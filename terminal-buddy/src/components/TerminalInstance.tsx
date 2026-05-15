@@ -149,7 +149,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           const cellH = screenRect.height / terminal.rows;
           updateAutocomplete({
             items: matches,
-            index: 0,
+            index: -1,
             x: screenRect.left + buffer.cursorX * cellW,
             y: screenRect.top + (buffer.cursorY + 1) * cellH,
           });
@@ -163,7 +163,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // Tab: accept autocomplete suggestion
         if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
           const ac = autocompleteRef.current;
-          if (ac && ac.items.length > 0) {
+          if (ac && ac.items.length > 0 && ac.index >= 0) {
             e.preventDefault();
             e.stopPropagation();
             const selected = ac.items[ac.index].command;
@@ -185,6 +185,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // Escape: close autocomplete
         if (e.key === 'Escape') {
           if (autocompleteRef.current) {
+            e.preventDefault();
+            e.stopPropagation();
             updateAutocomplete(null);
             return;
           }
@@ -195,9 +197,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           if (ac.items.length > 0) {
             e.preventDefault();
             e.stopPropagation();
-            const newIndex = e.key === 'ArrowDown'
-              ? Math.min(ac.index + 1, ac.items.length - 1)
-              : Math.max(ac.index - 1, 0);
+            let newIndex: number;
+            if (e.key === 'ArrowDown') {
+              newIndex = ac.index < 0 ? 0 : Math.min(ac.index + 1, ac.items.length - 1);
+            } else {
+              newIndex = ac.index < 0 ? ac.items.length - 1 : Math.max(ac.index - 1, 0);
+            }
             updateAutocomplete({ ...ac, index: newIndex });
             return;
           }
@@ -205,7 +210,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // Enter: accept autocomplete suggestion without submitting
         if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey && autocompleteRef.current) {
           const ac = autocompleteRef.current;
-          if (ac.items.length > 0) {
+          if (ac.items.length > 0 && ac.index >= 0) {
             e.preventDefault();
             e.stopPropagation();
             const selected = ac.items[ac.index].command;
@@ -371,6 +376,19 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     document.addEventListener('click', close, { once: true });
     return () => document.removeEventListener('click', close);
   }, [contextMenu.visible]);
+
+  // Close autocomplete on click outside
+  useEffect(() => {
+    if (!autocomplete) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.autocomplete-popup')) {
+        updateAutocomplete(null);
+      }
+    };
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [autocomplete]);
 
   return (
     <div ref={terminalRef} className="terminal-instance">

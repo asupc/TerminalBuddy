@@ -3,6 +3,7 @@
   height: 100%;
   padding: 4px;
   position: relative;
+  overflow: hidden;
 }
 
 .terminal-instance .xterm {
@@ -10,7 +11,25 @@
 }
 
 .terminal-instance .xterm-viewport {
-  overflow-y: auto !important;
+  overflow-y: scroll !important;
+}
+
+/* xterm viewport scrollbar */
+.terminal-instance .xterm-viewport::-webkit-scrollbar {
+  width: 12px;
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar-track {
+  background: var(--bg-primary, #1e1e1e);
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #5a5a5a);
+  border-radius: 6px;
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover, #7a7a7a);
 }
 
 .terminal-context-menu {

@@ -84,6 +84,12 @@ impl TerminalService {
         // Use cmd.exe to avoid 0xc0000142 with direct powershell.exe in ConPTY
         let mut cmd = CommandBuilder::new("cmd.exe");
 
+        // TERM tells child processes they're connected to a real terminal emulator
+        // (xterm.js). Without this, ConPTY cursor tracking and the frontend can get
+        // out of sync, causing the visual cursor to appear in the wrong position.
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+
         if let Some(ref path) = startup_path {
             cmd.cwd(path);
         }
@@ -162,7 +168,7 @@ impl TerminalService {
 
         thread::spawn(move || {
             let mut reader = master_reader;
-            let mut buf = [0u8; 4096];
+            let mut buf = [0u8; 65536];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
@@ -243,7 +249,9 @@ impl TerminalService {
             msg
         })?;
 
-        let cmd = CommandBuilder::new("cmd.exe");
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
 
         let child = pty_pair.slave.spawn_command(cmd).map_err(|e| {
             let msg = format!("spawn_command FAILED: {}", e);
@@ -300,7 +308,7 @@ impl TerminalService {
 
         thread::spawn(move || {
             let mut reader = master_reader;
-            let mut buf = [0u8; 4096];
+            let mut buf = [0u8; 65536];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
