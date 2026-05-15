@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TerminalBuddy - 设计预览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  h1 {
+    text-align: center;
+    margin-bottom: 10px;
+    color: #fff;
+  }
+
+  .subtitle {
+    text-align: center;
+    color: #888;
+    margin-bottom: 30px;
+    font-size: 14px;
+  }
+
+  /* Window Frame */
+  .window {
+    max-width: 1100px;
+    margin: 0 auto;
+    background: #252525;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+
+  .titlebar {
+    background: #2d2d2d;
+    padding: 10px 15px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .titlebar-icon {
+    width: 20px;
+    height: 20px;
+    background: linear-gradient(135deg, #00ff88, #00ccff);
+    border-radius: 4px;
+  }
+
+  .titlebar-text {
+    font-size: 13px;
+    color: #ccc;
+    flex: 1;
+  }
+
+  .window-controls {
+    display: flex;
+    gap: 8px;
+  }
+
+  .window-btn {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+
+  .btn-minimize { background: #ffbd2e; }
+  .btn-maximize { background: #28ca42; }
+  .btn-close { background: #ff5f57; }
+
+  /* Toolbar */
+  .toolbar {
+    background: #333;
+    padding: 8px 15px;
+    display: flex;
+    gap: 10px;
+    border-bottom: 1px solid #444;
+  }
+
+  .toolbar-btn {
+    background: #4a4a4a;
+    color: #ddd;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .toolbar-btn:hover { background: #555; }
+  .toolbar-btn.primary { background: #0078d4; color: #fff; }
+  .toolbar-btn.primary:hover { background: #106ebe; }
+
+  .toolbar-spacer { flex: 1; }
+
+  /* Main Content */
+  .main-content {
+    display: flex;
+    height: 500px;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 250px;
+    background: #2a2a2a;
+    border-right: 1px solid #3a3a3a;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sidebar-header {
+    padding: 10px 15px;
+    font-size: 11px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #333;
+  }
+
+  .profile-group {
+    border-bottom: 1px solid #333;
+  }
+
+  .group-header {
+    padding: 8px 15px;
+    font-size: 12px;
+    color: #aaa;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+  }
+
+  .group-header:hover { background: #333; }
+
+  .group-arrow {
+    font-size: 10px;
+    transition: transform 0.2s;
+  }
+
+  .group-header.collapsed .group-arrow { transform: rotate(-90deg); }
+
+  .group-items { background: #242424; }
+
+  .profile-item {
+    padding: 8px 15px 8px 30px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+  }
+
+  .profile-item:hover { background: #3a3a3a; }
+  .profile-item.active { background: #0078d4; }
+
+  .profile-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: bold;
+    background: #444;
+  }
+
+  .profile-icon.ps { background: #012456; color: #f1f1f1; }
+  .profile-icon.cmd { background: #1e1e1e; color: #ccc; }
+
+  .profile-name { flex: 1; }
+  .profile-time { font-size: 10px; color: #666; }
+
+  /* Quick Launch */
+  .quick-launch {
+    padding: 12px 15px;
+    border-top: 1px solid #333;
+    background: #252525;
+  }
+
+  .quick-launch-title {
+    font-size: 10px;
+    color: #666;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .quick-buttons {
+    display: flex;
+    gap: 6px;
+  }
+
+  .quick-btn {
+    flex: 1;
+    background: #3a3a3a;
+    border: none;
+    color: #ddd;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    text-align: center;
+  }
+
+  .quick-btn:hover { background: #4a4a4a; }
+
+  /* Terminal Panel */
+  .terminal-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #1e1e1e;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    background: #252525;
+    border-bottom: 1px solid #333;
+  }
+
+  .tab {
+    padding: 10px 20px;
+    font-size: 12px;
+    color: #888;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tab:hover { color: #ccc; background: #2a2a2a; }
+  .tab.active { color: #fff; border-bottom-color: #0078d4; background: #1e1e1e; }
+
+  .tab-close {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #666;
+  }
+
+  .tab-close:hover { background: #444; color: #fff; }
+
+  .tab-add {
+    padding: 10px 15px;
+    color: #666;
+    cursor: pointer;
+    font-size: 16px;
+  }
+
+  .tab-add:hover { color: #fff; }
+
+  /* Terminal Content */
+  .terminal-content {
+    flex: 1;
+    padding: 15px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow: auto;
+  }
+
+  .terminal-line { white-space: pre-wrap; word-break: break-all; }
+
+  /* Section */
+  .section {
+    max-width: 1100px;
+    margin: 40px auto 0;
+  }
+
+  .section h2 {
+    font-size: 16px;
+    color: #fff;
+    margin-bottom: 20px;
+    padding-left: 5px;
+  }
+
+  /* Profile Edit Dialog */
+  .dialog-overlay {
+    background: rgba(0,0,0,0.6);
+    border-radius: 8px;
+    padding: 30px;
+  }
+
+  .dialog {
+    background: #2d2d2d;
+    border-radius: 8px;
+    max-width: 600px;
+    margin: 0 auto;
+    overflow: hidden;
+  }
+
+  .dialog-header {
+    background: #333;
+    padding: 15px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .dialog-close {
+    cursor: pointer;
+    color: #888;
+    font-size: 18px;
+  }
+
+  .dialog-close:hover { color: #fff; }
+
+  .dialog-body {
+    padding: 20px;
+  }
+
+  .form-row {
+    margin-bottom: 15px;
+  }
+
+  .form-label {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 6px;
+    display: block;
+  }
+
+  .form-input {
+    width: 100%;
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: #ddd;
+    font-size: 13px;
+  }
+
+  .form-input:focus {
+    outline: none;
+    border-color: #0078d4;
+  }
+
+  .form-row-inline {
+    display: flex;
+    gap: 15px;
+  }
+
+  .form-row-inline .form-row {
+    flex: 1;
+  }
+
+  .radio-group {
+    display: flex;
+    gap: 15px;
+  }
+
+  .radio-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #ccc;
+  }
+
+  .radio-item input[type="radio"] {
+    accent-color: #0078d4;
+  }
+
+  .cmd-insert-btn {
+    background: #3a3a3a;
+    border: 1px dashed #555;
+    border-radius: 4px;
+    padding: 10px 15px;
+    color: #888;
+    font-size: 12px;
+    cursor: pointer;
+    width: 100%;
+    text-align: center;
+  }
+
+  .cmd-insert-btn:hover {
+    background: #444;
+    border-color: #666;
+    color: #ccc;
+  }
+
+  .selected-commands {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .cmd-tag {
+    background: #0078d4;
+    color: #fff;
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .cmd-tag-remove {
+    cursor: pointer;
+    opacity: 0.7;
+  }
+
+  .cmd-tag-remove:hover { opacity: 1; }
+
+  .theme-select {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .theme-option {
+    width: 60px;
+    height: 40px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    transition: border-color 0.2s;
+  }
+
+  .theme-option:hover { border-color: #666; }
+  .theme-option.selected { border-color: #0078d4; }
+
+  .dialog-footer {
+    background: #252525;
+    padding: 15px 20px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .dialog-btn {
+    padding: 8px 20px;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    border: none;
+  }
+
+  .dialog-btn.cancel {
+    background: #444;
+    color: #ccc;
+  }
+
+  .dialog-btn.cancel:hover { background: #555; }
+
+  .dialog-btn.primary {
+    background: #0078d4;
+    color: #fff;
+  }
+
+  .dialog-btn.primary:hover { background: #106ebe; }
+
+  .dialog-btn.danger {
+    background: #d32f2f;
+    color: #fff;
+  }
+
+  .dialog-btn.danger:hover { background: #b71c1c; }
+
+  /* Command Template Panel */
+  .cmd-template-panel {
+    background: #252525;
+    border-radius: 8px;
+    max-width: 600px;
+    margin: 20px auto 0;
+    overflow: hidden;
+  }
+
+  .cmd-template-header {
+    padding: 12px 15px;
+    background: #333;
+    font-size: 13px;
+    color: #ccc;
+  }
+
+  .cmd-template-categories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 12px 15px;
+    border-bottom: 1px solid #333;
+  }
+
+  .cmd-category-btn {
+    background: #3a3a3a;
+    border: none;
+    color: #ccc;
+    padding: 5px 12px;
+    border-radius: 3px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .cmd-category-btn:hover { background: #4a4a4a; }
+  .cmd-category-btn.active { background: #0078d4; color: #fff; }
+
+  .cmd-template-list {
+    padding: 10px 15px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .cmd-template-item {
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #ccc;
+    cursor: pointer;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+  }
+
+  .cmd-template-item:hover {
+    background: #2a2a2a;
+    border-color: #0078d4;
+  }
+
+  /* Theme Preview */
+  .theme-preview {
+    margin-top: 40px;
+    padding: 20px;
+    background: #252525;
+    border-radius: 8px;
+    max-width: 1100px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .theme-preview h2 {
+    font-size: 16px;
+    color: #fff;
+    margin-bottom: 20px;
+  }
+
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 15px;
+  }
+
+  .theme-card {
+    border-radius: 6px;
+    padding: 15px;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .theme-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+  }
+
+  .theme-name {
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 8px;
+  }
+
+  .theme-colors {
+    display: flex;
+    gap: 5px;
+  }
+
+  .theme-color-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .theme-desc {
+    font-size: 10px;
+    margin-top: 8px;
+    opacity: 0.7;
+  }
+
+  /* Theme definitions */
+  .theme-dark-default { background: #1e1e1e; color: #ccc; }
+  .theme-dark-green { background: #0c0c0c; color: #00ff00; }
+  .theme-dark-blue { background: #0d1b2a; color: #e0e0e0; }
+  .theme-dark-powershell { background: #012456; color: #f1f1f1; }
+  .theme-light { background: #ffffff; color: #333; }
+  .theme-solarized-dark { background: #002b36; color: #839496; }
+  .theme-solarized-light { background: #fdf6e3; color: #657b83; }
+  .theme-vintage { background: #0a0a0a; color: #33ff33; }
+
+  /* Autocomplete Demo */
+  .autocomplete-demo {
+    background: #252525;
+    border-radius: 8px;
+    padding: 20px;
+    max-width: 600px;
+    margin: 20px auto 0;
+  }
+
+  .autocomplete-demo h3 {
+    font-size: 14px;
+    color: #fff;
+    margin-bottom: 15px;
+  }
+
+  .terminal-with-ac {
+    background: #1e1e1e;
+    border-radius: 6px;
+    padding: 15px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 13px;
+    position: relative;
+  }
+
+  .terminal-line-ac { white-space: pre-wrap; word-break: break-all; }
+
+  .terminal-input-line {
+    display: flex;
+    align-items: center;
+  }
+
+  .terminal-prompt {
+    color: #569cd6;
+    margin-right: 8px;
+  }
+
+  .terminal-cursor {
+    display: inline-block;
+    width: 8px;
+    height: 15px;
+    background: #ccc;
+    animation: blink 1s infinite;
+  }
+
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+
+  .autocomplete-popup {
+    position: absolute;
+    background: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 4px;
+    margin-top: 5px;
+    margin-left: 60px;
+    min-width: 250px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.4);
+    z-index: 100;
+  }
+
+  .autocomplete-header {
+    padding: 8px 12px;
+    font-size: 10px;
+    color: #666;
+    text-transform: uppercase;
+    border-bottom: 1px solid #333;
+  }
+
+  .autocomplete-item {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #ccc;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .autocomplete-item:hover, .autocomplete-item.selected {
+    background: #0078d4;
+    color: #fff;
+  }
+
+  .autocomplete-item-type {
+    font-size: 10px;
+    color: #888;
+  }
+
+  .autocomplete-item.selected .autocomplete-item-type {
+    color: #a0d0ff;
+  }
+
+  .hint-text {
+    font-size: 11px;
+    color: #666;
+    margin-top: 10px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h1>TerminalBuddy</h1>
+<p class="subtitle">Windows 终端配置管理工具 - 界面设计预览</p>
+
+<!-- Main Window Mockup -->
+<div class="window">
+  <div class="titlebar">
+    <div class="titlebar-icon"></div>
+    <span class="titlebar-text">TerminalBuddy</span>
+    <div class="window-controls">
+      <div class="window-btn btn-minimize"></div>
+      <div class="window-btn btn-maximize"></div>
+      <div class="window-btn btn-close"></div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <button class="toolbar-btn primary">+ 新建</button>
+    <button class="toolbar-btn">导入</button>
+    <button class="toolbar-btn">导出</button>
+    <span class="toolbar-spacer"></span>
+    <button class="toolbar-btn">设置</button>
+  </div>
+
+  <div class="main-content">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">配置列表</div>
+
+      <div class="profile-group">
+        <div class="group-header">
+          <span class="group-arrow">▼</span>
+          日常工作
+        </div>
+        <div class="group-items">
+          <div class="profile-item active">
+            <span class="profile-icon ps">PS</span>
+            <span class="profile-name">开发环境</span>
+          </div>
+          <div class="profile-item">
+            <span class="profile-icon ps">PS</span>
+            <span class="profile-name">运维脚本</span>
+          </div>
+          <div class="profile-item">
+            <span class="profile-icon cmd">CMD</span>
+            <span class="profile-name">批处理</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="profile-group">
+        <div class="group-header">
+          <span class="group-arrow">▼</span>
+          实验
+        </div>
+        <div class="group-items">
+          <div class="profile-item">
+            <span class="profile-icon ps">PS</span>
+            <span class="profile-name">测试环境</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="quick-launch">
+        <div class="quick-launch-title">快速启动</div>
+        <div class="quick-buttons">
+          <button class="quick-btn">开发环境</button>
+          <button class="quick-btn">运维脚本</button>
+          <button class="quick-btn">测试环境</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Terminal Panel -->
+    <div class="terminal-panel">
+      <div class="tabs">
+        <div class="tab active">
+          <span>开发环境</span>
+          <span class="tab-close">×</span>
+        </div>
+        <div class="tab">
+          <span>运维脚本</span>
+          <span class="tab-close">×</span>
+        </div>
+        <div class="tab-add">+</div>
+      </div>
+      <div class="terminal-content theme-dark-default">
+        <div class="terminal-line" style="color: #569cd6;">PS D:\Projects&gt;</div>
+        <div class="terminal-line" style="color: #569cd6;">PS D:\Projects&gt; npm run dev</div>
+        <div class="terminal-line" style="color: #4ec9b0;">> project@1.0.0 dev</div>
+        <div class="terminal-line" style="color: #4ec9b0;">> vite</div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line" style="color: #dcdcaa;">  VITE v5.0.0  ready in 321 ms</div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line" style="color: #c586c0;">  ➜  Local:   http://localhost:5173/</div>
+        <div class="terminal-line" style="color: #c586c0;">  ➜  Network: use --host to expose</div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line" style="color: #569cd6;">PS D:\Projects&gt;</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Profile Edit Dialog -->
+<div class="section">
+  <h2>配置编辑对话框 - 命令模板</h2>
+  <div class="dialog-overlay">
+    <div class="dialog">
+      <div class="dialog-header">
+        <span>编辑配置</span>
+        <span class="dialog-close">×</span>
+      </div>
+      <div class="dialog-body">
+        <div class="form-row">
+          <label class="form-label">配置名称</label>
+          <input type="text" class="form-input" value="开发环境">
+        </div>
+        <div class="form-row-inline">
+          <div class="form-row">
+            <label class="form-label">分组</label>
+            <input type="text" class="form-input" value="日常工作">
+          </div>
+          <div class="form-row">
+            <label class="form-label">终端类型</label>
+            <div class="radio-group">
+              <label class="radio-item">
+                <input type="radio" name="term" checked>
+                PowerShell
+              </label>
+              <label class="radio-item">
+                <input type="radio" name="term">
+                CMD
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="form-label">起始路径</label>
+          <input type="text" class="form-input" value="D:\Projects">
+        </div>
+        <div class="form-row">
+          <label class="form-label">启动命令（点击下方插入常用命令）</label>
+          <div class="selected-commands">
+            <span class="cmd-tag">npm run dev <span class="cmd-tag-remove">×</span></span>
+            <span class="cmd-tag">code . <span class="cmd-tag-remove">×</span></span>
+          </div>
+          <button class="cmd-insert-btn">+ 插入命令模板</button>
+        </div>
+        <div class="form-row">
+          <label class="form-label">颜色主题</label>
+          <div class="theme-select">
+            <div class="theme-option theme-dark-default selected" style="background:#1e1e1e;color:#ccc;">深色</div>
+            <div class="theme-option theme-dark-green" style="background:#0c0c0c;color:#00ff00;">黑客</div>
+            <div class="theme-option theme-dark-blue" style="background:#0d1b2a;color:#e0e0e0;">海洋</div>
+            <div class="theme-option theme-dark-powershell" style="background:#012456;color:#f1f1f1;">PS</div>
+            <div class="theme-option theme-light" style="background:#fff;color:#333;">浅色</div>
+            <div class="theme-option theme-solarized-dark" style="background:#002b36;color:#839496;">Solar</div>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <button class="dialog-btn danger">删除</button>
+        <button class="dialog-btn cancel">取消</button>
+        <button class="dialog-btn primary">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Command Template Panel -->
+<div class="cmd-template-panel">
+  <div class="cmd-template-header">命令模板 - 点击即可插入</div>
+  <div class="cmd-template-categories">
+    <button class="cmd-category-btn active">Node.js</button>
+    <button class="cmd-category-btn">Git</button>
+    <button class="cmd-category-btn">Docker</button>
+    <button class="cmd-category-btn">Kubernetes</button>
+    <button class="cmd-category-btn">Python</button>
+    <button class="cmd-category-btn">dotnet</button>
+    <button class="cmd-category-btn">系统管理</button>
+    <button class="cmd-category-btn">文件操作</button>
+  </div>
+  <div class="cmd-template-list">
+    <div class="cmd-template-item">npm install</div>
+    <div class="cmd-template-item">npm run dev</div>
+    <div class="cmd-template-item">npm run build</div>
+    <div class="cmd-template-item">yarn install</div>
+    <div class="cmd-template-item">pnpm install</div>
+    <div class="cmd-template-item">npm test</div>
+    <div class="cmd-template-item">npm run lint</div>
+    <div class="cmd-template-item">npm run build -- --mode production</div>
+  </div>
+</div>
+
+<!-- Autocomplete Demo -->
+<div class="autocomplete-demo">
+  <h3>终端内实时自动补全</h3>
+  <div class="terminal-with-ac">
+    <div class="terminal-line-ac" style="color: #569cd6;">PS D:\Projects&gt; npm run dev</div>
+    <div class="terminal-line-ac"></div>
+    <div class="terminal-line-ac" style="color: #569cd6;">PS D:\Projects&gt; git </div>
+    <div class="terminal-input-line">
+      <span class="terminal-prompt">PS D:\Projects&gt;</span>
+      <span>git ch</span><span class="terminal-cursor"></span>
+    </div>
+    <div class="autocomplete-popup">
+      <div class="autocomplete-header">常用命令</div>
+      <div class="autocomplete-item selected">git checkout <span class="autocomplete-item-type">切换分支</span></div>
+      <div class="autocomplete-item">git check-ignore <span class="autocomplete-item-type">检查忽略</span></div>
+      <div class="autocomplete-item">git cherry-pick <span class="autocomplete-item-type">摘取提交</span></div>
+      <div class="autocomplete-item">git clone <span class="autocomplete-item-type">克隆仓库</span></div>
+    </div>
+  </div>
+  <p class="hint-text">输入命令时自动弹出补全建议，↑↓ 选择，Enter 或 Tab 确认</p>
+</div>
+
+<!-- Color Theme Preview -->
+<div class="theme-preview">
+  <h2>预设颜色主题</h2>
+  <div class="theme-grid">
+    <div class="theme-card theme-dark-default">
+      <div class="theme-name">深色默认</div>
+      <div class="theme-colors">
+        <div class="theme-color-swatch" style="background:#1e1e1e;"></div>
+        <div class="theme-color-swatch" style="background:#cccccc;"></div>
+      </div>
+      <div class="theme-desc">#1E1E1E / #CCCCCC</div>
+    </div>
+
+    <div class="theme-card theme-dark-green">
+      <div class="theme-name">黑客绿</div>
+      <div class="theme-colors">
+        <div class="theme-color-swatch" style="background:#0c0c0c;"></div>
+        <div class="theme-color-swatch" style="background:#00ff00;"></div>
+      </div>
+      <div class="theme-desc">#0C0C0C / #00FF00</div>
+    </div>
+
+    <div class="theme-card theme-dark-blue">
+      <div class="theme-name">海洋蓝</div>
+      <div class="theme-colors">
+        <div class="theme-color-swatch" style="background:#0d1b2a;"></div>
+        <div class="theme-color-swatch" style="background:#e0e0e0;"></div>
+      </div>
+      <div class="theme-desc">#0D1B2A / #E0E0E0</div>
+    </div>
+
+    <div class="theme-card theme-dark-powershell">
+      <div class="theme-name">PS深色</div>
+      <div class="theme-colors">
+        <div class="theme-color-swatch" style="background:#012456;"></div>
+        <div class="theme-color-swatch" style="background:#f1f1f1;"></div>
+      </div>
+      <div class="theme-desc">#012456 / #F1F1F1</div>
+    </div>
+
+    <div class="theme-card theme-light">
+      <div class="theme-name">浅色</div>
+      <div class="theme-colors">
+        <div class="theme-color-swatch" style="background:#ffffff; border-color: #ccc;"></div>
+        <div class="theme-color-swatch" style="background:#333333;"></div>
+      </div>
+      <div class="theme-desc">#FFFFFF / #333333</div>
+    </div>
+
+    <div class="theme-card theme-solarized-dark">
+      <div class="theme-name">Solarized暗</div>
+      <div class="theme-colors">
+        <div class="theme-color-swatch" style="background:#002b36;"></div>
+        <div class="theme-color-swatch" style="background:#839496;"></div>
+      </div>
+      <div class="theme-desc">#002B36 / #839496</div>
+    </div>
+
+    <div class="theme-card theme-solarized-light">
+      <div class="theme-name">Solarized亮</div>
+      <div class="theme-colors">
+        <div class="theme-color-swatch" style="background:#fdf6e3; border-color: #ccc;"></div>
+        <div class="theme-color-swatch" style="background:#657b83;"></div>
+      </div>
+      <div class="theme-desc">#FDF6E3 / #657B83</div>
+    </div>
+
+    <div class="theme-card theme-vintage">
+      <div class="theme-name">复古绿屏</div>
+      <div class="theme-colors">
+        <div class="theme-color-swatch" style="background:#0a0a0a;"></div>
+        <div class="theme-color-swatch" style="background:#33ff33;"></div>
+      </div>
+      <div class="theme-desc">#0A0A0A / #33FF33</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

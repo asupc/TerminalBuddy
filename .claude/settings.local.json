@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./terminal-buddy.exe)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(taskkill //F //IM terminal-buddy.exe)",
+      "Bash(cargo clean *)",
+      "Bash(npm run *)",
+      "Bash(tasklist)",
+      "Bash(taskkill //F //IM WindowsTerminal.exe)",
+      "Bash(taskkill //F //IM powershell.exe)",
+      "Bash(cmd.exe /c \"echo %APPDATA%\")",
+      "Bash(echo \"Log path: $\\(cmd.exe /c \"echo %APPDATA%\")",
+      "Bash(node *)",
+      "Bash(npx tauri *)",
+      "Bash(/d/gitee/TerminalBuddy/terminal-buddy/src-tauri/target/release/terminal-buddy.exe)",
+      "Bash(cargo check *)",
+      "Bash(npm ls *)",
+      "Bash(npm install *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(npx tsc *)",
+      "Bash(xxd \"D:/gitee/TerminalBuddy/terminal-buddy/src-tauri/src/models/mod.rs\")"
+    ]
+  }
+}
