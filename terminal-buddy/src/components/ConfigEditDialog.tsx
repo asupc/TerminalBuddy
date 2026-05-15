@@ -52,6 +52,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
       : []
   );
   const [envExpanded, setEnvExpanded] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const [dialogOffset, setDialogOffset] = useState({ x: 0, y: 0 });
   const isDragging = useRef(false);
@@ -126,6 +127,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
 
   const onSubmit = async (data: FormData) => {
     try {
+      setSaveError(null);
       const commands = startupCommands.filter(c => c.trim() !== '');
       commands.forEach(cmd => addCommandToHistory(cmd));
       if (profile) {
@@ -159,7 +161,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
       }
       onSave();
     } catch (err) {
-      console.error('Failed to save profile:', err);
+      setSaveError(String(err));
     }
   };
 
@@ -237,6 +239,9 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
           <h3>{profile ? '编辑配置' : '新建配置'}</h3>
           <button className="dialog-close" onClick={onClose}>×</button>
         </div>
+        {saveError && (
+          <div className="dialog-error">{saveError}</div>
+        )}
 
         <form onSubmit={handleSubmit(onSubmit)} className="dialog-content">
           <div className="form-row">

@@ -64,6 +64,10 @@ export async function closeTerminal(id: string): Promise<void> {
   return invoke('close_terminal', { id });
 }
 
+export async function drainTerminalOutput(id: string): Promise<string> {
+  return invoke('drain_terminal_output', { id });
+}
+
 // Events
 export async function onTerminalOutput(
   terminalId: string,
@@ -116,6 +120,15 @@ export async function updateTheme(theme: CustomTheme): Promise<void> {
 
 export async function deleteTheme(id: string): Promise<void> {
   return invoke('delete_theme', { id });
+}
+
+// Settings Commands
+export async function getBackendAppSettings(): Promise<{ closeBehavior: 'exit' | 'tray' }> {
+  return invoke('get_app_settings');
+}
+
+export async function saveCloseBehavior(behavior: 'exit' | 'tray'): Promise<void> {
+  return invoke('save_close_behavior', { behavior });
 }
 
 // Clipboard Commands

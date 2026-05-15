@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useRef, useCallback } from 'react';
-import { getAllThemes, createTheme, updateTheme, deleteTheme } from '../services/tauri';
+import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { PRESET_THEMES, type CustomTheme } from '../types';
 import { getCmdOverrides, saveCmdOverrides, getCustomCommands, saveCustomCommands, getEffectiveTemplates, type CmdOverride, type CommandItem } from '../data/commandTemplates';
@@ -11,6 +11,7 @@ export interface AppSettings {
   restoreTabsOnStartup: boolean;
   configPanelAutoExpand: boolean;
   fileTreeAutoExpand: boolean;
+  closeBehavior: 'exit' | 'tray';
 }
 
 const THEME_STORAGE_KEY = 'terminalbuddy_theme';
@@ -20,6 +21,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   restoreTabsOnStartup: true,
   configPanelAutoExpand: true,
   fileTreeAutoExpand: true,
+  closeBehavior: 'exit',
 };
 
 export const getAppSettings = (): AppSettings => {
@@ -88,6 +90,13 @@ export const SettingsDialog: FC<SettingsDialogProps> = ({ onClose }) => {
   useEffect(() => {
     saveAppSettings(settings);
   }, [settings]);
+
+  // Sync close behavior from Rust backend on mount
+  useEffect(() => {
+    getBackendAppSettings().then(backend => {
+      setSettings(prev => ({ ...prev, closeBehavior: backend.closeBehavior }));
+    }).catch(() => {});
+  }, []);
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -244,6 +253,21 @@ export const SettingsDialog: FC<SettingsDialogProps> = ({ onClose }) => {
                   <span>启动时展开文件导航</span>
                 </label>
                 <p className="settings-desc">程序启动时自动显示左侧文件树面板</p>
+              </div>
+              <div className="settings-section">
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.closeBehavior === 'tray'}
+                    onChange={(e) => {
+                      const value = e.target.checked ? 'tray' : 'exit';
+                      updateSetting('closeBehavior', value);
+                      saveCloseBehavior(value).catch(console.error);
+                    }}
+                  />
+                  <span>关闭窗口时最小化到系统托盘</span>
+                </label>
+                <p className="settings-desc">关闭窗口时应用将隐藏到系统托盘，双击托盘图标或右键选择"打开窗口"可重新显示</p>
               </div>
               <div className="settings-section">
                 <label className="settings-label">主题</label>

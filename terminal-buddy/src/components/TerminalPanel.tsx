@@ -1,63 +1,12 @@
-import React, { FC, useRef } from 'react';
+import { FC } from 'react';
 import { TerminalTab } from './TerminalTab';
 import { TerminalInstance } from './TerminalInstance';
 import { useAppStore, saveTabsToStorage } from '../stores/appStore';
-import { onTerminalOutput, writeToTerminal, closeTerminal as closeTerminalCmd } from '../services/tauri';
+import { writeToTerminal, closeTerminal as closeTerminalCmd } from '../services/tauri';
 import './TerminalPanel.css';
 
-// Match CMD prompt line ending with >: C:\Users\...>
-// Match PowerShell prompt line ending with >: PS C:\Users\...>
-// Requires trailing > to avoid matching executable paths in output
-const PROMPT_REGEX = /(?:PS )?([A-Za-z]:\\[^\s>]*)>/g;
-
 export const TerminalPanel: FC = () => {
-  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession, updateSession, setCurrentDirectory, setSessionDirectory } = useAppStore();
-
-  // Use ref for activeSessionId so directory detection uses the latest value
-  // without triggering listener re-registration on tab switch
-  const activeSessionIdRef = useRef(activeSessionId);
-  activeSessionIdRef.current = activeSessionId;
-
-  // Only re-register listeners when the set of session IDs changes,
-  // not on every state update (rename, color change, etc.)
-  const sessionIdsKey = sessions.map(s => s.id).join(',');
-
-  // Set up event listeners for terminal output
-  React.useEffect(() => {
-    let cancelled = false;
-    const unlisteners: (() => void)[] = [];
-
-    sessions.forEach((session) => {
-      onTerminalOutput(session.id, (output) => {
-        const writeFn = (window as any)[`xterm_write_${session.id}`];
-        if (writeFn) writeFn(output);
-
-        // Detect directory from prompt lines ending with >
-        if (activeSessionIdRef.current === session.id) {
-          const matches = [...output.matchAll(PROMPT_REGEX)];
-          if (matches.length > 0) {
-            const detectedPath = matches[matches.length - 1][1];
-            if (detectedPath.length >= 3 && detectedPath.includes('\\')) {
-              setCurrentDirectory(detectedPath);
-              setSessionDirectory(session.id, detectedPath);
-            }
-          }
-        }
-      }).then((unlisten) => {
-        if (cancelled) {
-          // Effect already cleaned up — immediately unregister to prevent leaks
-          unlisten();
-        } else {
-          unlisteners.push(unlisten);
-        }
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      unlisteners.forEach((unlisten) => unlisten());
-    };
-  }, [sessionIdsKey, setCurrentDirectory, setSessionDirectory]);
+  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession, updateSession } = useAppStore();
 
   const handleTerminalInput = async (sessionId: string, data: string) => {
     try {
@@ -128,8 +77,6 @@ export const TerminalPanel: FC = () => {
     saveTabsToStorage([], null);
   };
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId);
-
   return (
     <div className="terminal-panel">
       {sessions.length > 0 && (
@@ -160,16 +107,20 @@ export const TerminalPanel: FC = () => {
             <div className="empty-icon">⌨</div>
             <div className="empty-text">点击左侧配置启动终端</div>
           </div>
-        ) : activeSession ? (
-          <div className="terminal-tab-content active">
-            <TerminalInstance
-              key={activeSession.id}
-              terminalId={activeSession.id}
-              colorTheme={activeSession.colorTheme}
-              onOutput={(data) => handleTerminalInput(activeSession.id, data)}
-            />
-          </div>
-        ) : null}
+        ) : (
+          sessions.map((session) => (
+            <div
+              key={session.id}
+              className={`terminal-tab-content ${activeSessionId === session.id ? 'active' : ''}`}
+            >
+              <TerminalInstance
+                terminalId={session.id}
+                colorTheme={session.colorTheme}
+                onOutput={(data) => handleTerminalInput(session.id, data)}
+              />
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

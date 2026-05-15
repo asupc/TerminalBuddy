@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Toolbar } from './components/Toolbar';
 import { ConfigPanel } from './components/ConfigPanel';
 import { TerminalPanel } from './components/TerminalPanel';
@@ -11,11 +11,57 @@ import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUse
 import type { Profile } from './types';
 import { PRESET_THEMES } from './types';
 
+const FLOAT_POS_KEY = 'terminalbuddy_float_pos';
+
+function getSavedFloatPos(): { x: number; y: number } {
+  try {
+    const raw = localStorage.getItem(FLOAT_POS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { x: 8, y: window.innerHeight / 2 - 36 };
+}
+
+function saveFloatPos(pos: { x: number; y: number }) {
+  try {
+    localStorage.setItem(FLOAT_POS_KEY, JSON.stringify(pos));
+  } catch {}
+}
+
 function App() {
   const { setProfiles, addSession, configPanelVisible, fileTreeVisible, toggleConfigPanel, toggleFileTree } = useAppStore();
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const floatPosRef = useRef(getSavedFloatPos());
+  const [floatPos, setFloatPos] = useState(floatPosRef.current);
+  const floatDragging = useRef(false);
+  const floatStart = useRef({ x: 0, y: 0 });
+  const floatOrigin = useRef({ x: 0, y: 0 });
+
+  const handleFloatMouseDown = useCallback((e: React.MouseEvent) => {
+    floatDragging.current = true;
+    floatStart.current = { x: e.clientX, y: e.clientY };
+    floatOrigin.current = { x: floatPosRef.current.x, y: floatPosRef.current.y };
+  }, []);
+
+  const handleFloatMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!floatDragging.current) return;
+    const dx = e.clientX - floatStart.current.x;
+    const dy = e.clientY - floatStart.current.y;
+    if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+    const next = {
+      x: Math.max(0, Math.min(window.innerWidth - 40, floatOrigin.current.x + dx)),
+      y: Math.max(0, Math.min(window.innerHeight - 80, floatOrigin.current.y + dy)),
+    };
+    floatPosRef.current = next;
+    setFloatPos(next);
+  }, []);
+
+  const handleFloatMouseUp = useCallback(() => {
+    if (!floatDragging.current) return;
+    floatDragging.current = false;
+    saveFloatPos(floatPosRef.current);
+  }, []);
 
   useEffect(() => {
     applyTheme(getStoredTheme());
@@ -28,17 +74,13 @@ function App() {
   const restoreTabs = async () => {
     const { tabs, activeIndex } = loadSavedTabs();
     if (tabs.length === 0) return;
-    const { addSession } = useAppStore.getState();
-    const newSessions: { id: string; index: number }[] = [];
+    const { addSession, setActiveSession } = useAppStore.getState();
     for (let i = 0; i < tabs.length; i++) {
       const tab = tabs[i];
       try {
-        let terminalId: string;
-        if (tab.profileId) {
-          terminalId = await startTerminal(tab.profileId);
-        } else {
-          terminalId = await startBlankTerminal(tab.terminalType);
-        }
+        const terminalId = tab.profileId
+          ? await startTerminal(tab.profileId)
+          : await startBlankTerminal(tab.terminalType);
         addSession({
           id: terminalId,
           profileId: tab.profileId,
@@ -47,13 +89,12 @@ function App() {
           colorTheme: tab.colorTheme,
           tabColor: tab.tabColor,
         });
-        newSessions.push({ id: terminalId, index: i });
+        if (i === activeIndex) {
+          setActiveSession(terminalId);
+        }
       } catch (err) {
         console.error('Failed to restore tab:', tab.profileName, err);
       }
-    }
-    if (newSessions.length > 0 && activeIndex < newSessions.length) {
-      useAppStore.getState().setActiveSession(newSessions[activeIndex].id);
     }
   };
 
@@ -183,7 +224,14 @@ function App() {
         onStartTerminal={handleStartTerminal}
       />
       <div className="main-content">
-        <div className="floating-buttons">
+        <div
+          className="floating-buttons"
+          style={{ left: floatPos.x, top: floatPos.y, transform: 'none' }}
+          onMouseDown={handleFloatMouseDown}
+          onMouseMove={handleFloatMouseMove}
+          onMouseUp={handleFloatMouseUp}
+          onMouseLeave={handleFloatMouseUp}
+        >
           <button
             className={`float-btn ${configPanelVisible ? 'active' : ''}`}
             onClick={toggleConfigPanel}

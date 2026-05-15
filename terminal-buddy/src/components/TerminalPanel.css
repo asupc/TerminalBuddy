@@ -24,11 +24,15 @@
   left: 0;
   right: 0;
   bottom: 0;
-  display: none;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .terminal-tab-content.active {
-  display: block;
+  visibility: visible;
+  pointer-events: auto;
+  z-index: 1;
 }
 
 .terminal-empty {

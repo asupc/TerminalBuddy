@@ -13,6 +13,7 @@ pub struct TerminalInstance {
     pub child: Box<dyn Child + Send + Sync>,
     pub writer: Option<Box<dyn Write + Send>>,
     pub master: Box<dyn MasterPty + Send>,
+    pub output_buffer: Arc<Mutex<Vec<String>>>,
 }
 
 pub struct TerminalService {
@@ -115,11 +116,14 @@ impl TerminalService {
             msg
         })?;
 
+        let output_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
         let instance = TerminalInstance {
             id: terminal_id.clone(),
             child,
             writer: Some(writer),
             master: pty_pair.master,
+            output_buffer: output_buffer.clone(),
         };
 
         {
@@ -165,6 +169,7 @@ impl TerminalService {
         // Output forwarding thread
         let tid = terminal_id.clone();
         let app_clone = app.clone();
+        let buf_clone = output_buffer.clone();
 
         thread::spawn(move || {
             let mut reader = master_reader;
@@ -175,6 +180,10 @@ impl TerminalService {
                     Ok(n) => {
                         let output = String::from_utf8_lossy(&buf[..n]).to_string();
                         if !output.is_empty() {
+                            {
+                                let mut buffer = buf_clone.lock().unwrap();
+                                buffer.push(output.clone());
+                            }
                             let _ = app_clone.emit(&format!("terminal_output_{}", tid), output);
                         }
                     }
@@ -215,6 +224,18 @@ impl TerminalService {
             }).map_err(|e| format!("Resize failed: {}", e))?;
             log_debug(&format!("[resize] id={} rows={} cols={}", id, rows, cols));
             Ok(())
+        } else {
+            Err("Terminal not found".to_string())
+        }
+    }
+
+    pub fn drain_terminal_output(&self, id: &str) -> Result<String, String> {
+        let mut instances = self.instances.lock().unwrap();
+        if let Some(instance) = instances.get_mut(id) {
+            let mut buffer = instance.output_buffer.lock().unwrap();
+            let result = buffer.join("");
+            buffer.clear();
+            Ok(result)
         } else {
             Err("Terminal not found".to_string())
         }
@@ -271,11 +292,14 @@ impl TerminalService {
             msg
         })?;
 
+        let output_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
         let instance = TerminalInstance {
             id: terminal_id.clone(),
             child,
             writer: Some(writer),
             master: pty_pair.master,
+            output_buffer: output_buffer.clone(),
         };
 
         {
@@ -305,6 +329,7 @@ impl TerminalService {
         // Output forwarding thread
         let tid = terminal_id.clone();
         let app_clone = app.clone();
+        let buf_clone = output_buffer.clone();
 
         thread::spawn(move || {
             let mut reader = master_reader;
@@ -315,6 +340,10 @@ impl TerminalService {
                     Ok(n) => {
                         let output = String::from_utf8_lossy(&buf[..n]).to_string();
                         if !output.is_empty() {
+                            {
+                                let mut buffer = buf_clone.lock().unwrap();
+                                buffer.push(output.clone());
+                            }
                             let _ = app_clone.emit(&format!("terminal_output_{}", tid), output);
                         }
                     }
@@ -362,6 +391,14 @@ pub fn close_terminal(
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
     terminal_service.close_terminal(&id)
+}
+
+#[command]
+pub fn drain_terminal_output(
+    id: String,
+    terminal_service: State<TerminalService>,
+) -> Result<String, String> {
+    terminal_service.drain_terminal_output(&id)
 }
 
 #[command]

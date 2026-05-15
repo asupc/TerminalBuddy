@@ -5,10 +5,14 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { resizeTerminal, openPath, readClipboardFilePaths } from '../services/tauri';
+import { resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput } from '../services/tauri';
+import { useAppStore } from '../stores/appStore';
 import { getAllSuggestions, addCommandToHistory, type SuggestionItem } from '../data/commandTemplates';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
+
+// Match CMD/PowerShell prompt line ending with >
+const PROMPT_REGEX = /(?:PS )?([A-Za-z]:\\[^\s>]*)>/g;
 
 interface TerminalInstanceProps {
   terminalId: string;
@@ -48,6 +52,29 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let disposed = false;
 
     const cleanupFns: (() => void)[] = [];
+    const outputBuffer: string[] = [];
+
+    const handleOutput = (output: string) => {
+      if (disposed || !output) return;
+      if (xtermRef.current) {
+        xtermRef.current.write(output);
+      } else {
+        outputBuffer.push(output);
+      }
+
+      // Detect directory from prompt lines for active session
+      const state = useAppStore.getState();
+      if (state.activeSessionId === terminalId) {
+        const matches = [...output.matchAll(PROMPT_REGEX)];
+        if (matches.length > 0) {
+          const detectedPath = matches[matches.length - 1][1];
+          if (detectedPath.length >= 3 && detectedPath.includes('\\')) {
+            state.setCurrentDirectory(detectedPath);
+            state.setSessionDirectory(terminalId, detectedPath);
+          }
+        }
+      }
+    };
 
     const initTerminal = async () => {
       // Wait for fonts to be fully loaded so xterm measures correct cell dimensions
@@ -58,7 +85,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const terminal = new Terminal({
         cursorBlink: true,
         fontSize: 14,
-        fontFamily: "Cascadia Mono, Consolas, 'Courier New', monospace",
+        fontFamily: "Cascadia Code, Consolas, 'Courier New', monospace",
         fontWeight: 'normal',
         fontWeightBold: 'bold',
         scrollback: 50000,
@@ -100,6 +127,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       });
 
       xtermRef.current = terminal;
+      // Flush buffered output that arrived before xterm was ready
+      if (outputBuffer.length > 0) {
+        for (const chunk of outputBuffer) {
+          terminal.write(chunk);
+        }
+        outputBuffer.length = 0;
+      }
       fitAddonRef.current = fitAddon;
 
       terminal.onData((data) => {
@@ -317,6 +351,23 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       cleanupFns.push(() => window.removeEventListener('resize', handleResize));
     };
 
+    // Register Tauri event listener, then drain buffered backend output
+    (async () => {
+      const unlisten = await onTerminalOutput(terminalId, handleOutput);
+      if (disposed) { unlisten(); return; }
+      cleanupFns.push(unlisten);
+
+      // Drain any output buffered in the backend before the listener was active
+      try {
+        const drained = await drainTerminalOutput(terminalId);
+        if (drained && !disposed) {
+          handleOutput(drained);
+        }
+      } catch (err) {
+        console.error('Failed to drain terminal output:', err);
+      }
+    })();
+
     initTerminal();
 
     return () => {
@@ -325,15 +376,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
-    };
-  }, [terminalId]);
-
-  useEffect(() => {
-    (window as any)[`xterm_write_${terminalId}`] = (data: string) => {
-      xtermRef.current?.write(data);
-    };
-    return () => {
-      delete (window as any)[`xterm_write_${terminalId}`];
     };
   }, [terminalId]);
 

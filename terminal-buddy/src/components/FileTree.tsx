@@ -118,6 +118,7 @@ export const FileTree: FC = () => {
   const [pathError, setPathError] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [bookmarksExpanded, setBookmarksExpanded] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -285,20 +286,27 @@ export const FileTree: FC = () => {
     setCtxMenu(null);
   }, [ctxMenu, setCurrentDirectory]);
 
-  const handleDeleteItem = useCallback(async () => {
-    if (!ctxMenu) return;
-    if (!window.confirm(`确定删除 "${ctxMenu.path}" 吗？`)) return;
+  const handleDeleteItem = useCallback(() => {
+    setConfirmDelete(ctxMenu?.path || null);
+    setCtxMenu(null);
+  }, [ctxMenu]);
+
+  const confirmDeleteItem = useCallback(async () => {
+    if (!confirmDelete) return;
     try {
-      await deletePath(ctxMenu.path);
-      // Refresh current directory
+      await deletePath(confirmDelete);
       const entries = await listDirectory(currentDirectory);
       setRootNodes(entries);
     } catch (err) {
       console.error(err);
       alert('删除失败: ' + String(err));
     }
-    setCtxMenu(null);
-  }, [ctxMenu, currentDirectory]);
+    setConfirmDelete(null);
+  }, [confirmDelete, currentDirectory]);
+
+  const cancelDeleteItem = useCallback(() => {
+    setConfirmDelete(null);
+  }, []);
 
   const handleRenameItem = useCallback(async () => {
     if (!ctxMenu) return;
@@ -427,6 +435,23 @@ export const FileTree: FC = () => {
           </div>
           <div className="context-menu-item danger" onClick={handleDeleteItem}>
             删除
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div className="confirm-dialog-overlay" onClick={cancelDeleteItem}>
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-dialog-title">确认删除</div>
+            <div className="confirm-dialog-message">确定删除 "{confirmDelete}" 吗？</div>
+            <div className="confirm-dialog-buttons">
+              <button className="btn-secondary" onClick={cancelDeleteItem}>
+                取消
+              </button>
+              <button className="btn-danger" onClick={confirmDeleteItem}>
+                删除
+              </button>
+            </div>
           </div>
         </div>
       )}

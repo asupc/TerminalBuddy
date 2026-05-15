@@ -225,7 +225,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
         </div>
       </div>
       <div className="config-list">
-        {Object.entries(groupedProfiles).map(([group, groupProfiles]) => (
+        {Object.entries(groupedProfiles).sort(([a], [b]) => a.localeCompare(b, 'zh')).map(([group, groupProfiles]) => (
           <div key={group} className="config-group">
             <div
               className="group-header"
@@ -268,7 +268,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
                     <span className="config-icon">
                       {profile.terminalType === 'powershell' ? 'PS' : 'CMD'}
                     </span>
-                    <span className="config-name">{profile.name}</span>
+                    <span className="config-name" style={profile.tabColor ? { color: profile.tabColor } : undefined}>{profile.name}</span>
                   </div>
                 ))}
               </div>

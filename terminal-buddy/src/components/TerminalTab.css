@@ -120,19 +120,22 @@
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 4px;
-  min-width: 100px;
+  min-width: 220px;
   z-index: 1001;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
 }
 
 .color-picker-item {
-  padding: 6px 12px;
+  padding: 4px 8px;
   cursor: pointer;
   border-radius: 2px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .color-picker-item:hover {
