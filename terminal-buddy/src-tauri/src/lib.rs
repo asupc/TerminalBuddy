@@ -2,7 +2,7 @@ pub mod commands;
 pub mod models;
 pub mod services;
 
-use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, start_terminal, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, get_app_settings, save_close_behavior};
+use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, start_terminal, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, get_app_settings, save_close_behavior, get_data_path, set_data_path, save_tab_orientation, save_vertical_tab_width, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace};
 use commands::TerminalService;
 use models::CloseBehavior;
 use services::SettingsService;
@@ -92,6 +92,15 @@ pub fn run() {
             read_clipboard_file_paths,
             get_app_settings,
             save_close_behavior,
+            get_data_path,
+            set_data_path,
+            save_tab_orientation,
+            save_vertical_tab_width,
+            get_all_workspaces,
+            get_workspace,
+            create_workspace,
+            update_workspace,
+            delete_workspace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

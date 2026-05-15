@@ -7,3 +7,4 @@ pub use path_service::*;
 pub use profile_service::*;
 pub use settings_service::*;
 pub use theme_service::*;
+pub use workspace_service::*;

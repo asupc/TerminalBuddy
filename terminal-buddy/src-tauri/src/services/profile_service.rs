@@ -1,4 +1,5 @@
 use crate::models::Profile;
+use crate::services::PathService;
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -16,12 +17,7 @@ pub struct ProfileService;
 
 impl ProfileService {
     fn get_profiles_dir() -> PathBuf {
-        let base = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("TerminalBuddy")
-            .join("Profiles");
-        fs::create_dir_all(&base).ok();
-        base
+        PathService::get_profiles_dir()
     }
 
     pub fn get_all_profiles() -> Result<Vec<Profile>, String> {
@@ -76,6 +72,16 @@ impl ProfileService {
             color_theme: "dark-default".to_string(),
             tab_color: None,
             window_size: None,
+            ssh_host: None,
+            ssh_port: None,
+            ssh_user: None,
+            ssh_auth_type: None,
+            ssh_key_path: None,
+            docker_container_id: None,
+            docker_container_name: None,
+            k8s_namespace: None,
+            k8s_pod_name: None,
+            k8s_container_name: None,
             created_at: chrono::Utc::now().to_rfc3339(),
             last_used_at: None,
         };
