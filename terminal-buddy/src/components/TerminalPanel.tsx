@@ -1,6 +1,7 @@
 import { FC, useCallback, useRef, useState } from 'react';
 import { TerminalTab } from './TerminalTab';
 import { TerminalInstance } from './TerminalInstance';
+import { SplitPane } from './SplitPane';
 import { TabGroupHeader } from './TabGroup';
 import { useAppStore, saveTabsToStorage } from '../stores/appStore';
 import { writeToTerminal, closeTerminal as closeTerminalCmd, saveVerticalTabWidth } from '../services/tauri';
@@ -9,7 +10,8 @@ import './TerminalPanel.css';
 
 export const TerminalPanel: FC = () => {
   const { sessions, activeSessionId, removeSession, setActiveSession, renameSession, updateSession,
-          groups, toggleGroupCollapse, renameGroup, moveSessionToGroup } = useAppStore();
+          groups, toggleGroupCollapse, renameGroup, moveSessionToGroup,
+          groupLayouts } = useAppStore();
   const settings = getAppSettings();
   const orientation = settings.tabOrientation || 'horizontal';
   const [verticalWidth, setVerticalWidth] = useState(settings.verticalTabWidth || 180);
@@ -23,12 +25,21 @@ export const TerminalPanel: FC = () => {
   };
 
   const handleCloseTerminal = async (sessionId: string) => {
+    // Get group info before removing
+    const session = sessions.find(s => s.id === sessionId);
+    const groupId = session?.groupId;
+
     try {
       await closeTerminalCmd(sessionId);
     } catch (err) {
       console.error('Failed to close terminal:', err);
     }
     removeSession(sessionId);
+
+    // Clean up split layout for this session's group
+    if (groupId) {
+      useAppStore.getState().removeSplitTerminal(groupId, sessionId);
+    }
   };
 
   const handleCloseOthers = async (keepId: string) => {
@@ -121,6 +132,54 @@ export const TerminalPanel: FC = () => {
     moveSessionToGroup(sessionId, groupId);
   };
 
+  const handleSplitRight = (sessionId: string) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session) return;
+    const groupId = session.groupId;
+    import('../services/tauri').then(({ startBlankTerminal }) => {
+      startBlankTerminal(session.terminalType).then((newId) => {
+        const { addSession, setActiveSession } = useAppStore.getState();
+        addSession({
+          id: newId,
+          profileId: '',
+          profileName: session.terminalType === 'powershell' ? 'PowerShell' : 'CMD',
+          terminalType: session.terminalType,
+          colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
+          tabColor: null,
+          groupId,
+        });
+        setActiveSession(newId);
+        useAppStore.getState().splitTerminal(groupId, sessionId, newId, 'horizontal');
+      });
+    });
+  };
+
+  const handleSplitDown = (sessionId: string) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session) return;
+    const groupId = session.groupId;
+    import('../services/tauri').then(({ startBlankTerminal }) => {
+      startBlankTerminal(session.terminalType).then((newId) => {
+        const { addSession, setActiveSession } = useAppStore.getState();
+        addSession({
+          id: newId,
+          profileId: '',
+          profileName: session.terminalType === 'powershell' ? 'PowerShell' : 'CMD',
+          terminalType: session.terminalType,
+          colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
+          tabColor: null,
+          groupId,
+        });
+        setActiveSession(newId);
+        useAppStore.getState().splitTerminal(groupId, sessionId, newId, 'vertical');
+      });
+    });
+  };
+
+  const colorThemes = Object.fromEntries(
+    sessions.map(s => [s.id, s.colorTheme])
+  );
+
   return (
     <div className="terminal-panel" data-tab-orientation={orientation}>
       {sessions.length > 0 && (
@@ -156,6 +215,8 @@ export const TerminalPanel: FC = () => {
                       onRename={(name) => renameSession(session.id, name)}
                       onChangeColor={(color) => updateSession(session.id, { tabColor: color || null })}
                       onMoveToGroup={(groupId) => handleMoveToGroup(session.id, groupId)}
+                      onSplitRight={() => handleSplitRight(session.id)}
+                      onSplitDown={() => handleSplitDown(session.id)}
                       groups={groups}
                     />
                   ))}
@@ -175,8 +236,30 @@ export const TerminalPanel: FC = () => {
             <div className="empty-icon">⌨</div>
             <div className="empty-text">点击左侧配置启动终端</div>
           </div>
-        ) : (
-          sessions.map((session) => (
+        ) : (() => {
+          // Find which group the active session belongs to
+          const activeGroup = groups.find(g => {
+            const groupSessions = sessions.filter(s => s.groupId === g.id);
+            return groupSessions.some(s => s.id === activeSessionId);
+          });
+          const activeGroupId = activeGroup?.id || 'default';
+          const layout = groupLayouts[activeGroupId];
+
+          if (layout) {
+            // Split mode: render using SplitPane
+            return (
+              <SplitPane
+                node={layout}
+                activeSessionId={activeSessionId}
+                onOutput={handleTerminalInput}
+                colorThemes={colorThemes}
+                onActivate={(id) => setActiveSession(id)}
+              />
+            );
+          }
+
+          // Normal tab mode: only active terminal visible
+          return sessions.map((session) => (
             <div
               key={session.id}
               className={`terminal-tab-content ${activeSessionId === session.id ? 'active' : ''}`}
@@ -187,8 +270,8 @@ export const TerminalPanel: FC = () => {
                 onOutput={(data) => handleTerminalInput(session.id, data)}
               />
             </div>
-          ))
-        )}
+          ));
+        })()}
       </div>
     </div>
   );

@@ -16,6 +16,8 @@ interface TerminalTabProps {
   onRename: (name: string) => void;
   onChangeColor: (color: string) => void;
   onMoveToGroup: (groupId: string) => void;
+  onSplitRight: () => void;
+  onSplitDown: () => void;
   groups: { id: string; name: string }[];
 }
 
@@ -32,6 +34,8 @@ export const TerminalTab: FC<TerminalTabProps> = ({
   onRename,
   onChangeColor,
   onMoveToGroup,
+  onSplitRight,
+  onSplitDown,
   groups,
 }) => {
   const [showContextMenu, setShowContextMenu] = useState(false);
@@ -187,6 +191,13 @@ export const TerminalTab: FC<TerminalTabProps> = ({
                   </div>
                 ))}
               </div>
+            </div>
+            <div className="context-menu-separator" />
+            <div className="context-menu-item" onClick={() => { setShowContextMenu(false); setShowColorPicker(false); onSplitRight(); }}>
+              分屏到右侧 <span style={{ float: 'right', color: 'var(--text-muted)', fontSize: '10px' }}>Alt+Shift+→</span>
+            </div>
+            <div className="context-menu-item" onClick={() => { setShowContextMenu(false); setShowColorPicker(false); onSplitDown(); }}>
+              分屏到下方 <span style={{ float: 'right', color: 'var(--text-muted)', fontSize: '10px' }}>Alt+Shift+↓</span>
             </div>
             <div className="context-menu-item" onClick={() => { setShowContextMenu(false); setShowColorPicker(false); onCloseOthers(); }}>
               关闭其他
