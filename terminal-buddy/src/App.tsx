@@ -34,33 +34,34 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const floatPosRef = useRef(getSavedFloatPos());
   const [floatPos, setFloatPos] = useState(floatPosRef.current);
-  const floatDragging = useRef(false);
   const floatStart = useRef({ x: 0, y: 0 });
   const floatOrigin = useRef({ x: 0, y: 0 });
 
   const handleFloatMouseDown = useCallback((e: React.MouseEvent) => {
-    floatDragging.current = true;
+    if (e.button !== 0) return;
     floatStart.current = { x: e.clientX, y: e.clientY };
     floatOrigin.current = { x: floatPosRef.current.x, y: floatPosRef.current.y };
-  }, []);
 
-  const handleFloatMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!floatDragging.current) return;
-    const dx = e.clientX - floatStart.current.x;
-    const dy = e.clientY - floatStart.current.y;
-    if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
-    const next = {
-      x: Math.max(0, Math.min(window.innerWidth - 40, floatOrigin.current.x + dx)),
-      y: Math.max(0, Math.min(window.innerHeight - 80, floatOrigin.current.y + dy)),
+    const handleMouseMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - floatStart.current.x;
+      const dy = ev.clientY - floatStart.current.y;
+      if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+      const next = {
+        x: Math.max(0, Math.min(window.innerWidth - 40, floatOrigin.current.x + dx)),
+        y: Math.max(0, Math.min(window.innerHeight - 80, floatOrigin.current.y + dy)),
+      };
+      floatPosRef.current = next;
+      setFloatPos(next);
     };
-    floatPosRef.current = next;
-    setFloatPos(next);
-  }, []);
 
-  const handleFloatMouseUp = useCallback(() => {
-    if (!floatDragging.current) return;
-    floatDragging.current = false;
-    saveFloatPos(floatPosRef.current);
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      saveFloatPos(floatPosRef.current);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   }, []);
 
   useEffect(() => {
@@ -80,14 +81,15 @@ function App() {
       try {
         const terminalId = tab.profileId
           ? await startTerminal(tab.profileId)
-          : await startBlankTerminal(tab.terminalType);
+          : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s');
         addSession({
           id: terminalId,
           profileId: tab.profileId,
           profileName: tab.profileName,
-          terminalType: tab.terminalType,
+          terminalType: tab.terminalType as any,
           colorTheme: tab.colorTheme,
           tabColor: tab.tabColor,
+          groupId: tab.groupId || 'default',
         });
         if (i === activeIndex) {
           setActiveSession(terminalId);
@@ -121,6 +123,7 @@ function App() {
         terminalType: profile.terminalType,
         colorTheme: { background: theme.background, foreground: theme.foreground },
         tabColor: profile.tabColor || null,
+        groupId: 'default',
       });
     } catch (err) {
       console.error('[DEBUG] startTerminal FAILED:', err);
@@ -138,7 +141,7 @@ function App() {
       const newProfile = await createProfile(
         `${profile.name} (副本)`,
         profile.group,
-        profile.terminalType as 'powershell' | 'cmd'
+        profile.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s'
       );
       await updateProfile({
         ...newProfile,
@@ -205,6 +208,7 @@ function App() {
         terminalType,
         colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
         tabColor: null,
+        groupId: 'default',
       });
     } catch (err) {
       console.error('Failed to start blank terminal:', err);
@@ -228,9 +232,6 @@ function App() {
           className="floating-buttons"
           style={{ left: floatPos.x, top: floatPos.y, transform: 'none' }}
           onMouseDown={handleFloatMouseDown}
-          onMouseMove={handleFloatMouseMove}
-          onMouseUp={handleFloatMouseUp}
-          onMouseLeave={handleFloatMouseUp}
         >
           <button
             className={`float-btn ${configPanelVisible ? 'active' : ''}`}

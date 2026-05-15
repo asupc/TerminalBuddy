@@ -1,12 +1,18 @@
-import { FC } from 'react';
+import { FC, useCallback, useRef, useState } from 'react';
 import { TerminalTab } from './TerminalTab';
 import { TerminalInstance } from './TerminalInstance';
+import { TabGroupHeader } from './TabGroup';
 import { useAppStore, saveTabsToStorage } from '../stores/appStore';
-import { writeToTerminal, closeTerminal as closeTerminalCmd } from '../services/tauri';
+import { writeToTerminal, closeTerminal as closeTerminalCmd, saveVerticalTabWidth } from '../services/tauri';
+import { getAppSettings, saveAppSettings } from './SettingsDialog';
 import './TerminalPanel.css';
 
 export const TerminalPanel: FC = () => {
-  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession, updateSession } = useAppStore();
+  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession, updateSession,
+          groups, toggleGroupCollapse, renameGroup, moveSessionToGroup } = useAppStore();
+  const settings = getAppSettings();
+  const orientation = settings.tabOrientation || 'horizontal';
+  const [verticalWidth, setVerticalWidth] = useState(settings.verticalTabWidth || 180);
 
   const handleTerminalInput = async (sessionId: string, data: string) => {
     try {
@@ -77,28 +83,90 @@ export const TerminalPanel: FC = () => {
     saveTabsToStorage([], null);
   };
 
+  const resizeStartX = useRef(0);
+  const resizeStartWidth = useRef(0);
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    resizeStartX.current = e.clientX;
+    resizeStartWidth.current = verticalWidth;
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - resizeStartX.current;
+      const newWidth = Math.max(100, Math.min(400, resizeStartWidth.current + delta));
+      setVerticalWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      setVerticalWidth(w => {
+        saveVerticalTabWidth(w).catch(() => {});
+        saveAppSettings({ ...getAppSettings(), verticalTabWidth: w });
+        return w;
+      });
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [verticalWidth]);
+
+  const handleGroupContextMenu = (e: React.MouseEvent, _groupId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleMoveToGroup = (sessionId: string, groupId: string) => {
+    moveSessionToGroup(sessionId, groupId);
+  };
+
   return (
-    <div className="terminal-panel">
+    <div className="terminal-panel" data-tab-orientation={orientation}>
       {sessions.length > 0 && (
-        <div className="terminal-tabs">
-          {sessions.map((session) => (
-            <TerminalTab
-              key={session.id}
-              id={session.id}
-              name={session.profileName}
-              color={session.tabColor || ''}
-              isActive={activeSessionId === session.id}
-              onClick={() => setActiveSession(session.id)}
-              onClose={() => handleCloseTerminal(session.id)}
-              onCloseOthers={() => handleCloseOthers(session.id)}
-              onCloseLeft={() => handleCloseLeft(session.id)}
-              onCloseRight={() => handleCloseRight(session.id)}
-              onCloseAll={handleCloseAll}
-              onRename={(name) => renameSession(session.id, name)}
-              onChangeColor={(color) => updateSession(session.id, { tabColor: color || null })}
-            />
-          ))}
+        <div
+          className="terminal-tabs"
+          style={orientation === 'vertical' ? { width: verticalWidth } : undefined}
+        >
+          {groups.map((group) => {
+            const groupSessions = sessions.filter((s) => s.groupId === group.id);
+            if (groupSessions.length === 0 && group.id !== 'default') return null;
+            return (
+              <div key={group.id} className="tab-group-container">
+                <TabGroupHeader
+                  group={group}
+                  onToggleCollapse={() => toggleGroupCollapse(group.id)}
+                  onRename={(name) => renameGroup(group.id, name)}
+                  onContextMenu={handleGroupContextMenu}
+                />
+                <div className={`tab-group-tabs ${group.collapsed ? 'collapsed' : ''}`}>
+                  {groupSessions.map((session) => (
+                    <TerminalTab
+                      key={session.id}
+                      id={session.id}
+                      name={session.profileName}
+                      color={session.tabColor || ''}
+                      isActive={activeSessionId === session.id}
+                      onClick={() => setActiveSession(session.id)}
+                      onClose={() => handleCloseTerminal(session.id)}
+                      onCloseOthers={() => handleCloseOthers(session.id)}
+                      onCloseLeft={() => handleCloseLeft(session.id)}
+                      onCloseRight={() => handleCloseRight(session.id)}
+                      onCloseAll={handleCloseAll}
+                      onRename={(name) => renameSession(session.id, name)}
+                      onChangeColor={(color) => updateSession(session.id, { tabColor: color || null })}
+                      onMoveToGroup={(groupId) => handleMoveToGroup(session.id, groupId)}
+                      groups={groups}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
+      )}
+      {orientation === 'vertical' && sessions.length > 0 && (
+        <div className="tab-resize-handle" onMouseDown={handleResizeMouseDown} />
       )}
 
       <div className="terminal-content">

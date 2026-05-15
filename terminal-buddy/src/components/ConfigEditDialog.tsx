@@ -1,9 +1,10 @@
-import { FC, useState, useRef, useEffect, useCallback } from 'react';
+import { FC, useState, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { open } from '@tauri-apps/plugin-dialog';
 import { createProfile, updateProfile, deleteProfile } from '../services/tauri';
 import { PRESET_THEMES, TAB_COLORS, type Profile } from '../types';
 import { COMMAND_TEMPLATES, getCommandHistory, addCommandToHistory } from '../data/commandTemplates';
+import { useDraggable } from '../hooks/useDraggable';
 import './ConfigEditDialog.css';
 
 interface ConfigEditDialogProps {
@@ -15,7 +16,7 @@ interface ConfigEditDialogProps {
 interface FormData {
   name: string;
   group: string;
-  terminalType: 'powershell' | 'cmd';
+  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s';
   startupPath: string;
   colorTheme: string;
   tabColor: string;
@@ -53,11 +54,17 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   );
   const [envExpanded, setEnvExpanded] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [sshHost, setSshHost] = useState(profile?.sshHost || '');
+  const [sshPort, setSshPort] = useState(profile?.sshPort || 22);
+  const [sshUser, setSshUser] = useState(profile?.sshUser || '');
+  const [sshAuthType, setSshAuthType] = useState(profile?.sshAuthType || 'key');
+  const [sshKeyPath, setSshKeyPath] = useState(profile?.sshKeyPath || '');
+  const [dockerContainerName, setDockerContainerName] = useState(profile?.dockerContainerName || '');
+  const [k8sNamespace, setK8sNamespace] = useState(profile?.k8sNamespace || '');
+  const [k8sPodName, setK8sPodName] = useState(profile?.k8sPodName || '');
+  const [k8sContainerName, setK8sContainerName] = useState(profile?.k8sContainerName || '');
   const dialogRef = useRef<HTMLDivElement>(null);
-  const [dialogOffset, setDialogOffset] = useState({ x: 0, y: 0 });
-  const isDragging = useRef(false);
-  const dragStartPos = useRef({ x: 0, y: 0 });
-  const rafRef = useRef<number | null>(null);
+  const { offset: dialogOffset, dragHandleProps } = useDraggable('.dialog-content');
 
   const addCommand = () => {
     setStartupCommands([...startupCommands, '']);
@@ -144,6 +151,9 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             if (key.trim()) acc[key.trim()] = value;
             return acc;
           }, {} as Record<string, string>),
+          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath,
+          dockerContainerName,
+          k8sNamespace, k8sPodName, k8sContainerName,
         });
       } else {
         const newProfile = await createProfile(data.name, data.group, data.terminalType);
@@ -157,6 +167,9 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             if (key.trim()) acc[key.trim()] = value;
             return acc;
           }, {} as Record<string, string>),
+          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath,
+          dockerContainerName,
+          k8sNamespace, k8sPodName, k8sContainerName,
         });
       }
       onSave();
@@ -192,48 +205,13 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
     }
   };
 
-  const handleDialogMouseDown = useCallback((e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.dialog-content')) return;
-    isDragging.current = true;
-    dragStartPos.current = { x: e.clientX, y: e.clientY };
-  }, []);
-
-  const handleDialogMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isDragging.current) return;
-
-    if (rafRef.current) {
-      cancelAnimationFrame(rafRef.current);
-    }
-
-    rafRef.current = requestAnimationFrame(() => {
-      const dx = e.clientX - dragStartPos.current.x;
-      const dy = e.clientY - dragStartPos.current.y;
-      setDialogOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
-      dragStartPos.current = { x: e.clientX, y: e.clientY };
-    });
-  }, []);
-
-  const handleDialogMouseUp = useCallback(() => {
-    isDragging.current = false;
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-      }
-    };
-  }, []);
-
   return (
     <div className="dialog-overlay">
       <div
         ref={dialogRef}
         className="dialog dialog-large"
         style={{ transform: `translate(${dialogOffset.x}px, ${dialogOffset.y}px)` }}
-        onMouseDown={handleDialogMouseDown}
-        onMouseMove={handleDialogMouseMove}
-        onMouseUp={handleDialogMouseUp}
+        onMouseDown={dragHandleProps.onMouseDown}
       >
         <div className="dialog-header dialog-drag-handle">
           <h3>{profile ? '编辑配置' : '新建配置'}</h3>
@@ -260,6 +238,8 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             </div>
           </div>
 
+          {['powershell', 'cmd'].includes(watch('terminalType')) && (
+          <>
           <div className="form-group">
             <label>启动命令</label>
             <div className="cmd-list">
@@ -382,20 +362,73 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
               </button>
             </div>
           </div>
+          </>
+          )}
 
           <div className="form-group">
             <label>终端类型</label>
-            <div className="radio-group">
-              <label>
-                <input type="radio" value="powershell" {...register('terminalType')} />
-                PowerShell
-              </label>
-              <label>
-                <input type="radio" value="cmd" {...register('terminalType')} />
-                CMD
-              </label>
-            </div>
+            <select {...register('terminalType')}>
+              <option value="powershell">PowerShell</option>
+              <option value="cmd">CMD</option>
+              <option value="ssh">SSH</option>
+              <option value="docker">Docker</option>
+              <option value="k8s">Kubernetes</option>
+            </select>
           </div>
+
+          {watch('terminalType') === 'ssh' && (
+            <>
+              <div className="form-group">
+                <label>主机地址</label>
+                <input value={sshHost} onChange={e => setSshHost(e.target.value)} placeholder="192.168.1.100" />
+              </div>
+              <div className="form-group">
+                <label>端口</label>
+                <input type="number" value={sshPort} onChange={e => setSshPort(Number(e.target.value))} />
+              </div>
+              <div className="form-group">
+                <label>用户名</label>
+                <input value={sshUser} onChange={e => setSshUser(e.target.value)} placeholder="root" />
+              </div>
+              <div className="form-group">
+                <label>认证方式</label>
+                <select value={sshAuthType} onChange={e => setSshAuthType(e.target.value as 'password' | 'key')}>
+                  <option value="key">密钥认证</option>
+                  <option value="password">密码认证</option>
+                </select>
+              </div>
+              {sshAuthType === 'key' && (
+                <div className="form-group">
+                  <label>密钥路径</label>
+                  <input value={sshKeyPath} onChange={e => setSshKeyPath(e.target.value)} placeholder="~/.ssh/id_ed25519" />
+                </div>
+              )}
+            </>
+          )}
+
+          {watch('terminalType') === 'docker' && (
+            <div className="form-group">
+              <label>容器名称 / ID</label>
+              <input value={dockerContainerName} onChange={e => setDockerContainerName(e.target.value)} placeholder="my-container" />
+            </div>
+          )}
+
+          {watch('terminalType') === 'k8s' && (
+            <>
+              <div className="form-group">
+                <label>Namespace</label>
+                <input value={k8sNamespace} onChange={e => setK8sNamespace(e.target.value)} placeholder="default" />
+              </div>
+              <div className="form-group">
+                <label>Pod 名称</label>
+                <input value={k8sPodName} onChange={e => setK8sPodName(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Container 名称</label>
+                <input value={k8sContainerName} onChange={e => setK8sContainerName(e.target.value)} />
+              </div>
+            </>
+          )}
 
           <div className="form-group">
             <label>颜色主题</label>

@@ -1,4 +1,4 @@
-export type TerminalType = 'powershell' | 'cmd';
+export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s';
 
 export interface Profile {
   id: string;
@@ -11,6 +11,16 @@ export interface Profile {
   colorTheme: string;
   tabColor: string | null;
   windowSize: { width: number; height: number } | null;
+  sshHost?: string;
+  sshPort?: number;
+  sshUser?: string;
+  sshAuthType?: 'password' | 'key';
+  sshKeyPath?: string;
+  dockerContainerId?: string;
+  dockerContainerName?: string;
+  k8sNamespace?: string;
+  k8sPodName?: string;
+  k8sContainerName?: string;
   createdAt: string;
   lastUsedAt: string | null;
 }
@@ -87,4 +97,62 @@ export interface TerminalSession {
   terminalType: TerminalType;
   colorTheme: { background: string; foreground: string };
   tabColor: string | null;
+  groupId: string;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  icon?: string;
+  groups: WorkspaceGroup[];
+  createdAt: string;
+  lastUsedAt: string;
+}
+
+export interface WorkspaceGroup {
+  id: string;
+  name: string;
+  color?: string;
+  terminals: WorkspaceTerminal[];
+  layout: LayoutConfig;
+  collapsed: boolean;
+}
+
+export interface WorkspaceTerminal {
+  profileId?: string;
+  terminalType: TerminalType;
+  startupPath?: string;
+  startupCommands?: string[];
+  environmentVariables?: Record<string, string>;
+  sshHost?: string;
+  sshPort?: number;
+  sshUser?: string;
+  sshAuthType?: 'password' | 'key';
+  sshKeyPath?: string;
+  dockerContainerId?: string;
+  dockerContainerName?: string;
+  k8sNamespace?: string;
+  k8sPodName?: string;
+  k8sContainerName?: string;
+  colorTheme?: string;
+  tabColor?: string;
+}
+
+export interface LayoutConfig {
+  type: 'tabs' | 'split';
+  splits?: SplitNode;
+}
+
+export interface SplitNode {
+  direction: 'horizontal' | 'vertical';
+  ratio: number;
+  first: SplitNode | string;
+  second: SplitNode | string;
+}
+
+export interface TabGroup {
+  id: string;
+  name: string;
+  color?: string;
+  collapsed: boolean;
 }

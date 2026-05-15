@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Profile, CustomTheme } from '../types';
+import type { Profile, CustomTheme, Workspace } from '../types';
 
 // Profile Commands
 export async function getAllProfiles(): Promise<Profile[]> {
@@ -14,7 +14,7 @@ export async function getProfile(id: string): Promise<Profile> {
 export async function createProfile(
   name: string,
   group: string,
-  terminalType: 'powershell' | 'cmd'
+  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s'
 ): Promise<Profile> {
   return invoke('create_profile', { name, group, terminalType });
 }
@@ -44,7 +44,7 @@ export async function startTerminal(profileId: string): Promise<string> {
   return invoke('start_terminal', { profileId });
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'cmd'): Promise<string> {
+export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s'): Promise<string> {
   return invoke('start_blank_terminal', { terminalType });
 }
 
@@ -122,13 +122,55 @@ export async function deleteTheme(id: string): Promise<void> {
   return invoke('delete_theme', { id });
 }
 
+// Workspace Commands
+export async function getAllWorkspaces(): Promise<Workspace[]> {
+  return invoke('get_all_workspaces');
+}
+
+export async function getWorkspace(id: string): Promise<Workspace> {
+  return invoke('get_workspace', { id });
+}
+
+export async function createWorkspace(name: string): Promise<Workspace> {
+  return invoke('create_workspace', { name });
+}
+
+export async function updateWorkspace(workspace: Workspace): Promise<void> {
+  return invoke('update_workspace', { workspace });
+}
+
+export async function deleteWorkspace(id: string): Promise<void> {
+  return invoke('delete_workspace', { id });
+}
+
 // Settings Commands
-export async function getBackendAppSettings(): Promise<{ closeBehavior: 'exit' | 'tray' }> {
+export async function getBackendAppSettings(): Promise<{
+  closeBehavior: 'exit' | 'tray';
+  dataPath: string | null;
+  tabOrientation: 'horizontal' | 'vertical';
+  verticalTabWidth: number;
+}> {
   return invoke('get_app_settings');
 }
 
 export async function saveCloseBehavior(behavior: 'exit' | 'tray'): Promise<void> {
   return invoke('save_close_behavior', { behavior });
+}
+
+export async function getDataPath(): Promise<string> {
+  return invoke('get_data_path');
+}
+
+export async function setDataPath(newPath: string): Promise<void> {
+  return invoke('set_data_path', { newPath });
+}
+
+export async function saveTabOrientation(orientation: 'horizontal' | 'vertical'): Promise<void> {
+  return invoke('save_tab_orientation', { orientation });
+}
+
+export async function saveVerticalTabWidth(width: number): Promise<void> {
+  return invoke('save_vertical_tab_width', { width });
 }
 
 // Clipboard Commands

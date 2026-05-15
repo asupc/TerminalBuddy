@@ -15,6 +15,8 @@ interface TerminalTabProps {
   onCloseAll: () => void;
   onRename: (name: string) => void;
   onChangeColor: (color: string) => void;
+  onMoveToGroup: (groupId: string) => void;
+  groups: { id: string; name: string }[];
 }
 
 export const TerminalTab: FC<TerminalTabProps> = ({
@@ -29,6 +31,8 @@ export const TerminalTab: FC<TerminalTabProps> = ({
   onCloseAll,
   onRename,
   onChangeColor,
+  onMoveToGroup,
+  groups,
 }) => {
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
@@ -97,7 +101,7 @@ export const TerminalTab: FC<TerminalTabProps> = ({
     <>
       <div
         className={`terminal-tab ${isActive ? 'active' : ''}`}
-        style={isActive && color ? { borderBottomColor: color } : undefined}
+        style={isActive && color ? { borderBottomColor: color, borderLeftColor: color } : undefined}
         onClick={onClick}
         onContextMenu={handleContextMenu}
         onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
@@ -164,6 +168,26 @@ export const TerminalTab: FC<TerminalTabProps> = ({
               关闭
             </div>
             <div className="context-menu-separator" />
+            <div className="context-menu-item has-submenu">
+              <span>移动到组</span>
+              <span className="color-menu-arrow">▶</span>
+              <div className="context-submenu">
+                {groups.map((g) => (
+                  <div
+                    key={g.id}
+                    className="context-menu-item"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowContextMenu(false);
+                      setShowColorPicker(false);
+                      onMoveToGroup(g.id);
+                    }}
+                  >
+                    {g.name}
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="context-menu-item" onClick={() => { setShowContextMenu(false); setShowColorPicker(false); onCloseOthers(); }}>
               关闭其他
             </div>

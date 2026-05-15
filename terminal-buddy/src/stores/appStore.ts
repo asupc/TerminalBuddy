@@ -1,13 +1,14 @@
 import { create } from 'zustand';
-import type { Profile, TerminalSession, CustomTheme } from '../types';
+import type { Profile, TerminalSession, CustomTheme, TabGroup } from '../types';
 import { getAppSettings } from '../components/SettingsDialog';
 
 interface SavedTab {
   profileId: string;
   profileName: string;
-  terminalType: 'powershell' | 'cmd';
+  terminalType: string;
   colorTheme: { background: string; foreground: string };
   tabColor: string | null;
+  groupId: string;
 }
 
 const SAVED_TABS_KEY = 'terminalbuddy_saved_tabs';
@@ -21,6 +22,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
       terminalType: s.terminalType,
       colorTheme: s.colorTheme,
       tabColor: s.tabColor,
+      groupId: s.groupId,
     }));
     localStorage.setItem(SAVED_TABS_KEY, JSON.stringify(tabs));
     if (activeSessionId) {
@@ -77,6 +79,21 @@ interface AppState {
   addCustomTheme: (theme: CustomTheme) => void;
   updateCustomTheme: (theme: CustomTheme) => void;
   removeCustomTheme: (id: string) => void;
+
+  // Tab Groups
+  groups: TabGroup[];
+  addGroup: (name: string, color?: string) => void;
+  removeGroup: (id: string) => void;
+  renameGroup: (id: string, name: string) => void;
+  setGroupColor: (id: string, color: string) => void;
+  toggleGroupCollapse: (id: string) => void;
+  moveSessionToGroup: (sessionId: string, groupId: string) => void;
+
+  // Workspace
+  currentWorkspaceId: string | null;
+  workspaceModified: boolean;
+  setCurrentWorkspace: (id: string | null) => void;
+  setWorkspaceModified: (modified: boolean) => void;
 
   // Terminal Sessions
   sessions: TerminalSession[];
@@ -161,6 +178,41 @@ export const useAppStore = create<AppState>((set) => ({
       customThemes: state.customThemes.filter((t) => t.id !== id),
     })),
 
+  // Tab Groups
+  groups: [{ id: 'default', name: '默认', collapsed: false }],
+  addGroup: (name, color) => set((state) => ({
+    groups: [...state.groups, { id: crypto.randomUUID(), name, color, collapsed: false }],
+  })),
+  removeGroup: (id) => set((state) => {
+    if (id === 'default') return state;
+    return {
+      groups: state.groups.filter((g) => g.id !== id),
+      sessions: state.sessions.map((s) =>
+        s.groupId === id ? { ...s, groupId: 'default' } : s
+      ),
+    };
+  }),
+  renameGroup: (id, name) => set((state) => ({
+    groups: state.groups.map((g) => g.id === id ? { ...g, name } : g),
+  })),
+  setGroupColor: (id, color) => set((state) => ({
+    groups: state.groups.map((g) => g.id === id ? { ...g, color } : g),
+  })),
+  toggleGroupCollapse: (id) => set((state) => ({
+    groups: state.groups.map((g) => g.id === id ? { ...g, collapsed: !g.collapsed } : g),
+  })),
+  moveSessionToGroup: (sessionId, groupId) => set((state) => ({
+    sessions: state.sessions.map((s) =>
+      s.id === sessionId ? { ...s, groupId } : s
+    ),
+  })),
+
+  // Workspace
+  currentWorkspaceId: null,
+  workspaceModified: false,
+  setCurrentWorkspace: (id) => set({ currentWorkspaceId: id, workspaceModified: false }),
+  setWorkspaceModified: (modified) => set({ workspaceModified: modified }),
+
   // Terminal Sessions
   sessions: [],
   activeSessionId: null,
@@ -168,9 +220,10 @@ export const useAppStore = create<AppState>((set) => ({
   setCurrentDirectory: (path) => set({ currentDirectory: path }),
   addSession: (session) =>
     set((state) => {
-      const sessions = [...state.sessions, session];
-      saveTabsToStorage(sessions, session.id);
-      return { sessions, activeSessionId: session.id };
+      const s = { ...session, groupId: session.groupId || 'default' };
+      const sessions = [...state.sessions, s];
+      saveTabsToStorage(sessions, s.id);
+      return { sessions, activeSessionId: s.id };
     }),
   removeSession: (id) =>
     set((state) => {
