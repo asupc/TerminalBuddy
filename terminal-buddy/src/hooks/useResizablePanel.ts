@@ -56,11 +56,16 @@ export function useResizablePanel({
     };
   }, [isResizing, minWidth, maxWidth]);
 
+  const onResizeEndRef = useRef(onResizeEnd);
+  onResizeEndRef.current = onResizeEnd;
+
+  const prevResizingRef = useRef(false);
   useEffect(() => {
-    if (!isResizing && width !== defaultWidth) {
-      onResizeEnd?.(width);
+    if (prevResizingRef.current && !isResizing) {
+      onResizeEndRef.current?.(width);
     }
-  }, [isResizing]);
+    prevResizingRef.current = isResizing;
+  }, [isResizing, width]);
 
   return {
     width,

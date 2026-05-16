@@ -19,6 +19,10 @@ fn default_enable_tab_navigation() -> bool {
     true
 }
 
+fn default_single_instance() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -30,6 +34,8 @@ pub struct AppSettings {
     pub tab_sidebar_width: u32,
     #[serde(default = "default_enable_tab_navigation")]
     pub enable_tab_navigation: bool,
+    #[serde(default = "default_single_instance")]
+    pub single_instance: bool,
 }
 
 impl Default for AppSettings {
@@ -39,6 +45,7 @@ impl Default for AppSettings {
             data_path: None,
             tab_sidebar_width: 200,
             enable_tab_navigation: true,
+            single_instance: true,
         }
     }
 }

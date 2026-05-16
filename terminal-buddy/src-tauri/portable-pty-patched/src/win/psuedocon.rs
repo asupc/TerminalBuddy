@@ -24,8 +24,11 @@ use winapi::um::winnt::HANDLE;
 
 pub type HPCON = HANDLE;
 
+#[allow(dead_code)]
 pub const PSUEDOCONSOLE_INHERIT_CURSOR: DWORD = 0x1;
+#[allow(dead_code)]
 pub const PSEUDOCONSOLE_RESIZE_QUIRK: DWORD = 0x2;
+#[allow(dead_code)]
 pub const PSEUDOCONSOLE_WIN32_INPUT_MODE: DWORD = 0x4;
 #[allow(dead_code)]
 pub const PSEUDOCONSOLE_PASSTHROUGH_MODE: DWORD = 0x8;
@@ -79,41 +82,26 @@ impl Drop for PsuedoCon {
 impl PsuedoCon {
     pub fn new(size: COORD, input: FileDescriptor, output: FileDescriptor) -> Result<Self, Error> {
         let mut con: HPCON = INVALID_HANDLE_VALUE;
-        // Try with PASSTHROUGH_MODE first (Windows 11 22H2+) to avoid
-        // ConPTY cursor state tracking interfering with xterm.js.
-        // Fall back to without it on older Windows versions.
+        // Use dwFlags=0 (standard mode), matching VS Code's default behavior.
+        // PSEUDOCONSOLE_INHERIT_CURSOR is intentionally NOT used — it causes
+        // ConPTY to inject DSR (\e[6n) queries that desync from xterm.js
+        // cursor state during rapid TUI output (e.g., Claude Code spinners).
+        // VS Code / node-pty also defaults to flags=0 (conptyInheritCursor=false).
         let result = unsafe {
             (CONPTY.CreatePseudoConsole)(
                 size,
                 input.as_raw_handle() as _,
                 output.as_raw_handle() as _,
-                PSUEDOCONSOLE_INHERIT_CURSOR
-                    | PSEUDOCONSOLE_RESIZE_QUIRK
-                    | PSEUDOCONSOLE_WIN32_INPUT_MODE
-                    | PSEUDOCONSOLE_PASSTHROUGH_MODE,
+                0,
                 &mut con,
             )
         };
-        if result != S_OK {
-            // Retry without PASSTHROUGH_MODE for older Windows versions
-            con = INVALID_HANDLE_VALUE;
-            let result = unsafe {
-                (CONPTY.CreatePseudoConsole)(
-                    size,
-                    input.as_raw_handle() as _,
-                    output.as_raw_handle() as _,
-                    PSUEDOCONSOLE_INHERIT_CURSOR
-                        | PSEUDOCONSOLE_RESIZE_QUIRK
-                        | PSEUDOCONSOLE_WIN32_INPUT_MODE,
-                    &mut con,
-                )
-            };
-            ensure!(
-                result == S_OK,
-                "failed to create psuedo console: HRESULT {}",
-                result
-            );
-        }
+        ensure!(
+            result == S_OK,
+            "failed to create psuedo console: HRESULT {}",
+            result
+        );
+        log::info!("ConPTY created with dwFlags=0 (standard mode, matching VS Code)");
         Ok(Self { con })
     }
 

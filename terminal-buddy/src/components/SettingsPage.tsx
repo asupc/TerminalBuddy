@@ -1,11 +1,11 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile } from '../services/tauri';
+import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { PRESET_THEMES, type CustomTheme, type Profile } from '../types';
+import { type ThemeMode, type AppSettings, getAppSettings, saveAppSettings, getStoredTheme, applyTheme } from '../utils/settings';
 import { ConfigEditDialog } from './ConfigEditDialog';
 import { getCmdOverrides, saveCmdOverrides, getCustomCommands, saveCustomCommands, getEffectiveTemplates, type CmdOverride, type CommandItem, type HistoryEntry, getCommandHistory, loadCommandHistory, deleteCommandFromHistory, updateCommandInHistory, updateCommandNote, clearCommandHistory } from '../data/commandTemplates';
-import { type ThemeMode, type AppSettings, getAppSettings, saveAppSettings, getStoredTheme, applyTheme } from '../utils/settings';
 import './SettingsPage.css';
 
 interface SettingsPageProps {
@@ -82,17 +82,24 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
   useEffect(() => {
     getBackendAppSettings().then(backend => {
-      setSettings(prev => ({
-        ...prev,
+      const synced = {
+        ...getAppSettings(),
         closeBehavior: backend.closeBehavior,
         enableTabNavigation: backend.enableTabNavigation,
-      }));
+        singleInstance: backend.singleInstance,
+      };
+      setSettings(synced);
+      saveAppSettings(synced);
     }).catch(() => {});
     getDataPath().then(setDataPath).catch(() => {});
   }, []);
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-    setSettings(prev => ({ ...prev, [key]: value }));
+    setSettings(prev => {
+      const next = { ...prev, [key]: value };
+      saveAppSettings(next);
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -264,7 +271,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     checked={settings.restoreTabsOnStartup}
                     onChange={(e) => updateSetting('restoreTabsOnStartup', e.target.checked)}
                   />
-                  <span>启动时恢复上次打开的标签</span>
+                  <span>启动时恢复标签</span>
                 </label>
                 <p className="settings-desc">关闭程序时自动保存打开的终端标签，下次启动时自动恢复</p>
               </div>
@@ -275,7 +282,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     checked={settings.configPanelAutoExpand}
                     onChange={(e) => updateSetting('configPanelAutoExpand', e.target.checked)}
                   />
-                  <span>启动时展开连接导航</span>
+                  <span>启动时显示连接导航</span>
                 </label>
                 <p className="settings-desc">程序启动时自动显示左侧连接面板</p>
               </div>
@@ -286,7 +293,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     checked={settings.fileTreeAutoExpand}
                     onChange={(e) => updateSetting('fileTreeAutoExpand', e.target.checked)}
                   />
-                  <span>启动时展开文件导航</span>
+                  <span>启动时显示文件导航</span>
                 </label>
                 <p className="settings-desc">程序启动时自动显示左侧文件树面板</p>
               </div>
@@ -301,7 +308,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                       saveCloseBehavior(value).catch(console.error);
                     }}
                   />
-                  <span>关闭窗口时最小化到系统托盘</span>
+                  <span>关闭时最小化到托盘</span>
                 </label>
                 <p className="settings-desc">关闭窗口时应用将隐藏到系统托盘，双击托盘图标或右键选择"打开窗口"可重新显示</p>
               </div>
@@ -319,6 +326,34 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   <span>开启标签导航</span>
                 </label>
                 <p className="settings-desc">开启后在左侧显示标签导航面板，关闭后标签将以选项卡形式显示在终端上方</p>
+              </div>
+              <div className="settings-section">
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.rightClickPaste}
+                    onChange={(e) => {
+                      updateSetting('rightClickPaste', e.target.checked);
+                    }}
+                  />
+                  <span>右键粘贴</span>
+                </label>
+                <p className="settings-desc">右键时若无选中文本，直接粘贴剪贴板内容到终端</p>
+              </div>
+              <div className="settings-section">
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.singleInstance}
+                    onChange={(e) => {
+                      const value = e.target.checked;
+                      updateSetting('singleInstance', value);
+                      saveSingleInstance(value).catch(console.error);
+                    }}
+                  />
+                  <span>只允许运行一个实例</span>
+                </label>
+                <p className="settings-desc">开启后再次启动应用时会激活已打开的窗口，而非打开新窗口。更改需重启应用生效</p>
               </div>
               <div className="settings-section">
                 <label className="settings-label">主题</label>

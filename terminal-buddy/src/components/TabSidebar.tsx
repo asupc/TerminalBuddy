@@ -34,7 +34,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     defaultWidth: 200,
     minWidth: 150,
     maxWidth: 400,
-    onResizeEnd: (w) => { saveTabSidebarWidth(w).catch(() => {}); },
+    onResizeEnd: (w) => { saveTabSidebarWidth(w).catch(console.error); },
   });
 
   useEffect(() => {
@@ -99,13 +99,8 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const actionableItems = useMemo(() => submenuItems.filter(i => !i.isGroupHeader), [submenuItems]);
 
   const handleCloseTerminal = async (sessionId: string) => {
-    const session = sessions.find(s => s.id === sessionId);
-    const groupId = session?.groupId;
     try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
     removeSession(sessionId);
-    if (groupId) {
-      useAppStore.getState().removeSplitTerminal(groupId, sessionId);
-    }
   };
 
   const handleCloseGroup = async (group: { name: string; sessions: typeof sessions }) => {
@@ -117,9 +112,6 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
         for (const session of group.sessions) {
           try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
           removeSession(session.id);
-          if (session.groupId) {
-            useAppStore.getState().removeSplitTerminal(session.groupId, session.id);
-          }
         }
       },
     });
@@ -134,9 +126,6 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
         setConfirmDialog(null);
         for (const session of sessions) {
           try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
-          if (session.groupId) {
-            useAppStore.getState().removeSplitTerminal(session.groupId, session.id);
-          }
         }
         useAppStore.getState().setSessions([]);
         setShowContextMenu(false);

@@ -6,6 +6,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput } from '../services/tauri';
+import { getAppSettings } from '../utils/settings';
 import { useAppStore } from '../stores/appStore';
 import { getAllSuggestions, addCommandToHistory, type SuggestionItem } from '../data/commandTemplates';
 import '@xterm/xterm/css/xterm.css';
@@ -18,12 +19,14 @@ interface TerminalInstanceProps {
   terminalId: string;
   onOutput: (data: string) => void;
   colorTheme?: { background: string; foreground: string };
+  isActive?: boolean;
 }
 
 export const TerminalInstance: FC<TerminalInstanceProps> = ({
   terminalId,
   onOutput,
   colorTheme,
+  isActive,
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -53,11 +56,77 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const cleanupFns: (() => void)[] = [];
     const outputBuffer: string[] = [];
+    const pendingChunks: string[] = [];
+    let pendingRaf: number | null = null;
+    // Unified textarea position lock — prevents cursor/IME from following
+    // TUI cursor movements during rapid output or IME composition.
+    // xterm.js repositions .xterm-helper-textarea on every render to match
+    // the canvas cursor. When Claude Code rapidly updates status lines, the
+    // cursor alternates between status area and input area across frames,
+    // causing the textarea (and IME candidate window) to jump.
+    let isComposing = false;
+    let isOutputLocked = false;
+    let savedLeft = '';
+    let savedTop = '';
+    let lockObserver: MutationObserver | null = null;
+    let unlockTimer: ReturnType<typeof setTimeout> | null = null;
+    let textareaEl: HTMLTextAreaElement | null = null;
+    let compViewEl: HTMLElement | null = null;
 
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
       if (xtermRef.current) {
-        xtermRef.current.write(output);
+        // Batch writes via requestAnimationFrame to reduce cursor position
+        // thrashing during rapid TUI updates (e.g., spinners, status lines)
+        pendingChunks.push(output);
+        // Lock textarea position during rapid output to prevent cursor/IME
+        // from following TUI cursor movements (e.g., spinners, status lines).
+        // Save position at start of burst; restore it when xterm.js moves it.
+        // Only save if textarea has been positioned by xterm.js (left/top are
+        // non-empty pixel values), otherwise lock would anchor to (0,0).
+        if (!isOutputLocked && !isComposing && textareaEl) {
+          const left = textareaEl.style.left;
+          const top = textareaEl.style.top;
+          if (left && top) {
+            savedLeft = left;
+            savedTop = top;
+          }
+        }
+        isOutputLocked = true;
+        if (textareaEl && !lockObserver) {
+          lockObserver = new MutationObserver(() => {
+            if (!isComposing && !isOutputLocked) return;
+            if (textareaEl!.style.left !== savedLeft || textareaEl!.style.top !== savedTop) {
+              textareaEl!.style.left = savedLeft;
+              textareaEl!.style.top = savedTop;
+            }
+            if (compViewEl && (compViewEl.style.left !== savedLeft || compViewEl.style.top !== savedTop)) {
+              compViewEl.style.left = savedLeft;
+              compViewEl.style.top = savedTop;
+            }
+          });
+          lockObserver.observe(textareaEl, { attributes: true, attributeFilter: ['style'] });
+          if (compViewEl) {
+            lockObserver.observe(compViewEl, { attributes: true, attributeFilter: ['style'] });
+          }
+        }
+        if (unlockTimer) clearTimeout(unlockTimer);
+        unlockTimer = setTimeout(() => {
+          isOutputLocked = false;
+          if (!isComposing) {
+            lockObserver?.disconnect();
+            lockObserver = null;
+          }
+        }, 150);
+        if (!pendingRaf) {
+          pendingRaf = requestAnimationFrame(() => {
+            pendingRaf = null;
+            if (disposed) return;
+            const combined = pendingChunks.join('');
+            pendingChunks.length = 0;
+            xtermRef.current?.write(combined);
+          });
+        }
       } else {
         outputBuffer.push(output);
       }
@@ -137,11 +206,53 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Also reset scrollLeft after IME composition ends, as the browser may
       // set it during composition without firing a scroll event
-      const xtermTextarea = terminal.element!.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement;
+      textareaEl = terminal.element!.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement;
+      compViewEl = terminal.element!.querySelector('.xterm-composition-view') as HTMLElement | null;
+      const xtermTextarea = textareaEl;
       if (xtermTextarea) {
         xtermTextarea.addEventListener('compositionend', () => {
           requestAnimationFrame(preventHScroll);
         });
+
+        // IME composition: wait one frame for xterm.js to position the
+        // textarea at the cursor, then save that position and lock.
+        // If we save immediately (before xterm.js renders), we may lock
+        // to a stale position causing the IME window to appear elsewhere.
+        xtermTextarea.addEventListener('compositionstart', () => {
+          isComposing = true;
+          requestAnimationFrame(() => {
+            if (!isComposing) return;
+            savedLeft = xtermTextarea.style.left;
+            savedTop = xtermTextarea.style.top;
+            if (textareaEl && !lockObserver) {
+              lockObserver = new MutationObserver(() => {
+                if (!isComposing && !isOutputLocked) return;
+                if (textareaEl!.style.left !== savedLeft || textareaEl!.style.top !== savedTop) {
+                  textareaEl!.style.left = savedLeft;
+                  textareaEl!.style.top = savedTop;
+                }
+                if (compViewEl && (compViewEl.style.left !== savedLeft || compViewEl.style.top !== savedTop)) {
+                  compViewEl.style.left = savedLeft;
+                  compViewEl.style.top = savedTop;
+                }
+              });
+              lockObserver.observe(textareaEl, { attributes: true, attributeFilter: ['style'] });
+              if (compViewEl) {
+                lockObserver.observe(compViewEl, { attributes: true, attributeFilter: ['style'] });
+              }
+            }
+          });
+        });
+
+        const endCompositionLock = () => {
+          isComposing = false;
+          if (!isOutputLocked) {
+            lockObserver?.disconnect();
+            lockObserver = null;
+          }
+        };
+        xtermTextarea.addEventListener('compositionend', endCompositionLock);
+        cleanupFns.push(endCompositionLock);
       }
 
       // Double-fit: immediate + delayed to ensure correct measurements after layout
@@ -156,12 +267,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       xtermRef.current = terminal;
       // Flush buffered output that arrived before xterm was ready
       if (outputBuffer.length > 0) {
-        for (const chunk of outputBuffer) {
-          terminal.write(chunk);
-        }
+        terminal.write(outputBuffer.join(''));
         outputBuffer.length = 0;
       }
       fitAddonRef.current = fitAddon;
+
+      // Auto-focus after initialization
+      terminal.focus();
 
       terminal.onData((data) => {
         // Track command history on Enter
@@ -352,6 +464,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const xtermEl = terminal.element!;
       const handleContextMenu = (e: MouseEvent) => {
         e.preventDefault();
+        const settings = getAppSettings();
+        if (settings.rightClickPaste && !terminal.hasSelection()) {
+          navigator.clipboard.readText().then((text) => {
+            if (text) {
+              onOutputRef.current(text);
+              terminal.focus();
+            }
+          }).catch(() => {});
+          return;
+        }
         setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
       };
       xtermEl.addEventListener('contextmenu', handleContextMenu);
@@ -402,12 +524,23 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     return () => {
       disposed = true;
+      if (pendingRaf) {
+        cancelAnimationFrame(pendingRaf);
+        pendingRaf = null;
+      }
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
   }, [terminalId]);
+
+  // Focus terminal when tab becomes active
+  useEffect(() => {
+    if (isActive && xtermRef.current) {
+      xtermRef.current.focus();
+    }
+  }, [isActive]);
 
   const handleSearch = useCallback((direction: 'next' | 'prev' = 'next') => {
     const searchAddon = searchAddonRef.current;
@@ -435,7 +568,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       }
     } else {
       navigator.clipboard.readText().then((text) => {
-        if (text) onOutputRef.current(text);
+        if (text) {
+          onOutputRef.current(text);
+          terminal.focus();
+        }
       }).catch(() => {});
     }
     setContextMenu({ x: 0, y: 0, visible: false });

@@ -1,5 +1,5 @@
 import { FC } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { windowMinimize, windowToggleMaximize, windowClose } from '../services/tauri';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
 
@@ -8,8 +8,6 @@ interface TitleBarProps {
 }
 
 export const TitleBar: FC<TitleBarProps> = ({ onSettings }) => {
-  const appWindow = getCurrentWindow();
-
   return (
     <div className="titlebar" data-tauri-drag-region="deep">
       <div className="titlebar-left">
@@ -22,21 +20,21 @@ export const TitleBar: FC<TitleBarProps> = ({ onSettings }) => {
         </button>
         <button
           className="titlebar-btn"
-          onClick={() => appWindow.minimize()}
+          onClick={() => windowMinimize()}
           title="最小化"
         >
           ─
         </button>
         <button
           className="titlebar-btn"
-          onClick={() => appWindow.toggleMaximize()}
+          onClick={() => windowToggleMaximize()}
           title="最大化"
         >
           □
         </button>
         <button
           className="titlebar-btn titlebar-close-btn"
-          onClick={() => appWindow.close()}
+          onClick={() => windowClose()}
           title="关闭"
         >
           ✕

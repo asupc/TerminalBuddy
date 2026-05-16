@@ -9,12 +9,8 @@ export const TerminalTabBar: FC = () => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
 
   const handleCloseTerminal = async (sessionId: string) => {
-    const session = sessions.find(s => s.id === sessionId);
     try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
     removeSession(sessionId);
-    if (session?.groupId) {
-      useAppStore.getState().removeSplitTerminal(session.groupId, sessionId);
-    }
   };
 
   const closeOthers = useCallback((sessionId: string) => {
@@ -22,9 +18,6 @@ export const TerminalTabBar: FC = () => {
       if (s.id !== sessionId) {
         closeTerminalCmd(s.id).catch(() => {});
         removeSession(s.id);
-        if (s.groupId) {
-          useAppStore.getState().removeSplitTerminal(s.groupId, s.id);
-        }
       }
     }
   }, [sessions, removeSession]);
@@ -35,9 +28,6 @@ export const TerminalTabBar: FC = () => {
       const s = sessions[i];
       closeTerminalCmd(s.id).catch(() => {});
       removeSession(s.id);
-      if (s.groupId) {
-        useAppStore.getState().removeSplitTerminal(s.groupId, s.id);
-      }
     }
   }, [sessions, removeSession]);
 
@@ -47,9 +37,6 @@ export const TerminalTabBar: FC = () => {
       const s = sessions[i];
       closeTerminalCmd(s.id).catch(() => {});
       removeSession(s.id);
-      if (s.groupId) {
-        useAppStore.getState().removeSplitTerminal(s.groupId, s.id);
-      }
     }
   }, [sessions, removeSession]);
 

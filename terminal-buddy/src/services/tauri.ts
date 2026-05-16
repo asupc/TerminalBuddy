@@ -149,6 +149,7 @@ export async function getBackendAppSettings(): Promise<{
   dataPath: string | null;
   tabSidebarWidth: number;
   enableTabNavigation: boolean;
+  singleInstance: boolean;
 }> {
   return invoke('get_app_settings');
 }
@@ -171,6 +172,10 @@ export async function saveTabSidebarWidth(width: number): Promise<void> {
 
 export async function saveEnableTabNavigation(enabled: boolean): Promise<void> {
   return invoke('save_enable_tab_navigation', { enabled });
+}
+
+export async function saveSingleInstance(enabled: boolean): Promise<void> {
+  return invoke('save_single_instance', { enabled });
 }
 
 // Clipboard Commands
@@ -223,6 +228,23 @@ export async function saveCommandTemplates(content: string): Promise<void> {
 
 export async function initCommandTemplates(defaultContent: string): Promise<boolean> {
   return invoke('init_command_templates', { defaultContent });
+}
+
+// Window Commands (bypass ACL bug)
+export async function windowMinimize(): Promise<void> {
+  return invoke('window_minimize');
+}
+
+export async function windowToggleMaximize(): Promise<void> {
+  return invoke('window_toggle_maximize');
+}
+
+export async function windowClose(): Promise<void> {
+  return invoke('window_close');
+}
+
+export async function windowExitApp(): Promise<void> {
+  return invoke('window_exit_app');
 }
 
 // Full Data Import/Export

@@ -9,7 +9,7 @@ import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { getStoredTheme, applyTheme, getAppSettings } from './utils/settings';
 import { useAppStore } from './stores/appStore';
 import { loadSavedTabs } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp } from './services/tauri';
 import { loadCommandHistory, migrateLocalStorageHistory, initPersistedTemplates } from './data/commandTemplates';
 import type { Profile } from './types';
 import { PRESET_THEMES } from './types';
@@ -91,10 +91,12 @@ function App() {
       const settings = getAppSettings();
       if (settings.closeBehavior === 'tray') return; // tray mode handled by Rust
 
+      event.preventDefault();
       const { sessions } = useAppStore.getState();
       if (sessions.length > 0) {
-        event.preventDefault();
         setCloseConfirm({ sessionCount: sessions.length });
+      } else {
+        windowExitApp();
       }
     });
     return () => { unlisten.then(fn => fn()); };
@@ -103,7 +105,7 @@ function App() {
   const handleCloseConfirm = () => {
     closeConfirmedRef.current = true;
     setCloseConfirm(null);
-    getCurrentWindow().close();
+    windowExitApp();
   };
 
   const handleCloseCancel = () => {

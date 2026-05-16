@@ -114,7 +114,6 @@ export interface WorkspaceGroup {
   name: string;
   color?: string;
   terminals: WorkspaceTerminal[];
-  layout: LayoutConfig;
   collapsed: boolean;
 }
 
@@ -136,18 +135,6 @@ export interface WorkspaceTerminal {
   k8sContainerName?: string;
   colorTheme?: string;
   tabColor?: string;
-}
-
-export interface LayoutConfig {
-  type: 'tabs' | 'split';
-  splits?: SplitNode;
-}
-
-export interface SplitNode {
-  direction: 'horizontal' | 'vertical';
-  ratio: number;
-  first: SplitNode | string;
-  second: SplitNode | string;
 }
 
 export interface TabGroup {

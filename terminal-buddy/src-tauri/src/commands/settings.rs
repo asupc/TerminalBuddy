@@ -66,6 +66,13 @@ pub fn save_tab_sidebar_width(width: u32) -> Result<(), String> {
     SettingsService::save_settings(&settings)
 }
 
+#[tauri::command]
+pub fn save_single_instance(enabled: bool) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.single_instance = enabled;
+    SettingsService::save_settings(&settings)
+}
+
 fn read_json_files(dir: &PathBuf) -> Result<HashMap<String, Value>, String> {
     let mut map = HashMap::new();
     if !dir.exists() {

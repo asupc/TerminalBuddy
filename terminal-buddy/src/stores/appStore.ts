@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Profile, TerminalSession, CustomTheme, TabGroup, SplitNode } from '../types';
+import type { Profile, TerminalSession, CustomTheme, TabGroup } from '../types';
 import { getAppSettings } from '../utils/settings';
 
 interface SavedTab {
@@ -103,12 +103,6 @@ interface AppState {
   workspaceModified: boolean;
   setCurrentWorkspace: (id: string | null) => void;
   setWorkspaceModified: (modified: boolean) => void;
-
-  // Split Layout
-  groupLayouts: Record<string, string | SplitNode>;
-  setGroupLayout: (groupId: string, layout: string | SplitNode) => void;
-  splitTerminal: (groupId: string, existingSessionId: string, newSessionId: string, direction: 'horizontal' | 'vertical') => void;
-  removeSplitTerminal: (groupId: string, sessionId: string) => void;
 
   // Terminal Sessions
   sessions: TerminalSession[];
@@ -235,48 +229,6 @@ export const useAppStore = create<AppState>((set) => ({
   workspaceModified: false,
   setCurrentWorkspace: (id) => set({ currentWorkspaceId: id, workspaceModified: false }),
   setWorkspaceModified: (modified) => set({ workspaceModified: modified }),
-
-  // Split Layout
-  groupLayouts: {},
-  setGroupLayout: (groupId, layout) => set((state) => ({
-    groupLayouts: { ...state.groupLayouts, [groupId]: layout },
-  })),
-  splitTerminal: (groupId, existingSessionId, newSessionId, direction) => set((state) => {
-    const current = state.groupLayouts[groupId] || existingSessionId;
-    const newLayout: SplitNode = {
-      direction,
-      ratio: 0.5,
-      first: current,
-      second: newSessionId,
-    };
-    return {
-      groupLayouts: { ...state.groupLayouts, [groupId]: newLayout },
-    };
-  }),
-  removeSplitTerminal: (groupId, sessionId) => set((state) => {
-    const layout = state.groupLayouts[groupId];
-    if (!layout || typeof layout === 'string') return state;
-
-    // Find and remove the session from the split tree, collapsing the tree
-    const collapse = (node: string | SplitNode): string | SplitNode | null => {
-      if (typeof node === 'string') return node === sessionId ? null : node;
-      const firstResult = collapse(node.first);
-      const secondResult = collapse(node.second);
-      if (firstResult === null) return secondResult;
-      if (secondResult === null) return firstResult;
-      return { ...node, first: firstResult as string | SplitNode, second: secondResult as string | SplitNode };
-    };
-
-    const result = collapse(layout);
-    if (result === null) {
-      const newLayouts = { ...state.groupLayouts };
-      delete newLayouts[groupId];
-      return { groupLayouts: newLayouts };
-    }
-    return {
-      groupLayouts: { ...state.groupLayouts, [groupId]: result },
-    };
-  }),
 
   // Terminal Sessions
   sessions: [],

@@ -18,7 +18,6 @@ pub struct WorkspaceGroup {
     pub name: String,
     pub color: Option<String>,
     pub terminals: Vec<WorkspaceTerminal>,
-    pub layout: LayoutConfig,
     pub collapsed: bool,
 }
 
@@ -42,27 +41,4 @@ pub struct WorkspaceTerminal {
     pub k8s_container_name: Option<String>,
     pub color_theme: Option<String>,
     pub tab_color: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum LayoutConfig {
-    Tabs,
-    Split(SplitNode),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SplitNode {
-    pub direction: String,
-    pub ratio: f64,
-    pub first: SplitChild,
-    pub second: SplitChild,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum SplitChild {
-    Node(Box<SplitNode>),
-    Terminal(String),
 }
