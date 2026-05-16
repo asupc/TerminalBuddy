@@ -9,9 +9,6 @@ interface TerminalTabProps {
   color: string;
   onClick: () => void;
   onClose: () => void;
-  onCloseOthers: () => void;
-  onCloseLeft: () => void;
-  onCloseRight: () => void;
   onCloseAll: () => void;
   onRename: (name: string) => void;
   onChangeColor: (color: string) => void;
@@ -27,9 +24,6 @@ export const TerminalTab: FC<TerminalTabProps> = ({
   color,
   onClick,
   onClose,
-  onCloseOthers,
-  onCloseLeft,
-  onCloseRight,
   onCloseAll,
   onRename,
   onChangeColor,
@@ -64,6 +58,31 @@ export const TerminalTab: FC<TerminalTabProps> = ({
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showColorPicker]);
+
+  useEffect(() => {
+    if (!showContextMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('.context-menu')) return;
+      setShowContextMenu(false);
+      setShowColorPicker(false);
+    };
+    const handleKeyDown = () => {
+      setShowContextMenu(false);
+      setShowColorPicker(false);
+    };
+    const handleScroll = () => {
+      setShowContextMenu(false);
+      setShowColorPicker(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('wheel', handleScroll);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('wheel', handleScroll);
+    };
+  }, [showContextMenu]);
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -111,7 +130,7 @@ export const TerminalTab: FC<TerminalTabProps> = ({
         onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
         onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
       >
-        <span className="tab-color-indicator" style={color ? { backgroundColor: color } : undefined} />
+        <span className="tab-color-indicator" style={{ backgroundColor: color || 'var(--accent)' }} />
         {isRenaming ? (
           <input
             ref={inputRef}
@@ -198,15 +217,6 @@ export const TerminalTab: FC<TerminalTabProps> = ({
             </div>
             <div className="context-menu-item" onClick={() => { setShowContextMenu(false); setShowColorPicker(false); onSplitDown(); }}>
               分屏到下方 <span style={{ float: 'right', color: 'var(--text-muted)', fontSize: '10px' }}>Alt+Shift+↓</span>
-            </div>
-            <div className="context-menu-item" onClick={() => { setShowContextMenu(false); setShowColorPicker(false); onCloseOthers(); }}>
-              关闭其他
-            </div>
-            <div className="context-menu-item" onClick={() => { setShowContextMenu(false); setShowColorPicker(false); onCloseLeft(); }}>
-              关闭左侧
-            </div>
-            <div className="context-menu-item" onClick={() => { setShowContextMenu(false); setShowColorPicker(false); onCloseRight(); }}>
-              关闭右侧
             </div>
             <div className="context-menu-item" onClick={() => { setShowContextMenu(false); setShowColorPicker(false); onCloseAll(); }}>
               关闭全部

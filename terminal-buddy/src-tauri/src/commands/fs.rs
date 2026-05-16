@@ -2,6 +2,32 @@ use std::fs;
 use serde::Serialize;
 use tauri::command;
 
+fn should_exclude(name: &str, patterns: Option<&Vec<String>>) -> bool {
+    if let Some(pats) = patterns {
+        for pattern in pats {
+            if pattern.starts_with("**/*.") {
+                // **/*.ext -> match files ending with .ext
+                let suffix = &pattern[3..]; // "*.ext"
+                if name.ends_with(&suffix[1..]) { // ".ext"
+                    return true;
+                }
+            } else if pattern.starts_with('*') {
+                // *.ext -> match files ending with .ext
+                let suffix = &pattern[1..]; // ".ext"
+                if name.ends_with(suffix) {
+                    return true;
+                }
+            } else {
+                // Exact name match
+                if name == pattern {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[derive(Serialize)]
 pub struct FileNode {
     name: String,
@@ -10,20 +36,25 @@ pub struct FileNode {
 }
 
 #[command]
-pub fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
+pub fn list_directory(path: String, exclusions: Option<Vec<String>>) -> Result<Vec<FileNode>, String> {
     let entries = fs::read_dir(&path).map_err(|e| format!("Failed to read directory: {}", e))?;
 
     let mut nodes: Vec<FileNode> = entries
         .filter_map(|entry| {
             entry.ok().map(|e| {
                 let file_path = e.path();
-                FileNode {
-                    name: e.file_name().to_string_lossy().to_string(),
+                let name = e.file_name().to_string_lossy().to_string();
+                if should_exclude(&name, exclusions.as_ref()) {
+                    return None;
+                }
+                Some(FileNode {
+                    name,
                     path: file_path.to_string_lossy().to_string(),
                     is_directory: file_path.is_dir(),
-                }
+                })
             })
         })
+        .flatten()
         .collect();
 
     // Sort: directories first, then files, both alphabetically

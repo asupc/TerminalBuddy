@@ -1,13 +1,16 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { Toolbar } from './components/Toolbar';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { TitleBar } from './components/TitleBar';
 import { ConfigPanel } from './components/ConfigPanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import { FileTree } from './components/FileTree';
+import { TabSidebar } from './components/TabSidebar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
-import { SettingsDialog, getStoredTheme, applyTheme, getAppSettings } from './components/SettingsDialog';
+import { getStoredTheme, applyTheme, getAppSettings } from './utils/settings';
 import { useAppStore } from './stores/appStore';
 import { loadSavedTabs } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, exportAllProfiles, importAllProfiles } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile } from './services/tauri';
+import { loadCommandHistory, migrateLocalStorageHistory, initPersistedTemplates } from './data/commandTemplates';
 import type { Profile } from './types';
 import { PRESET_THEMES } from './types';
 
@@ -28,10 +31,11 @@ function saveFloatPos(pos: { x: number; y: number }) {
 }
 
 function App() {
-  const { setProfiles, addSession, configPanelVisible, fileTreeVisible, toggleConfigPanel, toggleFileTree } = useAppStore();
+  const { setProfiles, addSession, configPanelVisible, fileTreeVisible, toggleConfigPanel, toggleFileTree, openSettingsTab, profiles } = useAppStore();
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
+  const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
+  const closeConfirmedRef = useRef(false);
   const floatPosRef = useRef(getSavedFloatPos());
   const [floatPos, setFloatPos] = useState(floatPosRef.current);
   const floatStart = useRef({ x: 0, y: 0 });
@@ -66,11 +70,38 @@ function App() {
 
   useEffect(() => {
     applyTheme(getStoredTheme());
+    initPersistedTemplates();
     loadProfiles();
     if (getAppSettings().restoreTabsOnStartup) {
       restoreTabs();
     }
+    migrateLocalStorageHistory().then(() => loadCommandHistory());
   }, []);
+
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
+      if (closeConfirmedRef.current) return;
+      const settings = getAppSettings();
+      if (settings.closeBehavior === 'tray') return; // tray mode handled by Rust
+
+      const { sessions } = useAppStore.getState();
+      if (sessions.length > 0) {
+        event.preventDefault();
+        setCloseConfirm({ sessionCount: sessions.length });
+      }
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  const handleCloseConfirm = () => {
+    closeConfirmedRef.current = true;
+    setCloseConfirm(null);
+    getCurrentWindow().close();
+  };
+
+  const handleCloseCancel = () => {
+    setCloseConfirm(null);
+  };
 
   const restoreTabs = async () => {
     const { tabs, activeIndex } = loadSavedTabs();
@@ -157,44 +188,8 @@ function App() {
     }
   };
 
-  const handleNew = () => {
-    setEditingProfile(null);
-    setShowEditDialog(true);
-  };
-
-  const handleImport = async () => {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const path = await open({
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-        multiple: false,
-      });
-      if (!path) return;
-      await importAllProfiles(path as string);
-      await loadProfiles();
-    } catch (err) {
-      console.error('Failed to import profiles:', err);
-      alert('导入配置失败: ' + String(err));
-    }
-  };
-
-  const handleExport = async () => {
-    try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const path = await save({
-        defaultPath: 'terminalbuddy_profiles.json',
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-      });
-      if (!path) return;
-      await exportAllProfiles(path as string);
-    } catch (err) {
-      console.error('Failed to export profiles:', err);
-      alert('导出配置失败: ' + String(err));
-    }
-  };
-
   const handleSettings = () => {
-    setShowSettings(true);
+    openSettingsTab();
   };
 
   const handleStartBlankTerminal = async (terminalType: 'powershell' | 'cmd') => {
@@ -218,15 +213,7 @@ function App() {
 
   return (
     <div className="app-container">
-      <Toolbar
-        onNew={handleNew}
-        onImport={handleImport}
-        onExport={handleExport}
-        onSettings={handleSettings}
-        onNewPowershell={() => handleStartBlankTerminal('powershell')}
-        onNewCmd={() => handleStartBlankTerminal('cmd')}
-        onStartTerminal={handleStartTerminal}
-      />
+      <TitleBar onSettings={handleSettings} />
       <div className="main-content">
         <div
           className="floating-buttons"
@@ -236,7 +223,7 @@ function App() {
           <button
             className={`float-btn ${configPanelVisible ? 'active' : ''}`}
             onClick={toggleConfigPanel}
-            title={configPanelVisible ? '隐藏配置导航' : '显示配置导航'}
+            title={configPanelVisible ? '隐藏连接导航' : '显示连接导航'}
           >
             ☰
           </button>
@@ -254,6 +241,11 @@ function App() {
           onCopyProfile={handleCopyProfile}
         />
         <FileTree />
+        <TabSidebar
+          profiles={profiles}
+          onStartTerminal={handleStartTerminal}
+          onStartBlankTerminal={handleStartBlankTerminal}
+        />
         <TerminalPanel />
       </div>
       {showEditDialog && (
@@ -266,8 +258,17 @@ function App() {
           }}
         />
       )}
-      {showSettings && (
-        <SettingsDialog onClose={() => setShowSettings(false)} />
+      {closeConfirm && (
+        <div className="confirm-dialog-overlay" onClick={handleCloseCancel}>
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-dialog-title">确认退出</div>
+            <div className="confirm-dialog-message">当前有 {closeConfirm.sessionCount} 个终端正在运行，确定要退出吗？</div>
+            <div className="confirm-dialog-buttons">
+              <button className="btn-secondary" onClick={handleCloseCancel}>取消</button>
+              <button className="btn-danger" onClick={handleCloseConfirm}>退出</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

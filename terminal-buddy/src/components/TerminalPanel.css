@@ -43,6 +43,8 @@
   flex: 1;
   position: relative;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .terminal-tab-content {
@@ -88,18 +90,54 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 6px;
-  min-width: 140px;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: calc(100vh - var(--submenu-top, 0)px - 8px);
+  overflow-y: auto;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   padding: 4px 0;
   z-index: 260;
 }
 
+.context-submenu::-webkit-scrollbar {
+  width: 5px;
+}
+
+.context-submenu::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
 .context-menu-item.has-submenu {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .context-menu-item.has-submenu:hover .context-submenu {
   display: block;
+}
+
+.submenu-arrow {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.context-menu-item.highlighted {
+  background: var(--accent);
+  color: #fff;
+}
+
+.context-menu-item.submenu-group-header {
+  font-weight: 600;
+  pointer-events: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 12px;
 }
 
 /* Split Pane Layout */

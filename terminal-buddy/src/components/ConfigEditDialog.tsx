@@ -54,6 +54,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   );
   const [envExpanded, setEnvExpanded] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [sshHost, setSshHost] = useState(profile?.sshHost || '');
   const [sshPort, setSshPort] = useState(profile?.sshPort || 22);
   const [sshUser, setSshUser] = useState(profile?.sshUser || '');
@@ -88,16 +89,36 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
       return;
     }
     const query = value.toLowerCase();
+    const queryChars = [...query];
+
+    // Fuzzy match: substring first, then character sequence
+    const fuzzyMatch = (text: string): boolean => {
+      const lower = text.toLowerCase();
+      if (lower.includes(query)) return true;
+      let idx = 0;
+      for (const ch of lower) {
+        if (ch === queryChars[idx]) idx++;
+        if (idx === queryChars.length) return true;
+      }
+      return false;
+    };
+
     const allCommands = COMMAND_TEMPLATES.flatMap(cat => cat.commands);
     const builtIn = allCommands.filter(cmd =>
-      cmd.command.toLowerCase().includes(query)
+      fuzzyMatch(cmd.command) || fuzzyMatch(cmd.desc)
     );
+
+    // History: only show entries with notes that aren't already in built-in results
+    const builtInCommands = new Set(builtIn.map(c => c.command));
     const history = getCommandHistory()
-      .filter(cmd => cmd.toLowerCase().includes(query))
-      .map(cmd => ({ name: cmd, command: cmd }));
-    const seen = new Set(builtIn.map(c => c.command));
-    const uniqueHistory = history.filter(c => !seen.has(c.command));
-    setCmdSuggestions([...builtIn, ...uniqueHistory]);
+      .filter(entry => {
+        if (builtInCommands.has(entry.command)) return false;
+        if (!entry.note) return false;
+        return fuzzyMatch(entry.command) || fuzzyMatch(entry.note);
+      })
+      .map(entry => ({ name: entry.command, command: entry.command }));
+
+    setCmdSuggestions([...builtIn, ...history]);
     setActiveCmdIndex(index);
     setCmdSelectedIndex(-1);
   };
@@ -136,7 +157,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
     try {
       setSaveError(null);
       const commands = startupCommands.filter(c => c.trim() !== '');
-      commands.forEach(cmd => addCommandToHistory(cmd));
+      commands.forEach(cmd => addCommandToHistory(cmd).catch(() => {}));
       if (profile) {
         await updateProfile({
           ...profile,
@@ -178,14 +199,18 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
     }
   };
 
-  const handleDelete = async () => {
-    if (profile && confirm('确定要删除此配置吗？')) {
-      try {
-        await deleteProfile(profile.id);
-        onSave();
-      } catch (err) {
-        console.error('Failed to delete profile:', err);
-      }
+  const handleDelete = () => {
+    setConfirmDelete(true);
+  };
+
+  const confirmDeleteProfile = async () => {
+    setConfirmDelete(false);
+    if (!profile) return;
+    try {
+      await deleteProfile(profile.id);
+      onSave();
+    } catch (err) {
+      console.error('Failed to delete profile:', err);
     }
   };
 
@@ -214,7 +239,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
         onMouseDown={dragHandleProps.onMouseDown}
       >
         <div className="dialog-header dialog-drag-handle">
-          <h3>{profile ? '编辑配置' : '新建配置'}</h3>
+          <h3>{profile ? '编辑连接' : '新建连接'}</h3>
           <button className="dialog-close" onClick={onClose}>×</button>
         </div>
         {saveError && (
@@ -226,8 +251,8 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             <div className="form-group">
               <label>名称</label>
               <input
-                {...register('name', { required: '请输入配置名称' })}
-                placeholder="配置名称"
+                {...register('name', { required: '请输入连接名称' })}
+                placeholder="连接名称"
               />
               {errors.name && <span className="error">{errors.name.message}</span>}
             </div>
@@ -365,15 +390,27 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
           </>
           )}
 
-          <div className="form-group">
-            <label>终端类型</label>
-            <select {...register('terminalType')}>
-              <option value="powershell">PowerShell</option>
-              <option value="cmd">CMD</option>
-              <option value="ssh">SSH</option>
-              <option value="docker">Docker</option>
-              <option value="k8s">Kubernetes</option>
-            </select>
+          <div className="form-row">
+            <div className="form-group">
+              <label>终端类型</label>
+              <select {...register('terminalType')}>
+                <option value="powershell">PowerShell</option>
+                <option value="cmd">CMD</option>
+                <option value="ssh">SSH</option>
+                <option value="docker">Docker</option>
+                <option value="k8s">Kubernetes</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>颜色主题</label>
+              <select {...register('colorTheme')}>
+                {PRESET_THEMES.map((theme) => (
+                  <option key={theme.id} value={theme.id}>
+                    {theme.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {watch('terminalType') === 'ssh' && (
@@ -431,17 +468,6 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
           )}
 
           <div className="form-group">
-            <label>颜色主题</label>
-            <select {...register('colorTheme')}>
-              {PRESET_THEMES.map((theme) => (
-                <option key={theme.id} value={theme.id}>
-                  {theme.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-group">
             <label>Tab 颜色</label>
             <div className="tab-color-options">
               <label className={`tab-color-chip ${watch('tabColor') === '' ? 'active' : ''}`}>
@@ -485,6 +511,18 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
           </div>
         </form>
       </div>
+      {confirmDelete && (
+        <div className="confirm-dialog-overlay" onClick={() => setConfirmDelete(false)}>
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-dialog-title">确认删除</div>
+            <div className="confirm-dialog-message">确定要删除此连接吗？</div>
+            <div className="confirm-dialog-buttons">
+              <button className="btn-secondary" onClick={() => setConfirmDelete(false)}>取消</button>
+              <button className="btn-danger" onClick={confirmDeleteProfile}>删除</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

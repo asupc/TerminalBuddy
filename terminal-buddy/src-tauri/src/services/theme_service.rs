@@ -1,4 +1,5 @@
 use crate::models::CustomTheme;
+use crate::services::PathService;
 use std::fs;
 use std::path::PathBuf;
 
@@ -6,12 +7,7 @@ pub struct ThemeService;
 
 impl ThemeService {
     fn get_themes_dir() -> PathBuf {
-        let base = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("TerminalBuddy")
-            .join("Themes");
-        fs::create_dir_all(&base).ok();
-        base
+        PathService::get_themes_dir()
     }
 
     pub fn get_all_themes() -> Result<Vec<CustomTheme>, String> {

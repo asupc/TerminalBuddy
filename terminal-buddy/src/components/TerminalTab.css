@@ -9,6 +9,20 @@
   max-width: 200px;
 }
 
+/* Vertical tab overrides */
+[data-tab-orientation="vertical"] .terminal-tab {
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+  min-width: unset;
+  max-width: unset;
+}
+
+[data-tab-orientation="vertical"] .terminal-tab.active {
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+
 .tab-color-indicator {
   width: 8px;
   height: 8px;

@@ -82,6 +82,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
 
   const handleContextMenu = (e: React.MouseEvent, profileId: string) => {
     e.preventDefault();
+    selectProfile(profileId);
     setContextMenu({ x: e.clientX, y: e.clientY, profileId });
   };
 
@@ -90,6 +91,25 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
     setGroupContextMenu(null);
     setSortDropdownOpen(false);
   };
+
+  useEffect(() => {
+    if (!contextMenu && !groupContextMenu) return;
+    const close = () => closeContextMenu();
+    const handleClick = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('.context-menu')) return;
+      close();
+    };
+    const handleKey = () => close();
+    const handleWheel = () => close();
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    document.addEventListener('wheel', handleWheel);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+      document.removeEventListener('wheel', handleWheel);
+    };
+  }, [contextMenu, groupContextMenu]);
 
   const handleDeleteProfile = async (profileId: string) => {
     setConfirmDelete(profileId);
@@ -183,11 +203,15 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
 
   return (
     <div ref={containerRef} className={`config-panel ${!configPanelVisible ? 'collapsed' : ''}`} style={{ width }} onClick={closeContextMenu}>
+      <div className="panel-titlebar">
+        <span className="panel-title">连接导航</span>
+        <span className="panel-title-count">{profiles.length}</span>
+      </div>
       <div className="config-search-bar">
         <input
           type="text"
           className="config-search-input"
-          placeholder="搜索配置..."
+          placeholder="搜索连接..."
           value={configSearchQuery}
           onChange={(e) => setConfigSearchQuery(e.target.value)}
         />
@@ -266,7 +290,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
                     onContextMenu={(e) => handleContextMenu(e, profile.id)}
                   >
                     <span className="config-icon">
-                      {profile.terminalType === 'powershell' ? 'PS' : 'CMD'}
+                      {{ powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S' }[profile.terminalType] || profile.terminalType.toUpperCase()}
                     </span>
                     <span className="config-name" style={profile.tabColor ? { color: profile.tabColor } : undefined}>{profile.name}</span>
                   </div>
@@ -276,7 +300,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
           </div>
         ))}
         {profiles.length === 0 && (
-          <div className="empty-state">暂无配置，点击新建</div>
+          <div className="empty-state">暂无连接，点击新建</div>
         )}
       </div>
 
@@ -342,7 +366,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
         <div className="confirm-dialog-overlay" onClick={cancelDeleteProfile}>
           <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-dialog-title">确认删除</div>
-            <div className="confirm-dialog-message">确定要删除此配置吗？</div>
+            <div className="confirm-dialog-message">确定要删除此连接吗？</div>
             <div className="confirm-dialog-buttons">
               <button className="btn-secondary" onClick={cancelDeleteProfile}>
                 取消

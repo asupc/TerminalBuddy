@@ -85,8 +85,8 @@ export interface FileNode {
   is_directory: boolean;
 }
 
-export async function listDirectory(path: string): Promise<FileNode[]> {
-  return invoke('list_directory', { path });
+export async function listDirectory(path: string, exclusions?: string[]): Promise<FileNode[]> {
+  return invoke('list_directory', { path, exclusions: exclusions ?? null });
 }
 
 export async function openPath(path: string): Promise<void> {
@@ -147,8 +147,7 @@ export async function deleteWorkspace(id: string): Promise<void> {
 export async function getBackendAppSettings(): Promise<{
   closeBehavior: 'exit' | 'tray';
   dataPath: string | null;
-  tabOrientation: 'horizontal' | 'vertical';
-  verticalTabWidth: number;
+  tabSidebarWidth: number;
 }> {
   return invoke('get_app_settings');
 }
@@ -165,15 +164,67 @@ export async function setDataPath(newPath: string): Promise<void> {
   return invoke('set_data_path', { newPath });
 }
 
-export async function saveTabOrientation(orientation: 'horizontal' | 'vertical'): Promise<void> {
-  return invoke('save_tab_orientation', { orientation });
-}
-
-export async function saveVerticalTabWidth(width: number): Promise<void> {
-  return invoke('save_vertical_tab_width', { width });
+export async function saveTabSidebarWidth(width: number): Promise<void> {
+  return invoke('save_tab_sidebar_width', { width });
 }
 
 // Clipboard Commands
 export async function readClipboardFilePaths(): Promise<string[]> {
   return invoke('read_clipboard_file_paths');
+}
+
+// History Commands
+export interface HistoryEntryFE {
+  command: string;
+  note: string;
+}
+
+export async function getCommandHistory(): Promise<HistoryEntryFE[]> {
+  return invoke('get_command_history');
+}
+
+export async function addCommandToHistory(command: string): Promise<void> {
+  return invoke('add_command_to_history', { command });
+}
+
+export async function deleteCommandFromHistory(command: string): Promise<void> {
+  return invoke('delete_command_from_history', { command });
+}
+
+export async function updateCommandInHistory(oldCommand: string, newCommand: string): Promise<void> {
+  return invoke('update_command_in_history', { oldCommand, newCommand });
+}
+
+export async function updateCommandNote(command: string, note: string): Promise<void> {
+  return invoke('update_command_note', { command, note });
+}
+
+export async function clearCommandHistory(): Promise<void> {
+  return invoke('clear_command_history');
+}
+
+export async function importCommandHistory(commands: string[]): Promise<void> {
+  return invoke('import_command_history', { commands });
+}
+
+// Template Commands
+export async function getCommandTemplates(): Promise<string> {
+  return invoke('get_command_templates');
+}
+
+export async function saveCommandTemplates(content: string): Promise<void> {
+  return invoke('save_command_templates', { content });
+}
+
+export async function initCommandTemplates(defaultContent: string): Promise<boolean> {
+  return invoke('init_command_templates', { defaultContent });
+}
+
+// Full Data Import/Export
+export async function exportAllData(filePath: string): Promise<void> {
+  return invoke('export_all_data', { filePath });
+}
+
+export async function importAllData(filePath: string): Promise<void> {
+  return invoke('import_all_data', { filePath });
 }

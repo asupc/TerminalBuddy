@@ -43,6 +43,24 @@
   margin-bottom: 8px;
 }
 
+/* Data path */
+.data-path-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.data-path-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: 'Cascadia Code', Consolas, monospace;
+}
+
 /* Commands panel */
 .commands-panel {
   display: flex;

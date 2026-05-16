@@ -1,3 +1,5 @@
+import * as tauriService from '../services/tauri';
+
 export interface CommandItem {
   name: string;
   command: string;
@@ -9,8 +11,6 @@ export interface CommandTemplate {
   commands: CommandItem[];
 }
 
-const HISTORY_KEY = 'terminalbuddy_command_history';
-const MAX_HISTORY = 100;
 const CMD_OVERRIDES_KEY = 'terminalbuddy_cmd_overrides';
 const CMD_CUSTOM_KEY = 'terminalbuddy_cmd_custom';
 
@@ -70,21 +70,89 @@ export function getEffectiveTemplates(): CommandTemplate[] {
   return result;
 }
 
-export function getCommandHistory(): string[] {
+export interface HistoryEntry {
+  command: string;
+  note: string;
+}
+
+let historyCache: HistoryEntry[] | null = null;
+
+export function getCommandHistory(): HistoryEntry[] {
+  return historyCache ?? [];
+}
+
+export async function loadCommandHistory(): Promise<HistoryEntry[]> {
   try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
+    historyCache = await tauriService.getCommandHistory();
   } catch {
-    return [];
+    historyCache = [];
+  }
+  return historyCache;
+}
+
+export async function addCommandToHistory(command: string): Promise<void> {
+  const trimmed = command.trim();
+  if (!trimmed) return;
+  try {
+    await tauriService.addCommandToHistory(trimmed);
+    historyCache = await tauriService.getCommandHistory();
+  } catch {
+    // fallback: update cache optimistically
+    if (historyCache) {
+      historyCache = historyCache.filter(e => e.command !== trimmed);
+      historyCache.unshift({ command: trimmed, note: '' });
+    }
   }
 }
 
-export function addCommandToHistory(command: string) {
-  const trimmed = command.trim();
-  if (!trimmed) return;
-  const history = getCommandHistory().filter(c => c !== trimmed);
-  history.unshift(trimmed);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+export async function deleteCommandFromHistory(command: string): Promise<void> {
+  await tauriService.deleteCommandFromHistory(command);
+  historyCache = await tauriService.getCommandHistory();
+}
+
+export async function updateCommandInHistory(oldCommand: string, newCommand: string): Promise<void> {
+  await tauriService.updateCommandInHistory(oldCommand, newCommand);
+  historyCache = await tauriService.getCommandHistory();
+}
+
+export async function clearCommandHistory(): Promise<void> {
+  await tauriService.clearCommandHistory();
+  historyCache = [];
+}
+
+export async function updateCommandNote(command: string, note: string): Promise<void> {
+  await tauriService.updateCommandNote(command, note);
+  historyCache = await tauriService.getCommandHistory();
+}
+
+export async function migrateLocalStorageHistory(): Promise<void> {
+  const HISTORY_KEY = 'terminalbuddy_command_history';
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return;
+    const commands: string[] = JSON.parse(raw);
+    if (commands.length > 0) {
+      await tauriService.importCommandHistory(commands);
+    }
+    localStorage.removeItem(HISTORY_KEY);
+  } catch {
+    // migration failed silently
+  }
+}
+
+export async function initPersistedTemplates(): Promise<void> {
+  const defaultContent = JSON.stringify(COMMAND_TEMPLATES, null, 2);
+  const isNew = await tauriService.initCommandTemplates(defaultContent);
+  if (!isNew) {
+    try {
+      const content = await tauriService.getCommandTemplates();
+      const persisted: CommandTemplate[] = JSON.parse(content);
+      if (persisted.length > 0) {
+        COMMAND_TEMPLATES.length = 0;
+        persisted.forEach(t => COMMAND_TEMPLATES.push(t));
+      }
+    } catch {}
+  }
 }
 
 export interface SuggestionItem {
@@ -110,10 +178,11 @@ export function getAllSuggestions(): SuggestionItem[] {
   const result: SuggestionItem[] = [];
   const seen = new Set<string>();
 
-  for (const cmd of history) {
-    const tpl = tplMap.get(cmd);
-    result.push(tpl || { command: cmd, desc: '历史命令' });
-    seen.add(cmd);
+  for (const entry of history) {
+    const tpl = tplMap.get(entry.command);
+    const desc = entry.note || tpl?.desc || '历史命令';
+    result.push({ command: entry.command, desc });
+    seen.add(entry.command);
   }
 
   for (const [, item] of tplMap) {
@@ -339,15 +408,6 @@ export const COMMAND_TEMPLATES: CommandTemplate[] = [
       { name: 'dotnet add package', command: 'dotnet add package ', desc: '添加NuGet包' },
       { name: 'dotnet restore', command: 'dotnet restore', desc: '还原依赖' },
       { name: 'dotnet ef migrations', command: 'dotnet ef migrations add ', desc: '添加EF迁移' },
-    ],
-  },
-  {
-    category: '压缩与解压',
-    commands: [
-      { name: 'tar -czf', command: 'tar -czf archive.tar.gz ', desc: '压缩为tar.gz' },
-      { name: 'tar -xzf', command: 'tar -xzf archive.tar.gz', desc: '解压tar.gz' },
-      { name: 'Expand-Archive', command: 'Expand-Archive -Path ', desc: 'PowerShell解压ZIP' },
-      { name: 'Compress-Archive', command: 'Compress-Archive -Path ', desc: 'PowerShell压缩ZIP' },
     ],
   },
 ];

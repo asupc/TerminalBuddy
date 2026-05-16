@@ -117,6 +117,33 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       terminal.open(terminalRef.current!);
 
+      // Fix: prevent IME composition from causing horizontal content shift
+      // When the cursor is near the right edge, the browser's scroll-into-view
+      // behavior for the composition textarea can set scrollLeft on the viewport,
+      // causing the entire terminal content to drift left.
+      const preventHScroll = () => {
+        const vp = terminal.element?.querySelector('.xterm-viewport') as HTMLElement;
+        if (vp && vp.scrollLeft !== 0) vp.scrollLeft = 0;
+        const xt = terminal.element as HTMLElement;
+        if (xt && xt.scrollLeft !== 0) xt.scrollLeft = 0;
+      };
+      const xtermViewport = terminal.element!.querySelector('.xterm-viewport') as HTMLElement;
+      if (xtermViewport) {
+        xtermViewport.addEventListener('scroll', preventHScroll, { passive: true });
+        cleanupFns.push(() => xtermViewport.removeEventListener('scroll', preventHScroll));
+      }
+      (terminal.element as HTMLElement).addEventListener('scroll', preventHScroll, { passive: true });
+      cleanupFns.push(() => (terminal.element as HTMLElement).removeEventListener('scroll', preventHScroll));
+
+      // Also reset scrollLeft after IME composition ends, as the browser may
+      // set it during composition without firing a scroll event
+      const xtermTextarea = terminal.element!.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement;
+      if (xtermTextarea) {
+        xtermTextarea.addEventListener('compositionend', () => {
+          requestAnimationFrame(preventHScroll);
+        });
+      }
+
       // Double-fit: immediate + delayed to ensure correct measurements after layout
       fitAddon.fit();
       requestAnimationFrame(() => {
@@ -146,7 +173,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             const text = line.translateToString(true, 0, buffer.cursorX);
             const promptIdx = text.lastIndexOf('>');
             const cmd = promptIdx >= 0 ? text.substring(promptIdx + 1).trim() : text.trim();
-            if (cmd) addCommandToHistory(cmd);
+            if (cmd) addCommandToHistory(cmd).catch(() => {});
           }
           updateAutocomplete(null);
         }
@@ -170,7 +197,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
           const query = input.toLowerCase();
           const all = getAllSuggestions();
-          const matches = all.filter(s => s.command.toLowerCase().startsWith(query) && s.command !== input).slice(0, 8);
+          const matches = all.filter(s => {
+            if (s.command === input) return false;
+            return s.command.toLowerCase().startsWith(query) || s.desc.toLowerCase().includes(query);
+          }).slice(0, 8);
           if (matches.length === 0) {
             updateAutocomplete(null);
             return;
@@ -411,12 +441,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     setContextMenu({ x: 0, y: 0, visible: false });
   }, []);
 
-  // Close context menu on click outside
+  // Close context menu on click outside, keydown, or scroll
   useEffect(() => {
     if (!contextMenu.visible) return;
     const close = () => setContextMenu({ x: 0, y: 0, visible: false });
     document.addEventListener('click', close, { once: true });
-    return () => document.removeEventListener('click', close);
+    document.addEventListener('keydown', close);
+    document.addEventListener('wheel', close);
+    return () => {
+      document.removeEventListener('click', close);
+      document.removeEventListener('keydown', close);
+      document.removeEventListener('wheel', close);
+    };
   }, [contextMenu.visible]);
 
   // Close autocomplete on click outside

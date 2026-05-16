@@ -24,6 +24,10 @@
   will-change: transform;
 }
 
+.dialog-large {
+  width: 780px;
+}
+
 .dialog-header {
   display: flex;
   align-items: center;

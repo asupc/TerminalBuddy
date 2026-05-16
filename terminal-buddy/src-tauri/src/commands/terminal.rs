@@ -7,6 +7,7 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize, Child, MasterPty}
 use std::thread;
 use std::fs;
 use crate::services::ProfileService;
+use crate::services::PathService;
 
 pub struct TerminalInstance {
     pub id: String,
@@ -21,17 +22,12 @@ pub struct TerminalService {
 }
 
 fn log_debug(msg: &str) {
-    let log_path = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("TerminalBuddy")
-        .join("debug.log");
-    let _ = fs::create_dir_all(log_path.parent().unwrap());
+    let log_path = PathService::get_debug_log_path();
     let ts = chrono::Utc::now().format("%H:%M:%S%.3f");
     let line = format!("[{}] {}\n", ts, msg);
     let _ = fs::OpenOptions::new()
         .create(true)
-        .write(true)
-        .truncate(true)
+        .append(true)
         .open(&log_path)
         .and_then(|mut f| f.write_all(line.as_bytes()));
 }
@@ -55,7 +51,7 @@ impl TerminalService {
 
         // Load profile settings
         let profile = ProfileService::get_profile(profile_id).ok();
-        let is_cmd = profile.as_ref().map_or(false, |p| p.terminal_type == "cmd");
+        let terminal_type = profile.as_ref().map_or("powershell", |p| p.terminal_type.as_str());
         let startup_path = profile.as_ref().and_then(|p| {
             if p.startup_path.is_empty() { None } else { Some(p.startup_path.clone()) }
         });
@@ -66,8 +62,8 @@ impl TerminalService {
             .map(|p| p.environment_variables.iter().map(|(k,v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
 
-        log_debug(&format!("[create] is_cmd={}, path={:?}, commands={}, envs={}",
-            is_cmd, startup_path, startup_commands.len(), env_vars.len()));
+        log_debug(&format!("[create] type={}, path={:?}, commands={}, envs={}",
+            terminal_type, startup_path, startup_commands.len(), env_vars.len()));
 
         let pty_system = native_pty_system();
 
@@ -131,15 +127,52 @@ impl TerminalService {
             instances.insert(terminal_id.clone(), instance);
         }
 
-        // Build the sequence of commands to send after shell starts
-        // For PowerShell profiles: first launch powershell, then send startup commands
-        // For CMD profiles: send startup commands directly
-        let init_commands = if !is_cmd {
-            let mut cmds = vec!["powershell.exe".to_string()];
-            cmds.extend(startup_commands);
-            cmds
-        } else {
-            startup_commands
+        // Build init commands based on terminal type
+        let init_commands = match terminal_type {
+            "cmd" => startup_commands,
+            "powershell" => {
+                let mut cmds = vec!["powershell.exe".to_string()];
+                cmds.extend(startup_commands);
+                cmds
+            }
+            "ssh" => {
+                let p = profile.as_ref();
+                let host = p.and_then(|p| p.ssh_host.clone()).unwrap_or_default();
+                let port = p.and_then(|p| p.ssh_port).unwrap_or(22);
+                let user = p.and_then(|p| p.ssh_user.clone()).unwrap_or_default();
+                let auth_type = p.and_then(|p| p.ssh_auth_type.clone()).unwrap_or_else(|| "key".to_string());
+                let key_path = p.and_then(|p| p.ssh_key_path.clone()).unwrap_or_default();
+                let ssh_cmd = if auth_type == "key" && !key_path.is_empty() {
+                    format!("ssh -i {} -p {} {}@{}", key_path, port, user, host)
+                } else {
+                    format!("ssh -p {} {}@{}", port, user, host)
+                };
+                vec![ssh_cmd]
+            }
+            "docker" => {
+                let container = profile.as_ref()
+                    .and_then(|p| p.docker_container_name.clone())
+                    .or_else(|| profile.as_ref().and_then(|p| p.docker_container_id.clone()))
+                    .unwrap_or_default();
+                vec![format!("docker exec -it {} cmd.exe", container)]
+            }
+            "k8s" => {
+                let ns = profile.as_ref().and_then(|p| p.k8s_namespace.clone()).unwrap_or_default();
+                let pod = profile.as_ref().and_then(|p| p.k8s_pod_name.clone()).unwrap_or_default();
+                let container = profile.as_ref().and_then(|p| p.k8s_container_name.clone()).unwrap_or_default();
+                let mut cmd = format!("kubectl exec -it -n {} {}", ns, pod);
+                if !container.is_empty() {
+                    cmd = format!("{} -c {} -- cmd.exe", cmd, container);
+                } else {
+                    cmd = format!("{} -- cmd.exe", cmd);
+                }
+                vec![cmd]
+            }
+            _ => {
+                let mut cmds = vec!["powershell.exe".to_string()];
+                cmds.extend(startup_commands);
+                cmds
+            }
         };
 
         if !init_commands.is_empty() {
@@ -183,6 +216,11 @@ impl TerminalService {
                             {
                                 let mut buffer = buf_clone.lock().unwrap();
                                 buffer.push(output.clone());
+                                if buffer.len() > 1000 {
+                                    let start = buffer.len() - 500;
+                                    let kept: Vec<String> = buffer.splice(start.., []).collect();
+                                    *buffer = kept;
+                                }
                             }
                             let _ = app_clone.emit(&format!("terminal_output_{}", tid), output);
                         }
@@ -256,7 +294,13 @@ impl TerminalService {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create-blank] start, id={}, type={}", terminal_id, terminal_type));
 
-        let is_cmd = terminal_type == "cmd";
+        // Blank terminals only support cmd and powershell;
+        // ssh/docker/k8s require connection parameters from a profile
+        let effective_type = match terminal_type {
+            "cmd" => "cmd",
+            "powershell" => "powershell",
+            _ => "powershell", // fallback for ssh/docker/k8s without profile
+        };
         let pty_system = native_pty_system();
 
         let pty_pair = pty_system.openpty(PtySize {
@@ -308,7 +352,7 @@ impl TerminalService {
         }
 
         // Launch the actual shell
-        let shell_cmd = if is_cmd { "cmd.exe".to_string() } else { "powershell.exe".to_string() };
+        let shell_cmd = if effective_type == "cmd" { "cmd.exe".to_string() } else { "powershell.exe".to_string() };
         let tid = terminal_id.clone();
         let instances = self.instances.clone();
 
@@ -343,6 +387,11 @@ impl TerminalService {
                             {
                                 let mut buffer = buf_clone.lock().unwrap();
                                 buffer.push(output.clone());
+                                if buffer.len() > 1000 {
+                                    let start = buffer.len() - 500;
+                                    let kept: Vec<String> = buffer.splice(start.., []).collect();
+                                    *buffer = kept;
+                                }
                             }
                             let _ = app_clone.emit(&format!("terminal_output_{}", tid), output);
                         }

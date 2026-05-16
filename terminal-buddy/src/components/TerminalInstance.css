@@ -8,10 +8,13 @@
 
 .terminal-instance .xterm {
   height: 100%;
+  overflow: hidden !important;
+  overscroll-behavior: none;
 }
 
 .terminal-instance .xterm-viewport {
   overflow-y: scroll !important;
+  overflow-x: hidden !important;
 }
 
 /* xterm viewport scrollbar */
@@ -136,7 +139,8 @@
   border: 1px solid var(--border, #3c3c3c);
   border-radius: 4px;
   padding: 4px 0;
-  min-width: 200px;
+  width: max-content;
+  min-width: 120px;
   max-width: 400px;
   max-height: 240px;
   overflow-y: auto;
@@ -167,7 +171,7 @@
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
   white-space: nowrap;
   flex-shrink: 0;
-  min-width: 120px;
+  min-width: 80px;
 }
 
 .autocomplete-desc {

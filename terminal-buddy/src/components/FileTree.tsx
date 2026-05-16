@@ -10,13 +10,19 @@ interface TreeNodeProps {
   onSelect: (path: string) => void;
   onNavigate: (path: string) => void;
   onContextMenu: (e: React.MouseEvent, path: string, isDir: boolean) => void;
+  onRename: (path: string, newName: string) => Promise<void>;
+  renamingPath: string | null;
+  setRenamingPath: (path: string | null) => void;
 }
 
-const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNavigate, onContextMenu }) => {
+const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNavigate, onContextMenu, onRename, renamingPath, setRenamingPath }) => {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
   const itemRef = useRef<HTMLDivElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
 
   const isSelected = selectedPath === node.path;
 
@@ -30,7 +36,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
     if (!node.is_directory) return;
     if (!expanded) {
       setLoading(true);
-      listDirectory(node.path).then((entries) => {
+      listDirectory(node.path, exclusionPatterns).then((entries) => {
         setChildren(entries);
         setLoading(false);
       }).catch((err) => {
@@ -39,7 +45,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
       });
     }
     setExpanded(!expanded);
-  }, [node.path, node.is_directory, expanded]);
+  }, [node.path, node.is_directory, expanded, exclusionPatterns]);
 
   const handleDoubleClick = useCallback(async () => {
     if (node.is_directory) {
@@ -55,7 +61,36 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
       e.stopPropagation();
       navigator.clipboard.writeText(node.path).catch(() => {});
     }
-  }, [node.path]);
+    if (e.key === 'F2' && isSelected) {
+      e.preventDefault();
+      e.stopPropagation();
+      setRenameValue(node.name);
+      setRenamingPath(node.path);
+      setTimeout(() => renameInputRef.current?.select(), 0);
+    }
+  }, [node.path, node.name, isSelected, setRenamingPath]);
+
+  const isRenaming = renamingPath === node.path;
+
+  const finishRename = useCallback(() => {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== node.name) {
+      onRename(node.path, trimmed);
+    }
+    setRenamingPath(null);
+  }, [renameValue, node.path, node.name, onRename, setRenamingPath]);
+
+  const cancelRename = useCallback(() => {
+    setRenamingPath(null);
+  }, [setRenamingPath]);
+
+  // Auto-focus when entering rename mode
+  useEffect(() => {
+    if (isRenaming && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [isRenaming]);
 
   return (
     <div className="tree-node">
@@ -82,7 +117,22 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
         <span className="tree-icon">
           {node.is_directory ? '📁' : '📄'}
         </span>
-        <span className="tree-name">{node.name}</span>
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            className="tree-rename-input"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={finishRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); finishRename(); }
+              if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className="tree-name">{node.name}</span>
+        )}
       </div>
       {loading && (
         <div className="tree-loading" style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
@@ -100,6 +150,9 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
               onSelect={onSelect}
               onNavigate={onNavigate}
               onContextMenu={onContextMenu}
+              onRename={onRename}
+              renamingPath={renamingPath}
+              setRenamingPath={setRenamingPath}
             />
           ))}
         </div>
@@ -109,7 +162,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
 };
 
 export const FileTree: FC = () => {
-  const { currentDirectory, setCurrentDirectory, fileTreeVisible, bookmarks, addBookmark, removeBookmark } = useAppStore();
+  const { currentDirectory, setCurrentDirectory, fileTreeVisible, bookmarks, addBookmark, removeBookmark, exclusionPatterns } = useAppStore();
   const [rootNodes, setRootNodes] = useState<FileNode[]>([]);
   const [width, setWidth] = useState(250);
   const [isResizing, setIsResizing] = useState(false);
@@ -117,9 +170,11 @@ export const FileTree: FC = () => {
   const [editValue, setEditValue] = useState('');
   const [pathError, setPathError] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [bookmarksExpanded, setBookmarksExpanded] = useState(true);
+  const [confirmBookmarkDelete, setConfirmBookmarkDelete] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -129,7 +184,7 @@ export const FileTree: FC = () => {
     const loadRoot = async () => {
       try {
         const defaultPath = 'C:\\';
-        const entries = await listDirectory(defaultPath);
+        const entries = await listDirectory(defaultPath, exclusionPatterns);
         setRootNodes(entries);
         if (!currentDirectory) {
           setCurrentDirectory(defaultPath);
@@ -147,7 +202,7 @@ export const FileTree: FC = () => {
 
     const loadDirectory = async () => {
       try {
-        const entries = await listDirectory(currentDirectory);
+        const entries = await listDirectory(currentDirectory, exclusionPatterns);
         setRootNodes(entries);
         setPathError(false);
       } catch (err) {
@@ -210,7 +265,7 @@ export const FileTree: FC = () => {
   const handleRefresh = async () => {
     if (!currentDirectory) return;
     try {
-      const entries = await listDirectory(currentDirectory);
+      const entries = await listDirectory(currentDirectory, exclusionPatterns);
       setRootNodes(entries);
     } catch (err) {
       console.error('Failed to refresh:', err);
@@ -243,7 +298,7 @@ export const FileTree: FC = () => {
     if (!normalizedPath.endsWith('\\')) {
       normalizedPath += '\\';
     }
-    listDirectory(normalizedPath).then(() => {
+    listDirectory(normalizedPath, exclusionPatterns).then(() => {
       setPathError(false);
       setCurrentDirectory(normalizedPath);
       setIsEditing(false);
@@ -269,13 +324,13 @@ export const FileTree: FC = () => {
   }, []);
 
   const handleShowInExplorer = useCallback(async () => {
-    if (!ctxMenu) return;
+    if (!ctxMenu?.path) return;
     try { await openInExplorer(ctxMenu.path); } catch (err) { console.error(err); }
     setCtxMenu(null);
   }, [ctxMenu]);
 
   const handleCdToDir = useCallback(async () => {
-    if (!ctxMenu) return;
+    if (!ctxMenu?.path) return;
     const { activeSessionId } = useAppStore.getState();
     if (activeSessionId) {
       try {
@@ -295,43 +350,51 @@ export const FileTree: FC = () => {
     if (!confirmDelete) return;
     try {
       await deletePath(confirmDelete);
-      const entries = await listDirectory(currentDirectory);
+      const entries = await listDirectory(currentDirectory, exclusionPatterns);
       setRootNodes(entries);
     } catch (err) {
       console.error(err);
       alert('删除失败: ' + String(err));
     }
     setConfirmDelete(null);
-  }, [confirmDelete, currentDirectory]);
+  }, [confirmDelete, currentDirectory, exclusionPatterns]);
 
   const cancelDeleteItem = useCallback(() => {
     setConfirmDelete(null);
   }, []);
 
   const handleRenameItem = useCallback(async () => {
-    if (!ctxMenu) return;
-    const newName = window.prompt('请输入新名称:', ctxMenu.path.split('\\').pop() || '');
-    if (!newName) { setCtxMenu(null); return; }
+    if (!ctxMenu?.path) return;
+    setCtxMenu(null);
+    setRenamingPath(ctxMenu.path);
+  }, [ctxMenu]);
+
+  const handleRenameInline = useCallback(async (path: string, newName: string) => {
     try {
-      await renamePath(ctxMenu.path, newName);
-      const entries = await listDirectory(currentDirectory);
+      await renamePath(path, newName);
+      const entries = await listDirectory(currentDirectory, exclusionPatterns);
       setRootNodes(entries);
-      // Update selection to new path
-      const parent = ctxMenu.path.substring(0, ctxMenu.path.lastIndexOf('\\'));
+      const parent = path.substring(0, path.lastIndexOf('\\'));
       setSelectedPath(parent + '\\' + newName);
     } catch (err) {
       console.error(err);
       alert('重命名失败: ' + String(err));
     }
-    setCtxMenu(null);
-  }, [ctxMenu, currentDirectory]);
+    setRenamingPath(null);
+  }, [currentDirectory, exclusionPatterns]);
 
-  // Close context menu on outside click
+  // Close context menu on outside click, keydown, or scroll
   useEffect(() => {
     if (!ctxMenu) return;
     const close = () => setCtxMenu(null);
     document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
+    document.addEventListener('keydown', close);
+    document.addEventListener('wheel', close);
+    return () => {
+      document.removeEventListener('click', close);
+      document.removeEventListener('keydown', close);
+      document.removeEventListener('wheel', close);
+    };
   }, [ctxMenu]);
 
   return (
@@ -352,9 +415,7 @@ export const FileTree: FC = () => {
               onClick={() => setCurrentDirectory(bm.path)}
               onContextMenu={(e) => {
                 e.preventDefault();
-                if (confirm(`删除书签"${bm.name}"？`)) {
-                  removeBookmark(bm.path);
-                }
+                setConfirmBookmarkDelete(bm.path);
               }}
               title={bm.path}
             >
@@ -364,8 +425,8 @@ export const FileTree: FC = () => {
           ))}
         </div>
       )}
-      <div className="file-tree-header">
-        <span className="file-tree-title">文件导航</span>
+      <div className="panel-titlebar">
+        <span className="panel-title">文件导航</span>
         <div className="file-tree-actions">
           <button onClick={handleGoUp} title="上级目录">⬆</button>
           <button onClick={handleRefresh} title="刷新">↻</button>
@@ -389,7 +450,15 @@ export const FileTree: FC = () => {
         )}
         {pathError && <span className="path-error">路径不存在</span>}
       </div>
-      <div className="file-tree-content">
+      <div
+        className="file-tree-content"
+        onContextMenu={(e) => {
+          const target = e.target as HTMLElement;
+          if (target.closest('.tree-item')) return;
+          e.preventDefault();
+          setCtxMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
         {rootNodes.map((node) => (
           <TreeNode
             key={node.path}
@@ -399,6 +468,9 @@ export const FileTree: FC = () => {
             onSelect={handleSelect}
             onNavigate={handleNavigate}
             onContextMenu={handleContextMenu}
+            onRename={handleRenameInline}
+            renamingPath={renamingPath}
+            setRenamingPath={setRenamingPath}
           />
         ))}
       </div>
@@ -413,29 +485,40 @@ export const FileTree: FC = () => {
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="context-menu-item" onClick={handleShowInExplorer}>
-            在文件资源管理器中显示
+          <div className="context-menu-item" onClick={() => { setCtxMenu(null); handleRefresh(); }}>
+            刷新
           </div>
-          {ctxMenu.isDir && (
-            <div className="context-menu-item" onClick={handleCdToDir}>
-              cd 到当前目录
-            </div>
+          <div className="context-menu-item" onClick={() => { setCtxMenu(null); handleGoUp(); }}>
+            上一级目录
+          </div>
+          {ctxMenu.path && (
+            <>
+              <div className="context-menu-separator" />
+              <div className="context-menu-item" onClick={handleShowInExplorer}>
+                在文件资源管理器中显示
+              </div>
+              {ctxMenu.isDir && (
+                <div className="context-menu-item" onClick={handleCdToDir}>
+                  cd 到当前目录
+                </div>
+              )}
+              {ctxMenu.isDir && (
+                <div className="context-menu-item" onClick={() => {
+                  const name = ctxMenu.path!.split('\\').pop() || ctxMenu.path!;
+                  addBookmark(name, ctxMenu.path!);
+                  setCtxMenu(null);
+                }}>
+                  添加到书签
+                </div>
+              )}
+              <div className="context-menu-item" onClick={handleRenameItem}>
+                重命名
+              </div>
+              <div className="context-menu-item danger" onClick={handleDeleteItem}>
+                删除
+              </div>
+            </>
           )}
-          {ctxMenu.isDir && (
-            <div className="context-menu-item" onClick={() => {
-              const name = ctxMenu.path.split('\\').pop() || ctxMenu.path;
-              addBookmark(name, ctxMenu.path);
-              setCtxMenu(null);
-            }}>
-              添加到书签
-            </div>
-          )}
-          <div className="context-menu-item" onClick={handleRenameItem}>
-            重命名
-          </div>
-          <div className="context-menu-item danger" onClick={handleDeleteItem}>
-            删除
-          </div>
         </div>
       )}
 
@@ -451,6 +534,21 @@ export const FileTree: FC = () => {
               <button className="btn-danger" onClick={confirmDeleteItem}>
                 删除
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmBookmarkDelete && (
+        <div className="confirm-dialog-overlay" onClick={() => setConfirmBookmarkDelete(null)}>
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-dialog-title">确认删除</div>
+            <div className="confirm-dialog-message">确定删除此书签吗？</div>
+            <div className="confirm-dialog-buttons">
+              <button className="btn-secondary" onClick={() => setConfirmBookmarkDelete(null)}>取消</button>
+              <button className="btn-danger" onClick={() => {
+                removeBookmark(confirmBookmarkDelete);
+                setConfirmBookmarkDelete(null);
+              }}>删除</button>
             </div>
           </div>
         </div>

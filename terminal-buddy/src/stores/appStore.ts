@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Profile, TerminalSession, CustomTheme, TabGroup, SplitNode } from '../types';
-import { getAppSettings } from '../components/SettingsDialog';
+import { getAppSettings } from '../utils/settings';
 
 interface SavedTab {
   profileId: string;
@@ -67,6 +67,15 @@ interface AppState {
   setConfigSearchQuery: (query: string) => void;
   setConfigSortBy: (sortBy: AppState['configSortBy']) => void;
 
+  // Settings tab
+  settingsTabOpen: boolean;
+  openSettingsTab: () => void;
+  closeSettingsTab: () => void;
+
+  // File exclusion patterns
+  exclusionPatterns: string[];
+  setExclusionPatterns: (patterns: string[]) => void;
+
   // Directory bookmarks
   bookmarks: { name: string; path: string }[];
   addBookmark: (name: string, path: string) => void;
@@ -109,6 +118,7 @@ interface AppState {
   addSession: (session: TerminalSession) => void;
   removeSession: (id: string) => void;
   setActiveSession: (id: string | null) => void;
+  setSessions: (sessions: TerminalSession[]) => void;
   renameSession: (id: string, name: string) => void;
   updateSession: (id: string, updates: Partial<TerminalSession>) => void;
   sessionDirectories: Record<string, string>;
@@ -141,6 +151,13 @@ export const useAppStore = create<AppState>((set) => ({
   configSortBy: 'name-asc',
   setConfigSearchQuery: (query) => set({ configSearchQuery: query }),
   setConfigSortBy: (sortBy) => set({ configSortBy: sortBy }),
+
+  settingsTabOpen: false,
+  openSettingsTab: () => set({ settingsTabOpen: true }),
+  closeSettingsTab: () => set({ settingsTabOpen: false }),
+
+  exclusionPatterns: ['node_modules', '.git'],
+  setExclusionPatterns: (patterns) => set({ exclusionPatterns: patterns }),
 
   // Directory bookmarks
   bookmarks: (() => {
@@ -271,7 +288,7 @@ export const useAppStore = create<AppState>((set) => ({
       const s = { ...session, groupId: session.groupId || 'default' };
       const sessions = [...state.sessions, s];
       saveTabsToStorage(sessions, s.id);
-      return { sessions, activeSessionId: s.id };
+      return { sessions, activeSessionId: s.id, settingsTabOpen: false };
     }),
   removeSession: (id) =>
     set((state) => {
@@ -283,10 +300,15 @@ export const useAppStore = create<AppState>((set) => ({
       saveTabsToStorage(sessions, activeSessionId);
       return { sessions, activeSessionId };
     }),
+  setSessions: (sessions) => {
+    const activeSessionId = sessions[0]?.id ?? null;
+    saveTabsToStorage(sessions, activeSessionId);
+    set({ sessions, activeSessionId });
+  },
   setActiveSession: (id) => set((state) => {
     const currentDirectory = (id && state.sessionDirectories[id]) ? state.sessionDirectories[id] : state.currentDirectory;
     saveTabsToStorage(state.sessions, id);
-    return { activeSessionId: id, currentDirectory };
+    return { activeSessionId: id, currentDirectory, settingsTabOpen: false };
   }),
   renameSession: (id, name) =>
     set((state) => ({

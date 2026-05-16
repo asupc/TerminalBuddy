@@ -7,21 +7,31 @@ pub enum CloseBehavior {
     Tray,
 }
 
+fn default_close_behavior() -> CloseBehavior {
+    CloseBehavior::Exit
+}
+
+fn default_tab_sidebar_width() -> u32 {
+    200
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     #[serde(default = "default_close_behavior")]
     pub close_behavior: CloseBehavior,
-}
-
-fn default_close_behavior() -> CloseBehavior {
-    CloseBehavior::Exit
+    #[serde(default)]
+    pub data_path: Option<String>,
+    #[serde(default = "default_tab_sidebar_width")]
+    pub tab_sidebar_width: u32,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             close_behavior: CloseBehavior::Exit,
+            data_path: None,
+            tab_sidebar_width: 200,
         }
     }
 }
