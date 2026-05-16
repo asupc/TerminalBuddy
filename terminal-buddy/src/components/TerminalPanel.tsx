@@ -1,14 +1,17 @@
 import { FC } from 'react';
 import { TerminalInstance } from './TerminalInstance';
 import { SplitPane } from './SplitPane';
+import { TerminalTabBar } from './TerminalTabBar';
 import { SettingsPage } from './SettingsPage';
 import { useAppStore } from '../stores/appStore';
 import { writeToTerminal } from '../services/tauri';
+import { getAppSettings } from '../utils/settings';
 import './TerminalPanel.css';
 
 export const TerminalPanel: FC = () => {
   const { sessions, activeSessionId, setActiveSession,
           groups, groupLayouts, settingsTabOpen, closeSettingsTab } = useAppStore();
+  const settings = getAppSettings();
 
   const handleTerminalInput = async (sessionId: string, data: string) => {
     try {
@@ -24,6 +27,9 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
+      {!settings.enableTabNavigation && sessions.length > 0 && (
+        <TerminalTabBar />
+      )}
       <div className="terminal-content">
         {settingsTabOpen ? (
           <SettingsPage onClose={closeSettingsTab} />

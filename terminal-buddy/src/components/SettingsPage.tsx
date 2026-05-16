@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile } from '../services/tauri';
+import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { PRESET_THEMES, type CustomTheme, type Profile } from '../types';
 import { ConfigEditDialog } from './ConfigEditDialog';
@@ -85,6 +85,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       setSettings(prev => ({
         ...prev,
         closeBehavior: backend.closeBehavior,
+        enableTabNavigation: backend.enableTabNavigation,
       }));
     }).catch(() => {});
     getDataPath().then(setDataPath).catch(() => {});
@@ -303,6 +304,21 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   <span>关闭窗口时最小化到系统托盘</span>
                 </label>
                 <p className="settings-desc">关闭窗口时应用将隐藏到系统托盘，双击托盘图标或右键选择"打开窗口"可重新显示</p>
+              </div>
+              <div className="settings-section">
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.enableTabNavigation}
+                    onChange={(e) => {
+                      const value = e.target.checked;
+                      updateSetting('enableTabNavigation', value);
+                      saveEnableTabNavigation(value).catch(console.error);
+                    }}
+                  />
+                  <span>开启标签导航</span>
+                </label>
+                <p className="settings-desc">开启后在左侧显示标签导航面板，关闭后标签将以选项卡形式显示在终端上方</p>
               </div>
               <div className="settings-section">
                 <label className="settings-label">主题</label>

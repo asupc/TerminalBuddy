@@ -8,12 +8,14 @@ interface ConfigPanelProps {
   onStartTerminal: (profile: Profile) => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
+  onAddProfile: () => void;
 }
 
 export const ConfigPanel: FC<ConfigPanelProps> = ({
   onStartTerminal,
   onEditProfile,
   onCopyProfile,
+  onAddProfile,
 }) => {
   const { profiles, selectedProfileId, selectProfile, removeProfile, setProfiles, configPanelVisible, configSearchQuery, configSortBy, setConfigSearchQuery, setConfigSortBy } = useAppStore();
   const [width, setWidth] = useState(250);
@@ -32,6 +34,10 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
     x: number;
     y: number;
     group: string;
+  } | null>(null);
+  const [blankContextMenu, setBlankContextMenu] = useState<{
+    x: number;
+    y: number;
   } | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [newGroupName, setNewGroupName] = useState('');
@@ -89,11 +95,12 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   const closeContextMenu = () => {
     setContextMenu(null);
     setGroupContextMenu(null);
+    setBlankContextMenu(null);
     setSortDropdownOpen(false);
   };
 
   useEffect(() => {
-    if (!contextMenu && !groupContextMenu) return;
+    if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
     const close = () => closeContextMenu();
     const handleClick = (e: MouseEvent) => {
       if ((e.target as HTMLElement).closest('.context-menu')) return;
@@ -109,7 +116,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       document.removeEventListener('keydown', handleKey);
       document.removeEventListener('wheel', handleWheel);
     };
-  }, [contextMenu, groupContextMenu]);
+  }, [contextMenu, groupContextMenu, blankContextMenu]);
 
   const handleDeleteProfile = async (profileId: string) => {
     setConfirmDelete(profileId);
@@ -248,7 +255,11 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
           )}
         </div>
       </div>
-      <div className="config-list">
+      <div className="config-list" onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest('.config-item') || (e.target as HTMLElement).closest('.group-header')) return;
+        e.preventDefault();
+        setBlankContextMenu({ x: e.clientX, y: e.clientY });
+      }}>
         {Object.entries(groupedProfiles).sort(([a], [b]) => a.localeCompare(b, 'zh')).map(([group, groupProfiles]) => (
           <div key={group} className="config-group">
             <div
@@ -358,6 +369,23 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
             onClick={() => handleStartRename(groupContextMenu.group)}
           >
             重命名分组
+          </div>
+        </div>
+      )}
+
+      {blankContextMenu && (
+        <div
+          className="context-menu"
+          style={{ left: blankContextMenu.x, top: blankContextMenu.y }}
+        >
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              onAddProfile();
+              closeContextMenu();
+            }}
+          >
+            添加连接
           </div>
         </div>
       )}

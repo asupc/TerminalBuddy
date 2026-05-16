@@ -5,6 +5,7 @@ export interface AppSettings {
   configPanelAutoExpand: boolean;
   fileTreeAutoExpand: boolean;
   closeBehavior: 'exit' | 'tray';
+  enableTabNavigation: boolean;
 }
 
 const THEME_STORAGE_KEY = 'terminalbuddy_theme';
@@ -15,6 +16,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   configPanelAutoExpand: true,
   fileTreeAutoExpand: true,
   closeBehavior: 'exit',
+  enableTabNavigation: true,
 };
 
 export const getAppSettings = (): AppSettings => {

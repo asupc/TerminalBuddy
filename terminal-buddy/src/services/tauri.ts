@@ -148,6 +148,7 @@ export async function getBackendAppSettings(): Promise<{
   closeBehavior: 'exit' | 'tray';
   dataPath: string | null;
   tabSidebarWidth: number;
+  enableTabNavigation: boolean;
 }> {
   return invoke('get_app_settings');
 }
@@ -166,6 +167,10 @@ export async function setDataPath(newPath: string): Promise<void> {
 
 export async function saveTabSidebarWidth(width: number): Promise<void> {
   return invoke('save_tab_sidebar_width', { width });
+}
+
+export async function saveEnableTabNavigation(enabled: boolean): Promise<void> {
+  return invoke('save_enable_tab_navigation', { enabled });
 }
 
 // Clipboard Commands

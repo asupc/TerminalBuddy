@@ -35,6 +35,7 @@ function App() {
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
+  const [, setTabNavVersion] = useState(0);
   const closeConfirmedRef = useRef(false);
   const floatPosRef = useRef(getSavedFloatPos());
   const [floatPos, setFloatPos] = useState(floatPosRef.current);
@@ -76,6 +77,12 @@ function App() {
       restoreTabs();
     }
     migrateLocalStorageHistory().then(() => loadCommandHistory());
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setTabNavVersion(v => v + 1);
+    window.addEventListener('tab-navigation-changed', handler);
+    return () => window.removeEventListener('tab-navigation-changed', handler);
   }, []);
 
   useEffect(() => {
@@ -239,13 +246,19 @@ function App() {
           onStartTerminal={handleStartTerminal}
           onEditProfile={handleEditProfile}
           onCopyProfile={handleCopyProfile}
+          onAddProfile={() => {
+            setEditingProfile(null);
+            setShowEditDialog(true);
+          }}
         />
         <FileTree />
-        <TabSidebar
-          profiles={profiles}
-          onStartTerminal={handleStartTerminal}
-          onStartBlankTerminal={handleStartBlankTerminal}
-        />
+        {getAppSettings().enableTabNavigation && (
+          <TabSidebar
+            profiles={profiles}
+            onStartTerminal={handleStartTerminal}
+            onStartBlankTerminal={handleStartBlankTerminal}
+          />
+        )}
         <TerminalPanel />
       </div>
       {showEditDialog && (

@@ -53,6 +53,13 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn save_enable_tab_navigation(enabled: bool) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.enable_tab_navigation = enabled;
+    SettingsService::save_settings(&settings)
+}
+
+#[tauri::command]
 pub fn save_tab_sidebar_width(width: u32) -> Result<(), String> {
     let mut settings = SettingsService::get_settings();
     settings.tab_sidebar_width = width.clamp(150, 400);

@@ -1,7 +1,8 @@
 import { FC, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings } from '../services/tauri';
+import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
+import { getAppSettings, saveAppSettings } from '../utils/settings';
 import type { Profile } from '../types';
 import './TabSidebar.css';
 
@@ -334,6 +335,14 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
             <div className="context-menu-item danger" onClick={handleCloseAllTabs}>
               关闭所有标签
             </div>
+            <div className="context-menu-separator" />
+            <div className="context-menu-item" onClick={() => {
+              setShowContextMenu(false);
+              const s = getAppSettings();
+              saveAppSettings({ ...s, enableTabNavigation: false });
+              saveEnableTabNavigation(false).catch(() => {});
+              window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
+            }}>禁用标签导航</div>
           </div>
         </>
       )}
