@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TitleBar } from './components/TitleBar';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -14,22 +14,6 @@ import { loadCommandHistory, migrateLocalStorageHistory, initPersistedTemplates 
 import type { Profile } from './types';
 import { PRESET_THEMES } from './types';
 
-const FLOAT_POS_KEY = 'terminalbuddy_float_pos';
-
-function getSavedFloatPos(): { x: number; y: number } {
-  try {
-    const raw = localStorage.getItem(FLOAT_POS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { x: 8, y: window.innerHeight / 2 - 36 };
-}
-
-function saveFloatPos(pos: { x: number; y: number }) {
-  try {
-    localStorage.setItem(FLOAT_POS_KEY, JSON.stringify(pos));
-  } catch {}
-}
-
 function App() {
   const { setProfiles, addSession, configPanelVisible, fileTreeVisible, toggleConfigPanel, toggleFileTree, openSettingsTab, profiles } = useAppStore();
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -37,37 +21,6 @@ function App() {
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
   const [, setTabNavVersion] = useState(0);
   const closeConfirmedRef = useRef(false);
-  const floatPosRef = useRef(getSavedFloatPos());
-  const [floatPos, setFloatPos] = useState(floatPosRef.current);
-  const floatStart = useRef({ x: 0, y: 0 });
-  const floatOrigin = useRef({ x: 0, y: 0 });
-
-  const handleFloatMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    floatStart.current = { x: e.clientX, y: e.clientY };
-    floatOrigin.current = { x: floatPosRef.current.x, y: floatPosRef.current.y };
-
-    const handleMouseMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - floatStart.current.x;
-      const dy = ev.clientY - floatStart.current.y;
-      if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
-      const next = {
-        x: Math.max(0, Math.min(window.innerWidth - 40, floatOrigin.current.x + dx)),
-        y: Math.max(0, Math.min(window.innerHeight - 80, floatOrigin.current.y + dy)),
-      };
-      floatPosRef.current = next;
-      setFloatPos(next);
-    };
-
-    const handleMouseUp = () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      saveFloatPos(floatPosRef.current);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, []);
 
   useEffect(() => {
     applyTheme(getStoredTheme());
@@ -222,28 +175,14 @@ function App() {
 
   return (
     <div className="app-container">
-      <TitleBar onSettings={handleSettings} />
+      <TitleBar
+        onSettings={handleSettings}
+        configPanelVisible={configPanelVisible}
+        fileTreeVisible={fileTreeVisible}
+        onToggleConfigPanel={toggleConfigPanel}
+        onToggleFileTree={toggleFileTree}
+      />
       <div className="main-content">
-        <div
-          className="floating-buttons"
-          style={{ left: floatPos.x, top: floatPos.y, transform: 'none' }}
-          onMouseDown={handleFloatMouseDown}
-        >
-          <button
-            className={`float-btn ${configPanelVisible ? 'active' : ''}`}
-            onClick={toggleConfigPanel}
-            title={configPanelVisible ? '隐藏连接导航' : '显示连接导航'}
-          >
-            ☰
-          </button>
-          <button
-            className={`float-btn ${fileTreeVisible ? 'active' : ''}`}
-            onClick={toggleFileTree}
-            title={fileTreeVisible ? '隐藏文件导航' : '显示文件导航'}
-          >
-            📁
-          </button>
-        </div>
         <ConfigPanel
           onStartTerminal={handleStartTerminal}
           onEditProfile={handleEditProfile}

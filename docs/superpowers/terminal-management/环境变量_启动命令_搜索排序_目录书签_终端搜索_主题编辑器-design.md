@@ -1,10 +1,14 @@
 # TerminalBuddy 体验完善功能设计
 
+> **文档状态**：部分功能已实现，标注各功能当前状态。
+
 ## 概述
 
 为 TerminalBuddy 添加 7 个体验完善功能，补全已有数据模型的 UI、增强配置管理效率、改善终端交互体验。
 
-## 功能 1：环境变量 UI
+---
+
+## 功能 1：环境变量 UI ✅ 已实现
 
 ### 现状
 Profile 数据模型已有 `environmentVariables: HashMap<String, String>`，后端启动 PTY 时已将环境变量传入 `CommandBuilder`，但前端 `ConfigEditDialog` 完全没有暴露此字段的编辑界面。
@@ -16,13 +20,16 @@ Profile 数据模型已有 `environmentVariables: HashMap<String, String>`，后
 - 键名输入框带常见变量名提示（PATH、HOME、NODE_ENV、JAVA_HOME 等自动补全）
 - 界面风格与现有表单保持一致
 
+### 实现状态
+**已完成**。`ConfigEditDialog.tsx` 中已实现环境变量 Key-Value 编辑区，支持添加/删除/折叠。
+
 ### 影响范围
 - 前端：`ConfigEditDialog.tsx` / `ConfigEditDialog.css` — 添加环境变量编辑区
 - 后端：无需修改（已支持）
 
 ---
 
-## 功能 2：多条启动命令 UI
+## 功能 2：多条启动命令 UI ✅ 已实现
 
 ### 现状
 数据模型支持 `startupCommands: Vec<String>` 数组，但前端只提供单行文本框，且只存一条命令。
@@ -34,13 +41,16 @@ Profile 数据模型已有 `environmentVariables: HashMap<String, String>`，后
 - 命令执行顺序为列表顺序（从上到下），后端按序发送
 - 现有单条命令自动迁移：读取配置时，若 `startupCommands` 只有一项且与旧字段值相同，直接显示为列表；保存时始终以数组形式写入
 
+### 实现状态
+**已完成**。`ConfigEditDialog.tsx` 中已实现多条启动命令编辑，每行独立，支持添加/删除。
+
 ### 影响范围
 - 前端：`ConfigEditDialog.tsx` / `ConfigEditDialog.css` — 改造启动命令编辑区
 - 后端：无需修改（已支持 Vec<String>）
 
 ---
 
-## 功能 3：配置文件搜索/排序
+## 功能 3：配置文件搜索/排序 ✅ 已实现
 
 ### 现状
 配置面板只按 `group` 字段分组展示，配置多时查找不便，没有排序选项。
@@ -54,13 +64,16 @@ Profile 数据模型已有 `environmentVariables: HashMap<String, String>`，后
 - 排序仅影响组内顺序，不跨组重排
 - 搜索和排序状态不持久化（每次打开面板恢复默认）
 
+### 实现状态
+**已完成**。`ConfigPanel.tsx` 和 `appStore.ts` 中已实现搜索和排序功能，支持按名称/最近使用/创建时间排序。
+
 ### 影响范围
 - 前端：`ConfigPanel.tsx` / `ConfigPanel.css` — 添加搜索框和排序控件
 - 前端：`appStore.ts` — 添加搜索关键词和排序方式状态
 
 ---
 
-## 功能 4：目录书签
+## 功能 4：目录书签 ✅ 已实现
 
 ### 现状
 FileTree 只能从根路径逐层展开导航，切换常用目录效率低。
@@ -74,13 +87,16 @@ FileTree 只能从根路径逐层展开导航，切换常用目录效率低。
 - 书签栏可通过按钮收起/展开
 - 默认内置常见书签：用户主目录、桌面、文档
 
+### 实现状态
+**已完成**。`appStore.ts` 中实现了书签状态管理（addBookmark/removeBookmark/renameBookmark），数据持久化到 localStorage，默认 3 个书签（主目录、桌面、文档）。
+
 ### 影响范围
 - 前端：`FileTree.tsx` / `FileTree.css` — 添加书签栏 UI
 - 前端：`appStore.ts` — 添加书签状态管理
 
 ---
 
-## 功能 5：终端内搜索
+## 功能 5：终端内搜索 ✅ 已实现
 
 ### 现状
 终端输出大量内容后，无法快速定位关键信息。
@@ -93,6 +109,9 @@ FileTree 只能从根路径逐层展开导航，切换常用目录效率低。
 - **大小写切换**：搜索栏提供大小写敏感开关按钮
 - 每个终端实例独立搜索状态
 
+### 实现状态
+**已完成**。`TerminalInstance.tsx` 中集成了 `SearchAddon`，Ctrl+F 打开搜索栏，支持大小写切换、上/下导航、Enter/Esc 快捷键。
+
 ### 影响范围
 - 前端：`TerminalInstance.tsx` / `TerminalInstance.css` — 集成 SearchAddon，添加搜索栏 UI
 - 依赖：`xterm-addon-search` npm 包
@@ -100,7 +119,7 @@ FileTree 只能从根路径逐层展开导航，切换常用目录效率低。
 
 ---
 
-## 功能 6：自定义主题编辑器
+## 功能 6：自定义主题编辑器 ✅ 已实现
 
 ### 现状
 只有 8 个预设主题，用户无法自定义颜色。`ColorTheme` 类型仅 `{ id, name, background, foreground }`。
@@ -117,6 +136,9 @@ FileTree 只能从根路径逐层展开导航，切换常用目录效率低。
 - 预设主题不可编辑，但可基于预设"另存为新主题"
 - 删除自定义主题时需确认，正在使用的配置文件自动回退到默认主题
 
+### 实现状态
+**已完成**。`SettingsPage.tsx` 中实现了完整的主题管理分区：8 个预设 + 自定义主题 CRUD，11 色编辑器（背景/前景/光标 + ANSI 8 色），实时预览。后端 `ThemeService` 实现 CRUD，主题存储为 JSON 文件。
+
 ### UI 状态行为
 
 | UI 元素 | 预设主题 | 自定义主题 |
@@ -129,14 +151,14 @@ FileTree 只能从根路径逐层展开导航，切换常用目录效率低。
 | 导入 | 可见（全局） | 可见（全局） |
 
 ### 影响范围
-- 后端：新增 Theme CRUD 命令 + Theme Service + Theme Model
-- 前端：`SettingsDialog` 扩展为标签页、新增 `ThemeEditor` 组件
-- 前端：`types/index.ts` 扩展 `ColorTheme` 类型（增加 ANSI 颜色字段）
-- 前端：`appStore.ts` 增加自定义主题状态
+- 后端：新增 Theme CRUD 命令 + Theme Service + Theme Model ✅
+- 前端：`SettingsDialog` 扩展为标签页、新增 `ThemeEditor` 组件 ✅
+- 前端：`types/index.ts` 扩展 `ColorTheme` 类型（增加 ANSI 颜色字段） ✅
+- 前端：`appStore.ts` 增加自定义主题状态 ✅
 
 ---
 
-## 功能 7：URL 可点击打开
+## 功能 7：URL 可点击打开 ✅ 已实现
 
 ### 现状
 `TerminalInstance.tsx` 已集成 xterm.js 的 `WebLinksAddon`，可检测终端输出中的 URL 并高亮，但点击行为未配置 Ctrl+click 修饰键，且打开 URL 的方式可能不符合预期。
@@ -148,22 +170,25 @@ FileTree 只能从根路径逐层展开导航，切换常用目录效率低。
 - **URL 识别范围**：http://、https://、ftp:// 开头的完整 URL，与 Windows Terminal 行为一致
 - **防止误触**：仅 Ctrl+click 触发，普通点击不打开（避免干扰终端文本选择）
 
+### 实现状态
+**已完成**。`TerminalInstance.tsx` 中 `WebLinksAddon` 已配置 Ctrl+Click 打开 URL，通过 `openPath` 命令在默认浏览器中打开。
+
 ### 影响范围
 - 前端：`TerminalInstance.tsx` / `TerminalInstance.css` — 配置 WebLinksAddon 的 linkHandler 和 Ctrl 键检测，添加悬停光标样式
 - 后端：无需修改（已有 `open_path` 命令）
 
 ---
 
-## 实现优先级
+## 实现状态总结
 
-1. **环境变量 UI** — 数据模型已就绪，纯前端改动，风险最低
-2. **多条启动命令 UI** — 数据模型已就绪，纯前端改动，风险最低
-3. **URL 可点击打开** — WebLinksAddon 已集成，改动极小
-4. **配置文件搜索/排序** — 纯前端改动，独立性强
-5. **终端内搜索** — 仅需引入 xterm-addon-search，影响范围小
-6. **目录书签** — 纯前端改动，数据存 localStorage
-7. **自定义主题编辑器** — 需前后端同时改动，复杂度最高，放最后
+| # | 功能 | 状态 | 备注 |
+|---|------|------|------|
+| 1 | 环境变量 UI | ✅ 已实现 | ConfigEditDialog 中支持 Key-Value 编辑 |
+| 2 | 多条启动命令 UI | ✅ 已实现 | 支持多条命令添加/删除 |
+| 3 | 配置文件搜索/排序 | ✅ 已实现 | 支持名称/最近使用/创建时间排序 |
+| 4 | 目录书签 | ✅ 已实现 | localStorage 持久化，3 个默认书签 |
+| 5 | 终端内搜索 | ✅ 已实现 | SearchAddon + Ctrl+F |
+| 6 | 自定义主题编辑器 | ✅ 已实现 | 11 色编辑器 + 实时预览 + 后端 CRUD |
+| 7 | URL 可点击打开 | ✅ 已实现 | Ctrl+Click 通过 openPath 打开 |
 
-## 依赖关系
-
-功能 1-5、7 相互独立，可并行开发。功能 6 依赖 `ColorTheme` 类型扩展，但不影响其他功能。
+**所有 7 项功能均已实现。**
