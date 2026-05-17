@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
+  IgnorableNamespaces="uap uap3 rescap virtualization">
+
+  <Identity
+    Name="TerminalBuddy"
+    Publisher="CN=TerminalBuddy"
+    Version="1.0.0.0"
+    ProcessorArchitecture="neutral" />
+
+  <Properties>
+    <DisplayName>TerminalBuddy</DisplayName>
+    <PublisherDisplayName>TerminalBuddy</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+    <virtualization:RegistryWriteVirtualization>
+      <virtualization:ExcludedKeys>
+        <virtualization:ExcludedKey>HKEY_CURRENT_USER\Console\%%Startup</virtualization:ExcludedKey>
+      </virtualization:ExcludedKeys>
+    </virtualization:RegistryWriteVirtualization>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="zh-CN" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <Application Id="TerminalBuddy"
+      Executable="terminal-buddy.exe"
+      uap10:TrustLevel="mediumIL"
+      uap10:RuntimeBehavior="win32App">
+
+      <uap:VisualElements
+        AppListEntry="none"
+        DisplayName="TerminalBuddy"
+        Description="TerminalBuddy Terminal Emulator"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+
+      <Extensions>
+
+        <!-- Console host extension — OS discovers this to populate default terminal list -->
+        <uap3:Extension Category="windows.appExtension">
+          <uap3:AppExtension Name="com.microsoft.windows.console.host"
+              Id="TerminalBuddyConsole"
+              DisplayName="TerminalBuddy Console Host"
+              Description="TerminalBuddy console host"
+              PublicFolder="Public">
+            <uap3:Properties>
+              <Clsid>C2D3E4F5-A6B7-4890-ABCD-EF1234567890</Clsid>
+            </uap3:Properties>
+          </uap3:AppExtension>
+        </uap3:Extension>
+
+        <!-- Terminal host extension — pairs with console.host from the same package -->
+        <uap3:Extension Category="windows.appExtension">
+          <uap3:AppExtension Name="com.microsoft.windows.terminal.host"
+              Id="TerminalBuddyTerminal"
+              DisplayName="TerminalBuddy Terminal Host"
+              Description="TerminalBuddy terminal host"
+              PublicFolder="Public">
+            <uap3:Properties>
+              <Clsid>A1B2C3D4-E5F6-7890-ABCD-EF1234567890</Clsid>
+            </uap3:Properties>
+          </uap3:AppExtension>
+        </uap3:Extension>
+
+        <!-- COM ExeServer — maps CLSIDs to our executable -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer DisplayName="TerminalBuddy" Executable="terminal-buddy.exe">
+              <com:Class Id="C2D3E4F5-A6B7-4890-ABCD-EF1234567890" />
+              <com:Class Id="A1B2C3D4-E5F6-7890-ABCD-EF1234567890" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+
+      </Extensions>
+
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+
+</Package>

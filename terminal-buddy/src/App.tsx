@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { TitleBar } from './components/TitleBar';
 import { ConfigPanel } from './components/ConfigPanel';
 import { TerminalPanel } from './components/TerminalPanel';
@@ -36,6 +37,26 @@ function App() {
     const handler = () => setTabNavVersion(v => v + 1);
     window.addEventListener('tab-navigation-changed', handler);
     return () => window.removeEventListener('tab-navigation-changed', handler);
+  }, []);
+
+  // Listen for terminal handoff events (from Windows default terminal COM callback)
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    listen<{ terminalId: string; title: string }>('terminal_handoff', (event) => {
+      const { terminalId, title } = event.payload;
+      const { addSession, setActiveSession } = useAppStore.getState();
+      addSession({
+        id: terminalId,
+        profileId: '',
+        profileName: title || 'Handoff Terminal',
+        terminalType: 'cmd',
+        colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
+        tabColor: null,
+        groupId: 'default',
+      });
+      setActiveSession(terminalId);
+    }).then(fn => { unlisten = fn; });
+    return () => { unlisten?.(); };
   }, []);
 
   useEffect(() => {

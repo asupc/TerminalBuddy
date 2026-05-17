@@ -9,11 +9,35 @@ use std::fs;
 use crate::services::ProfileService;
 use crate::services::PathService;
 
+/// A terminal instance backed by portable-pty (normal terminals).
+struct PtyTerminal {
+    child: Box<dyn Child + Send + Sync>,
+    master: Box<dyn MasterPty + Send>,
+}
+
+/// A terminal instance backed by raw Windows handles (handoff terminals).
+/// Store handles as usize for Send/Sync safety; they're just identifiers.
+/// Fields prefixed with _ to suppress dead_code warnings — they may be
+/// used for resize signaling in future iterations.
+#[allow(dead_code)]
+struct HandoffTerminal {
+    _signal: usize,
+    _reference: usize,
+    _server: usize,
+    _client: usize,
+}
+
+/// The backing implementation for a terminal instance.
+#[allow(dead_code)]
+enum TerminalBacking {
+    Pty(PtyTerminal),
+    Handoff(HandoffTerminal),
+}
+
 pub struct TerminalInstance {
     pub id: String,
-    pub child: Box<dyn Child + Send + Sync>,
+    backing: TerminalBacking,
     pub writer: Option<Box<dyn Write + Send>>,
-    pub master: Box<dyn MasterPty + Send>,
     pub output_buffer: Arc<Mutex<Vec<String>>>,
 }
 
@@ -43,6 +67,85 @@ impl TerminalService {
         Self {
             instances: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Create a handoff terminal from raw Windows pipe handles.
+    pub fn create_handoff_terminal(
+        &self,
+        read_handle: windows::Win32::Foundation::HANDLE,
+        write_handle: windows::Win32::Foundation::HANDLE,
+        signal: windows::Win32::Foundation::HANDLE,
+        reference: windows::Win32::Foundation::HANDLE,
+        server: windows::Win32::Foundation::HANDLE,
+        client: windows::Win32::Foundation::HANDLE,
+        app: AppHandle,
+        title: &str,
+    ) -> Result<String, String> {
+        use std::os::windows::io::FromRawHandle;
+
+        let terminal_id = Uuid::new_v4().to_string();
+        log_debug(&format!("[handoff-create] start, id={}, title={}", terminal_id, title));
+
+        // SAFETY: The HANDLEs were created by CreatePipe in the COM callback
+        // and are valid, owned by us. We convert them to Rust Stdio objects.
+        let reader = unsafe { std::fs::File::from_raw_handle(read_handle.0 as *mut _) };
+        let writer_file = unsafe { std::fs::File::from_raw_handle(write_handle.0 as *mut _) };
+
+        let writer: Box<dyn Write + Send> = Box::new(std::io::BufWriter::new(writer_file));
+        let output_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let backing = TerminalBacking::Handoff(HandoffTerminal {
+            _signal: signal.0 as usize,
+            _reference: reference.0 as usize,
+            _server: server.0 as usize,
+            _client: client.0 as usize,
+        });
+
+        let instance = TerminalInstance {
+            id: terminal_id.clone(),
+            backing,
+            writer: Some(writer),
+            output_buffer: output_buffer.clone(),
+        };
+
+        {
+            let mut instances = self.instances.lock().unwrap();
+            instances.insert(terminal_id.clone(), instance);
+        }
+
+        // Output forwarding thread
+        let tid = terminal_id.clone();
+        let app_clone = app.clone();
+        let buf_clone = output_buffer.clone();
+
+        thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(reader);
+            let mut buf = [0u8; 65536];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let output = String::from_utf8_lossy(&buf[..n]).to_string();
+                        if !output.is_empty() {
+                            {
+                                let mut buffer = buf_clone.lock().unwrap();
+                                buffer.push(output.clone());
+                                if buffer.len() > 1000 {
+                                    let start = buffer.len() - 500;
+                                    let kept: Vec<String> = buffer.splice(start.., []).collect();
+                                    *buffer = kept;
+                                }
+                            }
+                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output);
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        log_debug(&format!("[handoff-create] DONE, id={}", terminal_id));
+        Ok(terminal_id)
     }
 
     pub fn create_terminal(&self, profile_id: &str, app: AppHandle) -> Result<String, String> {
@@ -116,9 +219,8 @@ impl TerminalService {
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),
-            child,
+            backing: TerminalBacking::Pty(PtyTerminal { child, master: pty_pair.master }),
             writer: Some(writer),
-            master: pty_pair.master,
             output_buffer: output_buffer.clone(),
         };
 
@@ -254,12 +356,20 @@ impl TerminalService {
     pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16) -> Result<(), String> {
         let mut instances = self.instances.lock().unwrap();
         if let Some(instance) = instances.get_mut(id) {
-            instance.master.resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            }).map_err(|e| format!("Resize failed: {}", e))?;
+            match &instance.backing {
+                TerminalBacking::Pty(pty) => {
+                    pty.master.resize(PtySize {
+                        rows,
+                        cols,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    }).map_err(|e| format!("Resize failed: {}", e))?;
+                }
+                TerminalBacking::Handoff(_) => {
+                    // Handoff terminals use ConPTY signal pipe for resize.
+                    // Not yet implemented — ConPTY will use default size.
+                }
+            }
             log_debug(&format!("[resize] id={} rows={} cols={}", id, rows, cols));
             Ok(())
         } else {
@@ -283,7 +393,9 @@ impl TerminalService {
         let mut instances = self.instances.lock().unwrap();
         if let Some(mut instance) = instances.remove(id) {
             instance.writer = None;
-            instance.child.kill().ok();
+            if let TerminalBacking::Pty(pty) = &mut instance.backing {
+                pty.child.kill().ok();
+            }
             Ok(())
         } else {
             Err("Terminal not found".to_string())
@@ -340,9 +452,8 @@ impl TerminalService {
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),
-            child,
+            backing: TerminalBacking::Pty(PtyTerminal { child, master: pty_pair.master }),
             writer: Some(writer),
-            master: pty_pair.master,
             output_buffer: output_buffer.clone(),
         };
 
