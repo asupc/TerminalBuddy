@@ -11,7 +11,6 @@ crate-type = ["rlib", "cdylib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-winres = "0.1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
@@ -25,15 +24,6 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 portable-pty = "0.9"
 clipboard-win = { version = "5.4.1", features = ["std"] }
-windows = { version = "0.61", features = [
-    "Win32_System_Com",
-    "Win32_System_Registry",
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_System_Threading",
-    "Win32_System_Pipes",
-] }
-windows-core = "0.61"
 
 [patch.crates-io]
 portable-pty = { path = "portable-pty-patched" }

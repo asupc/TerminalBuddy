@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, isDefaultTerminalSetting, setDefaultTerminal } from '../services/tauri';
+import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { PRESET_THEMES, type CustomTheme, type Profile } from '../types';
 import { type ThemeMode, type AppSettings, getAppSettings, saveAppSettings, getStoredTheme, applyTheme } from '../utils/settings';
@@ -51,7 +51,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [profileContextMenu, setProfileContextMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
-  const [isDefaultTerminal, setIsDefaultTerminal] = useState(false);
 
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
@@ -93,7 +92,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       saveAppSettings(synced);
     }).catch(() => {});
     getDataPath().then(setDataPath).catch(() => {});
-    isDefaultTerminalSetting().then(setIsDefaultTerminal).catch(() => {});
   }, []);
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
@@ -356,24 +354,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   <span>只允许运行一个实例</span>
                 </label>
                 <p className="settings-desc">开启后再次启动应用时会激活已打开的窗口，而非打开新窗口。更改需重启应用生效</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={isDefaultTerminal}
-                    onChange={(e) => {
-                      const value = e.target.checked;
-                      setDefaultTerminal(value).then(() => {
-                        setIsDefaultTerminal(value);
-                      }).catch((err) => {
-                        alert('设置默认终端失败: ' + String(err));
-                      });
-                    }}
-                  />
-                  <span>设为系统默认终端</span>
-                </label>
-                <p className="settings-desc">设为默认终端后，在 Visual Studio 调试控制台程序或双击运行命令行工具时，将使用 TerminalBuddy 打开。需重启应用后完全生效</p>
               </div>
               <div className="settings-section">
                 <label className="settings-label">主题</label>

@@ -20,15 +20,19 @@ interface TabSidebarProps {
 }
 
 export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal }) => {
-  const { sessions, activeSessionId, removeSession, setActiveSession } = useAppStore();
+  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession } = useAppStore();
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const { width, setWidth, isResizing, resizeHandleProps } = useResizablePanel({
     defaultWidth: 200,
@@ -151,6 +155,14 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     setShowContextMenu(false);
   }, [onStartTerminal, onStartBlankTerminal]);
 
+  // Close tab context menu on outside click
+  useEffect(() => {
+    if (!tabContextMenu) return;
+    const handler = () => setTabContextMenu(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [tabContextMenu]);
+
   // Close context menu on outside mouse/keyboard/wheel
   useEffect(() => {
     if (!showContextMenu) return;
@@ -262,12 +274,44 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 className={`tab-sidebar-item ${activeSessionId === session.id ? 'active' : ''}`}
                 onClick={() => setActiveSession(session.id)}
                 onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTerminal(session.id); } }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id });
+                }}
               >
                 <span
                   className="tab-sidebar-dot"
                   style={{ background: session.tabColor || 'var(--accent)' }}
                 />
-                <span className="tab-sidebar-name">{session.profileName}</span>
+                {renamingSessionId === session.id ? (
+                  <input
+                    ref={renameInputRef}
+                    className="tab-sidebar-rename-input"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => {
+                      const trimmed = renameValue.trim();
+                      if (trimmed && trimmed !== session.profileName) {
+                        renameSession(session.id, trimmed);
+                      }
+                      setRenamingSessionId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const trimmed = renameValue.trim();
+                        if (trimmed && trimmed !== session.profileName) {
+                          renameSession(session.id, trimmed);
+                        }
+                        setRenamingSessionId(null);
+                      } else if (e.key === 'Escape') {
+                        setRenamingSessionId(null);
+                      }
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <span className="tab-sidebar-name">{session.profileName}</span>
+                )}
                 <button
                   className="tab-sidebar-close"
                   onClick={(e) => { e.stopPropagation(); handleCloseTerminal(session.id); }}
@@ -285,6 +329,26 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
         className={`tab-sidebar-resize ${isResizing ? 'active' : ''}`}
         onMouseDown={resizeHandleProps.onMouseDown}
       />
+      {tabContextMenu && (
+        <>
+          <div className="context-menu-overlay" onClick={() => setTabContextMenu(null)} />
+          <div className="context-menu" style={{ left: tabContextMenu.x, top: tabContextMenu.y }}>
+            <div className="context-menu-item" onClick={() => {
+              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
+              if (session) {
+                setRenameValue(session.profileName);
+                setRenamingSessionId(session.id);
+                setTimeout(() => renameInputRef.current?.select(), 0);
+              }
+              setTabContextMenu(null);
+            }}>重命名</div>
+            <div className="context-menu-item danger" onClick={() => {
+              handleCloseTerminal(tabContextMenu.sessionId);
+              setTabContextMenu(null);
+            }}>关闭</div>
+          </div>
+        </>
+      )}
       {showContextMenu && (
         <>
           <div className="context-menu-overlay" onClick={() => setShowContextMenu(false)} />

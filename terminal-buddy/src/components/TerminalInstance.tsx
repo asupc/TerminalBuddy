@@ -289,7 +289,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
           updateAutocomplete(null);
         }
-        onOutputRef.current(data);
+        // Replace newlines in pasted text to prevent auto-execution
+        const sanitized = data.includes('\n') ? data.replace(/\r\n/g, ' ').replace(/\n/g, ' ') : data;
+        onOutputRef.current(sanitized);
       });
 
       // Autocomplete: update suggestions on keypress
@@ -569,7 +571,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     } else {
       navigator.clipboard.readText().then((text) => {
         if (text) {
-          onOutputRef.current(text);
+          const sanitized = text.includes('\n') ? text.replace(/\r\n/g, ' ').replace(/\n/g, ' ') : text;
+          onOutputRef.current(sanitized);
           terminal.focus();
         }
       }).catch(() => {});

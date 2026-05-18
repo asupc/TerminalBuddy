@@ -255,12 +255,3 @@ export async function exportAllData(filePath: string): Promise<void> {
 export async function importAllData(filePath: string): Promise<void> {
   return invoke('import_all_data', { filePath });
 }
-
-// Default Terminal Commands
-export async function isDefaultTerminalSetting(): Promise<boolean> {
-  return invoke('is_default_terminal_setting');
-}
-
-export async function setDefaultTerminal(enabled: boolean): Promise<void> {
-  return invoke('set_default_terminal', { enabled });
-}

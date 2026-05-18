@@ -99,7 +99,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px 5px 18px;
+  padding: 5px 12px 5px 28px;
   cursor: pointer;
   transition: background 0.1s;
   position: relative;
@@ -110,18 +110,23 @@
 }
 
 .tab-sidebar-item.active {
-  background: rgba(0, 120, 212, 0.12);
+  background: rgba(0, 120, 212, 0.2);
 }
 
 .tab-sidebar-item.active::before {
   content: '';
   position: absolute;
   left: 0;
-  top: 2px;
-  bottom: 2px;
-  width: 2px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
   background: var(--accent);
-  border-radius: 1px;
+  border-radius: 0 1px 1px 0;
+}
+
+.tab-sidebar-item.active .tab-sidebar-name {
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .tab-sidebar-dot {
@@ -161,6 +166,18 @@
 .tab-sidebar-close:hover {
   color: #f44747;
   background: rgba(244, 71, 71, 0.1);
+}
+
+.tab-sidebar-rename-input {
+  flex: 1;
+  font-size: 13px;
+  padding: 1px 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text-primary);
+  outline: none;
+  min-width: 0;
 }
 
 .tab-sidebar-group-close {

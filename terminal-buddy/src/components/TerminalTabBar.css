@@ -38,8 +38,13 @@
 
 .terminal-tab.active {
   background: var(--bg-primary);
-  border-bottom: 2px solid var(--accent);
+  border-bottom: 3px solid var(--accent);
   margin-bottom: -1px;
+}
+
+.terminal-tab.active .terminal-tab-name {
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .terminal-tab-dot {
@@ -84,4 +89,15 @@
 .context-menu-item.disabled {
   opacity: 0.4;
   pointer-events: none;
+}
+
+.tab-bar-rename-input {
+  font-size: 12px;
+  padding: 1px 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text-primary);
+  outline: none;
+  width: 120px;
 }

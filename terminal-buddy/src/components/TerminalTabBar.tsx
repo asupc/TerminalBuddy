@@ -1,12 +1,15 @@
-import { FC, useState, useEffect, useCallback } from 'react';
+import { FC, useState, useEffect, useCallback, useRef } from 'react';
 import { useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 import './TerminalTabBar.css';
 
 export const TerminalTabBar: FC = () => {
-  const { sessions, activeSessionId, removeSession, setActiveSession } = useAppStore();
+  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession } = useAppStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const handleCloseTerminal = async (sessionId: string) => {
     try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
@@ -71,7 +74,35 @@ export const TerminalTabBar: FC = () => {
             className="terminal-tab-dot"
             style={{ background: session.tabColor || 'var(--accent)' }}
           />
-          <span className="terminal-tab-name">{session.profileName}</span>
+          {renamingSessionId === session.id ? (
+            <input
+              ref={renameInputRef}
+              className="tab-bar-rename-input"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onBlur={() => {
+                const trimmed = renameValue.trim();
+                if (trimmed && trimmed !== session.profileName) {
+                  renameSession(session.id, trimmed);
+                }
+                setRenamingSessionId(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const trimmed = renameValue.trim();
+                  if (trimmed && trimmed !== session.profileName) {
+                    renameSession(session.id, trimmed);
+                  }
+                  setRenamingSessionId(null);
+                } else if (e.key === 'Escape') {
+                  setRenamingSessionId(null);
+                }
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <span className="terminal-tab-name">{session.profileName}</span>
+          )}
           <button
             className="terminal-tab-close"
             onClick={(e) => {
@@ -86,6 +117,15 @@ export const TerminalTabBar: FC = () => {
         <>
           <div className="context-menu-overlay" onClick={() => setContextMenu(null)} />
           <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+            <div className="context-menu-item" onClick={() => {
+              const session = sessions.find(s => s.id === contextMenu.sessionId);
+              if (session) {
+                setRenameValue(session.profileName);
+                setRenamingSessionId(session.id);
+                setTimeout(() => renameInputRef.current?.select(), 0);
+              }
+              setContextMenu(null);
+            }}>重命名</div>
             <div
               className={`context-menu-item ${sessionIdx(contextMenu.sessionId) <= 0 ? 'disabled' : ''}`}
               onClick={() => {
