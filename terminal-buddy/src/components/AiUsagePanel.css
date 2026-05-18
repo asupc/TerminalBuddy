@@ -3,8 +3,9 @@
   bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
-  width: 200px;
-  height: 50px;
+  width: auto;
+  height: auto;
+  padding: 10px 16px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 25px;
@@ -12,10 +13,84 @@
   z-index: 1000;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 10px;
 }
 
 .ai-usage-text {
   color: var(--text-tertiary);
   font-size: 12px;
+}
+
+.ai-usage-error {
+  color: #ef4444;
+  font-size: 12px;
+}
+
+.ai-usage-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-usage-tier {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-usage-tier-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  width: 24px;
+  text-align: right;
+}
+
+.ai-usage-bar-track {
+  width: 60px;
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ai-usage-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  min-width: 2px;
+}
+
+.ai-usage-pct {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-usage-countdown {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.ai-usage-refresh {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.ai-usage-refresh:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.ai-usage-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
