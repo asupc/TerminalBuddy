@@ -1,2 +1,7 @@
 node_modules
 target
+/.idea/.gitignore
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/terminal-buddy.iml
+/.idea/vcs.xml
