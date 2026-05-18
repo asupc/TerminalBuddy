@@ -58,8 +58,10 @@ interface AppState {
   // UI State
   configPanelVisible: boolean;
   fileTreeVisible: boolean;
+  aiUsageVisible: boolean;
   toggleConfigPanel: () => void;
   toggleFileTree: () => void;
+  toggleAiUsage: () => void;
 
   // Config panel search & sort
   configSearchQuery: string;
@@ -139,8 +141,10 @@ export const useAppStore = create<AppState>((set) => ({
   // UI State
   configPanelVisible: (() => { try { return getAppSettings().configPanelAutoExpand; } catch { return true; } })(),
   fileTreeVisible: (() => { try { return getAppSettings().fileTreeAutoExpand; } catch { return true; } })(),
+  aiUsageVisible: false,
   toggleConfigPanel: () => set((state) => ({ configPanelVisible: !state.configPanelVisible })),
   toggleFileTree: () => set((state) => ({ fileTreeVisible: !state.fileTreeVisible })),
+  toggleAiUsage: () => set((state) => ({ aiUsageVisible: !state.aiUsageVisible })),
   configSearchQuery: '',
   configSortBy: 'name-asc',
   setConfigSearchQuery: (query) => set({ configSearchQuery: query }),
