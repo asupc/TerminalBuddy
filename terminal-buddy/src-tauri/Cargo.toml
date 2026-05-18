@@ -1,0 +1,36 @@
+[package]
+name = "terminal-buddy"
+version = "1.0.0"
+description = "TerminalBuddy - 终端配置管理工具"
+authors = [""]
+edition = "2021"
+
+[lib]
+name = "terminal_buddy_lib"
+crate-type = ["rlib", "cdylib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "io-util", "macros", "sync", "time"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+portable-pty = "0.9"
+clipboard-win = { version = "5.4.1", features = ["std"] }
+
+[patch.crates-io]
+portable-pty = { path = "portable-pty-patched" }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

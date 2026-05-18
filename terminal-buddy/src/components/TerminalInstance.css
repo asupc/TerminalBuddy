@@ -1,0 +1,187 @@
+.terminal-instance {
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.terminal-instance .xterm {
+  height: 100%;
+  overflow: hidden !important;
+  overscroll-behavior: none;
+}
+
+.terminal-instance .xterm-viewport {
+  overflow-y: scroll !important;
+  overflow-x: hidden !important;
+}
+
+/* xterm viewport scrollbar */
+.terminal-instance .xterm-viewport::-webkit-scrollbar {
+  width: 12px;
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar-track {
+  background: var(--bg-primary, #1e1e1e);
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #5a5a5a);
+  border-radius: 6px;
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover, #7a7a7a);
+}
+
+.terminal-context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: #2d2d2d;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 120px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+
+.context-menu-item {
+  padding: 6px 16px;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.context-menu-item:hover {
+  background: #3d3d3d;
+  color: #fff;
+}
+
+/* URL Ctrl+click cursor */
+.terminal-instance.ctrl-hover .xterm-hyperlink {
+  cursor: pointer !important;
+  text-decoration: underline;
+}
+
+/* Terminal search bar */
+.terminal-search-bar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg-secondary, #2d2d2d);
+  border-bottom: 1px solid var(--border, #555);
+  align-items: center;
+}
+
+.terminal-search-input {
+  flex: 1;
+  padding: 4px 8px;
+  background: var(--bg-primary, #1e1e1e);
+  border: 1px solid var(--border, #555);
+  border-radius: 3px;
+  color: var(--text-primary, #ccc);
+  font-size: 13px;
+  outline: none;
+}
+
+.terminal-search-input:focus {
+  border-color: var(--accent, #0078d4);
+}
+
+.terminal-search-case {
+  padding: 2px 6px;
+  background: transparent;
+  border: 1px solid var(--border, #555);
+  border-radius: 3px;
+  color: var(--text-secondary, #888);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.terminal-search-case.active {
+  background: var(--bg-tertiary, #3d3d3d);
+  color: var(--accent, #0078d4);
+  border-color: var(--accent, #0078d4);
+}
+
+.terminal-search-nav {
+  padding: 2px 6px;
+  background: transparent;
+  border: 1px solid var(--border, #555);
+  border-radius: 3px;
+  color: var(--text-secondary, #888);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.terminal-search-nav:hover {
+  color: var(--text-primary, #ccc);
+}
+
+.terminal-search-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #888);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 4px;
+}
+
+.terminal-search-close:hover {
+  color: var(--text-primary, #ccc);
+}
+
+/* Autocomplete popup */
+.autocomplete-popup {
+  position: fixed;
+  background: var(--bg-secondary, #252526);
+  border: 1px solid var(--border, #3c3c3c);
+  border-radius: 4px;
+  padding: 4px 0;
+  width: max-content;
+  min-width: 120px;
+  max-width: 400px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 1100;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.autocomplete-item {
+  padding: 5px 12px;
+  font-size: 13px;
+  color: var(--text-primary, #ccc);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.autocomplete-item:hover {
+  background: var(--bg-tertiary, #2d2d2d);
+}
+
+.autocomplete-item.selected {
+  background: var(--accent, #0078d4);
+  color: #fff;
+}
+
+.autocomplete-cmd {
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 80px;
+}
+
+.autocomplete-desc {
+  color: var(--text-secondary, #888);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.autocomplete-item.selected .autocomplete-desc {
+  color: rgba(255, 255, 255, 0.75);
+}

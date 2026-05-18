@@ -1,0 +1,256 @@
+.config-panel {
+  min-width: 150px;
+  max-width: 500px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: width 0.2s ease, min-width 0.2s ease;
+}
+
+.config-panel.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden;
+  border-right: none;
+}
+
+.config-panel.collapsed .config-resize-handle {
+  display: none;
+}
+
+.config-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+  z-index: 10;
+}
+
+.config-resize-handle:hover,
+.config-resize-handle.active {
+  background: var(--accent);
+}
+
+.config-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.config-group {
+  margin-bottom: 4px;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
+}
+
+.group-header.drag-over {
+  background: rgba(0, 120, 212, 0.2);
+  outline: 1px dashed var(--accent);
+}
+
+.group-header:hover {
+  background: var(--bg-tertiary);
+}
+
+.group-rename-input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  padding: 2px 4px;
+  border-radius: 2px;
+  font-size: 13px;
+  outline: none;
+}
+
+.group-icon {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+
+.group-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.group-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  min-width: 20px;
+  text-align: center;
+}
+
+.group-items {
+  padding-left: 16px;
+}
+
+.config-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 2px 0;
+}
+
+.config-item[draggable="true"] {
+  cursor: grab;
+}
+
+.config-item[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.config-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.config-item.selected {
+  background: var(--accent);
+}
+
+.config-icon {
+  font-size: 10px;
+  font-weight: bold;
+  padding: 2px 4px;
+  background: var(--bg-primary);
+  border-radius: 2px;
+  margin-right: 8px;
+}
+
+.config-name {
+  font-size: 13px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.context-menu {
+  position: fixed;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px;
+  min-width: 120px;
+  z-index: 1000;
+}
+
+.context-menu-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  border-radius: 2px;
+  font-size: 13px;
+}
+
+.context-menu-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.context-menu-item.danger {
+  color: #f44747;
+}
+
+/* Config search & sort */
+.config-search-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.config-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  padding-right: 32px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.config-search-input:focus {
+  border-color: var(--accent);
+}
+
+.config-sort-wrapper {
+  position: relative;
+  margin-left: -30px;
+  flex-shrink: 0;
+  z-index: 5;
+}
+
+.config-sort-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 8px;
+  transition: border-color 0.15s;
+}
+
+.config-sort-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.config-sort-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px;
+  min-width: 160px;
+  z-index: 10;
+  margin-top: 4px;
+}
+
+.config-sort-option {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 2px;
+}
+
+.config-sort-option:hover {
+  background: var(--bg-tertiary);
+}
+
+.config-sort-option.active {
+  color: var(--accent);
+}
