@@ -289,8 +289,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
           updateAutocomplete(null);
         }
-        // Replace newlines in pasted text to prevent auto-execution
-        const sanitized = data.includes('\n') ? data.replace(/\r\n/g, ' ').replace(/\n/g, ' ') : data;
+        // Prevent multi-line paste from auto-executing:
+        // Replace \r\n and \r with \n (same as Shift+Enter) to keep visual line breaks
+        // Single-char \r (user pressing Enter) is left untouched
+        const sanitized = data.length > 1 && /[\r\n]/.test(data)
+          ? data.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+          : data;
         onOutputRef.current(sanitized);
       });
 
@@ -439,7 +443,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
                     onOutputRef.current(`"${trimmed.replace(/"/g, '\\"')}"`);
                   } else {
-                    onOutputRef.current(text);
+                    const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                    onOutputRef.current(sanitized);
                   }
                 }
               }).catch(() => {});
@@ -447,7 +452,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }).catch(() => {
             // Fallback: read as plain text
             navigator.clipboard.readText().then((text) => {
-              if (text) onOutputRef.current(text);
+              if (text) {
+                const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                onOutputRef.current(sanitized);
+              }
             }).catch(() => {});
           });
           return;
@@ -470,7 +478,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (settings.rightClickPaste && !terminal.hasSelection()) {
           navigator.clipboard.readText().then((text) => {
             if (text) {
-              onOutputRef.current(text);
+              const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+              onOutputRef.current(sanitized);
               terminal.focus();
             }
           }).catch(() => {});
@@ -571,7 +580,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     } else {
       navigator.clipboard.readText().then((text) => {
         if (text) {
-          const sanitized = text.includes('\n') ? text.replace(/\r\n/g, ' ').replace(/\n/g, ' ') : text;
+          const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
           onOutputRef.current(sanitized);
           terminal.focus();
         }
