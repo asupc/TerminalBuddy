@@ -54,6 +54,15 @@
   flex-shrink: 0;
 }
 
+.terminal-tab-dot.working {
+  animation: working-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes working-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .terminal-tab-name {
   font-size: 12px;
   color: var(--text-primary);

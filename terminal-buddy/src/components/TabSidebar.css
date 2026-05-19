@@ -136,6 +136,15 @@
   flex-shrink: 0;
 }
 
+.tab-sidebar-dot.working {
+  animation: working-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes working-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .tab-sidebar-name {
   flex: 1;
   font-size: 13px;

@@ -72,6 +72,24 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let unlockTimer: ReturnType<typeof setTimeout> | null = null;
     let textareaEl: HTMLTextAreaElement | null = null;
     let compViewEl: HTMLElement | null = null;
+    let workingDebounce: ReturnType<typeof setTimeout> | null = null;
+    let workingFallback: ReturnType<typeof setTimeout> | null = null;
+
+    const checkBufferForPrompt = () => {
+      if (disposed || !xtermRef.current) return false;
+      const buf = xtermRef.current!.buffer.active;
+      const absY = buf.baseY + buf.cursorY;
+      for (let offset = 0; offset <= 2; offset++) {
+        const line = buf.getLine(absY - offset);
+        if (line) {
+          const text = line.translateToString(true);
+          if (/(?:PS )?([A-Za-z]:\\[^\s>]*)>/.test(text)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
 
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
@@ -133,9 +151,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Detect directory from prompt lines for active session
       const state = useAppStore.getState();
-      if (state.activeSessionId === terminalId) {
-        const matches = [...output.matchAll(PROMPT_REGEX)];
-        if (matches.length > 0) {
+      const matches = [...output.matchAll(PROMPT_REGEX)];
+      if (matches.length > 0) {
+        if (state.activeSessionId === terminalId) {
           const detectedPath = matches[matches.length - 1][1];
           if (detectedPath.length >= 3 && detectedPath.includes('\\')) {
             state.setCurrentDirectory(detectedPath);
@@ -143,6 +161,23 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
         }
       }
+
+      // Working state: reset debounce on each output, check xterm buffer for prompt
+      if (workingDebounce) clearTimeout(workingDebounce);
+      if (workingFallback) clearTimeout(workingFallback);
+      // Quick check after 300ms — xterm buffer has clean text (no ANSI codes)
+      workingDebounce = setTimeout(() => {
+        if (!disposed && checkBufferForPrompt()) {
+          useAppStore.getState().setSessionWorking(terminalId, false);
+          if (workingFallback) clearTimeout(workingFallback);
+        }
+      }, 300);
+      // Fallback: after 1.5s of silence, force idle regardless
+      workingFallback = setTimeout(() => {
+        if (!disposed) {
+          useAppStore.getState().setSessionWorking(terminalId, false);
+        }
+      }, 1500);
     };
 
     const initTerminal = async () => {
@@ -278,6 +313,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       terminal.onData((data) => {
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
+          useAppStore.getState().setSessionWorking(terminalId, true);
           const buffer = terminal.buffer.active;
           const absY = buffer.baseY + buffer.cursorY;
           const line = buffer.getLine(absY);
@@ -535,6 +571,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     return () => {
       disposed = true;
+      if (workingDebounce) {
+        clearTimeout(workingDebounce);
+        workingDebounce = null;
+      }
+      if (workingFallback) {
+        clearTimeout(workingFallback);
+        workingFallback = null;
+      }
       if (pendingRaf) {
         cancelAnimationFrame(pendingRaf);
         pendingRaf = null;

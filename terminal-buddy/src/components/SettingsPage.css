@@ -169,6 +169,16 @@
   font-family: 'Cascadia Code', Consolas, monospace;
 }
 
+.settings-select {
+  padding: 6px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
 /* Theme selector */
 .theme-options {
   display: flex;

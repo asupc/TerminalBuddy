@@ -8,6 +8,8 @@ export interface AppSettings {
   enableTabNavigation: boolean;
   singleInstance: boolean;
   rightClickPaste: boolean;
+  zhipuApiKey: string;
+  qianfanCookie: string;
 }
 
 const THEME_STORAGE_KEY = 'terminalbuddy_theme';
@@ -21,6 +23,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   enableTabNavigation: true,
   singleInstance: true,
   rightClickPaste: false,
+  zhipuApiKey: '',
+  qianfanCookie: '',
 };
 
 export const getAppSettings = (): AppSettings => {

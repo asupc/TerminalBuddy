@@ -19,6 +19,7 @@ const SECTIONS = [
   { id: 'themes', label: '主题管理' },
   { id: 'history', label: '命令历史' },
   { id: 'exclusions', label: '文件排除' },
+  { id: 'ai-usage', label: 'AI用量' },
 ] as const;
 
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
@@ -51,6 +52,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [profileContextMenu, setProfileContextMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const [zhipuApiKeyVisible, setZhipuApiKeyVisible] = useState(false);
+  const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
 
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
@@ -1065,6 +1068,56 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   }}>删除</div>
                 </div>
               )}
+            </div>
+          </section>
+
+          {/* AI Usage Section */}
+          <section
+            id="ai-usage"
+            ref={(el) => { sectionRefs.current['ai-usage'] = el; }}
+            className="settings-section-block"
+          >
+            <h3 className="settings-section-title">AI用量</h3>
+            <div className="settings-general">
+              {/* 智谱 GLM API Key */}
+              <div className="settings-section">
+                <label className="settings-label">智谱 GLM API Key</label>
+                <div className="data-path-row">
+                  <input
+                    className="data-path-input"
+                    type={zhipuApiKeyVisible ? 'text' : 'password'}
+                    value={settings.zhipuApiKey}
+                    onChange={(e) => updateSetting('zhipuApiKey', e.target.value)}
+                    placeholder="请输入智谱 GLM API Key"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setZhipuApiKeyVisible(!zhipuApiKeyVisible)}
+                  >{zhipuApiKeyVisible ? '隐藏' : '显示'}</button>
+                </div>
+                <p className="settings-desc">填入智谱 GLM 的 API Key 用于查询 AI 用量信息。可在 <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>open.bigmodel.cn</a> 获取</p>
+              </div>
+
+              {/* 百度千帆 Cookie */}
+              <div className="settings-section">
+                <label className="settings-label">百度千帆 Cookie</label>
+                <div className="data-path-row">
+                  <input
+                    className="data-path-input"
+                    type={qianfanCookieVisible ? 'text' : 'password'}
+                    value={settings.qianfanCookie}
+                    onChange={(e) => updateSetting('qianfanCookie', e.target.value)}
+                    placeholder="请输入百度千帆的 Cookie"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setQianfanCookieVisible(!qianfanCookieVisible)}
+                  >{qianfanCookieVisible ? '隐藏' : '显示'}</button>
+                </div>
+                <p className="settings-desc">填入百度千帆控制台的 Cookie 用于查询 AI 用量。登录 <a href="https://console.bce.baidu.com/qianfan/resource/subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>百度千帆控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值</p>
+              </div>
             </div>
           </section>
         </div>

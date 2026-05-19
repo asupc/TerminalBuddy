@@ -5,7 +5,7 @@ import { getAppSettings, saveAppSettings } from '../utils/settings';
 import './TerminalTabBar.css';
 
 export const TerminalTabBar: FC = () => {
-  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession } = useAppStore();
+  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession, workingSessions } = useAppStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -71,8 +71,8 @@ export const TerminalTabBar: FC = () => {
           }}
         >
           <span
-            className="terminal-tab-dot"
-            style={{ background: session.tabColor || 'var(--accent)' }}
+            className={`terminal-tab-dot${workingSessions[session.id] ? ' working' : ''}`}
+            style={{ background: workingSessions[session.id] ? '#f0b429' : (session.tabColor || 'var(--accent)') }}
           />
           {renamingSessionId === session.id ? (
             <input
