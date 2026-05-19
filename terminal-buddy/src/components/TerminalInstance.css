@@ -6,6 +6,12 @@
   overflow: hidden;
 }
 
+.terminal-instance.drag-over {
+  outline: 2px dashed var(--accent, #0078d4);
+  outline-offset: -4px;
+  background: rgba(0, 120, 212, 0.08);
+}
+
 .terminal-instance .xterm {
   height: 100%;
   overflow: hidden !important;

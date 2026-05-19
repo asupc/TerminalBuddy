@@ -6,6 +6,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput } from '../services/tauri';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getAppSettings } from '../utils/settings';
 import { useAppStore } from '../stores/appStore';
 import { getAllSuggestions, addCommandToHistory, type SuggestionItem } from '../data/commandTemplates';
@@ -44,6 +45,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     x: number;
     y: number;
   } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const updateAutocomplete = useCallback((val: typeof autocomplete) => {
     autocompleteRef.current = val;
@@ -660,8 +662,44 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     return () => document.removeEventListener('mousedown', handleMouseDown);
   }, [autocomplete]);
 
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+
+  // Tauri native drag-drop: listen for file drops into the window
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+    let active = true;
+
+    listen<{ paths: string[] }>('tauri://drag-enter', () => {
+      if (active && isActiveRef.current) setDragOver(true);
+    }).then(fn => { unlisteners.push(fn); });
+
+    listen('tauri://drag-leave', () => {
+      if (active) setDragOver(false);
+    }).then(fn => { unlisteners.push(fn); });
+
+    listen<{ paths: string[] }>('tauri://drag-drop', (event) => {
+      if (!active) return;
+      setDragOver(false);
+      if (!isActiveRef.current) return;
+      const paths = event.payload.paths;
+      if (paths && paths.length > 0) {
+        const text = paths.map((p: string) => `"${p}"`).join(' ');
+        onOutputRef.current(text);
+      }
+    }).then(fn => { unlisteners.push(fn); });
+
+    return () => {
+      active = false;
+      unlisteners.forEach(fn => fn());
+    };
+  }, []);
+
   return (
-    <div ref={terminalRef} className="terminal-instance">
+    <div
+      ref={terminalRef}
+      className={`terminal-instance${dragOver ? ' drag-over' : ''}`}
+    >
       {searchVisible && (
         <div className="terminal-search-bar">
           <input
