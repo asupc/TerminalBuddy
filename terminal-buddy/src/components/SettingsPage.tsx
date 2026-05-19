@@ -53,6 +53,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [profileContextMenu, setProfileContextMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [zhipuApiKeyVisible, setZhipuApiKeyVisible] = useState(false);
+  const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
 
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
@@ -1078,6 +1079,22 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
           >
             <h3 className="settings-section-title">AI用量</h3>
             <div className="settings-general">
+              {/* 主显示模型选择 */}
+              <div className="settings-section">
+                <label className="settings-label">主显示模型</label>
+                <select
+                  className="settings-select"
+                  value={settings.aiUsageProvider}
+                  onChange={(e) => updateSetting('aiUsageProvider', e.target.value as 'zhipu' | 'qianfan')}
+                  style={{ width: '100%', padding: '6px 10px' }}
+                >
+                  <option value="zhipu">智谱 GLM</option>
+                  <option value="qianfan">百度千帆</option>
+                </select>
+                <p className="settings-desc">选择主界面显示的 AI 用量模型</p>
+              </div>
+
+              {/* 智谱 GLM API Key */}
               <div className="settings-section">
                 <label className="settings-label">智谱 GLM API Key</label>
                 <div className="data-path-row">
@@ -1095,6 +1112,26 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   >{zhipuApiKeyVisible ? '隐藏' : '显示'}</button>
                 </div>
                 <p className="settings-desc">填入智谱 GLM 的 API Key 用于查询 AI 用量信息。可在 <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>open.bigmodel.cn</a> 获取</p>
+              </div>
+
+              {/* 百度千帆 Cookie */}
+              <div className="settings-section">
+                <label className="settings-label">百度千帆 Cookie</label>
+                <div className="data-path-row">
+                  <input
+                    className="data-path-input"
+                    type={qianfanCookieVisible ? 'text' : 'password'}
+                    value={settings.qianfanCookie}
+                    onChange={(e) => updateSetting('qianfanCookie', e.target.value)}
+                    placeholder="请输入百度千帆的 Cookie"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setQianfanCookieVisible(!qianfanCookieVisible)}
+                  >{qianfanCookieVisible ? '隐藏' : '显示'}</button>
+                </div>
+                <p className="settings-desc">填入百度千帆控制台的 Cookie 用于查询 AI 用量。登录 <a href="https://console.bce.baidu.com/qianfan/resource/subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>百度千帆控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值</p>
               </div>
             </div>
           </section>

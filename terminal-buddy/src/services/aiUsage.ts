@@ -14,6 +14,8 @@ export interface AiUsageData {
 const TIER_NAMES: Record<string, string> = {
   five_hour: '5小时',
   weekly_limit: '每周',
+  qianfan_rpm: 'RPM',
+  qianfan_tpm: 'TPM',
 };
 
 export function tierDisplayName(name: string): string {
@@ -88,5 +90,24 @@ export async function fetchZhipuUsage(apiKey: string): Promise<AiUsageData> {
     return { success: true, level, tiers, error: null };
   } catch (e) {
     return { success: false, level: null, tiers: [], error: `网络错误: ${String(e)}` };
+  }
+}
+
+export async function fetchQianfanUsage(cookie: string): Promise<AiUsageData> {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const result = await invoke<{
+      success: boolean;
+      tiers: Array<{ name: string; utilization: number; resets_at: string | null }>;
+      error: string | null;
+    }>('fetch_qianfan_usage', { cookie });
+    return {
+      success: result.success,
+      level: null,
+      tiers: result.tiers.map(t => ({ name: t.name, utilization: t.utilization, resetsAt: t.resets_at })),
+      error: result.error,
+    };
+  } catch (e) {
+    return { success: false, level: null, tiers: [], error: `调用失败: ${String(e)}` };
   }
 }

@@ -1,5 +1,6 @@
-import { FC } from 'react';
+import { FC, useState, useRef } from 'react';
 import { windowMinimize, windowToggleMaximize, windowClose } from '../services/tauri';
+import { AiUsagePanel } from './AiUsagePanel';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
 
@@ -7,21 +8,29 @@ interface TitleBarProps {
   onSettings: () => void;
   configPanelVisible: boolean;
   fileTreeVisible: boolean;
-  aiUsageVisible: boolean;
   onToggleConfigPanel: () => void;
   onToggleFileTree: () => void;
-  onToggleAiUsage: () => void;
 }
 
 export const TitleBar: FC<TitleBarProps> = ({
   onSettings,
   configPanelVisible,
   fileTreeVisible,
-  aiUsageVisible,
   onToggleConfigPanel,
   onToggleFileTree,
-  onToggleAiUsage,
 }) => {
+  const [aiUsageHover, setAiUsageHover] = useState(false);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const handleMouseEnter = () => {
+    clearTimeout(hoverTimer.current);
+    setAiUsageHover(true);
+  };
+
+  const handleMouseLeave = () => {
+    hoverTimer.current = setTimeout(() => setAiUsageHover(false), 200);
+  };
+
   return (
     <div className="titlebar" data-tauri-drag-region="deep">
       <div className="titlebar-left">
@@ -42,18 +51,24 @@ export const TitleBar: FC<TitleBarProps> = ({
           >
             📁
           </button>
-          <button
-            className={`titlebar-nav-btn ${aiUsageVisible ? 'active' : ''}`}
-            onClick={onToggleAiUsage}
-            title={aiUsageVisible ? '隐藏AI用量' : '显示AI用量'}
+          <div
+            className="ai-usage-trigger"
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="1.5" y="1.5" width="13" height="13" rx="3" stroke="currentColor" strokeWidth="1.2"/>
-              <rect x="4" y="9" width="2" height="3.5" rx="0.5" fill="currentColor"/>
-              <rect x="7" y="6" width="2" height="6.5" rx="0.5" fill="currentColor"/>
-              <rect x="10" y="3.5" width="2" height="9" rx="0.5" fill="currentColor"/>
-            </svg>
-          </button>
+            <button
+              className="titlebar-nav-btn"
+              title="AI用量"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="1.5" y="1.5" width="13" height="13" rx="3" stroke="currentColor" strokeWidth="1.2"/>
+                <rect x="4" y="9" width="2" height="3.5" rx="0.5" fill="currentColor"/>
+                <rect x="7" y="6" width="2" height="6.5" rx="0.5" fill="currentColor"/>
+                <rect x="10" y="3.5" width="2" height="9" rx="0.5" fill="currentColor"/>
+              </svg>
+            </button>
+            {aiUsageHover && <AiUsagePanel />}
+          </div>
         </div>
       </div>
       <div className="titlebar-right">

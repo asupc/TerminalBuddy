@@ -5,7 +5,6 @@ import { ConfigPanel } from './components/ConfigPanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import { FileTree } from './components/FileTree';
 import { TabSidebar } from './components/TabSidebar';
-import { AiUsagePanel } from './components/AiUsagePanel';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { getStoredTheme, applyTheme, getAppSettings } from './utils/settings';
 import { useAppStore } from './stores/appStore';
@@ -16,7 +15,7 @@ import type { Profile } from './types';
 import { PRESET_THEMES } from './types';
 
 function App() {
-  const { setProfiles, addSession, configPanelVisible, fileTreeVisible, aiUsageVisible, toggleConfigPanel, toggleFileTree, toggleAiUsage, openSettingsTab, profiles } = useAppStore();
+  const { setProfiles, addSession, configPanelVisible, fileTreeVisible, toggleConfigPanel, toggleFileTree, openSettingsTab, profiles } = useAppStore();
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
@@ -180,10 +179,8 @@ function App() {
         onSettings={handleSettings}
         configPanelVisible={configPanelVisible}
         fileTreeVisible={fileTreeVisible}
-        aiUsageVisible={aiUsageVisible}
         onToggleConfigPanel={toggleConfigPanel}
         onToggleFileTree={toggleFileTree}
-        onToggleAiUsage={toggleAiUsage}
       />
       <div className="main-content">
         <ConfigPanel
@@ -215,7 +212,6 @@ function App() {
           }}
         />
       )}
-      {aiUsageVisible && <AiUsagePanel />}
       {closeConfirm && (
         <div className="confirm-dialog-overlay" onClick={handleCloseCancel}>
           <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>

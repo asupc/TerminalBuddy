@@ -1,57 +1,70 @@
-import { FC, useState, useEffect, useCallback } from 'react';
-import { fetchZhipuUsage, tierDisplayName, utilizationColor, countdownStr, type AiUsageData } from '../services/aiUsage';
+import { FC, useState, useEffect, useCallback, useRef } from 'react';
+import { fetchZhipuUsage, fetchQianfanUsage, tierDisplayName, utilizationColor, countdownStr, type AiUsageData } from '../services/aiUsage';
 import { getAppSettings } from '../utils/settings';
 import './AiUsagePanel.css';
 
-export const AiUsagePanel: FC = () => {
+interface TierRowProps {
+  tier: { name: string; utilization: number; resetsAt: string | null };
+}
+
+const TierRow: FC<TierRowProps> = ({ tier }) => (
+  <div className="ai-usage-tier">
+    <span className="ai-usage-tier-label">{tierDisplayName(tier.name)}</span>
+    <div className="ai-usage-bar-track">
+      <div
+        className="ai-usage-bar-fill"
+        style={{
+          width: `${Math.min(tier.utilization, 100)}%`,
+          background: utilizationColor(tier.utilization),
+        }}
+      />
+    </div>
+    <span className="ai-usage-pct" style={{ color: utilizationColor(tier.utilization) }}>
+      {Math.round(tier.utilization)}%
+    </span>
+    {tier.resetsAt && countdownStr(tier.resetsAt) && (
+      <span className="ai-usage-countdown">{countdownStr(tier.resetsAt)}</span>
+    )}
+  </div>
+);
+
+interface ProviderBlockProps {
+  label: string;
+  fetchFn: () => Promise<AiUsageData>;
+  hasCredential: boolean;
+}
+
+const ProviderBlock: FC<ProviderBlockProps> = ({ label, fetchFn, hasCredential }) => {
   const [data, setData] = useState<AiUsageData | null>(null);
   const [loading, setLoading] = useState(false);
-  const apiKey = getAppSettings().zhipuApiKey;
+  const loaded = useRef(false);
 
   const refresh = useCallback(async () => {
-    if (!apiKey) {
-      setData({ success: false, level: null, tiers: [], error: '未配置 API Key' });
-      return;
-    }
+    if (!hasCredential) return;
     setLoading(true);
-    const result = await fetchZhipuUsage(apiKey);
+    const result = await fetchFn();
     setData(result);
     setLoading(false);
-  }, [apiKey]);
+  }, [hasCredential, fetchFn]);
 
   useEffect(() => {
-    refresh();
+    if (!loaded.current) {
+      loaded.current = true;
+      refresh();
+    }
   }, [refresh]);
 
-  const hasKey = !!apiKey;
+  if (!hasCredential) return null;
 
   return (
-    <div className="ai-usage-panel">
-      {!hasKey ? (
-        <span className="ai-usage-text">未配置 API Key，请在设置中填入</span>
-      ) : loading ? (
+    <div className="ai-usage-provider-block">
+      <div className="ai-usage-provider-header">{label}</div>
+      {loading && !data ? (
         <span className="ai-usage-text">加载中...</span>
       ) : data && data.success && data.tiers.length > 0 ? (
         <div className="ai-usage-bars">
           {data.tiers.map((tier) => (
-            <div key={tier.name} className="ai-usage-tier">
-              <span className="ai-usage-tier-label">{tierDisplayName(tier.name)}</span>
-              <div className="ai-usage-bar-track">
-                <div
-                  className="ai-usage-bar-fill"
-                  style={{
-                    width: `${Math.min(tier.utilization, 100)}%`,
-                    background: utilizationColor(tier.utilization),
-                  }}
-                />
-              </div>
-              <span className="ai-usage-pct" style={{ color: utilizationColor(tier.utilization) }}>
-                {Math.round(tier.utilization)}%
-              </span>
-              {tier.resetsAt && countdownStr(tier.resetsAt) && (
-                <span className="ai-usage-countdown">{countdownStr(tier.resetsAt)}</span>
-              )}
-            </div>
+            <TierRow key={tier.name} tier={tier} />
           ))}
         </div>
       ) : data && !data.success ? (
@@ -59,10 +72,42 @@ export const AiUsagePanel: FC = () => {
       ) : (
         <span className="ai-usage-text">暂无数据</span>
       )}
-      {hasKey && (
-        <button className="ai-usage-refresh" onClick={refresh} disabled={loading} title="刷新">
-          ↻
-        </button>
+    </div>
+  );
+};
+
+export const AiUsagePanel: FC = () => {
+  const settings = getAppSettings();
+  const hasZhipu = !!settings.zhipuApiKey;
+  const hasQianfan = !!settings.qianfanCookie;
+
+  if (!hasZhipu && !hasQianfan) {
+    return (
+      <div className="ai-usage-tooltip">
+        <span className="ai-usage-text">未配置，请在设置中填入</span>
+      </div>
+    );
+  }
+
+  const fetchZhipu = useCallback(() => fetchZhipuUsage(settings.zhipuApiKey), [settings.zhipuApiKey]);
+  const fetchQianfan = useCallback(() => fetchQianfanUsage(settings.qianfanCookie), [settings.qianfanCookie]);
+
+  return (
+    <div className="ai-usage-tooltip">
+      {hasZhipu && (
+        <ProviderBlock
+          label="智谱 GLM"
+          fetchFn={fetchZhipu}
+          hasCredential={hasZhipu}
+        />
+      )}
+      {hasZhipu && hasQianfan && <div className="ai-usage-divider" />}
+      {hasQianfan && (
+        <ProviderBlock
+          label="百度千帆"
+          fetchFn={fetchQianfan}
+          hasCredential={hasQianfan}
+        />
       )}
     </div>
   );

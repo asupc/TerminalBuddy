@@ -1,3 +1,4 @@
+pub mod ai_usage;
 pub mod clipboard;
 pub mod fs;
 pub mod history;
@@ -8,6 +9,7 @@ pub mod terminal;
 pub mod theme;
 pub mod window;
 pub mod workspace;
+pub use ai_usage::*;
 pub use clipboard::*;
 pub use fs::*;
 pub use history::*;
