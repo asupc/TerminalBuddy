@@ -20,7 +20,7 @@ interface TabSidebarProps {
 }
 
 export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal }) => {
-  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession } = useAppStore();
+  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession, workingSessions } = useAppStore();
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [showContextMenu, setShowContextMenu] = useState(false);
@@ -280,8 +280,8 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 }}
               >
                 <span
-                  className="tab-sidebar-dot"
-                  style={{ background: session.tabColor || 'var(--accent)' }}
+                  className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
+                  style={{ background: workingSessions[session.id] ? '#f0b429' : (session.tabColor || 'var(--accent)') }}
                 />
                 {renamingSessionId === session.id ? (
                   <input

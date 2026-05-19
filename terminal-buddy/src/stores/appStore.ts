@@ -117,6 +117,10 @@ interface AppState {
   updateSession: (id: string, updates: Partial<TerminalSession>) => void;
   sessionDirectories: Record<string, string>;
   setSessionDirectory: (sessionId: string, path: string) => void;
+
+  // Working state (yellow dot when command is running)
+  workingSessions: Record<string, boolean>;
+  setSessionWorking: (sessionId: string, working: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -277,5 +281,9 @@ export const useAppStore = create<AppState>((set) => ({
   sessionDirectories: {},
   setSessionDirectory: (sessionId, path) => set((state) => ({
     sessionDirectories: { ...state.sessionDirectories, [sessionId]: path },
+  })),
+  workingSessions: {},
+  setSessionWorking: (sessionId, working) => set((state) => ({
+    workingSessions: { ...state.workingSessions, [sessionId]: working },
   })),
 }));
