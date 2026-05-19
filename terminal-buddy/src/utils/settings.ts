@@ -1,7 +1,5 @@
 export type ThemeMode = 'dark' | 'light' | 'system';
 
-export type AiUsageProvider = 'zhipu' | 'qianfan';
-
 export interface AppSettings {
   restoreTabsOnStartup: boolean;
   configPanelAutoExpand: boolean;
@@ -12,7 +10,6 @@ export interface AppSettings {
   rightClickPaste: boolean;
   zhipuApiKey: string;
   qianfanCookie: string;
-  aiUsageProvider: AiUsageProvider;
 }
 
 const THEME_STORAGE_KEY = 'terminalbuddy_theme';
@@ -28,7 +25,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   rightClickPaste: false,
   zhipuApiKey: '',
   qianfanCookie: '',
-  aiUsageProvider: 'zhipu',
 };
 
 export const getAppSettings = (): AppSettings => {

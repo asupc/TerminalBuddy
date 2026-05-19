@@ -1079,21 +1079,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
           >
             <h3 className="settings-section-title">AI用量</h3>
             <div className="settings-general">
-              {/* 主显示模型选择 */}
-              <div className="settings-section">
-                <label className="settings-label">主显示模型</label>
-                <select
-                  className="settings-select"
-                  value={settings.aiUsageProvider}
-                  onChange={(e) => updateSetting('aiUsageProvider', e.target.value as 'zhipu' | 'qianfan')}
-                  style={{ width: '100%', padding: '6px 10px' }}
-                >
-                  <option value="zhipu">智谱 GLM</option>
-                  <option value="qianfan">百度千帆</option>
-                </select>
-                <p className="settings-desc">选择主界面显示的 AI 用量模型</p>
-              </div>
-
               {/* 智谱 GLM API Key */}
               <div className="settings-section">
                 <label className="settings-label">智谱 GLM API Key</label>
