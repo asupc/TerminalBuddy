@@ -22,7 +22,7 @@ impl HasJwtSecret for AppState {
 }
 
 pub fn build_router(state: AppState) -> Router {
-    let public = Router::new()
+    let mut router = Router::new()
         .route("/api/auth/login", post(handlers::auth_handler::login))
         .route("/api/auth/status", get(handlers::auth_handler::status))
         .route("/api/profiles", get(handlers::profile_handler::list).post(handlers::profile_handler::create))
@@ -31,7 +31,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/terminals/{id}", delete(handlers::terminal_handler::close))
         .route("/ws/terminal/{id}", get(ws::ws_handler));
 
-    public
+    #[cfg(debug_assertions)]
+    {
+        use tower_http::services::ServeDir;
+        // In axum 0.8, nest_service("/", ...) acts as a fallback:
+        // explicit routes above take priority, then static files are served.
+        router = router.nest_service("/", ServeDir::new("../web/dist"));
+    }
+
+    router
         .with_state(state)
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
 }
