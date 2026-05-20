@@ -47,6 +47,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     y: number;
   } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [internalDragOver, setInternalDragOver] = useState(false);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const updateAutocomplete = useCallback((val: typeof autocomplete) => {
     autocompleteRef.current = val;
@@ -723,10 +724,41 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     };
   }, []);
 
+  // Internal drag from FileTree: detect mouseup to receive dropped paths
+  useEffect(() => {
+    const el = terminalRef.current;
+    if (!el) return;
+
+    const handleMouseUp = () => {
+      const paths = useAppStore.getState().dragPaths;
+      if (!paths || !isActiveRef.current) return;
+      setInternalDragOver(false);
+      const text = paths.map(p => `"${p}"`).join(' ');
+      onOutputRef.current(text);
+      useAppStore.getState().setDragPaths(null);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const paths = useAppStore.getState().dragPaths;
+      if (!paths || !isActiveRef.current) return;
+      const rect = el.getBoundingClientRect();
+      const inside = e.clientX >= rect.left && e.clientX <= rect.right
+                  && e.clientY >= rect.top && e.clientY <= rect.bottom;
+      setInternalDragOver(inside);
+    };
+
+    el.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mousemove', handleMouseMove);
+    return () => {
+      el.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('mousemove', handleMouseMove);
+    };
+  }, []);
+
   return (
     <div
       ref={terminalRef}
-      className={`terminal-instance${dragOver ? ' drag-over' : ''}`}
+      className={`terminal-instance${dragOver || internalDragOver ? ' drag-over' : ''}`}
     >
       {searchVisible && (
         <div className="terminal-search-bar">

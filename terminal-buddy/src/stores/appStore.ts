@@ -121,6 +121,10 @@ interface AppState {
   // Working state (yellow dot when command is running)
   workingSessions: Record<string, boolean>;
   setSessionWorking: (sessionId: string, working: boolean) => void;
+
+  // Internal drag paths (from FileTree to terminal)
+  dragPaths: string[] | null;
+  setDragPaths: (paths: string[] | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -286,4 +290,7 @@ export const useAppStore = create<AppState>((set) => ({
   setSessionWorking: (sessionId, working) => set((state) => ({
     workingSessions: { ...state.workingSessions, [sessionId]: working },
   })),
+
+  dragPaths: null,
+  setDragPaths: (paths) => set({ dragPaths: paths }),
 }));

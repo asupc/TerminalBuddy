@@ -23,6 +23,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
   const itemRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
+  const setDragPaths = useAppStore(s => s.setDragPaths);
 
   const isSelected = selectedPath === node.path;
 
@@ -99,6 +100,25 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
         className={`tree-item ${isSelected ? 'selected' : ''}`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         tabIndex={-1}
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          const startX = e.clientX;
+          const startY = e.clientY;
+          let dragging = false;
+          const onMove = (ev: MouseEvent) => {
+            if (!dragging && (Math.abs(ev.clientX - startX) > 4 || Math.abs(ev.clientY - startY) > 4)) {
+              dragging = true;
+              setDragPaths([node.path]);
+            }
+          };
+          const onUp = () => {
+            if (!dragging) setDragPaths(null);
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+          };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        }}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onKeyDown={handleKeyDown}
