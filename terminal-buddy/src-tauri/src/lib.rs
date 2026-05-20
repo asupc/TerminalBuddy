@@ -1,11 +1,12 @@
 pub mod commands;
 pub mod models;
 pub mod services;
+pub mod web;
 
-use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, start_terminal, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, get_app_settings, save_close_behavior, get_data_path, set_data_path, save_tab_sidebar_width, save_enable_tab_navigation, save_single_instance, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace, get_command_history, add_command_to_history, delete_command_from_history, update_command_in_history, update_command_note, clear_command_history, import_command_history, get_command_templates, save_command_templates, init_command_templates, export_all_data, import_all_data, window_minimize, window_toggle_maximize, window_close, window_exit_app, fetch_qianfan_usage};
+use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, start_terminal, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, get_app_settings, save_close_behavior, get_data_path, set_data_path, save_tab_sidebar_width, save_enable_tab_navigation, save_single_instance, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace, get_command_history, add_command_to_history, delete_command_from_history, update_command_in_history, update_command_note, clear_command_history, import_command_history, get_command_templates, save_command_templates, init_command_templates, export_all_data, import_all_data, window_minimize, window_toggle_maximize, window_close, window_exit_app, fetch_qianfan_usage, save_web_api_settings, get_web_api_status, restart_web_server, get_web_server_address};
 use commands::TerminalService;
 use models::CloseBehavior;
-use services::SettingsService;
+use services::{SettingsService, WebServiceState};
 use tauri::Manager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
@@ -15,7 +16,8 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(TerminalService::new());
+        .manage(TerminalService::new())
+        .manage(WebServiceState::new());
 
     if settings.single_instance {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
@@ -69,6 +71,23 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Conditionally start Web API server
+            let app_handle = app.handle().clone();
+            let settings_clone = SettingsService::get_settings();
+            if settings_clone.web_api_enabled && !settings_clone.web_api_password_hash.is_empty() {
+                let jwt_secret = crate::web::auth::generate_jwt_secret();
+                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+                *crate::commands::web::SHUTDOWN_TX.lock().unwrap() = Some(shutdown_tx);
+                *crate::commands::web::JWT_SECRET.lock().unwrap() = Some(jwt_secret.clone());
+
+                tauri::async_runtime::spawn(crate::web::server::run_server(
+                    settings_clone.web_api_port,
+                    jwt_secret,
+                    app_handle,
+                    shutdown_rx,
+                ));
+            }
 
             Ok(())
         })
@@ -135,6 +154,10 @@ pub fn run() {
             window_close,
             window_exit_app,
             fetch_qianfan_usage,
+            save_web_api_settings,
+            get_web_api_status,
+            restart_web_server,
+            get_web_server_address,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

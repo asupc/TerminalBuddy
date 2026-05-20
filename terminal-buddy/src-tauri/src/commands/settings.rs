@@ -192,3 +192,32 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn save_web_api_settings(
+    enabled: bool,
+    port: u16,
+    username: String,
+    password: String,
+) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.web_api_enabled = enabled;
+    settings.web_api_port = port;
+    settings.web_api_username = username;
+    if !password.is_empty() {
+        settings.web_api_password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
+            .map_err(|e| format!("密码加密失败: {}", e))?;
+    }
+    SettingsService::save_settings(&settings)
+}
+
+#[tauri::command]
+pub fn get_web_api_status() -> serde_json::Value {
+    let settings = SettingsService::get_settings();
+    serde_json::json!({
+        "enabled": settings.web_api_enabled,
+        "port": settings.web_api_port,
+        "username": settings.web_api_username,
+        "hasPassword": !settings.web_api_password_hash.is_empty(),
+    })
+}

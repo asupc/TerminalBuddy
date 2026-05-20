@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile } from '../services/tauri';
+import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { PRESET_THEMES, type CustomTheme, type Profile } from '../types';
 import { type ThemeMode, type AppSettings, getAppSettings, saveAppSettings, getStoredTheme, applyTheme } from '../utils/settings';
@@ -20,6 +20,7 @@ const SECTIONS = [
   { id: 'history', label: '命令历史' },
   { id: 'exclusions', label: '文件排除' },
   { id: 'ai-usage', label: 'AI用量' },
+  { id: 'web', label: 'Web管理' },
 ] as const;
 
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
@@ -54,6 +55,12 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [zhipuApiKeyVisible, setZhipuApiKeyVisible] = useState(false);
   const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
+  const [webPassword, setWebPassword] = useState('');
+  const [hasPassword, setHasPassword] = useState(false);
+  const [serverAddress, setServerAddress] = useState('');
+  const [serverRunning, setServerRunning] = useState(false);
+  const [serverError, setServerError] = useState('');
+  const [serverLoading, setServerLoading] = useState(false);
 
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
@@ -151,6 +158,27 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     return () => observer.disconnect();
   }, []);
 
+  // Load web status on mount so state is correct when user navigates to Web section
+  useEffect(() => { loadWebStatus(); }, []);
+
+  useEffect(() => {
+    if (activeSection === 'web') {
+      loadWebStatus();
+    }
+  }, [activeSection]);
+
+  const loadWebStatus = async () => {
+    try {
+      const status = await getWebApiStatus();
+      setSettings(prev => ({ ...prev, webApiEnabled: status.enabled, webApiPort: status.port, webApiUsername: status.username }));
+      setHasPassword(status.hasPassword);
+      const addr = await getWebServerAddress();
+      setServerAddress(addr);
+      setServerRunning(addr.startsWith('http'));
+      setServerError('');
+    } catch {}
+  };
+
   const scrollToSection = (id: string) => {
     sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -235,8 +263,58 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    try {
+      await saveWebApiSettings(
+        settings.webApiEnabled,
+        settings.webApiPort,
+        settings.webApiUsername,
+        webPassword
+      );
+      if (webPassword) setWebPassword('');
+    } catch (e) {
+      console.error('[WebAPI] 保存失败:', e);
+    }
     onClose();
+  };
+
+  const handleToggleServer = async () => {
+    setServerLoading(true);
+    setServerError('');
+    try {
+      if (serverRunning) {
+        // 停止：先关闭开关，保存，再重启（restart_web_server 会检测 enabled=false 并停止）
+        setSettings(prev => ({ ...prev, webApiEnabled: false }));
+        await saveWebApiSettings(false, settings.webApiPort, settings.webApiUsername, '');
+        const result = await restartWebServer();
+        setServerRunning(false);
+        setServerAddress('已停止');
+        console.log('[WebAPI]', result);
+      } else {
+        if (!webPassword && !hasPassword) {
+          setServerError('请先设置密码');
+          setServerLoading(false);
+          return;
+        }
+        // 确保开关打开
+        if (!settings.webApiEnabled) {
+          setSettings(prev => ({ ...prev, webApiEnabled: true }));
+        }
+        await saveWebApiSettings(true, settings.webApiPort, settings.webApiUsername, webPassword);
+        const result = await restartWebServer();
+        const addr = await getWebServerAddress();
+        setServerAddress(addr);
+        setServerRunning(addr.startsWith('http'));
+        console.log('[WebAPI]', result);
+        if (!addr.startsWith('http')) {
+          setServerError(result || '服务启动失败');
+        }
+      }
+    } catch (e: any) {
+      setServerError(e?.toString() || '操作失败');
+      console.error('[WebAPI] 操作失败:', e);
+    }
+    setServerLoading(false);
   };
 
   const handleCancel = () => {
@@ -1118,6 +1196,105 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                 </div>
                 <p className="settings-desc">填入百度千帆控制台的 Cookie 用于查询 AI 用量。登录 <a href="https://console.bce.baidu.com/qianfan/resource/subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>百度千帆控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值</p>
               </div>
+            </div>
+          </section>
+
+          {/* Web Management Section */}
+          <section
+            id="web"
+            ref={(el) => { sectionRefs.current['web'] = el; }}
+            className="settings-section-block"
+          >
+            <h3 className="settings-section-title">Web 远程管理</h3>
+            <div className="settings-general">
+              <p className="settings-desc" style={{ marginLeft: 0 }}>启用后可通过浏览器远程访问终端</p>
+
+              <div className="settings-section">
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.webApiEnabled}
+                    onChange={(e) => setSettings({ ...settings, webApiEnabled: e.target.checked })}
+                  />
+                  <span>启用 Web API</span>
+                </label>
+              </div>
+
+              {settings.webApiEnabled && (
+                <>
+                  <div className="settings-section">
+                    <label className="settings-label">端口</label>
+                    <div className="data-path-row">
+                      <input
+                        className="data-path-input"
+                        type="number"
+                        value={settings.webApiPort}
+                        min={1024}
+                        max={65535}
+                        onChange={(e) => setSettings({ ...settings, webApiPort: parseInt(e.target.value) || 9600 })}
+                        style={{ flex: 1 }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="settings-section">
+                    <label className="settings-label">用户名</label>
+                    <div className="data-path-row">
+                      <input
+                        className="data-path-input"
+                        type="text"
+                        value={settings.webApiUsername}
+                        onChange={(e) => setSettings({ ...settings, webApiUsername: e.target.value })}
+                        style={{ flex: 1 }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="settings-section">
+                    <label className="settings-label">密码</label>
+                    <div className="data-path-row">
+                      <input
+                        className="data-path-input"
+                        type="password"
+                        value={webPassword}
+                        onChange={(e) => setWebPassword(e.target.value)}
+                        placeholder="留空则不修改密码"
+                        style={{ flex: 1 }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="settings-section">
+                    <label className="settings-label">服务控制</label>
+                    <div className="data-path-row" style={{ alignItems: 'center', gap: 12 }}>
+                      <span style={{ color: serverRunning ? '#4caf50' : '#8a8aaa', fontSize: 13 }}>
+                        ● {serverRunning ? serverAddress : '已停止'}
+                      </span>
+                      <button
+                        onClick={handleToggleServer}
+                        disabled={serverLoading}
+                        style={{
+                          padding: '8px 20px',
+                          border: 'none',
+                          borderRadius: 6,
+                          background: serverRunning ? '#d32f2f' : '#4a4aaa',
+                          color: '#fff',
+                          fontSize: 13,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {serverLoading ? '处理中...' : serverRunning ? '停止服务' : '启动服务'}
+                      </button>
+                    </div>
+                    {serverError && (
+                      <div style={{ color: '#ff6b6b', fontSize: 12, marginTop: 6 }}>
+                        {serverError}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </section>
         </div>

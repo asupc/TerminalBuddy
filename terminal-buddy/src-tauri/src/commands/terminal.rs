@@ -1,4 +1,4 @@
-use tauri::{command, AppHandle, State, Emitter};
+use tauri::{command, AppHandle, State, Emitter, Manager};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -11,14 +11,17 @@ use crate::services::PathService;
 
 pub struct TerminalInstance {
     pub id: String,
+    pub profile_id: String,
     child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
     pub writer: Option<Box<dyn Write + Send>>,
     pub output_buffer: Arc<Mutex<Vec<String>>>,
+    current_rows: u16,
+    current_cols: u16,
 }
 
 pub struct TerminalService {
-    instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
+    pub instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
 }
 
 fn log_debug(msg: &str) {
@@ -116,10 +119,13 @@ impl TerminalService {
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),
+            profile_id: profile_id.to_string(),
             child,
             master: pty_pair.master,
             writer: Some(writer),
             output_buffer: output_buffer.clone(),
+            current_rows: 24,
+            current_cols: 80,
         };
 
         {
@@ -222,7 +228,10 @@ impl TerminalService {
                                     *buffer = kept;
                                 }
                             }
-                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output);
+                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output.clone());
+                            // Broadcast to Web subscribers
+                            let web_state = app_clone.state::<crate::services::WebServiceState>();
+                            web_state.broadcast(&tid, &output);
                         }
                     }
                     Err(_) => break,
@@ -262,13 +271,21 @@ impl TerminalService {
     pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16) -> Result<(), String> {
         let mut instances = self.instances.lock().unwrap();
         if let Some(instance) = instances.get_mut(id) {
-            instance.master.resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            }).map_err(|e| format!("Resize failed: {}", e))?;
-            log_debug(&format!("[resize] id={} rows={} cols={}", id, rows, cols));
+            // Only grow, never shrink — prevents a small client (mobile) from
+            // shrinking the PTY and affecting all other viewers (desktop).
+            let new_rows = std::cmp::max(instance.current_rows, rows);
+            let new_cols = std::cmp::max(instance.current_cols, cols);
+            if new_rows != instance.current_rows || new_cols != instance.current_cols {
+                instance.master.resize(PtySize {
+                    rows: new_rows,
+                    cols: new_cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                }).map_err(|e| format!("Resize failed: {}", e))?;
+                instance.current_rows = new_rows;
+                instance.current_cols = new_cols;
+                log_debug(&format!("[resize] id={} rows={} cols={}", id, new_rows, new_cols));
+            }
             Ok(())
         } else {
             Err("Terminal not found".to_string())
@@ -348,10 +365,13 @@ impl TerminalService {
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),
+            profile_id: String::new(),
             child,
             master: pty_pair.master,
             writer: Some(writer),
             output_buffer: output_buffer.clone(),
+            current_rows: 24,
+            current_cols: 80,
         };
 
         {
@@ -401,7 +421,10 @@ impl TerminalService {
                                     *buffer = kept;
                                 }
                             }
-                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output);
+                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output.clone());
+                            // Broadcast to Web subscribers
+                            let web_state = app_clone.state::<crate::services::WebServiceState>();
+                            web_state.broadcast(&tid, &output);
                         }
                     }
                     Err(_) => break,
