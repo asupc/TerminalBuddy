@@ -5,7 +5,7 @@ use std::path::PathBuf;
 pub struct SettingsService;
 
 impl SettingsService {
-    fn get_settings_path() -> PathBuf {
+    pub fn get_settings_path() -> PathBuf {
         let base = dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("TerminalBuddy");

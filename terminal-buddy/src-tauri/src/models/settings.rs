@@ -36,6 +36,14 @@ pub struct AppSettings {
     pub enable_tab_navigation: bool,
     #[serde(default = "default_single_instance")]
     pub single_instance: bool,
+    #[serde(default = "default_web_api_enabled")]
+    pub web_api_enabled: bool,
+    #[serde(default = "default_web_api_port")]
+    pub web_api_port: u16,
+    #[serde(default = "default_web_api_username")]
+    pub web_api_username: String,
+    #[serde(default = "default_web_api_password_hash")]
+    pub web_api_password_hash: String,
 }
 
 impl Default for AppSettings {
@@ -46,6 +54,26 @@ impl Default for AppSettings {
             tab_sidebar_width: 200,
             enable_tab_navigation: true,
             single_instance: true,
+            web_api_enabled: false,
+            web_api_port: 9600,
+            web_api_username: "admin".to_string(),
+            web_api_password_hash: String::new(),
         }
     }
+}
+
+fn default_web_api_enabled() -> bool {
+    false
+}
+
+fn default_web_api_port() -> u16 {
+    9600
+}
+
+fn default_web_api_username() -> String {
+    "admin".to_string()
+}
+
+fn default_web_api_password_hash() -> String {
+    String::new()
 }
