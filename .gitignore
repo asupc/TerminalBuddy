@@ -5,3 +5,5 @@ target
 /.idea/modules.xml
 /.idea/terminal-buddy.iml
 /.idea/vcs.xml
+/terminal-buddy/web/dist
+/terminal-buddy/dist
