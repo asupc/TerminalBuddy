@@ -1,4 +1,4 @@
-use tauri::{command, AppHandle, State, Emitter};
+use tauri::{command, AppHandle, State, Emitter, Manager};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -11,6 +11,7 @@ use crate::services::PathService;
 
 pub struct TerminalInstance {
     pub id: String,
+    pub profile_id: String,
     child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
     pub writer: Option<Box<dyn Write + Send>>,
@@ -18,7 +19,7 @@ pub struct TerminalInstance {
 }
 
 pub struct TerminalService {
-    instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
+    pub instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
 }
 
 fn log_debug(msg: &str) {
@@ -116,6 +117,7 @@ impl TerminalService {
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),
+            profile_id: profile_id.to_string(),
             child,
             master: pty_pair.master,
             writer: Some(writer),
@@ -222,7 +224,10 @@ impl TerminalService {
                                     *buffer = kept;
                                 }
                             }
-                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output);
+                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output.clone());
+                            // Broadcast to Web subscribers
+                            let web_state = app_clone.state::<crate::services::WebServiceState>();
+                            web_state.broadcast(&tid, &output);
                         }
                     }
                     Err(_) => break,
@@ -340,6 +345,7 @@ impl TerminalService {
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),
+            profile_id: String::new(),
             child,
             master: pty_pair.master,
             writer: Some(writer),
@@ -393,7 +399,10 @@ impl TerminalService {
                                     *buffer = kept;
                                 }
                             }
-                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output);
+                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output.clone());
+                            // Broadcast to Web subscribers
+                            let web_state = app_clone.state::<crate::services::WebServiceState>();
+                            web_state.broadcast(&tid, &output);
                         }
                     }
                     Err(_) => break,

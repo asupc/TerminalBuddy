@@ -1,5 +1,5 @@
 use axum::Router;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put, delete};
 use tower_http::cors::{Any, CorsLayer};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -7,10 +7,12 @@ use tokio::sync::watch;
 
 use crate::web::auth::HasJwtSecret;
 use crate::web::handlers;
+use crate::web::ws;
 
 #[derive(Clone)]
 pub struct AppState {
     pub jwt_secret: String,
+    pub app_handle: tauri::AppHandle,
 }
 
 impl HasJwtSecret for AppState {
@@ -22,15 +24,20 @@ impl HasJwtSecret for AppState {
 pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/api/auth/login", post(handlers::auth_handler::login))
-        .route("/api/auth/status", get(handlers::auth_handler::status));
+        .route("/api/auth/status", get(handlers::auth_handler::status))
+        .route("/api/profiles", get(handlers::profile_handler::list).post(handlers::profile_handler::create))
+        .route("/api/profiles/{id}", put(handlers::profile_handler::update).delete(handlers::profile_handler::delete))
+        .route("/api/terminals", get(handlers::terminal_handler::list).post(handlers::terminal_handler::start))
+        .route("/api/terminals/{id}", delete(handlers::terminal_handler::close))
+        .route("/ws/terminal/{id}", get(ws::ws_handler));
 
     public
         .with_state(state)
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
 }
 
-pub async fn run_server(port: u16, jwt_secret: String, mut shutdown_rx: watch::Receiver<bool>) {
-    let state = AppState { jwt_secret };
+pub async fn run_server(port: u16, jwt_secret: String, app_handle: tauri::AppHandle, mut shutdown_rx: watch::Receiver<bool>) {
+    let state = AppState { jwt_secret, app_handle };
     let app = build_router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
