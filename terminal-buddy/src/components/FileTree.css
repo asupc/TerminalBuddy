@@ -239,3 +239,17 @@
 .bookmark-name {
   color: var(--text-primary);
 }
+/* Drag ghost indicator */
+.file-drag-ghost {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  padding: 4px 10px;
+  background: var(--accent, #0078d4);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  opacity: 0.9;
+}
