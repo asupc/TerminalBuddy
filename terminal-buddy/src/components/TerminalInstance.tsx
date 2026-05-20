@@ -47,6 +47,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     y: number;
   } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [internalDragOver, setInternalDragOver] = useState(false);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const updateAutocomplete = useCallback((val: typeof autocomplete) => {
     autocompleteRef.current = val;
@@ -313,6 +314,28 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Auto-focus after initialization
       terminal.focus();
 
+      // Chunk large paste data to prevent SSH/PTY buffer overflow
+      const PASTE_CHUNK_SIZE = 256;
+      const PASTE_CHUNK_DELAY = 10;
+      const chunkedSend = (data: string) => {
+        if (data.length <= PASTE_CHUNK_SIZE) {
+          onOutputRef.current(data);
+          return;
+        }
+        const chunks: string[] = [];
+        for (let i = 0; i < data.length; i += PASTE_CHUNK_SIZE) {
+          chunks.push(data.slice(i, i + PASTE_CHUNK_SIZE));
+        }
+        const sendNext = (idx: number) => {
+          if (disposed || idx >= chunks.length) return;
+          onOutputRef.current(chunks[idx]);
+          if (idx < chunks.length - 1) {
+            setTimeout(() => sendNext(idx + 1), PASTE_CHUNK_DELAY);
+          }
+        };
+        sendNext(0);
+      };
+
       terminal.onData((data) => {
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
@@ -328,13 +351,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
           updateAutocomplete(null);
         }
-        // Prevent multi-line paste from auto-executing:
-        // Replace \r\n and \r with \n (same as Shift+Enter) to keep visual line breaks
-        // Single-char \r (user pressing Enter) is left untouched
-        const sanitized = data.length > 1 && /[\r\n]/.test(data)
-          ? data.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-          : data;
-        onOutputRef.current(sanitized);
+        const isBracketedPaste = data.startsWith('\x1b[200~');
+        if (isBracketedPaste) {
+          chunkedSend(data);
+        } else if (data.length > 1 && /[\r\n]/.test(data)) {
+          // ConPTY may not forward bracketed paste mode, so manually wrap
+          // to prevent the shell from executing each line as a command
+          const sanitized = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+          const wrapped = `\x1b[200~${sanitized}\x1b[201~`;
+          chunkedSend(wrapped);
+        } else {
+          onOutputRef.current(data);
+        }
       });
 
       // Autocomplete: update suggestions on keypress
@@ -482,8 +510,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
                     onOutputRef.current(`"${trimmed.replace(/"/g, '\\"')}"`);
                   } else {
-                    const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                    onOutputRef.current(sanitized);
+                    terminal.paste(text);
                   }
                 }
               }).catch(() => {});
@@ -492,8 +519,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             // Fallback: read as plain text
             navigator.clipboard.readText().then((text) => {
               if (text) {
-                const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                onOutputRef.current(sanitized);
+                terminal.paste(text);
               }
             }).catch(() => {});
           });
@@ -517,8 +543,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (settings.rightClickPaste && !terminal.hasSelection()) {
           navigator.clipboard.readText().then((text) => {
             if (text) {
-              const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-              onOutputRef.current(sanitized);
+              terminal.paste(text);
               terminal.focus();
             }
           }).catch(() => {});
@@ -636,8 +661,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     } else {
       navigator.clipboard.readText().then((text) => {
         if (text) {
-          const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-          onOutputRef.current(sanitized);
+          terminal.paste(text);
           terminal.focus();
         }
       }).catch(() => {});
@@ -678,8 +702,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   // Tauri native drag-drop: listen for file drops into the window
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
 
     getCurrentWebview().onDragDropEvent((event) => {
+      if (cancelled) return;
       if (event.payload.type === 'enter') {
         if (isActiveRef.current) setDragOver(true);
       } else if (event.payload.type === 'over') {
@@ -696,15 +722,52 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // 'leave' / cancel
         setDragOver(false);
       }
-    }).then(fn => { unlisten = fn; });
+    }).then(fn => {
+      if (cancelled) { fn(); return; }
+      unlisten = fn;
+    });
 
-    return () => { unlisten?.(); };
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Internal drag from FileTree: detect mouseup to receive dropped paths
+  useEffect(() => {
+    const el = terminalRef.current;
+    if (!el) return;
+
+    const handleMouseUp = () => {
+      const paths = useAppStore.getState().dragPaths;
+      if (!paths || !isActiveRef.current) return;
+      setInternalDragOver(false);
+      const text = paths.map(p => `"${p}"`).join(' ');
+      onOutputRef.current(text);
+      useAppStore.getState().setDragPaths(null);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const paths = useAppStore.getState().dragPaths;
+      if (!paths || !isActiveRef.current) return;
+      const rect = el.getBoundingClientRect();
+      const inside = e.clientX >= rect.left && e.clientX <= rect.right
+                  && e.clientY >= rect.top && e.clientY <= rect.bottom;
+      setInternalDragOver(inside);
+    };
+
+    el.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mousemove', handleMouseMove);
+    return () => {
+      el.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('mousemove', handleMouseMove);
+    };
   }, []);
 
   return (
     <div
       ref={terminalRef}
-      className={`terminal-instance${dragOver ? ' drag-over' : ''}`}
+      className={`terminal-instance${dragOver || internalDragOver ? ' drag-over' : ''}`}
     >
       {searchVisible && (
         <div className="terminal-search-bar">
