@@ -261,11 +261,17 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         settings.webApiUsername,
         webPassword
       );
-      await restartWebServer();
-      const addr = await getWebServerAddress();
-      setServerAddress(addr);
-      if (webPassword) setWebPassword('');
-    } catch {}
+      if (settings.webApiEnabled && !webPassword) {
+        // 首次启用但未设置密码：提示用户
+      } else {
+        const result = await restartWebServer();
+        setServerAddress(await getWebServerAddress());
+        if (webPassword) setWebPassword('');
+        console.log('[WebAPI]', result);
+      }
+    } catch (e) {
+      console.error('[WebAPI] 保存失败:', e);
+    }
     onClose();
   };
 
