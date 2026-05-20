@@ -2,7 +2,7 @@ pub mod commands;
 pub mod models;
 pub mod services;
 
-use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, start_terminal, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, get_app_settings, save_close_behavior, get_data_path, set_data_path, save_tab_sidebar_width, save_enable_tab_navigation, save_single_instance, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace, get_command_history, add_command_to_history, delete_command_from_history, update_command_in_history, update_command_note, clear_command_history, import_command_history, get_command_templates, save_command_templates, init_command_templates, export_all_data, import_all_data, window_minimize, window_toggle_maximize, window_close, window_exit_app, fetch_qianfan_usage};
+use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, start_terminal, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, get_app_settings, save_close_behavior, get_data_path, set_data_path, save_tab_sidebar_width, save_enable_tab_navigation, save_single_instance, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace, get_command_history, add_command_to_history, delete_command_from_history, update_command_in_history, update_command_note, clear_command_history, import_command_history, get_command_templates, save_command_templates, init_command_templates, export_all_data, import_all_data, window_minimize, window_toggle_maximize, window_close, window_exit_app, fetch_qianfan_usage, save_web_api_settings, get_web_api_status};
 use commands::TerminalService;
 use models::CloseBehavior;
 use services::SettingsService;
@@ -135,6 +135,8 @@ pub fn run() {
             window_close,
             window_exit_app,
             fetch_qianfan_usage,
+            save_web_api_settings,
+            get_web_api_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
