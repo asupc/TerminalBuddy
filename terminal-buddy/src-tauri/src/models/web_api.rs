@@ -1,30 +1,35 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoginResponse {
     pub token: String,
     pub username: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApiStatusResponse {
     pub enabled: bool,
     pub port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApiErrorResponse {
     pub error: String,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalInfo {
     pub id: String,
     pub profile_id: String,
@@ -33,7 +38,7 @@ pub struct TerminalInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(rename_all = "camelCase", tag = "type")]
 pub enum WsClientMessage {
     #[serde(rename = "input")]
     Input { data: String },
@@ -42,7 +47,7 @@ pub enum WsClientMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(rename_all = "camelCase", tag = "type")]
 pub enum WsServerMessage {
     #[serde(rename = "output")]
     Output { data: String },
@@ -51,6 +56,7 @@ pub enum WsServerMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StartTerminalRequest {
     pub profile_id: String,
 }
