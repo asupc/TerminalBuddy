@@ -692,8 +692,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   // Tauri native drag-drop: listen for file drops into the window
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
 
     getCurrentWebview().onDragDropEvent((event) => {
+      if (cancelled) return;
       if (event.payload.type === 'enter') {
         if (isActiveRef.current) setDragOver(true);
       } else if (event.payload.type === 'over') {
@@ -710,9 +712,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // 'leave' / cancel
         setDragOver(false);
       }
-    }).then(fn => { unlisten = fn; });
+    }).then(fn => {
+      if (cancelled) { fn(); return; }
+      unlisten = fn;
+    });
 
-    return () => { unlisten?.(); };
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   return (
