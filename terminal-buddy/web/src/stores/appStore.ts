@@ -1,6 +1,26 @@
 import { create } from 'zustand';
 import type { Profile, WebTerminalSession } from '../types';
 
+const AUTH_KEY = 'terminalbuddy_web_auth';
+
+function loadAuth(): { token: string | null; username: string | null } {
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { token: null, username: null };
+}
+
+function saveAuth(token: string | null, username: string | null) {
+  try {
+    if (token && username) {
+      localStorage.setItem(AUTH_KEY, JSON.stringify({ token, username }));
+    } else {
+      localStorage.removeItem(AUTH_KEY);
+    }
+  } catch {}
+}
+
 interface WebAppState {
   token: string | null;
   username: string | null;
@@ -20,18 +40,29 @@ interface WebAppState {
   setActiveSession: (id: string | null) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
+  isMobile: boolean;
+  setIsMobile: (v: boolean) => void;
 }
 
+const initialAuth = loadAuth();
+
 export const useWebAppStore = create<WebAppState>((set) => ({
-  token: null,
-  username: null,
+  token: initialAuth.token,
+  username: initialAuth.username,
   profiles: [],
   sessions: [],
   activeSessionId: null,
   sidebarOpen: true,
+  isMobile: false,
 
-  setAuth: (token, username) => set({ token, username }),
-  logout: () => set({ token: null, username: null, sessions: [], activeSessionId: null }),
+  setAuth: (token, username) => {
+    saveAuth(token, username);
+    set({ token, username });
+  },
+  logout: () => {
+    saveAuth(null, null);
+    set({ token: null, username: null, sessions: [], activeSessionId: null });
+  },
 
   setProfiles: (profiles) => set({ profiles }),
   addProfile: (profile) => set((s) => ({ profiles: [...s.profiles, profile] })),
@@ -53,4 +84,5 @@ export const useWebAppStore = create<WebAppState>((set) => ({
 
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
+  setIsMobile: (v) => set({ isMobile: v }),
 }));

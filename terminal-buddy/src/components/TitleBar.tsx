@@ -1,5 +1,5 @@
-import { FC, useState, useRef } from 'react';
-import { windowMinimize, windowToggleMaximize, windowClose } from '../services/tauri';
+import { FC, useState, useRef, useEffect, useCallback } from 'react';
+import { windowMinimize, windowToggleMaximize, windowClose, getWebApiStatus, saveWebApiSettings, restartWebServer, getWebServerAddress } from '../services/tauri';
 import { AiUsagePanel } from './AiUsagePanel';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
@@ -21,6 +21,41 @@ export const TitleBar: FC<TitleBarProps> = ({
 }) => {
   const [aiUsageHover, setAiUsageHover] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
+  const [webRunning, setWebRunning] = useState(false);
+  const [webToggling, setWebToggling] = useState(false);
+
+  const checkWebStatus = useCallback(async () => {
+    try {
+      const addr = await getWebServerAddress();
+      setWebRunning(addr.startsWith('http'));
+    } catch { setWebRunning(false); }
+  }, []);
+
+  useEffect(() => {
+    checkWebStatus();
+    const interval = setInterval(checkWebStatus, 5000);
+    return () => clearInterval(interval);
+  }, [checkWebStatus]);
+
+  const handleToggleWeb = async () => {
+    setWebToggling(true);
+    try {
+      const status = await getWebApiStatus();
+      if (webRunning) {
+        await saveWebApiSettings(false, status.port, status.username, '');
+        await restartWebServer();
+        setWebRunning(false);
+      } else {
+        await saveWebApiSettings(true, status.port, status.username, '');
+        await restartWebServer();
+        const addr = await getWebServerAddress();
+        setWebRunning(addr.startsWith('http'));
+      }
+    } catch (e) {
+      console.error('Web服务切换失败:', e);
+    }
+    setWebToggling(false);
+  };
 
   const handleMouseEnter = () => {
     clearTimeout(hoverTimer.current);
@@ -50,6 +85,18 @@ export const TitleBar: FC<TitleBarProps> = ({
             title={fileTreeVisible ? '隐藏文件导航' : '显示文件导航'}
           >
             📁
+          </button>
+          <button
+            className="titlebar-nav-btn"
+            onClick={handleToggleWeb}
+            disabled={webToggling}
+            title={webRunning ? 'Web管理已启动 - 点击停止' : 'Web管理已停止 - 点击启动'}
+            style={{ position: 'relative' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.2" fill="none"/>
+              <circle cx="8" cy="8" r="3" fill={webRunning ? '#4caf50' : '#666'}/>
+            </svg>
           </button>
           <div
             className="ai-usage-trigger"

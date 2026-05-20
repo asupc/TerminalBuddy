@@ -25,7 +25,7 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState) 
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     let web_state = state.app_handle.state::<WebServiceState>();
-    let mut output_rx = web_state.subscribe(&terminal_id);
+    let (sub_id, mut output_rx) = web_state.subscribe(&terminal_id);
 
     // Drain historical output
     {
@@ -87,5 +87,5 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState) 
         _ = recv_task => {}
     }
 
-    web_state.unsubscribe(&terminal_id);
+    web_state.unsubscribe(&terminal_id, &sub_id);
 }

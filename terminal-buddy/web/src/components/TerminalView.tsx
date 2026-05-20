@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -7,20 +7,25 @@ import type { WebTerminalSession } from '../types';
 
 interface Props {
   session: WebTerminalSession;
+  hidden?: boolean;
 }
 
-const TerminalView: React.FC<Props> = ({ session }) => {
+const TerminalView: React.FC<Props> = ({ session, hidden }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
 
+  const handleOutput = useCallback((data: string) => {
+    termRef.current?.write(data);
+  }, []);
+
+  const handleExited = useCallback((code: number) => {
+    termRef.current?.writeln(`\r\n\n[进程已退出，退出码: ${code}]`);
+  }, []);
+
   const { sendInput, sendResize } = useTerminal(session.id, {
-    onOutput: (data) => {
-      termRef.current?.write(data);
-    },
-    onExited: (code) => {
-      termRef.current?.writeln(`\r\n\n[进程已退出，退出码: ${code}]`);
-    },
+    onOutput: handleOutput,
+    onExited: handleExited,
   });
 
   useEffect(() => {
@@ -42,6 +47,16 @@ const TerminalView: React.FC<Props> = ({ session }) => {
     term.open(containerRef.current);
     fitAddon.fit();
 
+    // Intercept Shift+Enter / Ctrl+Enter to insert newline instead of submit
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.type === 'keydown' && (event.shiftKey || event.ctrlKey) && event.key === 'Enter') {
+        sendInput('\r');
+        term.write('\r\n');
+        return false; // prevent default xterm handling
+      }
+      return true;
+    });
+
     term.onData((data) => {
       sendInput(data);
     });
@@ -56,7 +71,6 @@ const TerminalView: React.FC<Props> = ({ session }) => {
 
     window.addEventListener('resize', handleResize);
 
-    // Initial resize after terminal is ready
     setTimeout(() => {
       fitAddon.fit();
       sendResize(term.cols, term.rows);
@@ -67,10 +81,24 @@ const TerminalView: React.FC<Props> = ({ session }) => {
       term.dispose();
       termRef.current = null;
     };
-  }, [session.id, sendInput, sendResize]);
+  }, [session.id]);
+
+  // Re-fit when visibility changes
+  useEffect(() => {
+    if (!hidden && termRef.current) {
+      setTimeout(() => {
+        fitAddonRef.current?.fit();
+        const term = termRef.current;
+        if (term) sendResize(term.cols, term.rows);
+      }, 50);
+    }
+  }, [hidden]);
 
   return (
-    <div ref={containerRef} style={{ height: '100%', padding: '8px' }} />
+    <div
+      ref={containerRef}
+      style={{ height: '100%', padding: '8px', display: hidden ? 'none' : 'block' }}
+    />
   );
 };
 

@@ -1,21 +1,43 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import Sidebar from './Sidebar';
 import TabBar from './TabBar';
 import TerminalView from './TerminalView';
 import { useWebAppStore } from '../stores/appStore';
+import { listTerminals } from '../api/terminals';
 
 const MainLayout: React.FC = () => {
   const sidebarOpen = useWebAppStore((s) => s.sidebarOpen);
   const activeSessionId = useWebAppStore((s) => s.activeSessionId);
   const sessions = useWebAppStore((s) => s.sessions);
   const toggleSidebar = useWebAppStore((s) => s.toggleSidebar);
+  const isMobile = useWebAppStore((s) => s.isMobile);
+  const setIsMobile = useWebAppStore((s) => s.setIsMobile);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    const mql = window.matchMedia('(max-width: 767px)');
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [setIsMobile]);
+
+  // Auto-load running terminals into tabs on page load
+  useEffect(() => {
+    listTerminals().then((terminals) => {
+      const store = useWebAppStore.getState();
+      for (const t of terminals) {
+        const alreadyOpen = store.sessions.find((s) => s.id === t.id);
+        if (!alreadyOpen) {
+          store.addSession({
+            id: t.id,
+            profileId: t.profileId,
+            profileName: t.profileName,
+            terminalType: t.terminalType as any,
+          });
+        }
+      }
+    }).catch(() => {});
   }, []);
 
   return (
@@ -62,16 +84,20 @@ const MainLayout: React.FC = () => {
         )}
 
         <TabBar />
-        <div style={{ flex: 1, background: '#0c0c1e' }}>
-          {activeSession ? (
-            <TerminalView session={activeSession} />
-          ) : (
+        <div style={{ flex: 1, background: '#0c0c1e', position: 'relative' }}>
+          {sessions.length === 0 ? (
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               height: '100%', color: '#6a6a8a', fontSize: 14,
             }}>
               选择一个连接开始使用终端
             </div>
+          ) : (
+            sessions.map((s) => (
+              <div key={s.id} style={{ position: 'absolute', inset: 0 }}>
+                <TerminalView session={s} hidden={s.id !== activeSessionId} />
+              </div>
+            ))
           )}
         </div>
       </div>

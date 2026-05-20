@@ -56,6 +56,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [zhipuApiKeyVisible, setZhipuApiKeyVisible] = useState(false);
   const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
   const [webPassword, setWebPassword] = useState('');
+  const [hasPassword, setHasPassword] = useState(false);
   const [serverAddress, setServerAddress] = useState('');
   const [serverRunning, setServerRunning] = useState(false);
   const [serverError, setServerError] = useState('');
@@ -157,6 +158,9 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     return () => observer.disconnect();
   }, []);
 
+  // Load web status on mount so state is correct when user navigates to Web section
+  useEffect(() => { loadWebStatus(); }, []);
+
   useEffect(() => {
     if (activeSection === 'web') {
       loadWebStatus();
@@ -167,6 +171,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     try {
       const status = await getWebApiStatus();
       setSettings(prev => ({ ...prev, webApiEnabled: status.enabled, webApiPort: status.port, webApiUsername: status.username }));
+      setHasPassword(status.hasPassword);
       const addr = await getWebServerAddress();
       setServerAddress(addr);
       setServerRunning(addr.startsWith('http'));
@@ -286,7 +291,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         setServerAddress('已停止');
         console.log('[WebAPI]', result);
       } else {
-        if (!webPassword) {
+        if (!webPassword && !hasPassword) {
           setServerError('请先设置密码');
           setServerLoading(false);
           return;

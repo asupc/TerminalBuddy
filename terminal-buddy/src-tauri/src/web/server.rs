@@ -5,6 +5,9 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
+#[cfg(not(debug_assertions))]
+use axum::response::IntoResponse;
+
 use crate::web::auth::HasJwtSecret;
 use crate::web::handlers;
 use crate::web::ws;
@@ -21,6 +24,10 @@ impl HasJwtSecret for AppState {
     }
 }
 
+// Embed web frontend files for release mode
+#[cfg(not(debug_assertions))]
+static WEB_DIST: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
+
 pub fn build_router(state: AppState) -> Router {
     let mut router = Router::new()
         .route("/api/auth/login", post(handlers::auth_handler::login))
@@ -33,15 +40,61 @@ pub fn build_router(state: AppState) -> Router {
 
     #[cfg(debug_assertions)]
     {
-        use tower_http::services::ServeDir;
-        // In axum 0.8, nest_service("/", ...) acts as a fallback:
-        // explicit routes above take priority, then static files are served.
-        router = router.nest_service("/", ServeDir::new("../web/dist"));
+        use tower_http::services::{ServeDir, ServeFile};
+        const WEB_DIST_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../web/dist");
+        const INDEX_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../web/dist/index.html");
+        router = router.fallback_service(
+            ServeDir::new(WEB_DIST_PATH).not_found_service(ServeFile::new(INDEX_PATH))
+        );
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        router = router.fallback(serve_embedded_file);
     }
 
     router
         .with_state(state)
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+}
+
+#[cfg(not(debug_assertions))]
+async fn serve_embedded_file(req: axum::extract::Request) -> axum::response::Response {
+    let path = req.uri().path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    match WEB_DIST.get_file(path) {
+        Some(file) => {
+            let content_type = guess_content_type(path);
+            ([(axum::http::header::CONTENT_TYPE, content_type)], file.contents()).into_response()
+        }
+        None => {
+            // SPA fallback: serve index.html for unknown paths
+            match WEB_DIST.get_file("index.html") {
+                Some(index) => {
+                    ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], index.contents()).into_response()
+                }
+                None => axum::http::StatusCode::NOT_FOUND.into_response(),
+            }
+        }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn guess_content_type(path: &str) -> &'static str {
+    match path.rsplit('.').next() {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "application/javascript",
+        Some("css") => "text/css",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("svg") => "image/svg+xml",
+        Some("ico") => "image/x-icon",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
+    }
 }
 
 pub async fn run_server(port: u16, jwt_secret: String, app_handle: tauri::AppHandle, mut shutdown_rx: watch::Receiver<bool>) {

@@ -43,8 +43,5 @@ pub fn get_web_server_address() -> Result<String, String> {
     if !settings.web_api_enabled {
         return Ok("Web API 未启用".into());
     }
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "localhost".to_string());
-    Ok(format!("http://{}:{}", hostname, settings.web_api_port))
+    Ok(format!("http://localhost:{}", settings.web_api_port))
 }

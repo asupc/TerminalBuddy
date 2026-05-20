@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from './components/TitleBar';
 import { ConfigPanel } from './components/ConfigPanel';
 import { TerminalPanel } from './components/TerminalPanel';
@@ -36,6 +37,36 @@ function App() {
     const handler = () => setTabNavVersion(v => v + 1);
     window.addEventListener('tab-navigation-changed', handler);
     return () => window.removeEventListener('tab-navigation-changed', handler);
+  }, []);
+
+  // Listen for terminals created/closed via Web API to sync with desktop UI
+  useEffect(() => {
+    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string }>('terminal-created', (event) => {
+      const { id, profileId, profileName, terminalType } = event.payload;
+      const store = useAppStore.getState();
+      // Skip if already in sessions
+      if (store.sessions.find((s) => s.id === id)) return;
+      const profile = store.profiles.find((p) => p.id === profileId);
+      const theme = PRESET_THEMES.find((t) => t.id === profile?.colorTheme) || PRESET_THEMES[0];
+      store.addSession({
+        id,
+        profileId,
+        profileName,
+        terminalType: terminalType as any,
+        colorTheme: { background: theme.background, foreground: theme.foreground },
+        tabColor: profile?.tabColor || null,
+        groupId: 'default',
+      });
+    });
+
+    const unlistenClosed = listen<string>('terminal-closed', (event) => {
+      useAppStore.getState().removeSession(event.payload);
+    });
+
+    return () => {
+      unlistenCreated.then((f) => f());
+      unlistenClosed.then((f) => f());
+    };
   }, []);
 
   useEffect(() => {

@@ -550,6 +550,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
       window.addEventListener('resize', handleResize);
       cleanupFns.push(() => window.removeEventListener('resize', handleResize));
+
+      // Re-fit when container size changes (sidebar toggle/collapse)
+      const resizeObserver = new ResizeObserver(() => {
+        fitAddon.fit();
+        const { rows, cols } = terminal;
+        resizeTerminal(terminalId, rows, cols).catch(() => {});
+      });
+      resizeObserver.observe(terminalRef.current!);
+      cleanupFns.push(() => resizeObserver.disconnect());
     };
 
     // Register Tauri event listener, then drain buffered backend output
