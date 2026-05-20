@@ -57,6 +57,9 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
   const [webPassword, setWebPassword] = useState('');
   const [serverAddress, setServerAddress] = useState('');
+  const [serverRunning, setServerRunning] = useState(false);
+  const [serverError, setServerError] = useState('');
+  const [serverLoading, setServerLoading] = useState(false);
 
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
@@ -166,6 +169,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       setSettings(prev => ({ ...prev, webApiEnabled: status.enabled, webApiPort: status.port, webApiUsername: status.username }));
       const addr = await getWebServerAddress();
       setServerAddress(addr);
+      setServerRunning(addr.startsWith('http'));
+      setServerError('');
     } catch {}
   };
 
@@ -261,18 +266,50 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         settings.webApiUsername,
         webPassword
       );
-      if (settings.webApiEnabled && !webPassword) {
-        // 首次启用但未设置密码：提示用户
-      } else {
-        const result = await restartWebServer();
-        setServerAddress(await getWebServerAddress());
-        if (webPassword) setWebPassword('');
-        console.log('[WebAPI]', result);
-      }
+      if (webPassword) setWebPassword('');
     } catch (e) {
       console.error('[WebAPI] 保存失败:', e);
     }
     onClose();
+  };
+
+  const handleToggleServer = async () => {
+    setServerLoading(true);
+    setServerError('');
+    try {
+      if (serverRunning) {
+        // 停止：先关闭开关，保存，再重启（restart_web_server 会检测 enabled=false 并停止）
+        setSettings(prev => ({ ...prev, webApiEnabled: false }));
+        await saveWebApiSettings(false, settings.webApiPort, settings.webApiUsername, '');
+        const result = await restartWebServer();
+        setServerRunning(false);
+        setServerAddress('已停止');
+        console.log('[WebAPI]', result);
+      } else {
+        if (!webPassword) {
+          setServerError('请先设置密码');
+          setServerLoading(false);
+          return;
+        }
+        // 确保开关打开
+        if (!settings.webApiEnabled) {
+          setSettings(prev => ({ ...prev, webApiEnabled: true }));
+        }
+        await saveWebApiSettings(true, settings.webApiPort, settings.webApiUsername, webPassword);
+        const result = await restartWebServer();
+        const addr = await getWebServerAddress();
+        setServerAddress(addr);
+        setServerRunning(addr.startsWith('http'));
+        console.log('[WebAPI]', result);
+        if (!addr.startsWith('http')) {
+          setServerError(result || '服务启动失败');
+        }
+      }
+    } catch (e: any) {
+      setServerError(e?.toString() || '操作失败');
+      console.error('[WebAPI] 操作失败:', e);
+    }
+    setServerLoading(false);
   };
 
   const handleCancel = () => {
@@ -1223,12 +1260,33 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   </div>
 
                   <div className="settings-section">
-                    <label className="settings-label">服务状态</label>
-                    <div className="data-path-row">
-                      <span style={{ color: serverAddress.startsWith('http') ? '#4caf50' : '#8a8aaa' }}>
-                        ● {serverAddress || '未启动'}
+                    <label className="settings-label">服务控制</label>
+                    <div className="data-path-row" style={{ alignItems: 'center', gap: 12 }}>
+                      <span style={{ color: serverRunning ? '#4caf50' : '#8a8aaa', fontSize: 13 }}>
+                        ● {serverRunning ? serverAddress : '已停止'}
                       </span>
+                      <button
+                        onClick={handleToggleServer}
+                        disabled={serverLoading}
+                        style={{
+                          padding: '8px 20px',
+                          border: 'none',
+                          borderRadius: 6,
+                          background: serverRunning ? '#d32f2f' : '#4a4aaa',
+                          color: '#fff',
+                          fontSize: 13,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {serverLoading ? '处理中...' : serverRunning ? '停止服务' : '启动服务'}
+                      </button>
                     </div>
+                    {serverError && (
+                      <div style={{ color: '#ff6b6b', fontSize: 12, marginTop: 6 }}>
+                        {serverError}
+                      </div>
+                    )}
                   </div>
                 </>
               )}
