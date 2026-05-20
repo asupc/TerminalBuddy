@@ -313,6 +313,28 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Auto-focus after initialization
       terminal.focus();
 
+      // Chunk large paste data to prevent SSH/PTY buffer overflow
+      const PASTE_CHUNK_SIZE = 256;
+      const PASTE_CHUNK_DELAY = 10;
+      const chunkedSend = (data: string) => {
+        if (data.length <= PASTE_CHUNK_SIZE) {
+          onOutputRef.current(data);
+          return;
+        }
+        const chunks: string[] = [];
+        for (let i = 0; i < data.length; i += PASTE_CHUNK_SIZE) {
+          chunks.push(data.slice(i, i + PASTE_CHUNK_SIZE));
+        }
+        const sendNext = (idx: number) => {
+          if (disposed || idx >= chunks.length) return;
+          onOutputRef.current(chunks[idx]);
+          if (idx < chunks.length - 1) {
+            setTimeout(() => sendNext(idx + 1), PASTE_CHUNK_DELAY);
+          }
+        };
+        sendNext(0);
+      };
+
       terminal.onData((data) => {
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
@@ -328,13 +350,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
           updateAutocomplete(null);
         }
-        // Prevent multi-line paste from auto-executing:
-        // Replace \r\n and \r with \n (same as Shift+Enter) to keep visual line breaks
-        // Single-char \r (user pressing Enter) is left untouched
-        const sanitized = data.length > 1 && /[\r\n]/.test(data)
-          ? data.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-          : data;
-        onOutputRef.current(sanitized);
+        const isBracketedPaste = data.startsWith('\x1b[200~');
+        if (isBracketedPaste) {
+          chunkedSend(data);
+        } else if (data.length > 1 && /[\r\n]/.test(data)) {
+          // ConPTY may not forward bracketed paste mode, so manually wrap
+          // to prevent the shell from executing each line as a command
+          const sanitized = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+          const wrapped = `\x1b[200~${sanitized}\x1b[201~`;
+          chunkedSend(wrapped);
+        } else {
+          onOutputRef.current(data);
+        }
       });
 
       // Autocomplete: update suggestions on keypress
@@ -482,8 +509,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
                     onOutputRef.current(`"${trimmed.replace(/"/g, '\\"')}"`);
                   } else {
-                    const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                    onOutputRef.current(sanitized);
+                    terminal.paste(text);
                   }
                 }
               }).catch(() => {});
@@ -492,8 +518,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             // Fallback: read as plain text
             navigator.clipboard.readText().then((text) => {
               if (text) {
-                const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                onOutputRef.current(sanitized);
+                terminal.paste(text);
               }
             }).catch(() => {});
           });
@@ -517,8 +542,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (settings.rightClickPaste && !terminal.hasSelection()) {
           navigator.clipboard.readText().then((text) => {
             if (text) {
-              const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-              onOutputRef.current(sanitized);
+              terminal.paste(text);
               terminal.focus();
             }
           }).catch(() => {});
@@ -627,8 +651,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     } else {
       navigator.clipboard.readText().then((text) => {
         if (text) {
-          const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-          onOutputRef.current(sanitized);
+          terminal.paste(text);
           terminal.focus();
         }
       }).catch(() => {});
