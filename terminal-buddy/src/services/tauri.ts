@@ -255,3 +255,30 @@ export async function exportAllData(filePath: string): Promise<void> {
 export async function importAllData(filePath: string): Promise<void> {
   return invoke('import_all_data', { filePath });
 }
+
+// Web API Commands
+export async function saveWebApiSettings(
+  enabled: boolean,
+  port: number,
+  username: string,
+  password: string
+): Promise<void> {
+  return invoke('save_web_api_settings', { enabled, port, username, password });
+}
+
+export async function getWebApiStatus(): Promise<{
+  enabled: boolean;
+  port: number;
+  username: string;
+  hasPassword: boolean;
+}> {
+  return invoke('get_web_api_status');
+}
+
+export async function restartWebServer(): Promise<string> {
+  return invoke('restart_web_server');
+}
+
+export async function getWebServerAddress(): Promise<string> {
+  return invoke('get_web_server_address');
+}

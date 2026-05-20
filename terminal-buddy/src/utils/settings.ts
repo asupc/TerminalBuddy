@@ -10,6 +10,9 @@ export interface AppSettings {
   rightClickPaste: boolean;
   zhipuApiKey: string;
   qianfanCookie: string;
+  webApiEnabled: boolean;
+  webApiPort: number;
+  webApiUsername: string;
 }
 
 const THEME_STORAGE_KEY = 'terminalbuddy_theme';
@@ -25,6 +28,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   rightClickPaste: false,
   zhipuApiKey: '',
   qianfanCookie: '',
+  webApiEnabled: false,
+  webApiPort: 9600,
+  webApiUsername: 'admin',
 };
 
 export const getAppSettings = (): AppSettings => {
