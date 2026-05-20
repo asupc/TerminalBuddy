@@ -6,7 +6,8 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput } from '../services/tauri';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getAppSettings } from '../utils/settings';
 import { useAppStore } from '../stores/appStore';
 import { getAllSuggestions, addCommandToHistory, type SuggestionItem } from '../data/commandTemplates';
@@ -667,32 +668,28 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
   // Tauri native drag-drop: listen for file drops into the window
   useEffect(() => {
-    const unlisteners: UnlistenFn[] = [];
-    let active = true;
+    let unlisten: UnlistenFn | undefined;
 
-    listen<{ paths: string[] }>('tauri://drag-enter', () => {
-      if (active && isActiveRef.current) setDragOver(true);
-    }).then(fn => { unlisteners.push(fn); });
-
-    listen('tauri://drag-leave', () => {
-      if (active) setDragOver(false);
-    }).then(fn => { unlisteners.push(fn); });
-
-    listen<{ paths: string[] }>('tauri://drag-drop', (event) => {
-      if (!active) return;
-      setDragOver(false);
-      if (!isActiveRef.current) return;
-      const paths = event.payload.paths;
-      if (paths && paths.length > 0) {
-        const text = paths.map((p: string) => `"${p}"`).join(' ');
-        onOutputRef.current(text);
+    getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type === 'enter') {
+        if (isActiveRef.current) setDragOver(true);
+      } else if (event.payload.type === 'over') {
+        // hovering — keep drag-over state
+      } else if (event.payload.type === 'drop') {
+        setDragOver(false);
+        if (!isActiveRef.current) return;
+        const paths = event.payload.paths;
+        if (paths && paths.length > 0) {
+          const text = paths.map(p => `"${p}"`).join(' ');
+          onOutputRef.current(text);
+        }
+      } else {
+        // 'leave' / cancel
+        setDragOver(false);
       }
-    }).then(fn => { unlisteners.push(fn); });
+    }).then(fn => { unlisten = fn; });
 
-    return () => {
-      active = false;
-      unlisteners.forEach(fn => fn());
-    };
+    return () => { unlisten?.(); };
   }, []);
 
   return (
