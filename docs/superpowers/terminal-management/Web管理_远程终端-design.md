@@ -277,6 +277,7 @@ interface WebAppState {
 - 构建产物 `web/dist/` 通过 Rust `include_dir!` 宏嵌入二进制
 - axum 通过 `ServeDir` 服务静态文件
 - SPA 路由：未匹配路径回退到 `index.html`
+- **开发模式**：前端开发时使用 Vite dev server（`cd web && npm run dev`），axum 仅提供 API/WS 服务，前端通过 `vite.config.ts` 中的 proxy 代理 API 请求到 axum，支持热更新
 
 ## 范围排除
 
