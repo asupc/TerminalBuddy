@@ -244,20 +244,28 @@ impl TerminalService {
     }
 
     pub fn write_to_terminal(&self, id: &str, data: &str) -> Result<(), String> {
-        let mut instances = self.instances.lock().unwrap();
-        if let Some(instance) = instances.get_mut(id) {
-            if let Some(ref mut writer) = instance.writer {
-                writer.write_all(data.as_bytes())
-                    .map_err(|e| format!("Write failed: {}", e))?;
-                writer.flush()
-                    .map_err(|e| format!("Flush failed: {}", e))?;
-                Ok(())
-            } else {
-                Err("Terminal writer not available".to_string())
+        let bytes = data.as_bytes();
+        let chunk_size = 256;
+        for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
+            if i > 0 {
+                // Release lock during sleep so other terminals aren't blocked
+                std::thread::sleep(std::time::Duration::from_millis(2));
             }
-        } else {
-            Err("Terminal not found".to_string())
+            let mut instances = self.instances.lock().unwrap();
+            if let Some(instance) = instances.get_mut(id) {
+                if let Some(ref mut writer) = instance.writer {
+                    writer.write_all(chunk)
+                        .map_err(|e| format!("Write failed: {}", e))?;
+                    writer.flush()
+                        .map_err(|e| format!("Flush failed: {}", e))?;
+                } else {
+                    return Err("Terminal writer not available".to_string());
+                }
+            } else {
+                return Err("Terminal not found".to_string());
+            }
         }
+        Ok(())
     }
 
     pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16) -> Result<(), String> {
