@@ -23,7 +23,8 @@ pub async fn login(
         return Err(ApiError::Unauthorized("用户名或密码错误".into()));
     }
 
-    let valid = verify(&req.password, &settings.web_api_password_hash).unwrap_or(false);
+    let valid = verify(&req.password, &settings.web_api_password_hash)
+        .map_err(|e| ApiError::Internal(format!("密码验证失败: {}", e)))?;
     if !valid {
         return Err(ApiError::Unauthorized("用户名或密码错误".into()));
     }

@@ -42,6 +42,7 @@ pub async fn run_server(port: u16, jwt_secret: String, mut shutdown_rx: watch::R
         }
     };
 
+    eprintln!("[WebAPI] 服务器启动成功 http://{}", addr);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             loop {
