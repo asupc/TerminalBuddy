@@ -3,6 +3,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useTerminal } from '../hooks/useTerminal';
+import { useWebAppStore } from '../stores/appStore';
+import MobileInputBar from './MobileInputBar';
 import type { WebTerminalSession } from '../types';
 
 interface Props {
@@ -14,12 +16,35 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const pendingChunksRef = useRef<string[]>([]);
+  const pendingRafRef = useRef<number | null>(null);
+  const isMobile = useWebAppStore((s) => s.isMobile);
 
   const handleOutput = useCallback((data: string) => {
-    termRef.current?.write(data);
+    const term = termRef.current;
+    if (!term) return;
+    pendingChunksRef.current.push(data);
+    if (!pendingRafRef.current) {
+      pendingRafRef.current = requestAnimationFrame(() => {
+        pendingRafRef.current = null;
+        const combined = pendingChunksRef.current.join('');
+        pendingChunksRef.current.length = 0;
+        termRef.current?.write(combined);
+      });
+    }
   }, []);
 
   const handleExited = useCallback((code: number) => {
+    // Flush pending output first
+    if (pendingChunksRef.current.length > 0) {
+      const combined = pendingChunksRef.current.join('');
+      pendingChunksRef.current.length = 0;
+      if (pendingRafRef.current) {
+        cancelAnimationFrame(pendingRafRef.current);
+        pendingRafRef.current = null;
+      }
+      termRef.current?.write(combined);
+    }
     termRef.current?.writeln(`\r\n\n[进程已退出，退出码: ${code}]`);
   }, []);
 
@@ -33,7 +58,7 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
 
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 14,
+      fontSize: isMobile ? 12 : 14,
       fontFamily: "Cascadia Code, Consolas, 'Courier New', monospace",
       theme: {
         background: '#0c0c1e',
@@ -52,7 +77,7 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
       if (event.type === 'keydown' && (event.shiftKey || event.ctrlKey) && event.key === 'Enter') {
         sendInput('\r');
         term.write('\r\n');
-        return false; // prevent default xterm handling
+        return false;
       }
       return true;
     });
@@ -64,20 +89,54 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     termRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    const handleResize = () => {
+    const doFit = () => {
       fitAddon.fit();
       sendResize(term.cols, term.rows);
     };
 
+    // ResizeObserver for container size changes
+    const resizeObserver = new ResizeObserver(() => {
+      doFit();
+    });
+    resizeObserver.observe(containerRef.current);
+
+    // Window resize fallback
+    const handleResize = () => doFit();
     window.addEventListener('resize', handleResize);
 
-    setTimeout(() => {
-      fitAddon.fit();
-      sendResize(term.cols, term.rows);
-    }, 100);
+    // visualViewport for mobile virtual keyboard
+    let vvHandler: (() => void) | null = null;
+    if (window.visualViewport) {
+      vvHandler = () => doFit();
+      window.visualViewport.addEventListener('resize', vvHandler);
+      window.visualViewport.addEventListener('scroll', vvHandler);
+    }
+
+    // Mobile: enable touch scrolling on xterm viewport
+    if (isMobile) {
+      const viewport = term.element?.querySelector('.xterm-viewport') as HTMLElement | null;
+      if (viewport) {
+        viewport.style.touchAction = 'pan-y';
+      }
+    }
+
+    // Double-fit to ensure stable layout
+    requestAnimationFrame(() => {
+      doFit();
+    });
 
     return () => {
+      if (pendingRafRef.current) {
+        cancelAnimationFrame(pendingRafRef.current);
+        pendingRafRef.current = null;
+      }
+      pendingChunksRef.current.length = 0;
+      resizeObserver.disconnect();
       window.removeEventListener('resize', handleResize);
+      if (vvHandler && window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', vvHandler);
+        window.visualViewport.removeEventListener('scroll', vvHandler);
+      }
       term.dispose();
       termRef.current = null;
     };
@@ -94,11 +153,26 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     }
   }, [hidden]);
 
+  const handleMobileSend = useCallback((text: string) => {
+    sendInput(text + '\r');
+  }, [sendInput]);
+
   return (
-    <div
-      ref={containerRef}
-      style={{ height: '100%', padding: '8px', display: hidden ? 'none' : 'block' }}
-    />
+    <div style={{
+      height: '100%', display: 'flex', flexDirection: isMobile ? 'column' : 'unset',
+    }}>
+      <div
+        ref={containerRef}
+        style={{
+          flex: isMobile ? '1' : 'unset',
+          height: isMobile ? 'auto' : '100%',
+          padding: isMobile ? '4px' : '8px',
+          display: hidden ? 'none' : 'block',
+          minHeight: 0,
+        }}
+      />
+      {isMobile && <MobileInputBar onSend={handleMobileSend} visible={!hidden} />}
+    </div>
   );
 };
 

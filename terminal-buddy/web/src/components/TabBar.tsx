@@ -7,6 +7,7 @@ const TabBar: React.FC = () => {
   const activeSessionId = useWebAppStore((s) => s.activeSessionId);
   const setActiveSession = useWebAppStore((s) => s.setActiveSession);
   const removeSession = useWebAppStore((s) => s.removeSession);
+  const isMobile = useWebAppStore((s) => s.isMobile);
 
   const handleClose = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -17,23 +18,27 @@ const TabBar: React.FC = () => {
   return (
     <div style={{
       display: 'flex', background: '#16162e', borderBottom: '1px solid #2a2a4a',
-      padding: '0 8px', height: 40, gap: 2, overflowX: 'auto', flexShrink: 0,
+      padding: isMobile ? '0 4px' : '0 8px',
+      height: isMobile ? 32 : 40, gap: 2, overflowX: 'auto', flexShrink: 0,
     }}>
       {sessions.map((session) => (
         <div
           key={session.id}
           onClick={() => setActiveSession(session.id)}
           style={{
-            padding: '6px 16px', borderRadius: '6px 6px 0 0',
-            fontSize: 13, color: session.id === activeSessionId ? '#e0e0ff' : '#8a8aaa',
+            padding: isMobile ? '3px 10px' : '6px 16px',
+            borderRadius: '6px 6px 0 0',
+            fontSize: isMobile ? 12 : 13,
+            color: session.id === activeSessionId ? '#e0e0ff' : '#8a8aaa',
             cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex',
-            alignItems: 'center', gap: 8, transition: 'all 0.15s',
+            alignItems: 'center', gap: isMobile ? 4 : 8, transition: 'all 0.15s',
             background: session.id === activeSessionId ? '#1e1e3a' : 'transparent',
             borderBottom: session.id === activeSessionId ? '2px solid #6a6ad5' : 'none',
           }}
         >
           <span style={{
-            width: 8, height: 8, borderRadius: '50%', background: '#4caf50', flexShrink: 0,
+            width: isMobile ? 6 : 8, height: isMobile ? 6 : 8,
+            borderRadius: '50%', background: '#4caf50', flexShrink: 0,
           }} />
           {session.profileName}
           <button
@@ -41,7 +46,8 @@ const TabBar: React.FC = () => {
             style={{
               width: 16, height: 16, borderRadius: 4, border: 'none',
               background: 'transparent', color: '#6a6a8a', cursor: 'pointer',
-              fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: isMobile ? 10 : 12, display: 'flex', alignItems: 'center',
+              justifyContent: 'center',
             }}
           >×</button>
         </div>

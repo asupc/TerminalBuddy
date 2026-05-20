@@ -72,14 +72,14 @@ const MainLayout: React.FC = () => {
         {isMobile && (
           <div style={{
             display: 'flex', alignItems: 'center', background: '#16162e',
-            borderBottom: '1px solid #2a2a4a', padding: '8px 12px', gap: 8,
+            borderBottom: '1px solid #2a2a4a', padding: '4px 8px', gap: 6,
           }}>
             <button onClick={toggleSidebar} style={{
-              width: 36, height: 36, borderRadius: 6, border: '1px solid #3a3a5a',
-              background: '#2a2a4a', color: '#a0a0d0', fontSize: 18,
+              width: 32, height: 32, borderRadius: 6, border: '1px solid #3a3a5a',
+              background: '#2a2a4a', color: '#a0a0d0', fontSize: 16,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>☰</button>
-            <span style={{ fontSize: 13, color: '#a0a0d0' }}>连接</span>
+            <span style={{ fontSize: 12, color: '#a0a0d0' }}>连接</span>
           </div>
         )}
 

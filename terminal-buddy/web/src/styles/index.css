@@ -39,3 +39,12 @@ button { cursor: pointer; transition: all 0.2s; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #3a3a5a; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #5a5a7a; }
+
+/* Mobile optimizations */
+@media (max-width: 767px) {
+  .xterm-viewport {
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+  .xterm-screen { touch-action: pan-y; }
+}
