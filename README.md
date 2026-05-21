@@ -2,28 +2,37 @@
 
 A modern desktop terminal emulator for Windows, built with Tauri 2 + React 18 + Rust.
 
-[中文文档](#中文说明)
+[中文文档](README_zh.md)
 
 ## Features
 
 - **Multi-terminal Support** — PowerShell, CMD, SSH, Docker, Kubernetes
-- **Profile Management** — Create and organize terminal profiles with custom startup paths, commands, and environment variables
-- **Tabbed Interface** — Grouped tabs with color labels, drag-and-drop reordering, and split pane layouts
-- **Theme System** — 8 built-in themes + custom ANSI color theme editor
-- **Autocomplete** — Smart command suggestions from templates and history
-- **Command History** — Searchable history with notes support
-- **Command Templates** — Predefined and custom command templates with fuzzy matching
+- **Profile Management** — Create and organize terminal profiles with custom startup paths, commands, environment variables, and profile-specific colors
+- **Tabbed Interface** — Vertical sidebar or horizontal tab bar, grouped tabs with color labels, drag-and-drop reordering
+- **File Tree Browser** — Built-in file explorer with bookmarks, exclusion patterns (e.g. `node_modules`, `.git`), and drag-and-drop to terminal
+- **Theme System** — 8 preset themes + custom 16-color ANSI theme editor, dark/light/system mode
+- **Autocomplete** — Smart command suggestions from templates and history with fuzzy matching
+- **Command History** — Searchable history with notes support, import/export
+- **Command Templates** — 10 categories of predefined templates (Network, Process, File, System, Git, Docker, Python, Node, .NET, PowerShell) plus custom commands
+- **Search in Terminal** — Ctrl+F to search terminal output
+- **Clipboard Integration** — Paste file paths directly from Explorer (Ctrl+V), right-click paste
+- **IME Support** — Position lock for CJK input method composition
+- **Web Links** — Ctrl+click to open URLs in browser
 - **Workspace Management** — Save and restore terminal layouts as workspaces
 - **System Tray** — Close to tray, single instance mode
-- **Data Portability** — All data stored as JSON files, with import/export support
+- **AI Usage Monitoring** — Track API usage for Zhipu GLM and Baidu Qianfan
+- **Web Remote Access** — Built-in HTTP/WebSocket server for browser-based remote terminal access with JWT authentication, mobile-friendly input bar
+- **Data Portability** — All data stored as JSON files, with full import/export support
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 18, TypeScript, Zustand, xterm.js |
-| Backend | Rust, Tauri 2, portable-pty (ConPTY) |
-| Build | Vite, NSIS installer |
+| Desktop Frontend | React 18, TypeScript, Zustand 5, xterm.js 5.5 |
+| Backend | Rust (edition 2021), Tauri 2, portable-pty (ConPTY) |
+| Web API | axum 0.8, tower-http, JWT (jsonwebtoken), bcrypt |
+| Web Frontend | React 18, Zustand 5, xterm.js, axios |
+| Build | Vite 5, NSIS installer |
 
 ## Getting Started
 
@@ -64,31 +73,51 @@ npm run build
 
 ```
 terminal-buddy/
-├── src/                          # Frontend (React/TypeScript)
+├── src/                          # Desktop frontend (React/TypeScript)
 │   ├── App.tsx                   # Root component
-│   ├── components/               # UI components
-│   │   ├── TerminalInstance.tsx   # xterm.js terminal with addons
-│   │   ├── TerminalPanel.tsx     # Terminal routing & split layout
-│   │   ├── SettingsPage.tsx      # Settings overlay (6 sections)
+│   ├── components/
+│   │   ├── TitleBar.tsx          # Custom frameless title bar
+│   │   ├── ConfigPanel.tsx       # Profile list panel
 │   │   ├── ConfigEditDialog.tsx  # Profile create/edit modal
-│   │   ├── TabSidebar.tsx        # Grouped session list
+│   │   ├── FileTree.tsx          # File browser with bookmarks
+│   │   ├── TerminalInstance.tsx  # xterm.js terminal with addons
+│   │   ├── TerminalPanel.tsx     # Terminal routing & split layout
+│   │   ├── TabSidebar.tsx        # Vertical tab navigation
+│   │   ├── TerminalTabBar.tsx    # Horizontal tab bar
+│   │   ├── SettingsPage.tsx      # Settings overlay (8 sections)
+│   │   ├── AiUsagePanel.tsx      # AI usage hover panel
 │   │   └── ...
 │   ├── stores/appStore.ts        # Zustand state management
-│   ├── services/tauri.ts         # Tauri invoke wrappers
+│   ├── services/tauri.ts         # Tauri invoke wrappers (62 commands)
+│   ├── services/aiUsage.ts       # AI API usage fetching
 │   ├── data/commandTemplates.ts  # Template definitions & history
+│   ├── utils/settings.ts         # Frontend settings (localStorage)
 │   └── types/index.ts            # TypeScript types & presets
 ├── src-tauri/                    # Backend (Rust/Tauri)
 │   └── src/
-│       ├── lib.rs                # App setup, tray, commands registration
-│       ├── commands/             # Tauri command handlers
+│       ├── lib.rs                # App setup, tray, single instance, Web API
+│       ├── commands/             # Tauri command handlers (62 commands)
 │       │   ├── terminal.rs       # PTY management (TerminalService)
-│       │   ├── profile.rs        # Profile CRUD
+│       │   ├── profile.rs        # Profile CRUD + export/import
 │       │   ├── history.rs        # Command history
-│       │   ├── theme.rs          # Theme CRUD
+│       │   ├── settings.rs       # App settings, data path, Web API settings
+│       │   ├── window.rs         # Window controls (minimize/maximize/close)
+│       │   ├── ai_usage.rs       # Baidu Qianfan API usage
 │       │   └── ...
 │       ├── services/             # Business logic (JSON file I/O)
-│       └── models/               # Data structures (Profile, Theme, etc.)
-└── portable-pty-patched/         # Local patch for portable-pty
+│       │   └── web_service.rs    # Terminal output pub/sub for WebSocket
+│       ├── models/               # Data structures
+│       ├── web/                  # Web API module (axum)
+│       │   ├── server.rs         # Axum router & SPA serving
+│       │   ├── auth.rs           # JWT authentication
+│       │   ├── ws.rs             # WebSocket terminal I/O
+│       │   └── handlers/         # REST handlers (auth, profiles, terminals)
+│       └── portable-pty-patched/ # Local patch for portable-pty
+└── web/                          # Web frontend (separate React SPA)
+    └── src/
+        ├── components/           # LoginPage, MainLayout, TerminalView, MobileInputBar
+        ├── api/                  # Auth, profiles, terminals API clients
+        └── hooks/useTerminal.ts  # WebSocket terminal hook
 ```
 
 ### Data Storage
@@ -105,125 +134,19 @@ All user data is stored as JSON files under `%APPDATA%/TerminalBuddy/`:
 └── settings.json              # App settings
 ```
 
-## Screenshots
+### Settings Sections
 
-> Add screenshots here
+| Section | Description |
+|---------|-------------|
+| General | Restore tabs, close behavior, tab navigation, theme mode, data path, import/export |
+| Profiles | Create, edit, delete, copy, group profiles |
+| Commands | 10 categories of templates, custom commands, show/hide, edit descriptions |
+| Themes | 8 presets + custom 16-color editor with live preview |
+| History | Search, edit commands and notes, clear |
+| Exclusions | File tree exclusion patterns (exact name, `*.ext`, `**/*.ext`) |
+| AI Usage | Zhipu GLM API key, Baidu Qianfan cookie |
+| Web Management | Enable/disable Web API, port, credentials, server control |
 
 ## License
-
-[MIT](LICENSE)
-
----
-
-# 中文说明
-
-一个基于 Tauri 2 + React 18 + Rust 构建的现代化 Windows 桌面终端模拟器。
-
-## 功能特性
-
-- **多终端类型** — 支持 PowerShell、CMD、SSH、Docker、Kubernetes
-- **配置文件管理** — 创建和组织终端配置，支持自定义启动路径、命令和环境变量
-- **标签页界面** — 分组标签页、颜色标签、拖拽排序、分屏布局
-- **主题系统** — 8 款内置主题 + 自定义 ANSI 颜色主题编辑器
-- **智能补全** — 基于模板和历史记录的命令自动补全
-- **命令历史** — 可搜索的命令历史，支持添加备注
-- **命令模板** — 预定义和自定义命令模板，支持模糊匹配
-- **工作区管理** — 保存和恢复终端布局
-- **系统托盘** — 关闭到托盘、单实例模式
-- **数据可移植** — 所有数据以 JSON 文件存储，支持导入/导出
-
-## 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 前端 | React 18、TypeScript、Zustand、xterm.js |
-| 后端 | Rust、Tauri 2、portable-pty (ConPTY) |
-| 构建 | Vite、NSIS 安装包 |
-
-## 快速开始
-
-### 环境要求
-
-- [Node.js](https://nodejs.org/)（v18+）
-- [Rust](https://www.rust-lang.org/tools/install)（stable 版本）
-- [Tauri 2 前置依赖](https://v2.tauri.app/start/prerequisites/)
-
-### 开发
-
-```bash
-cd terminal-buddy
-
-# 安装依赖
-npm install
-
-# 开发模式运行（Rust + 前端）
-npm run tauri dev
-
-# 仅前端开发（Vite 开发服务器，端口 1420）
-npm run dev
-```
-
-### 构建
-
-```bash
-cd terminal-buddy
-
-# 生产构建（输出 NSIS 安装包）
-npm run tauri build
-
-# 仅构建前端
-npm run build
-```
-
-## 项目结构
-
-```
-terminal-buddy/
-├── src/                          # 前端（React/TypeScript）
-│   ├── App.tsx                   # 根组件
-│   ├── components/               # UI 组件
-│   │   ├── TerminalInstance.tsx   # xterm.js 终端（含插件）
-│   │   ├── TerminalPanel.tsx     # 终端路由与分屏布局
-│   │   ├── SettingsPage.tsx      # 设置面板（6 个分区）
-│   │   ├── ConfigEditDialog.tsx  # 配置文件创建/编辑弹窗
-│   │   ├── TabSidebar.tsx        # 分组会话列表
-│   │   └── ...
-│   ├── stores/appStore.ts        # Zustand 状态管理
-│   ├── services/tauri.ts         # Tauri invoke 封装
-│   ├── data/commandTemplates.ts  # 模板定义与历史记录
-│   └── types/index.ts            # TypeScript 类型与预设
-├── src-tauri/                    # 后端（Rust/Tauri）
-│   └── src/
-│       ├── lib.rs                # 应用初始化、托盘、命令注册
-│       ├── commands/             # Tauri 命令处理
-│       │   ├── terminal.rs       # PTY 管理（TerminalService）
-│       │   ├── profile.rs        # 配置文件 CRUD
-│       │   ├── history.rs        # 命令历史
-│       │   ├── theme.rs          # 主题 CRUD
-│       │   └── ...
-│       ├── services/             # 业务逻辑（JSON 文件读写）
-│       └── models/               # 数据结构（Profile、Theme 等）
-└── portable-pty-patched/         # portable-pty 本地补丁
-```
-
-### 数据存储
-
-所有用户数据以 JSON 文件存储在 `%APPDATA%/TerminalBuddy/` 目录下：
-
-```
-%APPDATA%/TerminalBuddy/
-├── Profiles/                  # 终端配置文件
-├── Themes/                    # 自定义主题
-├── Workspaces/                # 保存的工作区
-├── command_history.json       # 命令历史（含备注）
-├── command_templates.json     # 命令模板
-└── settings.json              # 应用设置
-```
-
-## 截图
-
-> 在此添加截图
-
-## 开源协议
 
 [MIT](LICENSE)

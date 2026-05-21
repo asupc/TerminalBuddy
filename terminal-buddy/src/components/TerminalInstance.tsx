@@ -65,19 +65,74 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
 
-    // Textarea position lock — during rapid TUI output (e.g. Claude Code
-    // spinners/status lines), xterm.js repositions .xterm-helper-textarea
-    // on every render to match the canvas cursor.  This causes IME candidate
-    // windows to jump.  We lock the textarea at the input-line position and
-    // release after output settles.  Same approach VS Code uses.
+    // IME position lock — Chinese/Japanese/Korean input method candidate
+    // windows follow the .xterm-helper-textarea position.  During TUI
+    // output (spinners, status lines), xterm.js repositions this element
+    // to match the canvas cursor on every write(), causing the candidate
+    // window to jump or even drift to another monitor.
+    //
+    // Solution: CSS !important rules (see TerminalInstance.css .ime-locked)
+    // override xterm.js's inline style updates.  We save the textarea
+    // position from user input events and apply it via CSS custom properties
+    // + the .ime-locked class during composition.  This is proactive — the
+    // inline style never takes effect — unlike MutationObserver which can
+    // only react after the change.
     let isComposing = false;
-    let isOutputLocked = false;
     let savedLeft = '';
     let savedTop = '';
-    let lockObserver: MutationObserver | null = null;
-    let unlockTimer: ReturnType<typeof setTimeout> | null = null;
+    let hasUserPosition = false;
     let textareaEl: HTMLTextAreaElement | null = null;
     let compViewEl: HTMLElement | null = null;
+
+    // Validate that a textarea position is within the terminal's visible
+    // screen area.  Prevents saving (and locking to) coordinates that would
+    // place the IME candidate window off-screen or on another monitor.
+    const isPositionInBounds = (left: string, top: string): boolean => {
+      if (!xtermRef.current) return false;
+      const screenEl = xtermRef.current.element?.querySelector('.xterm-screen') as HTMLElement | null;
+      if (!screenEl) return true; // can't check, assume ok
+      const rect = screenEl.getBoundingClientRect();
+      const x = parseFloat(left);
+      const y = parseFloat(top);
+      if (isNaN(x) || isNaN(y)) return false;
+      return x >= 0 && y >= 0 && x < rect.width && y < rect.height;
+    };
+
+    // Save textarea position with bounds validation
+    const saveTextPosition = (left: string, top: string) => {
+      if (left && top && isPositionInBounds(left, top)) {
+        savedLeft = left;
+        savedTop = top;
+        hasUserPosition = true;
+      }
+    };
+
+    // Apply CSS !important lock to textarea and composition-view
+    const applyImeLock = () => {
+      if (!textareaEl || !savedLeft || !savedTop) return;
+      textareaEl.style.setProperty('--ime-lock-left', savedLeft);
+      textareaEl.style.setProperty('--ime-lock-top', savedTop);
+      textareaEl.classList.add('ime-locked');
+      if (compViewEl) {
+        compViewEl.style.setProperty('--ime-lock-left', savedLeft);
+        compViewEl.style.setProperty('--ime-lock-top', savedTop);
+        compViewEl.classList.add('ime-locked');
+      }
+    };
+
+    // Remove CSS !important lock
+    const removeImeLock = () => {
+      if (textareaEl) {
+        textareaEl.classList.remove('ime-locked');
+        textareaEl.style.removeProperty('--ime-lock-left');
+        textareaEl.style.removeProperty('--ime-lock-top');
+      }
+      if (compViewEl) {
+        compViewEl.classList.remove('ime-locked');
+        compViewEl.style.removeProperty('--ime-lock-left');
+        compViewEl.style.removeProperty('--ime-lock-top');
+      }
+    };
 
     const checkBufferForPrompt = () => {
       if (disposed || !xtermRef.current) return false;
@@ -112,40 +167,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         outputBuffer.push(output);
       }
 
-      // Lock textarea position during rapid output burst.
-      // xterm.js repositions .xterm-helper-textarea to match the canvas
-      // cursor after every write.  During TUI updates (spinners, status
-      // lines) the cursor toggles between areas across frames, which makes
-      // the IME candidate window jump.  Save position at burst start and
-      // use a MutationObserver to keep it anchored.
-      if (!isOutputLocked && !isComposing && textareaEl) {
-        const left = textareaEl.style.left;
-        const top = textareaEl.style.top;
-        if (left && top) { savedLeft = left; savedTop = top; }
-      }
-      isOutputLocked = true;
-      if (textareaEl && !lockObserver) {
-        lockObserver = new MutationObserver(() => {
-          if (!isComposing && !isOutputLocked) return;
-          if (textareaEl!.style.left !== savedLeft || textareaEl!.style.top !== savedTop) {
-            textareaEl!.style.left = savedLeft;
-            textareaEl!.style.top = savedTop;
-          }
-          if (compViewEl && (compViewEl.style.left !== savedLeft || compViewEl.style.top !== savedTop)) {
-            compViewEl.style.left = savedLeft;
-            compViewEl.style.top = savedTop;
-          }
-        });
-        lockObserver.observe(textareaEl, { attributes: true, attributeFilter: ['style'] });
-        if (compViewEl) {
-          lockObserver.observe(compViewEl, { attributes: true, attributeFilter: ['style'] });
-        }
-      }
-      if (unlockTimer) clearTimeout(unlockTimer);
-      unlockTimer = setTimeout(() => {
-        isOutputLocked = false;
-        if (!isComposing) { lockObserver?.disconnect(); lockObserver = null; }
-      }, 150);
+      // During composition, the CSS .ime-locked class prevents xterm.js
+      // from moving the textarea.  No action needed here — the proactive
+      // CSS approach is sufficient.
 
       // Detect directory from prompt lines for active session
       const state = useAppStore.getState();
@@ -241,35 +265,39 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (textareaEl) {
         textareaEl.addEventListener('compositionstart', () => {
           isComposing = true;
-          // Wait one frame for xterm.js to position the textarea at
-          // the cursor, then save and lock that position.
-          requestAnimationFrame(() => {
-            if (!isComposing) return;
-            savedLeft = textareaEl!.style.left;
-            savedTop = textareaEl!.style.top;
-            if (textareaEl && !lockObserver) {
-              lockObserver = new MutationObserver(() => {
-                if (!isComposing && !isOutputLocked) return;
-                if (textareaEl!.style.left !== savedLeft || textareaEl!.style.top !== savedTop) {
-                  textareaEl!.style.left = savedLeft;
-                  textareaEl!.style.top = savedTop;
-                }
-                if (compViewEl && (compViewEl.style.left !== savedLeft || compViewEl.style.top !== savedTop)) {
-                  compViewEl.style.left = savedLeft;
-                  compViewEl.style.top = savedTop;
-                }
-              });
-              lockObserver.observe(textareaEl, { attributes: true, attributeFilter: ['style'] });
-              if (compViewEl) {
-                lockObserver.observe(compViewEl, { attributes: true, attributeFilter: ['style'] });
-              }
-            }
-          });
+          // Save textarea position at composition start.  If we have a
+          // position from prior user input (click / keystroke), use that
+          // — the textarea may currently be at a TUI cursor position.
+          // Otherwise, read from the DOM (xterm.js positions the textarea
+          // on compositionstart via _syncTextArea, matching VS Code's
+          // approach).
+          if (!hasUserPosition) {
+            // Wait one frame for xterm.js's compositionstart handler
+            // to call _syncTextArea, positioning the textarea at the
+            // current buffer cursor.
+            requestAnimationFrame(() => {
+              if (!isComposing || disposed) return;
+              saveTextPosition(textareaEl!.style.left, textareaEl!.style.top);
+              applyImeLock();
+            });
+          } else {
+            applyImeLock();
+          }
         });
 
         textareaEl.addEventListener('compositionend', () => {
           isComposing = false;
-          if (!isOutputLocked) { lockObserver?.disconnect(); lockObserver = null; }
+          removeImeLock();
+          // Save current position for the next composition.  After
+          // composition ends the cursor has moved right by the length
+          // of the committed text, so this is the correct position for
+          // subsequent composition at the same prompt.
+          if (textareaEl) {
+            setTimeout(() => {
+              if (disposed || !textareaEl) return;
+              saveTextPosition(textareaEl.style.left, textareaEl.style.top);
+            }, 50);
+          }
         });
       }
 
@@ -336,6 +364,20 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             if (cmd) addCommandToHistory(cmd).catch(() => {});
           }
           updateAutocomplete(null);
+          // Prompt will move to a new line after Enter
+          hasUserPosition = false;
+        }
+
+        // Save textarea position from user input.  After a short delay
+        // the PTY echo will have moved the cursor and xterm.js will have
+        // repositioned the textarea at the correct input-line location.
+        // This position is used when the next composition starts to lock
+        // the textarea via CSS .ime-locked, preventing IME jumps.
+        if (textareaEl && !isComposing && data.length <= 2) {
+          setTimeout(() => {
+            if (disposed || !textareaEl || isComposing) return;
+            saveTextPosition(textareaEl.style.left, textareaEl.style.top);
+          }, 50);
         }
         const isBracketedPaste = data.startsWith('\x1b[200~');
         if (isBracketedPaste) {
@@ -523,6 +565,21 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Right-click context menu
       const xtermEl = terminal.element!;
+
+      // Update saved textarea position on click — the user clicked at a
+      // specific cursor location, so the textarea will be repositioned
+      // there by xterm.js after the click is processed.
+      const handleClickForPosition = () => {
+        if (textareaEl && !isComposing) {
+          setTimeout(() => {
+            if (disposed || !textareaEl) return;
+            saveTextPosition(textareaEl.style.left, textareaEl.style.top);
+          }, 50);
+        }
+      };
+      xtermEl.addEventListener('click', handleClickForPosition);
+      cleanupFns.push(() => xtermEl.removeEventListener('click', handleClickForPosition));
+
       const handleContextMenu = (e: MouseEvent) => {
         e.preventDefault();
         const settings = getAppSettings();
@@ -608,12 +665,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         cancelAnimationFrame(pendingRaf);
         pendingRaf = null;
       }
-      if (unlockTimer) {
-        clearTimeout(unlockTimer);
-        unlockTimer = null;
-      }
-      lockObserver?.disconnect();
-      lockObserver = null;
+      removeImeLock();
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;
