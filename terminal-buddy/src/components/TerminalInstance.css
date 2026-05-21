@@ -20,7 +20,7 @@
 
 .terminal-instance .xterm-viewport {
   overflow-y: scroll !important;
-  overflow-x: hidden !important;
+
 }
 
 /* xterm viewport scrollbar */

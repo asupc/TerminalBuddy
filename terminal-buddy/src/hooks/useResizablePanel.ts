@@ -18,7 +18,7 @@ interface UseResizablePanelResult {
 
 export function useResizablePanel({
   defaultWidth,
-  minWidth = 150,
+  minWidth = 120,
   maxWidth = 500,
   onResizeEnd,
 }: UseResizablePanelOptions): UseResizablePanelResult {

@@ -18,11 +18,16 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
   const fitAddonRef = useRef<FitAddon | null>(null);
   const pendingChunksRef = useRef<string[]>([]);
   const pendingRafRef = useRef<number | null>(null);
+  const outputBufferRef = useRef<string[]>([]);
   const isMobile = useWebAppStore((s) => s.isMobile);
 
   const handleOutput = useCallback((data: string) => {
     const term = termRef.current;
-    if (!term) return;
+    if (!term) {
+      // Buffer output until xterm.js is initialized
+      outputBufferRef.current.push(data);
+      return;
+    }
     pendingChunksRef.current.push(data);
     if (!pendingRafRef.current) {
       pendingRafRef.current = requestAnimationFrame(() => {
@@ -56,6 +61,10 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const isWindows = /Windows/i.test(
+      (navigator as any).userAgentData?.platform || navigator.userAgent || ''
+    );
+
     const term = new Terminal({
       cursorBlink: true,
       fontSize: isMobile ? 12 : 14,
@@ -65,6 +74,8 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
         foreground: '#e0e0e0',
       },
       allowProposedApi: true,
+      ...(isWindows ? { windowsPty: { backend: 'conpty' as const, buildNumber: 22000 } } : {}),
+      ...(isMobile ? { devicePixelRatio: window.devicePixelRatio } : {}),
     });
 
     const fitAddon = new FitAddon();
@@ -88,6 +99,12 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
+
+    // Flush buffered output that arrived before xterm was ready
+    if (outputBufferRef.current.length > 0) {
+      term.write(outputBufferRef.current.join(''));
+      outputBufferRef.current.length = 0;
+    }
 
     const doFit = () => {
       fitAddon.fit();
@@ -131,6 +148,7 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
         pendingRafRef.current = null;
       }
       pendingChunksRef.current.length = 0;
+      outputBufferRef.current.length = 0;
       resizeObserver.disconnect();
       window.removeEventListener('resize', handleResize);
       if (vvHandler && window.visualViewport) {
@@ -164,10 +182,12 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
       <div
         ref={containerRef}
         style={{
-          flex: isMobile ? '1' : 'unset',
-          height: isMobile ? 'auto' : '100%',
-          padding: isMobile ? '4px' : '8px',
-          display: hidden ? 'none' : 'block',
+          flex: 1,
+          minWidth: 0,
+          height: '100%',
+          display: 'block',
+          visibility: hidden ? 'hidden' : 'visible',
+          pointerEvents: hidden ? 'none' : 'auto',
           minHeight: 0,
         }}
       />

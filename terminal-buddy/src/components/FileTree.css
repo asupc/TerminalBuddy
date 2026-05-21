@@ -4,8 +4,9 @@
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
   position: relative;
-  min-width: 150px;
+  min-width: 120px;
   max-width: 500px;
+  flex-shrink: 1;
   transition: width 0.2s ease, min-width 0.2s ease;
 }
 

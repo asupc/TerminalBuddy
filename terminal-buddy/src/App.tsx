@@ -48,6 +48,8 @@ function App() {
       if (store.sessions.find((s) => s.id === id)) return;
       const profile = store.profiles.find((p) => p.id === profileId);
       const theme = PRESET_THEMES.find((t) => t.id === profile?.colorTheme) || PRESET_THEMES[0];
+      // Add session but do NOT auto-switch active tab — the terminal was
+      // opened from the web, so the user is looking at the web, not here.
       store.addSession({
         id,
         profileId,
@@ -56,7 +58,7 @@ function App() {
         colorTheme: { background: theme.background, foreground: theme.foreground },
         tabColor: profile?.tabColor || null,
         groupId: 'default',
-      });
+      }, true);
     });
 
     const unlistenClosed = listen<string>('terminal-closed', (event) => {

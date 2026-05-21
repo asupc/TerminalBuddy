@@ -230,6 +230,19 @@ export async function initCommandTemplates(defaultContent: string): Promise<bool
   return invoke('init_command_templates', { defaultContent });
 }
 
+// System Commands
+let _windowsBuildNumber: number | null | undefined = undefined;
+
+export async function getWindowsBuildNumber(): Promise<number | null> {
+  if (_windowsBuildNumber !== undefined) return _windowsBuildNumber;
+  try {
+    _windowsBuildNumber = await invoke<number>('get_windows_build_number');
+  } catch {
+    _windowsBuildNumber = null;
+  }
+  return _windowsBuildNumber;
+}
+
 // Window Commands (bypass ACL bug)
 export async function windowMinimize(): Promise<void> {
   return invoke('window_minimize');

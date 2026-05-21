@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput } from '../services/tauri';
+import { resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../services/tauri';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getAppSettings } from '../utils/settings';
@@ -62,12 +62,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const outputBuffer: string[] = [];
     const pendingChunks: string[] = [];
     let pendingRaf: number | null = null;
-    // Unified textarea position lock — prevents cursor/IME from following
-    // TUI cursor movements during rapid output or IME composition.
-    // xterm.js repositions .xterm-helper-textarea on every render to match
-    // the canvas cursor. When Claude Code rapidly updates status lines, the
-    // cursor alternates between status area and input area across frames,
-    // causing the textarea (and IME candidate window) to jump.
+    let workingDebounce: ReturnType<typeof setTimeout> | null = null;
+    let workingFallback: ReturnType<typeof setTimeout> | null = null;
+
+    // Textarea position lock — during rapid TUI output (e.g. Claude Code
+    // spinners/status lines), xterm.js repositions .xterm-helper-textarea
+    // on every render to match the canvas cursor.  This causes IME candidate
+    // windows to jump.  We lock the textarea at the input-line position and
+    // release after output settles.  Same approach VS Code uses.
     let isComposing = false;
     let isOutputLocked = false;
     let savedLeft = '';
@@ -76,8 +78,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let unlockTimer: ReturnType<typeof setTimeout> | null = null;
     let textareaEl: HTMLTextAreaElement | null = null;
     let compViewEl: HTMLElement | null = null;
-    let workingDebounce: ReturnType<typeof setTimeout> | null = null;
-    let workingFallback: ReturnType<typeof setTimeout> | null = null;
 
     const checkBufferForPrompt = () => {
       if (disposed || !xtermRef.current) return false;
@@ -98,48 +98,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
       if (xtermRef.current) {
-        // Batch writes via requestAnimationFrame to reduce cursor position
-        // thrashing during rapid TUI updates (e.g., spinners, status lines)
         pendingChunks.push(output);
-        // Lock textarea position during rapid output to prevent cursor/IME
-        // from following TUI cursor movements (e.g., spinners, status lines).
-        // Save position at start of burst; restore it when xterm.js moves it.
-        // Only save if textarea has been positioned by xterm.js (left/top are
-        // non-empty pixel values), otherwise lock would anchor to (0,0).
-        if (!isOutputLocked && !isComposing && textareaEl) {
-          const left = textareaEl.style.left;
-          const top = textareaEl.style.top;
-          if (left && top) {
-            savedLeft = left;
-            savedTop = top;
-          }
-        }
-        isOutputLocked = true;
-        if (textareaEl && !lockObserver) {
-          lockObserver = new MutationObserver(() => {
-            if (!isComposing && !isOutputLocked) return;
-            if (textareaEl!.style.left !== savedLeft || textareaEl!.style.top !== savedTop) {
-              textareaEl!.style.left = savedLeft;
-              textareaEl!.style.top = savedTop;
-            }
-            if (compViewEl && (compViewEl.style.left !== savedLeft || compViewEl.style.top !== savedTop)) {
-              compViewEl.style.left = savedLeft;
-              compViewEl.style.top = savedTop;
-            }
-          });
-          lockObserver.observe(textareaEl, { attributes: true, attributeFilter: ['style'] });
-          if (compViewEl) {
-            lockObserver.observe(compViewEl, { attributes: true, attributeFilter: ['style'] });
-          }
-        }
-        if (unlockTimer) clearTimeout(unlockTimer);
-        unlockTimer = setTimeout(() => {
-          isOutputLocked = false;
-          if (!isComposing) {
-            lockObserver?.disconnect();
-            lockObserver = null;
-          }
-        }, 150);
         if (!pendingRaf) {
           pendingRaf = requestAnimationFrame(() => {
             pendingRaf = null;
@@ -152,6 +111,41 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       } else {
         outputBuffer.push(output);
       }
+
+      // Lock textarea position during rapid output burst.
+      // xterm.js repositions .xterm-helper-textarea to match the canvas
+      // cursor after every write.  During TUI updates (spinners, status
+      // lines) the cursor toggles between areas across frames, which makes
+      // the IME candidate window jump.  Save position at burst start and
+      // use a MutationObserver to keep it anchored.
+      if (!isOutputLocked && !isComposing && textareaEl) {
+        const left = textareaEl.style.left;
+        const top = textareaEl.style.top;
+        if (left && top) { savedLeft = left; savedTop = top; }
+      }
+      isOutputLocked = true;
+      if (textareaEl && !lockObserver) {
+        lockObserver = new MutationObserver(() => {
+          if (!isComposing && !isOutputLocked) return;
+          if (textareaEl!.style.left !== savedLeft || textareaEl!.style.top !== savedTop) {
+            textareaEl!.style.left = savedLeft;
+            textareaEl!.style.top = savedTop;
+          }
+          if (compViewEl && (compViewEl.style.left !== savedLeft || compViewEl.style.top !== savedTop)) {
+            compViewEl.style.left = savedLeft;
+            compViewEl.style.top = savedTop;
+          }
+        });
+        lockObserver.observe(textareaEl, { attributes: true, attributeFilter: ['style'] });
+        if (compViewEl) {
+          lockObserver.observe(compViewEl, { attributes: true, attributeFilter: ['style'] });
+        }
+      }
+      if (unlockTimer) clearTimeout(unlockTimer);
+      unlockTimer = setTimeout(() => {
+        isOutputLocked = false;
+        if (!isComposing) { lockObserver?.disconnect(); lockObserver = null; }
+      }, 150);
 
       // Detect directory from prompt lines for active session
       const state = useAppStore.getState();
@@ -190,6 +184,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       if (disposed || !terminalRef.current) return;
 
+      const buildNumber = await getWindowsBuildNumber();
+
       const terminal = new Terminal({
         cursorBlink: true,
         fontSize: 14,
@@ -202,6 +198,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           foreground: colorTheme?.foreground || '#cccccc',
         },
         allowProposedApi: true,
+        ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),
       });
 
       const fitAddon = new FitAddon();
@@ -225,44 +222,31 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       terminal.open(terminalRef.current!);
 
-      // Fix: prevent IME composition from causing horizontal content shift
-      // When the cursor is near the right edge, the browser's scroll-into-view
-      // behavior for the composition textarea can set scrollLeft on the viewport,
-      // causing the entire terminal content to drift left.
-      const preventHScroll = () => {
-        const vp = terminal.element?.querySelector('.xterm-viewport') as HTMLElement;
-        if (vp && vp.scrollLeft !== 0) vp.scrollLeft = 0;
-        const xt = terminal.element as HTMLElement;
-        if (xt && xt.scrollLeft !== 0) xt.scrollLeft = 0;
-      };
-      const xtermViewport = terminal.element!.querySelector('.xterm-viewport') as HTMLElement;
-      if (xtermViewport) {
-        xtermViewport.addEventListener('scroll', preventHScroll, { passive: true });
-        cleanupFns.push(() => xtermViewport.removeEventListener('scroll', preventHScroll));
+      fitAddon.fit();
+
+      xtermRef.current = terminal;
+      // Flush buffered output that arrived before xterm was ready
+      if (outputBuffer.length > 0) {
+        terminal.write(outputBuffer.join(''));
+        outputBuffer.length = 0;
       }
-      (terminal.element as HTMLElement).addEventListener('scroll', preventHScroll, { passive: true });
-      cleanupFns.push(() => (terminal.element as HTMLElement).removeEventListener('scroll', preventHScroll));
+      fitAddonRef.current = fitAddon;
 
-      // Also reset scrollLeft after IME composition ends, as the browser may
-      // set it during composition without firing a scroll event
-      textareaEl = terminal.element!.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement;
+      // Auto-focus after initialization
+      terminal.focus();
+
+      // Capture textarea elements for IME position lock
+      textareaEl = terminal.element!.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
       compViewEl = terminal.element!.querySelector('.xterm-composition-view') as HTMLElement | null;
-      const xtermTextarea = textareaEl;
-      if (xtermTextarea) {
-        xtermTextarea.addEventListener('compositionend', () => {
-          requestAnimationFrame(preventHScroll);
-        });
-
-        // IME composition: wait one frame for xterm.js to position the
-        // textarea at the cursor, then save that position and lock.
-        // If we save immediately (before xterm.js renders), we may lock
-        // to a stale position causing the IME window to appear elsewhere.
-        xtermTextarea.addEventListener('compositionstart', () => {
+      if (textareaEl) {
+        textareaEl.addEventListener('compositionstart', () => {
           isComposing = true;
+          // Wait one frame for xterm.js to position the textarea at
+          // the cursor, then save and lock that position.
           requestAnimationFrame(() => {
             if (!isComposing) return;
-            savedLeft = xtermTextarea.style.left;
-            savedTop = xtermTextarea.style.top;
+            savedLeft = textareaEl!.style.left;
+            savedTop = textareaEl!.style.top;
             if (textareaEl && !lockObserver) {
               lockObserver = new MutationObserver(() => {
                 if (!isComposing && !isOutputLocked) return;
@@ -283,36 +267,38 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           });
         });
 
-        const endCompositionLock = () => {
+        textareaEl.addEventListener('compositionend', () => {
           isComposing = false;
-          if (!isOutputLocked) {
-            lockObserver?.disconnect();
-            lockObserver = null;
-          }
-        };
-        xtermTextarea.addEventListener('compositionend', endCompositionLock);
-        cleanupFns.push(endCompositionLock);
+          if (!isOutputLocked) { lockObserver?.disconnect(); lockObserver = null; }
+        });
       }
 
-      // Double-fit: immediate + delayed to ensure correct measurements after layout
-      fitAddon.fit();
-      requestAnimationFrame(() => {
-        if (disposed) return;
-        fitAddon.fit();
-        const { rows, cols } = terminal;
-        resizeTerminal(terminalId, rows, cols).catch(() => {});
-      });
-
-      xtermRef.current = terminal;
-      // Flush buffered output that arrived before xterm was ready
-      if (outputBuffer.length > 0) {
-        terminal.write(outputBuffer.join(''));
-        outputBuffer.length = 0;
+      // Prevent horizontal content shift during IME composition.
+      // When the cursor is near the right edge, the browser's
+      // scroll-into-view behavior for the composition textarea can set
+      // scrollLeft on the viewport / terminal element, causing the
+      // entire terminal content to drift left.
+      const preventHScroll = () => {
+        const vp = terminal.element?.querySelector('.xterm-viewport') as HTMLElement;
+        if (vp && vp.scrollLeft !== 0) vp.scrollLeft = 0;
+        const xt = terminal.element as HTMLElement;
+        if (xt && xt.scrollLeft !== 0) xt.scrollLeft = 0;
+      };
+      const xtermViewport = terminal.element!.querySelector('.xterm-viewport') as HTMLElement;
+      if (xtermViewport) {
+        xtermViewport.addEventListener('scroll', preventHScroll, { passive: true });
+        cleanupFns.push(() => xtermViewport.removeEventListener('scroll', preventHScroll));
       }
-      fitAddonRef.current = fitAddon;
+      (terminal.element as HTMLElement).addEventListener('scroll', preventHScroll, { passive: true });
+      cleanupFns.push(() => (terminal.element as HTMLElement).removeEventListener('scroll', preventHScroll));
 
-      // Auto-focus after initialization
-      terminal.focus();
+      // Also reset scrollLeft after IME composition ends — the browser
+      // may set it during composition without firing a scroll event
+      if (textareaEl) {
+        textareaEl.addEventListener('compositionend', () => {
+          requestAnimationFrame(preventHScroll);
+        });
+      }
 
       // Chunk large paste data to prevent SSH/PTY buffer overflow
       const PASTE_CHUNK_SIZE = 256;
@@ -568,20 +554,22 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         document.removeEventListener('keyup', handleKeyUpGlobal);
       });
 
-      // Window resize
-      const handleResize = () => {
-        fitAddon.fit();
-        const { rows, cols } = terminal;
-        resizeTerminal(terminalId, rows, cols).catch(() => {});
-      };
-      window.addEventListener('resize', handleResize);
-      cleanupFns.push(() => window.removeEventListener('resize', handleResize));
-
-      // Re-fit when container size changes (sidebar toggle/collapse)
+      // VS Code pattern: one debounced ResizeObserver covers all layout
+      // changes. Window resize, sidebar drag, and panel collapse all
+      // propagate through flex layout to the container, so observing it
+      // is sufficient — no separate window.resize listener needed.
+      // rAF gate batches rapid resize events into a single fit per frame.
+      let resizeScheduled = false;
       const resizeObserver = new ResizeObserver(() => {
-        fitAddon.fit();
-        const { rows, cols } = terminal;
-        resizeTerminal(terminalId, rows, cols).catch(() => {});
+        if (resizeScheduled) return;
+        resizeScheduled = true;
+        requestAnimationFrame(() => {
+          resizeScheduled = false;
+          if (disposed) return;
+          fitAddon.fit();
+          const { rows, cols } = terminal;
+          resizeTerminal(terminalId, rows, cols).catch(() => {});
+        });
       });
       resizeObserver.observe(terminalRef.current!);
       cleanupFns.push(() => resizeObserver.disconnect());
@@ -620,6 +608,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         cancelAnimationFrame(pendingRaf);
         pendingRaf = null;
       }
+      if (unlockTimer) {
+        clearTimeout(unlockTimer);
+        unlockTimer = null;
+      }
+      lockObserver?.disconnect();
+      lockObserver = null;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;

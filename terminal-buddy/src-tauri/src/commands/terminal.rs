@@ -268,13 +268,19 @@ impl TerminalService {
         Ok(())
     }
 
-    pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16) -> Result<(), String> {
+    pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16, allow_shrink: bool) -> Result<(), String> {
         let mut instances = self.instances.lock().unwrap();
         if let Some(instance) = instances.get_mut(id) {
-            // Only grow, never shrink — prevents a small client (mobile) from
-            // shrinking the PTY and affecting all other viewers (desktop).
-            let new_rows = std::cmp::max(instance.current_rows, rows);
-            let new_cols = std::cmp::max(instance.current_cols, cols);
+            let (new_rows, new_cols) = if allow_shrink {
+                (rows, cols)
+            } else {
+                // Only grow — prevents a small web/mobile client from shrinking
+                // the PTY and affecting the desktop viewer.
+                (
+                    std::cmp::max(instance.current_rows, rows),
+                    std::cmp::max(instance.current_cols, cols),
+                )
+            };
             if new_rows != instance.current_rows || new_cols != instance.current_cols {
                 instance.master.resize(PtySize {
                     rows: new_rows,
@@ -284,7 +290,7 @@ impl TerminalService {
                 }).map_err(|e| format!("Resize failed: {}", e))?;
                 instance.current_rows = new_rows;
                 instance.current_cols = new_cols;
-                log_debug(&format!("[resize] id={} rows={} cols={}", id, new_rows, new_cols));
+                log_debug(&format!("[resize] id={} rows={} cols={} allow_shrink={}", id, new_rows, new_cols, allow_shrink));
             }
             Ok(())
         } else {
@@ -299,6 +305,16 @@ impl TerminalService {
             let result = buffer.join("");
             buffer.clear();
             Ok(result)
+        } else {
+            Err("Terminal not found".to_string())
+        }
+    }
+
+    pub fn peek_terminal_output(&self, id: &str) -> Result<String, String> {
+        let instances = self.instances.lock().unwrap();
+        if let Some(instance) = instances.get(id) {
+            let buffer = instance.output_buffer.lock().unwrap();
+            Ok(buffer.join(""))
         } else {
             Err("Terminal not found".to_string())
         }
@@ -462,7 +478,8 @@ pub fn resize_terminal(
     cols: u16,
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
-    terminal_service.resize_terminal(&id, rows, cols)
+    // Desktop (Tauri invoke) always allows shrink — it's the primary viewer
+    terminal_service.resize_terminal(&id, rows, cols, true)
 }
 
 #[command]
@@ -479,6 +496,14 @@ pub fn drain_terminal_output(
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
     terminal_service.drain_terminal_output(&id)
+}
+
+#[command]
+pub fn peek_terminal_output(
+    id: String,
+    terminal_service: State<TerminalService>,
+) -> Result<String, String> {
+    terminal_service.peek_terminal_output(&id)
 }
 
 #[command]

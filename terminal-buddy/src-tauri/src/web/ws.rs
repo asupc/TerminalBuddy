@@ -27,10 +27,10 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState) 
     let web_state = state.app_handle.state::<WebServiceState>();
     let (sub_id, mut output_rx) = web_state.subscribe(&terminal_id);
 
-    // Drain historical output
+    // Send historical output (peek without clearing, so reconnecting viewers also get history)
     {
         let ts = state.app_handle.state::<TerminalService>();
-        if let Ok(history) = ts.drain_terminal_output(&terminal_id) {
+        if let Ok(history) = ts.peek_terminal_output(&terminal_id) {
             if !history.is_empty() {
                 if let Ok(msg) = serde_json::to_string(&WsServerMessage::Output { data: history }) {
                     let _ = ws_sender.send(Message::Text(msg.into())).await;
@@ -71,7 +71,10 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState) 
                             }
                             WsClientMessage::Resize { cols, rows } => {
                                 let ts = app.state::<TerminalService>();
-                                let _ = ts.resize_terminal(&tid, rows, cols);
+                                // Web clients: only grow, never shrink —
+                                // prevents mobile/small viewports from
+                                // shrinking the PTY under the desktop viewer.
+                                let _ = ts.resize_terminal(&tid, rows, cols, false);
                             }
                         }
                     }
