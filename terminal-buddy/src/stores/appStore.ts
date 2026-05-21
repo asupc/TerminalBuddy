@@ -277,11 +277,13 @@ export const useAppStore = create<AppState>((set) => ({
     return { activeSessionId: id, currentDirectory, settingsTabOpen: false };
   }),
   renameSession: (id, name) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) =>
+    set((state) => {
+      const newSessions = state.sessions.map((s) =>
         s.id === id ? { ...s, profileName: name } : s
-      ),
-    })),
+      );
+      saveTabsToStorage(newSessions, state.activeSessionId);
+      return { sessions: newSessions };
+    }),
   updateSession: (id, updates) =>
     set((state) => ({
       sessions: state.sessions.map((s) =>

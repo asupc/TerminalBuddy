@@ -229,3 +229,71 @@
   background: var(--accent);
   opacity: 0.5;
 }
+
+.submenu-group-toggle {
+  cursor: pointer;
+  user-select: none;
+  pointer-events: auto !important;
+  font-size: 13px !important;
+}
+
+.submenu-group-toggle:hover {
+  background: var(--bg-tertiary);
+}
+
+.submenu-group-arrow {
+  font-size: 10px;
+  margin-right: 4px;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+
+.submenu-group-arrow.collapsed {
+  transform: rotate(-90deg);
+}
+
+.submenu-profile-item {
+  padding-left: 16px !important;
+}
+
+/* TreeView inside context-submenu */
+.context-submenu .submenu-tree {
+  /* container for TreeView inside the submenu */
+}
+
+.context-submenu .submenu-tree .tree-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 0;
+  color: var(--text-primary);
+}
+
+.context-submenu .submenu-tree .tree-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.context-submenu .submenu-tree .tree-item.selected,
+.context-submenu .submenu-tree .tree-item.highlighted {
+  background: var(--accent);
+  color: #fff;
+}
+
+.context-submenu .submenu-tree .tree-item-group {
+  font-weight: 600;
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+
+.context-submenu .submenu-tree .tree-node:first-child > .tree-item-group {
+  border-top: none;
+  margin-top: 0;
+}
+
+.context-submenu .submenu-tree .tree-arrow {
+  font-size: 10px;
+  margin-right: 4px;
+}
+
+.context-submenu .submenu-tree .tree-icon {
+  display: none;
+}

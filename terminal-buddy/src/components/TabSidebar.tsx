@@ -1,17 +1,11 @@
-import { FC, useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
+import { TreeView, type TreeItem } from './TreeView';
 import type { Profile } from '../types';
 import './TabSidebar.css';
-
-interface SubmenuItem {
-  label: string;
-  profile?: Profile;
-  terminalType?: 'powershell' | 'cmd';
-  isGroupHeader?: boolean;
-}
 
 interface TabSidebarProps {
   profiles: Profile[];
@@ -33,6 +27,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const [submenuExpandedGroups, setSubmenuExpandedGroups] = useState<Set<string>>(new Set());
 
   const { width, setWidth, isResizing, resizeHandleProps } = useResizablePanel({
     defaultWidth: 200,
@@ -45,75 +40,92 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     getBackendAppSettings().then(s => setWidth(s.tabSidebarWidth || 200)).catch(() => {});
   }, []);
 
-  const profileGroups = useMemo(() => {
-    const groupMap = new Map<string, { name: string; sessions: typeof sessions }>();
-    const profileGroupNames = new Set(profiles.map(p => p.group || '默认'));
-
-    for (const name of profileGroupNames) {
-      groupMap.set(name, { name, sessions: [] });
-    }
-
+  // Build tree for active sessions grouped by profile group
+  const sessionTree = useMemo(() => {
+    const groupMap = new Map<string, typeof sessions>();
     for (const session of sessions) {
       const profile = profiles.find(p => p.id === session.profileId);
       const groupName = profile?.group || '默认';
-      if (!groupMap.has(groupName)) {
-        groupMap.set(groupName, { name: groupName, sessions: [] });
-      }
-      groupMap.get(groupName)!.sessions.push(session);
+      if (!groupMap.has(groupName)) groupMap.set(groupName, []);
+      groupMap.get(groupName)!.push(session);
     }
+    return Array.from(groupMap.entries())
+      .filter(([, s]) => s.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b, 'zh'))
+      .map(([groupName, groupSessions]): TreeItem => ({
+        id: groupName,
+        label: groupName,
+        isGroup: true,
+        children: groupSessions.map((session): TreeItem => ({
+          id: session.id,
+          label: session.profileName,
+          icon: (
+            <span
+              className="tab-sidebar-dot"
+              style={{ background: workingSessions[session.id] ? '#f0b429' : (session.tabColor || 'var(--accent)') }}
+            />
+          ),
+          data: session,
+        })),
+      }));
+  }, [sessions, profiles, workingSessions]);
 
-    return Array.from(groupMap.values()).filter(g => g.sessions.length > 0);
-  }, [sessions, profiles]);
-
-  const filteredGroups = useMemo(() => {
-    if (!search) return profileGroups;
-    const q = search.toLowerCase();
-    return profileGroups.map(g => ({
-      ...g,
-      sessions: g.sessions.filter(s => s.profileName.toLowerCase().includes(q)),
-    })).filter(g => g.sessions.length > 0);
-  }, [profileGroups, search]);
-
-  const menuProfileGroups = useMemo(() => {
-    const map = new Map<string, Profile[]>();
+  // Build submenu tree: PowerShell/CMD always visible, then groups collapsed
+  const submenuTree = useMemo(() => {
+    const groupMap = new Map<string, Profile[]>();
     for (const p of profiles) {
       const g = p.group || '默认';
-      if (!map.has(g)) map.set(g, []);
-      map.get(g)!.push(p);
+      if (!groupMap.has(g)) groupMap.set(g, []);
+      groupMap.get(g)!.push(p);
     }
-    return Array.from(map.entries()).map(([name, profs]) => ({ name, profiles: profs }));
+    const groups = Array.from(groupMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b, 'zh'))
+      .map(([groupName, groupProfiles]): TreeItem => ({
+        id: groupName,
+        label: groupName,
+        isGroup: true,
+        children: groupProfiles.map((p): TreeItem => ({
+          id: p.id,
+          label: p.name,
+          data: p,
+        })),
+      }));
+
+    // Prepend PowerShell/CMD items (not in a group)
+    return groups;
   }, [profiles]);
 
-  // Flatten submenu items for keyboard navigation
-  const submenuItems = useMemo<SubmenuItem[]>(() => {
-    const items: SubmenuItem[] = [
-      { label: 'PowerShell', terminalType: 'powershell' },
-      { label: 'CMD', terminalType: 'cmd' },
-    ];
-    for (const group of menuProfileGroups) {
-      items.push({ label: group.name, isGroupHeader: true });
-      for (const profile of group.profiles) {
-        items.push({ label: profile.name, profile });
+  // Flatten expanded items for keyboard nav
+  const visibleSubmenuItems = useMemo(() => {
+    const result: TreeItem[] = [];
+    // PowerShell
+    result.push({ id: 'powershell', label: 'PowerShell', data: { terminalType: 'powershell' as const } });
+    // CMD
+    result.push({ id: 'cmd', label: 'CMD', data: { terminalType: 'cmd' as const } });
+    // Groups and their children
+    for (const group of submenuTree) {
+      result.push(group);
+      if (submenuExpandedGroups.has(group.id)) {
+        for (const child of (group.children || [])) {
+          result.push(child);
+        }
       }
     }
-    return items;
-  }, [menuProfileGroups]);
-
-  // Only actionable items (not group headers)
-  const actionableItems = useMemo(() => submenuItems.filter(i => !i.isGroupHeader), [submenuItems]);
+    return result;
+  }, [submenuTree, submenuExpandedGroups]);
 
   const handleCloseTerminal = async (sessionId: string) => {
     try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
     removeSession(sessionId);
   };
 
-  const handleCloseGroup = async (group: { name: string; sessions: typeof sessions }) => {
+  const handleCloseGroup = async (groupName: string, groupSessions: typeof sessions) => {
     setConfirmDialog({
       title: '确认关闭分组',
-      message: `确定要关闭分组「${group.name}」中的所有 ${group.sessions.length} 个终端吗？`,
+      message: `确定要关闭分组「${groupName}」中的所有 ${groupSessions.length} 个终端吗？`,
       onConfirm: async () => {
         setConfirmDialog(null);
-        for (const session of group.sessions) {
+        for (const session of groupSessions) {
           try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
           removeSession(session.id);
         }
@@ -143,17 +155,8 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     setShowContextMenu(true);
     setContextMenuPos({ x: e.clientX, y: e.clientY });
     setHighlightedIndex(-1);
+    setSubmenuExpandedGroups(new Set());
   };
-
-  // Execute a submenu action
-  const executeSubmenuItem = useCallback((item: SubmenuItem) => {
-    if (item.terminalType) {
-      onStartBlankTerminal(item.terminalType);
-    } else if (item.profile) {
-      onStartTerminal(item.profile);
-    }
-    setShowContextMenu(false);
-  }, [onStartTerminal, onStartBlankTerminal]);
 
   // Close tab context menu on outside click
   useEffect(() => {
@@ -163,7 +166,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     return () => document.removeEventListener('click', handler);
   }, [tabContextMenu]);
 
-  // Close context menu on outside mouse/keyboard/wheel
+  // Close context menu on outside click/key/wheel
   useEffect(() => {
     if (!showContextMenu) return;
     const handleClick = (e: MouseEvent) => {
@@ -171,60 +174,69 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
       setShowContextMenu(false);
     };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowContextMenu(false);
-        return;
-      }
-      // Arrow keys / Enter for submenu navigation
+      if (e.key === 'Escape') { setShowContextMenu(false); return; }
       if (['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
         e.preventDefault();
         if (e.key === 'ArrowDown') {
-          setHighlightedIndex(prev => {
-            let next = prev + 1;
-            while (next < actionableItems.length && actionableItems[next]?.isGroupHeader) next++;
-            return next >= actionableItems.length ? 0 : next;
-          });
+          setHighlightedIndex(prev => (prev + 1) % visibleSubmenuItems.length);
         } else if (e.key === 'ArrowUp') {
-          setHighlightedIndex(prev => {
-            let next = prev - 1;
-            while (next >= 0 && actionableItems[next]?.isGroupHeader) next--;
-            return next < 0 ? actionableItems.length - 1 : next;
-          });
-        } else if (e.key === 'Enter' && highlightedIndex >= 0 && highlightedIndex < actionableItems.length) {
-          executeSubmenuItem(actionableItems[highlightedIndex]);
+          setHighlightedIndex(prev => prev <= 0 ? visibleSubmenuItems.length - 1 : prev - 1);
+        } else if (e.key === 'Enter' && highlightedIndex >= 0 && highlightedIndex < visibleSubmenuItems.length) {
+          const item = visibleSubmenuItems[highlightedIndex];
+          if (item.isGroup || (item.children && item.children.length > 0)) {
+            setSubmenuExpandedGroups(prev => {
+              const next = new Set(prev);
+              if (next.has(item.id)) next.delete(item.id);
+              else next.add(item.id);
+              return next;
+            });
+          } else if (item.data) {
+            const d = item.data as { terminalType?: string };
+            if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'cmd');
+            else onStartTerminal(item.data as Profile);
+            setShowContextMenu(false);
+          }
         }
         return;
       }
-      // Any other key closes the menu
-      setShowContextMenu(false);
-    };
-    const handleWheel = (e: WheelEvent) => {
-      // Allow scrolling inside the submenu
-      if ((e.target as HTMLElement).closest('.context-submenu')) return;
       setShowContextMenu(false);
     };
     document.addEventListener('mousedown', handleClick);
     document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('wheel', handleWheel, { passive: true });
     return () => {
       document.removeEventListener('mousedown', handleClick);
       document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('wheel', handleWheel);
     };
-  }, [showContextMenu, highlightedIndex, actionableItems, executeSubmenuItem]);
+  }, [showContextMenu, highlightedIndex, visibleSubmenuItems, onStartTerminal, onStartBlankTerminal]);
 
   // Scroll highlighted item into view
   useEffect(() => {
     if (highlightedIndex < 0 || !submenuRef.current) return;
-    const actionable = submenuRef.current.querySelectorAll('.context-menu-item:not(.submenu-group-header)');
-    const el = actionable[highlightedIndex] as HTMLElement;
+    const items = submenuRef.current.querySelectorAll('.submenu-item, .submenu-tree .tree-item');
+    const el = items[highlightedIndex] as HTMLElement;
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlightedIndex]);
 
   if (sessions.length === 0) return null;
 
-  // Map actionable index back to submenu index for rendering
-  let actionIdx = 0;
+  const renderGroupEnd = (item: TreeItem) => {
+    if (!item.isGroup || !item.children) return null;
+    const groupSessions = sessions.filter(s =>
+      item.children!.some(c => c.id === s.id)
+    );
+    return (
+      <span className="tree-item-end">
+        <span className="tree-item-count">{groupSessions.length}</span>
+        <button
+          className="tree-item-close"
+          onClick={(e) => { e.stopPropagation(); handleCloseGroup(item.id, groupSessions); }}
+          title="关闭分组内所有终端"
+        >
+          ×
+        </button>
+      </span>
+    );
+  };
 
   return (
     <div className="tab-sidebar" style={{ width }}>
@@ -242,88 +254,87 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
         />
       </div>
       <div className="tab-sidebar-content" onContextMenu={handleContentContextMenu}>
-        {filteredGroups.map((group) => {
-          const isCollapsed = collapsedGroups.has(group.name);
-          return (
-          <div key={group.name} className="tab-sidebar-group">
+        {sessionTree.map((group) => (
+          <div key={group.id}>
             <div
-              className="tab-sidebar-group-header"
+              className="tree-item"
+              style={{ paddingLeft: '8px' }}
               onClick={() => {
                 setCollapsedGroups(prev => {
                   const next = new Set(prev);
-                  if (next.has(group.name)) next.delete(group.name);
-                  else next.add(group.name);
+                  if (next.has(group.id)) next.delete(group.id);
+                  else next.add(group.id);
                   return next;
                 });
               }}
             >
-              <span className={`tab-sidebar-group-arrow ${isCollapsed ? 'collapsed' : ''}`}>▾</span>
-              <span className="tab-sidebar-group-name">{group.name}</span>
-              <span className="tab-sidebar-group-count">{group.sessions.length}</span>
-              <button
-                className="tab-sidebar-group-close"
-                onClick={(e) => { e.stopPropagation(); handleCloseGroup(group); }}
-                title="关闭分组内所有终端"
-              >
-                ×
-              </button>
+              <span className={`tree-arrow${collapsedGroups.has(group.id) ? '' : ' expanded'}`}>
+                ▶
+              </span>
+              <span className="tree-name" style={{ fontWeight: 600 }}>{group.label}</span>
+              {renderGroupEnd(group)}
             </div>
-            {!isCollapsed && group.sessions.map((session) => (
-              <div
-                key={session.id}
-                className={`tab-sidebar-item ${activeSessionId === session.id ? 'active' : ''}`}
-                onClick={() => setActiveSession(session.id)}
-                onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTerminal(session.id); } }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id });
-                }}
-              >
-                <span
-                  className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
-                  style={{ background: workingSessions[session.id] ? '#f0b429' : (session.tabColor || 'var(--accent)') }}
-                />
-                {renamingSessionId === session.id ? (
-                  <input
-                    ref={renameInputRef}
-                    className="tab-sidebar-rename-input"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={() => {
-                      const trimmed = renameValue.trim();
-                      if (trimmed && trimmed !== session.profileName) {
-                        renameSession(session.id, trimmed);
-                      }
-                      setRenamingSessionId(null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
+            {!collapsedGroups.has(group.id) && group.children?.map((child) => (
+              <div key={child.id}>
+                {renamingSessionId === child.id ? (
+                  <div className="tree-item" style={{ paddingLeft: '20px' }}>
+                    <span
+                      className="tab-sidebar-dot"
+                      style={{ background: workingSessions[child.id] ? '#f0b429' : 'var(--accent)' }}
+                    />
+                    <input
+                      ref={renameInputRef}
+                      className="tree-rename-input"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={() => {
                         const trimmed = renameValue.trim();
-                        if (trimmed && trimmed !== session.profileName) {
-                          renameSession(session.id, trimmed);
+                        if (trimmed && trimmed !== child.label) renameSession(child.id, trimmed);
+                        setRenamingSessionId(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const trimmed = renameValue.trim();
+                          if (trimmed && trimmed !== child.label) renameSession(child.id, trimmed);
+                          setRenamingSessionId(null);
+                        } else if (e.key === 'Escape') {
+                          setRenamingSessionId(null);
                         }
-                        setRenamingSessionId(null);
-                      } else if (e.key === 'Escape') {
-                        setRenamingSessionId(null);
-                      }
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
                 ) : (
-                  <span className="tab-sidebar-name">{session.profileName}</span>
+                  <div
+                    className={`tree-item tab-sidebar-item ${activeSessionId === child.id ? 'active' : ''}`}
+                    style={{ paddingLeft: '20px' }}
+                    onClick={() => setActiveSession(child.id)}
+                    onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTerminal(child.id); } }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: child.id });
+                    }}
+                  >
+                    <span
+                      className="tab-sidebar-dot"
+                      style={{ background: workingSessions[child.id] ? '#f0b429' : 'var(--accent)' }}
+                    />
+                    <span className="tree-name">{child.label}</span>
+                    <span className="tree-item-end">
+                      <button
+                        className="tree-item-close"
+                        onClick={(e) => { e.stopPropagation(); handleCloseTerminal(child.id); }}
+                        title="关闭"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  </div>
                 )}
-                <button
-                  className="tab-sidebar-close"
-                  onClick={(e) => { e.stopPropagation(); handleCloseTerminal(session.id); }}
-                  title="关闭"
-                >
-                  ×
-                </button>
               </div>
             ))}
           </div>
-          );
-        })}
+        ))}
       </div>
       <div
         className={`tab-sidebar-resize ${isResizing ? 'active' : ''}`}
@@ -361,27 +372,44 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 ref={submenuRef}
                 style={{ maxHeight: `${Math.max(200, window.innerHeight - contextMenuPos.y - 16)}px` }}
               >
-                {submenuItems.map((item, idx) => {
-                  if (item.isGroupHeader) {
-                    return (
-                      <div key={`sep-${item.label}`}>
-                        <div className="context-menu-separator" />
-                        <div className="context-menu-item submenu-group-header">{item.label}</div>
-                      </div>
-                    );
-                  }
-                  const currentActionIdx = actionIdx++;
-                  return (
-                    <div
-                      key={item.profile?.id || item.terminalType || idx}
-                      className={`context-menu-item ${highlightedIndex === currentActionIdx ? 'highlighted' : ''}`}
-                      onClick={() => executeSubmenuItem(item)}
-                      onMouseEnter={() => setHighlightedIndex(currentActionIdx)}
-                    >
-                      {item.label}
-                    </div>
-                  );
-                })}
+                {/* PowerShell / CMD — always at top */}
+                <div
+                  className={`context-menu-item submenu-item ${highlightedIndex === 0 ? 'highlighted' : ''}`}
+                  onClick={() => { onStartBlankTerminal('powershell'); setShowContextMenu(false); }}
+                  onMouseEnter={() => setHighlightedIndex(0)}
+                >
+                  PowerShell
+                </div>
+                <div
+                  className={`context-menu-item submenu-item ${highlightedIndex === 1 ? 'highlighted' : ''}`}
+                  onClick={() => { onStartBlankTerminal('cmd'); setShowContextMenu(false); }}
+                  onMouseEnter={() => setHighlightedIndex(1)}
+                >
+                  CMD
+                </div>
+                <TreeView
+                  items={submenuTree}
+                  expandedIds={submenuExpandedGroups}
+                  onToggle={(id) => {
+                    setSubmenuExpandedGroups(prev => {
+                      const next = new Set(prev);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    });
+                  }}
+                  selectedId={highlightedIndex >= 0 ? visibleSubmenuItems[highlightedIndex]?.id : undefined}
+                  onSelect={(item) => {
+                    if (item.data) {
+                      const d = item.data as { terminalType?: string };
+                      if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'cmd');
+                      else onStartTerminal(item.data as Profile);
+                      setShowContextMenu(false);
+                    }
+                  }}
+                  className="submenu-tree"
+                  indent={12}
+                />
               </div>
             </div>
             <div className="context-menu-separator" />
