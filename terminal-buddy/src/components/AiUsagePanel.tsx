@@ -68,26 +68,12 @@ const DeepseekView: FC<{ data: DeepseekUsageData }> = ({ data }) => {
 
   return (
     <div className="ds-card">
-      <div className="ds-head">
-        <span className="ds-title">DeepSeek 用量</span>
-        <span className="ds-date">{now.toLocaleDateString('zh-CN')}</span>
-      </div>
-
       {(data.normalWallets.length > 0 || data.bonusWallets.some(w => parseFloat(w.balance) > 0)) && (
         <div className="ds-section">
-          <div className="ds-section-head"><span>账户余额</span></div>
-          {data.normalWallets.map((w, i) => (
-            <div key={`n${i}`} className="ds-row">
-              <span className="ds-label">充值余额</span>
-              <span className="ds-val ds-cost">{w.currency} {parseFloat(w.balance).toFixed(2)}</span>
-            </div>
-          ))}
-          {data.bonusWallets.filter(w => parseFloat(w.balance) > 0).map((w, i) => (
-            <div key={`b${i}`} className="ds-row">
-              <span className="ds-label">赠送余额</span>
-              <span className="ds-val ds-cost">{w.currency} {parseFloat(w.balance).toFixed(2)}</span>
-            </div>
-          ))}
+          <div className="ds-row">
+            <span className="ds-label">账户余额</span>
+            <span className="ds-val ds-cost">{data.normalWallets.map(w => `${parseFloat(w.balance).toFixed(2)}`).concat(data.bonusWallets.filter(w => parseFloat(w.balance) > 0).map(w => `${parseFloat(w.balance).toFixed(2)}`)).join(' / ')} CNY</span>
+          </div>
         </div>
       )}
 
