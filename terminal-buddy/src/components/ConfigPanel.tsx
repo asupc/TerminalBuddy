@@ -10,10 +10,11 @@ const TYPE_ICONS: Record<string, string> = {
 };
 
 interface ConfigPanelProps {
-  onStartTerminal: (profile: Profile) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string) => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
   onAddProfile: () => void;
+  onManageExtraParams: () => void;
 }
 
 export const ConfigPanel: FC<ConfigPanelProps> = ({
@@ -21,6 +22,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   onEditProfile,
   onCopyProfile,
   onAddProfile,
+  onManageExtraParams,
 }) => {
   const profiles = useAppStore(s => s.profiles);
   const selectedProfileId = useAppStore(s => s.selectedProfileId);
@@ -32,6 +34,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   const configSortBy = useAppStore(s => s.configSortBy);
   const setConfigSearchQuery = useAppStore(s => s.setConfigSearchQuery);
   const setConfigSortBy = useAppStore(s => s.setConfigSortBy);
+  const extraParamPresets = useAppStore(s => s.extraParamPresets);
   const [width, setWidth] = useState(250);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -304,6 +307,14 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
             onStartTerminal(profiles.find((p) => p.id === contextMenu.profileId)!);
             closeContextMenu();
           }}>启动</div>
+          {extraParamPresets.map((preset) => (
+            <div key={preset.id} className="context-menu-item" onClick={() => {
+              onStartTerminal(profiles.find((p) => p.id === contextMenu.profileId)!, preset.params);
+              closeContextMenu();
+            }}>
+              启动[<span style={{ color: '#FFD700' }}>{preset.name}</span>]
+            </div>
+          ))}
           <div className="context-menu-item" onClick={() => {
             onEditProfile(profiles.find((p) => p.id === contextMenu.profileId)!);
             closeContextMenu();
@@ -334,6 +345,9 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
         <div className="context-menu" style={{ left: blankContextMenu.x, top: blankContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <div className="context-menu-item" onClick={() => { onAddProfile(); closeContextMenu(); }}>
             添加连接
+          </div>
+          <div className="context-menu-item" onClick={() => { onManageExtraParams(); closeContextMenu(); }}>
+            添加额外参数
           </div>
         </div>
       )}

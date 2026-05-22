@@ -7,6 +7,7 @@ import { TerminalPanel } from './components/TerminalPanel';
 import { FileTree } from './components/FileTree';
 import { TabSidebar } from './components/TabSidebar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
+import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { getStoredTheme, applyTheme, getAppSettings } from './utils/settings';
 import { useAppStore } from './stores/appStore';
 import { loadSavedTabs } from './stores/appStore';
@@ -26,6 +27,7 @@ function App() {
   const profiles = useAppStore(s => s.profiles);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
+  const [showExtraParamsDialog, setShowExtraParamsDialog] = useState(false);
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
   const [enableTabNav, setEnableTabNav] = useState(() => getAppSettings().enableTabNavigation);
   const closeConfirmedRef = useRef(false);
@@ -141,9 +143,9 @@ function App() {
     }
   }, [setProfiles]);
 
-  const handleStartTerminal = useCallback(async (profile: Profile) => {
+  const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string) => {
     try {
-      const terminalId = await startTerminal(profile.id);
+      const terminalId = await startTerminal(profile.id, extraParams);
       await updateProfileLastUsed(profile.id);
       const theme = PRESET_THEMES.find(t => t.id === profile.colorTheme) || PRESET_THEMES[0];
       addSession({
@@ -238,6 +240,7 @@ function App() {
           onEditProfile={handleEditProfile}
           onCopyProfile={handleCopyProfile}
           onAddProfile={handleAddProfile}
+          onManageExtraParams={() => setShowExtraParamsDialog(true)}
         />
         <FileTree />
         {enableTabNav && (
@@ -255,6 +258,9 @@ function App() {
           onClose={handleDialogClose}
           onSave={handleDialogSave}
         />
+      )}
+      {showExtraParamsDialog && (
+        <ExtraParamsDialog onClose={() => setShowExtraParamsDialog(false)} />
       )}
       {closeConfirm && (
         <div className="confirm-dialog-overlay" onClick={handleCloseCancel}>
