@@ -12,12 +12,15 @@
   z-index: 1000;
   white-space: nowrap;
   pointer-events: none;
+  width: 252px;
+  min-width: unset;
 }
 
 .ai-usage-provider-block {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  width: 100%;
 }
 
 .ai-usage-provider-header {
@@ -64,22 +67,25 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
 }
 
 .ai-usage-tier-label {
   font-size: 10px;
   color: var(--text-tertiary);
   white-space: nowrap;
-  width: 30px;
+  width: 36px;
+  flex-shrink: 0;
   text-align: right;
 }
 
 .ai-usage-bar-track {
-  width: 60px;
+  flex: 1;
   height: 6px;
   background: var(--bg-tertiary);
   border-radius: 3px;
   overflow: hidden;
+  min-width: 0;
 }
 
 .ai-usage-bar-fill {
@@ -93,13 +99,18 @@
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  min-width: 32px;
+  width: 32px;
+  flex-shrink: 0;
+  text-align: right;
 }
 
 .ai-usage-countdown {
   font-size: 10px;
   color: var(--text-tertiary);
   white-space: nowrap;
+  width: 36px;
+  flex-shrink: 0;
+  text-align: right;
 }
 
 .ai-usage-divider {
@@ -114,7 +125,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-width: 250px;
+  width: 100%;
 }
 
 .ds-head {
