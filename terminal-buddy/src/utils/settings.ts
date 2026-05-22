@@ -1,5 +1,7 @@
 export type ThemeMode = 'dark' | 'light' | 'system';
 
+export type BreathingLightColorMode = 'tab' | 'custom';
+
 export interface AppSettings {
   restoreTabsOnStartup: boolean;
   configPanelAutoExpand: boolean;
@@ -13,6 +15,8 @@ export interface AppSettings {
   webApiEnabled: boolean;
   webApiPort: number;
   webApiUsername: string;
+  breathingLightColorMode: BreathingLightColorMode;
+  breathingLightCustomColor: string;
 }
 
 const THEME_STORAGE_KEY = 'terminalbuddy_theme';
@@ -31,6 +35,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   webApiEnabled: false,
   webApiPort: 9600,
   webApiUsername: 'admin',
+  breathingLightColorMode: 'tab',
+  breathingLightCustomColor: '#FFC107',
 };
 
 export const getAppSettings = (): AppSettings => {
@@ -43,6 +49,7 @@ export const getAppSettings = (): AppSettings => {
 
 export const saveAppSettings = (settings: AppSettings) => {
   localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  window.dispatchEvent(new CustomEvent('app-settings-changed'));
 };
 
 export const getStoredTheme = (): ThemeMode => {

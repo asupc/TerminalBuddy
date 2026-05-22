@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { open } from '@tauri-apps/plugin-dialog';
 import { createProfile, updateProfile, deleteProfile } from '../services/tauri';
 import { PRESET_THEMES, TAB_COLORS, type Profile } from '../types';
-import { COMMAND_TEMPLATES, getCommandHistory, addCommandToHistory } from '../data/commandTemplates';
+import { COMMAND_TEMPLATES } from '../data/commandTemplates';
 import { useDraggable } from '../hooks/useDraggable';
 import './ConfigEditDialog.css';
 
@@ -108,17 +108,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
       fuzzyMatch(cmd.command) || fuzzyMatch(cmd.desc)
     );
 
-    // History: only show entries with notes that aren't already in built-in results
-    const builtInCommands = new Set(builtIn.map(c => c.command));
-    const history = getCommandHistory()
-      .filter(entry => {
-        if (builtInCommands.has(entry.command)) return false;
-        if (!entry.note) return false;
-        return fuzzyMatch(entry.command) || fuzzyMatch(entry.note);
-      })
-      .map(entry => ({ name: entry.command, command: entry.command }));
-
-    setCmdSuggestions([...builtIn, ...history]);
+    setCmdSuggestions(builtIn);
     setActiveCmdIndex(index);
     setCmdSelectedIndex(-1);
   };
@@ -157,7 +147,6 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
     try {
       setSaveError(null);
       const commands = startupCommands.filter(c => c.trim() !== '');
-      commands.forEach(cmd => addCommandToHistory(cmd).catch(() => {}));
       if (profile) {
         await updateProfile({
           ...profile,

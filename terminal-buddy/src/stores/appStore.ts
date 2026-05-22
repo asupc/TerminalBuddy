@@ -122,6 +122,10 @@ interface AppState {
   workingSessions: Record<string, boolean>;
   setSessionWorking: (sessionId: string, working: boolean) => void;
 
+  // Settings version (incremented when settings change, triggers re-render in subscribers)
+  settingsVersion: number;
+  incrementSettingsVersion: () => void;
+
   // Internal drag paths (from FileTree to terminal)
   dragPaths: string[] | null;
   setDragPaths: (paths: string[] | null) => void;
@@ -299,6 +303,14 @@ export const useAppStore = create<AppState>((set) => ({
     workingSessions: { ...state.workingSessions, [sessionId]: working },
   })),
 
+  settingsVersion: 0,
+  incrementSettingsVersion: () => set((state) => ({ settingsVersion: state.settingsVersion + 1 })),
+
   dragPaths: null,
   setDragPaths: (paths) => set({ dragPaths: paths }),
 }));
+
+// Listen for app-settings-changed events and increment version to trigger re-renders
+window.addEventListener('app-settings-changed', () => {
+  useAppStore.getState().incrementSettingsVersion();
+});

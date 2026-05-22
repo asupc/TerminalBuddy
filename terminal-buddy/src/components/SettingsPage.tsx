@@ -2,10 +2,10 @@ import { FC, useState, useEffect, useRef, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
-import { PRESET_THEMES, type CustomTheme, type Profile } from '../types';
-import { type ThemeMode, type AppSettings, getAppSettings, saveAppSettings, getStoredTheme, applyTheme } from '../utils/settings';
+import { PRESET_THEMES, BREATHING_LIGHT_COLORS, type CustomTheme, type Profile } from '../types';
+import { type ThemeMode, type AppSettings, type BreathingLightColorMode, getAppSettings, saveAppSettings, getStoredTheme, applyTheme } from '../utils/settings';
 import { ConfigEditDialog } from './ConfigEditDialog';
-import { getCmdOverrides, saveCmdOverrides, getCustomCommands, saveCustomCommands, getEffectiveTemplates, type CmdOverride, type CommandItem, type HistoryEntry, getCommandHistory, loadCommandHistory, deleteCommandFromHistory, updateCommandInHistory, updateCommandNote, clearCommandHistory } from '../data/commandTemplates';
+import { getCmdOverrides, saveCmdOverrides, getCustomCommands, saveCustomCommands, getEffectiveTemplates, type CmdOverride, type CommandItem } from '../data/commandTemplates';
 import './SettingsPage.css';
 
 interface SettingsPageProps {
@@ -17,7 +17,6 @@ const SECTIONS = [
   { id: 'profiles', label: '连接管理' },
   { id: 'commands', label: '命令模板' },
   { id: 'themes', label: '主题管理' },
-  { id: 'history', label: '命令历史' },
   { id: 'exclusions', label: '文件排除' },
   { id: 'ai-usage', label: 'AI用量' },
   { id: 'web', label: 'Web管理' },
@@ -39,12 +38,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [pendingDataPath, setPendingDataPath] = useState('');
   const [isMigrating, setIsMigrating] = useState(false);
   const [activeSection, setActiveSection] = useState('general');
-  const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
-  const [historySearch, setHistorySearch] = useState('');
-  const [editingHistoryIdx, setEditingHistoryIdx] = useState<number | null>(null);
-  const [editHistoryValue, setEditHistoryValue] = useState('');
-  const [editNoteValue, setEditNoteValue] = useState('');
-  const [historyContextMenu, setHistoryContextMenu] = useState<{ x: number; y: number; entry: HistoryEntry; idx: number } | null>(null);
   const [newPattern, setNewPattern] = useState('');
   const [exclusionContextMenu, setExclusionContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [profileSearch, setProfileSearch] = useState('');
@@ -133,8 +126,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
   useEffect(() => {
     getAllThemes().then(setCustomThemes).catch(console.error);
-    loadCommandHistory().then(() => setHistoryList(getCommandHistory())).catch(() => {});
-  }, []);
+      }, []);
 
   // Close profile context menu on outside click
   useEffect(() => {
@@ -377,9 +369,9 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     checked={settings.configPanelAutoExpand}
                     onChange={(e) => updateSetting('configPanelAutoExpand', e.target.checked)}
                   />
-                  <span>启动时显示连接导航</span>
+                  <span>启动时展开连接面板</span>
                 </label>
-                <p className="settings-desc">程序启动时自动显示左侧连接面板</p>
+                <p className="settings-desc">启动时自动展开左侧连接面板</p>
               </div>
               <div className="settings-section">
                 <label className="settings-toggle">
@@ -388,9 +380,9 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     checked={settings.fileTreeAutoExpand}
                     onChange={(e) => updateSetting('fileTreeAutoExpand', e.target.checked)}
                   />
-                  <span>启动时显示文件导航</span>
+                  <span>启动时展开文件面板</span>
                 </label>
-                <p className="settings-desc">程序启动时自动显示左侧文件树面板</p>
+                <p className="settings-desc">启动时自动展开左侧文件面板</p>
               </div>
               <div className="settings-section">
                 <label className="settings-toggle">
@@ -418,9 +410,52 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                       saveEnableTabNavigation(value).catch(console.error);
                     }}
                   />
-                  <span>开启标签导航</span>
+                  <span>侧边标签栏</span>
                 </label>
-                <p className="settings-desc">开启后在左侧显示标签导航面板，关闭后标签将以选项卡形式显示在终端上方</p>
+                <p className="settings-desc">开启后标签显示在左侧面板，关闭后以选项卡形式显示在终端上方</p>
+              </div>
+              <div className="settings-section">
+                <label className="settings-label">活动指示灯颜色</label>
+                <div className="breathing-light-mode-options">
+                  <label className={`breathing-light-mode ${settings.breathingLightColorMode === 'tab' ? 'active' : ''}`}>
+                    <input
+                      type="radio"
+                      name="breathingLightColorMode"
+                      checked={settings.breathingLightColorMode === 'tab'}
+                      onChange={() => updateSetting('breathingLightColorMode', 'tab' as BreathingLightColorMode)}
+                    />
+                    <span>跟随标签颜色</span>
+                  </label>
+                  <label className={`breathing-light-mode ${settings.breathingLightColorMode === 'custom' ? 'active' : ''}`}>
+                    <input
+                      type="radio"
+                      name="breathingLightColorMode"
+                      checked={settings.breathingLightColorMode === 'custom'}
+                      onChange={() => updateSetting('breathingLightColorMode', 'custom' as BreathingLightColorMode)}
+                    />
+                    <span>自定义颜色</span>
+                  </label>
+                </div>
+                {settings.breathingLightColorMode === 'custom' && (
+                  <div className="tab-color-options" style={{ marginTop: 8 }}>
+                    {BREATHING_LIGHT_COLORS.map((c) => (
+                      <label
+                        key={c.id}
+                        className={`tab-color-chip ${settings.breathingLightCustomColor === c.color ? 'active' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="breathingLightCustomColor"
+                          checked={settings.breathingLightCustomColor === c.color}
+                          onChange={() => updateSetting('breathingLightCustomColor', c.color)}
+                        />
+                        <span className="tab-color-swatch" style={{ background: c.color }} />
+                        {c.name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p className="settings-desc">终端执行命令时指示灯使用的颜色</p>
               </div>
               <div className="settings-section">
                 <label className="settings-toggle">
@@ -446,9 +481,9 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                       saveSingleInstance(value).catch(console.error);
                     }}
                   />
-                  <span>只允许运行一个实例</span>
+                  <span>仅单窗口运行</span>
                 </label>
-                <p className="settings-desc">开启后再次启动应用时会激活已打开的窗口，而非打开新窗口。更改需重启应用生效</p>
+                <p className="settings-desc">重复启动时激活已有窗口，而非打开新窗口。需重启生效</p>
               </div>
               <div className="settings-section">
                 <label className="settings-label">主题</label>
@@ -551,7 +586,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     }
                   }}>导入全部数据</button>
                 </div>
-                <p className="settings-desc">将所有数据（连接、主题、历史记录、命令模板等）导出为单个 JSON 文件，导入时同理</p>
+                <p className="settings-desc">将所有数据（连接、主题、命令模板等）导出为单个 JSON 文件，导入时同理</p>
               </div>
             </div>
           </section>
@@ -961,126 +996,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
             </div>
           </section>
 
-          {/* History Section */}
-          <section
-            id="history"
-            ref={(el) => { sectionRefs.current['history'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">命令历史</h3>
-            <div className="commands-panel">
-              <div className="commands-toolbar">
-                <input
-                  className="commands-search"
-                  type="text"
-                  placeholder="搜索历史命令..."
-                  value={historySearch}
-                  onChange={(e) => setHistorySearch(e.target.value)}
-                />
-                <button
-                  className="cmd-add-btn danger-btn"
-                  onClick={() => {
-                    askConfirm('确定清空所有命令历史？此操作不可恢复。', async () => {
-                      setConfirmDialog(null);
-                      await clearCommandHistory();
-                      setHistoryList([]);
-                    });
-                  }}
-                >清空</button>
-              </div>
-              <div className="commands-list" style={{ maxHeight: 400 }}>
-                {historyList
-                  .filter(entry => !historySearch || entry.command.toLowerCase().includes(historySearch.toLowerCase()) || entry.note.toLowerCase().includes(historySearch.toLowerCase()))
-                  .map((entry, idx) => (
-                    <div key={idx} className={`cmd-cat-item ${historyContextMenu?.entry.command === entry.command ? 'selected' : ''}`} onContextMenu={(e) => {
-                      e.preventDefault();
-                      setHistoryContextMenu({ x: e.clientX, y: e.clientY, entry, idx });
-                    }}>
-                      {editingHistoryIdx === idx ? (
-                        <div className="history-edit-row">
-                          <input
-                            className="cmd-edit-input"
-                            value={editHistoryValue}
-                            onChange={(e) => setEditHistoryValue(e.target.value)}
-                            placeholder="命令"
-                            autoFocus
-                          />
-                          <input
-                            className="cmd-edit-input"
-                            value={editNoteValue}
-                            onChange={(e) => setEditNoteValue(e.target.value)}
-                            placeholder="备注"
-                          />
-                          <button className="btn-primary" style={{ padding: '2px 8px', fontSize: 12 }} onClick={async () => {
-                            if (editHistoryValue.trim() && editHistoryValue !== entry.command) {
-                              await updateCommandInHistory(entry.command, editHistoryValue);
-                            }
-                            if (editNoteValue !== entry.note) {
-                              const targetCmd = editHistoryValue.trim() || entry.command;
-                              await updateCommandNote(targetCmd, editNoteValue);
-                            }
-                            setHistoryList(getCommandHistory());
-                            setEditingHistoryIdx(null);
-                          }}>保存</button>
-                          <button className="btn-secondary" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => setEditingHistoryIdx(null)}>取消</button>
-                        </div>
-                      ) : (
-                        <>
-                          <code className="cmd-cat-cmd">{entry.command}</code>
-                          <span className="cmd-cat-desc">{entry.note || '历史命令'}</span>
-                        </>
-                      )}
-                      {editingHistoryIdx !== idx && (
-                        <div className="cmd-cat-actions">
-                          <button
-                            className="cmd-action-btn"
-                            title="编辑"
-                            onClick={() => { setEditingHistoryIdx(idx); setEditHistoryValue(entry.command); setEditNoteValue(entry.note); }}
-                          >✎</button>
-                          <button
-                            className="cmd-action-btn danger"
-                            title="删除"
-                            onClick={() => {
-                              askConfirm(`确定删除历史命令「${entry.command}」？`, async () => {
-                                setConfirmDialog(null);
-                                await deleteCommandFromHistory(entry.command);
-                                setHistoryList(getCommandHistory());
-                              });
-                            }}
-                          >×</button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-              </div>
-              {historyContextMenu && (
-                <div className="context-menu-overlay" onClick={() => setHistoryContextMenu(null)} />
-              )}
-              {historyContextMenu && (
-                <div className="context-menu" style={{ left: historyContextMenu.x, top: historyContextMenu.y }}>
-                  <div className="context-menu-item" onClick={() => {
-                    const { entry } = historyContextMenu;
-                    const idx = historyContextMenu.idx;
-                    setHistoryContextMenu(null);
-                    setEditingHistoryIdx(idx);
-                    setEditHistoryValue(entry.command);
-                    setEditNoteValue(entry.note);
-                  }}>编辑</div>
-                  <div className="context-menu-separator" />
-                  <div className="context-menu-item danger" onClick={() => {
-                    const { entry } = historyContextMenu;
-                    setHistoryContextMenu(null);
-                    askConfirm(`确定删除历史命令「${entry.command}」？`, async () => {
-                      setConfirmDialog(null);
-                      await deleteCommandFromHistory(entry.command);
-                      setHistoryList(getCommandHistory());
-                    });
-                  }}>删除</div>
-                </div>
-              )}
-            </div>
-          </section>
-
           {/* Exclusions Section */}
           <section
             id="exclusions"
@@ -1230,7 +1145,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     checked={settings.webApiEnabled}
                     onChange={(e) => setSettings({ ...settings, webApiEnabled: e.target.checked })}
                   />
-                  <span>启用 Web API</span>
+                  <span>启用远程访问</span>
                 </label>
               </div>
 
@@ -1279,7 +1194,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   </div>
 
                   <div className="settings-section">
-                    <label className="settings-label">服务控制</label>
+                    <label className="settings-label">服务状态</label>
                     <div className="data-path-row" style={{ alignItems: 'center', gap: 12 }}>
                       <span style={{ color: serverRunning ? '#4caf50' : '#8a8aaa', fontSize: 13 }}>
                         ● {serverRunning ? serverAddress : '已停止'}

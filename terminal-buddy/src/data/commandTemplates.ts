@@ -72,14 +72,11 @@ export function getEffectiveTemplates(): CommandTemplate[] {
   return result;
 }
 
-export interface HistoryEntry {
+export interface SuggestionItem {
   command: string;
-  note: string;
+  desc: string;
 }
 
-let historyCache: HistoryEntry[] | null = null;
-
-// --- Suggestions cache ---
 let suggestionsCache: SuggestionItem[] | null = null;
 let suggestionsDirty = true;
 
@@ -88,72 +85,25 @@ export function invalidateSuggestionsCache() {
   suggestionsCache = null;
 }
 
-export function getCommandHistory(): HistoryEntry[] {
-  return historyCache ?? [];
-}
+export function getAllSuggestions(): SuggestionItem[] {
+  if (!suggestionsDirty && suggestionsCache) return suggestionsCache;
 
-export async function loadCommandHistory(): Promise<HistoryEntry[]> {
-  try {
-    historyCache = await tauriService.getCommandHistory();
-  } catch {
-    historyCache = [];
-  }
-  return historyCache;
-}
+  const tplMap = new Map<string, SuggestionItem>();
 
-export async function addCommandToHistory(command: string): Promise<void> {
-  const trimmed = command.trim();
-  if (!trimmed) return;
-  try {
-    await tauriService.addCommandToHistory(trimmed);
-    historyCache = await tauriService.getCommandHistory();
-  } catch {
-    // fallback: update cache optimistically
-    if (historyCache) {
-      historyCache = historyCache.filter(e => e.command !== trimmed);
-      historyCache.unshift({ command: trimmed, note: '' });
+  for (const cat of getEffectiveTemplates()) {
+    for (const c of cat.commands) {
+      const key = c.command.trim();
+      if (!tplMap.has(key)) {
+        tplMap.set(key, { command: key, desc: c.desc });
+      }
     }
   }
-  invalidateSuggestionsCache();
-}
 
-export async function deleteCommandFromHistory(command: string): Promise<void> {
-  await tauriService.deleteCommandFromHistory(command);
-  historyCache = await tauriService.getCommandHistory();
-  invalidateSuggestionsCache();
-}
+  const result: SuggestionItem[] = [...tplMap.values()];
 
-export async function updateCommandInHistory(oldCommand: string, newCommand: string): Promise<void> {
-  await tauriService.updateCommandInHistory(oldCommand, newCommand);
-  historyCache = await tauriService.getCommandHistory();
-  invalidateSuggestionsCache();
-}
-
-export async function clearCommandHistory(): Promise<void> {
-  await tauriService.clearCommandHistory();
-  historyCache = [];
-  invalidateSuggestionsCache();
-}
-
-export async function updateCommandNote(command: string, note: string): Promise<void> {
-  await tauriService.updateCommandNote(command, note);
-  historyCache = await tauriService.getCommandHistory();
-  invalidateSuggestionsCache();
-}
-
-export async function migrateLocalStorageHistory(): Promise<void> {
-  const HISTORY_KEY = 'terminalbuddy_command_history';
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    if (!raw) return;
-    const commands: string[] = JSON.parse(raw);
-    if (commands.length > 0) {
-      await tauriService.importCommandHistory(commands);
-    }
-    localStorage.removeItem(HISTORY_KEY);
-  } catch {
-    // migration failed silently
-  }
+  suggestionsCache = result;
+  suggestionsDirty = false;
+  return result;
 }
 
 export async function initPersistedTemplates(): Promise<void> {
@@ -170,49 +120,6 @@ export async function initPersistedTemplates(): Promise<void> {
     } catch {}
   }
   invalidateSuggestionsCache();
-}
-
-export interface SuggestionItem {
-  command: string;
-  desc: string;
-}
-
-export function getAllSuggestions(): SuggestionItem[] {
-  if (!suggestionsDirty && suggestionsCache) return suggestionsCache;
-
-  const history = getCommandHistory();
-  const tplMap = new Map<string, SuggestionItem>();
-
-  // Templates first (with descriptions, applying overrides)
-  for (const cat of getEffectiveTemplates()) {
-    for (const c of cat.commands) {
-      const key = c.command.trim();
-      if (!tplMap.has(key)) {
-        tplMap.set(key, { command: key, desc: c.desc });
-      }
-    }
-  }
-
-  // Build result: history items first (keep template desc if exists), then remaining templates
-  const result: SuggestionItem[] = [];
-  const seen = new Set<string>();
-
-  for (const entry of history) {
-    const tpl = tplMap.get(entry.command);
-    const desc = entry.note || tpl?.desc || '历史命令';
-    result.push({ command: entry.command, desc });
-    seen.add(entry.command);
-  }
-
-  for (const [, item] of tplMap) {
-    if (!seen.has(item.command)) {
-      result.push(item);
-    }
-  }
-
-  suggestionsCache = result;
-  suggestionsDirty = false;
-  return result;
 }
 
 export const COMMAND_TEMPLATES: CommandTemplate[] = [

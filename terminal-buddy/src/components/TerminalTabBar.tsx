@@ -2,10 +2,17 @@ import { FC, useState, useEffect, useCallback, useRef } from 'react';
 import { useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
+import { getWorkingDotColor } from '../utils/tabColor';
 import './TerminalTabBar.css';
 
 export const TerminalTabBar: FC = () => {
-  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession, workingSessions } = useAppStore();
+  const sessions = useAppStore(s => s.sessions);
+  const activeSessionId = useAppStore(s => s.activeSessionId);
+  const removeSession = useAppStore(s => s.removeSession);
+  const setActiveSession = useAppStore(s => s.setActiveSession);
+  const renameSession = useAppStore(s => s.renameSession);
+  const workingSessions = useAppStore(s => s.workingSessions);
+  const settingsVersion = useAppStore(s => s.settingsVersion);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -53,7 +60,7 @@ export const TerminalTabBar: FC = () => {
   const sessionIdx = (id: string) => sessions.findIndex(s => s.id === id);
 
   return (
-    <div className="terminal-tab-bar">
+    <div className="terminal-tab-bar" key={settingsVersion}>
       {sessions.map((session) => (
         <div
           key={session.id}
@@ -72,7 +79,7 @@ export const TerminalTabBar: FC = () => {
         >
           <span
             className={`terminal-tab-dot${workingSessions[session.id] ? ' working' : ''}`}
-            style={{ background: workingSessions[session.id] ? '#f0b429' : (session.tabColor || 'var(--accent)') }}
+            style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
           />
           {renamingSessionId === session.id ? (
             <input

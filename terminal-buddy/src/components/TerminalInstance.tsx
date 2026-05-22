@@ -10,7 +10,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getAppSettings } from '../utils/settings';
 import { useAppStore } from '../stores/appStore';
-import { getAllSuggestions, addCommandToHistory, type SuggestionItem } from '../data/commandTemplates';
+import { getAllSuggestions, type SuggestionItem } from '../data/commandTemplates';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
@@ -354,15 +354,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
           useAppStore.getState().setSessionWorking(terminalId, true);
-          const buffer = terminal.buffer.active;
-          const absY = buffer.baseY + buffer.cursorY;
-          const line = buffer.getLine(absY);
-          if (line) {
-            const text = line.translateToString(true, 0, buffer.cursorX);
-            const promptIdx = text.lastIndexOf('>');
-            const cmd = promptIdx >= 0 ? text.substring(promptIdx + 1).trim() : text.trim();
-            if (cmd) addCommandToHistory(cmd).catch(() => {});
-          }
           updateAutocomplete(null);
           // Prompt will move to a new line after Enter
           hasUserPosition = false;

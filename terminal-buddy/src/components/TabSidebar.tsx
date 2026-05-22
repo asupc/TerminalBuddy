@@ -3,6 +3,7 @@ import { useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
+import { getWorkingDotColor } from '../utils/tabColor';
 import { TreeView, type TreeItem } from './TreeView';
 import type { Profile } from '../types';
 import './TabSidebar.css';
@@ -20,6 +21,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const setActiveSession = useAppStore(s => s.setActiveSession);
   const renameSession = useAppStore(s => s.renameSession);
   const workingSessions = useAppStore(s => s.workingSessions);
+  const settingsVersion = useAppStore(s => s.settingsVersion);
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const highlightedIndexRef = useRef(-1);
@@ -35,6 +37,12 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [submenuExpandedGroups, setSubmenuExpandedGroups] = useState<Set<string>>(new Set());
+  const [, setSettingsTick] = useState(0);
+  useEffect(() => {
+    const handler = () => setSettingsTick(t => t + 1);
+    window.addEventListener('app-settings-changed', handler);
+    return () => window.removeEventListener('app-settings-changed', handler);
+  }, []);
 
   const { width, setWidth, isResizing, resizeHandleProps } = useResizablePanel({
     defaultWidth: 200,
@@ -69,13 +77,13 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
           icon: (
             <span
               className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
-              style={{ background: session.tabColor || 'var(--accent)' }}
+              style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
             />
           ),
           data: session,
         })),
       }));
-  }, [sessions, profiles, workingSessions]);
+  }, [sessions, profiles, workingSessions, settingsVersion]);
 
   // Build submenu tree: PowerShell/CMD always visible, then groups collapsed
   const submenuTree = useMemo(() => {
@@ -297,7 +305,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                   <div className="tree-item" style={{ paddingLeft: '20px' }}>
                     <span
                       className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
-                      style={{ background: (child.data as any)?.tabColor || 'var(--accent)' }}
+                      style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
                     />
                     <input
                       ref={renameInputRef}
@@ -334,7 +342,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                   >
                     <span
                       className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
-                      style={{ background: (child.data as any)?.tabColor || 'var(--accent)' }}
+                      style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
                     />
                     <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>{child.label}</span>
                     <span className="tree-item-end">

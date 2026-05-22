@@ -183,40 +183,6 @@ export async function readClipboardFilePaths(): Promise<string[]> {
   return invoke('read_clipboard_file_paths');
 }
 
-// History Commands
-export interface HistoryEntryFE {
-  command: string;
-  note: string;
-}
-
-export async function getCommandHistory(): Promise<HistoryEntryFE[]> {
-  return invoke('get_command_history');
-}
-
-export async function addCommandToHistory(command: string): Promise<void> {
-  return invoke('add_command_to_history', { command });
-}
-
-export async function deleteCommandFromHistory(command: string): Promise<void> {
-  return invoke('delete_command_from_history', { command });
-}
-
-export async function updateCommandInHistory(oldCommand: string, newCommand: string): Promise<void> {
-  return invoke('update_command_in_history', { oldCommand, newCommand });
-}
-
-export async function updateCommandNote(command: string, note: string): Promise<void> {
-  return invoke('update_command_note', { command, note });
-}
-
-export async function clearCommandHistory(): Promise<void> {
-  return invoke('clear_command_history');
-}
-
-export async function importCommandHistory(commands: string[]): Promise<void> {
-  return invoke('import_command_history', { commands });
-}
-
 // Template Commands
 export async function getCommandTemplates(): Promise<string> {
   return invoke('get_command_templates');

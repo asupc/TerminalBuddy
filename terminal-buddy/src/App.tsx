@@ -11,7 +11,7 @@ import { getStoredTheme, applyTheme, getAppSettings } from './utils/settings';
 import { useAppStore } from './stores/appStore';
 import { loadSavedTabs } from './stores/appStore';
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp } from './services/tauri';
-import { loadCommandHistory, migrateLocalStorageHistory, initPersistedTemplates } from './data/commandTemplates';
+import { initPersistedTemplates } from './data/commandTemplates';
 import type { Profile } from './types';
 import { PRESET_THEMES } from './types';
 
@@ -37,7 +37,6 @@ function App() {
     if (getAppSettings().restoreTabsOnStartup) {
       restoreTabs();
     }
-    migrateLocalStorageHistory().then(() => loadCommandHistory());
   }, []);
 
   useEffect(() => {

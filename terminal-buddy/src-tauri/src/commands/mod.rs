@@ -1,7 +1,6 @@
 pub mod ai_usage;
 pub mod clipboard;
 pub mod fs;
-pub mod history;
 pub mod profile;
 pub mod settings;
 pub mod templates;
@@ -13,7 +12,6 @@ pub mod workspace;
 pub use ai_usage::*;
 pub use clipboard::*;
 pub use fs::*;
-pub use history::*;
 pub use profile::*;
 pub use settings::*;
 pub use templates::*;

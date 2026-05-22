@@ -90,6 +90,10 @@ export const TAB_COLORS: (TabColorOption | null)[] = [
   { id: 'white', name: '白色', color: '#FAFAFA' },
 ];
 
+export const BREATHING_LIGHT_COLORS: TabColorOption[] = TAB_COLORS.filter(
+  (c): c is TabColorOption => c !== null && !['grey', 'white'].includes(c.id)
+);
+
 export interface TerminalSession {
   id: string;
   profileId: string;
