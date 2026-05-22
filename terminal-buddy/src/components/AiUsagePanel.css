@@ -107,3 +107,78 @@
   background: var(--border);
   margin: 6px 0;
 }
+
+/* DeepSeek card style */
+.ds-card {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 250px;
+}
+
+.ds-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.ds-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ds-date {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.ds-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+}
+
+.ds-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.ds-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.ds-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.ds-val {
+  font-size: 11px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ds-cost {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.ds-token {
+  color: #a78bfa;
+  font-weight: 600;
+}

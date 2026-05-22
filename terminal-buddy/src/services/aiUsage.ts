@@ -31,12 +31,21 @@ export interface DeepseekMonthUsage {
   totalCost: number;
 }
 
+export interface DeepseekWeekUsage {
+  startDate: string;
+  endDate: string;
+  request: number;
+  totalToken: number;
+  cost: number;
+}
+
 export interface DeepseekUsageData {
   success: boolean;
   normalWallets: DeepseekWallet[];
   bonusWallets: DeepseekWallet[];
   today: DeepseekDayUsage | null;
   yesterday: DeepseekDayUsage | null;
+  week: DeepseekWeekUsage | null;
   month: DeepseekMonthUsage | null;
   error: string | null;
 }
@@ -159,6 +168,7 @@ export async function fetchDeepseekUsage(apiKey: string): Promise<DeepseekUsageD
       bonusWallets: [],
       today: null,
       yesterday: null,
+      week: null,
       month: null,
       error: `调用失败: ${String(e)}`,
     };

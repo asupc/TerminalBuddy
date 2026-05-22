@@ -52,12 +52,23 @@ pub struct DeepseekMonthUsage {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DeepseekWeekUsage {
+    pub start_date: String,
+    pub end_date: String,
+    pub request: i64,
+    pub total_token: i64,
+    pub cost: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeepseekUsageResult {
     pub success: bool,
     pub normal_wallets: Vec<DeepseekBalanceWallet>,
     pub bonus_wallets: Vec<DeepseekBalanceWallet>,
     pub today: Option<DeepseekDayUsage>,
     pub yesterday: Option<DeepseekDayUsage>,
+    pub week: Option<DeepseekWeekUsage>,
     pub month: Option<DeepseekMonthUsage>,
     pub error: Option<String>,
 }
@@ -254,8 +265,10 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
     let headers = |req: reqwest::RequestBuilder| -> reqwest::RequestBuilder {
         req.header("Authorization", format!("Bearer {}", api_key))
             .header("Accept", "application/json")
-            .header("Referer", base)
+            .header("Accept-Language", "zh-CN,zh;q=0.9")
+            .header("Referer", format!("{}/", base))
             .header("Origin", base)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0")
     };
 
     // Parallel: summary + daily amount + daily cost
@@ -287,6 +300,7 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
                 bonus_wallets: vec![],
                 today: None,
                 yesterday: None,
+                week: None,
                 month: None,
                 error: Some("API Key 无效".into()),
             }
@@ -385,6 +399,17 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
     // Build today/yesterday usage
     let today_s = today_str();
     let yesterday_s = yesterday_str();
+    let week_start_s = {
+        let n = chrono::Local::now();
+        let weekday = n.weekday().num_days_from_monday() as i64;
+        let monday = n - chrono::Duration::days(weekday);
+        let mut ws = format!("{}", monday.format("%Y-%m-%d"));
+        let month_start = format!("{}-{:02}-01", year, month);
+        if ws < month_start {
+            ws = month_start;
+        }
+        ws
+    };
 
     let today = if let Some(days) = amount_days {
         if let Some(models) = extract_day_data(days, &today_s) {
@@ -393,18 +418,14 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
                 .and_then(|d| extract_day_data(d, &today_s))
                 .map(|m| sum_cost(&m))
                 .unwrap_or(0.0);
-            if total > 0 || req > 0 {
-                Some(DeepseekDayUsage {
-                    request: req,
-                    input_token: hit + miss,
-                    cache_hit_token: hit,
-                    output_token: resp,
-                    total_token: total,
-                    cost,
-                })
-            } else {
-                None
-            }
+            Some(DeepseekDayUsage {
+                request: req,
+                input_token: hit + miss,
+                cache_hit_token: hit,
+                output_token: resp,
+                total_token: total,
+                cost,
+            })
         } else {
             None
         }
@@ -419,18 +440,14 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
                 .and_then(|d| extract_day_data(d, &yesterday_s))
                 .map(|m| sum_cost(&m))
                 .unwrap_or(0.0);
-            if total > 0 || req > 0 {
-                Some(DeepseekDayUsage {
-                    request: req,
-                    input_token: hit + miss,
-                    cache_hit_token: hit,
-                    output_token: resp,
-                    total_token: total,
-                    cost,
-                })
-            } else {
-                None
-            }
+            Some(DeepseekDayUsage {
+                request: req,
+                input_token: hit + miss,
+                cache_hit_token: hit,
+                output_token: resp,
+                total_token: total,
+                cost,
+            })
         } else {
             None
         }
@@ -475,12 +492,58 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
         None
     };
 
+    // Weekly
+    let week_usage = if let Some(days) = amount_days {
+        let mut req = 0i64;
+        let mut hit = 0i64;
+        let mut miss = 0i64;
+        let mut resp = 0i64;
+        for d in days {
+            let date = d.get("date").and_then(|v| v.as_str()).unwrap_or("");
+            if date >= week_start_s.as_str() && date <= today_s.as_str() {
+                if let Some(models) = d.get("data").and_then(|v| v.as_array()) {
+                    let (r, h, m, s, _) = sum_usage(models);
+                    req += r;
+                    hit += h;
+                    miss += m;
+                    resp += s;
+                }
+            }
+        }
+        let total = hit + miss + resp;
+        let mut week_cost = 0.0;
+        if let Some(cdays) = cost_days {
+            for d in cdays {
+                let date = d.get("date").and_then(|v| v.as_str()).unwrap_or("");
+                if date >= week_start_s.as_str() && date <= today_s.as_str() {
+                    if let Some(models) = d.get("data").and_then(|v| v.as_array()) {
+                        week_cost += sum_cost(models);
+                    }
+                }
+            }
+        }
+        if total > 0 || req > 0 {
+            Some(DeepseekWeekUsage {
+                start_date: week_start_s,
+                end_date: today_s,
+                request: req,
+                total_token: total,
+                cost: week_cost,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     DeepseekUsageResult {
         success: true,
         normal_wallets,
         bonus_wallets,
         today,
         yesterday,
+        week: week_usage,
         month: month_usage,
         error: None,
     }

@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useCallback, Fragment } from 'react';
-import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, tierDisplayName, utilizationColor, countdownStr, formatTokens, type AiUsageData, type DeepseekUsageData } from '../services/aiUsage';
+import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, tierDisplayName, utilizationColor, countdownStr, formatTokens, type AiUsageData, type DeepseekUsageData, type DeepseekDayUsage } from '../services/aiUsage';
 import { getAppSettings } from '../utils/settings';
 import './AiUsagePanel.css';
 
@@ -30,55 +30,79 @@ const TierRow: FC<TierRowProps> = ({ tier }) => (
   </div>
 );
 
+const fmtDate = (d: Date) =>
+  `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+
+const DayBlock: FC<{
+  title: string; date: string;
+  data: DeepseekDayUsage;
+}> = ({ title, date, data }) => {
+  const rate = data.inputToken > 0 ? Math.round((data.cacheHitToken / data.inputToken) * 100) : null;
+  return (
+    <div className="ds-section">
+      <div className="ds-section-head">
+        <span>{title} {date}</span>
+      </div>
+      <div className="ds-row"><span className="ds-label">API请求</span><span className="ds-val">{formatTokens(data.request)}</span></div>
+      <div className="ds-row"><span className="ds-label">输入</span><span className="ds-val">{formatTokens(data.inputToken)}{rate !== null && <span style={{ color: '#f59e0b' }}> ({rate}%)</span>}</span></div>
+      <div className="ds-row"><span className="ds-label">输出</span><span className="ds-val">{formatTokens(data.outputToken)}</span></div>
+      <div className="ds-row"><span className="ds-label">合计</span><span className="ds-val ds-token">{formatTokens(data.totalToken)}</span></div>
+      <div className="ds-row"><span className="ds-label">消费</span><span className="ds-val ds-cost">¥{data.cost.toFixed(2)}</span></div>
+    </div>
+  );
+};
+
 const DeepseekView: FC<{ data: DeepseekUsageData }> = ({ data }) => {
   if (!data.success) {
     return <span className="ai-usage-error">{data.error || '查询失败'}</span>;
   }
-  const hasBalance = data.normalWallets.length > 0 || data.bonusWallets.length > 0;
-  if (!hasBalance && !data.today && !data.yesterday && !data.month) {
+  const hasData = data.normalWallets.length > 0 || data.bonusWallets.length > 0
+    || data.today || data.yesterday;
+  if (!hasData) {
     return <span className="ai-usage-text">暂无数据</span>;
   }
 
+  const now = new Date();
+  const yd = new Date(now);
+  yd.setDate(yd.getDate() - 1);
+
   return (
-    <div className="ai-usage-bars">
-      {data.normalWallets.map((w, i) => (
-        <div key={`n${i}`} className="ai-usage-tier" style={{ gap: 6 }}>
-          <span className="ai-usage-tier-label">余额</span>
-          <span className="ai-usage-pct" style={{ color: parseFloat(w.balance) > 0 ? '#22c55e' : '#ef4444', fontSize: 13 }}>
-            {w.currency} {parseFloat(w.balance).toFixed(2)}
-          </span>
-        </div>
-      ))}
-      {data.bonusWallets.filter(w => parseFloat(w.balance) > 0).map((w, i) => (
-        <div key={`b${i}`} className="ai-usage-tier" style={{ gap: 6 }}>
-          <span className="ai-usage-tier-label">赠送</span>
-          <span className="ai-usage-pct" style={{ color: '#3b82f6', fontSize: 13 }}>
-            {w.currency} {parseFloat(w.balance).toFixed(2)}
-          </span>
-        </div>
-      ))}
-      {data.today && (
-        <div className="ai-usage-tier" style={{ gap: 6 }}>
-          <span className="ai-usage-tier-label">今日</span>
-          <span className="ai-usage-pct" style={{ fontSize: 12, color: 'var(--text-primary)' }}>
-            {formatTokens(data.today.totalToken)} tokens · {data.today.cost.toFixed(2)}元
-          </span>
+    <div className="ds-card">
+      <div className="ds-head">
+        <span className="ds-title">DeepSeek 用量</span>
+        <span className="ds-date">{now.toLocaleDateString('zh-CN')}</span>
+      </div>
+
+      {(data.normalWallets.length > 0 || data.bonusWallets.some(w => parseFloat(w.balance) > 0)) && (
+        <div className="ds-section">
+          <div className="ds-section-head"><span>账户余额</span></div>
+          {data.normalWallets.map((w, i) => (
+            <div key={`n${i}`} className="ds-row">
+              <span className="ds-label">充值余额</span>
+              <span className="ds-val ds-cost">{w.currency} {parseFloat(w.balance).toFixed(2)}</span>
+            </div>
+          ))}
+          {data.bonusWallets.filter(w => parseFloat(w.balance) > 0).map((w, i) => (
+            <div key={`b${i}`} className="ds-row">
+              <span className="ds-label">赠送余额</span>
+              <span className="ds-val ds-cost">{w.currency} {parseFloat(w.balance).toFixed(2)}</span>
+            </div>
+          ))}
         </div>
       )}
-      {data.yesterday && (
-        <div className="ai-usage-tier" style={{ gap: 6 }}>
-          <span className="ai-usage-tier-label">昨日</span>
-          <span className="ai-usage-pct" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            {formatTokens(data.yesterday.totalToken)} tokens · {data.yesterday.cost.toFixed(2)}元
-          </span>
+
+      {data.today && <DayBlock title="今日" date={fmtDate(now)} data={data.today} />}
+      {!data.today && (
+        <div className="ds-section">
+          <div className="ds-section-head"><span>今日 {fmtDate(now)}</span></div>
+          <span className="ds-label" style={{ padding: '2px 0' }}>暂无用量</span>
         </div>
       )}
-      {data.month && (
-        <div className="ai-usage-tier" style={{ gap: 6 }}>
-          <span className="ai-usage-tier-label">本月</span>
-          <span className="ai-usage-pct" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            {formatTokens(data.month.totalToken)} tokens · {data.month.totalCost.toFixed(2)}元
-          </span>
+      {data.yesterday && <DayBlock title="昨日" date={fmtDate(yd)} data={data.yesterday} />}
+      {!data.yesterday && (
+        <div className="ds-section">
+          <div className="ds-section-head"><span>昨日 {fmtDate(yd)}</span></div>
+          <span className="ds-label" style={{ padding: '2px 0' }}>暂无用量</span>
         </div>
       )}
     </div>
