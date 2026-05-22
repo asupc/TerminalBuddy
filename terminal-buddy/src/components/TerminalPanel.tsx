@@ -1,4 +1,4 @@
-import { FC } from 'react';
+import { FC, useCallback } from 'react';
 import { TerminalInstance } from './TerminalInstance';
 import { TerminalTabBar } from './TerminalTabBar';
 import { SettingsPage } from './SettingsPage';
@@ -8,17 +8,19 @@ import { getAppSettings } from '../utils/settings';
 import './TerminalPanel.css';
 
 export const TerminalPanel: FC = () => {
-  const { sessions, activeSessionId,
-          settingsTabOpen, closeSettingsTab } = useAppStore();
+  const sessions = useAppStore(s => s.sessions);
+  const activeSessionId = useAppStore(s => s.activeSessionId);
+  const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
+  const closeSettingsTab = useAppStore(s => s.closeSettingsTab);
   const settings = getAppSettings();
 
-  const handleTerminalInput = async (sessionId: string, data: string) => {
+  const handleTerminalInput = useCallback(async (sessionId: string, data: string) => {
     try {
       await writeToTerminal(sessionId, data);
     } catch (err) {
       console.error('Failed to write to terminal:', err);
     }
-  };
+  }, []);
 
   return (
     <div className="terminal-panel">
@@ -41,7 +43,7 @@ export const TerminalPanel: FC = () => {
             <TerminalInstance
               terminalId={session.id}
               colorTheme={session.colorTheme}
-              onOutput={(data) => handleTerminalInput(session.id, data)}
+              onOutput={handleTerminalInput}
               isActive={activeSessionId === session.id}
             />
           </div>

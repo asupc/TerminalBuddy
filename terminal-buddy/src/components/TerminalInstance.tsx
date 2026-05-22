@@ -19,7 +19,7 @@ const PROMPT_REGEX = /(?:PS )?([A-Za-z]:\\[^\s>]*)>/g;
 
 interface TerminalInstanceProps {
   terminalId: string;
-  onOutput: (data: string) => void;
+  onOutput: (sessionId: string, data: string) => void;
   colorTheme?: { background: string; foreground: string };
   isActive?: boolean;
 }
@@ -333,7 +333,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const PASTE_CHUNK_DELAY = 10;
       const chunkedSend = (data: string) => {
         if (data.length <= PASTE_CHUNK_SIZE) {
-          onOutputRef.current(data);
+          onOutputRef.current(terminalId, data);
           return;
         }
         const chunks: string[] = [];
@@ -342,7 +342,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         }
         const sendNext = (idx: number) => {
           if (disposed || idx >= chunks.length) return;
-          onOutputRef.current(chunks[idx]);
+          onOutputRef.current(terminalId, chunks[idx]);
           if (idx < chunks.length - 1) {
             setTimeout(() => sendNext(idx + 1), PASTE_CHUNK_DELAY);
           }
@@ -389,7 +389,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           const wrapped = `\x1b[200~${sanitized}\x1b[201~`;
           chunkedSend(wrapped);
         } else {
-          onOutputRef.current(data);
+          onOutputRef.current(terminalId, data);
         }
       });
 
@@ -453,7 +453,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               const promptIdx = text.lastIndexOf('>');
               const input = promptIdx >= 0 ? text.substring(promptIdx + 1).trimStart() : '';
               const completion = selected.substring(input.length);
-              if (completion) onOutputRef.current(completion);
+              if (completion) onOutputRef.current(terminalId, completion);
             }
             updateAutocomplete(null);
             return;
@@ -499,7 +499,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               const promptIdx = text.lastIndexOf('>');
               const input = promptIdx >= 0 ? text.substring(promptIdx + 1).trimStart() : '';
               const completion = selected.substring(input.length);
-              if (completion) onOutputRef.current(completion);
+              if (completion) onOutputRef.current(terminalId, completion);
             }
             updateAutocomplete(null);
             return;
@@ -508,7 +508,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (e.key === 'Enter' && (e.ctrlKey || e.shiftKey)) {
           e.preventDefault();
           e.stopPropagation();
-          onOutputRef.current('\n');
+          onOutputRef.current(terminalId, '\n');
           return;
         }
         if (e.key === 'c' && e.ctrlKey && !e.shiftKey) {
@@ -528,7 +528,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             if (paths.length > 0) {
               // Paste file paths wrapped in quotes
               const text = paths.map(p => `"${p}"`).join(' ');
-              onOutputRef.current(text);
+              onOutputRef.current(terminalId, text);
             } else {
               // Fallback: read as plain text
               navigator.clipboard.readText().then((text) => {
@@ -536,7 +536,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   const trimmed = text.trim();
                   // Detect single Windows file path in text — wrap in quotes
                   if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
-                    onOutputRef.current(`"${trimmed.replace(/"/g, '\\"')}"`);
+                    onOutputRef.current(terminalId, `"${trimmed.replace(/"/g, '\\"')}"`);
                   } else {
                     terminal.paste(text);
                   }
@@ -762,7 +762,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         const paths = event.payload.paths;
         if (paths && paths.length > 0) {
           const text = paths.map(p => `"${p}"`).join(' ');
-          onOutputRef.current(text);
+          onOutputRef.current(terminalId, text);
         }
       } else {
         // 'leave' / cancel
@@ -789,7 +789,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (!paths || !isActiveRef.current) return;
       setInternalDragOver(false);
       const text = paths.map(p => `"${p}"`).join(' ');
-      onOutputRef.current(text);
+      onOutputRef.current(terminalId, text);
       useAppStore.getState().setDragPaths(null);
     };
 
@@ -885,7 +885,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   const promptIdx = text.lastIndexOf('>');
                   const input = promptIdx >= 0 ? text.substring(promptIdx + 1).trimStart() : '';
                   const completion = cmd.command.substring(input.length);
-                  if (completion) onOutputRef.current(completion);
+                  if (completion) onOutputRef.current(terminalId, completion);
                 }
                 updateAutocomplete(null);
               }}

@@ -192,7 +192,13 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
 };
 
 export const FileTree: FC = () => {
-  const { currentDirectory, setCurrentDirectory, fileTreeVisible, bookmarks, addBookmark, removeBookmark, exclusionPatterns } = useAppStore();
+  const currentDirectory = useAppStore(s => s.currentDirectory);
+  const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
+  const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
+  const bookmarks = useAppStore(s => s.bookmarks);
+  const addBookmark = useAppStore(s => s.addBookmark);
+  const removeBookmark = useAppStore(s => s.removeBookmark);
+  const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
   const [rootNodes, setRootNodes] = useState<FileNode[]>([]);
   const [width, setWidth] = useState(250);
   const [isResizing, setIsResizing] = useState(false);

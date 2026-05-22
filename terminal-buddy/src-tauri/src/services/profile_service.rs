@@ -2,6 +2,7 @@ use crate::models::Profile;
 use crate::services::PathService;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::RwLock;
 use uuid::Uuid;
 
 fn sanitize_filename(name: &str) -> String {
@@ -13,6 +14,8 @@ fn sanitize_filename(name: &str) -> String {
         .collect::<String>()
 }
 
+static CACHED_PROFILES: RwLock<Option<Vec<Profile>>> = RwLock::new(None);
+
 pub struct ProfileService;
 
 impl ProfileService {
@@ -20,17 +23,23 @@ impl ProfileService {
         PathService::get_profiles_dir()
     }
 
-    pub fn get_all_profiles() -> Result<Vec<Profile>, String> {
+    fn invalidate_cache() {
+        if let Ok(mut cache) = CACHED_PROFILES.write() {
+            *cache = None;
+        }
+    }
+
+    fn read_all_from_disk() -> Vec<Profile> {
         let dir = Self::get_profiles_dir();
         let mut profiles = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
 
         if let Ok(entries) = fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 if entry.path().extension().map_or(false, |e| e == "json") {
                     if let Ok(content) = fs::read_to_string(entry.path()) {
                         if let Ok(profile) = serde_json::from_str::<Profile>(&content) {
-                            // Deduplicate by ID (old {id}.json and new {name}.json may coexist)
-                            if !profiles.iter().any(|p: &Profile| p.id == profile.id) {
+                            if seen_ids.insert(profile.id.clone()) {
                                 profiles.push(profile);
                             }
                         }
@@ -39,6 +48,19 @@ impl ProfileService {
             }
         }
 
+        profiles
+    }
+
+    pub fn get_all_profiles() -> Result<Vec<Profile>, String> {
+        if let Ok(cache) = CACHED_PROFILES.read() {
+            if let Some(ref profiles) = *cache {
+                return Ok(profiles.clone());
+            }
+        }
+        let profiles = Self::read_all_from_disk();
+        if let Ok(mut cache) = CACHED_PROFILES.write() {
+            *cache = Some(profiles.clone());
+        }
         Ok(profiles)
     }
 
@@ -91,7 +113,7 @@ impl ProfileService {
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         fs::write(&path, content)
             .map_err(|e| format!("Failed to write file: {}", e))?;
-
+        Self::invalidate_cache();
         Ok(profile)
     }
 
@@ -121,14 +143,18 @@ impl ProfileService {
         let content = serde_json::to_string_pretty(profile)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         fs::write(&path, content)
-            .map_err(|e| format!("Failed to write file: {}", e))
+            .map_err(|e| format!("Failed to write file: {}", e))?;
+        Self::invalidate_cache();
+        Ok(())
     }
 
     pub fn delete_profile(id: &str) -> Result<(), String> {
         let profile = Self::get_profile(id)?;
         let path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&profile.name)));
         fs::remove_file(&path)
-            .map_err(|e| format!("Failed to delete profile: {}", e))
+            .map_err(|e| format!("Failed to delete profile: {}", e))?;
+        Self::invalidate_cache();
+        Ok(())
     }
 
     pub fn update_last_used(id: &str) -> Result<(), String> {
@@ -162,6 +188,7 @@ impl ProfileService {
                 .map_err(|e| format!("Failed to write file: {}", e))?;
             imported.push(profile);
         }
+        Self::invalidate_cache();
         Ok(imported)
     }
 }

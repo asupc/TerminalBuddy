@@ -1,11 +1,13 @@
 use tauri::{command, AppHandle, State, Emitter, Manager};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use uuid::Uuid;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize, Child, MasterPty};
 use std::thread;
 use std::fs;
+use std::path::PathBuf;
 use crate::services::ProfileService;
 use crate::services::PathService;
 
@@ -15,7 +17,7 @@ pub struct TerminalInstance {
     child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
     pub writer: Option<Box<dyn Write + Send>>,
-    pub output_buffer: Arc<Mutex<Vec<String>>>,
+    pub output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
     current_rows: u16,
     current_cols: u16,
 }
@@ -24,15 +26,56 @@ pub struct TerminalService {
     pub instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
 }
 
+use std::sync::OnceLock;
+static DEBUG_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
 fn log_debug(msg: &str) {
-    let log_path = PathService::get_debug_log_path();
+    let log_path = DEBUG_LOG_PATH.get_or_init(|| PathService::get_debug_log_path());
     let ts = chrono::Utc::now().format("%H:%M:%S%.3f");
     let line = format!("[{}] {}\n", ts, msg);
     let _ = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&log_path)
+        .open(log_path)
         .and_then(|mut f| f.write_all(line.as_bytes()));
+}
+
+/// Shared output forwarding logic for both create_terminal and create_blank_terminal
+fn spawn_output_forwarder(
+    reader: Box<dyn Read + Send>,
+    terminal_id: String,
+    app: AppHandle,
+    output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
+) {
+    thread::spawn(move || {
+        let mut reader = reader;
+        let mut buf = [0u8; 65536];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    // Try fast path: valid UTF-8, avoid Cow allocation
+                    let output: Arc<str> = match std::str::from_utf8(&buf[..n]) {
+                        Ok(s) => Arc::from(s),
+                        Err(_) => Arc::from(String::from_utf8_lossy(&buf[..n]).to_string()),
+                    };
+                    if !output.is_empty() {
+                        {
+                            let mut buffer = output_buffer.lock().unwrap();
+                            buffer.push_back(output.clone());
+                            if buffer.len() > 1000 {
+                                buffer.drain(0..500);
+                            }
+                        }
+                        let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
+                        let web_state = app.state::<crate::services::WebServiceState>();
+                        web_state.broadcast(&terminal_id, &output);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
 }
 
 impl Default for TerminalService {
@@ -115,7 +158,7 @@ impl TerminalService {
             msg
         })?;
 
-        let output_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let output_buffer: Arc<Mutex<VecDeque<Arc<str>>>> = Arc::new(Mutex::new(VecDeque::new()));
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),
@@ -206,38 +249,7 @@ impl TerminalService {
         }
 
         // Output forwarding thread
-        let tid = terminal_id.clone();
-        let app_clone = app.clone();
-        let buf_clone = output_buffer.clone();
-
-        thread::spawn(move || {
-            let mut reader = master_reader;
-            let mut buf = [0u8; 65536];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let output = String::from_utf8_lossy(&buf[..n]).to_string();
-                        if !output.is_empty() {
-                            {
-                                let mut buffer = buf_clone.lock().unwrap();
-                                buffer.push(output.clone());
-                                if buffer.len() > 1000 {
-                                    let start = buffer.len() - 500;
-                                    let kept: Vec<String> = buffer.splice(start.., []).collect();
-                                    *buffer = kept;
-                                }
-                            }
-                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output.clone());
-                            // Broadcast to Web subscribers
-                            let web_state = app_clone.state::<crate::services::WebServiceState>();
-                            web_state.broadcast(&tid, &output);
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
+        spawn_output_forwarder(master_reader, terminal_id.clone(), app, output_buffer);
 
         log_debug(&format!("[create] DONE, id={}", terminal_id));
         Ok(terminal_id)
@@ -245,10 +257,27 @@ impl TerminalService {
 
     pub fn write_to_terminal(&self, id: &str, data: &str) -> Result<(), String> {
         let bytes = data.as_bytes();
+        if bytes.len() <= 256 {
+            // Fast path: single write, single lock
+            let mut instances = self.instances.lock().unwrap();
+            if let Some(instance) = instances.get_mut(id) {
+                if let Some(ref mut writer) = instance.writer {
+                    writer.write_all(bytes)
+                        .map_err(|e| format!("Write failed: {}", e))?;
+                    writer.flush()
+                        .map_err(|e| format!("Flush failed: {}", e))?;
+                    return Ok(());
+                } else {
+                    return Err("Terminal writer not available".to_string());
+                }
+            } else {
+                return Err("Terminal not found".to_string());
+            }
+        }
+        // Chunked path for large pastes — acquire lock per chunk with sleep between
         let chunk_size = 256;
         for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
             if i > 0 {
-                // Release lock during sleep so other terminals aren't blocked
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
             let mut instances = self.instances.lock().unwrap();
@@ -299,25 +328,28 @@ impl TerminalService {
     }
 
     pub fn drain_terminal_output(&self, id: &str) -> Result<String, String> {
-        let mut instances = self.instances.lock().unwrap();
-        if let Some(instance) = instances.get_mut(id) {
-            let mut buffer = instance.output_buffer.lock().unwrap();
-            let result = buffer.join("");
-            buffer.clear();
-            Ok(result)
-        } else {
-            Err("Terminal not found".to_string())
-        }
+        // Get buffer reference while holding instances lock briefly
+        let buf_arc = {
+            let instances = self.instances.lock().unwrap();
+            instances.get(id)
+                .map(|inst| inst.output_buffer.clone())
+                .ok_or("Terminal not found".to_string())?
+        };
+        let mut buffer = buf_arc.lock().unwrap();
+        let result: String = buffer.iter().map(|s| s.as_ref()).collect();
+        buffer.clear();
+        Ok(result)
     }
 
     pub fn peek_terminal_output(&self, id: &str) -> Result<String, String> {
-        let instances = self.instances.lock().unwrap();
-        if let Some(instance) = instances.get(id) {
-            let buffer = instance.output_buffer.lock().unwrap();
-            Ok(buffer.join(""))
-        } else {
-            Err("Terminal not found".to_string())
-        }
+        let buf_arc = {
+            let instances = self.instances.lock().unwrap();
+            instances.get(id)
+                .map(|inst| inst.output_buffer.clone())
+                .ok_or("Terminal not found".to_string())?
+        };
+        let buffer = buf_arc.lock().unwrap();
+        Ok(buffer.iter().map(|s| s.as_ref()).collect())
     }
 
     pub fn close_terminal(&self, id: &str) -> Result<(), String> {
@@ -377,7 +409,7 @@ impl TerminalService {
             msg
         })?;
 
-        let output_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let output_buffer: Arc<Mutex<VecDeque<Arc<str>>>> = Arc::new(Mutex::new(VecDeque::new()));
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),
@@ -415,38 +447,7 @@ impl TerminalService {
         });
 
         // Output forwarding thread
-        let tid = terminal_id.clone();
-        let app_clone = app.clone();
-        let buf_clone = output_buffer.clone();
-
-        thread::spawn(move || {
-            let mut reader = master_reader;
-            let mut buf = [0u8; 65536];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let output = String::from_utf8_lossy(&buf[..n]).to_string();
-                        if !output.is_empty() {
-                            {
-                                let mut buffer = buf_clone.lock().unwrap();
-                                buffer.push(output.clone());
-                                if buffer.len() > 1000 {
-                                    let start = buffer.len() - 500;
-                                    let kept: Vec<String> = buffer.splice(start.., []).collect();
-                                    *buffer = kept;
-                                }
-                            }
-                            let _ = app_clone.emit(&format!("terminal_output_{}", tid), output.clone());
-                            // Broadcast to Web subscribers
-                            let web_state = app_clone.state::<crate::services::WebServiceState>();
-                            web_state.broadcast(&tid, &output);
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
+        spawn_output_forwarder(master_reader, terminal_id.clone(), app, output_buffer);
 
         log_debug(&format!("[create-blank] DONE, id={}", terminal_id));
         Ok(terminal_id)

@@ -22,7 +22,16 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   onCopyProfile,
   onAddProfile,
 }) => {
-  const { profiles, selectedProfileId, selectProfile, removeProfile, setProfiles, configPanelVisible, configSearchQuery, configSortBy, setConfigSearchQuery, setConfigSortBy } = useAppStore();
+  const profiles = useAppStore(s => s.profiles);
+  const selectedProfileId = useAppStore(s => s.selectedProfileId);
+  const selectProfile = useAppStore(s => s.selectProfile);
+  const removeProfile = useAppStore(s => s.removeProfile);
+  const setProfiles = useAppStore(s => s.setProfiles);
+  const configPanelVisible = useAppStore(s => s.configPanelVisible);
+  const configSearchQuery = useAppStore(s => s.configSearchQuery);
+  const configSortBy = useAppStore(s => s.configSortBy);
+  const setConfigSearchQuery = useAppStore(s => s.setConfigSearchQuery);
+  const setConfigSortBy = useAppStore(s => s.setConfigSortBy);
   const [width, setWidth] = useState(250);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);

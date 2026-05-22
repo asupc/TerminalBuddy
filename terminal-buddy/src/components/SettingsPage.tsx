@@ -66,7 +66,15 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     setConfirmDialog({ message, onConfirm });
   };
 
-  const { customThemes, setCustomThemes, addCustomTheme, updateCustomTheme, removeCustomTheme, exclusionPatterns, setExclusionPatterns, profiles, setProfiles } = useAppStore();
+  const customThemes = useAppStore(s => s.customThemes);
+  const setCustomThemes = useAppStore(s => s.setCustomThemes);
+  const addCustomTheme = useAppStore(s => s.addCustomTheme);
+  const updateCustomTheme = useAppStore(s => s.updateCustomTheme);
+  const removeCustomTheme = useAppStore(s => s.removeCustomTheme);
+  const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
+  const setExclusionPatterns = useAppStore(s => s.setExclusionPatterns);
+  const profiles = useAppStore(s => s.profiles);
+  const setProfiles = useAppStore(s => s.setProfiles);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
   const [editingTheme, setEditingTheme] = useState<CustomTheme | null>(null);
 
@@ -86,8 +94,10 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     localStorage.setItem('terminalbuddy_theme', theme);
   }, [theme]);
 
+  // Debounced settings save to avoid frequent localStorage writes
   useEffect(() => {
-    saveAppSettings(settings);
+    const timer = setTimeout(() => saveAppSettings(settings), 300);
+    return () => clearTimeout(timer);
   }, [settings]);
 
   useEffect(() => {
@@ -226,9 +236,13 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
   const allThemes = [...PRESET_THEMES, ...customThemes];
 
-  const profileGroups = useMemo(() => {
-    const names = new Set(profiles.map(p => p.group || '默认'));
-    return Array.from(names);
+  const profileGroupsWithCount = useMemo(() => {
+    const countMap = new Map<string, number>();
+    for (const p of profiles) {
+      const g = p.group || '默认';
+      countMap.set(g, (countMap.get(g) || 0) + 1);
+    }
+    return Array.from(countMap.entries()).map(([name, count]) => ({ name, count }));
   }, [profiles]);
 
   const filteredProfiles = useMemo(() => {
@@ -249,10 +263,10 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
   // Set default group tab when profiles load
   useEffect(() => {
-    if (profileGroups.length > 0 && !profileGroupTab) {
-      setProfileGroupTab(profileGroups[0]);
+    if (profileGroupsWithCount.length > 0 && !profileGroupTab) {
+      setProfileGroupTab(profileGroupsWithCount[0].name);
     }
-  }, [profileGroups, profileGroupTab]);
+  }, [profileGroupsWithCount, profileGroupTab]);
 
   const loadProfiles = async () => {
     try {
@@ -562,16 +576,16 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   + 新建连接
                 </button>
               </div>
-              {!profileSearch && profileGroups.length > 0 && (
+              {!profileSearch && profileGroupsWithCount.length > 0 && (
                 <div className="cmd-tabs">
-                  {profileGroups.map(group => (
+                  {profileGroupsWithCount.map(({ name, count }) => (
                     <button
-                      key={group}
-                      className={`cmd-tab ${profileGroupTab === group ? 'active' : ''}`}
-                      onClick={() => setProfileGroupTab(group)}
+                      key={name}
+                      className={`cmd-tab ${profileGroupTab === name ? 'active' : ''}`}
+                      onClick={() => setProfileGroupTab(name)}
                     >
-                      {group}
-                      <span className="cmd-tab-count">{profiles.filter(p => (p.group || '默认') === group).length}</span>
+                      {name}
+                      <span className="cmd-tab-count">{count}</span>
                     </button>
                   ))}
                 </div>

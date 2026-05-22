@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from './components/TitleBar';
@@ -16,11 +16,18 @@ import type { Profile } from './types';
 import { PRESET_THEMES } from './types';
 
 function App() {
-  const { setProfiles, addSession, configPanelVisible, fileTreeVisible, toggleConfigPanel, toggleFileTree, openSettingsTab, profiles } = useAppStore();
+  const setProfiles = useAppStore(s => s.setProfiles);
+  const addSession = useAppStore(s => s.addSession);
+  const configPanelVisible = useAppStore(s => s.configPanelVisible);
+  const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
+  const toggleConfigPanel = useAppStore(s => s.toggleConfigPanel);
+  const toggleFileTree = useAppStore(s => s.toggleFileTree);
+  const openSettingsTab = useAppStore(s => s.openSettingsTab);
+  const profiles = useAppStore(s => s.profiles);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
-  const [, setTabNavVersion] = useState(0);
+  const [enableTabNav, setEnableTabNav] = useState(() => getAppSettings().enableTabNavigation);
   const closeConfirmedRef = useRef(false);
 
   useEffect(() => {
@@ -34,7 +41,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const handler = () => setTabNavVersion(v => v + 1);
+    const handler = () => setEnableTabNav(getAppSettings().enableTabNavigation);
     window.addEventListener('tab-navigation-changed', handler);
     return () => window.removeEventListener('tab-navigation-changed', handler);
   }, []);
@@ -88,15 +95,15 @@ function App() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  const handleCloseConfirm = () => {
+  const handleCloseConfirm = useCallback(() => {
     closeConfirmedRef.current = true;
     setCloseConfirm(null);
     windowExitApp();
-  };
+  }, []);
 
-  const handleCloseCancel = () => {
+  const handleCloseCancel = useCallback(() => {
     setCloseConfirm(null);
-  };
+  }, []);
 
   const restoreTabs = async () => {
     const { tabs, activeIndex } = loadSavedTabs();
@@ -126,20 +133,18 @@ function App() {
     }
   };
 
-  const loadProfiles = async () => {
+  const loadProfiles = useCallback(async () => {
     try {
       const data = await getAllProfiles();
       setProfiles(data);
     } catch (err) {
       console.error('Failed to load profiles:', err);
     }
-  };
+  }, [setProfiles]);
 
-  const handleStartTerminal = async (profile: Profile) => {
+  const handleStartTerminal = useCallback(async (profile: Profile) => {
     try {
-      console.log('[DEBUG] startTerminal called, profileId:', profile.id);
       const terminalId = await startTerminal(profile.id);
-      console.log('[DEBUG] startTerminal returned:', terminalId);
       await updateProfileLastUsed(profile.id);
       const theme = PRESET_THEMES.find(t => t.id === profile.colorTheme) || PRESET_THEMES[0];
       addSession({
@@ -152,17 +157,16 @@ function App() {
         groupId: 'default',
       });
     } catch (err) {
-      console.error('[DEBUG] startTerminal FAILED:', err);
       alert('启动终端失败: ' + String(err));
     }
-  };
+  }, [addSession]);
 
-  const handleEditProfile = (profile: Profile) => {
+  const handleEditProfile = useCallback((profile: Profile) => {
     setEditingProfile(profile);
     setShowEditDialog(true);
-  };
+  }, []);
 
-  const handleCopyProfile = async (profile: Profile) => {
+  const handleCopyProfile = useCallback(async (profile: Profile) => {
     try {
       const newProfile = await createProfile(
         `${profile.name} (副本)`,
@@ -181,13 +185,13 @@ function App() {
     } catch (err) {
       console.error('Failed to copy profile:', err);
     }
-  };
+  }, [loadProfiles]);
 
-  const handleSettings = () => {
+  const handleSettings = useCallback(() => {
     openSettingsTab();
-  };
+  }, [openSettingsTab]);
 
-  const handleStartBlankTerminal = async (terminalType: 'powershell' | 'cmd') => {
+  const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'cmd') => {
     try {
       const name = terminalType === 'powershell' ? 'PowerShell' : 'CMD';
       const terminalId = await startBlankTerminal(terminalType);
@@ -204,7 +208,21 @@ function App() {
       console.error('Failed to start blank terminal:', err);
       alert('启动终端失败: ' + String(err));
     }
-  };
+  }, [addSession]);
+
+  const handleAddProfile = useCallback(() => {
+    setEditingProfile(null);
+    setShowEditDialog(true);
+  }, []);
+
+  const handleDialogSave = useCallback(() => {
+    setShowEditDialog(false);
+    loadProfiles();
+  }, [loadProfiles]);
+
+  const handleDialogClose = useCallback(() => {
+    setShowEditDialog(false);
+  }, []);
 
   return (
     <div className="app-container">
@@ -220,13 +238,10 @@ function App() {
           onStartTerminal={handleStartTerminal}
           onEditProfile={handleEditProfile}
           onCopyProfile={handleCopyProfile}
-          onAddProfile={() => {
-            setEditingProfile(null);
-            setShowEditDialog(true);
-          }}
+          onAddProfile={handleAddProfile}
         />
         <FileTree />
-        {getAppSettings().enableTabNavigation && (
+        {enableTabNav && (
           <TabSidebar
             profiles={profiles}
             onStartTerminal={handleStartTerminal}
@@ -238,11 +253,8 @@ function App() {
       {showEditDialog && (
         <ConfigEditDialog
           profile={editingProfile}
-          onClose={() => setShowEditDialog(false)}
-          onSave={() => {
-            setShowEditDialog(false);
-            loadProfiles();
-          }}
+          onClose={handleDialogClose}
+          onSave={handleDialogSave}
         />
       )}
       {closeConfirm && (

@@ -44,10 +44,10 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState) 
         loop {
             match output_rx.recv().await {
                 Some(data) => {
-                    if let Ok(msg) = serde_json::to_string(&WsServerMessage::Output { data }) {
-                        if ws_sender.send(Message::Text(msg.into())).await.is_err() {
-                            break;
-                        }
+                    // Manual JSON to avoid serde overhead on hot path
+                    let msg = format!("{{\"type\":\"output\",\"data\":{}}}", serde_json::Value::String(data.to_string()));
+                    if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+                        break;
                     }
                 }
                 None => break,

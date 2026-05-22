@@ -2,8 +2,10 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
+pub type OutputData = Arc<str>;
+
 pub struct WebServiceState {
-    pub output_subscribers: Arc<Mutex<HashMap<String, Vec<(String, mpsc::UnboundedSender<String>)>>>>,
+    pub output_subscribers: Arc<Mutex<HashMap<String, Vec<(String, mpsc::UnboundedSender<OutputData>)>>>>,
     next_subscriber_id: Arc<Mutex<u64>>,
 }
 
@@ -15,7 +17,7 @@ impl WebServiceState {
         }
     }
 
-    pub fn subscribe(&self, terminal_id: &str) -> (String, mpsc::UnboundedReceiver<String>) {
+    pub fn subscribe(&self, terminal_id: &str) -> (String, mpsc::UnboundedReceiver<OutputData>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut id_counter = self.next_subscriber_id.lock().unwrap();
         let sub_id = id_counter.to_string();
@@ -37,12 +39,13 @@ impl WebServiceState {
         }
     }
 
-    pub fn broadcast(&self, terminal_id: &str, data: &str) {
+    pub fn broadcast(&self, terminal_id: &str, data: &Arc<str>) {
         let subs = self.output_subscribers.lock().unwrap();
         if let Some(senders) = subs.get(terminal_id) {
             let mut dead = false;
             for (_, tx) in senders {
-                if tx.send(data.to_string()).is_err() {
+                // Arc clone is cheap — no string copy per subscriber
+                if tx.send(data.clone()).is_err() {
                     dead = true;
                 }
             }

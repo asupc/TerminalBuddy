@@ -1,4 +1,11 @@
 use serde::Serialize;
+use std::sync::OnceLock;
+
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn get_http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
 
 #[derive(Serialize)]
 pub struct QianfanTier {
@@ -16,7 +23,7 @@ pub struct QianfanResult {
 
 #[tauri::command]
 pub async fn fetch_qianfan_usage(cookie: String) -> QianfanResult {
-    let client = reqwest::Client::new();
+    let client = get_http_client();
     let resp = match client
         .get("https://console.bce.baidu.com/api/qianfan/charge/codingPlan/resourceList")
         .header("Accept", "application/json;charset=UTF-8")

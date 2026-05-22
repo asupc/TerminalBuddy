@@ -14,12 +14,19 @@ interface TabSidebarProps {
 }
 
 export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal }) => {
-  const { sessions, activeSessionId, removeSession, setActiveSession, renameSession, workingSessions } = useAppStore();
+  const sessions = useAppStore(s => s.sessions);
+  const activeSessionId = useAppStore(s => s.activeSessionId);
+  const removeSession = useAppStore(s => s.removeSession);
+  const setActiveSession = useAppStore(s => s.setActiveSession);
+  const renameSession = useAppStore(s => s.renameSession);
+  const workingSessions = useAppStore(s => s.workingSessions);
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const highlightedIndexRef = useRef(-1);
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  highlightedIndexRef.current = highlightedIndex;
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
@@ -61,8 +68,8 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
           label: session.profileName,
           icon: (
             <span
-              className="tab-sidebar-dot"
-              style={{ background: workingSessions[session.id] ? '#f0b429' : (session.tabColor || 'var(--accent)') }}
+              className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
+              style={{ background: session.tabColor || 'var(--accent)' }}
             />
           ),
           data: session,
@@ -113,6 +120,14 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     }
     return result;
   }, [submenuTree, submenuExpandedGroups]);
+
+  // Refs for stable access in effect without causing re-registrations
+  const visibleSubmenuItemsRef = useRef(visibleSubmenuItems);
+  visibleSubmenuItemsRef.current = visibleSubmenuItems;
+  const onStartTerminalRef = useRef(onStartTerminal);
+  onStartTerminalRef.current = onStartTerminal;
+  const onStartBlankTerminalRef = useRef(onStartBlankTerminal);
+  onStartBlankTerminalRef.current = onStartBlankTerminal;
 
   const handleCloseTerminal = async (sessionId: string) => {
     try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
@@ -177,12 +192,14 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
       if (e.key === 'Escape') { setShowContextMenu(false); return; }
       if (['ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) {
         e.preventDefault();
+        const items = visibleSubmenuItemsRef.current;
+        const idx = highlightedIndexRef.current;
         if (e.key === 'ArrowDown') {
-          setHighlightedIndex(prev => (prev + 1) % visibleSubmenuItems.length);
+          setHighlightedIndex(prev => (prev + 1) % items.length);
         } else if (e.key === 'ArrowUp') {
-          setHighlightedIndex(prev => prev <= 0 ? visibleSubmenuItems.length - 1 : prev - 1);
-        } else if (e.key === 'Enter' && highlightedIndex >= 0 && highlightedIndex < visibleSubmenuItems.length) {
-          const item = visibleSubmenuItems[highlightedIndex];
+          setHighlightedIndex(prev => prev <= 0 ? items.length - 1 : prev - 1);
+        } else if (e.key === 'Enter' && idx >= 0 && idx < items.length) {
+          const item = items[idx];
           if (item.isGroup || (item.children && item.children.length > 0)) {
             setSubmenuExpandedGroups(prev => {
               const next = new Set(prev);
@@ -191,9 +208,9 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
               return next;
             });
           } else if (item.data) {
-            const d = item.data as { terminalType?: string };
-            if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'cmd');
-            else onStartTerminal(item.data as Profile);
+            const d = item.data as Record<string, unknown>;
+            if ('group' in d) onStartTerminalRef.current(item.data as Profile);
+            else if (d.terminalType) onStartBlankTerminalRef.current(d.terminalType as 'powershell' | 'cmd');
             setShowContextMenu(false);
           }
         }
@@ -207,7 +224,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
       document.removeEventListener('mousedown', handleClick);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showContextMenu, highlightedIndex, visibleSubmenuItems, onStartTerminal, onStartBlankTerminal]);
+  }, [showContextMenu]);
 
   // Scroll highlighted item into view
   useEffect(() => {
@@ -279,8 +296,8 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 {renamingSessionId === child.id ? (
                   <div className="tree-item" style={{ paddingLeft: '20px' }}>
                     <span
-                      className="tab-sidebar-dot"
-                      style={{ background: workingSessions[child.id] ? '#f0b429' : 'var(--accent)' }}
+                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                      style={{ background: (child.data as any)?.tabColor || 'var(--accent)' }}
                     />
                     <input
                       ref={renameInputRef}
@@ -316,10 +333,10 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                     }}
                   >
                     <span
-                      className="tab-sidebar-dot"
-                      style={{ background: workingSessions[child.id] ? '#f0b429' : 'var(--accent)' }}
+                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                      style={{ background: (child.data as any)?.tabColor || 'var(--accent)' }}
                     />
-                    <span className="tree-name">{child.label}</span>
+                    <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>{child.label}</span>
                     <span className="tree-item-end">
                       <button
                         className="tree-item-close"
@@ -401,9 +418,9 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                   selectedId={highlightedIndex >= 0 ? visibleSubmenuItems[highlightedIndex]?.id : undefined}
                   onSelect={(item) => {
                     if (item.data) {
-                      const d = item.data as { terminalType?: string };
-                      if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'cmd');
-                      else onStartTerminal(item.data as Profile);
+                      const d = item.data as Record<string, unknown>;
+                      if ('group' in d) onStartTerminal(item.data as Profile);
+                      else if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'cmd');
                       setShowContextMenu(false);
                     }
                   }}

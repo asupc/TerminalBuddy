@@ -33,11 +33,11 @@ export const TitleBar: FC<TitleBarProps> = ({
 
   useEffect(() => {
     checkWebStatus();
-    const interval = setInterval(checkWebStatus, 5000);
+    const interval = setInterval(checkWebStatus, 30000);
     return () => clearInterval(interval);
   }, [checkWebStatus]);
 
-  const handleToggleWeb = async () => {
+  const handleToggleWeb = useCallback(async () => {
     setWebToggling(true);
     try {
       const status = await getWebApiStatus();
@@ -55,7 +55,7 @@ export const TitleBar: FC<TitleBarProps> = ({
       console.error('Web服务切换失败:', e);
     }
     setWebToggling(false);
-  };
+  }, [webRunning]);
 
   const handleMouseEnter = () => {
     clearTimeout(hoverTimer.current);

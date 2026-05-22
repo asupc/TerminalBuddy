@@ -12,12 +12,16 @@ pub async fn list(
     _claims: ClaimsFromRequest,
 ) -> Result<Json<Vec<TerminalInfo>>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
-    let instances = ts.instances.lock().unwrap();
-    let terminals: Vec<TerminalInfo> = instances.values().map(|inst| {
-        let profile = ProfileService::get_profile(&inst.profile_id).ok();
+    // Collect IDs while holding lock, then release before reading profiles
+    let instance_ids: Vec<(String, String)> = {
+        let instances = ts.instances.lock().unwrap();
+        instances.values().map(|inst| (inst.id.clone(), inst.profile_id.clone())).collect()
+    };
+    let terminals: Vec<TerminalInfo> = instance_ids.into_iter().map(|(id, profile_id)| {
+        let profile = ProfileService::get_profile(&profile_id).ok();
         TerminalInfo {
-            id: inst.id.clone(),
-            profile_id: inst.profile_id.clone(),
+            id,
+            profile_id: profile_id.clone(),
             profile_name: profile.as_ref().map(|p| p.name.clone()).unwrap_or_default(),
             terminal_type: profile.as_ref().map(|p| p.terminal_type.clone()).unwrap_or_default(),
         }

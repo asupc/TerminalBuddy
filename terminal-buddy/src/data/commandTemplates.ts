@@ -28,6 +28,7 @@ export function getCmdOverrides(): Record<string, CmdOverride> {
 
 export function saveCmdOverrides(overrides: Record<string, CmdOverride>) {
   localStorage.setItem(CMD_OVERRIDES_KEY, JSON.stringify(overrides));
+  invalidateSuggestionsCache();
 }
 
 export function getCustomCommands(): CommandItem[] {
@@ -39,6 +40,7 @@ export function getCustomCommands(): CommandItem[] {
 
 export function saveCustomCommands(cmds: CommandItem[]) {
   localStorage.setItem(CMD_CUSTOM_KEY, JSON.stringify(cmds));
+  invalidateSuggestionsCache();
 }
 
 export function getEffectiveTemplates(): CommandTemplate[] {
@@ -77,6 +79,15 @@ export interface HistoryEntry {
 
 let historyCache: HistoryEntry[] | null = null;
 
+// --- Suggestions cache ---
+let suggestionsCache: SuggestionItem[] | null = null;
+let suggestionsDirty = true;
+
+export function invalidateSuggestionsCache() {
+  suggestionsDirty = true;
+  suggestionsCache = null;
+}
+
 export function getCommandHistory(): HistoryEntry[] {
   return historyCache ?? [];
 }
@@ -103,26 +114,31 @@ export async function addCommandToHistory(command: string): Promise<void> {
       historyCache.unshift({ command: trimmed, note: '' });
     }
   }
+  invalidateSuggestionsCache();
 }
 
 export async function deleteCommandFromHistory(command: string): Promise<void> {
   await tauriService.deleteCommandFromHistory(command);
   historyCache = await tauriService.getCommandHistory();
+  invalidateSuggestionsCache();
 }
 
 export async function updateCommandInHistory(oldCommand: string, newCommand: string): Promise<void> {
   await tauriService.updateCommandInHistory(oldCommand, newCommand);
   historyCache = await tauriService.getCommandHistory();
+  invalidateSuggestionsCache();
 }
 
 export async function clearCommandHistory(): Promise<void> {
   await tauriService.clearCommandHistory();
   historyCache = [];
+  invalidateSuggestionsCache();
 }
 
 export async function updateCommandNote(command: string, note: string): Promise<void> {
   await tauriService.updateCommandNote(command, note);
   historyCache = await tauriService.getCommandHistory();
+  invalidateSuggestionsCache();
 }
 
 export async function migrateLocalStorageHistory(): Promise<void> {
@@ -153,6 +169,7 @@ export async function initPersistedTemplates(): Promise<void> {
       }
     } catch {}
   }
+  invalidateSuggestionsCache();
 }
 
 export interface SuggestionItem {
@@ -161,6 +178,8 @@ export interface SuggestionItem {
 }
 
 export function getAllSuggestions(): SuggestionItem[] {
+  if (!suggestionsDirty && suggestionsCache) return suggestionsCache;
+
   const history = getCommandHistory();
   const tplMap = new Map<string, SuggestionItem>();
 
@@ -191,6 +210,8 @@ export function getAllSuggestions(): SuggestionItem[] {
     }
   }
 
+  suggestionsCache = result;
+  suggestionsDirty = false;
   return result;
 }
 
