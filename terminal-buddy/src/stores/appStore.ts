@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Profile, TerminalSession, CustomTheme, TabGroup } from '../types';
+import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset } from '../types';
 import { getAppSettings } from '../utils/settings';
 
 interface SavedTab {
@@ -129,6 +129,11 @@ interface AppState {
   // Internal drag paths (from FileTree to terminal)
   dragPaths: string[] | null;
   setDragPaths: (paths: string[] | null) => void;
+
+  // Extra param presets
+  extraParamPresets: ExtraParamPreset[];
+  addExtraParamPreset: (name: string, params: string) => void;
+  removeExtraParamPreset: (id: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -308,6 +313,25 @@ export const useAppStore = create<AppState>((set) => ({
 
   dragPaths: null,
   setDragPaths: (paths) => set({ dragPaths: paths }),
+
+  // Extra param presets
+  extraParamPresets: (() => {
+    try {
+      const stored = localStorage.getItem('terminalbuddy_extra_param_presets');
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return [];
+  })(),
+  addExtraParamPreset: (name, params) => set((state) => {
+    const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params }];
+    localStorage.setItem('terminalbuddy_extra_param_presets', JSON.stringify(next));
+    return { extraParamPresets: next };
+  }),
+  removeExtraParamPreset: (id) => set((state) => {
+    const next = state.extraParamPresets.filter(p => p.id !== id);
+    localStorage.setItem('terminalbuddy_extra_param_presets', JSON.stringify(next));
+    return { extraParamPresets: next };
+  }),
 }));
 
 // Listen for app-settings-changed events and increment version to trigger re-renders

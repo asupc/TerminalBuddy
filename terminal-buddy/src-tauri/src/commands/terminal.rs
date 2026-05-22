@@ -91,7 +91,7 @@ impl TerminalService {
         }
     }
 
-    pub fn create_terminal(&self, profile_id: &str, app: AppHandle) -> Result<String, String> {
+    pub fn create_terminal(&self, profile_id: &str, extra_startup_params: Option<&str>, app: AppHandle) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create] start, id={}, profile_id={}", terminal_id, profile_id));
 
@@ -104,6 +104,17 @@ impl TerminalService {
         let startup_commands: Vec<String> = profile.as_ref()
             .map(|p| p.startup_commands.clone())
             .unwrap_or_default();
+        let startup_commands: Vec<String> = if let Some(extra) = extra_startup_params {
+            if !extra.is_empty() {
+                startup_commands.into_iter()
+                    .map(|cmd| format!("{} {}", cmd, extra))
+                    .collect()
+            } else {
+                startup_commands
+            }
+        } else {
+            startup_commands
+        };
         let env_vars: Vec<(String, String)> = profile.as_ref()
             .map(|p| p.environment_variables.iter().map(|(k,v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
@@ -457,10 +468,11 @@ impl TerminalService {
 #[command]
 pub fn start_terminal(
     profile_id: String,
+    extra_startup_params: Option<String>,
     app: AppHandle,
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.create_terminal(&profile_id, app)
+    terminal_service.create_terminal(&profile_id, extra_startup_params.as_deref(), app)
 }
 
 #[command]

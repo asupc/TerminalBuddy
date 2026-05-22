@@ -147,3 +147,9 @@ export interface TabGroup {
   color?: string;
   collapsed: boolean;
 }
+
+export interface ExtraParamPreset {
+  id: string;
+  name: string;
+  params: string;
+}
