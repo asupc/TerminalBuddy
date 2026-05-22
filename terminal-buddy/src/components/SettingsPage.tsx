@@ -48,6 +48,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [zhipuApiKeyVisible, setZhipuApiKeyVisible] = useState(false);
   const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
+  const [deepseekApiKeyVisible, setDeepseekApiKeyVisible] = useState(false);
   const [webPassword, setWebPassword] = useState('');
   const [hasPassword, setHasPassword] = useState(false);
   const [serverAddress, setServerAddress] = useState('');
@@ -1124,6 +1125,26 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   >{qianfanCookieVisible ? '隐藏' : '显示'}</button>
                 </div>
                 <p className="settings-desc">填入百度千帆控制台的 Cookie 用于查询 AI 用量。登录 <a href="https://console.bce.baidu.com/qianfan/resource/subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>百度千帆控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值</p>
+              </div>
+
+              {/* DeepSeek API Key */}
+              <div className="settings-section">
+                <label className="settings-label">DeepSeek API Key</label>
+                <div className="data-path-row">
+                  <input
+                    className="data-path-input"
+                    type={deepseekApiKeyVisible ? 'text' : 'password'}
+                    value={settings.deepseekApiKey}
+                    onChange={(e) => updateSetting('deepseekApiKey', e.target.value)}
+                    placeholder="请输入 DeepSeek API Key"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setDeepseekApiKeyVisible(!deepseekApiKeyVisible)}
+                  >{deepseekApiKeyVisible ? '隐藏' : '显示'}</button>
+                </div>
+                <p className="settings-desc">填入 DeepSeek 的 API Key 用于查询账户余额。可在 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com</a> 获取</p>
               </div>
             </div>
           </section>

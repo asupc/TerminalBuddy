@@ -16,6 +16,7 @@ const TIER_NAMES: Record<string, string> = {
   weekly_limit: '每周',
   qianfan_rpm: 'RPM',
   qianfan_tpm: 'TPM',
+  deepseek_balance: '余额',
 };
 
 export function tierDisplayName(name: string): string {
@@ -109,5 +110,60 @@ export async function fetchQianfanUsage(cookie: string): Promise<AiUsageData> {
     };
   } catch (e) {
     return { success: false, level: null, tiers: [], error: `调用失败: ${String(e)}` };
+  }
+}
+
+export async function fetchDeepseekUsage(apiKey: string): Promise<AiUsageData> {
+  try {
+    const resp = await fetch('https://api.deepseek.com/user/balance', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (resp.status === 401 || resp.status === 403) {
+      return { success: false, level: null, tiers: [], error: 'API Key 无效' };
+    }
+
+    if (!resp.ok) {
+      return { success: false, level: null, tiers: [], error: `请求失败 (HTTP ${resp.status})` };
+    }
+
+    const body = await resp.json();
+    const isAvailable = body.is_available !== false;
+    const balanceInfos = body.balance_infos;
+
+    if (!Array.isArray(balanceInfos) || balanceInfos.length === 0) {
+      return { success: false, level: null, tiers: [], error: isAvailable ? '暂无余额数据' : '余额不足' };
+    }
+
+    const tiers: QuotaTier[] = balanceInfos.map((info: any) => {
+      const currency = info.currency || 'CNY';
+      const totalBalance = typeof info.total_balance === 'number'
+        ? info.total_balance
+        : parseFloat(info.total_balance) || 0;
+      const granted = typeof info.granted_balance === 'number'
+        ? info.granted_balance
+        : parseFloat(info.granted_balance) || 0;
+      const toppedUp = typeof info.topped_up_balance === 'number'
+        ? info.topped_up_balance
+        : parseFloat(info.topped_up_balance) || 0;
+      const utilization = totalBalance > 0 ? 0 : 100;
+      return {
+        name: `deepseek_balance_${currency}`,
+        utilization,
+        resetsAt: null,
+        rawBalance: totalBalance,
+        currency,
+        granted,
+        toppedUp,
+      } as any;
+    });
+
+    return { success: true, level: isAvailable ? '可用' : '不可用', tiers, error: null };
+  } catch (e) {
+    return { success: false, level: null, tiers: [], error: `网络错误: ${String(e)}` };
   }
 }
