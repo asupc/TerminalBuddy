@@ -31,12 +31,14 @@ function App() {
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
   const [enableTabNav, setEnableTabNav] = useState(() => getAppSettings().enableTabNavigation);
   const closeConfirmedRef = useRef(false);
+  const restoredRef = useRef(false);
 
   useEffect(() => {
     applyTheme(getStoredTheme());
     initPersistedTemplates();
     loadProfiles();
-    if (getAppSettings().restoreTabsOnStartup) {
+    if (getAppSettings().restoreTabsOnStartup && !restoredRef.current) {
+      restoredRef.current = true;
       restoreTabs();
     }
   }, []);

@@ -12,6 +12,7 @@ export interface AppSettings {
   rightClickPaste: boolean;
   zhipuApiKey: string;
   qianfanCookie: string;
+  deepseekApiKey: string;
   webApiEnabled: boolean;
   webApiPort: number;
   webApiUsername: string;
@@ -32,6 +33,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   rightClickPaste: false,
   zhipuApiKey: '',
   qianfanCookie: '',
+  deepseekApiKey: '',
   webApiEnabled: false,
   webApiPort: 9600,
   webApiUsername: 'admin',

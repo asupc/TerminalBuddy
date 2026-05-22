@@ -11,6 +11,45 @@ export interface AiUsageData {
   error: string | null;
 }
 
+export interface DeepseekWallet {
+  balance: string;
+  currency: string;
+  tokenEstimation: number;
+}
+
+export interface DeepseekDayUsage {
+  request: number;
+  inputToken: number;
+  cacheHitToken: number;
+  outputToken: number;
+  totalToken: number;
+  cost: number;
+}
+
+export interface DeepseekMonthUsage {
+  totalToken: number;
+  totalCost: number;
+}
+
+export interface DeepseekWeekUsage {
+  startDate: string;
+  endDate: string;
+  request: number;
+  totalToken: number;
+  cost: number;
+}
+
+export interface DeepseekUsageData {
+  success: boolean;
+  normalWallets: DeepseekWallet[];
+  bonusWallets: DeepseekWallet[];
+  today: DeepseekDayUsage | null;
+  yesterday: DeepseekDayUsage | null;
+  week: DeepseekWeekUsage | null;
+  month: DeepseekMonthUsage | null;
+  error: string | null;
+}
+
 const TIER_NAMES: Record<string, string> = {
   five_hour: '5小时',
   weekly_limit: '每周',
@@ -40,6 +79,12 @@ export function countdownStr(resetsAt: string | null): string | null {
   }
   if (hours > 0) return `${hours}h${minutes}m`;
   return `${minutes}m`;
+}
+
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(n);
 }
 
 export async function fetchZhipuUsage(apiKey: string): Promise<AiUsageData> {
@@ -109,5 +154,23 @@ export async function fetchQianfanUsage(cookie: string): Promise<AiUsageData> {
     };
   } catch (e) {
     return { success: false, level: null, tiers: [], error: `调用失败: ${String(e)}` };
+  }
+}
+
+export async function fetchDeepseekUsage(apiKey: string): Promise<DeepseekUsageData> {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<DeepseekUsageData>('fetch_deepseek_usage', { apiKey });
+  } catch (e) {
+    return {
+      success: false,
+      normalWallets: [],
+      bonusWallets: [],
+      today: null,
+      yesterday: null,
+      week: null,
+      month: null,
+      error: `调用失败: ${String(e)}`,
+    };
   }
 }
