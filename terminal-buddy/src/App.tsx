@@ -11,9 +11,9 @@ import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { getStoredTheme, applyTheme, getAppSettings } from './utils/settings';
 import { useAppStore } from './stores/appStore';
 import { loadSavedTabs, saveTabsToStorage } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize } from './services/tauri';
 import { initPersistedTemplates } from './data/commandTemplates';
-import type { Profile } from './types';
+import type { Profile, TerminalSession } from './types';
 import { PRESET_THEMES } from './types';
 
 function App() {
@@ -118,20 +118,45 @@ function App() {
       for (let i = 0; i < tabs.length; i++) {
         const tab = tabs[i];
         try {
-          const terminalId = tab.profileId
-            ? await startTerminal(tab.profileId)
-            : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s');
-          store.addSession({
-            id: terminalId,
-            profileId: tab.profileId,
-            profileName: tab.profileName,
-            terminalType: tab.terminalType as any,
-            colorTheme: tab.colorTheme,
-            tabColor: tab.tabColor,
-            groupId: tab.groupId || 'default',
-          });
-          if (i === activeIndex) {
-            store.setActiveSession(terminalId);
+          if (tab.sessionType === 'editor') {
+            // Editor tabs don't need a PTY — create session directly
+            store.ensureEditorGroup();
+            try {
+              await getFileSize(tab.profileId);
+              const session: TerminalSession = {
+                id: crypto.randomUUID(),
+                profileId: tab.profileId,
+                profileName: tab.profileName,
+                terminalType: 'editor',
+                colorTheme: tab.colorTheme,
+                tabColor: tab.tabColor,
+                groupId: 'editor-group',
+                sessionType: 'editor',
+                isDirty: false,
+              };
+              store.addSession(session, true);
+              if (i === activeIndex) {
+                store.setActiveSession(session.id);
+              }
+            } catch {
+              // File no longer exists, skip this tab
+            }
+          } else {
+            const terminalId = tab.profileId
+              ? await startTerminal(tab.profileId)
+              : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s');
+            store.addSession({
+              id: terminalId,
+              profileId: tab.profileId,
+              profileName: tab.profileName,
+              terminalType: tab.terminalType as any,
+              colorTheme: tab.colorTheme,
+              tabColor: tab.tabColor,
+              groupId: tab.groupId || 'default',
+            });
+            if (i === activeIndex) {
+              store.setActiveSession(terminalId);
+            }
           }
         } catch (err) {
           console.error('Failed to restore tab:', tab.profileName, err);
