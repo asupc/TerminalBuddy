@@ -42,12 +42,10 @@ const DayBlock: FC<{
     <div className="ds-section">
       <div className="ds-section-head">
         <span>{title} {date}</span>
+        <span className="ds-val">次数 {formatTokens(data.request)}</span>
       </div>
-      <div className="ds-row"><span className="ds-label">API请求</span><span className="ds-val">{formatTokens(data.request)}</span></div>
-      <div className="ds-row"><span className="ds-label">输入</span><span className="ds-val">{formatTokens(data.inputToken)}{rate !== null && <span style={{ color: '#f59e0b' }}> ({rate}%)</span>}</span></div>
-      <div className="ds-row"><span className="ds-label">输出</span><span className="ds-val">{formatTokens(data.outputToken)}</span></div>
-      <div className="ds-row"><span className="ds-label">合计</span><span className="ds-val ds-token">{formatTokens(data.totalToken)}</span></div>
-      <div className="ds-row"><span className="ds-label">消费</span><span className="ds-val ds-cost">¥{data.cost.toFixed(2)}</span></div>
+      <div className="ds-row"><span className="ds-label">输入/输出</span><span className="ds-val">{formatTokens(data.inputToken)}{rate !== null && <span style={{ color: '#f59e0b' }}> ({rate}%)</span>}/{formatTokens(data.outputToken)}</span></div>
+      <div className="ds-row"><span className="ds-label">合计/消费</span><span className="ds-val"><span className="ds-token">{formatTokens(data.totalToken)}</span>/<span className="ds-cost">¥{data.cost.toFixed(2)}</span></span></div>
     </div>
   );
 };

@@ -109,6 +109,7 @@ interface AppState {
   activeSessionId: string | null;
   currentDirectory: string;
   setCurrentDirectory: (path: string) => void;
+  _skipSaveTabs: boolean;
   addSession: (session: TerminalSession, keepActive?: boolean) => void;
   removeSession: (id: string) => void;
   setActiveSession: (id: string | null) => void;
@@ -252,15 +253,16 @@ export const useAppStore = create<AppState>((set) => ({
   activeSessionId: null,
   currentDirectory: '',
   setCurrentDirectory: (path) => set({ currentDirectory: path }),
+  _skipSaveTabs: false,
   addSession: (session, keepActive) =>
     set((state) => {
       const s = { ...session, groupId: session.groupId || 'default' };
       const sessions = [...state.sessions, s];
-      saveTabsToStorage(sessions, s.id);
+      if (!state._skipSaveTabs) {
+        saveTabsToStorage(sessions, s.id);
+      }
       return {
         sessions,
-        // When keepActive is true (e.g. terminal created from web), don't
-        // switch away from the currently active tab.
         activeSessionId: keepActive ? state.activeSessionId : s.id,
         settingsTabOpen: false,
       };

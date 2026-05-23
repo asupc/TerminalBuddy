@@ -10,7 +10,7 @@ import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { getStoredTheme, applyTheme, getAppSettings } from './utils/settings';
 import { useAppStore } from './stores/appStore';
-import { loadSavedTabs } from './stores/appStore';
+import { loadSavedTabs, saveTabsToStorage } from './stores/appStore';
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp } from './services/tauri';
 import { initPersistedTemplates } from './data/commandTemplates';
 import type { Profile } from './types';
@@ -111,28 +111,40 @@ function App() {
   const restoreTabs = async () => {
     const { tabs, activeIndex } = loadSavedTabs();
     if (tabs.length === 0) return;
-    const { addSession, setActiveSession } = useAppStore.getState();
-    for (let i = 0; i < tabs.length; i++) {
-      const tab = tabs[i];
-      try {
-        const terminalId = tab.profileId
-          ? await startTerminal(tab.profileId)
-          : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s');
-        addSession({
-          id: terminalId,
-          profileId: tab.profileId,
-          profileName: tab.profileName,
-          terminalType: tab.terminalType as any,
-          colorTheme: tab.colorTheme,
-          tabColor: tab.tabColor,
-          groupId: tab.groupId || 'default',
-        });
-        if (i === activeIndex) {
-          setActiveSession(terminalId);
+    const store = useAppStore.getState();
+    // 暂停逐次写入 localStorage，恢复完后统一写一次
+    useAppStore.setState({ _skipSaveTabs: true });
+    try {
+      for (let i = 0; i < tabs.length; i++) {
+        const tab = tabs[i];
+        try {
+          const terminalId = tab.profileId
+            ? await startTerminal(tab.profileId)
+            : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s');
+          store.addSession({
+            id: terminalId,
+            profileId: tab.profileId,
+            profileName: tab.profileName,
+            terminalType: tab.terminalType as any,
+            colorTheme: tab.colorTheme,
+            tabColor: tab.tabColor,
+            groupId: tab.groupId || 'default',
+          });
+          if (i === activeIndex) {
+            store.setActiveSession(terminalId);
+          }
+        } catch (err) {
+          console.error('Failed to restore tab:', tab.profileName, err);
         }
-      } catch (err) {
-        console.error('Failed to restore tab:', tab.profileName, err);
+        // 让出主线程，避免 UI 卡顿
+        if (i < tabs.length - 1) {
+          await new Promise(r => setTimeout(r, 100));
+        }
       }
+    } finally {
+      useAppStore.setState({ _skipSaveTabs: false });
+      const { sessions, activeSessionId } = useAppStore.getState();
+      saveTabsToStorage(sessions, activeSessionId);
     }
   };
 
