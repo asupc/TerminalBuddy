@@ -1,6 +1,7 @@
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
-import { listDirectory, openPath, openInExplorer, deletePath, renamePath, writeToTerminal, type FileNode } from '../services/tauri';
+import { listDirectory, openPath, openInExplorer, deletePath, renamePath, writeToTerminal, getFileSize, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
+import { isTextFile } from '../utils/fileExtensions';
 import './FileTree.css';
 
 interface TreeNodeProps {
@@ -51,6 +52,17 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
   const handleDoubleClick = useCallback(async () => {
     if (node.is_directory) {
       onNavigate(node.path);
+    } else if (isTextFile(node.path)) {
+      try {
+        const size = await getFileSize(node.path);
+        if (size > 1024 * 1024) {
+          alert('文件过大，无法在编辑器中打开（超过 1MB）');
+          return;
+        }
+      } catch {
+        // 无法获取大小时尝试打开
+      }
+      useAppStore.getState().openEditorSession(node.path);
     } else {
       openPath(node.path).catch((err) => console.error('Failed to open file:', err));
     }
