@@ -59,8 +59,13 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const sessionTree = useMemo(() => {
     const groupMap = new Map<string, typeof sessions>();
     for (const session of sessions) {
-      const profile = profiles.find(p => p.id === session.profileId);
-      const groupName = profile?.group || '默认';
+      let groupName: string;
+      if (session.sessionType === 'editor') {
+        groupName = '文本编辑';
+      } else {
+        const profile = profiles.find(p => p.id === session.profileId);
+        groupName = profile?.group || '默认';
+      }
       if (!groupMap.has(groupName)) groupMap.set(groupName, []);
       groupMap.get(groupName)!.push(session);
     }
@@ -71,17 +76,25 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
         id: groupName,
         label: groupName,
         isGroup: true,
-        children: groupSessions.map((session): TreeItem => ({
-          id: session.id,
-          label: session.profileName,
-          icon: (
-            <span
-              className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
-              style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
-            />
-          ),
-          data: session,
-        })),
+        children: groupSessions.map((session): TreeItem => {
+          const isEditor = session.sessionType === 'editor';
+          return {
+            id: session.id,
+            label: session.profileName,
+            icon: isEditor ? (
+              <span className="tab-sidebar-file-icon">
+                {session.isDirty && <span className="tab-sidebar-dirty-dot" />}
+                📄
+              </span>
+            ) : (
+              <span
+                className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
+                style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
+              />
+            ),
+            data: session,
+          };
+        }),
       }));
   }, [sessions, profiles, workingSessions, settingsVersion]);
 
@@ -138,8 +151,24 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   onStartBlankTerminalRef.current = onStartBlankTerminal;
 
   const handleCloseTerminal = async (sessionId: string) => {
-    try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
-    removeSession(sessionId);
+    const session = sessions.find(s => s.id === sessionId);
+    if (session?.sessionType === 'editor') {
+      if (session.isDirty) {
+        setConfirmDialog({
+          title: '未保存的更改',
+          message: `文件「${session.profileName}」有未保存的更改，确定要关闭吗？`,
+          onConfirm: async () => {
+            setConfirmDialog(null);
+            removeSession(sessionId);
+          },
+        });
+        return;
+      }
+      removeSession(sessionId);
+    } else {
+      try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
+      removeSession(sessionId);
+    }
   };
 
   const handleCloseGroup = async (groupName: string, groupSessions: typeof sessions) => {
@@ -158,13 +187,18 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
 
   const handleCloseAllTabs = () => {
     if (sessions.length === 0) return;
+    const hasDirty = sessions.some(s => s.sessionType === 'editor' && s.isDirty);
     setConfirmDialog({
       title: '确认关闭所有标签',
-      message: `确定关闭所有 ${sessions.length} 个标签吗？`,
+      message: hasDirty
+        ? `有未保存的文件更改，确定关闭所有 ${sessions.length} 个标签吗？`
+        : `确定关闭所有 ${sessions.length} 个标签吗？`,
       onConfirm: async () => {
         setConfirmDialog(null);
         for (const session of sessions) {
-          try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
+          if (session.sessionType !== 'editor') {
+            try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
+          }
         }
         useAppStore.getState().setSessions([]);
         setShowContextMenu(false);
@@ -303,10 +337,12 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
               <div key={child.id}>
                 {renamingSessionId === child.id ? (
                   <div className="tree-item" style={{ paddingLeft: '20px' }}>
-                    <span
-                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
-                      style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
-                    />
+                    {child.icon || (
+                      <span
+                        className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                        style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
+                      />
+                    )}
                     <input
                       ref={renameInputRef}
                       className="tree-rename-input"
@@ -340,10 +376,12 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                       setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: child.id });
                     }}
                   >
-                    <span
-                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
-                      style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
-                    />
+                    {child.icon || (
+                      <span
+                        className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                        style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
+                      />
+                    )}
                     <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>{child.label}</span>
                     <span className="tree-item-end">
                       <button
@@ -382,6 +420,17 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
               handleCloseTerminal(tabContextMenu.sessionId);
               setTabContextMenu(null);
             }}>关闭</div>
+            {sessions.find(s => s.id === tabContextMenu.sessionId)?.sessionType === 'editor' && (
+              <div className="context-menu-item" onClick={() => {
+                const editorSessions = sessions.filter(
+                  s => s.sessionType === 'editor' && s.id !== tabContextMenu.sessionId
+                );
+                for (const s of editorSessions) {
+                  removeSession(s.id);
+                }
+                setTabContextMenu(null);
+              }}>关闭其它</div>
+            )}
           </div>
         </>
       )}
