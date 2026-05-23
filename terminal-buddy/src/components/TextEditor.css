@@ -39,3 +39,55 @@
   max-width: 400px;
   text-align: center;
 }
+
+.editor-ctx-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 9998;
+}
+
+.editor-ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  background: #1e1e1e;
+  border: 1px solid #454545;
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 180px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  font-size: 13px;
+  color: #ccc;
+}
+
+.editor-ctx-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.editor-ctx-item:hover {
+  background: #04395e;
+  color: #fff;
+}
+
+.editor-ctx-shortcut {
+  color: #888;
+  font-size: 11px;
+  margin-left: 24px;
+}
+
+.editor-ctx-item:hover .editor-ctx-shortcut {
+  color: #aaa;
+}
+
+.editor-ctx-separator {
+  height: 1px;
+  background: #454545;
+  margin: 4px 8px;
+}

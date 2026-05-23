@@ -185,33 +185,9 @@
   display: flex;
   gap: 4px;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
+  border-top: 1px solid var(--border);
   align-items: center;
-  flex-wrap: nowrap;
-}
-
-.bookmark-bar::-webkit-scrollbar {
-  height: 4px;
-}
-
-.bookmark-bar::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 2px;
-}
-
-.bookmark-toggle {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 10px;
-  padding: 2px 4px;
-  flex-shrink: 0;
-}
-
-.bookmark-toggle:hover {
-  color: var(--text-primary);
+  flex-wrap: wrap;
 }
 
 .bookmark-tag {
@@ -240,6 +216,38 @@
 .bookmark-name {
   color: var(--text-primary);
 }
+
+.bookmark-close {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+  margin: 0;
+}
+
+.bookmark-close:hover {
+  color: #f44;
+}
+
+.bookmark-tag:hover .bookmark-close {
+  display: inline;
+}
+
+.bookmark-rename-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 0 4px;
+  width: 60px;
+  border-radius: 2px;
+  outline: none;
+}
+
 /* Drag ghost indicator */
 .file-drag-ghost {
   position: fixed;

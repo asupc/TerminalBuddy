@@ -5,6 +5,24 @@ import { readFileContent, writeFileContent } from '../services/tauri';
 import { getMonacoLanguage } from '../utils/fileExtensions';
 import './TextEditor.css';
 
+const CONTEXT_MENU_ITEMS = [
+  { id: 'editor.action.clipboardCutAction', label: '剪切', shortcut: 'Ctrl+X' },
+  { id: 'editor.action.clipboardCopyAction', label: '复制', shortcut: 'Ctrl+C' },
+  { id: 'editor.action.clipboardPasteAction', label: '粘贴', shortcut: 'Ctrl+V' },
+  { id: '---' },
+  { id: 'editor.action.selectAll', label: '全选', shortcut: 'Ctrl+A' },
+  { id: '---' },
+  { id: 'editor.action.undo', label: '撤销', shortcut: 'Ctrl+Z' },
+  { id: 'editor.action.redo', label: '重做', shortcut: 'Ctrl+Y' },
+  { id: '---' },
+  { id: 'actions.find', label: '查找', shortcut: 'Ctrl+F' },
+  { id: 'editor.action.startFindReplaceAction', label: '替换', shortcut: 'Ctrl+H' },
+  { id: '---' },
+  { id: 'editor.action.formatDocument', label: '格式化文档', shortcut: 'Shift+Alt+F' },
+  { id: 'editor.action.commentLine', label: '切换行注释', shortcut: 'Ctrl+/' },
+  { id: 'editor.action.blockComment', label: '切换块注释', shortcut: 'Shift+Alt+A' },
+];
+
 interface TextEditorProps {
   filePath: string;
   isDirty: boolean;
@@ -14,8 +32,10 @@ interface TextEditorProps {
 
 export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, onDirtyChange, isActive: _isActive }) => {
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,6 +57,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
 
   const handleEditorMount: OnMount = useCallback((editor) => {
     editorRef.current = editor;
+    editor.updateOptions({ contextmenu: false });
 
     editor.addAction({
       id: 'save-file',
@@ -67,6 +88,29 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
     });
   }, [filePath, onDirtyChange]);
 
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', close);
+    document.addEventListener('wheel', close);
+    return () => {
+      document.removeEventListener('click', close);
+      document.removeEventListener('keydown', close);
+      document.removeEventListener('wheel', close);
+    };
+  }, [ctxMenu]);
+
+  const handleMenuItemClick = useCallback((actionId: string) => {
+    editorRef.current?.getAction(actionId)?.run();
+    setCtxMenu(null);
+  }, []);
+
   if (error) {
     return (
       <div className="text-editor-error">
@@ -82,7 +126,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
   }
 
   return (
-    <div className="text-editor-container">
+    <div className="text-editor-container" ref={containerRef} onContextMenu={handleContextMenu}>
       <Editor
         height="100%"
         language={getMonacoLanguage(filePath)}
@@ -105,6 +149,27 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
           if (value !== undefined) setContent(value);
         }}
       />
+      {ctxMenu && (
+        <>
+          <div className="editor-ctx-overlay" onClick={() => setCtxMenu(null)} />
+          <div className="editor-ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+            {CONTEXT_MENU_ITEMS.map((item) =>
+              item.id === '---' ? (
+                <div key={Math.random()} className="editor-ctx-separator" />
+              ) : (
+                <div
+                  key={item.id}
+                  className="editor-ctx-item"
+                  onClick={() => handleMenuItemClick(item.id)}
+                >
+                  <span>{item.label}</span>
+                  <span className="editor-ctx-shortcut">{item.shortcut}</span>
+                </div>
+              )
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 };

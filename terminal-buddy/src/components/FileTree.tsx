@@ -210,6 +210,7 @@ export const FileTree: FC = () => {
   const bookmarks = useAppStore(s => s.bookmarks);
   const addBookmark = useAppStore(s => s.addBookmark);
   const removeBookmark = useAppStore(s => s.removeBookmark);
+  const renameBookmark = useAppStore(s => s.renameBookmark);
   const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
   const [rootNodes, setRootNodes] = useState<FileNode[]>([]);
   const [width, setWidth] = useState(250);
@@ -221,8 +222,11 @@ export const FileTree: FC = () => {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
-  const [bookmarksExpanded, setBookmarksExpanded] = useState(true);
   const [confirmBookmarkDelete, setConfirmBookmarkDelete] = useState<string | null>(null);
+  const [bookmarkCtxMenu, setBookmarkCtxMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const [renamingBookmark, setRenamingBookmark] = useState<string | null>(null);
+  const [renamingBookmarkValue, setRenamingBookmarkValue] = useState('');
+  const renameBookmarkInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -447,32 +451,6 @@ export const FileTree: FC = () => {
 
   return (
     <div ref={containerRef} className={`file-tree ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
-      {bookmarks.length > 0 && (
-        <div className="bookmark-bar">
-          <button
-            className="bookmark-toggle"
-            onClick={() => setBookmarksExpanded(!bookmarksExpanded)}
-            title={bookmarksExpanded ? '收起书签' : '展开书签'}
-          >
-            {bookmarksExpanded ? '▼' : '▶'}
-          </button>
-          {bookmarksExpanded && bookmarks.map((bm) => (
-            <div
-              key={bm.path}
-              className="bookmark-tag"
-              onClick={() => setCurrentDirectory(bm.path)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setConfirmBookmarkDelete(bm.path);
-              }}
-              title={bm.path}
-            >
-              <span className="bookmark-icon">📁</span>
-              <span className="bookmark-name">{bm.name}</span>
-            </div>
-          ))}
-        </div>
-      )}
       <div className="panel-titlebar">
         <span className="panel-title">文件导航</span>
         <div className="file-tree-actions">
@@ -522,6 +500,60 @@ export const FileTree: FC = () => {
           />
         ))}
       </div>
+      {bookmarks.length > 0 && (
+        <div className="bookmark-bar">
+          {bookmarks.map((bm) => (
+            <div
+              key={bm.path}
+              className="bookmark-tag"
+              onClick={() => { if (!renamingBookmark || renamingBookmark !== bm.path) setCurrentDirectory(bm.path); }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setBookmarkCtxMenu({ x: e.clientX, y: e.clientY, path: bm.path });
+              }}
+              title={bm.path}
+            >
+              <span className="bookmark-icon">📁</span>
+              {renamingBookmark === bm.path ? (
+                <input
+                  ref={renameBookmarkInputRef}
+                  className="bookmark-rename-input"
+                  value={renamingBookmarkValue}
+                  onChange={(e) => setRenamingBookmarkValue(e.target.value)}
+                  onBlur={() => {
+                    const trimmed = renamingBookmarkValue.trim();
+                    if (trimmed) renameBookmark(renamingBookmark!, trimmed);
+                    setRenamingBookmark(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const trimmed = renamingBookmarkValue.trim();
+                      if (trimmed) renameBookmark(renamingBookmark!, trimmed);
+                      setRenamingBookmark(null);
+                    } else if (e.key === 'Escape') {
+                      setRenamingBookmark(null);
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  autoFocus
+                />
+              ) : (
+                <span className="bookmark-name">{bm.name}</span>
+              )}
+              <button
+                className="bookmark-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmBookmarkDelete(bm.path);
+                }}
+                title="删除书签"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div
         className={`resize-handle ${isResizing ? 'active' : ''}`}
         onMouseDown={handleMouseDown}
@@ -601,6 +633,32 @@ export const FileTree: FC = () => {
           </div>
         </div>
       )}
+      {bookmarkCtxMenu && (() => {
+        const menuH = 64;
+        const top = bookmarkCtxMenu.y + menuH > window.innerHeight
+          ? bookmarkCtxMenu.y - menuH
+          : bookmarkCtxMenu.y;
+        return (
+        <>
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 9998 }} onClick={() => setBookmarkCtxMenu(null)} />
+          <div className="context-menu" style={{ left: bookmarkCtxMenu.x, top, zIndex: 9999 }}>
+            <div className="context-menu-item" onClick={() => {
+              const bm = bookmarks.find(b => b.path === bookmarkCtxMenu.path);
+              if (bm) {
+                setRenamingBookmarkValue(bm.name);
+                setRenamingBookmark(bm.path);
+                setTimeout(() => renameBookmarkInputRef.current?.select(), 0);
+              }
+              setBookmarkCtxMenu(null);
+            }}>重命名</div>
+            <div className="context-menu-item danger" onClick={() => {
+              setConfirmBookmarkDelete(bookmarkCtxMenu.path);
+              setBookmarkCtxMenu(null);
+            }}>删除</div>
+          </div>
+        </>
+        );
+      })()}
     </div>
   );
 };

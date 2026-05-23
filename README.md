@@ -3,7 +3,6 @@
 A modern desktop terminal emulator for Windows, built with Tauri 2 + React 18 + Rust.
 
 [中文文档](README_zh.md)
-
 ## Features
 
 - **Multi-terminal Support** — PowerShell, CMD, SSH, Docker, Kubernetes
