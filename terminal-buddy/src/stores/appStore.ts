@@ -9,6 +9,8 @@ interface SavedTab {
   colorTheme: { background: string; foreground: string };
   tabColor: string | null;
   groupId: string;
+  sessionType?: 'terminal' | 'editor';
+  isDirty?: boolean;
 }
 
 const SAVED_TABS_KEY = 'terminalbuddy_saved_tabs';
@@ -23,6 +25,8 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
       colorTheme: s.colorTheme,
       tabColor: s.tabColor,
       groupId: s.groupId,
+      sessionType: s.sessionType,
+      isDirty: s.sessionType === 'editor' ? false : undefined,
     }));
     localStorage.setItem(SAVED_TABS_KEY, JSON.stringify(tabs));
     if (activeSessionId) {

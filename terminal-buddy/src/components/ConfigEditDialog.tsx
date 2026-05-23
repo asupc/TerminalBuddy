@@ -16,7 +16,7 @@ interface ConfigEditDialogProps {
 interface FormData {
   name: string;
   group: string;
-  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s';
+  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor';
   startupPath: string;
   colorTheme: string;
   tabColor: string;

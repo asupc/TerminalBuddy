@@ -14,7 +14,7 @@ export async function getProfile(id: string): Promise<Profile> {
 export async function createProfile(
   name: string,
   group: string,
-  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s'
+  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor'
 ): Promise<Profile> {
   return invoke('create_profile', { name, group, terminalType });
 }
@@ -44,7 +44,7 @@ export async function startTerminal(profileId: string, extraStartupParams?: stri
   return invoke('start_terminal', { profileId, extraStartupParams: extraStartupParams || null });
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s'): Promise<string> {
+export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor'): Promise<string> {
   return invoke('start_blank_terminal', { terminalType });
 }
 
@@ -104,6 +104,10 @@ export async function deletePath(path: string): Promise<void> {
 export async function renamePath(path: string, newName: string): Promise<void> {
   return invoke('rename_path', { path, newName });
 }
+
+export const readFileContent = (path: string) => invoke<string>('read_file_content', { path });
+export const writeFileContent = (path: string, content: string) => invoke<boolean>('write_file_content', { path, content });
+export const getFileSize = (path: string) => invoke<number>('get_file_size', { path });
 
 // Theme Commands
 export async function getAllThemes(): Promise<CustomTheme[]> {

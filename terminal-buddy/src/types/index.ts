@@ -1,4 +1,4 @@
-export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s';
+export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor';
 
 export interface Profile {
   id: string;
@@ -102,6 +102,8 @@ export interface TerminalSession {
   colorTheme: { background: string; foreground: string };
   tabColor: string | null;
   groupId: string;
+  sessionType?: 'terminal' | 'editor';
+  isDirty?: boolean;
 }
 
 export interface Workspace {
