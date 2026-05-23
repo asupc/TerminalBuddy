@@ -114,3 +114,20 @@ pub fn rename_path(path: String, new_name: String) -> Result<(), String> {
     fs::rename(&path, &new_path).map_err(|e| format!("Failed to rename: {}", e))?;
     Ok(())
 }
+
+#[command]
+pub fn read_file_content(path: String) -> Result<String, String> {
+    fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
+}
+
+#[command]
+pub fn write_file_content(path: String, content: String) -> Result<bool, String> {
+    fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))?;
+    Ok(true)
+}
+
+#[command]
+pub fn get_file_size(path: String) -> Result<u64, String> {
+    let meta = fs::metadata(&path).map_err(|e| format!("Failed to get file size: {}", e))?;
+    Ok(meta.len())
+}
