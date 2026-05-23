@@ -38,6 +38,10 @@ export interface TerminalSession {
 type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor';
 ```
 
+### 编辑器标签 ID
+
+编辑器标签的 `id` 使用 `crypto.randomUUID()` 生成，不依赖后端 PTY。
+
 ### 后端新增命令
 
 在 `commands/fs.rs` 中新增：
@@ -182,6 +186,19 @@ interface TextEditorProps {
 - 恢复时，`sessionType === 'editor'` 的标签直接调用 `read_file_content` 重新加载
 - 恢复时如果文件已不存在，跳过该标签并提示用户
 - 不保存未保存的内容——用户需在关闭前手动保存
+
+## UI 状态行为
+
+编辑器标签在不同状态下的 UI 表现：
+
+| UI 元素 | 已保存 | 未保存 (isDirty) | 文件不存在 |
+|---------|--------|------------------|------------|
+| 标签名称 | 文件名 | 文件名 + 圆点 | 文件名 |
+| 保存按钮 (Ctrl+S) | 禁用 | 启用 | 禁用 |
+| 格式化 (Shift+Alt+F) | 启用 | 启用 | 禁用 |
+| 关闭标签 | 直接关闭 | 弹窗确认 | 直接关闭 |
+| 编辑区域 | 可编辑 | 可编辑 | 显示"文件不存在"提示 |
+| 标签图标 | 文件图标 | 文件图标(圆点) | 文件图标(灰色) |
 
 ## 依赖
 
