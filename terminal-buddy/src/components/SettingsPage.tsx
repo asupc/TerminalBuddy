@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress } from '../services/tauri';
+import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress, writeClientData } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { PRESET_THEMES, BREATHING_LIGHT_COLORS, type CustomTheme, type Profile } from '../types';
 import { type ThemeMode, type AppSettings, type BreathingLightColorMode, getAppSettings, saveAppSettings, getStoredTheme, applyTheme } from '../utils/settings';
@@ -85,7 +85,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
   useEffect(() => {
     applyTheme(theme);
-    localStorage.setItem('terminalbuddy_theme', theme);
+    writeClientData('theme', theme).catch(() => {});
   }, [theme]);
 
   // Debounced settings save to avoid frequent localStorage writes

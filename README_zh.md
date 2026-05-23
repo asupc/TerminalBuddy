@@ -22,13 +22,14 @@
 - **系统托盘** — 关闭到托盘、单实例模式
 - **AI 用量监控** — 查看智谱 GLM 和百度千帆的 API 用量
 - **Web 远程访问** — 内置 HTTP/WebSocket 服务器，支持浏览器远程终端访问，JWT 认证，移动端友好输入栏
+- **文本编辑器** — 集成 Monaco Editor，双击文件树中的文本文件打开编辑器标签页，语法高亮、查找替换、格式化文档
 - **数据可移植** — 所有数据以 JSON 文件存储，支持完整导入/导出
 
 ## 技术栈
 
 | 层级 | 技术 |
 |------|------|
-| 桌面前端 | React 18、TypeScript、Zustand 5、xterm.js 5.5 |
+| 桌面前端 | React 18、TypeScript、Zustand 5、xterm.js 5.5、Monaco Editor |
 | 后端 | Rust (edition 2021)、Tauri 2、portable-pty (ConPTY) |
 | Web API | axum 0.8、tower-http、JWT (jsonwebtoken)、bcrypt |
 | Web 前端 | React 18、Zustand 5、xterm.js、axios |
@@ -85,10 +86,11 @@ terminal-buddy/
 │   │   ├── TabSidebar.tsx        # 垂直标签导航
 │   │   ├── TerminalTabBar.tsx    # 水平标签栏
 │   │   ├── SettingsPage.tsx      # 设置面板（8 个分区）
+│   │   ├── TextEditor.tsx        # Monaco Editor 文本编辑器
 │   │   ├── AiUsagePanel.tsx      # AI 用量悬浮面板
 │   │   └── ...
 │   ├── stores/appStore.ts        # Zustand 状态管理
-│   ├── services/tauri.ts         # Tauri invoke 封装（62 个命令）
+│   ├── services/tauri.ts         # Tauri invoke 封装
 │   ├── services/aiUsage.ts       # AI API 用量获取
 │   ├── data/commandTemplates.ts  # 模板定义与历史记录
 │   ├── utils/settings.ts         # 前端设置（localStorage）
@@ -96,7 +98,7 @@ terminal-buddy/
 ├── src-tauri/                    # 后端（Rust/Tauri）
 │   └── src/
 │       ├── lib.rs                # 应用初始化、托盘、单实例、Web API
-│       ├── commands/             # Tauri 命令处理（62 个命令）
+│       ├── commands/             # Tauri 命令处理
 │       │   ├── terminal.rs       # PTY 管理（TerminalService）
 │       │   ├── profile.rs        # 配置文件 CRUD + 导入/导出
 │       │   ├── history.rs        # 命令历史

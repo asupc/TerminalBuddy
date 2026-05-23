@@ -664,12 +664,19 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     };
   }, [terminalId]);
 
-  // Focus terminal when tab becomes active
+  // Focus and re-fit terminal when tab becomes active
   useEffect(() => {
     if (isActive && xtermRef.current) {
       xtermRef.current.focus();
+      requestAnimationFrame(() => {
+        const fitAddon = fitAddonRef.current;
+        if (!fitAddon || !xtermRef.current) return;
+        fitAddon.fit();
+        const { rows, cols } = xtermRef.current;
+        resizeTerminal(terminalId, rows, cols).catch(() => {});
+      });
     }
-  }, [isActive]);
+  }, [isActive, terminalId]);
 
   const handleSearch = useCallback((direction: 'next' | 'prev' = 'next') => {
     const searchAddon = searchAddonRef.current;

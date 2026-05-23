@@ -8,11 +8,11 @@ import { FileTree } from './components/FileTree';
 import { TabSidebar } from './components/TabSidebar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
-import { getStoredTheme, applyTheme, getAppSettings } from './utils/settings';
-import { useAppStore } from './stores/appStore';
-import { loadSavedTabs, saveTabsToStorage } from './stores/appStore';
+import { initTheme, applyTheme, getAppSettings, initAppSettings } from './utils/settings';
+import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets } from './stores/appStore';
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize } from './services/tauri';
-import { initPersistedTemplates } from './data/commandTemplates';
+import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
+import { migrateLocalStorageToBackend } from './utils/migration';
 import type { Profile, TerminalSession } from './types';
 import { PRESET_THEMES } from './types';
 
@@ -29,18 +29,37 @@ function App() {
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [showExtraParamsDialog, setShowExtraParamsDialog] = useState(false);
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
-  const [enableTabNav, setEnableTabNav] = useState(() => getAppSettings().enableTabNavigation);
+  const [enableTabNav, setEnableTabNav] = useState(true);
   const closeConfirmedRef = useRef(false);
   const restoredRef = useRef(false);
 
   useEffect(() => {
-    applyTheme(getStoredTheme());
-    initPersistedTemplates();
-    loadProfiles();
-    if (getAppSettings().restoreTabsOnStartup && !restoredRef.current) {
-      restoredRef.current = true;
-      restoreTabs();
-    }
+    (async () => {
+      await migrateLocalStorageToBackend();
+
+      const theme = await initTheme();
+      applyTheme(theme);
+      await initAppSettings();
+      await initBookmarks();
+      await initExtraParamPresets();
+      await initCmdOverrides();
+      await initCustomCommands();
+
+      const settings = getAppSettings();
+      setEnableTabNav(settings.enableTabNavigation);
+      useAppStore.setState({
+        configPanelVisible: settings.configPanelAutoExpand,
+        fileTreeVisible: settings.fileTreeAutoExpand,
+      });
+
+      initPersistedTemplates();
+      loadProfiles();
+
+      if (settings.restoreTabsOnStartup && !restoredRef.current) {
+        restoredRef.current = true;
+        restoreTabs();
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -109,10 +128,10 @@ function App() {
   }, []);
 
   const restoreTabs = async () => {
-    const { tabs, activeIndex } = loadSavedTabs();
+    const { tabs, activeIndex } = await loadSavedTabs();
     if (tabs.length === 0) return;
     const store = useAppStore.getState();
-    // 暂停逐次写入 localStorage，恢复完后统一写一次
+    // 暂停逐次写入，恢复完后统一写一次
     useAppStore.setState({ _skipSaveTabs: true });
     try {
       for (let i = 0; i < tabs.length; i++) {

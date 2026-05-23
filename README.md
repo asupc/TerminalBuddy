@@ -21,13 +21,14 @@ A modern desktop terminal emulator for Windows, built with Tauri 2 + React 18 + 
 - **System Tray** — Close to tray, single instance mode
 - **AI Usage Monitoring** — Track API usage for Zhipu GLM and Baidu Qianfan
 - **Web Remote Access** — Built-in HTTP/WebSocket server for browser-based remote terminal access with JWT authentication, mobile-friendly input bar
+- **Text Editor** — Monaco Editor integration, double-click files in File Tree to open editor tabs, syntax highlighting, find/replace, format document
 - **Data Portability** — All data stored as JSON files, with full import/export support
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Desktop Frontend | React 18, TypeScript, Zustand 5, xterm.js 5.5 |
+| Desktop Frontend | React 18, TypeScript, Zustand 5, xterm.js 5.5, Monaco Editor |
 | Backend | Rust (edition 2021), Tauri 2, portable-pty (ConPTY) |
 | Web API | axum 0.8, tower-http, JWT (jsonwebtoken), bcrypt |
 | Web Frontend | React 18, Zustand 5, xterm.js, axios |
@@ -84,10 +85,11 @@ terminal-buddy/
 │   │   ├── TabSidebar.tsx        # Vertical tab navigation
 │   │   ├── TerminalTabBar.tsx    # Horizontal tab bar
 │   │   ├── SettingsPage.tsx      # Settings overlay (8 sections)
+│   │   ├── TextEditor.tsx        # Monaco Editor text editor
 │   │   ├── AiUsagePanel.tsx      # AI usage hover panel
 │   │   └── ...
 │   ├── stores/appStore.ts        # Zustand state management
-│   ├── services/tauri.ts         # Tauri invoke wrappers (62 commands)
+│   ├── services/tauri.ts         # Tauri invoke wrappers
 │   ├── services/aiUsage.ts       # AI API usage fetching
 │   ├── data/commandTemplates.ts  # Template definitions & history
 │   ├── utils/settings.ts         # Frontend settings (localStorage)
@@ -95,7 +97,7 @@ terminal-buddy/
 ├── src-tauri/                    # Backend (Rust/Tauri)
 │   └── src/
 │       ├── lib.rs                # App setup, tray, single instance, Web API
-│       ├── commands/             # Tauri command handlers (62 commands)
+│       ├── commands/             # Tauri command handlers
 │       │   ├── terminal.rs       # PTY management (TerminalService)
 │       │   ├── profile.rs        # Profile CRUD + export/import
 │       │   ├── history.rs        # Command history

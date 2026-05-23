@@ -1,4 +1,5 @@
 pub mod ai_usage;
+pub mod client_data;
 pub mod clipboard;
 pub mod fs;
 pub mod profile;
@@ -10,6 +11,7 @@ pub mod web;
 pub mod window;
 pub mod workspace;
 pub use ai_usage::*;
+pub use client_data::*;
 pub use clipboard::*;
 pub use fs::*;
 pub use profile::*;

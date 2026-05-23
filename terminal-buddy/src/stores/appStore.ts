@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset } from '../types';
-import { getAppSettings } from '../utils/settings';
+import { readClientData, writeClientData } from '../services/tauri';
 
 interface SavedTab {
   profileId: string;
@@ -12,9 +12,6 @@ interface SavedTab {
   sessionType?: 'terminal' | 'editor';
   isDirty?: boolean;
 }
-
-const SAVED_TABS_KEY = 'terminalbuddy_saved_tabs';
-const ACTIVE_TAB_KEY = 'terminalbuddy_active_tab';
 
 export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: string | null) {
   try {
@@ -28,25 +25,52 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
       sessionType: s.sessionType,
       isDirty: s.sessionType === 'editor' ? false : undefined,
     }));
-    localStorage.setItem(SAVED_TABS_KEY, JSON.stringify(tabs));
-    if (activeSessionId) {
-      const index = sessions.findIndex(s => s.id === activeSessionId);
-      localStorage.setItem(ACTIVE_TAB_KEY, String(index));
-    } else {
-      localStorage.removeItem(ACTIVE_TAB_KEY);
-    }
+    const activeIndex = activeSessionId
+      ? sessions.findIndex(s => s.id === activeSessionId)
+      : -1;
+    writeClientData('saved_tabs', JSON.stringify({ tabs, activeIndex })).catch(() => {});
   } catch {}
 }
 
-export function loadSavedTabs(): { tabs: SavedTab[]; activeIndex: number } {
+export async function loadSavedTabs(): Promise<{ tabs: SavedTab[]; activeIndex: number }> {
   try {
-    const raw = localStorage.getItem(SAVED_TABS_KEY);
-    const tabs: SavedTab[] = raw ? JSON.parse(raw) : [];
-    const activeIndex = parseInt(localStorage.getItem(ACTIVE_TAB_KEY) || '0', 10);
-    return { tabs, activeIndex: Math.min(activeIndex, Math.max(tabs.length - 1, 0)) };
+    const raw = await readClientData('saved_tabs');
+    if (raw) {
+      const data = JSON.parse(raw);
+      const tabs: SavedTab[] = data.tabs || [];
+      const activeIndex = data.activeIndex ?? 0;
+      return { tabs, activeIndex: Math.min(activeIndex, Math.max(tabs.length - 1, 0)) };
+    }
+  } catch {}
+  return { tabs: [], activeIndex: 0 };
+}
+
+const DEFAULT_BOOKMARKS = [
+  { name: '主目录', path: 'C:\\Users' },
+  { name: '桌面', path: 'C:\\Users\\Public\\Desktop' },
+  { name: '文档', path: 'C:\\Users\\Public\\Documents' },
+];
+
+export async function initBookmarks() {
+  try {
+    const raw = await readClientData('bookmarks');
+    if (raw) {
+      useAppStore.setState({ bookmarks: JSON.parse(raw) });
+    } else {
+      useAppStore.setState({ bookmarks: DEFAULT_BOOKMARKS });
+    }
   } catch {
-    return { tabs: [], activeIndex: 0 };
+    useAppStore.setState({ bookmarks: DEFAULT_BOOKMARKS });
   }
+}
+
+export async function initExtraParamPresets() {
+  try {
+    const raw = await readClientData('extra_param_presets');
+    if (raw) {
+      useAppStore.setState({ extraParamPresets: JSON.parse(raw) });
+    }
+  } catch {}
 }
 
 interface AppState {
@@ -162,8 +186,8 @@ export const useAppStore = create<AppState>((set) => ({
   selectProfile: (id) => set({ selectedProfileId: id }),
 
   // UI State
-  configPanelVisible: (() => { try { return getAppSettings().configPanelAutoExpand; } catch { return true; } })(),
-  fileTreeVisible: (() => { try { return getAppSettings().fileTreeAutoExpand; } catch { return true; } })(),
+  configPanelVisible: true,
+  fileTreeVisible: true,
   toggleConfigPanel: () => set((state) => ({ configPanelVisible: !state.configPanelVisible })),
   toggleFileTree: () => set((state) => ({ fileTreeVisible: !state.fileTreeVisible })),
   configSearchQuery: '',
@@ -179,30 +203,20 @@ export const useAppStore = create<AppState>((set) => ({
   setExclusionPatterns: (patterns) => set({ exclusionPatterns: patterns }),
 
   // Directory bookmarks
-  bookmarks: (() => {
-    try {
-      const stored = localStorage.getItem('terminalbuddy_bookmarks');
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return [
-      { name: '主目录', path: 'C:\\Users' },
-      { name: '桌面', path: 'C:\\Users\\Public\\Desktop' },
-      { name: '文档', path: 'C:\\Users\\Public\\Documents' },
-    ];
-  })(),
+  bookmarks: [],
   addBookmark: (name, path) => set((state) => {
     const next = [...state.bookmarks, { name, path }];
-    localStorage.setItem('terminalbuddy_bookmarks', JSON.stringify(next));
+    writeClientData('bookmarks', JSON.stringify(next)).catch(() => {});
     return { bookmarks: next };
   }),
   removeBookmark: (path) => set((state) => {
     const next = state.bookmarks.filter(b => b.path !== path);
-    localStorage.setItem('terminalbuddy_bookmarks', JSON.stringify(next));
+    writeClientData('bookmarks', JSON.stringify(next)).catch(() => {});
     return { bookmarks: next };
   }),
   renameBookmark: (path, newName) => set((state) => {
     const next = state.bookmarks.map(b => b.path === path ? { ...b, name: newName } : b);
-    localStorage.setItem('terminalbuddy_bookmarks', JSON.stringify(next));
+    writeClientData('bookmarks', JSON.stringify(next)).catch(() => {});
     return { bookmarks: next };
   }),
 
@@ -364,21 +378,15 @@ export const useAppStore = create<AppState>((set) => ({
   setDragPaths: (paths) => set({ dragPaths: paths }),
 
   // Extra param presets
-  extraParamPresets: (() => {
-    try {
-      const stored = localStorage.getItem('terminalbuddy_extra_param_presets');
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return [];
-  })(),
+  extraParamPresets: [],
   addExtraParamPreset: (name, params) => set((state) => {
     const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params }];
-    localStorage.setItem('terminalbuddy_extra_param_presets', JSON.stringify(next));
+    writeClientData('extra_param_presets', JSON.stringify(next)).catch(() => {});
     return { extraParamPresets: next };
   }),
   removeExtraParamPreset: (id) => set((state) => {
     const next = state.extraParamPresets.filter(p => p.id !== id);
-    localStorage.setItem('terminalbuddy_extra_param_presets', JSON.stringify(next));
+    writeClientData('extra_param_presets', JSON.stringify(next)).catch(() => {});
     return { extraParamPresets: next };
   }),
 }));

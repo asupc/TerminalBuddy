@@ -1,4 +1,5 @@
 import * as tauriService from '../services/tauri';
+import { readClientData, writeClientData } from '../services/tauri';
 
 export interface CommandItem {
   name: string;
@@ -11,35 +12,46 @@ export interface CommandTemplate {
   commands: CommandItem[];
 }
 
-const CMD_OVERRIDES_KEY = 'terminalbuddy_cmd_overrides';
-const CMD_CUSTOM_KEY = 'terminalbuddy_cmd_custom';
-
 export interface CmdOverride {
   desc?: string;
   hidden?: boolean;
 }
 
+let _cachedOverrides: Record<string, CmdOverride> | null = null;
+
 export function getCmdOverrides(): Record<string, CmdOverride> {
-  try {
-    const raw = localStorage.getItem(CMD_OVERRIDES_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
+  return _cachedOverrides || {};
 }
 
+export const initCmdOverrides = async (): Promise<void> => {
+  try {
+    const raw = await readClientData('cmd_overrides');
+    if (raw) _cachedOverrides = JSON.parse(raw);
+  } catch {}
+};
+
 export function saveCmdOverrides(overrides: Record<string, CmdOverride>) {
-  localStorage.setItem(CMD_OVERRIDES_KEY, JSON.stringify(overrides));
+  _cachedOverrides = overrides;
+  writeClientData('cmd_overrides', JSON.stringify(overrides)).catch(() => {});
   invalidateSuggestionsCache();
 }
 
+let _cachedCustomCommands: CommandItem[] | null = null;
+
 export function getCustomCommands(): CommandItem[] {
-  try {
-    const raw = localStorage.getItem(CMD_CUSTOM_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  return _cachedCustomCommands || [];
 }
 
+export const initCustomCommands = async (): Promise<void> => {
+  try {
+    const raw = await readClientData('cmd_custom');
+    if (raw) _cachedCustomCommands = JSON.parse(raw);
+  } catch {}
+};
+
 export function saveCustomCommands(cmds: CommandItem[]) {
-  localStorage.setItem(CMD_CUSTOM_KEY, JSON.stringify(cmds));
+  _cachedCustomCommands = cmds;
+  writeClientData('cmd_custom', JSON.stringify(cmds)).catch(() => {});
   invalidateSuggestionsCache();
 }
 

@@ -265,3 +265,12 @@ export async function restartWebServer(): Promise<string> {
 export async function getWebServerAddress(): Promise<string> {
   return invoke('get_web_server_address');
 }
+
+// Client Data Commands
+export async function readClientData(key: string): Promise<string | null> {
+  return invoke<string | null>('read_client_data', { key });
+}
+
+export async function writeClientData(key: string, content: string): Promise<void> {
+  return invoke('write_client_data', { key, content });
+}

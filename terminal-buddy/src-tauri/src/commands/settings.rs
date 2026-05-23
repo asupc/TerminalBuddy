@@ -37,7 +37,7 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
         return Ok(());
     }
 
-    for subdir in &["Profiles", "Themes"] {
+    for subdir in &["Profiles", "Themes", "Workspaces", "ClientData"] {
         let src = old_dir.join(subdir);
         let dst = new_dir.join(subdir);
         if src.exists() {
@@ -110,7 +110,7 @@ pub fn export_all_data(file_path: String) -> Result<(), String> {
     });
 
     // Collect subdirectory data (Profiles, Themes, Workspaces)
-    for subdir in &["Profiles", "Themes", "Workspaces"] {
+    for subdir in &["Profiles", "Themes", "Workspaces", "ClientData"] {
         let dir = data_dir.join(subdir);
         match read_json_files(&dir) {
             Ok(map) => {
@@ -169,7 +169,7 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     fs::create_dir_all(&data_dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
 
     // Restore subdirectory data
-    for subdir in &["Profiles", "Themes", "Workspaces"] {
+    for subdir in &["Profiles", "Themes", "Workspaces", "ClientData"] {
         if let Some(obj) = data.get(subdir).and_then(|v| v.as_object()) {
             let mut map = HashMap::new();
             for (key, value) in obj {
