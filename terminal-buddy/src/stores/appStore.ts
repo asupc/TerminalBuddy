@@ -120,6 +120,9 @@ interface AppState {
   setSessions: (sessions: TerminalSession[]) => void;
   renameSession: (id: string, name: string) => void;
   updateSession: (id: string, updates: Partial<TerminalSession>) => void;
+  ensureEditorGroup: () => void;
+  openEditorSession: (filePath: string) => void;
+  closeEditorSession: (id: string) => void;
   sessionDirectories: Record<string, string>;
   setSessionDirectory: (sessionId: string, path: string) => void;
 
@@ -305,6 +308,46 @@ export const useAppStore = create<AppState>((set) => ({
         s.id === id ? { ...s, ...updates } : s
       ),
     })),
+  ensureEditorGroup: () => set((state) => {
+    if (state.groups.some(g => g.id === 'editor-group')) return state;
+    return { groups: [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }] };
+  }),
+  openEditorSession: (filePath) => set((state) => {
+    const existing = state.sessions.find(s => s.sessionType === 'editor' && s.profileId === filePath);
+    if (existing) {
+      saveTabsToStorage(state.sessions, existing.id);
+      return { activeSessionId: existing.id, settingsTabOpen: false };
+    }
+    const fileName = filePath.split(/[\\/]/).pop() || filePath;
+    const id = crypto.randomUUID();
+    const session: TerminalSession = {
+      id,
+      profileId: filePath,
+      profileName: fileName,
+      terminalType: 'editor',
+      colorTheme: { background: '#1e1e1e', foreground: '#d4d4d4' },
+      tabColor: null,
+      groupId: 'editor-group',
+      sessionType: 'editor',
+      isDirty: false,
+    };
+    const groups = state.groups.some(g => g.id === 'editor-group')
+      ? state.groups
+      : [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }];
+    const sessions = [...state.sessions, session];
+    saveTabsToStorage(sessions, id);
+    return { sessions, activeSessionId: id, settingsTabOpen: false, groups };
+  }),
+  closeEditorSession: (id) =>
+    set((state) => {
+      const sessions = state.sessions.filter((s) => s.id !== id);
+      const activeSessionId =
+        state.activeSessionId === id
+          ? sessions[0]?.id ?? null
+          : state.activeSessionId;
+      saveTabsToStorage(sessions, activeSessionId);
+      return { sessions, activeSessionId };
+    }),
   sessionDirectories: {},
   setSessionDirectory: (sessionId, path) => set((state) => ({
     sessionDirectories: { ...state.sessionDirectories, [sessionId]: path },
