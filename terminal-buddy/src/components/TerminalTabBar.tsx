@@ -16,12 +16,29 @@ export const TerminalTabBar: FC = () => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
-  const handleCloseTerminal = async (sessionId: string) => {
-    try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
-    removeSession(sessionId);
-  };
+  const handleCloseTerminal = useCallback(async (sessionId: string) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (session?.sessionType === 'editor') {
+      if (session.isDirty) {
+        setConfirmDialog({
+          title: '未保存的更改',
+          message: `文件「${session.profileName}」有未保存的更改，确定要关闭吗？`,
+          onConfirm: () => {
+            setConfirmDialog(null);
+            removeSession(sessionId);
+          },
+        });
+        return;
+      }
+      removeSession(sessionId);
+    } else {
+      try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
+      removeSession(sessionId);
+    }
+  }, [sessions, removeSession]);
 
   const closeOthers = useCallback((sessionId: string) => {
     for (const s of sessions) {
@@ -77,10 +94,15 @@ export const TerminalTabBar: FC = () => {
             setContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id });
           }}
         >
-          <span
-            className={`terminal-tab-dot${workingSessions[session.id] ? ' working' : ''}`}
-            style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
-          />
+          {session.sessionType === 'editor' ? (
+            <span className="tab-file-icon">📄</span>
+          ) : (
+            <span
+              className={`terminal-tab-dot${workingSessions[session.id] ? ' working' : ''}`}
+              style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
+            />
+          )}
+          {session.isDirty && <span className="tab-dirty-dot" />}
           {renamingSessionId === session.id ? (
             <input
               ref={renameInputRef}
@@ -108,7 +130,7 @@ export const TerminalTabBar: FC = () => {
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
-            <span className="terminal-tab-name">{session.profileName}</span>
+            <span className="terminal-tab-name" style={session.tabColor ? { color: session.tabColor } : undefined}>{session.profileName}</span>
           )}
           <button
             className="terminal-tab-close"
@@ -174,6 +196,18 @@ export const TerminalTabBar: FC = () => {
             }}>关闭</div>
           </div>
         </>
+      )}
+      {confirmDialog && (
+        <div className="confirm-dialog-overlay" onClick={() => setConfirmDialog(null)}>
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-dialog-title">{confirmDialog.title}</div>
+            <div className="confirm-dialog-message">{confirmDialog.message}</div>
+            <div className="confirm-dialog-buttons">
+              <button className="btn-secondary" onClick={() => setConfirmDialog(null)}>取消</button>
+              <button className="btn-danger" onClick={confirmDialog.onConfirm}>确定</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

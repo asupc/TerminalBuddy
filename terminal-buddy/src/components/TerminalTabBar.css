@@ -110,3 +110,17 @@
   outline: none;
   width: 120px;
 }
+
+.tab-file-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tab-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e8e8e8;
+  display: inline-block;
+  margin-right: 2px;
+}
