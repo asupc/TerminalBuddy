@@ -1,9 +1,9 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress, writeClientData } from '../services/tauri';
+import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { PRESET_THEMES, BREATHING_LIGHT_COLORS, type CustomTheme, type Profile } from '../types';
-import { type ThemeMode, type AppSettings, type BreathingLightColorMode, getAppSettings, saveAppSettings, getStoredTheme, applyTheme } from '../utils/settings';
+import { type AppSettings, type BreathingLightColorMode, getAppSettings, saveAppSettings } from '../utils/settings';
 import { ConfigEditDialog } from './ConfigEditDialog';
 import { getCmdOverrides, saveCmdOverrides, getCustomCommands, saveCustomCommands, getEffectiveTemplates, type CmdOverride, type CommandItem } from '../data/commandTemplates';
 import './SettingsPage.css';
@@ -13,7 +13,8 @@ interface SettingsPageProps {
 }
 
 const SECTIONS = [
-  { id: 'general', label: '通用' },
+  { id: 'behavior', label: '行为设置' },
+  { id: 'data', label: '数据管理' },
   { id: 'profiles', label: '连接管理' },
   { id: 'commands', label: '命令模板' },
   { id: 'themes', label: '主题管理' },
@@ -23,7 +24,6 @@ const SECTIONS = [
 ] as const;
 
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
-  const [theme, setTheme] = useState<ThemeMode>(getStoredTheme);
   const [settings, setSettings] = useState<AppSettings>(getAppSettings);
   const [cmdSearch, setCmdSearch] = useState('');
   const [activeCmdTab, setActiveCmdTab] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [dataPath, setDataPath] = useState('');
   const [pendingDataPath, setPendingDataPath] = useState('');
   const [isMigrating, setIsMigrating] = useState(false);
-  const [activeSection, setActiveSection] = useState('general');
+  const [activeSection, setActiveSection] = useState('behavior');
   const [newPattern, setNewPattern] = useState('');
   const [exclusionContextMenu, setExclusionContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [profileSearch, setProfileSearch] = useState('');
@@ -49,6 +49,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [zhipuApiKeyVisible, setZhipuApiKeyVisible] = useState(false);
   const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
   const [deepseekApiKeyVisible, setDeepseekApiKeyVisible] = useState(false);
+  const [minimaxApiKeyVisible, setMinimaxApiKeyVisible] = useState(false);
   const [webPassword, setWebPassword] = useState('');
   const [hasPassword, setHasPassword] = useState(false);
   const [serverAddress, setServerAddress] = useState('');
@@ -84,26 +85,24 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   }, [effectiveTemplates, activeCmdTab]);
 
   useEffect(() => {
-    applyTheme(theme);
-    writeClientData('theme', theme).catch(() => {});
-  }, [theme]);
-
-  // Debounced settings save to avoid frequent localStorage writes
-  useEffect(() => {
     const timer = setTimeout(() => saveAppSettings(settings), 300);
     return () => clearTimeout(timer);
   }, [settings]);
 
   useEffect(() => {
     getBackendAppSettings().then(backend => {
+      const prev = getAppSettings();
       const synced = {
-        ...getAppSettings(),
+        ...prev,
         closeBehavior: backend.closeBehavior,
         enableTabNavigation: backend.enableTabNavigation,
         singleInstance: backend.singleInstance,
       };
       setSettings(synced);
       saveAppSettings(synced);
+      if (synced.enableTabNavigation !== prev.enableTabNavigation) {
+        window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
+      }
     }).catch(() => {});
     getDataPath().then(setDataPath).catch(() => {});
   }, []);
@@ -117,17 +116,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   };
 
   useEffect(() => {
-    if (theme === 'system') {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const handler = () => applyTheme('system');
-      mediaQuery.addEventListener('change', handler);
-      return () => mediaQuery.removeEventListener('change', handler);
-    }
-  }, [theme]);
-
-  useEffect(() => {
     getAllThemes().then(setCustomThemes).catch(console.error);
-      }, []);
+  }, []);
 
   // Close profile context menu on outside click
   useEffect(() => {
@@ -344,13 +334,13 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       <div className="settings-body">
         <button className="settings-close-btn" onClick={onClose} title="关闭设置">×</button>
         <div className="settings-content" ref={contentRef}>
-          {/* General Section */}
+          {/* Behavior Section */}
           <section
-            id="general"
-            ref={(el) => { sectionRefs.current['general'] = el; }}
+            id="behavior"
+            ref={(el) => { sectionRefs.current['behavior'] = el; }}
             className="settings-section-block"
           >
-            <h3 className="settings-section-title">通用</h3>
+            <h3 className="settings-section-title">行为设置</h3>
             <div className="settings-general">
               <div className="settings-section">
                 <label className="settings-toggle">
@@ -409,11 +399,40 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                       const value = e.target.checked;
                       updateSetting('enableTabNavigation', value);
                       saveEnableTabNavigation(value).catch(console.error);
+                      window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
                     }}
                   />
                   <span>侧边标签栏</span>
                 </label>
                 <p className="settings-desc">开启后标签显示在左侧面板，关闭后以选项卡形式显示在终端上方</p>
+              </div>
+              <div className="settings-section">
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.rightClickPaste}
+                    onChange={(e) => {
+                      updateSetting('rightClickPaste', e.target.checked);
+                    }}
+                  />
+                  <span>右键粘贴</span>
+                </label>
+                <p className="settings-desc">右键时若无选中文本，直接粘贴剪贴板内容到终端</p>
+              </div>
+              <div className="settings-section">
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.singleInstance}
+                    onChange={(e) => {
+                      const value = e.target.checked;
+                      updateSetting('singleInstance', value);
+                      saveSingleInstance(value).catch(console.error);
+                    }}
+                  />
+                  <span>仅单窗口运行</span>
+                </label>
+                <p className="settings-desc">重复启动时激活已有窗口，而非打开新窗口。需重启生效</p>
               </div>
               <div className="settings-section">
                 <label className="settings-label">活动指示灯颜色</label>
@@ -458,53 +477,17 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                 )}
                 <p className="settings-desc">终端执行命令时指示灯使用的颜色</p>
               </div>
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.rightClickPaste}
-                    onChange={(e) => {
-                      updateSetting('rightClickPaste', e.target.checked);
-                    }}
-                  />
-                  <span>右键粘贴</span>
-                </label>
-                <p className="settings-desc">右键时若无选中文本，直接粘贴剪贴板内容到终端</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.singleInstance}
-                    onChange={(e) => {
-                      const value = e.target.checked;
-                      updateSetting('singleInstance', value);
-                      saveSingleInstance(value).catch(console.error);
-                    }}
-                  />
-                  <span>仅单窗口运行</span>
-                </label>
-                <p className="settings-desc">重复启动时激活已有窗口，而非打开新窗口。需重启生效</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-label">主题</label>
-                <div className="theme-options">
-                  {(['dark', 'light', 'system'] as ThemeMode[]).map((mode) => (
-                    <label key={mode} className={`theme-option ${theme === mode ? 'active' : ''}`}>
-                      <input
-                        type="radio"
-                        name="theme"
-                        value={mode}
-                        checked={theme === mode}
-                        onChange={() => setTheme(mode)}
-                      />
-                      <span className="theme-label">
-                        {mode === 'dark' ? '🌙 暗黑' : mode === 'light' ? '☀️ 浅色' : '💻 跟随系统'}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+            </div>
+          </section>
+
+          {/* Data Section */}
+          <section
+            id="data"
+            ref={(el) => { sectionRefs.current['data'] = el; }}
+            className="settings-section-block"
+          >
+            <h3 className="settings-section-title">数据管理</h3>
+            <div className="settings-general">
               <div className="settings-section">
                 <label className="settings-label">数据存储路径</label>
                 <div className="data-path-row">
@@ -1144,7 +1127,27 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     onClick={() => setDeepseekApiKeyVisible(!deepseekApiKeyVisible)}
                   >{deepseekApiKeyVisible ? '隐藏' : '显示'}</button>
                 </div>
-                <p className="settings-desc">填入 DeepSeek 的 API Key 用于查询账户余额。可在 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com</a> 获取</p>
+                <p className="settings-desc">填入 DeepSeek 的 API Key 用于查询 AI 用量。可在 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com/usage</a> 获取 Authorization Bearer 值</p>
+              </div>
+
+              {/* MiniMax API Key */}
+              <div className="settings-section">
+                <label className="settings-label">MiniMax API Key</label>
+                <div className="data-path-row">
+                  <input
+                    className="data-path-input"
+                    type={minimaxApiKeyVisible ? 'text' : 'password'}
+                    value={settings.minimaxApiKey}
+                    onChange={(e) => updateSetting('minimaxApiKey', e.target.value)}
+                    placeholder="请输入 MiniMax API Key"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setMinimaxApiKeyVisible(!minimaxApiKeyVisible)}
+                  >{minimaxApiKeyVisible ? '隐藏' : '显示'}</button>
+                </div>
+                <p className="settings-desc">填入 MiniMax 的 API Key 用于查询 AI 用量。可在 <a href="https://platform.minimax.chat/api_keys" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.minimax.chat</a> 获取</p>
               </div>
             </div>
           </section>

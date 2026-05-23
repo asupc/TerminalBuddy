@@ -17,6 +17,8 @@ interface TabSidebarProps {
 export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal }) => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
+  const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
+  const openSettingsTab = useAppStore(s => s.openSettingsTab);
   const removeSession = useAppStore(s => s.removeSession);
   const setActiveSession = useAppStore(s => s.setActiveSession);
   const renameSession = useAppStore(s => s.renameSession);
@@ -311,6 +313,16 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        {settingsTabOpen && (
+          <div
+            className={`tab-sidebar-settings-btn active`}
+            onClick={openSettingsTab}
+            title="设置"
+          >
+            <span className="tab-sidebar-dot" style={{ background: 'var(--accent)' }} />
+            <span className="tab-sidebar-name">设置</span>
+          </div>
+        )}
       </div>
       <div className="tab-sidebar-content" onContextMenu={handleContentContextMenu}>
         {sessionTree.map((group) => (
@@ -495,7 +507,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
               setShowContextMenu(false);
               const s = getAppSettings();
               saveAppSettings({ ...s, enableTabNavigation: false });
-              saveEnableTabNavigation(false).catch(() => {});
+              saveEnableTabNavigation(false).catch(console.error);
               window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
             }}>禁用标签导航</div>
           </div>

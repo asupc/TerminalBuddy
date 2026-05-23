@@ -1,4 +1,4 @@
-import { FC, useCallback } from 'react';
+import { FC, useCallback, useState, useEffect } from 'react';
 import { TerminalInstance } from './TerminalInstance';
 import { TextEditor } from './TextEditor';
 import { TerminalTabBar } from './TerminalTabBar';
@@ -14,7 +14,13 @@ export const TerminalPanel: FC = () => {
   const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
   const closeSettingsTab = useAppStore(s => s.closeSettingsTab);
   const updateSession = useAppStore(s => s.updateSession);
-  const settings = getAppSettings();
+  const [settings, setSettings] = useState(() => getAppSettings());
+
+  useEffect(() => {
+    const handler = () => setSettings(getAppSettings());
+    window.addEventListener('tab-navigation-changed', handler);
+    return () => window.removeEventListener('tab-navigation-changed', handler);
+  }, []);
 
   const handleTerminalInput = useCallback(async (sessionId: string, data: string) => {
     try {

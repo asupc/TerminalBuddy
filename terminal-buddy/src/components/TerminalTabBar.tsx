@@ -13,6 +13,9 @@ export const TerminalTabBar: FC = () => {
   const renameSession = useAppStore(s => s.renameSession);
   const workingSessions = useAppStore(s => s.workingSessions);
   const settingsVersion = useAppStore(s => s.settingsVersion);
+  const openSettingsTab = useAppStore(s => s.openSettingsTab);
+  const closeSettingsTab = useAppStore(s => s.closeSettingsTab);
+  const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -142,6 +145,25 @@ export const TerminalTabBar: FC = () => {
           >×</button>
         </div>
       ))}
+      {/* Settings tab */}
+      {settingsTabOpen && (
+        <div
+          className="terminal-tab active"
+          onClick={() => openSettingsTab()}
+          title="设置"
+        >
+          <span style={{ fontSize: '12px' }}>⚙️</span>
+          <span className="terminal-tab-name">设置</span>
+          <button
+            className="terminal-tab-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              closeSettingsTab();
+            }}
+            title="关闭"
+          >×</button>
+        </div>
+      )}
       {contextMenu && (
         <>
           <div className="context-menu-overlay" onClick={() => setContextMenu(null)} />
@@ -186,7 +208,7 @@ export const TerminalTabBar: FC = () => {
               setContextMenu(null);
               const s = getAppSettings();
               saveAppSettings({ ...s, enableTabNavigation: true });
-              saveEnableTabNavigation(true).catch(() => {});
+              saveEnableTabNavigation(true).catch(console.error);
               window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
             }}>启用标签导航</div>
             <div className="context-menu-separator" />

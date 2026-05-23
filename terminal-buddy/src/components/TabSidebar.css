@@ -32,6 +32,52 @@
   border-color: var(--accent);
 }
 
+.tab-sidebar-settings-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 12px 5px 28px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.1s;
+  position: relative;
+  text-align: left;
+}
+
+.tab-sidebar-settings-btn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 0 1px 1px 0;
+  background: transparent;
+}
+
+.tab-sidebar-settings-btn.active {
+  background: rgba(0, 120, 212, 0.2);
+  color: var(--accent);
+}
+
+.tab-sidebar-settings-btn.active::before {
+  background: var(--accent);
+}
+
+.tab-sidebar-settings-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.tab-sidebar-settings-btn:hover::before {
+  background: var(--accent);
+  opacity: 0.5;
+}
+
 .tab-sidebar-content {
   flex: 1;
   overflow-y: auto;

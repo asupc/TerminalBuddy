@@ -174,3 +174,22 @@ export async function fetchDeepseekUsage(apiKey: string): Promise<DeepseekUsageD
     };
   }
 }
+
+export async function fetchMinimaxUsage(apiKey: string): Promise<AiUsageData> {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const result = await invoke<{
+      success: boolean;
+      tiers: Array<{ name: string; utilization: number; resets_at: string | null }>;
+      error: string | null;
+    }>('fetch_minimax_usage', { apiKey });
+    return {
+      success: result.success,
+      level: null,
+      tiers: result.tiers.map(t => ({ name: t.name, utilization: t.utilization, resetsAt: t.resets_at })),
+      error: result.error,
+    };
+  } catch (e) {
+    return { success: false, level: null, tiers: [], error: `调用失败: ${String(e)}` };
+  }
+}

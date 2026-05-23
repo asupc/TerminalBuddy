@@ -1,9 +1,9 @@
 import { FC, useState, useEffect, useCallback, Fragment } from 'react';
-import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, tierDisplayName, utilizationColor, countdownStr, formatTokens, type AiUsageData, type DeepseekUsageData, type DeepseekDayUsage } from '../services/aiUsage';
+import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, fetchMinimaxUsage, tierDisplayName, utilizationColor, countdownStr, formatTokens, type AiUsageData, type DeepseekUsageData, type DeepseekDayUsage } from '../services/aiUsage';
 import { getAppSettings } from '../utils/settings';
 import './AiUsagePanel.css';
 
-const cache: Record<string, any> = { zhipu: null, qianfan: null, deepseek: null };
+const cache: Record<string, any> = { zhipu: null, qianfan: null, deepseek: null, minimax: null };
 
 interface TierRowProps {
   tier: { name: string; utilization: number; resetsAt: string | null };
@@ -74,21 +74,8 @@ const DeepseekView: FC<{ data: DeepseekUsageData }> = ({ data }) => {
           </div>
         </div>
       )}
-
       {data.today && <DayBlock title="今日" date={fmtDate(now)} data={data.today} />}
-      {!data.today && (
-        <div className="ds-section">
-          <div className="ds-section-head"><span>今日 {fmtDate(now)}</span></div>
-          <span className="ds-label" style={{ padding: '2px 0' }}>暂无用量</span>
-        </div>
-      )}
       {data.yesterday && <DayBlock title="昨日" date={fmtDate(yd)} data={data.yesterday} />}
-      {!data.yesterday && (
-        <div className="ds-section">
-          <div className="ds-section-head"><span>昨日 {fmtDate(yd)}</span></div>
-          <span className="ds-label" style={{ padding: '2px 0' }}>暂无用量</span>
-        </div>
-      )}
     </div>
   );
 };
@@ -156,13 +143,15 @@ export const AiUsagePanel: FC = () => {
   const settings = getAppSettings();
   const hasZhipu = !!settings.zhipuApiKey;
   const hasQianfan = !!settings.qianfanCookie;
+  const hasMinimax = !!settings.minimaxApiKey;
   const hasDeepseek = !!settings.deepseekApiKey;
 
   const fetchZhipu = useCallback(() => fetchZhipuUsage(settings.zhipuApiKey), [settings.zhipuApiKey]);
   const fetchQianfan = useCallback(() => fetchQianfanUsage(settings.qianfanCookie), [settings.qianfanCookie]);
+  const fetchMinimaxCb = useCallback(() => fetchMinimaxUsage(settings.minimaxApiKey), [settings.minimaxApiKey]);
   const fetchDeepseekCb = useCallback(() => fetchDeepseekUsage(settings.deepseekApiKey), [settings.deepseekApiKey]);
 
-  if (!hasZhipu && !hasQianfan && !hasDeepseek) {
+  if (!hasZhipu && !hasQianfan && !hasDeepseek && !hasMinimax) {
     return (
       <div className="ai-usage-tooltip">
         <span className="ai-usage-text">未配置，请在设置中填入</span>
@@ -173,6 +162,7 @@ export const AiUsagePanel: FC = () => {
   const providers = [
     hasZhipu && <ProviderBlock key="zhipu" cacheKey="zhipu" label="智谱 GLM" fetchFn={fetchZhipu} />,
     hasQianfan && <ProviderBlock key="qianfan" cacheKey="qianfan" label="百度千帆" fetchFn={fetchQianfan} />,
+    hasMinimax && <ProviderBlock key="minimax" cacheKey="minimax" label="MiniMax" fetchFn={fetchMinimaxCb} />,
     hasDeepseek && <ProviderBlock key="deepseek" cacheKey="deepseek" label="DeepSeek" fetchFn={fetchDeepseekCb} isDeepseek />,
   ].filter(Boolean);
 

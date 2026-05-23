@@ -3,6 +3,7 @@ import { windowMinimize, windowToggleMaximize, windowClose, getWebApiStatus, sav
 import { AiUsagePanel } from './AiUsagePanel';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
+import { getStoredTheme, applyTheme } from '../utils/settings';
 
 interface TitleBarProps {
   onSettings: () => void;
@@ -23,6 +24,13 @@ export const TitleBar: FC<TitleBarProps> = ({
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
   const [webRunning, setWebRunning] = useState(false);
   const [webToggling, setWebToggling] = useState(false);
+  const [theme, setTheme] = useState(getStoredTheme);
+
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    applyTheme(next);
+  };
 
   const checkWebStatus = useCallback(async () => {
     try {
@@ -116,6 +124,13 @@ export const TitleBar: FC<TitleBarProps> = ({
         </div>
       </div>
       <div className="titlebar-right">
+        <button
+          className="titlebar-btn titlebar-action-btn"
+          onClick={toggleTheme}
+          title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+        >
+          {theme === 'dark' ? '☀️' : '🌙'}
+        </button>
         <button className="titlebar-btn titlebar-action-btn" onClick={onSettings} title="设置">
           ⚙
         </button>
