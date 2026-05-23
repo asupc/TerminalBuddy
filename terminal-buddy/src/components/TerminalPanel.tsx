@@ -1,5 +1,6 @@
 import { FC, useCallback } from 'react';
 import { TerminalInstance } from './TerminalInstance';
+import { TextEditor } from './TextEditor';
 import { TerminalTabBar } from './TerminalTabBar';
 import { SettingsPage } from './SettingsPage';
 import { useAppStore } from '../stores/appStore';
@@ -12,6 +13,7 @@ export const TerminalPanel: FC = () => {
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
   const closeSettingsTab = useAppStore(s => s.closeSettingsTab);
+  const updateSession = useAppStore(s => s.updateSession);
   const settings = getAppSettings();
 
   const handleTerminalInput = useCallback(async (sessionId: string, data: string) => {
@@ -40,12 +42,21 @@ export const TerminalPanel: FC = () => {
             key={session.id}
             className={`terminal-tab-content ${activeSessionId === session.id ? 'active' : ''}`}
           >
-            <TerminalInstance
-              terminalId={session.id}
-              colorTheme={session.colorTheme}
-              onOutput={handleTerminalInput}
-              isActive={activeSessionId === session.id}
-            />
+            {session.sessionType === 'editor' ? (
+              <TextEditor
+                filePath={session.profileId}
+                isDirty={session.isDirty ?? false}
+                onDirtyChange={(dirty) => updateSession(session.id, { isDirty: dirty })}
+                isActive={activeSessionId === session.id}
+              />
+            ) : (
+              <TerminalInstance
+                terminalId={session.id}
+                colorTheme={session.colorTheme}
+                onOutput={handleTerminalInput}
+                isActive={activeSessionId === session.id}
+              />
+            )}
           </div>
         ))}
       </div>
