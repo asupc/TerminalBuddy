@@ -691,6 +691,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                 profile={editingProfile}
                 onClose={() => setShowProfileDialog(false)}
                 onSave={() => { setShowProfileDialog(false); loadProfiles(); }}
+                profiles={profiles}
               />
             )}
           </section>

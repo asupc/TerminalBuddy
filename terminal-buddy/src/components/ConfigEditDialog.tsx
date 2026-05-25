@@ -5,6 +5,7 @@ import { createProfile, updateProfile, deleteProfile } from '../services/tauri';
 import { PRESET_THEMES, TAB_COLORS, type Profile } from '../types';
 import { COMMAND_TEMPLATES } from '../data/commandTemplates';
 import { useDraggable } from '../hooks/useDraggable';
+import { GroupCascader } from './GroupCascader';
 import './ConfigEditDialog.css';
 
 interface ConfigEditDialogProps {
@@ -12,6 +13,7 @@ interface ConfigEditDialogProps {
   onClose: () => void;
   onSave: () => void;
   defaultGroup?: string;
+  profiles: Profile[];
 }
 
 interface FormData {
@@ -28,6 +30,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   onClose,
   onSave,
   defaultGroup,
+  profiles,
 }) => {
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormData>({
     defaultValues: {
@@ -250,7 +253,11 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
 
             <div className="form-group">
               <label>分组</label>
-              <input {...register('group')} placeholder="默认" />
+              <GroupCascader
+                value={watch('group')}
+                onChange={(val) => setValue('group', val)}
+                profiles={profiles}
+              />
             </div>
           </div>
 

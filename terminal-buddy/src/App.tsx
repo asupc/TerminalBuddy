@@ -324,6 +324,7 @@ function App() {
           onClose={handleDialogClose}
           onSave={handleDialogSave}
           defaultGroup={defaultGroupForNewProfile}
+          profiles={profiles}
         />
       )}
       {showExtraParamsDialog && (
