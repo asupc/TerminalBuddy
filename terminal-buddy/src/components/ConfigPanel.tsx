@@ -277,31 +277,20 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
         e.preventDefault();
         setBlankContextMenu({ x: e.clientX, y: e.clientY });
       }}>
-        {renamingGroup ? (
-          <div className="config-group-rename-row">
-            <input
-              className="tree-rename-input"
-              value={newGroupName}
-              onChange={(e) => setNewGroupName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleFinishRename(renamingGroup);
-                if (e.key === 'Escape') setRenamingGroup(null);
-              }}
-              onBlur={() => handleFinishRename(renamingGroup)}
-              autoFocus
-            />
-          </div>
-        ) : (
-          <TreeView
-            items={treeItems}
-            expandedIds={expandedGroups}
-            onToggle={handleToggle}
-            selectedId={selectedProfileId}
-            onSelect={handleSelect}
-            onDoubleClick={handleDoubleClick}
-            onContextMenu={handleItemContextMenu}
-          />
-        )}
+        <TreeView
+          items={treeItems}
+          expandedIds={expandedGroups}
+          onToggle={handleToggle}
+          selectedId={selectedProfileId}
+          onSelect={handleSelect}
+          onDoubleClick={handleDoubleClick}
+          onContextMenu={handleItemContextMenu}
+          renamingId={renamingGroup}
+          renameValue={newGroupName}
+          onRenameValueChange={setNewGroupName}
+          onRenameSubmit={(id) => handleFinishRename(id)}
+          onRenameCancel={() => setRenamingGroup(null)}
+        />
         {profiles.length === 0 && (
           <div className="empty-state">暂无连接，点击新建</div>
         )}

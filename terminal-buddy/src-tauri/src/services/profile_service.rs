@@ -71,16 +71,20 @@ impl ProfileService {
             .ok_or_else(|| format!("Profile not found: {}", id))
     }
 
-    fn find_profile_by_name(name: &str) -> Option<Profile> {
+    fn find_profile_by_name_in_group(name: &str, group: &str) -> Option<Profile> {
+        let normalized_group = if group.is_empty() { "默认" } else { group };
         Self::get_all_profiles().ok().and_then(|profiles| {
-            profiles.into_iter().find(|p| p.name == name)
+            profiles.into_iter().find(|p| {
+                let p_group = if p.group.is_empty() { "默认" } else { &p.group };
+                p.name == name && p_group == normalized_group
+            })
         })
     }
 
     pub fn create_profile(name: &str, group: &str, terminal_type: &str) -> Result<Profile, String> {
-        // Check for duplicate name
-        if Self::find_profile_by_name(name).is_some() {
-            return Err(format!("配置名称 '{}' 已存在，请使用其他名称", name));
+        // Check for duplicate name within the same group
+        if Self::find_profile_by_name_in_group(name, group).is_some() {
+            return Err(format!("该分组下名称 '{}' 已存在，请使用其他名称", name));
         }
 
         let profile = Profile {
@@ -108,7 +112,7 @@ impl ProfileService {
             last_used_at: None,
         };
 
-        let path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&profile.name)));
+        let path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
         let content = serde_json::to_string_pretty(&profile)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         fs::write(&path, content)
@@ -118,28 +122,25 @@ impl ProfileService {
     }
 
     pub fn update_profile(profile: &Profile) -> Result<(), String> {
-        // Check for duplicate name (exclude self)
-        if let Some(existing) = Self::find_profile_by_name(&profile.name) {
+        // Check for duplicate name within the same group (exclude self)
+        let profile_group = if profile.group.is_empty() { "默认" } else { &profile.group };
+        if let Some(existing) = Self::find_profile_by_name_in_group(&profile.name, profile_group) {
             if existing.id != profile.id {
-                return Err(format!("配置名称 '{}' 已存在，请使用其他名称", profile.name));
+                return Err(format!("该分组下名称 '{}' 已存在，请使用其他名称", profile.name));
             }
         }
 
-        // Delete old-format file ({id}.json) if it exists (migration)
-        let old_id_path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
-        if old_id_path.exists() {
-            fs::remove_file(&old_id_path).ok();
-        }
-
-        // If name changed, delete old name-based file
+        // Delete old name-based file if it exists (migration from name-based naming)
         if let Ok(old_profile) = Self::get_profile(&profile.id) {
             if old_profile.name != profile.name {
-                let old_path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&old_profile.name)));
-                fs::remove_file(&old_path).ok();
+                let old_name_path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&old_profile.name)));
+                if old_name_path.exists() {
+                    fs::remove_file(&old_name_path).ok();
+                }
             }
         }
 
-        let path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&profile.name)));
+        let path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
         let content = serde_json::to_string_pretty(profile)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         fs::write(&path, content)
@@ -150,7 +151,10 @@ impl ProfileService {
 
     pub fn delete_profile(id: &str) -> Result<(), String> {
         let profile = Self::get_profile(id)?;
-        let path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&profile.name)));
+        // Try id-based file first, then fall back to name-based file (migration)
+        let id_path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
+        let name_path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&profile.name)));
+        let path = if id_path.exists() { id_path } else { name_path };
         fs::remove_file(&path)
             .map_err(|e| format!("Failed to delete profile: {}", e))?;
         Self::invalidate_cache();
@@ -181,7 +185,7 @@ impl ProfileService {
             profile.id = Uuid::new_v4().to_string();
             profile.created_at = chrono::Utc::now().to_rfc3339();
             profile.last_used_at = None;
-            let save_path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&profile.name)));
+            let save_path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
             let json = serde_json::to_string_pretty(&profile)
                 .map_err(|e| format!("Failed to serialize: {}", e))?;
             fs::write(&save_path, json)

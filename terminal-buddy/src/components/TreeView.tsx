@@ -24,6 +24,11 @@ interface TreeViewProps {
   indent?: number;
   className?: string;
   itemClassName?: string;
+  renamingId?: string | null;
+  renameValue?: string;
+  onRenameValueChange?: (value: string) => void;
+  onRenameSubmit?: (id: string) => void;
+  onRenameCancel?: () => void;
 }
 
 const TreeNode: FC<{
@@ -38,7 +43,12 @@ const TreeNode: FC<{
   renderEnd?: (item: TreeItem) => ReactNode;
   indent: number;
   itemClassName?: string;
-}> = ({ item, depth, expandedIds, onToggle, selectedId, onSelect, onDoubleClick, onContextMenu, renderEnd, indent, itemClassName }) => {
+  renamingId?: string | null;
+  renameValue?: string;
+  onRenameValueChange?: (value: string) => void;
+  onRenameSubmit?: (id: string) => void;
+  onRenameCancel?: () => void;
+}> = ({ item, depth, expandedIds, onToggle, selectedId, onSelect, onDoubleClick, onContextMenu, renderEnd, indent, itemClassName, renamingId, renameValue, onRenameValueChange, onRenameSubmit, onRenameCancel }) => {
   const isExpanded = expandedIds.has(item.id);
   const isSelected = selectedId === item.id;
   const hasChildren = item.children && item.children.length > 0;
@@ -65,9 +75,25 @@ const TreeNode: FC<{
           </span>
         )}
         {item.icon && <span className="tree-icon">{item.icon}</span>}
-        <span className="tree-name" style={item.color ? { color: item.color } : undefined}>
-          {item.label}
-        </span>
+        {renamingId === item.id ? (
+          <input
+            className="tree-rename-input"
+            value={renameValue ?? item.label}
+            onChange={(e) => onRenameValueChange?.(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') onRenameSubmit?.(item.id);
+              if (e.key === 'Escape') onRenameCancel?.();
+            }}
+            onBlur={() => onRenameSubmit?.(item.id)}
+            onClick={(e) => e.stopPropagation()}
+            autoFocus
+          />
+        ) : (
+          <span className="tree-name" style={item.color ? { color: item.color } : undefined}>
+            {item.label}
+          </span>
+        )}
         {renderEnd?.(item)}
       </div>
       {isExpanded && hasChildren && (
@@ -86,6 +112,11 @@ const TreeNode: FC<{
               renderEnd={renderEnd}
               indent={indent}
               itemClassName={itemClassName}
+              renamingId={renamingId}
+              renameValue={renameValue}
+              onRenameValueChange={onRenameValueChange}
+              onRenameSubmit={onRenameSubmit}
+              onRenameCancel={onRenameCancel}
             />
           ))}
         </div>
@@ -106,6 +137,11 @@ export const TreeView: FC<TreeViewProps> = ({
   indent = 14,
   className,
   itemClassName,
+  renamingId,
+  renameValue,
+  onRenameValueChange,
+  onRenameSubmit,
+  onRenameCancel,
 }) => {
   return (
     <div className={className}>
@@ -123,6 +159,11 @@ export const TreeView: FC<TreeViewProps> = ({
           renderEnd={renderEnd}
           indent={indent}
           itemClassName={itemClassName}
+          renamingId={renamingId}
+          renameValue={renameValue}
+          onRenameValueChange={onRenameValueChange}
+          onRenameSubmit={onRenameSubmit}
+          onRenameCancel={onRenameCancel}
         />
       ))}
     </div>
