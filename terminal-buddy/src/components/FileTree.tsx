@@ -30,8 +30,21 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     onSelect(node.path);
+    if (node.is_directory) {
+      if (!expanded) {
+        setLoading(true);
+        listDirectory(node.path, exclusionPatterns).then((entries) => {
+          setChildren(entries);
+          setLoading(false);
+        }).catch((err) => {
+          console.error('Failed to load directory:', err);
+          setLoading(false);
+        });
+      }
+      setExpanded(!expanded);
+    }
     (e.currentTarget as HTMLElement).focus();
-  }, [node.path, onSelect]);
+  }, [node.path, node.is_directory, expanded, exclusionPatterns, onSelect]);
 
   const handleArrowClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -206,6 +219,8 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
 export const FileTree: FC = () => {
   const currentDirectory = useAppStore(s => s.currentDirectory);
   const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
+  const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
+  const activeSessionId = useAppStore(s => s.activeSessionId);
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
   const bookmarks = useAppStore(s => s.bookmarks);
   const addBookmark = useAppStore(s => s.addBookmark);
@@ -248,6 +263,13 @@ export const FileTree: FC = () => {
     loadRoot();
   }, []);
 
+  const navigateTo = useCallback((path: string) => {
+    setCurrentDirectory(path);
+    if (activeSessionId) {
+      setSessionDirectory(activeSessionId, path);
+    }
+  }, [setCurrentDirectory, setSessionDirectory, activeSessionId]);
+
   // Load directory when currentDirectory changes
   useEffect(() => {
     if (!currentDirectory) return;
@@ -270,8 +292,8 @@ export const FileTree: FC = () => {
   }, []);
 
   const handleNavigate = useCallback((path: string) => {
-    setCurrentDirectory(path);
-  }, [setCurrentDirectory]);
+    navigateTo(path);
+  }, [navigateTo]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -328,7 +350,7 @@ export const FileTree: FC = () => {
     if (!currentDirectory) return;
     const parent = currentDirectory.substring(0, currentDirectory.lastIndexOf('\\'));
     if (parent.length >= 3) {
-      setCurrentDirectory(parent);
+      navigateTo(parent);
     }
   };
 
@@ -352,7 +374,7 @@ export const FileTree: FC = () => {
     }
     listDirectory(normalizedPath, exclusionPatterns).then(() => {
       setPathError(false);
-      setCurrentDirectory(normalizedPath);
+      navigateTo(normalizedPath);
       setIsEditing(false);
     }).catch(() => {
       setPathError(true);
@@ -389,9 +411,9 @@ export const FileTree: FC = () => {
         await writeToTerminal(activeSessionId, `cd "${ctxMenu.path}"\r`);
       } catch (err) { console.error(err); }
     }
-    setCurrentDirectory(ctxMenu.path);
+    navigateTo(ctxMenu.path);
     setCtxMenu(null);
-  }, [ctxMenu, setCurrentDirectory]);
+  }, [ctxMenu, navigateTo]);
 
   const handleDeleteItem = useCallback(() => {
     setConfirmDelete(ctxMenu?.path || null);
@@ -506,7 +528,7 @@ export const FileTree: FC = () => {
             <div
               key={bm.path}
               className="bookmark-tag"
-              onClick={() => { if (!renamingBookmark || renamingBookmark !== bm.path) setCurrentDirectory(bm.path); }}
+              onClick={() => { if (!renamingBookmark || renamingBookmark !== bm.path) navigateTo(bm.path); }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setBookmarkCtxMenu({ x: e.clientX, y: e.clientY, path: bm.path });

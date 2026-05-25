@@ -14,9 +14,6 @@ import { getAllSuggestions, type SuggestionItem } from '../data/commandTemplates
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
-// Match CMD/PowerShell prompt line ending with >
-const PROMPT_REGEX = /(?:PS )?([A-Za-z]:\\[^\s>]*)>/g;
-
 interface TerminalInstanceProps {
   terminalId: string;
   onOutput: (sessionId: string, data: string) => void;
@@ -170,19 +167,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // During composition, the CSS .ime-locked class prevents xterm.js
       // from moving the textarea.  No action needed here — the proactive
       // CSS approach is sufficient.
-
-      // Detect directory from prompt lines for active session
-      const state = useAppStore.getState();
-      const matches = [...output.matchAll(PROMPT_REGEX)];
-      if (matches.length > 0) {
-        if (state.activeSessionId === terminalId) {
-          const detectedPath = matches[matches.length - 1][1];
-          if (detectedPath.length >= 3 && detectedPath.includes('\\')) {
-            state.setCurrentDirectory(detectedPath);
-            state.setSessionDirectory(terminalId, detectedPath);
-          }
-        }
-      }
 
       // Working state: reset debounce on each output, check xterm buffer for prompt
       if (workingDebounce) clearTimeout(workingDebounce);
