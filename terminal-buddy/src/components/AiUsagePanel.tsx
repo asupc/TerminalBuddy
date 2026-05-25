@@ -34,18 +34,20 @@ const fmtDate = (d: Date) =>
   `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
 
 const DayBlock: FC<{
-  title: string; date: string;
+  title: string; date: string; accent: string;
   data: DeepseekDayUsage;
-}> = ({ title, date, data }) => {
+}> = ({ title, date, accent, data }) => {
   const rate = data.inputToken > 0 ? Math.round((data.cacheHitToken / data.inputToken) * 100) : null;
   return (
-    <div className="ds-section">
+    <div className="ds-section" style={{ borderLeftColor: accent }}>
       <div className="ds-section-head">
-        <span>{title} {date}</span>
-        <span className="ds-val">次数 {formatTokens(data.request)}</span>
+        <span className="ds-section-title">{title} <span className="ds-date">{date}</span></span>
+        <span className="ds-request">{formatTokens(data.request)}次/<span className="ds-cost">¥{data.cost.toFixed(2)}</span></span>
       </div>
-      <div className="ds-row"><span className="ds-label">输入/输出</span><span className="ds-val">{formatTokens(data.inputToken)}{rate !== null && <span style={{ color: '#f59e0b' }}> ({rate}%)</span>}/{formatTokens(data.outputToken)}</span></div>
-      <div className="ds-row"><span className="ds-label">合计/消费</span><span className="ds-val"><span className="ds-token">{formatTokens(data.totalToken)}</span>/<span className="ds-cost">¥{data.cost.toFixed(2)}</span></span></div>
+      <div className="ds-row">
+        <span className="ds-label">输入/输出</span>
+        <span className="ds-val">{formatTokens(data.inputToken)}{rate !== null && <span className="ds-cache">{rate}%</span>}/{formatTokens(data.outputToken)}</span>
+      </div>
     </div>
   );
 };
@@ -55,7 +57,7 @@ const DeepseekView: FC<{ data: DeepseekUsageData }> = ({ data }) => {
     return <span className="ai-usage-error">{data.error || '查询失败'}</span>;
   }
   const hasData = data.normalWallets.length > 0 || data.bonusWallets.length > 0
-    || data.today || data.yesterday;
+    || data.today || data.yesterday || data.week || data.month;
   if (!hasData) {
     return <span className="ai-usage-text">暂无数据</span>;
   }
@@ -64,18 +66,44 @@ const DeepseekView: FC<{ data: DeepseekUsageData }> = ({ data }) => {
   const yd = new Date(now);
   yd.setDate(yd.getDate() - 1);
 
+  const normalTotal = data.normalWallets.reduce((s, w) => s + parseFloat(w.balance), 0);
+  const bonusTotal = data.bonusWallets.reduce((s, w) => s + parseFloat(w.balance), 0);
+
   return (
     <div className="ds-card">
-      {(data.normalWallets.length > 0 || data.bonusWallets.some(w => parseFloat(w.balance) > 0)) && (
-        <div className="ds-section">
+      {(normalTotal > 0 || bonusTotal > 0 || data.month) && (
+        <div className="ds-section" style={{ borderLeftColor: '#f59e0b' }}>
+          {(normalTotal > 0 || bonusTotal > 0) && (
+            <div className="ds-row">
+              <span className="ds-label">余额</span>
+              <span className="ds-val">{normalTotal > 0 && <span className="ds-balance-amount">¥{normalTotal.toFixed(2)}</span>}{bonusTotal > 0 && <span className="ds-bonus"> 赠{bonusTotal.toFixed(2)}</span>}</span>
+            </div>
+          )}
+          {data.month && (
+            <div className="ds-row">
+              <span className="ds-label">本月</span>
+              <span className="ds-val"><span className="ds-token">{formatTokens(data.month.totalToken)}</span> · <span className="ds-cost">¥{data.month.totalCost.toFixed(2)}</span></span>
+            </div>
+          )}
+        </div>
+      )}
+      {data.today && <DayBlock title="今日" date={fmtDate(now)} data={data.today} accent="#10b981" />}
+      {data.yesterday && <DayBlock title="昨日" date={fmtDate(yd)} data={data.yesterday} accent="#6366f1" />}
+      {data.week && (
+        <div className="ds-section" style={{ borderLeftColor: '#38bdf8' }}>
+          <div className="ds-section-head">
+            <span className="ds-section-title">本周</span>
+          </div>
           <div className="ds-row">
-            <span className="ds-label">账户余额</span>
-            <span className="ds-val ds-cost">{data.normalWallets.map(w => `${parseFloat(w.balance).toFixed(2)}`).concat(data.bonusWallets.filter(w => parseFloat(w.balance) > 0).map(w => `${parseFloat(w.balance).toFixed(2)}`)).join(' / ')} CNY</span>
+            <span className="ds-label">用量</span>
+            <span className="ds-val">{formatTokens(data.week.request)}次 · <span className="ds-token">{formatTokens(data.week.totalToken)}</span></span>
+          </div>
+          <div className="ds-row">
+            <span className="ds-label">消费</span>
+            <span className="ds-val ds-cost">¥{data.week.cost.toFixed(2)}</span>
           </div>
         </div>
       )}
-      {data.today && <DayBlock title="今日" date={fmtDate(now)} data={data.today} />}
-      {data.yesterday && <DayBlock title="昨日" date={fmtDate(yd)} data={data.yesterday} />}
     </div>
   );
 };
