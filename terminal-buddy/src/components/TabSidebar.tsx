@@ -5,6 +5,7 @@ import { useResizablePanel } from '../hooks/useResizablePanel';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 import { getWorkingDotColor } from '../utils/tabColor';
 import { TreeView, type TreeItem } from './TreeView';
+import { buildGroupTree, type GroupNode } from '../utils/groupTree';
 import type { Profile } from '../types';
 import './TabSidebar.css';
 
@@ -57,90 +58,119 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     getBackendAppSettings().then(s => setWidth(s.tabSidebarWidth || 200)).catch(() => {});
   }, []);
 
-  // Build tree for active sessions grouped by profile group
+  // Build tree for active sessions grouped by profile group (hierarchical)
   const sessionTree = useMemo(() => {
-    const groupMap = new Map<string, typeof sessions>();
-    for (const session of sessions) {
-      let groupName: string;
-      if (session.sessionType === 'editor') {
-        groupName = '文本编辑';
-      } else {
-        const profile = profiles.find(p => p.id === session.profileId);
-        groupName = profile?.group || '默认';
+    const editorSessions = sessions.filter(s => s.sessionType === 'editor');
+    const terminalSessions = sessions.filter(s => s.sessionType !== 'editor');
+
+    const tree = buildGroupTree(terminalSessions, s => {
+      const profile = profiles.find(p => p.id === s.profileId);
+      return profile?.group || '默认';
+    });
+
+    // Recursive helper: collect all sessions under a node (including children)
+    const collectAllSessions = (node: GroupNode<typeof terminalSessions[0]>): typeof terminalSessions => {
+      const result = [...node.items];
+      for (const child of node.children) {
+        result.push(...collectAllSessions(child));
       }
-      if (!groupMap.has(groupName)) groupMap.set(groupName, []);
-      groupMap.get(groupName)!.push(session);
-    }
-    return Array.from(groupMap.entries())
-      .filter(([, s]) => s.length > 0)
-      .sort(([a], [b]) => a.localeCompare(b, 'zh'))
-      .map(([groupName, groupSessions]): TreeItem => ({
-        id: groupName,
-        label: groupName,
+      return result;
+    };
+
+    // Convert GroupNode[] to TreeItem[] with recursive nesting
+    const toTreeItems = (nodes: GroupNode<typeof terminalSessions[0]>[]): TreeItem[] =>
+      nodes.map(node => ({
+        id: node.path,
+        label: node.name,
         isGroup: true,
-        children: groupSessions.map((session): TreeItem => {
-          const isEditor = session.sessionType === 'editor';
-          return {
-            id: session.id,
-            label: session.profileName,
-            icon: isEditor ? (
-              <span className="tab-sidebar-file-icon">
-                {session.isDirty && <span className="tab-sidebar-dirty-dot" />}
-                📄
-              </span>
-            ) : (
-              <span
-                className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
-                style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
-              />
-            ),
-            data: session,
-          };
-        }),
+        data: { type: 'group' as const, allSessions: collectAllSessions(node) },
+        children: [
+          ...toTreeItems(node.children),
+          ...node.items.map(session => {
+            const isEditor = session.sessionType === 'editor';
+            return {
+              id: session.id,
+              label: session.profileName,
+              icon: isEditor ? (
+                <span className="tab-sidebar-file-icon">
+                  {session.isDirty && <span className="tab-sidebar-dirty-dot" />}
+                  📄
+                </span>
+              ) : (
+                <span
+                  className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
+                  style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
+                />
+              ),
+              data: session,
+            };
+          }),
+        ],
       }));
+
+    const items = toTreeItems(tree);
+
+    // Editor sessions as a flat top-level group
+    if (editorSessions.length > 0) {
+      items.unshift({
+        id: '文本编辑',
+        label: '文本编辑',
+        isGroup: true,
+        children: editorSessions.map(session => ({
+          id: session.id,
+          label: session.profileName,
+          icon: (
+            <span className="tab-sidebar-file-icon">
+              {session.isDirty && <span className="tab-sidebar-dirty-dot" />}
+              📄
+            </span>
+          ),
+          data: session,
+        })),
+      });
+    }
+
+    return items;
   }, [sessions, profiles, workingSessions, settingsVersion]);
 
-  // Build submenu tree: PowerShell/CMD always visible, then groups collapsed
+  // Build submenu tree: PowerShell/CMD always visible, then groups collapsed (hierarchical)
   const submenuTree = useMemo(() => {
-    const groupMap = new Map<string, Profile[]>();
-    for (const p of profiles) {
-      const g = p.group || '默认';
-      if (!groupMap.has(g)) groupMap.set(g, []);
-      groupMap.get(g)!.push(p);
-    }
-    const groups = Array.from(groupMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b, 'zh'))
-      .map(([groupName, groupProfiles]): TreeItem => ({
-        id: groupName,
-        label: groupName,
+    const tree = buildGroupTree(profiles, p => p.group || '默认');
+
+    const toTreeItems = (nodes: GroupNode<Profile>[]): TreeItem[] =>
+      nodes.map(node => ({
+        id: node.path,
+        label: node.name,
         isGroup: true,
-        children: groupProfiles.map((p): TreeItem => ({
-          id: p.id,
-          label: p.name,
-          data: p,
-        })),
+        children: [
+          ...toTreeItems(node.children),
+          ...node.items.map(p => ({
+            id: p.id,
+            label: p.name,
+            data: p,
+          })),
+        ],
       }));
 
-    // Prepend PowerShell/CMD items (not in a group)
-    return groups;
+    return toTreeItems(tree);
   }, [profiles]);
 
-  // Flatten expanded items for keyboard nav
+  // Flatten expanded items for keyboard nav (recursive for nested groups)
   const visibleSubmenuItems = useMemo(() => {
     const result: TreeItem[] = [];
-    // PowerShell
     result.push({ id: 'powershell', label: 'PowerShell', data: { terminalType: 'powershell' as const } });
-    // CMD
     result.push({ id: 'cmd', label: 'CMD', data: { terminalType: 'cmd' as const } });
-    // Groups and their children
-    for (const group of submenuTree) {
-      result.push(group);
-      if (submenuExpandedGroups.has(group.id)) {
-        for (const child of (group.children || [])) {
-          result.push(child);
+
+    const flattenTree = (items: TreeItem[], expanded: Set<string>) => {
+      for (const item of items) {
+        result.push(item);
+        if (expanded.has(item.id) && item.children) {
+          flattenTree(item.children, expanded);
         }
       }
-    }
+    };
+    flattenTree(submenuTree, submenuExpandedGroups);
+
     return result;
   }, [submenuTree, submenuExpandedGroups]);
 
@@ -282,9 +312,17 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
 
   const renderGroupEnd = (item: TreeItem) => {
     if (!item.isGroup || !item.children) return null;
-    const groupSessions = sessions.filter(s =>
-      item.children!.some(c => c.id === s.id)
-    );
+    // Recursively collect all session IDs from this group and its sub-groups
+    const collectSessionIds = (treeItem: TreeItem): string[] => {
+      const ids: string[] = [];
+      if (!treeItem.isGroup && treeItem.id) ids.push(treeItem.id);
+      for (const child of (treeItem.children || [])) {
+        ids.push(...collectSessionIds(child));
+      }
+      return ids;
+    };
+    const allSessionIds = collectSessionIds(item);
+    const groupSessions = sessions.filter(s => allSessionIds.includes(s.id));
     return (
       <span className="tree-item-end">
         <span className="tree-item-count">{groupSessions.length}</span>
@@ -296,6 +334,104 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
           ×
         </button>
       </span>
+    );
+  };
+
+  const renderGroupRecursive = (item: TreeItem, depth: number) => {
+    if (!item.isGroup && !item.children?.length) return null;
+    const indent = 8 + depth * 12;
+    const isCollapsed = collapsedGroups.has(item.id);
+
+    return (
+      <div key={item.id}>
+        <div
+          className="tree-item"
+          style={{ paddingLeft: `${indent}px` }}
+          onClick={() => {
+            setCollapsedGroups(prev => {
+              const next = new Set(prev);
+              if (next.has(item.id)) next.delete(item.id);
+              else next.add(item.id);
+              return next;
+            });
+          }}
+        >
+          <span className={`tree-arrow${isCollapsed ? '' : ' expanded'}`}>
+            ▶
+          </span>
+          <span className="tree-name" style={{ fontWeight: 600 }}>{item.label}</span>
+          {renderGroupEnd(item)}
+        </div>
+        {!isCollapsed && item.children?.map((child) => {
+          if (child.isGroup || (child.children && child.children.length > 0)) {
+            return renderGroupRecursive(child, depth + 1);
+          }
+          // Leaf node: session
+          return (
+            <div key={child.id}>
+              {renamingSessionId === child.id ? (
+                <div className="tree-item" style={{ paddingLeft: `${indent + 12}px` }}>
+                  {child.icon || (
+                    <span
+                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                      style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
+                    />
+                  )}
+                  <input
+                    ref={renameInputRef}
+                    className="tree-rename-input"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => {
+                      const trimmed = renameValue.trim();
+                      if (trimmed && trimmed !== child.label) renameSession(child.id, trimmed);
+                      setRenamingSessionId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const trimmed = renameValue.trim();
+                        if (trimmed && trimmed !== child.label) renameSession(child.id, trimmed);
+                        setRenamingSessionId(null);
+                      } else if (e.key === 'Escape') {
+                        setRenamingSessionId(null);
+                      }
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </div>
+              ) : (
+                <div
+                  className={`tree-item tab-sidebar-item ${activeSessionId === child.id ? 'active' : ''}`}
+                  style={{ paddingLeft: `${indent + 12}px` }}
+                  onClick={() => setActiveSession(child.id)}
+                  onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTerminal(child.id); } }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: child.id });
+                  }}
+                >
+                  {child.icon || (
+                    <span
+                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                      style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
+                    />
+                  )}
+                  <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>{child.label}</span>
+                  <span className="tree-item-end">
+                    <button
+                      className="tree-item-close"
+                      onClick={(e) => { e.stopPropagation(); handleCloseTerminal(child.id); }}
+                      title="关闭"
+                    >
+                      ×
+                    </button>
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     );
   };
 
@@ -325,91 +461,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
         )}
       </div>
       <div className="tab-sidebar-content" onContextMenu={handleContentContextMenu}>
-        {sessionTree.map((group) => (
-          <div key={group.id}>
-            <div
-              className="tree-item"
-              style={{ paddingLeft: '8px' }}
-              onClick={() => {
-                setCollapsedGroups(prev => {
-                  const next = new Set(prev);
-                  if (next.has(group.id)) next.delete(group.id);
-                  else next.add(group.id);
-                  return next;
-                });
-              }}
-            >
-              <span className={`tree-arrow${collapsedGroups.has(group.id) ? '' : ' expanded'}`}>
-                ▶
-              </span>
-              <span className="tree-name" style={{ fontWeight: 600 }}>{group.label}</span>
-              {renderGroupEnd(group)}
-            </div>
-            {!collapsedGroups.has(group.id) && group.children?.map((child) => (
-              <div key={child.id}>
-                {renamingSessionId === child.id ? (
-                  <div className="tree-item" style={{ paddingLeft: '20px' }}>
-                    {child.icon || (
-                      <span
-                        className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
-                        style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
-                      />
-                    )}
-                    <input
-                      ref={renameInputRef}
-                      className="tree-rename-input"
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={() => {
-                        const trimmed = renameValue.trim();
-                        if (trimmed && trimmed !== child.label) renameSession(child.id, trimmed);
-                        setRenamingSessionId(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          const trimmed = renameValue.trim();
-                          if (trimmed && trimmed !== child.label) renameSession(child.id, trimmed);
-                          setRenamingSessionId(null);
-                        } else if (e.key === 'Escape') {
-                          setRenamingSessionId(null);
-                        }
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </div>
-                ) : (
-                  <div
-                    className={`tree-item tab-sidebar-item ${activeSessionId === child.id ? 'active' : ''}`}
-                    style={{ paddingLeft: '20px' }}
-                    onClick={() => setActiveSession(child.id)}
-                    onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTerminal(child.id); } }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: child.id });
-                    }}
-                  >
-                    {child.icon || (
-                      <span
-                        className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
-                        style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
-                      />
-                    )}
-                    <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>{child.label}</span>
-                    <span className="tree-item-end">
-                      <button
-                        className="tree-item-close"
-                        onClick={(e) => { e.stopPropagation(); handleCloseTerminal(child.id); }}
-                        title="关闭"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        ))}
+        {sessionTree.map((group) => renderGroupRecursive(group, 0))}
       </div>
       <div
         className={`tab-sidebar-resize ${isResizing ? 'active' : ''}`}
