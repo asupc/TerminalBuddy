@@ -49,10 +49,8 @@ export const GroupCascader: React.FC<GroupCascaderProps> = ({ value, onChange, p
       for (const seg of segs) {
         newSelected.push(seg);
         const childPath = newSelected.join('/');
-        const children = levelMap.get(childPath);
-        if (children && children.length > 0) {
-          newLevels.push({ parentPath: childPath, options: children });
-        }
+        const children = levelMap.get(childPath) || [];
+        newLevels.push({ parentPath: childPath, options: children });
       }
       setLevels(newLevels);
       setSelectedSegments(segs);
@@ -77,14 +75,10 @@ export const GroupCascader: React.FC<GroupCascaderProps> = ({ value, onChange, p
     setSelectedSegments(newSelected);
     const path = newSelected.join('/');
     onChange(path);
-    const children = levelMap.get(path);
-    if (children && children.length > 0) {
-      const newLevels = levels.slice(0, levelIndex + 1);
-      newLevels.push({ parentPath: path, options: children });
-      setLevels(newLevels);
-    } else {
-      setLevels(levels.slice(0, levelIndex + 1));
-    }
+    const children = levelMap.get(path) || [];
+    const newLevels = levels.slice(0, levelIndex + 1);
+    newLevels.push({ parentPath: path, options: children });
+    setLevels(newLevels);
     setAddingAtLevel(null);
   };
 
