@@ -19,6 +19,8 @@ import { PRESET_THEMES } from './types';
 function App() {
   const setProfiles = useAppStore(s => s.setProfiles);
   const addSession = useAppStore(s => s.addSession);
+  const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
+  const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
   const configPanelVisible = useAppStore(s => s.configPanelVisible);
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
   const toggleConfigPanel = useAppStore(s => s.toggleConfigPanel);
@@ -27,6 +29,7 @@ function App() {
   const profiles = useAppStore(s => s.profiles);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
+  const [defaultGroupForNewProfile, setDefaultGroupForNewProfile] = useState<string | undefined>();
   const [showExtraParamsDialog, setShowExtraParamsDialog] = useState(false);
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
   const [enableTabNav, setEnableTabNav] = useState(true);
@@ -215,6 +218,10 @@ function App() {
         tabColor: profile.tabColor || null,
         groupId: 'default',
       });
+      if (profile.startupPath) {
+        setSessionDirectory(terminalId, profile.startupPath);
+        setCurrentDirectory(profile.startupPath);
+      }
     } catch (err) {
       alert('启动终端失败: ' + String(err));
     }
@@ -269,7 +276,8 @@ function App() {
     }
   }, [addSession]);
 
-  const handleAddProfile = useCallback(() => {
+  const handleAddProfile = useCallback((defaultGroup?: string) => {
+    setDefaultGroupForNewProfile(defaultGroup);
     setEditingProfile(null);
     setShowEditDialog(true);
   }, []);
@@ -315,6 +323,7 @@ function App() {
           profile={editingProfile}
           onClose={handleDialogClose}
           onSave={handleDialogSave}
+          defaultGroup={defaultGroupForNewProfile}
         />
       )}
       {showExtraParamsDialog && (

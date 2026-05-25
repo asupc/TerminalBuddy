@@ -3,6 +3,7 @@ import { useAppStore } from '../stores/appStore';
 import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile } from '../services/tauri';
 import type { Profile } from '../types';
 import { TreeView, type TreeItem } from './TreeView';
+import { buildGroupTree, renameGroupInPath } from '../utils/groupTree';
 import './ConfigPanel.css';
 
 const TYPE_ICONS: Record<string, string> = {
@@ -13,7 +14,7 @@ interface ConfigPanelProps {
   onStartTerminal: (profile: Profile, extraParams?: string) => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
-  onAddProfile: () => void;
+  onAddProfile: (defaultGroup?: string) => void;
   onManageExtraParams: () => void;
 }
 
@@ -54,9 +55,8 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
 
-  // Build tree items: groups -> profiles
+  // Build tree items: hierarchical groups -> profiles
   const treeItems = useMemo(() => {
-    const groupMap = new Map<string, Profile[]>();
     let filtered = profiles;
 
     if (configSearchQuery.trim()) {
@@ -64,15 +64,8 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       filtered = profiles.filter(p => p.name.toLowerCase().includes(query));
     }
 
-    filtered.forEach((p) => {
-      const group = p.group || '默认';
-      if (!groupMap.has(group)) groupMap.set(group, []);
-      groupMap.get(group)!.push(p);
-    });
-
-    // Sort profiles within each group
-    groupMap.forEach((groupProfiles) => {
-      groupProfiles.sort((a, b) => {
+    const sortProfiles = (items: Profile[]): Profile[] => {
+      return items.sort((a, b) => {
         switch (configSortBy) {
           case 'name-asc': return a.name.localeCompare(b.name, 'zh');
           case 'name-desc': return b.name.localeCompare(a.name, 'zh');
@@ -83,22 +76,28 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
           default: return 0;
         }
       });
-    });
+    };
 
-    return Array.from(groupMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b, 'zh'))
-      .map(([groupName, groupProfiles]): TreeItem => ({
-        id: groupName,
-        label: groupName,
+    const tree = buildGroupTree<Profile>(filtered, p => p.group || '默认', sortProfiles);
+
+    const toTreeItems = (nodes: ReturnType<typeof buildGroupTree<Profile>>): TreeItem[] =>
+      nodes.map((node): TreeItem => ({
+        id: node.path,
+        label: node.name,
         isGroup: true,
-        children: groupProfiles.map((p): TreeItem => ({
-          id: p.id,
-          label: p.name,
-          icon: <span className="config-icon-type">{TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
-          color: p.tabColor || undefined,
-          data: p,
-        })),
+        children: [
+          ...toTreeItems(node.children),
+          ...node.items.map((p): TreeItem => ({
+            id: p.id,
+            label: p.name,
+            icon: <span className="config-icon-type">{TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
+            color: p.tabColor || undefined,
+            data: p,
+          })),
+        ],
       }));
+
+    return toTreeItems(tree);
   }, [profiles, configSearchQuery, configSortBy]);
 
   const handleToggle = (groupId: string) => {
@@ -169,20 +168,27 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
     }
   };
 
-  const handleStartRename = (group: string) => {
-    setRenamingGroup(group);
-    setNewGroupName(group);
+  const handleStartRename = (groupPath: string) => {
+    const name = groupPath.includes('/') ? groupPath.split('/').pop()! : groupPath;
+    setRenamingGroup(groupPath);
+    setNewGroupName(name);
     setGroupContextMenu(null);
   };
 
-  const handleFinishRename = async (oldGroup: string) => {
-    const trimmed = newGroupName.trim();
+  const handleFinishRename = async (oldPath: string) => {
+    const trimmed = newGroupName.trim() || '默认';
     setRenamingGroup(null);
-    if (!trimmed || trimmed === oldGroup) return;
+    if (trimmed === oldPath) return;
+    const segments = oldPath.split('/');
+    const newPath = segments.length > 1
+      ? segments.slice(0, -1).join('/') + '/' + trimmed
+      : trimmed;
     try {
       for (const p of profiles) {
-        if ((p.group || '默认') === oldGroup) {
-          await updateProfile({ ...p, group: trimmed });
+        const group = p.group || '默认';
+        const newGroup = renameGroupInPath(group, oldPath, newPath);
+        if (newGroup !== group) {
+          await updateProfile({ ...p, group: newGroup });
         }
       }
       const data = await getAllProfiles();
@@ -332,8 +338,11 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
 
       {groupContextMenu && (
         <div className="context-menu" style={{ left: groupContextMenu.x, top: groupContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
-          <div className="context-menu-item" onClick={() => { onAddProfile(); closeContextMenu(); }}>
+          <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
             添加连接
+          </div>
+          <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
+            添加子分组
           </div>
           <div className="context-menu-item" onClick={() => handleStartRename(groupContextMenu.group)}>
             重命名分组
@@ -343,7 +352,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
 
       {blankContextMenu && (
         <div className="context-menu" style={{ left: blankContextMenu.x, top: blankContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
-          <div className="context-menu-item" onClick={() => { onAddProfile(); closeContextMenu(); }}>
+          <div className="context-menu-item" onClick={() => { onAddProfile('默认'); closeContextMenu(); }}>
             添加连接
           </div>
           <div className="context-menu-item" onClick={() => { onManageExtraParams(); closeContextMenu(); }}>

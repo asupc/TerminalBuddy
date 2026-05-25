@@ -11,6 +11,7 @@ interface ConfigEditDialogProps {
   profile: Profile | null;
   onClose: () => void;
   onSave: () => void;
+  defaultGroup?: string;
 }
 
 interface FormData {
@@ -26,11 +27,12 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   profile,
   onClose,
   onSave,
+  defaultGroup,
 }) => {
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormData>({
     defaultValues: {
       name: profile?.name || '',
-      group: profile?.group || '默认',
+      group: defaultGroup || profile?.group || '默认',
       terminalType: profile?.terminalType || 'powershell',
       startupPath: profile?.startupPath || '',
       colorTheme: profile?.colorTheme || 'dark-default',
