@@ -52,6 +52,8 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   } | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [newGroupName, setNewGroupName] = useState('');
+  const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null);
+  const [renamingProfileName, setRenamingProfileName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
 
@@ -112,6 +114,8 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   const handleSelect = useCallback((item: TreeItem) => {
     if (item.data) {
       selectProfile((item.data as Profile).id);
+    } else if (item.isGroup) {
+      selectProfile(item.id);
     }
   }, [selectProfile]);
 
@@ -169,20 +173,16 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   };
 
   const handleStartRename = (groupPath: string) => {
-    const name = groupPath.includes('/') ? groupPath.split('/').pop()! : groupPath;
     setRenamingGroup(groupPath);
-    setNewGroupName(name);
+    setNewGroupName(groupPath);
     setGroupContextMenu(null);
   };
 
   const handleFinishRename = async (oldPath: string) => {
-    const trimmed = newGroupName.trim() || '默认';
+    const trimmed = newGroupName.trim();
     setRenamingGroup(null);
-    if (trimmed === oldPath) return;
-    const segments = oldPath.split('/');
-    const newPath = segments.length > 1
-      ? segments.slice(0, -1).join('/') + '/' + trimmed
-      : trimmed;
+    if (!trimmed || trimmed === oldPath) return;
+    const newPath = trimmed.includes('/') ? trimmed : trimmed;
     try {
       for (const p of profiles) {
         const group = p.group || '默认';
@@ -195,6 +195,22 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       setProfiles(data);
     } catch (err) {
       console.error('Failed to rename group:', err);
+    }
+  };
+
+  const handleFinishRenameProfile = async () => {
+    const trimmed = renamingProfileName.trim();
+    const id = renamingProfileId;
+    setRenamingProfileId(null);
+    if (!trimmed || !id) return;
+    const profile = profiles.find(p => p.id === id);
+    if (!profile || profile.name === trimmed) return;
+    try {
+      await updateProfile({ ...profile, name: trimmed });
+      const data = await getAllProfiles();
+      setProfiles(data);
+    } catch (err) {
+      console.error('Failed to rename profile:', err);
     }
   };
 
@@ -230,6 +246,24 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       document.removeEventListener('mouseup', handleResizeMouseUp);
     };
   }, [isResizing, handleResizeMouseMove, handleResizeMouseUp]);
+
+  // F2 快速重命名分组/连接
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'F2' && selectedProfileId) {
+        const item = findTreeItemById(treeItems, selectedProfileId);
+        if (item?.isGroup || (item?.children && item.children.length > 0)) {
+          handleStartRename(selectedProfileId);
+        } else if (item?.data) {
+          const profile = item.data as Profile;
+          setRenamingProfileId(profile.id);
+          setRenamingProfileName(profile.name);
+        }
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [selectedProfileId, treeItems]);
 
   return (
     <div ref={containerRef} className={`config-panel ${!configPanelVisible ? 'collapsed' : ''}`} style={{ width }} onClick={closeContextMenu}>
@@ -290,6 +324,12 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
           onRenameValueChange={setNewGroupName}
           onRenameSubmit={(id) => handleFinishRename(id)}
           onRenameCancel={() => setRenamingGroup(null)}
+          onGroupRename={(id) => handleStartRename(id)}
+          renamingProfileId={renamingProfileId}
+          renamingProfileValue={renamingProfileName}
+          onRenamingProfileChange={setRenamingProfileName}
+          onRenamingProfileSubmit={handleFinishRenameProfile}
+          onRenamingProfileCancel={() => setRenamingProfileId(null)}
         />
         {profiles.length === 0 && (
           <div className="empty-state">暂无连接，点击新建</div>
@@ -318,6 +358,14 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
             onCopyProfile(profiles.find((p) => p.id === contextMenu.profileId)!);
             closeContextMenu();
           }}>复制</div>
+          <div className="context-menu-item" onClick={() => {
+            const profile = profiles.find((p) => p.id === contextMenu.profileId);
+            if (profile) {
+              setRenamingProfileId(profile.id);
+              setRenamingProfileName(profile.name);
+            }
+            closeContextMenu();
+          }}>重命名</div>
           <div className="context-menu-item danger" onClick={() => {
             handleDeleteProfile(contextMenu.profileId);
             closeContextMenu();
@@ -369,3 +417,14 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
     </div>
   );
 };
+
+function findTreeItemById(items: TreeItem[], id: string): TreeItem | null {
+  for (const item of items) {
+    if (item.id === id) return item;
+    if (item.children) {
+      const found = findTreeItemById(item.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}

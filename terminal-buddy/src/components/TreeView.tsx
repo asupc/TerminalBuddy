@@ -29,6 +29,12 @@ interface TreeViewProps {
   onRenameValueChange?: (value: string) => void;
   onRenameSubmit?: (id: string) => void;
   onRenameCancel?: () => void;
+  onGroupRename?: (id: string) => void;
+  renamingProfileId?: string | null;
+  renamingProfileValue?: string;
+  onRenamingProfileChange?: (value: string) => void;
+  onRenamingProfileSubmit?: () => void;
+  onRenamingProfileCancel?: () => void;
 }
 
 const TreeNode: FC<{
@@ -48,11 +54,18 @@ const TreeNode: FC<{
   onRenameValueChange?: (value: string) => void;
   onRenameSubmit?: (id: string) => void;
   onRenameCancel?: () => void;
-}> = ({ item, depth, expandedIds, onToggle, selectedId, onSelect, onDoubleClick, onContextMenu, renderEnd, indent, itemClassName, renamingId, renameValue, onRenameValueChange, onRenameSubmit, onRenameCancel }) => {
+  onGroupRename?: (id: string) => void;
+  renamingProfileId?: string | null;
+  renamingProfileValue?: string;
+  onRenamingProfileChange?: (value: string) => void;
+  onRenamingProfileSubmit?: () => void;
+  onRenamingProfileCancel?: () => void;
+}> = ({ item, depth, expandedIds, onToggle, selectedId, onSelect, onDoubleClick, onContextMenu, renderEnd, indent, itemClassName, renamingId, renameValue, onRenameValueChange, onRenameSubmit, onRenameCancel, onGroupRename, renamingProfileId, renamingProfileValue, onRenamingProfileChange, onRenamingProfileSubmit, onRenamingProfileCancel }) => {
   const isExpanded = expandedIds.has(item.id);
   const isSelected = selectedId === item.id;
   const hasChildren = item.children && item.children.length > 0;
   const isGroup = item.isGroup || hasChildren;
+  const isRenamingProfile = renamingProfileId === item.id;
 
   return (
     <div className="tree-node">
@@ -89,6 +102,20 @@ const TreeNode: FC<{
             onClick={(e) => e.stopPropagation()}
             autoFocus
           />
+        ) : isRenamingProfile ? (
+          <input
+            className="tree-rename-input"
+            value={renamingProfileValue ?? item.label}
+            onChange={(e) => onRenamingProfileChange?.(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') onRenamingProfileSubmit?.();
+              if (e.key === 'Escape') onRenamingProfileCancel?.();
+            }}
+            onBlur={() => onRenamingProfileSubmit?.()}
+            onClick={(e) => e.stopPropagation()}
+            autoFocus
+          />
         ) : (
           <span className="tree-name" style={item.color ? { color: item.color } : undefined}>
             {item.label}
@@ -117,6 +144,12 @@ const TreeNode: FC<{
               onRenameValueChange={onRenameValueChange}
               onRenameSubmit={onRenameSubmit}
               onRenameCancel={onRenameCancel}
+              onGroupRename={onGroupRename}
+              renamingProfileId={renamingProfileId}
+              renamingProfileValue={renamingProfileValue}
+              onRenamingProfileChange={onRenamingProfileChange}
+              onRenamingProfileSubmit={onRenamingProfileSubmit}
+              onRenamingProfileCancel={onRenamingProfileCancel}
             />
           ))}
         </div>
@@ -142,9 +175,23 @@ export const TreeView: FC<TreeViewProps> = ({
   onRenameValueChange,
   onRenameSubmit,
   onRenameCancel,
+  onGroupRename,
+  renamingProfileId,
+  renamingProfileValue,
+  onRenamingProfileChange,
+  onRenamingProfileSubmit,
+  onRenamingProfileCancel,
 }) => {
   return (
-    <div className={className}>
+    <div className={className} tabIndex={0} onKeyDown={(e) => {
+      if (e.key === 'F2' && selectedId) {
+        const selectedItem = findItemById(items, selectedId);
+        if (selectedItem && (selectedItem.isGroup || (selectedItem.children && selectedItem.children.length > 0))) {
+          e.preventDefault();
+          onGroupRename?.(selectedId);
+        }
+      }
+    }}>
       {items.map((item) => (
         <TreeNode
           key={item.id}
@@ -164,8 +211,25 @@ export const TreeView: FC<TreeViewProps> = ({
           onRenameValueChange={onRenameValueChange}
           onRenameSubmit={onRenameSubmit}
           onRenameCancel={onRenameCancel}
+          onGroupRename={onGroupRename}
+          renamingProfileId={renamingProfileId}
+          renamingProfileValue={renamingProfileValue}
+          onRenamingProfileChange={onRenamingProfileChange}
+          onRenamingProfileSubmit={onRenamingProfileSubmit}
+          onRenamingProfileCancel={onRenamingProfileCancel}
         />
       ))}
     </div>
   );
 };
+
+function findItemById(items: TreeItem[], id: string): TreeItem | null {
+  for (const item of items) {
+    if (item.id === id) return item;
+    if (item.children) {
+      const found = findItemById(item.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}

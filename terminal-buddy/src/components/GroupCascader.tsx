@@ -29,11 +29,14 @@ export const GroupCascader: React.FC<GroupCascaderProps> = ({ value, onChange, p
     map.set('', []);
     for (const path of groupPaths) {
       const segments = path.split('/');
-      const parentPath = segments.length > 1 ? segments.slice(0, -1).join('/') : '';
-      if (!map.has(parentPath)) map.set(parentPath, []);
-      const names = map.get(parentPath)!;
-      const name = segments[segments.length - 1];
-      if (!names.includes(name)) names.push(name);
+      // 添加所有中间路径，确保父级也出现在选择器中
+      for (let i = 1; i <= segments.length; i++) {
+        const partialPath = segments.slice(0, i - 1).join('/');
+        const name = segments[i - 1];
+        if (!map.has(partialPath)) map.set(partialPath, []);
+        const names = map.get(partialPath)!;
+        if (!names.includes(name)) names.push(name);
+      }
     }
     for (const names of map.values()) {
       names.sort((a, b) => a.localeCompare(b, 'zh'));

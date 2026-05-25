@@ -41,6 +41,22 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [submenuExpandedGroups, setSubmenuExpandedGroups] = useState<Set<string>>(new Set());
   const [, setSettingsTick] = useState(0);
+
+  // F2 快速重命名标签
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'F2' && activeSessionId) {
+        const session = sessions.find(s => s.id === activeSessionId);
+        if (session && session.sessionType !== 'editor') {
+          setRenameValue(session.profileName);
+          setRenamingSessionId(activeSessionId);
+          setTimeout(() => renameInputRef.current?.select(), 0);
+        }
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [activeSessionId, sessions]);
   useEffect(() => {
     const handler = () => setSettingsTick(t => t + 1);
     window.addEventListener('app-settings-changed', handler);

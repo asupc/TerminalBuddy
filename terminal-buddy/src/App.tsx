@@ -58,7 +58,7 @@ function App() {
       initPersistedTemplates();
       loadProfiles();
 
-      if (settings.restoreTabsOnStartup && !restoredRef.current) {
+      if (!import.meta.env.DEV && settings.restoreTabsOnStartup && !restoredRef.current) {
         restoredRef.current = true;
         restoreTabs();
       }
@@ -240,6 +240,7 @@ function App() {
   }, [addSession]);
 
   const handleEditProfile = useCallback((profile: Profile) => {
+    setDefaultGroupForNewProfile(undefined);
     setEditingProfile(profile);
     setShowEditDialog(true);
   }, []);

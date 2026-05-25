@@ -243,21 +243,20 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
         <form onSubmit={handleSubmit(onSubmit)} className="dialog-content">
           <div className="form-row">
             <div className="form-group">
-              <label>名称</label>
-              <input
-                {...register('name', { required: '请输入连接名称' })}
-                placeholder="连接名称"
-              />
-              {errors.name && <span className="error">{errors.name.message}</span>}
-            </div>
-
-            <div className="form-group">
               <label>分组</label>
               <GroupCascader
                 value={watch('group')}
                 onChange={(val) => setValue('group', val)}
                 profiles={profiles}
               />
+            </div>
+            <div className="form-group">
+              <label>名称</label>
+              <input
+                {...register('name', { required: '请输入连接名称' })}
+                placeholder="连接名称"
+              />
+              {errors.name && <span className="error">{errors.name.message}</span>}
             </div>
           </div>
 
