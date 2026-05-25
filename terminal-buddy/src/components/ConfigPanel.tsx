@@ -247,18 +247,32 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
     };
   }, [isResizing, handleResizeMouseMove, handleResizeMouseUp]);
 
+  // 跟踪上次点击区域
+  useEffect(() => {
+    const panel = containerRef.current;
+    if (!panel) return;
+    const handler = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      useAppStore.getState().setLastClickRegion('config');
+    };
+    panel.addEventListener('mousedown', handler);
+    return () => panel.removeEventListener('mousedown', handler);
+  }, []);
+
   // F2 快速重命名分组/连接
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'F2' && selectedProfileId) {
-        const item = findTreeItemById(treeItems, selectedProfileId);
-        if (item?.isGroup || (item?.children && item.children.length > 0)) {
-          handleStartRename(selectedProfileId);
-        } else if (item?.data) {
-          const profile = item.data as Profile;
-          setRenamingProfileId(profile.id);
-          setRenamingProfileName(profile.name);
-        }
+      if (e.key !== 'F2') return;
+      const region = useAppStore.getState().lastClickRegion;
+      if (region && region !== 'config') return;
+      if (!selectedProfileId) return;
+      const item = findTreeItemById(treeItems, selectedProfileId);
+      if (item?.isGroup || (item?.children && item.children.length > 0)) {
+        handleStartRename(selectedProfileId);
+      } else if (item?.data) {
+        const profile = item.data as Profile;
+        setRenamingProfileId(profile.id);
+        setRenamingProfileName(profile.name);
       }
     };
     document.addEventListener('keydown', handler);

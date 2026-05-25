@@ -28,6 +28,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const highlightedIndexRef = useRef(-1);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
@@ -45,18 +46,33 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   // F2 快速重命名标签
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'F2' && activeSessionId) {
-        const session = sessions.find(s => s.id === activeSessionId);
-        if (session && session.sessionType !== 'editor') {
-          setRenameValue(session.profileName);
-          setRenamingSessionId(activeSessionId);
-          setTimeout(() => renameInputRef.current?.select(), 0);
-        }
+      if (e.key !== 'F2') return;
+      const region = useAppStore.getState().lastClickRegion;
+      if (region && region !== 'tab') return;
+      if (!activeSessionId) return;
+      const session = sessions.find(s => s.id === activeSessionId);
+      if (session && session.sessionType !== 'editor') {
+        setRenameValue(session.profileName);
+        setRenamingSessionId(activeSessionId);
+        setTimeout(() => renameInputRef.current?.select(), 0);
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [activeSessionId, sessions]);
+
+  // 跟踪上次点击区域
+  useEffect(() => {
+    const sidebar = containerRef.current;
+    if (!sidebar) return;
+    const handler = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      useAppStore.getState().setLastClickRegion('tab');
+    };
+    sidebar.addEventListener('mousedown', handler);
+    return () => sidebar.removeEventListener('mousedown', handler);
+  }, []);
+
   useEffect(() => {
     const handler = () => setSettingsTick(t => t + 1);
     window.addEventListener('app-settings-changed', handler);
@@ -452,7 +468,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   };
 
   return (
-    <div className="tab-sidebar" style={{ width }}>
+    <div className="tab-sidebar" style={{ width }} ref={containerRef}>
       <div className="panel-titlebar">
         <span className="panel-title">标签导航</span>
         <span className="panel-title-count">{sessions.length}</span>

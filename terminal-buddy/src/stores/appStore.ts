@@ -166,6 +166,10 @@ interface AppState {
   extraParamPresets: ExtraParamPreset[];
   addExtraParamPreset: (name: string, params: string) => void;
   removeExtraParamPreset: (id: string) => void;
+
+  // Last click region for F2 routing
+  lastClickRegion: 'config' | 'tab' | null;
+  setLastClickRegion: (region: 'config' | 'tab' | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -389,6 +393,8 @@ export const useAppStore = create<AppState>((set) => ({
     writeClientData('extra_param_presets', JSON.stringify(next)).catch(() => {});
     return { extraParamPresets: next };
   }),
+  lastClickRegion: null,
+  setLastClickRegion: (region) => set({ lastClickRegion: region }),
 }));
 
 // Listen for app-settings-changed events and increment version to trigger re-renders
