@@ -6,8 +6,8 @@ A modern desktop terminal emulator for Windows, built with Tauri 2 + React 18 + 
 ## Features
 
 - **Multi-terminal Support** — PowerShell, CMD, SSH, Docker, Kubernetes
-- **Profile Management** — Create and organize terminal profiles with custom startup paths, commands, environment variables, and profile-specific colors
-- **Tabbed Interface** — Vertical sidebar or horizontal tab bar, grouped tabs with color labels, drag-and-drop reordering
+- **Profile Management** — Create and organize terminal profiles with custom startup paths, commands, environment variables, profile-specific colors, and hierarchical grouping
+- **Tabbed Interface** — Vertical sidebar or horizontal tab bar, grouped tabs with color labels, drag-and-drop reordering, recursive group collapse
 - **File Tree Browser** — Built-in file explorer with bookmarks, exclusion patterns (e.g. `node_modules`, `.git`), and drag-and-drop to terminal
 - **Theme System** — 8 preset themes + custom 16-color ANSI theme editor, dark/light/system mode
 - **Autocomplete** — Smart command suggestions from templates and history with fuzzy matching
@@ -19,7 +19,7 @@ A modern desktop terminal emulator for Windows, built with Tauri 2 + React 18 + 
 - **Web Links** — Ctrl+click to open URLs in browser
 - **Workspace Management** — Save and restore terminal layouts as workspaces
 - **System Tray** — Close to tray, single instance mode
-- **AI Usage Monitoring** — Track API usage for Zhipu GLM and Baidu Qianfan
+- **AI Usage Monitoring** — Track API usage for Zhipu GLM, Baidu Qianfan, and Deepseek
 - **Web Remote Access** — Built-in HTTP/WebSocket server for browser-based remote terminal access with JWT authentication, mobile-friendly input bar
 - **Text Editor** — Monaco Editor integration, double-click files in File Tree to open editor tabs, syntax highlighting, find/replace, format document
 - **Data Portability** — All data stored as JSON files, with full import/export support
@@ -77,9 +77,10 @@ terminal-buddy/
 │   ├── App.tsx                   # Root component
 │   ├── components/
 │   │   ├── TitleBar.tsx          # Custom frameless title bar
-│   │   ├── ConfigPanel.tsx       # Profile list panel
-│   │   ├── ConfigEditDialog.tsx  # Profile create/edit modal
-│   │   ├── FileTree.tsx          # File browser with bookmarks
+│   │   ├── ConfigPanel.tsx       # Profile list panel with hierarchical groups
+│   │   ├── ConfigEditDialog.tsx  # Profile create/edit modal with GroupCascader
+│   │   ├── GroupCascader.tsx     # Multi-level group cascade selector
+│   │   ├── FileTree.tsx          # File browser with bookmarks, inline rename
 │   │   ├── TerminalInstance.tsx  # xterm.js terminal with addons
 │   │   ├── TerminalPanel.tsx     # Terminal routing & split layout
 │   │   ├── TabSidebar.tsx        # Vertical tab navigation
@@ -145,7 +146,7 @@ All user data is stored as JSON files under `%APPDATA%/TerminalBuddy/`:
 | Themes | 8 presets + custom 16-color editor with live preview |
 | History | Search, edit commands and notes, clear |
 | Exclusions | File tree exclusion patterns (exact name, `*.ext`, `**/*.ext`) |
-| AI Usage | Zhipu GLM API key, Baidu Qianfan cookie |
+| AI Usage | Zhipu GLM API key, Baidu Qianfan cookie, Deepseek API key |
 | Web Management | Enable/disable Web API, port, credentials, server control |
 
 ## License
