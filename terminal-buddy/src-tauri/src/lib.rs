@@ -8,6 +8,7 @@ use commands::TerminalService;
 use models::CloseBehavior;
 use services::{SettingsService, WebServiceState};
 use tauri::Manager;
+use tauri::Emitter;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 
@@ -56,7 +57,7 @@ pub fn run() {
                             }
                         }
                         "quit" => {
-                            app.exit(0);
+                            let _ = app.emit("tray-exit-requested", ());
                         }
                         _ => {}
                     }

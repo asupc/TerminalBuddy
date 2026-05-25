@@ -97,9 +97,21 @@ function App() {
       useAppStore.getState().removeSession(event.payload);
     });
 
+    // Listen for tray exit request to show confirmation dialog
+    const unlistenTrayExit = listen('tray-exit-requested', () => {
+      if (closeConfirmedRef.current) return;
+      const { sessions } = useAppStore.getState();
+      if (sessions.length > 0) {
+        setCloseConfirm({ sessionCount: sessions.length });
+      } else {
+        windowExitApp();
+      }
+    });
+
     return () => {
       unlistenCreated.then((f) => f());
       unlistenClosed.then((f) => f());
+      unlistenTrayExit.then((f) => f());
     };
   }, []);
 
