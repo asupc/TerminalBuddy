@@ -30,9 +30,6 @@ const TierRow: FC<TierRowProps> = ({ tier }) => (
   </div>
 );
 
-const fmtDate = (d: Date) =>
-  `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
-
 const DayBlock: FC<{
   title: string; accent: string;
   data: DeepseekDayUsage;
