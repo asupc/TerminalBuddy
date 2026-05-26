@@ -1113,14 +1113,14 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
               {/* DeepSeek API Key */}
               <div className="settings-section">
-                <label className="settings-label">DeepSeek API Key</label>
+                <label className="settings-label">DeepSeek 认证 Token</label>
                 <div className="data-path-row">
                   <input
                     className="data-path-input"
                     type={deepseekApiKeyVisible ? 'text' : 'password'}
                     value={settings.deepseekApiKey}
                     onChange={(e) => updateSetting('deepseekApiKey', e.target.value)}
-                    placeholder="请输入 DeepSeek API Key"
+                    placeholder="请输入 DeepSeek 认证Token"
                     style={{ flex: 1 }}
                   />
                   <button
@@ -1128,7 +1128,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     onClick={() => setDeepseekApiKeyVisible(!deepseekApiKeyVisible)}
                   >{deepseekApiKeyVisible ? '隐藏' : '显示'}</button>
                 </div>
-                <p className="settings-desc">填入 DeepSeek 的 API Key 用于查询 AI 用量。可在 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com/usage</a> 获取 Authorization Bearer 值</p>
+                <p className="settings-desc">填入 DeepSeek 的 认证Token 用于查询 AI 用量。可在 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com/usage</a> 登录后打开浏览器开发者工具，查看网络请求获取 Authorization Bearer 值</p>
               </div>
 
               {/* MiniMax API Key */}
@@ -1141,8 +1141,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     value={settings.minimaxApiKey}
                     onChange={(e) => updateSetting('minimaxApiKey', e.target.value)}
                     placeholder="请输入 MiniMax API Key"
-                    style={{ flex: 1 }}
-                  />
+                    style={{ flex: 1 }} />
                   <button
                     className="btn-secondary"
                     onClick={() => setMinimaxApiKeyVisible(!minimaxApiKeyVisible)}

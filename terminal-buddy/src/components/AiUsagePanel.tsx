@@ -3,7 +3,8 @@ import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, fetchMinimaxUsa
 import { getAppSettings } from '../utils/settings';
 import './AiUsagePanel.css';
 
-const cache: Record<string, any> = { zhipu: null, qianfan: null, deepseek: null, minimax: null };
+const cache: Record<string, { data: any; timestamp: number }> = {};
+const CACHE_TTL = 60_000; // 1 minute
 
 interface TierRowProps {
   tier: { name: string; utilization: number; resetsAt: string | null };
@@ -126,14 +127,14 @@ interface ProviderBlockProps {
 
 const ProviderBlock: FC<ProviderBlockProps> = ({ cacheKey, label, fetchFn, isDeepseek }) => {
   const cached = cache[cacheKey];
-  const [data, setData] = useState<any>(cached);
-  const [refreshing, setRefreshing] = useState(true);
+  const [data, setData] = useState<any>(cached?.data);
+  const [refreshing, setRefreshing] = useState(!cached || Date.now() - cached.timestamp > CACHE_TTL);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     const start = Date.now();
     const result = await fetchFn();
-    cache[cacheKey] = result;
+    cache[cacheKey] = { data: result, timestamp: Date.now() };
     setData(result);
     const elapsed = Date.now() - start;
     if (elapsed < 600) {
@@ -144,6 +145,11 @@ const ProviderBlock: FC<ProviderBlockProps> = ({ cacheKey, label, fetchFn, isDee
   }, [cacheKey, fetchFn]);
 
   useEffect(() => {
+    if (cached && Date.now() - cached.timestamp <= CACHE_TTL) {
+      setData(cached.data);
+      setRefreshing(false);
+      return;
+    }
     refresh();
   }, [refresh]);
 

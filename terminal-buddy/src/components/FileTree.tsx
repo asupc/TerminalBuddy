@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
-import { listDirectory, openPath, openInExplorer, deletePath, renamePath, writeToTerminal, getFileSize, type FileNode } from '../services/tauri';
+import { listDirectory, openPath, openInExplorer, startBlankTerminal, deletePath, renamePath, writeToTerminal, getFileSize, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
 import './FileTree.css';
@@ -241,6 +241,7 @@ export const FileTree: FC = () => {
   const [bookmarkCtxMenu, setBookmarkCtxMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   const [renamingBookmark, setRenamingBookmark] = useState<string | null>(null);
   const [renamingBookmarkValue, setRenamingBookmarkValue] = useState('');
+  const [bookmarkHeight, setBookmarkHeight] = useState(60);
   const renameBookmarkInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -269,6 +270,23 @@ export const FileTree: FC = () => {
       setSessionDirectory(activeSessionId, path);
     }
   }, [setCurrentDirectory, setSessionDirectory, activeSessionId]);
+
+  const openTerminalInDir = useCallback(async (dir: string) => {
+    const terminalId = await startBlankTerminal('powershell');
+    useAppStore.getState().addSession({
+      id: terminalId,
+      profileId: '',
+      profileName: 'PowerShell',
+      terminalType: 'powershell',
+      colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
+      tabColor: null,
+      groupId: 'default',
+    });
+    setSessionDirectory(terminalId, dir);
+    setTimeout(() => {
+      writeToTerminal(terminalId, `cd "${dir}"\r`).catch(console.error);
+    }, 500);
+  }, [setSessionDirectory]);
 
   // Load directory when currentDirectory changes
   useEffect(() => {
@@ -403,18 +421,6 @@ export const FileTree: FC = () => {
     setCtxMenu(null);
   }, [ctxMenu]);
 
-  const handleCdToDir = useCallback(async () => {
-    if (!ctxMenu?.path) return;
-    const { activeSessionId } = useAppStore.getState();
-    if (activeSessionId) {
-      try {
-        await writeToTerminal(activeSessionId, `cd "${ctxMenu.path}"\r`);
-      } catch (err) { console.error(err); }
-    }
-    navigateTo(ctxMenu.path);
-    setCtxMenu(null);
-  }, [ctxMenu, navigateTo]);
-
   const handleDeleteItem = useCallback(() => {
     setConfirmDelete(ctxMenu?.path || null);
     setCtxMenu(null);
@@ -523,7 +529,26 @@ export const FileTree: FC = () => {
         ))}
       </div>
       {bookmarks.length > 0 && (
-        <div className="bookmark-bar">
+        <div className="bookmark-section" style={{ height: bookmarkHeight }}>
+          <div
+            className="bookmark-resize-handle"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startY = e.clientY;
+              const startH = bookmarkHeight;
+              const onMove = (ev: MouseEvent) => {
+                const newH = Math.max(32, Math.min(300, startH - (ev.clientY - startY)));
+                setBookmarkHeight(newH);
+              };
+              const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+              };
+              document.addEventListener('mousemove', onMove);
+              document.addEventListener('mouseup', onUp);
+            }}
+          />
+          <div className="bookmark-bar">
           {bookmarks.map((bm) => (
             <div
               key={bm.path}
@@ -574,6 +599,7 @@ export const FileTree: FC = () => {
               </button>
             </div>
           ))}
+          </div>
         </div>
       )}
       <div
@@ -593,6 +619,25 @@ export const FileTree: FC = () => {
           <div className="context-menu-item" onClick={() => { setCtxMenu(null); handleGoUp(); }}>
             上一级目录
           </div>
+          {!ctxMenu.path && currentDirectory && (
+            <>
+              <div className="context-menu-separator" />
+              <div className="context-menu-item" onClick={async () => {
+                const dir = currentDirectory;
+                setCtxMenu(null);
+                try { await openTerminalInDir(dir); } catch (err) { console.error(err); }
+              }}>
+                在当前目录打开命令窗口
+              </div>
+              <div className="context-menu-item" onClick={() => {
+                const name = currentDirectory.split('\\').filter(Boolean).pop() || currentDirectory;
+                addBookmark(name, currentDirectory);
+                setCtxMenu(null);
+              }}>
+                添加到书签
+              </div>
+            </>
+          )}
           {ctxMenu.path && (
             <>
               <div className="context-menu-separator" />
@@ -600,8 +645,12 @@ export const FileTree: FC = () => {
                 在文件资源管理器中显示
               </div>
               {ctxMenu.isDir && (
-                <div className="context-menu-item" onClick={handleCdToDir}>
-                  cd 到当前目录
+                <div className="context-menu-item" onClick={async () => {
+                  const dir = ctxMenu.path!;
+                  setCtxMenu(null);
+                  try { await openTerminalInDir(dir); } catch (err) { console.error(err); }
+                }}>
+                  在当前目录打开命令窗口
                 </div>
               )}
               {ctxMenu.isDir && (

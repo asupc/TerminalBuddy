@@ -45,6 +45,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [internalDragOver, setInternalDragOver] = useState(false);
+  const [scrollInfo, setScrollInfo] = useState({ top: 0, height: 0, visible: false });
+  const scrollThumbRef = useRef<HTMLDivElement>(null);
+  const scrollViewportRef = useRef<HTMLElement | null>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const updateAutocomplete = useCallback((val: typeof autocomplete) => {
     autocompleteRef.current = val;
@@ -298,6 +301,30 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
       const xtermViewport = terminal.element!.querySelector('.xterm-viewport') as HTMLElement;
       if (xtermViewport) {
+        scrollViewportRef.current = xtermViewport;
+        const syncScrollbar = () => {
+          const el = xtermViewport;
+          const scrollable = el.scrollHeight > el.clientHeight;
+          if (!scrollable) {
+            setScrollInfo({ top: 0, height: 0, visible: false });
+            return;
+          }
+          const ratio = el.clientHeight / el.scrollHeight;
+          const thumbH = Math.max(20, el.clientHeight * ratio);
+          const maxTop = el.clientHeight - thumbH;
+          const scrollTop = el.scrollTop;
+          const maxScrollTop = el.scrollHeight - el.clientHeight;
+          const top = maxScrollTop > 0 ? (scrollTop / maxScrollTop) * maxTop : 0;
+          setScrollInfo({ top, height: thumbH, visible: true });
+        };
+        xtermViewport.addEventListener('scroll', syncScrollbar, { passive: true });
+        syncScrollbar();
+        const ro = new ResizeObserver(syncScrollbar);
+        ro.observe(xtermViewport);
+        cleanupFns.push(() => {
+          xtermViewport.removeEventListener('scroll', syncScrollbar);
+          ro.disconnect();
+        });
         xtermViewport.addEventListener('scroll', preventHScroll, { passive: true });
         cleanupFns.push(() => xtermViewport.removeEventListener('scroll', preventHScroll));
       }
@@ -876,6 +903,38 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               <span className="autocomplete-desc">{cmd.desc}</span>
             </div>
           ))}
+        </div>
+      )}
+      {scrollInfo.visible && (
+        <div className="terminal-scroll-wrapper">
+          <div className="terminal-scroll-track">
+            <div
+              ref={scrollThumbRef}
+              className="terminal-scroll-thumb"
+              style={{ top: scrollInfo.top, height: scrollInfo.height }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const vp = scrollViewportRef.current;
+                if (!vp) return;
+                const startY = e.clientY;
+                const startScrollTop = vp.scrollTop;
+                const maxScrollTop = vp.scrollHeight - vp.clientHeight;
+                const maxThumbTop = vp.clientHeight - scrollInfo.height;
+                const onMove = (ev: MouseEvent) => {
+                  if (maxThumbTop <= 0 || maxScrollTop <= 0) return;
+                  const delta = ev.clientY - startY;
+                  vp.scrollTop = startScrollTop + (delta / maxThumbTop) * maxScrollTop;
+                };
+                const onUp = () => {
+                  document.removeEventListener('mousemove', onMove);
+                  document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+              }}
+            />
+          </div>
         </div>
       )}
     </div>
