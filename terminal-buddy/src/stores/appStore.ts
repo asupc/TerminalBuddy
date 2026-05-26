@@ -73,6 +73,18 @@ export async function initExtraParamPresets() {
   } catch {}
 }
 
+export async function initBookmarkHeight() {
+  try {
+    const raw = await readClientData('bookmark_height');
+    if (raw) {
+      const height = JSON.parse(raw);
+      if (typeof height === 'number' && height >= 32 && height <= 300) {
+        useAppStore.setState({ bookmarkHeight: height });
+      }
+    }
+  } catch {}
+}
+
 interface AppState {
   // Profiles
   profiles: Profile[];
@@ -109,6 +121,10 @@ interface AppState {
   addBookmark: (name: string, path: string) => void;
   removeBookmark: (path: string) => void;
   renameBookmark: (path: string, newName: string) => void;
+
+  // Bookmark section height
+  bookmarkHeight: number;
+  setBookmarkHeight: (height: number) => void;
 
   // Custom themes
   customThemes: CustomTheme[];
@@ -223,6 +239,13 @@ export const useAppStore = create<AppState>((set) => ({
     writeClientData('bookmarks', JSON.stringify(next)).catch(() => {});
     return { bookmarks: next };
   }),
+
+  // Bookmark section height
+  bookmarkHeight: 60,
+  setBookmarkHeight: (height) => {
+    writeClientData('bookmark_height', JSON.stringify(height)).catch(() => {});
+    set({ bookmarkHeight: height });
+  },
 
   // Custom themes
   customThemes: [],

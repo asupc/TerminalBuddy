@@ -91,7 +91,7 @@ impl TerminalService {
         }
     }
 
-    pub fn create_terminal(&self, profile_id: &str, extra_startup_params: Option<&str>, app: AppHandle) -> Result<String, String> {
+    pub fn create_terminal(&self, profile_id: &str, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, app: AppHandle) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create] start, id={}, profile_id={}", terminal_id, profile_id));
 
@@ -124,9 +124,12 @@ impl TerminalService {
 
         let pty_system = native_pty_system();
 
+        let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
+        let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
+
         let pty_pair = pty_system.openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows: init_rows,
+            cols: init_cols,
             pixel_width: 0,
             pixel_height: 0,
         }).map_err(|e| {
@@ -178,8 +181,8 @@ impl TerminalService {
             master: pty_pair.master,
             writer: Some(writer),
             output_buffer: output_buffer.clone(),
-            current_rows: 24,
-            current_cols: 80,
+            current_rows: init_rows,
+            current_cols: init_cols,
         };
 
         {
@@ -374,7 +377,7 @@ impl TerminalService {
         }
     }
 
-    pub fn create_blank_terminal(&self, terminal_type: &str, app: AppHandle) -> Result<String, String> {
+    pub fn create_blank_terminal(&self, terminal_type: &str, initial_rows: u16, initial_cols: u16, app: AppHandle) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create-blank] start, id={}, type={}", terminal_id, terminal_type));
 
@@ -387,9 +390,12 @@ impl TerminalService {
         };
         let pty_system = native_pty_system();
 
+        let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
+        let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
+
         let pty_pair = pty_system.openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows: init_rows,
+            cols: init_cols,
             pixel_width: 0,
             pixel_height: 0,
         }).map_err(|e| {
@@ -429,8 +435,8 @@ impl TerminalService {
             master: pty_pair.master,
             writer: Some(writer),
             output_buffer: output_buffer.clone(),
-            current_rows: 24,
-            current_cols: 80,
+            current_rows: init_rows,
+            current_cols: init_cols,
         };
 
         {
@@ -469,10 +475,12 @@ impl TerminalService {
 pub fn start_terminal(
     profile_id: String,
     extra_startup_params: Option<String>,
+    initial_rows: u16,
+    initial_cols: u16,
     app: AppHandle,
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.create_terminal(&profile_id, extra_startup_params.as_deref(), app)
+    terminal_service.create_terminal(&profile_id, extra_startup_params.as_deref(), initial_rows, initial_cols, app)
 }
 
 #[command]
@@ -522,8 +530,10 @@ pub fn peek_terminal_output(
 #[command]
 pub fn start_blank_terminal(
     terminal_type: String,
+    initial_rows: u16,
+    initial_cols: u16,
     app: AppHandle,
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.create_blank_terminal(&terminal_type, app)
+    terminal_service.create_blank_terminal(&terminal_type, initial_rows, initial_cols, app)
 }

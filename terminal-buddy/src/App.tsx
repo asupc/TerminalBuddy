@@ -9,10 +9,23 @@ import { TabSidebar } from './components/TabSidebar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { initTheme, applyTheme, getAppSettings, initAppSettings } from './utils/settings';
-import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets } from './stores/appStore';
+import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight } from './stores/appStore';
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize } from './services/tauri';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
+
+/** Estimate terminal rows/cols from the .terminal-content container size. */
+function estimateTerminalSize(): { rows: number; cols: number } {
+  const content = document.querySelector('.terminal-content');
+  if (!content) return { rows: 0, cols: 0 };
+  const w = content.clientWidth;
+  const h = content.clientHeight;
+  const availW = w - 20; // .xterm padding: 10px each side
+  const availH = h - 20;
+  const cols = Math.max(2, Math.floor(availW / 8.4));
+  const rows = Math.max(1, Math.floor(availH / 17));
+  return { rows, cols };
+}
 import type { Profile, TerminalSession } from './types';
 import { PRESET_THEMES } from './types';
 
@@ -44,6 +57,7 @@ function App() {
       applyTheme(theme);
       await initAppSettings();
       await initBookmarks();
+      await initBookmarkHeight();
       await initExtraParamPresets();
       await initCmdOverrides();
       await initCustomCommands();
@@ -176,9 +190,10 @@ function App() {
               // File no longer exists, skip this tab
             }
           } else {
+            const { rows: estRows, cols: estCols } = estimateTerminalSize();
             const terminalId = tab.profileId
-              ? await startTerminal(tab.profileId)
-              : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s');
+              ? await startTerminal(tab.profileId, undefined, estRows, estCols)
+              : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols);
             store.addSession({
               id: terminalId,
               profileId: tab.profileId,
@@ -218,7 +233,8 @@ function App() {
 
   const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string) => {
     try {
-      const terminalId = await startTerminal(profile.id, extraParams);
+      const { rows, cols } = estimateTerminalSize();
+      const terminalId = await startTerminal(profile.id, extraParams, rows, cols);
       await updateProfileLastUsed(profile.id);
       const theme = PRESET_THEMES.find(t => t.id === profile.colorTheme) || PRESET_THEMES[0];
       addSession({
@@ -273,7 +289,8 @@ function App() {
   const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'cmd') => {
     try {
       const name = terminalType === 'powershell' ? 'PowerShell' : 'CMD';
-      const terminalId = await startBlankTerminal(terminalType);
+      const { rows, cols } = estimateTerminalSize();
+      const terminalId = await startBlankTerminal(terminalType, rows, cols);
       addSession({
         id: terminalId,
         profileId: '',

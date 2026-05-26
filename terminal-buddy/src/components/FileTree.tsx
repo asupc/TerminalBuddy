@@ -241,7 +241,8 @@ export const FileTree: FC = () => {
   const [bookmarkCtxMenu, setBookmarkCtxMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   const [renamingBookmark, setRenamingBookmark] = useState<string | null>(null);
   const [renamingBookmarkValue, setRenamingBookmarkValue] = useState('');
-  const [bookmarkHeight, setBookmarkHeight] = useState(60);
+  const bookmarkHeight = useAppStore(s => s.bookmarkHeight);
+  const setBookmarkHeightStore = useAppStore(s => s.setBookmarkHeight);
   const renameBookmarkInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -272,7 +273,13 @@ export const FileTree: FC = () => {
   }, [setCurrentDirectory, setSessionDirectory, activeSessionId]);
 
   const openTerminalInDir = useCallback(async (dir: string) => {
-    const terminalId = await startBlankTerminal('powershell');
+    const content = document.querySelector('.terminal-content');
+    let estRows = 0, estCols = 0;
+    if (content) {
+      estCols = Math.max(2, Math.floor((content.clientWidth - 20) / 8.4));
+      estRows = Math.max(1, Math.floor((content.clientHeight - 20) / 17));
+    }
+    const terminalId = await startBlankTerminal('powershell', estRows, estCols);
     useAppStore.getState().addSession({
       id: terminalId,
       profileId: '',
@@ -421,6 +428,12 @@ export const FileTree: FC = () => {
     setCtxMenu(null);
   }, [ctxMenu]);
 
+  const handleShowCurrentDirInExplorer = useCallback(async () => {
+    if (!currentDirectory) return;
+    try { await openInExplorer(currentDirectory); } catch (err) { console.error(err); }
+    setCtxMenu(null);
+  }, [currentDirectory]);
+
   const handleDeleteItem = useCallback(() => {
     setConfirmDelete(ctxMenu?.path || null);
     setCtxMenu(null);
@@ -538,7 +551,7 @@ export const FileTree: FC = () => {
               const startH = bookmarkHeight;
               const onMove = (ev: MouseEvent) => {
                 const newH = Math.max(32, Math.min(300, startH - (ev.clientY - startY)));
-                setBookmarkHeight(newH);
+                setBookmarkHeightStore(newH);
               };
               const onUp = () => {
                 document.removeEventListener('mousemove', onMove);
@@ -635,6 +648,9 @@ export const FileTree: FC = () => {
                 setCtxMenu(null);
               }}>
                 添加到书签
+              </div>
+              <div className="context-menu-item" onClick={handleShowCurrentDirInExplorer}>
+                在文件资源管理器中显示
               </div>
             </>
           )}

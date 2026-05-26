@@ -234,6 +234,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       terminal.open(terminalRef.current!);
 
       fitAddon.fit();
+      // Immediately sync PTY size — the PTY was created with 80x24,
+      // but the container may be much larger.  Without this, TUI programs
+      // (Claude Code, vim, etc.) that start before ResizeObserver fires
+      // will detect the wrong terminal width.
+      const { rows: initRows, cols: initCols } = terminal;
+      if (initCols > 0 && initRows > 0) {
+        resizeTerminal(terminalId, initRows, initCols).catch(() => {});
+      }
 
       xtermRef.current = terminal;
       // Flush buffered output that arrived before xterm was ready
@@ -613,25 +621,76 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         document.removeEventListener('keyup', handleKeyUpGlobal);
       });
 
-      // VS Code pattern: one debounced ResizeObserver covers all layout
-      // changes. Window resize, sidebar drag, and panel collapse all
-      // propagate through flex layout to the container, so observing it
-      // is sufficient — no separate window.resize listener needed.
-      // rAF gate batches rapid resize events into a single fit per frame.
-      let resizeScheduled = false;
+      // Throttle + trailing resize to prevent ConPTY reflow corruption.
+      // Leading edge: immediate resize on first event.
+      // During drag: at most one resize per 150ms (~7/s) — manageable for ConPTY.
+      // Trailing edge: guaranteed final resize 150ms after last event.
+      // lastCols/lastRows are seeded from the initial fit() above so the first
+      // ResizeObserver callback can skip a redundant PTY resize.
+      let lastResizeTime = Date.now();
+      let lastCols = initCols;
+      let lastRows = initRows;
+      let trailingTimer: ReturnType<typeof setTimeout> | null = null;
+      const RESIZE_THROTTLE_MS = 150;
+
+      // Custom fit that doesn't subtract scrollbar width — the native
+      // scrollbar is hidden via CSS (overflow-y: hidden), so FitAddon's
+      // default subtraction of ~15px wastes ~2 terminal columns.
+      const doFit = () => {
+        if (!terminal.element || !terminal.element.parentElement) return;
+        const core = (terminal as any)._core;
+        const dims = core._renderService.dimensions;
+        if (!dims?.css?.cell?.width || !dims?.css?.cell?.height) return;
+        const parentStyle = window.getComputedStyle(terminal.element.parentElement);
+        const parentW = Math.max(0, parseInt(parentStyle.getPropertyValue('width')));
+        const parentH = parseInt(parentStyle.getPropertyValue('height'));
+        const elStyle = window.getComputedStyle(terminal.element);
+        const padH = parseInt(elStyle.getPropertyValue('padding-left'))
+                    + parseInt(elStyle.getPropertyValue('padding-right'));
+        const padV = parseInt(elStyle.getPropertyValue('padding-top'))
+                    + parseInt(elStyle.getPropertyValue('padding-bottom'));
+        const cols = Math.max(2, Math.floor((parentW - padH) / dims.css.cell.width));
+        const rows = Math.max(1, Math.floor((parentH - padV) / dims.css.cell.height));
+        if (terminal.rows !== rows || terminal.cols !== cols) {
+          core._renderService.clear();
+          terminal.resize(cols, rows);
+        }
+      };
+
+      const doResize = () => {
+        if (disposed) return;
+        try {
+          doFit();
+        } catch {
+          return;
+        }
+        const { rows, cols } = terminal;
+        if (cols <= 0 || rows <= 0) return;
+        if (cols === lastCols && rows === lastRows) return;
+        lastCols = cols;
+        lastRows = rows;
+        resizeTerminal(terminalId, rows, cols).catch(() => {});
+      };
+
       const resizeObserver = new ResizeObserver(() => {
-        if (resizeScheduled) return;
-        resizeScheduled = true;
-        requestAnimationFrame(() => {
-          resizeScheduled = false;
-          if (disposed) return;
-          fitAddon.fit();
-          const { rows, cols } = terminal;
-          resizeTerminal(terminalId, rows, cols).catch(() => {});
-        });
+        if (disposed) return;
+        const now = Date.now();
+        if (now - lastResizeTime >= RESIZE_THROTTLE_MS) {
+          lastResizeTime = now;
+          doResize();
+        }
+        if (trailingTimer) clearTimeout(trailingTimer);
+        trailingTimer = setTimeout(() => {
+          trailingTimer = null;
+          lastResizeTime = Date.now();
+          doResize();
+        }, RESIZE_THROTTLE_MS);
       });
       resizeObserver.observe(terminalRef.current!);
-      cleanupFns.push(() => resizeObserver.disconnect());
+      cleanupFns.push(() => {
+        resizeObserver.disconnect();
+        if (trailingTimer) clearTimeout(trailingTimer);
+      });
     };
 
     // Register Tauri event listener, then drain buffered backend output
@@ -680,11 +739,26 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     if (isActive && xtermRef.current) {
       xtermRef.current.focus();
       requestAnimationFrame(() => {
-        const fitAddon = fitAddonRef.current;
-        if (!fitAddon || !xtermRef.current) return;
-        fitAddon.fit();
-        const { rows, cols } = xtermRef.current;
-        resizeTerminal(terminalId, rows, cols).catch(() => {});
+        const terminal = xtermRef.current;
+        if (!terminal?.element?.parentElement) return;
+        const core = (terminal as any)._core;
+        const dims = core._renderService.dimensions;
+        if (!dims?.css?.cell?.width || !dims?.css?.cell?.height) return;
+        const parentStyle = window.getComputedStyle(terminal.element.parentElement);
+        const parentW = Math.max(0, parseInt(parentStyle.getPropertyValue('width')));
+        const parentH = parseInt(parentStyle.getPropertyValue('height'));
+        const elStyle = window.getComputedStyle(terminal.element);
+        const padH = parseInt(elStyle.getPropertyValue('padding-left'))
+                    + parseInt(elStyle.getPropertyValue('padding-right'));
+        const padV = parseInt(elStyle.getPropertyValue('padding-top'))
+                    + parseInt(elStyle.getPropertyValue('padding-bottom'));
+        const cols = Math.max(2, Math.floor((parentW - padH) / dims.css.cell.width));
+        const rows = Math.max(1, Math.floor((parentH - padV) / dims.css.cell.height));
+        if (terminal.rows !== rows || terminal.cols !== cols) {
+          core._renderService.clear();
+          terminal.resize(cols, rows);
+          resizeTerminal(terminalId, rows, cols).catch(() => {});
+        }
       });
     }
   }, [isActive, terminalId]);

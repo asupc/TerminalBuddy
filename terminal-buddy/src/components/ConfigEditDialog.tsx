@@ -51,7 +51,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [cmdSuggestions, setCmdSuggestions] = useState<{ name: string; command: string }[]>([]);
   const [cmdSelectedIndex, setCmdSelectedIndex] = useState(-1);
   const cmdSuggestionsRef = useRef<HTMLDivElement>(null);
-  const [dragEnabledIndex, setDragEnabledIndex] = useState<number | null>(null);
+  const dragStateRef = useRef<{ startIndex: number; startY: number } | null>(null);
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>(
     profile?.environmentVariables
       ? Object.entries(profile.environmentVariables).map(([key, value]) => ({ key, value }))
@@ -124,28 +124,39 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
     setCmdSelectedIndex(-1);
   };
 
-  const handleDragHandleMouseDown = (index: number) => {
-    setDragEnabledIndex(index);
-  };
-
-  const handleDragStart = (index: number) => {
-    if (dragEnabledIndex !== index) return;
-    setDragIndex(index);
-  };
-
-  const handleDragOver = (e: React.DragEvent, index: number) => {
+  const handleDragHandleMouseDown = (e: React.MouseEvent, index: number) => {
     e.preventDefault();
+    e.stopPropagation();
+    dragStateRef.current = { startIndex: index, startY: e.clientY };
+    setDragIndex(index);
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!dragStateRef.current) return;
+      const dy = ev.clientY - dragStateRef.current.startY;
+      if (Math.abs(dy) > 5) {
+        document.body.style.cursor = 'grabbing';
+      }
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      dragStateRef.current = null;
+      setDragIndex(null);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleMouseEnter = (index: number) => {
     if (dragIndex === null || dragIndex === index) return;
     const next = [...startupCommands];
     const [removed] = next.splice(dragIndex, 1);
     next.splice(index, 0, removed);
     setStartupCommands(next);
     setDragIndex(index);
-  };
-
-  const handleDragEnd = () => {
-    setDragIndex(null);
-    setDragEnabledIndex(null);
   };
 
   const onSubmit = async (data: FormData) => {
@@ -269,15 +280,12 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                 <div
                   key={index}
                   className={`cmd-item ${dragIndex === index ? 'dragging' : ''}`}
-                  draggable={dragEnabledIndex === index}
-                  onDragStart={() => handleDragStart(index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDragEnd={handleDragEnd}
+                  onMouseEnter={() => handleMouseEnter(index)}
                 >
                   <span
                     className="cmd-drag-handle"
                     title="拖拽排序"
-                    onMouseDown={() => handleDragHandleMouseDown(index)}
+                    onMouseDown={(e) => handleDragHandleMouseDown(e, index)}
                   >⠿</span>
                   <span className="cmd-num">{index + 1}.</span>
                   <div className="cmd-input-wrapper">

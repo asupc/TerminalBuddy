@@ -40,12 +40,12 @@ export async function importAllProfiles(path: string): Promise<Profile[]> {
 }
 
 // Terminal Commands
-export async function startTerminal(profileId: string, extraStartupParams?: string): Promise<string> {
-  return invoke('start_terminal', { profileId, extraStartupParams: extraStartupParams || null });
+export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number): Promise<string> {
+  return invoke('start_terminal', { profileId, extraStartupParams: extraStartupParams || null, initialRows: initialRows || 0, initialCols: initialCols || 0 });
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor'): Promise<string> {
-  return invoke('start_blank_terminal', { terminalType });
+export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor', initialRows?: number, initialCols?: number): Promise<string> {
+  return invoke('start_blank_terminal', { terminalType, initialRows: initialRows || 0, initialCols: initialCols || 0 });
 }
 
 export async function writeToTerminal(id: string, data: string): Promise<void> {

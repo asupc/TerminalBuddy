@@ -1,7 +1,7 @@
 .terminal-instance {
   width: 100%;
   height: 100%;
-  padding: 10px;
+  padding: 0;
   position: relative;
   overflow: hidden;
 }
@@ -14,6 +14,9 @@
 
 .terminal-instance .xterm {
   height: 100%;
+  width: 100%;
+  padding: 10px;
+  box-sizing: border-box;
   overflow: hidden !important;
   overscroll-behavior: none;
 }
