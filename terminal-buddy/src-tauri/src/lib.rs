@@ -3,10 +3,10 @@ pub mod models;
 pub mod services;
 pub mod web;
 
-use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, start_terminal, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, peek_terminal_output, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, get_app_settings, save_close_behavior, get_data_path, set_data_path, save_tab_sidebar_width, save_enable_tab_navigation, save_single_instance, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace, get_command_templates, save_command_templates, init_command_templates, export_all_data, import_all_data, get_windows_build_number, window_minimize, window_toggle_maximize, window_close, window_exit_app, fetch_qianfan_usage, fetch_deepseek_usage, fetch_minimax_usage, save_web_api_settings, get_web_api_status, restart_web_server, get_web_server_address, read_file_content, write_file_content, get_file_size, read_client_data, write_client_data};
+use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, connect_ssh_session, start_terminal, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, peek_terminal_output, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, get_app_settings, save_close_behavior, get_data_path, set_data_path, save_tab_sidebar_width, save_enable_tab_navigation, save_single_instance, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace, get_command_templates, save_command_templates, init_command_templates, export_all_data, import_all_data, get_windows_build_number, window_minimize, window_toggle_maximize, window_close, window_exit_app, fetch_qianfan_usage, fetch_deepseek_usage, fetch_minimax_usage, save_web_api_settings, get_web_api_status, restart_web_server, get_web_server_address, read_file_content, write_file_content, get_file_size, read_client_data, write_client_data, ensure_dir, get_ssh_temp_directory, remote_chmod, remote_copy, remote_create_dir, remote_create_file, remote_download, remote_list_dir, remote_move, remote_remove, remote_rename, remote_upload};
 use commands::TerminalService;
 use models::CloseBehavior;
-use services::{SettingsService, WebServiceState};
+use services::{SettingsService, SshSessionService, WebServiceState};
 use tauri::Manager;
 use tauri::Emitter;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -18,6 +18,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(TerminalService::new())
+        .manage(SshSessionService::new())
         .manage(WebServiceState::new());
 
     if settings.single_instance {
@@ -104,12 +105,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_all_profiles,
             get_profile,
+            get_ssh_temp_directory,
             create_profile,
             update_profile,
             delete_profile,
             update_profile_last_used,
             export_all_profiles,
             import_all_profiles,
+            connect_ssh_session,
             start_terminal,
             write_to_terminal,
             resize_terminal,
@@ -122,6 +125,16 @@ pub fn run() {
             open_in_explorer,
             delete_path,
             rename_path,
+            remote_chmod,
+            remote_copy,
+            remote_create_dir,
+            remote_create_file,
+            remote_download,
+            remote_list_dir,
+            remote_move,
+            remote_remove,
+            remote_rename,
+            remote_upload,
             get_all_themes,
             create_theme,
             update_theme,
@@ -143,6 +156,7 @@ pub fn run() {
             save_command_templates,
             init_command_templates,
             export_all_data,
+            ensure_dir,
             import_all_data,
             get_windows_build_number,
             window_minimize,
