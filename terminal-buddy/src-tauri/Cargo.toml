@@ -36,6 +36,7 @@ include_dir = "0.7"
 hex = "0.4"
 rand = "0.8"
 ssh2 = "0.9"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
 
 
 [patch.crates-io]

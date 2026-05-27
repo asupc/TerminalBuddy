@@ -4414,6 +4414,7 @@ dependencies = [
  "tower",
  "tower-http",
  "uuid",
+ "windows",
 ]
 
 [[package]]

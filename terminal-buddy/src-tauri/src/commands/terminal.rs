@@ -541,6 +541,105 @@ pub fn start_blank_terminal(
     terminal_service.create_blank_terminal(&terminal_type, initial_rows, initial_cols, app)
 }
 
+// 跟踪已启动的 mstsc 进程 PID，key = profile_id
+static MSTSC_PROCESSES: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+
+fn mstsc_processes() -> &'static Mutex<HashMap<String, u32>> {
+    MSTSC_PROCESSES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 检查进程是否仍在运行
+fn is_process_running(pid: u32) -> bool {
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
+    use windows::Win32::Foundation::CloseHandle;
+
+    unsafe {
+        if let Ok(handle) = OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) {
+            let mut exit_code: u32 = 0;
+            let running = windows::Win32::System::Threading::GetExitCodeProcess(handle, &mut exit_code).is_ok()
+                && exit_code == 259; // STILL_ACTIVE
+            let _ = CloseHandle(handle);
+            running
+        } else {
+            false
+        }
+    }
+}
+
+/// 将指定 PID 的窗口提到前台
+fn bring_window_to_front(pid: u32) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow,
+    };
+    use windows::Win32::Foundation::{HWND, LPARAM};
+
+    struct EnumCtx {
+        target_pid: u32,
+        found_hwnd: Option<HWND>,
+    }
+
+    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
+        let ctx = unsafe { &mut *(lparam.0 as *mut EnumCtx) };
+        let mut pid: u32 = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid == ctx.target_pid && unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            ctx.found_hwnd = Some(hwnd);
+            return windows::core::BOOL(0); // stop enumeration
+        }
+        windows::core::BOOL(1) // continue
+    }
+
+    let mut ctx = EnumCtx { target_pid: pid, found_hwnd: None };
+    unsafe {
+        let _ = EnumWindows(Some(enum_callback), LPARAM(&mut ctx as *mut _ as isize));
+        if let Some(hwnd) = ctx.found_hwnd {
+            let _ = SetForegroundWindow(hwnd);
+            return true;
+        }
+    }
+    false
+}
+
+/// 修改指定 PID 的 mstsc 窗口标题
+fn set_mstsc_window_title(pid: u32, title: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, GetClassNameW, SetWindowTextW,
+    };
+    use windows::Win32::Foundation::{HWND, LPARAM};
+
+    let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+
+    struct EnumCtx {
+        target_pid: u32,
+        title: Vec<u16>,
+    }
+
+    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
+        let ctx = unsafe { &*(lparam.0 as *const EnumCtx) };
+        let mut pid: u32 = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid == ctx.target_pid {
+            let mut class_name = [0u16; 64];
+            let len = unsafe { GetClassNameW(hwnd, &mut class_name) } as usize;
+            // mstsc 主窗口的类名是 "TscMainDesktopWindow"
+            if len > 0 {
+                let class_str = String::from_utf16_lossy(&class_name[..len]);
+                if class_str.contains("TscMainDesktopWindow") {
+                    let pcwstr = windows::core::PCWSTR(ctx.title.as_ptr());
+                    unsafe { let _ = SetWindowTextW(hwnd, pcwstr); }
+                    return windows::core::BOOL(0); // stop
+                }
+            }
+        }
+        windows::core::BOOL(1) // continue
+    }
+
+    let ctx = EnumCtx { target_pid: pid, title: title_wide };
+    unsafe {
+        let _ = EnumWindows(Some(enum_callback), LPARAM(&ctx as *const _ as isize));
+    }
+}
+
 #[command]
 pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
     let profile = ProfileService::get_profile(&profile_id)
@@ -549,6 +648,19 @@ pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
     let host = profile.mstsc_host.as_ref()
         .filter(|h| !h.is_empty())
         .ok_or_else(|| "请先配置远程主机地址".to_string())?;
+
+    // 检查是否已有该 Profile 的 mstsc 进程在运行
+    {
+        let mut processes = mstsc_processes().lock().unwrap();
+        if let Some(&pid) = processes.get(&profile_id) {
+            if is_process_running(pid) {
+                bring_window_to_front(pid);
+                return Ok(());
+            } else {
+                processes.remove(&profile_id);
+            }
+        }
+    }
 
     let port = profile.mstsc_port.unwrap_or(3389);
     let user = profile.mstsc_user.as_deref().unwrap_or("");
@@ -590,10 +702,26 @@ pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
         args.push("/f".to_string());
     }
 
-    std::process::Command::new("mstsc.exe")
+    let child = std::process::Command::new("mstsc.exe")
         .args(&args)
         .spawn()
         .map_err(|e| format!("启动远程桌面失败: {}", e))?;
+
+    let pid = child.id();
+
+    // 记录进程 PID
+    {
+        let mut processes = mstsc_processes().lock().unwrap();
+        processes.insert(profile_id.clone(), pid);
+    }
+
+    // 后台线程：等待窗口出现后修改标题
+    let title = profile.name.clone();
+    std::thread::spawn(move || {
+        // 等待 mstsc 窗口创建
+        std::thread::sleep(std::time::Duration::from_millis(2000));
+        set_mstsc_window_title(pid, &title);
+    });
 
     Ok(())
 }
