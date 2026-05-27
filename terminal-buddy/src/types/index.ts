@@ -155,3 +155,47 @@ export interface ExtraParamPreset {
   name: string;
   params: string;
 }
+
+export interface RemoteFileEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  permissions: number;
+  modified: number;
+  owner: string;
+  group: string;
+}
+
+export interface ServerStats {
+  uptime: string;
+  cpuUsage: number;
+  memory: MemoryStats;
+  disk: DiskStats[];
+  network: NetworkStats;
+  timestamp: number;
+}
+
+export interface MemoryStats {
+  total: number;
+  used: number;
+  available: number;
+  usagePercent: number;
+  swapTotal: number;
+  swapUsed: number;
+}
+
+export interface DiskStats {
+  mount: string;
+  total: number;
+  used: number;
+  available: number;
+  usagePercent: number;
+}
+
+export interface NetworkStats {
+  rxBytes: number;
+  txBytes: number;
+  rxSpeed: number;
+  txSpeed: number;
+}

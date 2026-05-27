@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset } from '../types';
+import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats } from '../types';
 import { readClientData, writeClientData } from '../services/tauri';
 
 interface SavedTab {
@@ -186,6 +186,22 @@ interface AppState {
   // Last click region for F2 routing
   lastClickRegion: 'config' | 'tab' | null;
   setLastClickRegion: (region: 'config' | 'tab' | null) => void;
+
+  // Remote file state
+  remoteFiles: RemoteFileEntry[];
+  remoteCurrentPath: string;
+  remoteLoading: boolean;
+  setRemoteFiles: (files: RemoteFileEntry[]) => void;
+  setRemoteCurrentPath: (path: string) => void;
+  setRemoteLoading: (loading: boolean) => void;
+
+  // Remote clipboard
+  remoteClipboard: { items: string[]; operation: 'copy' | 'move' } | null;
+  setRemoteClipboard: (clipboard: { items: string[]; operation: 'copy' | 'move' } | null) => void;
+
+  // Server stats
+  serverStats: ServerStats | null;
+  setServerStats: (stats: ServerStats | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -418,6 +434,22 @@ export const useAppStore = create<AppState>((set) => ({
   }),
   lastClickRegion: null,
   setLastClickRegion: (region) => set({ lastClickRegion: region }),
+
+  // Remote file state
+  remoteFiles: [],
+  remoteCurrentPath: '/',
+  remoteLoading: false,
+  setRemoteFiles: (files) => set({ remoteFiles: files }),
+  setRemoteCurrentPath: (path) => set({ remoteCurrentPath: path }),
+  setRemoteLoading: (loading) => set({ remoteLoading: loading }),
+
+  // Remote clipboard
+  remoteClipboard: null,
+  setRemoteClipboard: (clipboard) => set({ remoteClipboard: clipboard }),
+
+  // Server stats
+  serverStats: null,
+  setServerStats: (stats) => set({ serverStats: stats }),
 }));
 
 // Listen for app-settings-changed events and increment version to trigger re-renders
