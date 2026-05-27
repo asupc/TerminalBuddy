@@ -371,6 +371,21 @@ impl TerminalService {
         Ok(buffer.iter().map(|s| s.as_ref()).collect())
     }
 
+    /// 检查 PC 端是否有权限操作指定终端
+    /// 在不共享模式下，PC 端不能操作 Web 端创建的终端
+    pub fn check_pc_permission(&self, id: &str) -> Result<(), String> {
+        let settings = SettingsService::get_settings();
+        if !settings.web_api_share_sessions {
+            let instances = self.instances.lock().unwrap();
+            if let Some(terminal) = instances.get(id) {
+                if terminal.owner == TerminalOwner::Web {
+                    return Err("终端由 Web 端管理，PC 端只读".to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn close_terminal(&self, id: &str) -> Result<(), String> {
         let mut instances = self.instances.lock().unwrap();
         if let Some(mut instance) = instances.remove(id) {
@@ -495,17 +510,7 @@ pub fn write_to_terminal(
     data: String,
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
-    // 权限检查：不共享模式下，PC 端不能输入 Web 端创建的终端
-    let settings = SettingsService::get_settings();
-    if !settings.web_api_share_sessions {
-        let instances = terminal_service.instances.lock().unwrap();
-        if let Some(terminal) = instances.get(&id) {
-            if terminal.owner == TerminalOwner::Web {
-                return Err("终端由 Web 端管理，PC 端只读".to_string());
-            }
-        }
-    }
-
+    terminal_service.check_pc_permission(&id)?;
     terminal_service.write_to_terminal(&id, &data)
 }
 
@@ -516,17 +521,7 @@ pub fn resize_terminal(
     cols: u16,
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
-    // 权限检查：不共享模式下，PC 端不能 resize Web 端创建的终端
-    let settings = SettingsService::get_settings();
-    if !settings.web_api_share_sessions {
-        let instances = terminal_service.instances.lock().unwrap();
-        if let Some(terminal) = instances.get(&id) {
-            if terminal.owner == TerminalOwner::Web {
-                return Err("终端由 Web 端管理，PC 端只读".to_string());
-            }
-        }
-    }
-
+    terminal_service.check_pc_permission(&id)?;
     // Desktop (Tauri invoke) always allows shrink — it's the primary viewer
     terminal_service.resize_terminal(&id, rows, cols, true)
 }
@@ -537,6 +532,7 @@ pub fn close_terminal(
     terminal_service: State<TerminalService>,
     ssh_service: State<SshSessionService>,
 ) -> Result<(), String> {
+    terminal_service.check_pc_permission(&id)?;
     ssh_service.close_session(&id);
     terminal_service.close_terminal(&id)
 }
