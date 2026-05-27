@@ -8,6 +8,7 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize, Child, MasterPty}
 use std::thread;
 use std::fs;
 use std::path::PathBuf;
+use crate::models::TerminalOwner;
 use crate::services::ProfileService;
 use crate::services::PathService;
 use crate::services::ssh_session_service::SshSessionService;
@@ -15,6 +16,7 @@ use crate::services::ssh_session_service::SshSessionService;
 pub struct TerminalInstance {
     pub id: String,
     pub profile_id: String,
+    pub owner: TerminalOwner,
     child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
     pub writer: Option<Box<dyn Write + Send>>,
@@ -92,7 +94,7 @@ impl TerminalService {
         }
     }
 
-    pub fn create_terminal(&self, profile_id: &str, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, app: AppHandle) -> Result<String, String> {
+    pub fn create_terminal(&self, profile_id: &str, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create] start, id={}, profile_id={}", terminal_id, profile_id));
 
@@ -178,6 +180,7 @@ impl TerminalService {
         let instance = TerminalInstance {
             id: terminal_id.clone(),
             profile_id: profile_id.to_string(),
+            owner,
             child,
             master: pty_pair.master,
             writer: Some(writer),
@@ -378,7 +381,7 @@ impl TerminalService {
         }
     }
 
-    pub fn create_blank_terminal(&self, terminal_type: &str, initial_rows: u16, initial_cols: u16, app: AppHandle) -> Result<String, String> {
+    pub fn create_blank_terminal(&self, terminal_type: &str, initial_rows: u16, initial_cols: u16, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create-blank] start, id={}, type={}", terminal_id, terminal_type));
 
@@ -432,6 +435,7 @@ impl TerminalService {
         let instance = TerminalInstance {
             id: terminal_id.clone(),
             profile_id: String::new(),
+            owner,
             child,
             master: pty_pair.master,
             writer: Some(writer),
@@ -481,7 +485,7 @@ pub fn start_terminal(
     app: AppHandle,
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.create_terminal(&profile_id, extra_startup_params.as_deref(), initial_rows, initial_cols, app)
+    terminal_service.create_terminal(&profile_id, extra_startup_params.as_deref(), initial_rows, initial_cols, app, TerminalOwner::Pc)
 }
 
 #[command]
@@ -538,7 +542,7 @@ pub fn start_blank_terminal(
     app: AppHandle,
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.create_blank_terminal(&terminal_type, initial_rows, initial_cols, app)
+    terminal_service.create_blank_terminal(&terminal_type, initial_rows, initial_cols, app, TerminalOwner::Pc)
 }
 
 // 跟踪已启动的 mstsc 进程 PID，key = profile_id

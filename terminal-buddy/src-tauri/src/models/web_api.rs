@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::models::TerminalOwner;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +36,7 @@ pub struct TerminalInfo {
     pub profile_id: String,
     pub profile_name: String,
     pub terminal_type: String,
+    pub owner: TerminalOwner,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

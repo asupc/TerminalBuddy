@@ -1,5 +1,6 @@
 use axum::{Json, extract::{State, Path}};
 use crate::commands::TerminalService;
+use crate::models::TerminalOwner;
 use crate::models::web_api::{TerminalInfo, StartTerminalRequest};
 use crate::services::ProfileService;
 use crate::web::auth::ClaimsFromRequest;
@@ -13,17 +14,18 @@ pub async fn list(
 ) -> Result<Json<Vec<TerminalInfo>>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
     // Collect IDs while holding lock, then release before reading profiles
-    let instance_ids: Vec<(String, String)> = {
+    let instance_ids: Vec<(String, String, TerminalOwner)> = {
         let instances = ts.instances.lock().unwrap();
-        instances.values().map(|inst| (inst.id.clone(), inst.profile_id.clone())).collect()
+        instances.values().map(|inst| (inst.id.clone(), inst.profile_id.clone(), inst.owner.clone())).collect()
     };
-    let terminals: Vec<TerminalInfo> = instance_ids.into_iter().map(|(id, profile_id)| {
+    let terminals: Vec<TerminalInfo> = instance_ids.into_iter().map(|(id, profile_id, owner)| {
         let profile = ProfileService::get_profile(&profile_id).ok();
         TerminalInfo {
             id,
             profile_id: profile_id.clone(),
             profile_name: profile.as_ref().map(|p| p.name.clone()).unwrap_or_default(),
             terminal_type: profile.as_ref().map(|p| p.terminal_type.clone()).unwrap_or_default(),
+            owner,
         }
     }).collect();
     Ok(Json(terminals))
@@ -48,6 +50,7 @@ pub async fn start(
                     profile_id: req.profile_id,
                     profile_name: profile.name,
                     terminal_type: profile.terminal_type,
+                    owner: inst.owner.clone(),
                 };
                 let _ = state.app_handle.emit("terminal-created", info.clone());
                 return Ok(Json(info));
@@ -55,7 +58,7 @@ pub async fn start(
         }
     }
 
-    let terminal_id = ts.create_terminal(&req.profile_id, None, 0, 0, state.app_handle.clone())
+    let terminal_id = ts.create_terminal(&req.profile_id, None, 0, 0, state.app_handle.clone(), TerminalOwner::Web)
         .map_err(|e| ApiError::Internal(e))?;
     let profile = ProfileService::get_profile(&req.profile_id)
         .map_err(|e| ApiError::Internal(e))?;
@@ -64,6 +67,7 @@ pub async fn start(
         profile_id: req.profile_id,
         profile_name: profile.name,
         terminal_type: profile.terminal_type,
+        owner: TerminalOwner::Web,
     };
     let _ = state.app_handle.emit("terminal-created", info.clone());
     Ok(Json(info))
