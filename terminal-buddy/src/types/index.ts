@@ -1,4 +1,4 @@
-export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor';
+export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
 
 export interface Profile {
   id: string;
@@ -22,6 +22,11 @@ export interface Profile {
   k8sNamespace?: string;
   k8sPodName?: string;
   k8sContainerName?: string;
+  mstscHost?: string;
+  mstscPort?: number;
+  mstscUser?: string;
+  mstscPassword?: string;
+  mstscResolution?: string;
   createdAt: string;
   lastUsedAt: string | null;
 }

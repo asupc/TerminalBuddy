@@ -14,7 +14,7 @@ export async function getProfile(id: string): Promise<Profile> {
 export async function createProfile(
   name: string,
   group: string,
-  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor'
+  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc'
 ): Promise<Profile> {
   return invoke('create_profile', { name, group, terminalType });
 }
@@ -44,7 +44,11 @@ export async function startTerminal(profileId: string, extraStartupParams?: stri
   return invoke('start_terminal', { profileId, extraStartupParams: extraStartupParams || null, initialRows: initialRows || 0, initialCols: initialCols || 0 });
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor', initialRows?: number, initialCols?: number): Promise<string> {
+export async function startMstsc(profileId: string): Promise<void> {
+  return invoke('start_mstsc', { profileId });
+}
+
+export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number): Promise<string> {
   return invoke('start_blank_terminal', { terminalType, initialRows: initialRows || 0, initialCols: initialCols || 0 });
 }
 

@@ -623,7 +623,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     setProfileContextMenu({ x: e.clientX, y: e.clientY, profile });
                   }}>
                     <span style={{ fontSize: 10, fontWeight: 'bold', padding: '2px 4px', background: 'var(--bg-primary)', borderRadius: 2, marginRight: 6, color: 'var(--text-secondary)' }}>
-                      {{ powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', editor: 'ED' }[profile.terminalType]}
+                      {{ powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', editor: 'ED', mstsc: 'RDP' }[profile.terminalType]}
                     </span>
                     <code className="cmd-cat-cmd" style={{ color: profile.tabColor || undefined, minWidth: 'auto', flexShrink: 0 }}>{profile.name}</code>
                     <span className="cmd-cat-desc" style={{ fontSize: 12, color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
