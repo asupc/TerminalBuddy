@@ -98,6 +98,18 @@ pub async fn close(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
+
+    // 权限检查：不共享模式下，Web 端不能关闭 PC 端的终端
+    let settings = SettingsService::get_settings();
+    if !settings.web_api_share_sessions {
+        let instances = ts.instances.lock().unwrap();
+        if let Some(terminal) = instances.get(&id) {
+            if terminal.owner == TerminalOwner::Pc {
+                return Err(ApiError::Forbidden("终端由 PC 端管理，Web 端无权关闭".to_string()));
+            }
+        }
+    }
+
     ts.close_terminal(&id).map_err(|e| ApiError::Internal(e))?;
     let _ = state.app_handle.emit("terminal-closed", &id);
     Ok(Json(serde_json::json!({ "closed": true })))
