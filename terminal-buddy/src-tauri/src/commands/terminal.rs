@@ -558,9 +558,18 @@ pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
     // 存储凭据到 Windows 凭据管理器
     if !user.is_empty() {
         let cred_target = format!("TERMSRV/{}", host);
-        let _ = std::process::Command::new("cmdkey.exe")
+        match std::process::Command::new("cmdkey.exe")
             .args(["/generic:".to_string() + &cred_target, "/user:".to_string() + user, "/pass:".to_string() + password])
-            .output();
+            .output()
+        {
+            Ok(output) if !output.status.success() => {
+                eprintln!("[mstsc] cmdkey.exe 存储凭据失败: {}", String::from_utf8_lossy(&output.stderr));
+            }
+            Err(e) => {
+                eprintln!("[mstsc] cmdkey.exe 执行失败: {}", e);
+            }
+            _ => {}
+        }
     }
 
     // 构建 mstsc.exe 参数
