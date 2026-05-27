@@ -391,13 +391,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         }
         const isBracketedPaste = data.startsWith('\x1b[200~');
         if (isBracketedPaste) {
-          chunkedSend(data);
+          const inner = data.slice(6, -5);
+          if (inner.includes('\n')) {
+            onOutputRef.current(terminalId, data);
+          } else {
+            chunkedSend(data);
+          }
         } else if (data.length > 1 && /[\r\n]/.test(data)) {
-          // ConPTY may not forward bracketed paste mode, so manually wrap
-          // to prevent the shell from executing each line as a command
           const sanitized = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-          const wrapped = `\x1b[200~${sanitized}\x1b[201~`;
-          chunkedSend(wrapped);
+          onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
         } else {
           onOutputRef.current(terminalId, data);
         }
@@ -547,6 +549,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   // Detect single Windows file path in text — wrap in quotes
                   if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
                     onOutputRef.current(terminalId, `"${trimmed.replace(/"/g, '\\"')}"`);
+                  } else if (text.includes('\n') || text.includes('\r')) {
+                    const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                    onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
                   } else {
                     terminal.paste(text);
                   }
@@ -557,7 +562,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             // Fallback: read as plain text
             navigator.clipboard.readText().then((text) => {
               if (text) {
-                terminal.paste(text);
+                if (text.includes('\n') || text.includes('\r')) {
+                  const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                  onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+                } else {
+                  terminal.paste(text);
+                }
               }
             }).catch(() => {});
           });
@@ -596,7 +606,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (settings.rightClickPaste && !terminal.hasSelection()) {
           navigator.clipboard.readText().then((text) => {
             if (text) {
-              terminal.paste(text);
+              if (text.includes('\n') || text.includes('\r')) {
+                const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+              } else {
+                terminal.paste(text);
+              }
               terminal.focus();
             }
           }).catch(() => {});
@@ -790,7 +805,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     } else {
       navigator.clipboard.readText().then((text) => {
         if (text) {
-          terminal.paste(text);
+          if (text.includes('\n') || text.includes('\r')) {
+            const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+          } else {
+            terminal.paste(text);
+          }
           terminal.focus();
         }
       }).catch(() => {});
