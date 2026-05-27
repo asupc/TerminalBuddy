@@ -429,6 +429,12 @@ export const FileTree: FC = () => {
     setCtxMenu(null);
   }, [ctxMenu]);
 
+  const handleOpenInSystem = useCallback(async () => {
+    if (!ctxMenu?.path) return;
+    try { await openPath(ctxMenu.path); } catch (err) { console.error(err); }
+    setCtxMenu(null);
+  }, [ctxMenu]);
+
   const handleShowCurrentDirInExplorer = useCallback(async () => {
     if (!currentDirectory) return;
     try { await openInExplorer(currentDirectory); } catch (err) { console.error(err); }
@@ -670,6 +676,11 @@ export const FileTree: FC = () => {
               <div className="context-menu-item" onClick={handleShowInExplorer}>
                 在文件资源管理器中显示
               </div>
+              {!ctxMenu.isDir && (
+                <div className="context-menu-item" onClick={handleOpenInSystem}>
+                  在系统中打开
+                </div>
+              )}
               {ctxMenu.isDir && (
                 <div className="context-menu-item" onClick={async () => {
                   const dir = ctxMenu.path!;

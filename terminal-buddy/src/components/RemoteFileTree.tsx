@@ -4,7 +4,7 @@ import {
   remoteListDir, remoteCreateDir, remoteCreateFile, remoteRemove,
   remoteRename, remoteMove, remoteCopy, remoteChmod, remoteUpload,
   remoteDownload, writeToTerminal, getSshTempDirectory, ensureDir,
-  connectSshSession,
+  connectSshSession, openPath,
 } from '../services/tauri';
 import { isTextFile } from '../utils/fileExtensions';
 import { ChmodDialog } from './ChmodDialog';
@@ -64,6 +64,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const [currentPath, setCurrentPath] = useState('/');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [connected, setConnected] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renaming, setRenaming] = useState<RemoteFileEntry | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -87,18 +89,27 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const session = useAppStore(s => s.sessions.find(s => s.id === terminalId));
   const connectedRef = useRef(false);
 
-  const ensureConnected = useCallback(async () => {
-    if (connectedRef.current || !session?.profileId) return;
+  const connectSession = useCallback(async () => {
+    if (connectedRef.current) return true;
+    if (!session?.profileId) return false;
+    setConnecting(true);
+    setError(null);
     try {
       await connectSshSession(terminalId, session.profileId);
       connectedRef.current = true;
+      setConnected(true);
+      return true;
     } catch (e) {
       console.error('SSH session connect failed:', e);
+      setError('连接失败: ' + String(e));
+      return false;
+    } finally {
+      setConnecting(false);
     }
   }, [terminalId, session?.profileId]);
 
   const loadDirectory = useCallback(async (path: string) => {
-    await ensureConnected();
+    if (!connectedRef.current) return;
     setLoading(true);
     setError(null);
     try {
@@ -114,8 +125,13 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     }
   }, [terminalId, setSessionDirectory]);
 
+  // Reset connection state when switching to a different SSH terminal
   useEffect(() => {
-    loadDirectory('/');
+    connectedRef.current = false;
+    setConnected(false);
+    setError(null);
+    setFiles([]);
+    setCurrentPath('/');
   }, [terminalId]);
 
   // Transfer progress listener
@@ -214,6 +230,21 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     } catch (err) {
       console.error('Download failed:', err);
       alert('下载失败: ' + String(err));
+    }
+  };
+
+  const handleOpenInSystem = async (file: RemoteFileEntry) => {
+    setContextMenu(null);
+    try {
+      const baseTempDir = await getSshTempDirectory();
+      const tempDir = `${baseTempDir}/${terminalId}`;
+      await ensureDir(tempDir);
+      const localPath = `${tempDir}/${file.name}`;
+      await remoteDownload(terminalId, file.path, localPath);
+      await openPath(localPath);
+    } catch (err) {
+      console.error('Open in system failed:', err);
+      alert('打开失败: ' + String(err));
     }
   };
 
@@ -442,13 +473,34 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       )}
 
       <div className="file-tree-content" onContextMenu={(e) => handleContextMenu(e)}>
-        {loading && (
+        {!connected && (
+          <div style={{ padding: '16px 12px', textAlign: 'center' }}>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+              远程文件管理需要建立 SSH 连接
+            </div>
+            <button
+              className="btn-secondary"
+              disabled={connecting}
+              onClick={async () => {
+                const ok = await connectSession();
+                if (ok) loadDirectory('/');
+              }}
+              style={{ padding: '6px 20px', cursor: connecting ? 'default' : 'pointer' }}
+            >
+              {connecting ? '连接中...' : '连接'}
+            </button>
+            {error && (
+              <div style={{ padding: '8px 0', fontSize: 12, color: '#f44747' }}>{error}</div>
+            )}
+          </div>
+        )}
+        {connected && loading && (
           <div className="tree-loading" style={{ padding: '8px 12px' }}>加载中...</div>
         )}
-        {error && (
+        {connected && error && (
           <div style={{ padding: '8px 12px', fontSize: 12, color: '#f44747' }}>{error}</div>
         )}
-        {!loading && !error && sortedFiles.map((file) => (
+        {connected && !loading && !error && sortedFiles.map((file) => (
           <div
             key={file.path}
             className={`tree-item ${selectedPath === file.path ? 'selected' : ''}`}
@@ -541,6 +593,11 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
               {!contextMenu.file.isDir && (
                 <div className="context-menu-item" onClick={() => handleDownload(contextMenu.file!)}>
                   下载
+                </div>
+              )}
+              {!contextMenu.file.isDir && (
+                <div className="context-menu-item" onClick={() => handleOpenInSystem(contextMenu.file!)}>
+                  在系统中打开
                 </div>
               )}
               {!contextMenu.file.isDir && isTextFile(contextMenu.file.name) && (
