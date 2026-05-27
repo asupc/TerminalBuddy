@@ -48,6 +48,8 @@ pub struct AppSettings {
     pub ssh_download_dir: Option<String>,
     #[serde(default = "default_server_monitor_interval")]
     pub server_monitor_interval: u32,
+    #[serde(default)]
+    pub web_api_share_sessions: bool,
 }
 
 impl Default for AppSettings {
@@ -64,6 +66,7 @@ impl Default for AppSettings {
             web_api_password_hash: String::new(),
             ssh_download_dir: None,
             server_monitor_interval: 3,
+            web_api_share_sessions: false,
         }
     }
 }
