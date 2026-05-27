@@ -55,6 +55,8 @@ pub enum WsServerMessage {
     Output { data: String },
     #[serde(rename = "exited")]
     Exited { code: i32 },
+    #[serde(rename = "error")]
+    Error { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
