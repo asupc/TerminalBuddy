@@ -126,6 +126,12 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                                     let instances = ts.instances.lock().unwrap();
                                     if let Some(terminal) = instances.get(&tid) {
                                         if terminal.owner == TerminalOwner::Web {
+                                            let error_msg = serde_json::to_string(
+                                                &WsServerMessage::Error {
+                                                    message: "终端由 Web 端管理，PC 端只读".to_string()
+                                                }
+                                            ).unwrap_or_default();
+                                            let _ = error_tx.send(error_msg);
                                             continue;
                                         }
                                     }
