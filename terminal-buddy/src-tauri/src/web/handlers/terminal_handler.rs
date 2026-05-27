@@ -2,7 +2,7 @@ use axum::{Json, extract::{State, Path}};
 use crate::commands::TerminalService;
 use crate::models::TerminalOwner;
 use crate::models::web_api::{TerminalInfo, StartTerminalRequest};
-use crate::services::ProfileService;
+use crate::services::{ProfileService, SettingsService};
 use crate::web::auth::ClaimsFromRequest;
 use crate::web::error::ApiError;
 use crate::web::server::AppState;
@@ -13,10 +13,21 @@ pub async fn list(
     _claims: ClaimsFromRequest,
 ) -> Result<Json<Vec<TerminalInfo>>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
+
+    // 获取设置
+    let settings = SettingsService::get_settings();
+
     // Collect IDs while holding lock, then release before reading profiles
     let instance_ids: Vec<(String, String, TerminalOwner)> = {
         let instances = ts.instances.lock().unwrap();
-        instances.values().map(|inst| (inst.id.clone(), inst.profile_id.clone(), inst.owner.clone())).collect()
+        instances.values()
+            .filter(|inst| {
+                // 共享模式：返回所有终端
+                // 不共享模式：只返回 Web 端创建的终端
+                settings.web_api_share_sessions || inst.owner == TerminalOwner::Web
+            })
+            .map(|inst| (inst.id.clone(), inst.profile_id.clone(), inst.owner.clone()))
+            .collect()
     };
     let terminals: Vec<TerminalInfo> = instance_ids.into_iter().map(|(id, profile_id, owner)| {
         let profile = ProfileService::get_profile(&profile_id).ok();
@@ -38,11 +49,19 @@ pub async fn start(
 ) -> Result<Json<TerminalInfo>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
 
+    // 获取设置
+    let settings = SettingsService::get_settings();
+
     // Reuse existing terminal for the same profile if already running
     {
         let instances = ts.instances.lock().unwrap();
         for inst in instances.values() {
             if inst.profile_id == req.profile_id {
+                // 不共享模式下，只能复用 Web 端创建的终端
+                if !settings.web_api_share_sessions && inst.owner != TerminalOwner::Web {
+                    continue;
+                }
+
                 let profile = ProfileService::get_profile(&req.profile_id)
                     .map_err(|e| ApiError::Internal(e))?;
                 let info = TerminalInfo {
