@@ -19,7 +19,11 @@ export const TerminalPanel: FC = () => {
   useEffect(() => {
     const handler = () => setSettings(getAppSettings());
     window.addEventListener('tab-navigation-changed', handler);
-    return () => window.removeEventListener('tab-navigation-changed', handler);
+    window.addEventListener('app-settings-changed', handler);
+    return () => {
+      window.removeEventListener('tab-navigation-changed', handler);
+      window.removeEventListener('app-settings-changed', handler);
+    };
   }, []);
 
   const handleTerminalInput = useCallback(async (sessionId: string, data: string) => {
