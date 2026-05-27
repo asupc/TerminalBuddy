@@ -1,7 +1,8 @@
 import { FC, useEffect, useRef, useState, useCallback } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { editor as MonacoEditor, KeyMod, KeyCode } from 'monaco-editor';
-import { readFileContent, writeFileContent } from '../services/tauri';
+import { readFileContent, writeFileContent, remoteUpload } from '../services/tauri';
+import { useAppStore } from '../stores/appStore';
 import { getMonacoLanguage } from '../utils/fileExtensions';
 import './TextEditor.css';
 
@@ -67,6 +68,17 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
         const value = ed.getValue();
         try {
           await writeFileContent(filePath, value);
+          const session = useAppStore.getState().sessions.find(
+            s => s.sessionType === 'editor' && s.profileId === filePath
+          );
+          if (session?.sshRemotePath && session?.sshTerminalId) {
+            try {
+              await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath);
+              console.log('已自动上传到服务器:', session.sshRemotePath);
+            } catch (uploadErr) {
+              console.error('Auto-upload to server failed:', uploadErr);
+            }
+          }
           onDirtyChange(false);
         } catch (err) {
           console.error('Failed to save file:', err);

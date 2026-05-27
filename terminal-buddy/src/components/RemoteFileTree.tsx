@@ -211,7 +211,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       await ensureDir(tempDir);
       const localPath = `${tempDir}/${file.name}`;
       await remoteDownload(terminalId, file.path, localPath);
-      useAppStore.getState().openEditorSession(localPath);
+      useAppStore.getState().openEditorSession(localPath, file.path, terminalId);
     } catch (err) {
       console.error('Edit failed:', err);
       alert('打开编辑器失败: ' + String(err));

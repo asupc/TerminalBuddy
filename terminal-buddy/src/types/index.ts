@@ -104,6 +104,8 @@ export interface TerminalSession {
   groupId: string;
   sessionType?: 'terminal' | 'editor';
   isDirty?: boolean;
+  sshRemotePath?: string;
+  sshTerminalId?: string;
 }
 
 export interface Workspace {

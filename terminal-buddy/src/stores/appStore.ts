@@ -161,7 +161,7 @@ interface AppState {
   renameSession: (id: string, name: string) => void;
   updateSession: (id: string, updates: Partial<TerminalSession>) => void;
   ensureEditorGroup: () => void;
-  openEditorSession: (filePath: string) => void;
+  openEditorSession: (filePath: string, sshRemotePath?: string, sshTerminalId?: string) => void;
   closeEditorSession: (id: string) => void;
   sessionDirectories: Record<string, string>;
   setSessionDirectory: (sessionId: string, path: string) => void;
@@ -369,7 +369,7 @@ export const useAppStore = create<AppState>((set) => ({
     if (state.groups.some(g => g.id === 'editor-group')) return state;
     return { groups: [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }] };
   }),
-  openEditorSession: (filePath) => set((state) => {
+  openEditorSession: (filePath, sshRemotePath?, sshTerminalId?) => set((state) => {
     const existing = state.sessions.find(s => s.sessionType === 'editor' && s.profileId === filePath);
     if (existing) {
       saveTabsToStorage(state.sessions, existing.id);
@@ -387,6 +387,8 @@ export const useAppStore = create<AppState>((set) => ({
       groupId: 'editor-group',
       sessionType: 'editor',
       isDirty: false,
+      sshRemotePath,
+      sshTerminalId,
     };
     const groups = state.groups.some(g => g.id === 'editor-group')
       ? state.groups
