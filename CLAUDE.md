@@ -45,15 +45,15 @@ Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (b
 - `workspace_service` — CRUD for `Workspaces/*.json`
 - `path_service` — Centralizes data directory resolution (default: `%APPDATA%/TerminalBuddy`), validates custom paths, provides `copy_dir_recursive` for migration/export
 - `web_service` — Pub/sub state for broadcasting terminal output to WebSocket clients
-- `TerminalService` (in `commands/terminal.rs`) — Managed state holding `HashMap<String, TerminalInstance>`. Uses `cmd.exe` as base PTY, injects PowerShell/SSH/Docker/K8s commands. Output forwarded via Tauri events `terminal_output_{id}`.
+- `TerminalService` (in `commands/terminal.rs`) — Managed state holding `HashMap<String, TerminalInstance>`. Each instance has an `owner` field (`TerminalOwner::Pc` or `TerminalOwner::Web`) tracking its origin. Uses `cmd.exe` as base PTY, injects PowerShell/SSH/Docker/K8s commands. Output forwarded via Tauri events `terminal_output_{id}`. Permission checks via `check_pc_permission()` enforce session isolation when `web_api_share_sessions` is false.
 
 **Web module** (`web/`): Embedded axum HTTP server for remote terminal access:
 - `server.rs` — Axum router: REST API + WebSocket + embedded SPA serving
 - `auth.rs` — JWT generation/verification with bcrypt password hashing
-- `ws.rs` — WebSocket handler for terminal I/O (JSON protocol: Input/Resize/Output/Exited)
+- `ws.rs` — WebSocket handler for terminal I/O (JSON protocol: Input/Resize/Output/Exited/Error). Enforces session isolation: non-shared mode blocks Web clients from PC terminals.
 - `handlers/` — REST handlers: `auth_handler.rs`, `profile_handler.rs`, `terminal_handler.rs`
 
-**Models** (`models/`): `Profile` (with SSH/Docker/K8s fields), `AppSettings` (close_behavior, data_path, web_api settings), `CustomTheme` (16-color ANSI palette), `Workspace` (groups, terminals), `web_api.rs` (LoginRequest, WsClientMessage, WsServerMessage, etc.).
+**Models** (`models/`): `Profile` (with SSH/Docker/K8s fields), `AppSettings` (close_behavior, data_path, web_api settings including `web_api_share_sessions`), `CustomTheme` (16-color ANSI palette), `Workspace` (groups, terminals), `TerminalOwner` (Pc/Web enum), `web_api.rs` (LoginRequest, WsClientMessage, WsServerMessage with Error variant, TerminalInfo with owner field, etc.).
 
 **App setup** (`lib.rs`): System tray with "打开窗口"/"退出", close-to-tray behavior, single instance (tauri-plugin-single-instance), window close interception, Web API server startup.
 
@@ -106,9 +106,9 @@ Embedded in the Rust binary via `include_dir!` in release mode; served from `web
 
 **HistoryEntry:** command, note (structured, backward-compatible with old string array).
 
-**AppSettings (backend):** closeBehavior (Exit/Tray), dataPath (optional custom), tabSidebarWidth, enableTabNavigation, singleInstance, webApiEnabled, webApiPort, webApiUsername, webApiPasswordHash.
+**AppSettings (backend):** closeBehavior (Exit/Tray), dataPath (optional custom), tabSidebarWidth, enableTabNavigation, singleInstance, webApiEnabled, webApiPort, webApiUsername, webApiPasswordHash, sshDownloadDir, serverMonitorInterval, webApiShareSessions (default false — controls terminal session isolation between Web and PC).
 
-**AppSettings (frontend, localStorage):** restoreTabsOnStartup, configPanelAutoExpand, fileTreeAutoExpand, closeBehavior, enableTabNavigation, singleInstance, rightClickPaste, zhipuApiKey, qianfanCookie, webApiEnabled, webApiPort, webApiUsername.
+**AppSettings (frontend, localStorage):** restoreTabsOnStartup, configPanelAutoExpand, fileTreeAutoExpand, closeBehavior, enableTabNavigation, singleInstance, rightClickPaste, zhipuApiKey, qianfanCookie, webApiEnabled, webApiPort, webApiUsername, webApiShareSessions.
 
 **Storage layout:** `%APPDATA%/TerminalBuddy/` — `Profiles/`, `Themes/`, `Workspaces/`, `command_history.json`, `command_templates.json`, `settings.json`.
 
@@ -123,5 +123,6 @@ Embedded in the Rust binary via `include_dir!` in release mode; served from `web
 - Theme system: CSS custom properties toggled via `data-theme` attribute on `<html>`
 - Web API uses JWT for auth, bcrypt for password hashing, WebSocket for terminal I/O
 - Web clients can only grow the PTY size (never shrink) to protect the desktop viewer
+- Session isolation: when `webApiShareSessions` is false (default), Web clients can only see/operate Web-created terminals; PC clients can see Web-created terminals but cannot write/resize/close them
 - Custom frameless window (`decorations: false` in tauri.conf.json), TitleBar.tsx provides window controls
 - No automated tests exist in the project
