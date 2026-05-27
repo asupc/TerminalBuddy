@@ -109,6 +109,11 @@ impl ProfileService {
             k8s_namespace: None,
             k8s_pod_name: None,
             k8s_container_name: None,
+            mstsc_host: None,
+            mstsc_port: None,
+            mstsc_user: None,
+            mstsc_password: None,
+            mstsc_resolution: None,
             created_at: chrono::Utc::now().to_rfc3339(),
             last_used_at: None,
         };

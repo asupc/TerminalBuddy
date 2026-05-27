@@ -26,6 +26,11 @@ pub struct Profile {
     pub k8s_namespace: Option<String>,
     pub k8s_pod_name: Option<String>,
     pub k8s_container_name: Option<String>,
+    pub mstsc_host: Option<String>,
+    pub mstsc_port: Option<u16>,
+    pub mstsc_user: Option<String>,
+    pub mstsc_password: Option<String>,
+    pub mstsc_resolution: Option<String>,
     pub created_at: String,
     pub last_used_at: Option<String>,
 }

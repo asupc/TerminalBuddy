@@ -540,3 +540,51 @@ pub fn start_blank_terminal(
 ) -> Result<String, String> {
     terminal_service.create_blank_terminal(&terminal_type, initial_rows, initial_cols, app)
 }
+
+#[command]
+pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
+    let profile = ProfileService::get_profile(&profile_id)
+        .map_err(|e| format!("配置不存在: {}", e))?;
+
+    let host = profile.mstsc_host.as_ref()
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| "请先配置远程主机地址".to_string())?;
+
+    let port = profile.mstsc_port.unwrap_or(3389);
+    let user = profile.mstsc_user.as_deref().unwrap_or("");
+    let password = profile.mstsc_password.as_deref().unwrap_or("");
+    let resolution = profile.mstsc_resolution.as_deref().unwrap_or("");
+
+    // 存储凭据到 Windows 凭据管理器
+    if !user.is_empty() {
+        let cred_target = format!("TERMSRV/{}", host);
+        let _ = std::process::Command::new("cmdkey.exe")
+            .args(["/generic:".to_string() + &cred_target, "/user:".to_string() + user, "/pass:".to_string() + password])
+            .output();
+    }
+
+    // 构建 mstsc.exe 参数
+    let addr = if port == 3389 {
+        host.clone()
+    } else {
+        format!("{}:{}", host, port)
+    };
+
+    let mut args = vec![format!("/v:{}", addr)];
+
+    if !resolution.is_empty() {
+        if let Some((w, h)) = resolution.split_once('x') {
+            args.push(format!("/w:{}", w));
+            args.push(format!("/h:{}", h));
+        }
+    } else {
+        args.push("/f".to_string());
+    }
+
+    std::process::Command::new("mstsc.exe")
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("启动远程桌面失败: {}", e))?;
+
+    Ok(())
+}
