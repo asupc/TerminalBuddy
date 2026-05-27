@@ -10,6 +10,7 @@ use std::fs;
 use std::path::PathBuf;
 use crate::services::ProfileService;
 use crate::services::PathService;
+use crate::services::ssh_session_service::SshSessionService;
 
 pub struct TerminalInstance {
     pub id: String,
@@ -507,7 +508,9 @@ pub fn resize_terminal(
 pub fn close_terminal(
     id: String,
     terminal_service: State<TerminalService>,
+    ssh_service: State<SshSessionService>,
 ) -> Result<(), String> {
+    ssh_service.close_session(&id);
     terminal_service.close_terminal(&id)
 }
 

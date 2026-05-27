@@ -25,7 +25,7 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
   const [stats, setStats] = useState<ServerStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [interval, setInterval_] = useState(3);
-  const [consecutiveErrors, setConsecutiveErrors] = useState(0);
+  const consecutiveErrorsRef = useRef(0);
   const timerRef = useRef<number | null>(null);
 
   const fetchStats = useCallback(async () => {
@@ -33,14 +33,14 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
       const data = await getServerStats(terminalId);
       setStats(data);
       setError(null);
-      setConsecutiveErrors(0);
+      consecutiveErrorsRef.current = 0;
     } catch (err) {
-      setConsecutiveErrors(prev => prev + 1);
-      if (consecutiveErrors >= 2) {
+      consecutiveErrorsRef.current += 1;
+      if (consecutiveErrorsRef.current >= 3) {
         setError('连接断开');
       }
     }
-  }, [terminalId, consecutiveErrors]);
+  }, [terminalId]);
 
   useEffect(() => {
     if (!isSsh || !expanded || interval <= 0) {

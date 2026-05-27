@@ -13,14 +13,21 @@ struct NetworkCache {
     timestamp: i64,
 }
 
+struct CpuCache {
+    idle: u64,
+    total: u64,
+}
+
 pub struct MonitorCache {
-    cache: Mutex<HashMap<String, NetworkCache>>,
+    net: Mutex<HashMap<String, NetworkCache>>,
+    cpu: Mutex<HashMap<String, CpuCache>>,
 }
 
 impl MonitorCache {
     pub fn new() -> Self {
         Self {
-            cache: Mutex::new(HashMap::new()),
+            net: Mutex::new(HashMap::new()),
+            cpu: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -105,15 +112,13 @@ fn parse_memory(output: &str) -> MemoryStats {
     }
 }
 
-fn parse_cpu(output: &str) -> f64 {
-    // /proc/stat first line:
-    // cpu  user nice system idle iowait irq softirq steal guest guest_nice
+fn parse_cpu(output: &str, terminal_id: &str, cache: &MonitorCache) -> f64 {
+    // /proc/stat first line is cumulative since boot: cpu  user nice system idle ...
     let line = output.trim();
     let fields: Vec<&str> = line.split_whitespace().collect();
     if fields.len() < 5 {
         return 0.0;
     }
-    // fields[0] is "cpu", fields[1..] are values
     let values: Vec<u64> = fields[1..]
         .iter()
         .filter_map(|v| v.parse().ok())
@@ -126,11 +131,19 @@ fn parse_cpu(output: &str) -> f64 {
     if total == 0 {
         return 0.0;
     }
-    // This gives instantaneous idle ratio; subtract from 100 for usage
-    // Since we only read once, we get a snapshot. A proper reading needs two samples,
-    // but this is a reasonable approximation for a single poll.
-    let idle_pct = idle as f64 / total as f64 * 100.0;
-    (100.0 - idle_pct).max(0.0).min(100.0)
+
+    let mut cpu_cache = cache.cpu.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(prev) = cpu_cache.get(terminal_id) {
+        let d_idle = idle.saturating_sub(prev.idle);
+        let d_total = total.saturating_sub(prev.total);
+        cpu_cache.insert(terminal_id.to_string(), CpuCache { idle, total });
+        if d_total > 0 {
+            return (1.0 - d_idle as f64 / d_total as f64) * 100.0;
+        }
+        return 0.0;
+    }
+    cpu_cache.insert(terminal_id.to_string(), CpuCache { idle, total });
+    0.0 // First reading, need two samples
 }
 
 fn parse_disk(output: &str) -> Vec<DiskStats> {
@@ -233,7 +246,7 @@ pub fn get_server_stats(
 
     let uptime = parse_uptime(uptime_section);
     let memory = parse_memory(mem_section);
-    let cpu_usage = parse_cpu(cpu_section);
+    let cpu_usage = parse_cpu(cpu_section, &terminal_id, &monitor_cache);
     let disk = parse_disk(disk_section);
     let (rx_bytes, tx_bytes) = parse_network(net_section);
 
@@ -242,7 +255,7 @@ pub fn get_server_stats(
     let mut tx_speed = 0.0f64;
 
     // Calculate network speed from cached previous reading
-    if let Ok(mut cache) = monitor_cache.cache.lock() {
+    if let Ok(mut cache) = monitor_cache.net.lock() {
         if let Some(prev) = cache.get(&terminal_id) {
             let dt_ms = now - prev.timestamp;
             if dt_ms > 0 {

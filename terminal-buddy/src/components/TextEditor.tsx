@@ -74,9 +74,9 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
           if (session?.sshRemotePath && session?.sshTerminalId) {
             try {
               await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath);
-              console.log('已自动上传到服务器:', session.sshRemotePath);
             } catch (uploadErr) {
               console.error('Auto-upload to server failed:', uploadErr);
+              alert('已保存到本地，但上传到服务器失败: ' + String(uploadErr));
             }
           }
           onDirtyChange(false);
