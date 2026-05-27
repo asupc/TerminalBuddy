@@ -108,6 +108,7 @@ export async function renamePath(path: string, newName: string): Promise<void> {
 export const readFileContent = (path: string) => invoke<string>('read_file_content', { path });
 export const writeFileContent = (path: string, content: string) => invoke<boolean>('write_file_content', { path, content });
 export const getFileSize = (path: string) => invoke<number>('get_file_size', { path });
+export const getFileMeta = (path: string) => invoke<{ lastModified: number; size: number }>('get_file_meta', { path });
 
 // Theme Commands
 export async function getAllThemes(): Promise<CustomTheme[]> {

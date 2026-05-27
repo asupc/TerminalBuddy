@@ -91,3 +91,74 @@
   background: #454545;
   margin: 4px 8px;
 }
+
+.editor-conflict-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+}
+
+.editor-conflict-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: #1e1e1e;
+  border: 1px solid #454545;
+  border-radius: 8px;
+  padding: 20px 24px;
+  z-index: 10001;
+  min-width: 320px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.editor-conflict-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-bottom: 8px;
+}
+
+.editor-conflict-message {
+  font-size: 13px;
+  color: #999;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.editor-conflict-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.editor-conflict-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.editor-conflict-btn.overwrite {
+  background: #0e639c;
+  color: #fff;
+}
+
+.editor-conflict-btn.overwrite:hover {
+  background: #1177bb;
+}
+
+.editor-conflict-btn.discard {
+  background: #3c3c3c;
+  color: #ccc;
+}
+
+.editor-conflict-btn.discard:hover {
+  background: #4c4c4c;
+}

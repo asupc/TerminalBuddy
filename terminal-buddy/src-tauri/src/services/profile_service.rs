@@ -103,6 +103,7 @@ impl ProfileService {
             ssh_user: None,
             ssh_auth_type: None,
             ssh_key_path: None,
+            ssh_password: None,
             docker_container_id: None,
             docker_container_name: None,
             k8s_namespace: None,

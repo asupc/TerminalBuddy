@@ -16,6 +16,7 @@ export interface Profile {
   sshUser?: string;
   sshAuthType?: 'password' | 'key';
   sshKeyPath?: string;
+  sshPassword?: string;
   dockerContainerId?: string;
   dockerContainerName?: string;
   k8sNamespace?: string;

@@ -56,6 +56,12 @@ impl SshSessionService {
                 session.userauth_pubkey_file(user, None, Path::new(key_path), None)
                     .map_err(|e| format!("Key auth failed: {}", e))?;
             }
+            Some("password") => {
+                let password = profile.ssh_password.as_deref()
+                    .ok_or("SSH password not set")?;
+                session.userauth_password(user, password)
+                    .map_err(|e| format!("Password auth failed: {}", e))?;
+            }
             _ => {
                 if session.userauth_agent(user).is_err() {
                     return Err("Agent authentication failed. Password auth not supported — use key-based authentication.".to_string());
