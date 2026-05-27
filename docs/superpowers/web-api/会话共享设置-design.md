@@ -173,6 +173,10 @@ pub async fn handle_socket(
 
 **文件**：`src-tauri/src/web/ws.rs`
 
+WebSocket 连接已经根据权限过滤（见上一节），所以到达输入权限检查的连接只有两类：
+1. **Web 端连接 Web 端创建的终端**：允许输入
+2. **PC 端连接 Web 端创建的终端**：拒绝输入
+
 处理 WebSocket 消息时检查权限：
 ```rust
 async fn handle_client_message(
@@ -180,18 +184,17 @@ async fn handle_client_message(
     terminal_id: &str,
     ts: &TerminalService,
     settings: &AppSettings,
+    is_web_client: bool,  // 标识请求来源：true=Web 端，false=PC 端
 ) -> Result<(), String> {
     let terminal = ts.get_terminal(terminal_id)
         .ok_or("终端不存在")?;
     
     match msg {
         WsClientMessage::Input { data } => {
+            // 不共享模式下，PC 端不能输入 Web 端的终端
             if !settings.web_api_share_sessions 
-                && terminal.owner == TerminalOwner::Web {
-                // 不共享模式下，PC 端不能输入 Web 端的终端
-                // 但 Web 端可以输入自己创建的终端
-                // 这里需要判断请求来源（Web 端还是 PC 端）
-                // 由于 WebSocket 连接已经被过滤，这里主要是 PC 端的请求
+                && terminal.owner == TerminalOwner::Web
+                && !is_web_client {
                 return Err("终端由 Web 端管理，PC 端只读".to_string());
             }
             ts.write_to_terminal(terminal_id, &data)
@@ -200,7 +203,8 @@ async fn handle_client_message(
         WsClientMessage::Resize { cols, rows } => {
             // 同样的权限检查
             if !settings.web_api_share_sessions 
-                && terminal.owner == TerminalOwner::Web {
+                && terminal.owner == TerminalOwner::Web
+                && !is_web_client {
                 return Err("终端由 Web 端管理，PC 端只读".to_string());
             }
             ts.resize_terminal(terminal_id, rows, cols, false)
@@ -210,6 +214,10 @@ async fn handle_client_message(
     Ok(())
 }
 ```
+
+**请求来源标识**：
+- Web 端通过 HTTP API 创建的 WebSocket 连接：`is_web_client = true`
+- PC 端通过 Tauri 命令创建的 WebSocket 连接：`is_web_client = false`
 
 #### PC 端 Tauri 命令权限
 
