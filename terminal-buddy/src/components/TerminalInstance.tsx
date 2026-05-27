@@ -20,6 +20,7 @@ interface TerminalInstanceProps {
   onOutput: (sessionId: string, data: string) => void;
   colorTheme?: { background: string; foreground: string };
   isActive?: boolean;
+  readOnly?: boolean;
 }
 
 export const TerminalInstance: FC<TerminalInstanceProps> = ({
@@ -27,6 +28,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   onOutput,
   colorTheme,
   isActive,
+  readOnly,
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -211,6 +213,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           foreground: colorTheme?.foreground || '#cccccc',
         },
         allowProposedApi: true,
+        disableStdin: !!readOnly,
         ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),
       });
 
@@ -449,6 +452,26 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Capture-phase keydown — fires before xterm's internal textarea sees the event
       const handleKeyDown = (e: KeyboardEvent) => {
+        // ReadOnly mode: only allow copy (Ctrl+C) and search (Ctrl+F)
+        if (readOnly) {
+          if (e.key === 'c' && e.ctrlKey && !e.shiftKey) {
+            const selection = terminal.getSelection();
+            if (selection) {
+              navigator.clipboard.writeText(selection).catch(() => {});
+            }
+            return;
+          }
+          if (e.key === 'f' && e.ctrlKey && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            setSearchVisible(true);
+            return;
+          }
+          // Block all other input in readOnly mode
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         // Tab: accept autocomplete suggestion
         if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
           const ac = autocompleteRef.current;
@@ -594,15 +617,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       const handleContextMenu = (e: MouseEvent) => {
         e.preventDefault();
-        const settings = getAppSettings();
-        if (settings.rightClickPaste && !terminal.hasSelection()) {
-          navigator.clipboard.readText().then((text) => {
-            if (text) {
-              terminal.paste(text);
-              terminal.focus();
-            }
-          }).catch(() => {});
-          return;
+        // In readOnly mode, block paste but still allow copy from context menu
+        if (!readOnly) {
+          const settings = getAppSettings();
+          if (settings.rightClickPaste && !terminal.hasSelection()) {
+            navigator.clipboard.readText().then((text) => {
+              if (text) {
+                terminal.paste(text);
+                terminal.focus();
+              }
+            }).catch(() => {});
+            return;
+          }
         }
         setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
       };
@@ -789,7 +815,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (selection) {
         navigator.clipboard.writeText(selection).catch(() => {});
       }
-    } else {
+    } else if (!readOnly) {
       navigator.clipboard.readText().then((text) => {
         if (text) {
           terminal.paste(text);
@@ -843,7 +869,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // hovering — keep drag-over state
       } else if (event.payload.type === 'drop') {
         setDragOver(false);
-        if (!isActiveRef.current) return;
+        if (!isActiveRef.current || readOnly) return;
         const paths = event.payload.paths;
         if (paths && paths.length > 0) {
           const text = paths.map(p => `"${p}"`).join(' ');
@@ -871,7 +897,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const handleMouseUp = () => {
       const paths = useAppStore.getState().dragPaths;
-      if (!paths || !isActiveRef.current) return;
+      if (!paths || !isActiveRef.current || readOnly) return;
       setInternalDragOver(false);
       const text = paths.map(p => `"${p}"`).join(' ');
       onOutputRef.current(terminalId, text);

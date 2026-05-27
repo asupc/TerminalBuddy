@@ -61,6 +61,7 @@ export const TerminalPanel: FC = () => {
                 colorTheme={session.colorTheme}
                 onOutput={handleTerminalInput}
                 isActive={activeSessionId === session.id}
+                readOnly={!settings.webApiShareSessions && session.owner === 'web'}
               />
             )}
           </div>

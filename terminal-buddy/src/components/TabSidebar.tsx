@@ -449,6 +449,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                     />
                   )}
                   <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>{child.label}</span>
+                  {(child.data as any)?.owner === 'web' && <span className="tab-sidebar-owner-badge">Web</span>}
                   <span className="tree-item-end">
                     <button
                       className="tree-item-close"

@@ -87,8 +87,8 @@ function App() {
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
-    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string }>('terminal-created', (event) => {
-      const { id, profileId, profileName, terminalType } = event.payload;
+    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web' }>('terminal-created', (event) => {
+      const { id, profileId, profileName, terminalType, owner } = event.payload;
       const store = useAppStore.getState();
       // Skip if already in sessions
       if (store.sessions.find((s) => s.id === id)) return;
@@ -104,6 +104,7 @@ function App() {
         colorTheme: { background: theme.background, foreground: theme.foreground },
         tabColor: profile?.tabColor || null,
         groupId: 'default',
+        owner,
       }, true);
     });
 
@@ -202,6 +203,7 @@ function App() {
               colorTheme: tab.colorTheme,
               tabColor: tab.tabColor,
               groupId: tab.groupId || 'default',
+              owner: 'pc',
             });
             if (i === activeIndex) {
               store.setActiveSession(terminalId);
@@ -250,6 +252,7 @@ function App() {
         colorTheme: { background: theme.background, foreground: theme.foreground },
         tabColor: profile.tabColor || null,
         groupId: 'default',
+        owner: 'pc',
       });
       if (profile.startupPath) {
         setSessionDirectory(terminalId, profile.startupPath);
@@ -320,6 +323,7 @@ function App() {
         colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
         tabColor: null,
         groupId: 'default',
+        owner: 'pc',
       });
     } catch (err) {
       console.error('Failed to start blank terminal:', err);

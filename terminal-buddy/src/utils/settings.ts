@@ -23,6 +23,7 @@ export interface AppSettings {
   breathingLightCustomColor: string;
   sshDownloadDir: string;
   serverMonitorInterval: number;
+  webApiShareSessions: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -44,6 +45,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   breathingLightCustomColor: '#FFC107',
   sshDownloadDir: '',
   serverMonitorInterval: 3,
+  webApiShareSessions: false,
 };
 
 let _cachedSettings: AppSettings | null = null;

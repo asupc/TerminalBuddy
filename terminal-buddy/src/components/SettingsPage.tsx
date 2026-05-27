@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress, getDownloadsDirectory, saveSshDownloadDir, saveServerMonitorInterval } from '../services/tauri';
+import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress, getDownloadsDirectory, saveSshDownloadDir, saveServerMonitorInterval, saveWebApiShareSessions } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { PRESET_THEMES, BREATHING_LIGHT_COLORS, type CustomTheme, type Profile } from '../types';
 import { type AppSettings, type BreathingLightColorMode, getAppSettings, saveAppSettings } from '../utils/settings';
@@ -273,7 +273,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         settings.webApiEnabled,
         settings.webApiPort,
         settings.webApiUsername,
-        webPassword
+        webPassword,
+        settings.webApiShareSessions
       );
       if (webPassword) setWebPassword('');
     } catch (e) {
@@ -289,7 +290,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       if (serverRunning) {
         // 停止：先关闭开关，保存，再重启（restart_web_server 会检测 enabled=false 并停止）
         setSettings(prev => ({ ...prev, webApiEnabled: false }));
-        await saveWebApiSettings(false, settings.webApiPort, settings.webApiUsername, '');
+        await saveWebApiSettings(false, settings.webApiPort, settings.webApiUsername, '', settings.webApiShareSessions);
         const result = await restartWebServer();
         setServerRunning(false);
         setServerAddress('已停止');
@@ -304,7 +305,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         if (!settings.webApiEnabled) {
           setSettings(prev => ({ ...prev, webApiEnabled: true }));
         }
-        await saveWebApiSettings(true, settings.webApiPort, settings.webApiUsername, webPassword);
+        await saveWebApiSettings(true, settings.webApiPort, settings.webApiUsername, webPassword, settings.webApiShareSessions);
         const result = await restartWebServer();
         const addr = await getWebServerAddress();
         setServerAddress(addr);
@@ -1222,6 +1223,22 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                         style={{ flex: 1 }}
                       />
                     </div>
+                  </div>
+
+                  <div className="settings-section">
+                    <label className="settings-toggle">
+                      <input
+                        type="checkbox"
+                        checked={settings.webApiShareSessions ?? false}
+                        onChange={(e) => {
+                          const value = e.target.checked;
+                          updateSetting('webApiShareSessions', value);
+                          saveWebApiShareSessions(value).catch(console.error);
+                        }}
+                      />
+                      <span>共享会话窗口</span>
+                    </label>
+                    <p className="settings-desc">开启后 Web 端和 PC 端可以看到并操作所有终端；关闭后 Web 端只能看到自己创建的终端，PC 端可以看到 Web 端创建的终端但不能操作</p>
                   </div>
 
                   <div className="settings-section">

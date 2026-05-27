@@ -112,6 +112,7 @@ export interface TerminalSession {
   isDirty?: boolean;
   sshRemotePath?: string;
   sshTerminalId?: string;
+  owner?: 'pc' | 'web';
 }
 
 export interface Workspace {

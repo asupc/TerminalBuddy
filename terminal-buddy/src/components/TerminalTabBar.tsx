@@ -133,7 +133,10 @@ export const TerminalTabBar: FC = () => {
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
-            <span className="terminal-tab-name" style={session.tabColor ? { color: session.tabColor } : undefined}>{session.profileName}</span>
+            <>
+              <span className="terminal-tab-name" style={session.tabColor ? { color: session.tabColor } : undefined}>{session.profileName}</span>
+              {session.owner === 'web' && <span className="terminal-owner-badge">Web</span>}
+            </>
           )}
           <button
             className="terminal-tab-close"
