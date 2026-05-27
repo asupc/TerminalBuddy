@@ -3,7 +3,7 @@ import { windowMinimize, windowToggleMaximize, windowClose, getWebApiStatus, sav
 import { AiUsagePanel } from './AiUsagePanel';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
-import { getStoredTheme, applyTheme } from '../utils/settings';
+import { getStoredTheme, applyTheme, getAppSettings } from '../utils/settings';
 
 interface TitleBarProps {
   onSettings: () => void;
@@ -50,11 +50,11 @@ export const TitleBar: FC<TitleBarProps> = ({
     try {
       const status = await getWebApiStatus();
       if (webRunning) {
-        await saveWebApiSettings(false, status.port, status.username, '');
+        await saveWebApiSettings(false, status.port, status.username, '', getAppSettings().webApiShareSessions);
         await restartWebServer();
         setWebRunning(false);
       } else {
-        await saveWebApiSettings(true, status.port, status.username, '');
+        await saveWebApiSettings(true, status.port, status.username, '', getAppSettings().webApiShareSessions);
         await restartWebServer();
         const addr = await getWebServerAddress();
         setWebRunning(addr.startsWith('http'));

@@ -249,9 +249,10 @@ export async function saveWebApiSettings(
   enabled: boolean,
   port: number,
   username: string,
-  password: string
+  password: string,
+  shareSessions: boolean
 ): Promise<void> {
-  return invoke('save_web_api_settings', { enabled, port, username, password });
+  return invoke('save_web_api_settings', { enabled, port, username, password, shareSessions });
 }
 
 export async function getWebApiStatus(): Promise<{
@@ -291,6 +292,10 @@ export async function saveSshDownloadDir(dir: string): Promise<void> {
 
 export async function saveServerMonitorInterval(interval: number): Promise<void> {
   return invoke('save_server_monitor_interval', { interval });
+}
+
+export async function saveWebApiShareSessions(enabled: boolean): Promise<void> {
+  return invoke('save_web_api_share_sessions', { enabled });
 }
 
 // ============ SSH Remote File Commands ============

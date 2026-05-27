@@ -94,6 +94,13 @@ pub fn save_server_monitor_interval(interval: u32) -> Result<(), String> {
     SettingsService::save_settings(&settings)
 }
 
+#[tauri::command]
+pub fn save_web_api_share_sessions(enabled: bool) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.web_api_share_sessions = enabled;
+    SettingsService::save_settings(&settings)
+}
+
 fn read_json_files(dir: &PathBuf) -> Result<HashMap<String, Value>, String> {
     let mut map = HashMap::new();
     if !dir.exists() {
@@ -220,6 +227,7 @@ pub fn save_web_api_settings(
     port: u16,
     username: String,
     password: String,
+    share_sessions: bool,
 ) -> Result<(), String> {
     let mut settings = SettingsService::get_settings();
     settings.web_api_enabled = enabled;
@@ -229,6 +237,7 @@ pub fn save_web_api_settings(
         settings.web_api_password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
             .map_err(|e| format!("密码加密失败: {}", e))?;
     }
+    settings.web_api_share_sessions = share_sessions;
     SettingsService::save_settings(&settings)
 }
 
