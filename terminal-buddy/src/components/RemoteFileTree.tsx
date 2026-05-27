@@ -4,6 +4,7 @@ import {
   remoteListDir, remoteCreateDir, remoteCreateFile, remoteRemove,
   remoteRename, remoteMove, remoteCopy, remoteChmod, remoteUpload,
   remoteDownload, writeToTerminal, getSshTempDirectory, ensureDir,
+  connectSshSession,
 } from '../services/tauri';
 import { isTextFile } from '../utils/fileExtensions';
 import { ChmodDialog } from './ChmodDialog';
@@ -83,8 +84,21 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const remoteClipboard = useAppStore(s => s.remoteClipboard);
   const setRemoteClipboard = useAppStore(s => s.setRemoteClipboard);
   const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
+  const session = useAppStore(s => s.sessions.find(s => s.id === terminalId));
+  const connectedRef = useRef(false);
+
+  const ensureConnected = useCallback(async () => {
+    if (connectedRef.current || !session?.profileId) return;
+    try {
+      await connectSshSession(terminalId, session.profileId);
+      connectedRef.current = true;
+    } catch (e) {
+      console.error('SSH session connect failed:', e);
+    }
+  }, [terminalId, session?.profileId]);
 
   const loadDirectory = useCallback(async (path: string) => {
+    await ensureConnected();
     setLoading(true);
     setError(null);
     try {

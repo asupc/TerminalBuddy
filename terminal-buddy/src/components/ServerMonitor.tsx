@@ -1,5 +1,6 @@
 import { FC, useEffect, useRef, useState, useCallback } from 'react';
-import { getServerStats } from '../services/tauri';
+import { getServerStats, connectSshSession } from '../services/tauri';
+import { useAppStore } from '../stores/appStore';
 import type { ServerStats } from '../types';
 
 interface ServerMonitorProps {
@@ -27,8 +28,21 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
   const [interval, setInterval_] = useState(3);
   const consecutiveErrorsRef = useRef(0);
   const timerRef = useRef<number | null>(null);
+  const connectedRef = useRef(false);
+  const session = useAppStore(s => s.sessions.find(s => s.id === terminalId));
+
+  const ensureConnected = useCallback(async () => {
+    if (connectedRef.current || !session?.profileId) return;
+    try {
+      await connectSshSession(terminalId, session.profileId);
+      connectedRef.current = true;
+    } catch (e) {
+      console.error('SSH session connect failed:', e);
+    }
+  }, [terminalId, session?.profileId]);
 
   const fetchStats = useCallback(async () => {
+    await ensureConnected();
     try {
       const data = await getServerStats(terminalId);
       setStats(data);
@@ -40,7 +54,7 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
         setError('连接断开');
       }
     }
-  }, [terminalId]);
+  }, [terminalId, ensureConnected]);
 
   useEffect(() => {
     if (!isSsh || !expanded || interval <= 0) {
