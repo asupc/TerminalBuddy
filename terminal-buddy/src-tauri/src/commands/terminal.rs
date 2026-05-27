@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use crate::models::TerminalOwner;
 use crate::services::ProfileService;
 use crate::services::PathService;
+use crate::services::SettingsService;
 use crate::services::ssh_session_service::SshSessionService;
 
 pub struct TerminalInstance {
@@ -494,6 +495,17 @@ pub fn write_to_terminal(
     data: String,
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
+    // 权限检查：不共享模式下，PC 端不能输入 Web 端创建的终端
+    let settings = SettingsService::get_settings();
+    if !settings.web_api_share_sessions {
+        let instances = terminal_service.instances.lock().unwrap();
+        if let Some(terminal) = instances.get(&id) {
+            if terminal.owner == TerminalOwner::Web {
+                return Err("终端由 Web 端管理，PC 端只读".to_string());
+            }
+        }
+    }
+
     terminal_service.write_to_terminal(&id, &data)
 }
 
@@ -504,6 +516,17 @@ pub fn resize_terminal(
     cols: u16,
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
+    // 权限检查：不共享模式下，PC 端不能 resize Web 端创建的终端
+    let settings = SettingsService::get_settings();
+    if !settings.web_api_share_sessions {
+        let instances = terminal_service.instances.lock().unwrap();
+        if let Some(terminal) = instances.get(&id) {
+            if terminal.owner == TerminalOwner::Web {
+                return Err("终端由 Web 端管理，PC 端只读".to_string());
+            }
+        }
+    }
+
     // Desktop (Tauri invoke) always allows shrink — it's the primary viewer
     terminal_service.resize_terminal(&id, rows, cols, true)
 }
