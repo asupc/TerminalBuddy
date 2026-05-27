@@ -600,44 +600,63 @@ fn bring_window_to_front(pid: u32) -> bool {
     false
 }
 
-/// 修改指定 PID 的 mstsc 窗口标题
-fn set_mstsc_window_title(pid: u32, title: &str) {
+/// 获取指定 HWND 的窗口标题
+unsafe fn get_window_title(hwnd: windows::Win32::Foundation::HWND) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowTextW;
+    let mut buf = [0u16; 512];
+    let len = unsafe { GetWindowTextW(hwnd, &mut buf) } as usize;
+    String::from_utf16_lossy(&buf[..len])
+}
+
+/// 通过类名和标题关键词查找 mstsc 窗口并修改标题
+/// 返回 true 表示成功找到并修改了标题
+fn set_mstsc_window_title(new_title: &str) -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowThreadProcessId, GetClassNameW, SetWindowTextW,
+        EnumWindows, GetClassNameW, SetWindowTextW, IsWindowVisible,
     };
     use windows::Win32::Foundation::{HWND, LPARAM};
 
-    let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    let new_title_wide: Vec<u16> = new_title.encode_utf16().chain(std::iter::once(0)).collect();
 
     struct EnumCtx {
-        target_pid: u32,
-        title: Vec<u16>,
+        new_title: Vec<u16>,
+        found: bool,
     }
 
     unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
-        let ctx = unsafe { &*(lparam.0 as *const EnumCtx) };
-        let mut pid: u32 = 0;
-        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
-        if pid == ctx.target_pid {
-            let mut class_name = [0u16; 64];
-            let len = unsafe { GetClassNameW(hwnd, &mut class_name) } as usize;
-            // mstsc 主窗口的类名是 "TscMainDesktopWindow"
-            if len > 0 {
-                let class_str = String::from_utf16_lossy(&class_name[..len]);
-                if class_str.contains("TscMainDesktopWindow") {
-                    let pcwstr = windows::core::PCWSTR(ctx.title.as_ptr());
-                    unsafe { let _ = SetWindowTextW(hwnd, pcwstr); }
-                    return windows::core::BOOL(0); // stop
-                }
-            }
+        let ctx = unsafe { &mut *(lparam.0 as *mut EnumCtx) };
+
+        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            return windows::core::BOOL(1);
         }
-        windows::core::BOOL(1) // continue
+
+        let mut class_name = [0u16; 64];
+        let len = unsafe { GetClassNameW(hwnd, &mut class_name) } as usize;
+        if len == 0 {
+            return windows::core::BOOL(1);
+        }
+        let class_str = String::from_utf16_lossy(&class_name[..len]);
+        if !class_str.contains("TscMainDesktopWindow") {
+            return windows::core::BOOL(1);
+        }
+
+        let cur_title = unsafe { get_window_title(hwnd) };
+        if cur_title.contains("远程桌面连接") || cur_title.contains("Remote Desktop Connection") {
+            let pcwstr = windows::core::PCWSTR(ctx.new_title.as_ptr());
+            unsafe { let _ = SetWindowTextW(hwnd, pcwstr); }
+            ctx.found = true;
+            return windows::core::BOOL(0);
+        }
+
+        windows::core::BOOL(1)
     }
 
-    let ctx = EnumCtx { target_pid: pid, title: title_wide };
+    let mut ctx = EnumCtx { new_title: new_title_wide, found: false };
     unsafe {
-        let _ = EnumWindows(Some(enum_callback), LPARAM(&ctx as *const _ as isize));
+        let _ = EnumWindows(Some(enum_callback), LPARAM(&mut ctx as *mut _ as isize));
     }
+
+    ctx.found
 }
 
 #[command]
@@ -718,9 +737,12 @@ pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
     // 后台线程：等待窗口出现后修改标题
     let title = profile.name.clone();
     std::thread::spawn(move || {
-        // 等待 mstsc 窗口创建
-        std::thread::sleep(std::time::Duration::from_millis(2000));
-        set_mstsc_window_title(pid, &title);
+        for wait_ms in [500, 1000, 2000, 3000] {
+            std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+            if set_mstsc_window_title(&title) {
+                break;
+            }
+        }
     });
 
     Ok(())
