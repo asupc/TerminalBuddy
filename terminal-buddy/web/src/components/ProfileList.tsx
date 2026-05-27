@@ -79,6 +79,7 @@ const ProfileList: React.FC = () => {
         profileId: existingTerminal.profileId,
         profileName: existingTerminal.profileName,
         terminalType: existingTerminal.terminalType as any,
+        owner: existingTerminal.owner,
       });
       return;
     }
@@ -91,6 +92,7 @@ const ProfileList: React.FC = () => {
         profileId: info.profileId,
         profileName: info.profileName,
         terminalType: info.terminalType as any,
+        owner: info.owner,
       });
     } catch (err) { console.error('启动终端失败', err); }
   };
@@ -120,6 +122,7 @@ const ProfileList: React.FC = () => {
                     profileId: t.profileId,
                     profileName: t.profileName,
                     terminalType: t.terminalType as any,
+                    owner: t.owner,
                   });
                 }}
                 style={{

@@ -34,6 +34,7 @@ const MainLayout: React.FC = () => {
             profileId: t.profileId,
             profileName: t.profileName,
             terminalType: t.terminalType as any,
+            owner: t.owner,
           });
         }
       }

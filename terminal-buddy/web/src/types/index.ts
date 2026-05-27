@@ -30,6 +30,7 @@ export interface WebTerminalSession {
   profileId: string;
   profileName: string;
   terminalType: TerminalType;
+  owner: 'pc' | 'web';
 }
 
 export interface TerminalInfo {
@@ -37,4 +38,5 @@ export interface TerminalInfo {
   profileId: string;
   profileName: string;
   terminalType: string;
+  owner: 'pc' | 'web';
 }
