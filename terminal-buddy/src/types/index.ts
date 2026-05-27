@@ -16,6 +16,7 @@ export interface Profile {
   sshUser?: string;
   sshAuthType?: 'password' | 'key';
   sshKeyPath?: string;
+  sshPassword?: string;
   dockerContainerId?: string;
   dockerContainerName?: string;
   k8sNamespace?: string;
@@ -104,6 +105,8 @@ export interface TerminalSession {
   groupId: string;
   sessionType?: 'terminal' | 'editor';
   isDirty?: boolean;
+  sshRemotePath?: string;
+  sshTerminalId?: string;
 }
 
 export interface Workspace {
@@ -154,4 +157,48 @@ export interface ExtraParamPreset {
   id: string;
   name: string;
   params: string;
+}
+
+export interface RemoteFileEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  permissions: number;
+  modified: number;
+  owner: string;
+  group: string;
+}
+
+export interface ServerStats {
+  uptime: string;
+  cpuUsage: number;
+  memory: MemoryStats;
+  disk: DiskStats[];
+  network: NetworkStats;
+  timestamp: number;
+}
+
+export interface MemoryStats {
+  total: number;
+  used: number;
+  available: number;
+  usagePercent: number;
+  swapTotal: number;
+  swapUsed: number;
+}
+
+export interface DiskStats {
+  mount: string;
+  total: number;
+  used: number;
+  available: number;
+  usagePercent: number;
+}
+
+export interface NetworkStats {
+  rxBytes: number;
+  txBytes: number;
+  rxSpeed: number;
+  txSpeed: number;
 }

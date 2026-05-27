@@ -1,7 +1,8 @@
 import { FC, useEffect, useRef, useState, useCallback } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { editor as MonacoEditor, KeyMod, KeyCode } from 'monaco-editor';
-import { readFileContent, writeFileContent } from '../services/tauri';
+import { readFileContent, writeFileContent, remoteUpload, getFileMeta } from '../services/tauri';
+import { useAppStore } from '../stores/appStore';
 import { getMonacoLanguage } from '../utils/fileExtensions';
 import './TextEditor.css';
 
@@ -30,13 +31,48 @@ interface TextEditorProps {
   isActive: boolean;
 }
 
-export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, onDirtyChange, isActive: _isActive }) => {
+export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChange, isActive }) => {
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [conflictDialog, setConflictDialog] = useState<'overwrite' | 'discard' | null>(null);
+  const diskModTimeRef = useRef<number>(0);
+  const isDirtyRef = useRef(isDirty);
+  const lastLoadedContentRef = useRef<string | null>(null);
+  const isInternalUpdateRef = useRef(false);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  isDirtyRef.current = isDirty;
+
+  const loadFileContent = useCallback(async (forceReload = false) => {
+    try {
+      const meta = await getFileMeta(filePath);
+      if (!forceReload && diskModTimeRef.current !== 0 && meta.lastModified === diskModTimeRef.current) {
+        return;
+      }
+      const text = await readFileContent(filePath);
+      diskModTimeRef.current = meta.lastModified;
+      lastLoadedContentRef.current = text;
+
+      isInternalUpdateRef.current = true;
+      setContent(text);
+      setError(null);
+
+      if (editorRef.current) {
+        const model = editorRef.current.getModel();
+        if (model && model.getValue() !== text) {
+          model.setValue(text);
+        }
+      }
+    } catch (err) {
+      setError(String(err));
+      setContent(null);
+    }
+  }, [filePath]);
+
+  // Initial load
   useEffect(() => {
     let cancelled = false;
     readFileContent(filePath)
@@ -44,6 +80,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
         if (!cancelled) {
           setContent(text);
           setError(null);
+          lastLoadedContentRef.current = text;
         }
       })
       .catch((err) => {
@@ -52,8 +89,61 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
           setContent(null);
         }
       });
+    getFileMeta(filePath)
+      .then((meta) => {
+        if (!cancelled) diskModTimeRef.current = meta.lastModified;
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [filePath]);
+
+  // Re-read file when switching to this tab
+  useEffect(() => {
+    if (!isActive) return;
+    const checkForChanges = async () => {
+      try {
+        const meta = await getFileMeta(filePath);
+        if (meta.lastModified === diskModTimeRef.current) return;
+
+        if (!isDirtyRef.current) {
+          await loadFileContent(true);
+        } else {
+          setConflictDialog('overwrite');
+        }
+      } catch {}
+    };
+    checkForChanges();
+  }, [isActive, filePath, loadFileContent]);
+
+  // Poll for external changes when active
+  useEffect(() => {
+    if (!isActive) {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      return;
+    }
+    const poll = async () => {
+      try {
+        const meta = await getFileMeta(filePath);
+        if (meta.lastModified === diskModTimeRef.current) return;
+
+        if (!isDirtyRef.current) {
+          await loadFileContent(true);
+        } else if (!conflictDialog) {
+          setConflictDialog('overwrite');
+        }
+      } catch {}
+    };
+    pollTimerRef.current = setInterval(poll, 3000);
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+  }, [isActive, filePath, loadFileContent, conflictDialog]);
 
   const handleEditorMount: OnMount = useCallback((editor) => {
     editorRef.current = editor;
@@ -67,7 +157,21 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
         const value = ed.getValue();
         try {
           await writeFileContent(filePath, value);
+          const session = useAppStore.getState().sessions.find(
+            s => s.sessionType === 'editor' && s.profileId === filePath
+          );
+          if (session?.sshRemotePath && session?.sshTerminalId) {
+            try {
+              await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath);
+            } catch (uploadErr) {
+              console.error('Auto-upload to server failed:', uploadErr);
+              alert('已保存到本地，但上传到服务器失败: ' + String(uploadErr));
+            }
+          }
           onDirtyChange(false);
+          const meta = await getFileMeta(filePath).catch(() => null);
+          if (meta) diskModTimeRef.current = meta.lastModified;
+          lastLoadedContentRef.current = value;
         } catch (err) {
           console.error('Failed to save file:', err);
         }
@@ -84,7 +188,10 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
     });
 
     editor.onDidChangeModelContent(() => {
-      onDirtyChange(true);
+      if (!isInternalUpdateRef.current) {
+        onDirtyChange(true);
+      }
+      isInternalUpdateRef.current = false;
     });
   }, [filePath, onDirtyChange]);
 
@@ -110,6 +217,39 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
     editorRef.current?.getAction(actionId)?.run();
     setCtxMenu(null);
   }, []);
+
+  const handleOverwriteSave = useCallback(async () => {
+    if (editorRef.current) {
+      const value = editorRef.current.getValue();
+      try {
+        await writeFileContent(filePath, value);
+        const session = useAppStore.getState().sessions.find(
+          s => s.sessionType === 'editor' && s.profileId === filePath
+        );
+        if (session?.sshRemotePath && session?.sshTerminalId) {
+          try {
+            await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath);
+          } catch (uploadErr) {
+            console.error('Auto-upload to server failed:', uploadErr);
+            alert('已保存到本地，但上传到服务器失败: ' + String(uploadErr));
+          }
+        }
+        onDirtyChange(false);
+        const meta = await getFileMeta(filePath).catch(() => null);
+        if (meta) diskModTimeRef.current = meta.lastModified;
+        lastLoadedContentRef.current = value;
+      } catch (err) {
+        console.error('Failed to save file:', err);
+      }
+    }
+    setConflictDialog(null);
+  }, [filePath, onDirtyChange]);
+
+  const handleDiscard = useCallback(async () => {
+    await loadFileContent(true);
+    onDirtyChange(false);
+    setConflictDialog(null);
+  }, [loadFileContent, onDirtyChange]);
 
   if (error) {
     return (
@@ -167,6 +307,25 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty: _isDirty, o
                 </div>
               )
             )}
+          </div>
+        </>
+      )}
+      {conflictDialog && (
+        <>
+          <div className="editor-conflict-overlay" />
+          <div className="editor-conflict-dialog">
+            <div className="editor-conflict-title">文件已被外部修改</div>
+            <div className="editor-conflict-message">
+              此文件在编辑器外已被修改，且您有未保存的更改。
+            </div>
+            <div className="editor-conflict-actions">
+              <button className="editor-conflict-btn overwrite" onClick={handleOverwriteSave}>
+                覆盖保存
+              </button>
+              <button className="editor-conflict-btn discard" onClick={handleDiscard}>
+                放弃修改
+              </button>
+            </div>
           </div>
         </>
       )}

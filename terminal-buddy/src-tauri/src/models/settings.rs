@@ -44,6 +44,10 @@ pub struct AppSettings {
     pub web_api_username: String,
     #[serde(default = "default_web_api_password_hash")]
     pub web_api_password_hash: String,
+    #[serde(default)]
+    pub ssh_download_dir: Option<String>,
+    #[serde(default = "default_server_monitor_interval")]
+    pub server_monitor_interval: u32,
 }
 
 impl Default for AppSettings {
@@ -58,6 +62,8 @@ impl Default for AppSettings {
             web_api_port: 9600,
             web_api_username: "admin".to_string(),
             web_api_password_hash: String::new(),
+            ssh_download_dir: None,
+            server_monitor_interval: 3,
         }
     }
 }
@@ -76,4 +82,8 @@ fn default_web_api_username() -> String {
 
 fn default_web_api_password_hash() -> String {
     String::new()
+}
+
+fn default_server_monitor_interval() -> u32 {
+    3
 }

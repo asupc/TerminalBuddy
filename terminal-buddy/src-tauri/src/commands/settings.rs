@@ -73,6 +73,27 @@ pub fn save_single_instance(enabled: bool) -> Result<(), String> {
     SettingsService::save_settings(&settings)
 }
 
+#[tauri::command]
+pub fn get_downloads_directory() -> Result<String, String> {
+    dirs::download_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| "Failed to get downloads directory".to_string())
+}
+
+#[tauri::command]
+pub fn save_ssh_download_dir(dir: String) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.ssh_download_dir = Some(dir);
+    SettingsService::save_settings(&settings)
+}
+
+#[tauri::command]
+pub fn save_server_monitor_interval(interval: u32) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.server_monitor_interval = interval;
+    SettingsService::save_settings(&settings)
+}
+
 fn read_json_files(dir: &PathBuf) -> Result<HashMap<String, Value>, String> {
     let mut map = HashMap::new();
     if !dir.exists() {

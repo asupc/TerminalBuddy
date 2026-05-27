@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSH Enhancement - 服务器监控与远程文件管理</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1e1e1e; color: #cccccc; font-size: 13px; }
+.demo-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+h1 { color: #569cd6; font-size: 18px; margin-bottom: 4px; }
+.subtitle { color: #808080; font-size: 12px; margin-bottom: 20px; }
+.section { margin-bottom: 24px; }
+.section-title { color: #dcdcaa; font-size: 14px; font-weight: 600; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid #333; }
+
+/* Main Layout Mock */
+.layout-mock { display: flex; height: 520px; border: 1px solid #3c3c3c; border-radius: 6px; overflow: hidden; }
+
+/* Sidebar / File Tree */
+.sidebar { width: 260px; background: #252526; border-right: 1px solid #3c3c3c; display: flex; flex-direction: column; }
+.sidebar-header { padding: 8px 12px; font-size: 11px; text-transform: uppercase; color: #808080; border-bottom: 1px solid #3c3c3c; display: flex; justify-content: space-between; align-items: center; }
+.sidebar-header .tab-switch { display: flex; gap: 2px; }
+.sidebar-header .tab-btn { padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; background: transparent; color: #808080; border: none; }
+.sidebar-header .tab-btn.active { background: #37373d; color: #cccccc; }
+.breadcrumb { padding: 6px 12px; font-size: 12px; color: #808080; border-bottom: 1px solid #3c3c3c; display: flex; gap: 4px; flex-wrap: wrap; }
+.breadcrumb span { cursor: pointer; color: #569cd6; }
+.breadcrumb span:hover { text-decoration: underline; }
+.breadcrumb .sep { color: #555; }
+.file-list { flex: 1; overflow-y: auto; }
+.file-item { padding: 4px 12px 4px 16px; display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.file-item:hover { background: #2a2d2e; }
+.file-item.selected { background: #094771; }
+.file-item .icon { width: 16px; text-align: center; flex-shrink: 0; }
+.file-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.file-item .size { color: #808080; font-size: 11px; min-width: 50px; text-align: right; }
+.file-item .perms { color: #608b4e; font-size: 11px; min-width: 70px; }
+
+/* Context Menu */
+.context-menu { position: fixed; background: #3c3c3c; border: 1px solid #555; border-radius: 4px; padding: 4px 0; min-width: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 100; display: none; }
+.context-menu.visible { display: block; }
+.context-menu .menu-item { padding: 5px 24px; cursor: pointer; display: flex; justify-content: space-between; font-size: 12px; }
+.context-menu .menu-item:hover { background: #094771; }
+.context-menu .menu-item .shortcut { color: #808080; margin-left: 20px; }
+.context-menu .separator { height: 1px; background: #555; margin: 4px 0; }
+
+/* Terminal Area */
+.terminal-area { flex: 1; display: flex; flex-direction: column; }
+.terminal-content { flex: 1; background: #0c0c0c; padding: 8px 12px; font-family: 'Cascadia Code', Consolas, monospace; font-size: 13px; line-height: 1.4; overflow: hidden; }
+.terminal-content .prompt { color: #6ec6ff; }
+.terminal-content .cmd { color: #cccccc; }
+.terminal-content .output { color: #a0a0a0; }
+.terminal-content .cursor { display: inline-block; width: 8px; height: 14px; background: #cccccc; animation: blink 1s step-end infinite; vertical-align: text-bottom; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Server Monitor */
+.server-monitor { border-top: 1px solid #3c3c3c; background: #252526; }
+.monitor-header { padding: 4px 12px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-size: 12px; }
+.monitor-header:hover { background: #2a2d2e; }
+.monitor-header .arrow { margin-right: 6px; }
+.monitor-header .status-ok { color: #4ec9b0; }
+.monitor-header .status-err { color: #f44747; }
+.monitor-body { padding: 4px 12px 8px; font-size: 12px; display: none; }
+.monitor-body.expanded { display: block; }
+.monitor-row { display: flex; gap: 16px; padding: 2px 0; flex-wrap: wrap; }
+.monitor-item { display: flex; align-items: center; gap: 4px; }
+.monitor-item .label { color: #808080; }
+.monitor-item .value { color: #cccccc; font-weight: 500; }
+.monitor-item .bar { width: 60px; height: 6px; background: #3c3c3c; border-radius: 3px; overflow: hidden; }
+.monitor-item .bar-fill { height: 100%; border-radius: 3px; }
+.bar-fill.low { background: #4ec9b0; }
+.bar-fill.mid { background: #dcdcaa; }
+.bar-fill.high { background: #f44747; }
+.monitor-interval { color: #808080; font-size: 11px; }
+.monitor-interval select { background: #3c3c3c; color: #cccccc; border: 1px solid #555; border-radius: 3px; padding: 1px 4px; font-size: 11px; }
+
+/* Upload Progress */
+.upload-progress { padding: 6px 12px; background: #1e1e1e; border-top: 1px solid #3c3c3c; font-size: 11px; display: none; }
+.upload-progress.visible { display: block; }
+.upload-bar { width: 100%; height: 4px; background: #3c3c3c; border-radius: 2px; margin-top: 4px; overflow: hidden; }
+.upload-bar-fill { height: 100%; background: #569cd6; border-radius: 2px; transition: width 0.3s; }
+
+/* Chmod Dialog */
+.dialog-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 200; }
+.dialog-overlay.visible { display: flex; }
+.dialog { background: #2d2d2d; border: 1px solid #555; border-radius: 8px; padding: 20px; min-width: 320px; }
+.dialog h3 { color: #cccccc; font-size: 14px; margin-bottom: 12px; }
+.dialog .perm-grid { display: grid; grid-template-columns: 70px repeat(3, 1fr); gap: 4px 8px; margin-bottom: 16px; font-size: 12px; }
+.dialog .perm-grid .header { color: #808080; text-align: center; font-weight: 600; }
+.dialog .perm-grid label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.dialog .perm-grid input[type="checkbox"] { accent-color: #569cd6; }
+.dialog .perm-result { text-align: center; font-family: monospace; font-size: 16px; color: #4ec9b0; margin-bottom: 12px; letter-spacing: 2px; }
+.dialog .btn-row { display: flex; justify-content: flex-end; gap: 8px; }
+.dialog .btn { padding: 5px 16px; border-radius: 4px; border: 1px solid #555; background: #3c3c3c; color: #cccccc; cursor: pointer; font-size: 12px; }
+.dialog .btn:hover { background: #4c4c4c; }
+.dialog .btn.primary { background: #0e639c; border-color: #1177bb; }
+.dialog .btn.primary:hover { background: #1177bb; }
+
+/* Toast */
+.toast { position: fixed; bottom: 20px; right: 20px; background: #2d2d2d; border: 1px solid #555; border-radius: 6px; padding: 10px 16px; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); display: none; z-index: 300; max-width: 300px; }
+.toast.visible { display: block; animation: slideIn 0.3s ease; }
+.toast .toast-title { color: #4ec9b0; font-weight: 600; margin-bottom: 4px; }
+.toast .toast-msg { color: #cccccc; }
+@keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .layout-mock { flex-direction: column; height: auto; }
+  .sidebar { width: 100%; height: 300px; border-right: none; border-bottom: 1px solid #3c3c3c; }
+}
+</style>
+</head>
+<body>
+<div class="demo-container">
+  <h1>SSH Enhancement Demo</h1>
+  <p class="subtitle">服务器监控与远程文件管理 - 交互演示</p>
+
+  <!-- Section 1: Main Layout -->
+  <div class="section">
+    <div class="section-title">主界面布局（SSH 标签页激活时）</div>
+    <div class="layout-mock">
+      <!-- Sidebar: Remote File Tree -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <div class="tab-switch">
+            <button class="tab-btn active" onclick="showLocal(this)">远程文件</button>
+            <button class="tab-btn" onclick="showLocal(this)">本地文件</button>
+          </div>
+          <span style="cursor:pointer;" title="刷新" onclick="showToast('目录已刷新')">⟳</span>
+        </div>
+        <div class="breadcrumb" id="breadcrumb">
+          <span onclick="navigateTo('/')">/</span>
+          <span class="sep">&gt;</span>
+          <span onclick="navigateTo('/home')">home</span>
+          <span class="sep">&gt;</span>
+          <span onclick="navigateTo('/home/deploy')">deploy</span>
+        </div>
+        <div class="file-list" id="fileList" oncontextmenu="showContextMenu(event, 'blank')">
+          <div class="file-item" ondblclick="navigateTo('/home/deploy/app')" oncontextmenu="showContextMenu(event, 'dir')">
+            <span class="icon">📁</span>
+            <span class="name">app</span>
+            <span class="perms">drwxr-xr-x</span>
+          </div>
+          <div class="file-item" ondblclick="navigateTo('/home/deploy/logs')" oncontextmenu="showContextMenu(event, 'dir')">
+            <span class="icon">📁</span>
+            <span class="name">logs</span>
+            <span class="perms">drwxr-xr-x</span>
+          </div>
+          <div class="file-item selected" onclick="selectFile(this)" oncontextmenu="showContextMenu(event, 'text')">
+            <span class="icon">📄</span>
+            <span class="name">config.yaml</span>
+            <span class="size">1.2K</span>
+            <span class="perms">-rw-------</span>
+          </div>
+          <div class="file-item" onclick="selectFile(this)" oncontextmenu="showContextMenu(event, 'file')">
+            <span class="icon">📦</span>
+            <span class="name">app.log</span>
+            <span class="size">2.3M</span>
+            <span class="perms">-rw-r--r--</span>
+          </div>
+          <div class="file-item" onclick="selectFile(this)" oncontextmenu="showContextMenu(event, 'file')">
+            <span class="icon">🖼️</span>
+            <span class="name">screenshot.png</span>
+            <span class="size">500K</span>
+            <span class="perms">-rw-r--r--</span>
+          </div>
+          <div class="file-item" onclick="selectFile(this)" oncontextmenu="showContextMenu(event, 'file')">
+            <span class="icon">📄</span>
+            <span class="name">deploy.sh</span>
+            <span class="size">3.4K</span>
+            <span class="perms">-rwxr-xr-x</span>
+          </div>
+        </div>
+        <!-- Upload Progress -->
+        <div class="upload-progress" id="uploadProgress">
+          <span>正在上传: app.tar.gz</span>
+          <span id="uploadPercent" style="float:right;">0%</span>
+          <div class="upload-bar"><div class="upload-bar-fill" id="uploadBarFill" style="width:0%"></div></div>
+        </div>
+      </div>
+
+      <!-- Terminal Area -->
+      <div class="terminal-area">
+        <div class="terminal-content">
+          <div><span class="prompt">deploy@server:~$</span> <span class="cmd">ls -la</span></div>
+          <div class="output">total 48</div>
+          <div class="output">drwxr-xr-x 4 deploy deploy 4096 May 20 10:30 .</div>
+          <div class="output">drwxr-xr-x 3 root   root   4096 May 15 08:00 ..</div>
+          <div class="output">-rw------- 1 deploy deploy 1234 May 19 15:22 config.yaml</div>
+          <div class="output">-rw-r--r-- 1 deploy deploy 2.3M May 20 10:30 app.log</div>
+          <div class="output">-rwxr-xr-x 1 deploy deploy 3456 May 18 09:15 deploy.sh</div>
+          <div><span class="prompt">deploy@server:~$</span> <span class="cursor"></span></div>
+        </div>
+
+        <!-- Server Monitor Panel -->
+        <div class="server-monitor">
+          <div class="monitor-header" onclick="toggleMonitor()">
+            <span>
+              <span class="arrow" id="monitorArrow">▶</span>
+              <span class="status-ok" id="monitorStatus">●</span>
+              <span id="monitorSummary">CPU 23% | Mem 30% | Disk 30% | ↑1.2M ↓3.4M</span>
+            </span>
+            <span class="monitor-interval" id="monitorIntervalCtrl" style="display:none;">
+              刷新间隔:
+              <select onchange="changeInterval(this.value)">
+                <option value="1">1s</option>
+                <option value="3" selected>3s</option>
+                <option value="5">5s</option>
+                <option value="10">10s</option>
+                <option value="0">关闭</option>
+              </select>
+            </span>
+          </div>
+          <div class="monitor-body" id="monitorBody">
+            <div class="monitor-row">
+              <div class="monitor-item">
+                <span class="label">Uptime:</span>
+                <span class="value">15d 3h 42m</span>
+              </div>
+              <div class="monitor-item">
+                <span class="label">CPU:</span>
+                <span class="value">23.5%</span>
+                <div class="bar"><div class="bar-fill low" style="width:23.5%"></div></div>
+              </div>
+              <div class="monitor-item">
+                <span class="label">Mem:</span>
+                <span class="value">1.2G/4.0G (30%)</span>
+                <div class="bar"><div class="bar-fill low" style="width:30%"></div></div>
+              </div>
+              <div class="monitor-item">
+                <span class="label">Swap:</span>
+                <span class="value">0/1G</span>
+              </div>
+            </div>
+            <div class="monitor-row">
+              <div class="monitor-item">
+                <span class="label">Disk /:</span>
+                <span class="value">15G/50G (30%)</span>
+                <div class="bar"><div class="bar-fill low" style="width:30%"></div></div>
+              </div>
+              <div class="monitor-item">
+                <span class="label">Net ↑:</span>
+                <span class="value">1.2 MB/s</span>
+              </div>
+              <div class="monitor-item">
+                <span class="label">Net ↓:</span>
+                <span class="value">3.4 MB/s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 2: Context Menu Demo -->
+  <div class="section">
+    <div class="section-title">右键菜单（点击文件或空白区域触发）</div>
+    <p style="color:#808080; font-size:12px;">在左侧文件树区域点击右键查看菜单。文本文件会多出"用本地编辑器打开"选项。</p>
+  </div>
+
+  <!-- Section 3: Upload Demo -->
+  <div class="section">
+    <div class="section-title">上传进度演示</div>
+    <button class="btn primary" style="background:#0e639c; border:1px solid #1177bb; color:#fff; padding:6px 16px; border-radius:4px; cursor:pointer;" onclick="simulateUpload()">模拟上传文件</button>
+  </div>
+
+  <!-- Section 4: Chmod Dialog Demo -->
+  <div class="section">
+    <div class="section-title">权限修改对话框</div>
+    <button class="btn primary" style="background:#0e639c; border:1px solid #1177bb; color:#fff; padding:6px 16px; border-radius:4px; cursor:pointer;" onclick="showChmodDialog()">打开 Chmod 对话框</button>
+  </div>
+</div>
+
+<!-- Context Menu -->
+<div class="context-menu" id="contextMenu">
+  <div class="menu-item" onclick="hideContextMenu()">打开（在终端中 cd）<span class="shortcut">Enter</span></div>
+  <div class="menu-item" id="menuEdit" style="display:none;" onclick="hideContextMenu(); showToast('已下载到临时目录，编辑器已打开')">用本地编辑器打开</div>
+  <div class="menu-item" onclick="hideContextMenu(); simulateUpload()">下载<span class="shortcut">Ctrl+D</span></div>
+  <div class="separator"></div>
+  <div class="menu-item" onclick="hideContextMenu()">重命名<span class="shortcut">F2</span></div>
+  <div class="menu-item" onclick="hideContextMenu()">复制<span class="shortcut">Ctrl+C</span></div>
+  <div class="menu-item" onclick="hideContextMenu()">移动到...</div>
+  <div class="menu-item" onclick="hideContextMenu(); showChmodDialog()">修改权限</div>
+  <div class="separator"></div>
+  <div class="menu-item" onclick="hideContextMenu()">新建文件</div>
+  <div class="menu-item" onclick="hideContextMenu()">新建文件夹</div>
+  <div class="menu-item" id="menuUpload" style="display:none;" onclick="hideContextMenu(); simulateUpload()">上传文件</div>
+  <div class="separator" id="menuSep" style="display:none;"></div>
+  <div class="menu-item" style="color:#f44747;" onclick="hideContextMenu()">删除<span class="shortcut">Del</span></div>
+  <div class="separator"></div>
+  <div class="menu-item" onclick="hideContextMenu()">刷新<span class="shortcut">F5</span></div>
+</div>
+
+<!-- Chmod Dialog -->
+<div class="dialog-overlay" id="chmodDialog">
+  <div class="dialog">
+    <h3>修改权限 - config.yaml</h3>
+    <div class="perm-grid">
+      <div></div>
+      <div class="header">Owner</div>
+      <div class="header">Group</div>
+      <div class="header">Other</div>
+
+      <div>读取 (r)</div>
+      <label><input type="checkbox" checked onchange="updatePerm()"> r</label>
+      <label><input type="checkbox" onchange="updatePerm()"> r</label>
+      <label><input type="checkbox" onchange="updatePerm()"> r</label>
+
+      <div>写入 (w)</div>
+      <label><input type="checkbox" checked onchange="updatePerm()"> w</label>
+      <label><input type="checkbox" onchange="updatePerm()"> w</label>
+      <label><input type="checkbox" onchange="updatePerm()"> w</label>
+
+      <div>执行 (x)</div>
+      <label><input type="checkbox" onchange="updatePerm()"> x</label>
+      <label><input type="checkbox" onchange="updatePerm()"> x</label>
+      <label><input type="checkbox" onchange="updatePerm()"> x</label>
+    </div>
+    <div class="perm-result" id="permResult">-rw------- (600)</div>
+    <div class="btn-row">
+      <button class="btn" onclick="closeChmodDialog()">取消</button>
+      <button class="btn primary" onclick="closeChmodDialog(); showToast('权限已修改为 644')">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast">
+  <div class="toast-title">操作成功</div>
+  <div class="toast-msg" id="toastMsg"></div>
+</div>
+
+<script>
+// Context Menu
+function showContextMenu(e, type) {
+  e.preventDefault();
+  const menu = document.getElementById('contextMenu');
+  const editItem = document.getElementById('menuEdit');
+  const uploadItem = document.getElementById('menuUpload');
+  const sep = document.getElementById('menuSep');
+
+  editItem.style.display = type === 'text' ? 'flex' : 'none';
+  uploadItem.style.display = type === 'blank' ? 'flex' : 'none';
+  sep.style.display = type === 'blank' ? 'block' : 'none';
+
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  menu.classList.add('visible');
+}
+function hideContextMenu() {
+  document.getElementById('contextMenu').classList.remove('visible');
+}
+document.addEventListener('click', hideContextMenu);
+
+// File selection
+function selectFile(el) {
+  document.querySelectorAll('.file-item').forEach(f => f.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+// Navigation
+function navigateTo(path) {
+  const parts = path.split('/').filter(Boolean);
+  const bc = document.getElementById('breadcrumb');
+  bc.innerHTML = '<span onclick="navigateTo(\'/\')">/</span>';
+  let current = '';
+  parts.forEach((p, i) => {
+    current += '/' + p;
+    const cp = current;
+    bc.innerHTML += '<span class="sep">&gt;</span><span onclick="navigateTo(\'' + cp + '\')">' + p + '</span>';
+  });
+}
+
+// Monitor toggle
+function toggleMonitor() {
+  const body = document.getElementById('monitorBody');
+  const arrow = document.getElementById('monitorArrow');
+  const interval = document.getElementById('monitorIntervalCtrl');
+  const summary = document.getElementById('monitorSummary');
+  if (body.classList.contains('expanded')) {
+    body.classList.remove('expanded');
+    arrow.textContent = '▶';
+    interval.style.display = 'none';
+    summary.style.display = 'inline';
+  } else {
+    body.classList.add('expanded');
+    arrow.textContent = '▼';
+    interval.style.display = 'inline';
+    summary.style.display = 'none';
+  }
+}
+
+// Upload simulation
+function simulateUpload() {
+  const prog = document.getElementById('uploadProgress');
+  const bar = document.getElementById('uploadBarFill');
+  const pct = document.getElementById('uploadPercent');
+  prog.classList.add('visible');
+  let p = 0;
+  const iv = setInterval(() => {
+    p += Math.random() * 15;
+    if (p >= 100) {
+      p = 100;
+      clearInterval(iv);
+      setTimeout(() => {
+        prog.classList.remove('visible');
+        bar.style.width = '0%';
+        showToast('上传完成: app.tar.gz');
+      }, 500);
+    }
+    bar.style.width = p + '%';
+    pct.textContent = Math.round(p) + '%';
+  }, 200);
+}
+
+// Chmod dialog
+function showChmodDialog() { document.getElementById('chmodDialog').classList.add('visible'); }
+function closeChmodDialog() { document.getElementById('chmodDialog').classList.remove('visible'); }
+function updatePerm() {
+  const checks = document.querySelectorAll('#chmodDialog input[type="checkbox"]');
+  let mode = 0;
+  checks.forEach((c, i) => { if (c.checked) mode += [4, 2, 1][i % 3]; });
+  const owner = (checks[0].checked?4:0) + (checks[1].checked?2:0) + (checks[2].checked?1:0);
+  const group = (checks[3].checked?4:0) + (checks[4].checked?2:0) + (checks[5].checked?1:0);
+  const other = (checks[6].checked?4:0) + (checks[7].checked?2:0) + (checks[8].checked?1:0);
+  const perm = '' + owner + group + other;
+  const str = '-' +
+    (checks[0].checked?'r':'-') + (checks[1].checked?'w':'-') + (checks[2].checked?'x':'-') +
+    (checks[3].checked?'r':'-') + (checks[4].checked?'w':'-') + (checks[5].checked?'x':'-') +
+    (checks[6].checked?'r':'-') + (checks[7].checked?'w':'-') + (checks[8].checked?'x':'-');
+  document.getElementById('permResult').textContent = str + ' (' + perm + ')';
+}
+
+// Toast
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  t.classList.add('visible');
+  setTimeout(() => t.classList.remove('visible'), 3000);
+}
+
+// Tab switch
+function showLocal(btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>

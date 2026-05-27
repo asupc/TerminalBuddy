@@ -21,6 +21,8 @@ export interface AppSettings {
   webApiUsername: string;
   breathingLightColorMode: BreathingLightColorMode;
   breathingLightCustomColor: string;
+  sshDownloadDir: string;
+  serverMonitorInterval: number;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -40,6 +42,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   webApiUsername: 'admin',
   breathingLightColorMode: 'tab',
   breathingLightCustomColor: '#FFC107',
+  sshDownloadDir: '',
+  serverMonitorInterval: 3,
 };
 
 let _cachedSettings: AppSettings | null = null;

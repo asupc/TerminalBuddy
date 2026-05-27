@@ -2,6 +2,7 @@ import { FC, useState, useEffect, useCallback, useRef } from 'react';
 import { listDirectory, openPath, openInExplorer, startBlankTerminal, deletePath, renamePath, writeToTerminal, getFileSize, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
+import { RemoteFileTree } from './RemoteFileTree';
 import './FileTree.css';
 
 interface TreeNodeProps {
@@ -428,6 +429,12 @@ export const FileTree: FC = () => {
     setCtxMenu(null);
   }, [ctxMenu]);
 
+  const handleOpenInSystem = useCallback(async () => {
+    if (!ctxMenu?.path) return;
+    try { await openPath(ctxMenu.path); } catch (err) { console.error(err); }
+    setCtxMenu(null);
+  }, [ctxMenu]);
+
   const handleShowCurrentDirInExplorer = useCallback(async () => {
     if (!currentDirectory) return;
     try { await openInExplorer(currentDirectory); } catch (err) { console.error(err); }
@@ -489,6 +496,15 @@ export const FileTree: FC = () => {
       document.removeEventListener('wheel', close);
     };
   }, [ctxMenu]);
+
+  const sessions = useAppStore(s => s.sessions);
+  const activeTerminalId = useAppStore(s => s.activeSessionId);
+  const activeSession = sessions.find(s => s.id === activeTerminalId);
+  const isSsh = activeSession?.terminalType === 'ssh';
+
+  if (isSsh && activeSession) {
+    return <RemoteFileTree terminalId={activeSession.id} />;
+  }
 
   return (
     <div ref={containerRef} className={`file-tree ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
@@ -660,6 +676,11 @@ export const FileTree: FC = () => {
               <div className="context-menu-item" onClick={handleShowInExplorer}>
                 在文件资源管理器中显示
               </div>
+              {!ctxMenu.isDir && (
+                <div className="context-menu-item" onClick={handleOpenInSystem}>
+                  在系统中打开
+                </div>
+              )}
               {ctxMenu.isDir && (
                 <div className="context-menu-item" onClick={async () => {
                   const dir = ctxMenu.path!;

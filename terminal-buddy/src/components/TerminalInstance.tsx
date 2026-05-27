@@ -6,6 +6,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../services/tauri';
+import { ServerMonitor } from './ServerMonitor';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getAppSettings } from '../utils/settings';
@@ -45,6 +46,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [internalDragOver, setInternalDragOver] = useState(false);
+  const isSsh = useAppStore(s => s.sessions.find(sess => sess.id === terminalId)?.terminalType === 'ssh');
   const [scrollInfo, setScrollInfo] = useState({ top: 0, height: 0, visible: false });
   const scrollThumbRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLElement | null>(null);
@@ -1031,6 +1033,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           </div>
         </div>
       )}
+      <ServerMonitor terminalId={terminalId} isSsh={isSsh} />
     </div>
   );
 };

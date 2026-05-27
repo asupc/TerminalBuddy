@@ -20,6 +20,7 @@ pub struct Profile {
     pub ssh_user: Option<String>,
     pub ssh_auth_type: Option<String>,
     pub ssh_key_path: Option<String>,
+    pub ssh_password: Option<String>,
     pub docker_container_id: Option<String>,
     pub docker_container_name: Option<String>,
     pub k8s_namespace: Option<String>,

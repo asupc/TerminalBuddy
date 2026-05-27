@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Profile, CustomTheme, Workspace } from '../types';
+import type { Profile, CustomTheme, Workspace, RemoteFileEntry, ServerStats } from '../types';
 
 // Profile Commands
 export async function getAllProfiles(): Promise<Profile[]> {
@@ -108,6 +108,7 @@ export async function renamePath(path: string, newName: string): Promise<void> {
 export const readFileContent = (path: string) => invoke<string>('read_file_content', { path });
 export const writeFileContent = (path: string, content: string) => invoke<boolean>('write_file_content', { path, content });
 export const getFileSize = (path: string) => invoke<number>('get_file_size', { path });
+export const getFileMeta = (path: string) => invoke<{ lastModified: number; size: number }>('get_file_meta', { path });
 
 // Theme Commands
 export async function getAllThemes(): Promise<CustomTheme[]> {
@@ -273,4 +274,83 @@ export async function readClientData(key: string): Promise<string | null> {
 
 export async function writeClientData(key: string, content: string): Promise<void> {
   return invoke('write_client_data', { key, content });
+}
+
+// SSH Settings Commands
+export async function getDownloadsDirectory(): Promise<string> {
+  return invoke('get_downloads_directory');
+}
+
+export async function saveSshDownloadDir(dir: string): Promise<void> {
+  return invoke('save_ssh_download_dir', { dir });
+}
+
+export async function saveServerMonitorInterval(interval: number): Promise<void> {
+  return invoke('save_server_monitor_interval', { interval });
+}
+
+// ============ SSH Remote File Commands ============
+
+export async function connectSshSession(terminalId: string, profileId: string): Promise<void> {
+  return invoke('connect_ssh_session', { terminalId, profileId });
+}
+
+export async function getSshTempDirectory(): Promise<string> {
+  return invoke('get_ssh_temp_directory');
+}
+
+export async function ensureDir(path: string): Promise<void> {
+  return invoke('ensure_dir', { path });
+}
+
+export async function remoteListDir(terminalId: string, path: string): Promise<RemoteFileEntry[]> {
+  return invoke('remote_list_dir', { terminalId, path });
+}
+
+export async function remoteCreateDir(terminalId: string, path: string): Promise<void> {
+  return invoke('remote_create_dir', { terminalId, path });
+}
+
+export async function remoteCreateFile(terminalId: string, path: string): Promise<void> {
+  return invoke('remote_create_file', { terminalId, path });
+}
+
+export async function remoteRemove(terminalId: string, path: string, isDir: boolean): Promise<void> {
+  return invoke('remote_remove', { terminalId, path, isDir });
+}
+
+export async function remoteRename(terminalId: string, from: string, to: string): Promise<void> {
+  return invoke('remote_rename', { terminalId, from, to });
+}
+
+export async function remoteMove(terminalId: string, from: string, to: string): Promise<void> {
+  return invoke('remote_move', { terminalId, from, to });
+}
+
+export async function remoteCopy(terminalId: string, from: string, to: string): Promise<void> {
+  return invoke('remote_copy', { terminalId, from, to });
+}
+
+export async function remoteChmod(terminalId: string, path: string, mode: number): Promise<void> {
+  return invoke('remote_chmod', { terminalId, path, mode });
+}
+
+export async function remoteUpload(terminalId: string, localPath: string, remotePath: string): Promise<void> {
+  return invoke('remote_upload', { terminalId, localPath, remotePath });
+}
+
+export async function remoteDownload(terminalId: string, remotePath: string, localPath: string): Promise<void> {
+  return invoke('remote_download', { terminalId, remotePath, localPath });
+}
+
+export async function getServerStats(terminalId: string): Promise<ServerStats> {
+  return invoke('get_server_stats', { terminalId });
+}
+
+export async function onTransferProgress(
+  callback: (progress: { terminalId: string; transferred: number; total: number; percent: number; direction: string }) => void
+): Promise<UnlistenFn> {
+  return listen('remote_transfer_progress', (event) => {
+    callback(event.payload as any);
+  });
 }

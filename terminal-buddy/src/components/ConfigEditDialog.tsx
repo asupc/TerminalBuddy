@@ -65,6 +65,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [sshUser, setSshUser] = useState(profile?.sshUser || '');
   const [sshAuthType, setSshAuthType] = useState(profile?.sshAuthType || 'key');
   const [sshKeyPath, setSshKeyPath] = useState(profile?.sshKeyPath || '');
+  const [sshPassword, setSshPassword] = useState(profile?.sshPassword || '');
   const [dockerContainerName, setDockerContainerName] = useState(profile?.dockerContainerName || '');
   const [k8sNamespace, setK8sNamespace] = useState(profile?.k8sNamespace || '');
   const [k8sPodName, setK8sPodName] = useState(profile?.k8sPodName || '');
@@ -177,7 +178,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             if (key.trim()) acc[key.trim()] = value;
             return acc;
           }, {} as Record<string, string>),
-          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath,
+          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath, sshPassword,
           dockerContainerName,
           k8sNamespace, k8sPodName, k8sContainerName,
         });
@@ -193,7 +194,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             if (key.trim()) acc[key.trim()] = value;
             return acc;
           }, {} as Record<string, string>),
-          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath,
+          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath, sshPassword,
           dockerContainerName,
           k8sNamespace, k8sPodName, k8sContainerName,
         });
@@ -443,6 +444,12 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                 <div className="form-group">
                   <label>密钥路径</label>
                   <input value={sshKeyPath} onChange={e => setSshKeyPath(e.target.value)} placeholder="~/.ssh/id_ed25519" />
+                </div>
+              )}
+              {sshAuthType === 'password' && (
+                <div className="form-group">
+                  <label>密码</label>
+                  <input type="password" value={sshPassword} onChange={e => setSshPassword(e.target.value)} placeholder="输入 SSH 密码" />
                 </div>
               )}
             </>

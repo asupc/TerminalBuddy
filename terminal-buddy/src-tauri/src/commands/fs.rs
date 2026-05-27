@@ -2,6 +2,12 @@ use std::fs;
 use serde::Serialize;
 use tauri::command;
 
+#[derive(Serialize)]
+pub struct FileMeta {
+    last_modified: u64,
+    size: u64,
+}
+
 fn should_exclude(name: &str, patterns: Option<&Vec<String>>) -> bool {
     if let Some(pats) = patterns {
         for pattern in pats {
@@ -130,4 +136,19 @@ pub fn write_file_content(path: String, content: String) -> Result<bool, String>
 pub fn get_file_size(path: String) -> Result<u64, String> {
     let meta = fs::metadata(&path).map_err(|e| format!("Failed to get file size: {}", e))?;
     Ok(meta.len())
+}
+
+#[command]
+pub fn get_file_meta(path: String) -> Result<FileMeta, String> {
+    let meta = fs::metadata(&path).map_err(|e| format!("Failed to get file meta: {}", e))?;
+    let last_modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Ok(FileMeta {
+        last_modified,
+        size: meta.len(),
+    })
 }
