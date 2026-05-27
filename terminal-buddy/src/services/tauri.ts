@@ -275,6 +275,19 @@ export async function writeClientData(key: string, content: string): Promise<voi
   return invoke('write_client_data', { key, content });
 }
 
+// SSH Settings Commands
+export async function getDownloadsDirectory(): Promise<string> {
+  return invoke('get_downloads_directory');
+}
+
+export async function saveSshDownloadDir(dir: string): Promise<void> {
+  return invoke('save_ssh_download_dir', { dir });
+}
+
+export async function saveServerMonitorInterval(interval: number): Promise<void> {
+  return invoke('save_server_monitor_interval', { interval });
+}
+
 // ============ SSH Remote File Commands ============
 
 export async function connectSshSession(terminalId: string, profileId: string): Promise<void> {

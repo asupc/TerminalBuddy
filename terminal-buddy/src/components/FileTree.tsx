@@ -2,6 +2,7 @@ import { FC, useState, useEffect, useCallback, useRef } from 'react';
 import { listDirectory, openPath, openInExplorer, startBlankTerminal, deletePath, renamePath, writeToTerminal, getFileSize, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
+import { RemoteFileTree } from './RemoteFileTree';
 import './FileTree.css';
 
 interface TreeNodeProps {
@@ -489,6 +490,15 @@ export const FileTree: FC = () => {
       document.removeEventListener('wheel', close);
     };
   }, [ctxMenu]);
+
+  const sessions = useAppStore(s => s.sessions);
+  const activeTerminalId = useAppStore(s => s.activeSessionId);
+  const activeSession = sessions.find(s => s.id === activeTerminalId);
+  const isSsh = activeSession?.terminalType === 'ssh';
+
+  if (isSsh && activeSession) {
+    return <RemoteFileTree terminalId={activeSession.id} />;
+  }
 
   return (
     <div ref={containerRef} className={`file-tree ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>

@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress } from '../services/tauri';
+import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress, getDownloadsDirectory, saveSshDownloadDir, saveServerMonitorInterval } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { PRESET_THEMES, BREATHING_LIGHT_COLORS, type CustomTheme, type Profile } from '../types';
 import { type AppSettings, type BreathingLightColorMode, getAppSettings, saveAppSettings } from '../utils/settings';
@@ -21,6 +21,7 @@ const SECTIONS = [
   { id: 'exclusions', label: '文件排除' },
   { id: 'ai-usage', label: 'AI用量' },
   { id: 'web', label: 'Web管理' },
+  { id: 'ssh', label: 'SSH 设置' },
 ] as const;
 
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
@@ -105,6 +106,12 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       }
     }).catch(() => {});
     getDataPath().then(setDataPath).catch(() => {});
+    // Load default downloads directory for SSH settings
+    if (!getAppSettings().sshDownloadDir) {
+      getDownloadsDirectory().then(dir => {
+        updateSetting('sshDownloadDir', dir);
+      }).catch(() => {});
+    }
   }, []);
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
@@ -1248,6 +1255,62 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                   </div>
                 </>
               )}
+            </div>
+          </section>
+
+          {/* SSH Settings Section */}
+          <section
+            id="ssh"
+            ref={(el) => { sectionRefs.current['ssh'] = el; }}
+            className="settings-section-block"
+          >
+            <h3 className="settings-section-title">SSH 设置</h3>
+            <div className="settings-general">
+              <div className="settings-section">
+                <label className="settings-label">下载目录</label>
+                <div className="data-path-row">
+                  <input
+                    className="data-path-input"
+                    type="text"
+                    value={settings.sshDownloadDir}
+                    readOnly
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={async () => {
+                      try {
+                        const selected = await open({ directory: true, title: '选择 SSH 下载目录' });
+                        if (selected) {
+                          updateSetting('sshDownloadDir', selected as string);
+                          saveSshDownloadDir(selected as string).catch(console.error);
+                        }
+                      } catch {}
+                    }}
+                  >浏览</button>
+                </div>
+                <p className="settings-desc">SSH 远程文件下载的本地保存目录，默认为系统下载文件夹</p>
+              </div>
+              <div className="settings-section">
+                <label className="settings-label">监控刷新间隔</label>
+                <div className="data-path-row">
+                  <select
+                    className="data-path-input"
+                    value={settings.serverMonitorInterval}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      updateSetting('serverMonitorInterval', val);
+                      saveServerMonitorInterval(val).catch(console.error);
+                    }}
+                  >
+                    <option value={1}>1 秒</option>
+                    <option value={3}>3 秒</option>
+                    <option value={5}>5 秒</option>
+                    <option value={10}>10 秒</option>
+                    <option value={0}>关闭</option>
+                  </select>
+                </div>
+                <p className="settings-desc">SSH 远程服务器状态监控的自动刷新间隔，设为"关闭"可停止自动刷新</p>
+              </div>
             </div>
           </section>
         </div>
