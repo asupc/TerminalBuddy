@@ -141,8 +141,13 @@ const ProfileList: React.FC = () => {
                     borderRadius: '50%', background: '#4caf50', border: '2px solid #16162e',
                   }} />
                 </div>
-                <div>
-                  <div style={{ fontSize: 13, color: '#d0d0e0' }}>{t.profileName}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: '#d0d0e0', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.profileName}</span>
+                    <span className={`terminal-owner-badge ${t.owner}`}>
+                      {t.owner === 'pc' ? 'PC' : 'Web'}
+                    </span>
+                  </div>
                   <div style={{ fontSize: 11, color: '#4caf50' }}>运行中 - 点击连接</div>
                 </div>
               </div>

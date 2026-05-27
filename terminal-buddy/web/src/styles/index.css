@@ -40,6 +40,27 @@ button { cursor: pointer; transition: all 0.2s; }
 ::-webkit-scrollbar-thumb { background: #3a3a5a; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #5a5a7a; }
 
+/* Terminal owner badge */
+.terminal-owner-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+.terminal-owner-badge.pc {
+  background: rgba(106, 106, 213, 0.2);
+  color: #8888e0;
+}
+.terminal-owner-badge.web {
+  background: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+}
+
 /* Mobile optimizations */
 @media (max-width: 767px) {
   .xterm-viewport {
