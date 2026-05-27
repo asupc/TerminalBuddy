@@ -25,12 +25,20 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'output') {
-          callbacksRef.current.onOutput(msg.data);
-        } else if (msg.type === 'exited') {
-          callbacksRef.current.onExited(msg.code);
+        switch (msg.type) {
+          case 'output':
+            callbacksRef.current.onOutput(msg.data);
+            break;
+          case 'exited':
+            callbacksRef.current.onExited(msg.code);
+            break;
+          case 'error':
+            callbacksRef.current.onOutput(`\r\n[错误] ${msg.message || '未知错误'}\r\n`);
+            break;
         }
-      } catch {}
+      } catch (e) {
+        console.error('WebSocket 消息解析失败:', e);
+      }
     };
 
     ws.onclose = () => {
