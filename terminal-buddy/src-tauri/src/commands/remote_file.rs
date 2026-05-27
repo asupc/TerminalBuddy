@@ -124,26 +124,15 @@ pub fn remote_download(
 }
 
 #[command]
-pub fn get_ssh_temp_directory(
-    terminal_id: String,
-    ssh_service: State<'_, SshSessionService>,
-) -> Result<String, String> {
-    let output = ssh_service.exec(&terminal_id, "echo $TMPDIR || echo /tmp")?;
-    let dir = output.trim();
-    if dir.is_empty() {
-        Ok("/tmp".to_string())
-    } else {
-        Ok(dir.to_string())
-    }
+pub fn get_ssh_temp_directory() -> Result<String, String> {
+    Ok(std::env::temp_dir()
+        .join("TerminalBuddy")
+        .join("ssh_edit")
+        .to_string_lossy()
+        .to_string())
 }
 
 #[command]
-pub fn ensure_dir(
-    terminal_id: String,
-    path: String,
-    ssh_service: State<'_, SshSessionService>,
-) -> Result<(), String> {
-    let cmd = format!("mkdir -p {}", shell_escape(&path));
-    ssh_service.exec(&terminal_id, &cmd)?;
-    Ok(())
+pub fn ensure_dir(path: String) -> Result<(), String> {
+    std::fs::create_dir_all(&path).map_err(|e| format!("创建目录失败: {}", e))
 }
