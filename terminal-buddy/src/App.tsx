@@ -280,6 +280,22 @@ function App() {
         environmentVariables: profile.environmentVariables,
         colorTheme: profile.colorTheme,
         windowSize: profile.windowSize,
+        sshHost: profile.sshHost,
+        sshPort: profile.sshPort,
+        sshUser: profile.sshUser,
+        sshAuthType: profile.sshAuthType,
+        sshKeyPath: profile.sshKeyPath,
+        sshPassword: profile.sshPassword,
+        dockerContainerId: profile.dockerContainerId,
+        dockerContainerName: profile.dockerContainerName,
+        k8sNamespace: profile.k8sNamespace,
+        k8sPodName: profile.k8sPodName,
+        k8sContainerName: profile.k8sContainerName,
+        mstscHost: profile.mstscHost,
+        mstscPort: profile.mstscPort,
+        mstscUser: profile.mstscUser,
+        mstscPassword: profile.mstscPassword,
+        mstscResolution: profile.mstscResolution,
       });
       await loadProfiles();
     } catch (err) {

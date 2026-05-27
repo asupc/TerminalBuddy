@@ -491,7 +491,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             <>
               <div className="form-group">
                 <label>主机地址 *</label>
-                <input value={mstscHost} onChange={e => setMstscHost(e.target.value)} placeholder="192.168.1.100 或 remote.example.com" />
+                <input value={mstscHost} onChange={e => setMstscHost(e.target.value)} placeholder="192.168.1.100 或 remote.example.com" required />
               </div>
               <div className="form-group">
                 <label>端口</label>
