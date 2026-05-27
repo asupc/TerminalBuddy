@@ -10,7 +10,7 @@ import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { initTheme, applyTheme, getAppSettings, initAppSettings } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc } from './services/tauri';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
 
@@ -233,6 +233,11 @@ function App() {
 
   const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string) => {
     try {
+      if (profile.terminalType === 'mstsc') {
+        await startMstsc(profile.id);
+        await updateProfileLastUsed(profile.id);
+        return;
+      }
       const { rows, cols } = estimateTerminalSize();
       const terminalId = await startTerminal(profile.id, extraParams, rows, cols);
       await updateProfileLastUsed(profile.id);
@@ -266,7 +271,7 @@ function App() {
       const newProfile = await createProfile(
         `${profile.name} (副本)`,
         profile.group,
-        profile.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s'
+        profile.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc'
       );
       await updateProfile({
         ...newProfile,

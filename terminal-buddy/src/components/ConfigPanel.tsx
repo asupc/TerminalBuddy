@@ -7,7 +7,7 @@ import { buildGroupTree, renameGroupInPath } from '../utils/groupTree';
 import './ConfigPanel.css';
 
 const TYPE_ICONS: Record<string, string> = {
-  powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S',
+  powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
 };
 
 interface ConfigPanelProps {

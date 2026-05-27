@@ -70,6 +70,11 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [k8sNamespace, setK8sNamespace] = useState(profile?.k8sNamespace || '');
   const [k8sPodName, setK8sPodName] = useState(profile?.k8sPodName || '');
   const [k8sContainerName, setK8sContainerName] = useState(profile?.k8sContainerName || '');
+  const [mstscHost, setMstscHost] = useState(profile?.mstscHost || '');
+  const [mstscPort, setMstscPort] = useState(profile?.mstscPort || 3389);
+  const [mstscUser, setMstscUser] = useState(profile?.mstscUser || '');
+  const [mstscPassword, setMstscPassword] = useState(profile?.mstscPassword || '');
+  const [mstscResolution, setMstscResolution] = useState(profile?.mstscResolution || '');
   const dialogRef = useRef<HTMLDivElement>(null);
   const { offset: dialogOffset, dragHandleProps } = useDraggable('.dialog-content');
 
@@ -181,6 +186,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
           sshHost, sshPort, sshUser, sshAuthType, sshKeyPath, sshPassword,
           dockerContainerName,
           k8sNamespace, k8sPodName, k8sContainerName,
+          mstscHost, mstscPort, mstscUser, mstscPassword, mstscResolution,
         });
       } else {
         const newProfile = await createProfile(data.name, data.group, data.terminalType);
@@ -197,6 +203,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
           sshHost, sshPort, sshUser, sshAuthType, sshKeyPath, sshPassword,
           dockerContainerName,
           k8sNamespace, k8sPodName, k8sContainerName,
+          mstscHost, mstscPort, mstscUser, mstscPassword, mstscResolution,
         });
       }
       onSave();
@@ -405,6 +412,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                 <option value="ssh">SSH</option>
                 <option value="docker">Docker</option>
                 <option value="k8s">Kubernetes</option>
+                <option value="mstsc">远程桌面 (RDP)</option>
               </select>
             </div>
             <div className="form-group">
@@ -475,6 +483,39 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
               <div className="form-group">
                 <label>Container 名称</label>
                 <input value={k8sContainerName} onChange={e => setK8sContainerName(e.target.value)} />
+              </div>
+            </>
+          )}
+
+          {watch('terminalType') === 'mstsc' && (
+            <>
+              <div className="form-group">
+                <label>主机地址 *</label>
+                <input value={mstscHost} onChange={e => setMstscHost(e.target.value)} placeholder="192.168.1.100 或 remote.example.com" />
+              </div>
+              <div className="form-group">
+                <label>端口</label>
+                <input type="number" value={mstscPort} onChange={e => setMstscPort(Number(e.target.value))} placeholder="3389" />
+              </div>
+              <div className="form-group">
+                <label>用户名</label>
+                <input value={mstscUser} onChange={e => setMstscUser(e.target.value)} placeholder="Administrator" />
+              </div>
+              <div className="form-group">
+                <label>密码</label>
+                <input type="password" value={mstscPassword} onChange={e => setMstscPassword(e.target.value)} placeholder="将存储到 Windows 凭据管理器" />
+              </div>
+              <div className="form-group">
+                <label>分辨率</label>
+                <select value={mstscResolution} onChange={e => setMstscResolution(e.target.value)}>
+                  <option value="">全屏</option>
+                  <option value="1280x720">1280 x 720</option>
+                  <option value="1366x768">1366 x 768</option>
+                  <option value="1600x900">1600 x 900</option>
+                  <option value="1920x1080">1920 x 1080</option>
+                  <option value="2560x1440">2560 x 1440</option>
+                  <option value="3840x2160">3840 x 2160</option>
+                </select>
               </div>
             </>
           )}
