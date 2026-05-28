@@ -4,6 +4,7 @@ import { useWebAppStore } from '../stores/appStore';
 interface TerminalCallbacks {
   onOutput: (data: string) => void;
   onExited: (code: number) => void;
+  onConnected?: () => void;
 }
 
 export function useTerminal(terminalId: string | null, callbacks: TerminalCallbacks) {
@@ -11,6 +12,17 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
   const retryCountRef = useRef(0);
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
+  // Queue the latest resize so it's sent as soon as WebSocket opens
+  const pendingResizeRef = useRef<{ cols: number; rows: number } | null>(null);
+
+  const flushPendingResize = useCallback(() => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN && pendingResizeRef.current) {
+      const { cols, rows } = pendingResizeRef.current;
+      pendingResizeRef.current = null;
+      ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    }
+  }, []);
 
   const connect = useCallback(() => {
     if (!terminalId) return;
@@ -51,8 +63,11 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
 
     ws.onopen = () => {
       retryCountRef.current = 0;
+      // Send any resize that was queued before WebSocket was ready
+      flushPendingResize();
+      callbacksRef.current.onConnected?.();
     };
-  }, [terminalId]);
+  }, [terminalId, flushPendingResize]);
 
   const sendInput = useCallback((data: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -63,6 +78,9 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
   const sendResize = useCallback((cols: number, rows: number) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'resize', cols, rows }));
+    } else {
+      // Queue for when WebSocket opens — TUI programs need correct dimensions
+      pendingResizeRef.current = { cols, rows };
     }
   }, []);
 

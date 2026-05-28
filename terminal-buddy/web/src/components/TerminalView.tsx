@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
 import { useTerminal } from '../hooks/useTerminal';
 import { useWebAppStore } from '../stores/appStore';
@@ -20,6 +21,7 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
   const pendingRafRef = useRef<number | null>(null);
   const outputBufferRef = useRef<string[]>([]);
   const isMobile = useWebAppStore((s) => s.isMobile);
+  const windowsBuildRef = useRef<number | null>(null);
 
   const handleOutput = useCallback((data: string) => {
     const term = termRef.current;
@@ -56,6 +58,10 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
   const { sendInput, sendResize } = useTerminal(session.id, {
     onOutput: handleOutput,
     onExited: handleExited,
+    onConnected: () => {
+      // Don't send resize here — the container may still be transitioning
+      // (sidebar animation). ResizeObserver will fire doFit() once stable.
+    },
   });
 
   useEffect(() => {
@@ -64,6 +70,13 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     const isWindows = /Windows/i.test(
       (navigator as any).userAgentData?.platform || navigator.userAgent || ''
     );
+
+    // Detect real Windows build number for accurate ConPTY workarounds
+    if (isWindows && !windowsBuildRef.current) {
+      const ua = navigator.userAgent;
+      const m = ua.match(/Windows NT [\d.]+;.*?Build\/(\d+)/);
+      if (m) windowsBuildRef.current = parseInt(m[1], 10);
+    }
 
     const term = new Terminal({
       cursorBlink: true,
@@ -74,12 +87,19 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
         foreground: '#e0e0e0',
       },
       allowProposedApi: true,
-      ...(isWindows ? { windowsPty: { backend: 'conpty' as const, buildNumber: 22000 } } : {}),
+      ...(isWindows && windowsBuildRef.current
+        ? { windowsPty: { backend: 'conpty' as const, buildNumber: windowsBuildRef.current } }
+        : isWindows
+          ? { windowsPty: { backend: 'conpty' as const, buildNumber: 22000 } }
+          : {}),
       ...(isMobile ? { devicePixelRatio: window.devicePixelRatio } : {}),
     });
 
     const fitAddon = new FitAddon();
+    const unicode11Addon = new Unicode11Addon();
     term.loadAddon(fitAddon);
+    term.loadAddon(unicode11Addon);
+    term.unicode.activeVersion = '11';
     term.open(containerRef.current);
     fitAddon.fit();
 
@@ -142,7 +162,11 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
       doFit();
     });
 
+    // Delayed fit after sidebar transition (200ms) settles
+    const settleTimer = setTimeout(() => doFit(), 250);
+
     return () => {
+      clearTimeout(settleTimer);
       if (pendingRafRef.current) {
         cancelAnimationFrame(pendingRafRef.current);
         pendingRafRef.current = null;

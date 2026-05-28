@@ -137,8 +137,11 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                                     }
                                 }
 
+                                // Allow shrink for Web-owned terminals in non-shared mode;
+                                // TUI programs require exact PTY size match for correct rendering.
+                                let allow_shrink = !settings.web_api_share_sessions && is_web_client;
                                 let ts = app.state::<TerminalService>();
-                                let _ = ts.resize_terminal(&tid, rows, cols, false);
+                                let _ = ts.resize_terminal(&tid, rows, cols, allow_shrink);
                             }
                         }
                     }

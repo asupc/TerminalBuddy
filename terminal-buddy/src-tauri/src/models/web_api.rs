@@ -63,4 +63,6 @@ pub enum WsServerMessage {
 #[serde(rename_all = "camelCase")]
 pub struct StartTerminalRequest {
     pub profile_id: String,
+    pub rows: Option<u16>,
+    pub cols: Option<u16>,
 }

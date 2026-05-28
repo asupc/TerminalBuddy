@@ -77,7 +77,7 @@ pub async fn start(
         }
     }
 
-    let terminal_id = ts.create_terminal(&req.profile_id, None, 0, 0, state.app_handle.clone(), TerminalOwner::Web)
+    let terminal_id = ts.create_terminal(&req.profile_id, None, req.rows.unwrap_or(0), req.cols.unwrap_or(0), state.app_handle.clone(), TerminalOwner::Web)
         .map_err(|e| ApiError::Internal(e))?;
     let profile = ProfileService::get_profile(&req.profile_id)
         .map_err(|e| ApiError::Internal(e))?;
