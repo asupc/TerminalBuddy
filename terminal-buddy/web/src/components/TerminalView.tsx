@@ -194,27 +194,21 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     }
   }, [hidden]);
 
-  const handleMobileSend = useCallback((text: string) => {
-    sendInput(text + '\r');
-  }, [sendInput]);
-
   return (
     <div style={{
-      height: '100%', display: 'flex', flexDirection: isMobile ? 'column' : 'unset',
+      height: '100%', position: 'relative',
     }}>
       <div
         ref={containerRef}
         style={{
-          flex: 1,
-          minWidth: 0,
+          width: '100%',
           height: '100%',
           display: 'block',
           visibility: hidden ? 'hidden' : 'visible',
           pointerEvents: hidden ? 'none' : 'auto',
-          minHeight: 0,
         }}
       />
-      {isMobile && <MobileInputBar onSend={handleMobileSend} visible={!hidden} />}
+      <MobileInputBar onSend={sendInput} visible={!hidden} />
     </div>
   );
 };

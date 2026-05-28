@@ -18,9 +18,12 @@ client.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      useWebAppStore.getState().logout();
-      if (window.location.pathname !== '/login') {
-        alert('登录已过期，请重新登录');
+      const alreadyLoggedOut = !useWebAppStore.getState().token;
+      if (!alreadyLoggedOut) {
+        useWebAppStore.getState().logout();
+        if (window.location.pathname !== '/login') {
+          alert('登录已过期，请重新登录');
+        }
       }
     }
     return Promise.reject(error);

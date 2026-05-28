@@ -10,7 +10,8 @@ TerminalBuddy 的 Web 终端在移动端浏览器上缺少特殊键支持。用�
 
 ## 改动范围
 
-仅修改 `terminal-buddy/web/src/components/MobileInputBar.tsx`，不涉及其他文件。
+- `terminal-buddy/web/src/components/MobileInputBar.tsx` — 功能键逻辑与 UI
+- `terminal-buddy/web/src/components/TerminalView.tsx` — 修复 `handleMobileSend` 追加多余 `\r` 的问题（集成层适配）
 
 ## UI 布局
 
