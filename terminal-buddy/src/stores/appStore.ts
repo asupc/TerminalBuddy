@@ -2,6 +2,14 @@ import { create } from 'zustand';
 import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats } from '../types';
 import { readClientData, writeClientData } from '../services/tauri';
 
+let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
+function debouncedSaveTabs(sessions: any[], activeSessionId: string | null) {
+  if (_saveTabsTimer) clearTimeout(_saveTabsTimer);
+  _saveTabsTimer = setTimeout(() => {
+    saveTabsToStorage(sessions, activeSessionId);
+  }, 300);
+}
+
 interface SavedTab {
   profileId: string;
   profileName: string;
@@ -325,7 +333,7 @@ export const useAppStore = create<AppState>((set) => ({
       const s = { ...session, groupId: session.groupId || 'default' };
       const sessions = [...state.sessions, s];
       if (!state._skipSaveTabs) {
-        saveTabsToStorage(sessions, s.id);
+        debouncedSaveTabs(sessions, s.id);
       }
       return {
         sessions,
@@ -340,7 +348,7 @@ export const useAppStore = create<AppState>((set) => ({
         state.activeSessionId === id
           ? sessions[0]?.id ?? null
           : state.activeSessionId;
-      saveTabsToStorage(sessions, activeSessionId);
+      debouncedSaveTabs(sessions, activeSessionId);
       return { sessions, activeSessionId };
     }),
   setSessions: (sessions) => {
@@ -350,7 +358,7 @@ export const useAppStore = create<AppState>((set) => ({
   },
   setActiveSession: (id) => set((state) => {
     const currentDirectory = (id && state.sessionDirectories[id]) ? state.sessionDirectories[id] : state.currentDirectory;
-    saveTabsToStorage(state.sessions, id);
+    debouncedSaveTabs(state.sessions, id);
     return { activeSessionId: id, currentDirectory, settingsTabOpen: false };
   }),
   renameSession: (id, name) =>
@@ -358,7 +366,7 @@ export const useAppStore = create<AppState>((set) => ({
       const newSessions = state.sessions.map((s) =>
         s.id === id ? { ...s, profileName: name } : s
       );
-      saveTabsToStorage(newSessions, state.activeSessionId);
+      debouncedSaveTabs(newSessions, state.activeSessionId);
       return { sessions: newSessions };
     }),
   updateSession: (id, updates) =>
@@ -457,6 +465,9 @@ export const useAppStore = create<AppState>((set) => ({
 }));
 
 // Listen for app-settings-changed events and increment version to trigger re-renders
-window.addEventListener('app-settings-changed', () => {
-  useAppStore.getState().incrementSettingsVersion();
-});
+if (!(window as any).__settingsListenerRegistered) {
+  (window as any).__settingsListenerRegistered = true;
+  window.addEventListener('app-settings-changed', () => {
+    useAppStore.getState().incrementSettingsVersion();
+  });
+}

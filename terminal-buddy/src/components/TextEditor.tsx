@@ -293,9 +293,9 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
         <>
           <div className="editor-ctx-overlay" onClick={() => setCtxMenu(null)} />
           <div className="editor-ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
-            {CONTEXT_MENU_ITEMS.map((item) =>
+            {CONTEXT_MENU_ITEMS.map((item, idx) =>
               item.id === '---' ? (
-                <div key={Math.random()} className="editor-ctx-separator" />
+                <div key={`sep-${idx}`} className="editor-ctx-separator" />
               ) : (
                 <div
                   key={item.id}

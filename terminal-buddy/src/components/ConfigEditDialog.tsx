@@ -1,4 +1,4 @@
-import { FC, useState, useRef } from 'react';
+import { FC, useState, useRef, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { open } from '@tauri-apps/plugin-dialog';
 import { createProfile, updateProfile, deleteProfile } from '../services/tauri';
@@ -51,6 +51,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [cmdSuggestions, setCmdSuggestions] = useState<{ name: string; command: string }[]>([]);
   const [cmdSelectedIndex, setCmdSelectedIndex] = useState(-1);
   const cmdSuggestionsRef = useRef<HTMLDivElement>(null);
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const dragStateRef = useRef<{ startIndex: number; startY: number } | null>(null);
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>(
     profile?.environmentVariables
@@ -77,6 +78,12 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [mstscResolution, setMstscResolution] = useState(profile?.mstscResolution || '');
   const dialogRef = useRef<HTMLDivElement>(null);
   const { offset: dialogOffset, dragHandleProps } = useDraggable('.dialog-content');
+
+  useEffect(() => {
+    return () => {
+      if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+    };
+  }, []);
 
   const addCommand = () => {
     setStartupCommands([...startupCommands, '']);
@@ -300,8 +307,13 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                     <input
                       value={cmd}
                       onChange={(e) => handleCmdInputChange(index, e.target.value)}
-                      onFocus={() => setActiveCmdIndex(index)}
-                      onBlur={() => setTimeout(() => setCmdSuggestions([]), 200)}
+                      onFocus={() => {
+                        if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+                        setActiveCmdIndex(index);
+                      }}
+                      onBlur={() => {
+                        blurTimerRef.current = setTimeout(() => setCmdSuggestions([]), 200);
+                      }}
                       placeholder="输入命令..."
                       style={{ fontFamily: 'monospace' }}
                     />

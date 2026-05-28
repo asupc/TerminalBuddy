@@ -22,6 +22,14 @@ export const TitleBar: FC<TitleBarProps> = ({
 }) => {
   const [aiUsageHover, setAiUsageHover] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimer.current) {
+        clearTimeout(hoverTimer.current);
+      }
+    };
+  }, []);
   const [webRunning, setWebRunning] = useState(false);
   const [webToggling, setWebToggling] = useState(false);
   const [theme, setTheme] = useState(getStoredTheme);

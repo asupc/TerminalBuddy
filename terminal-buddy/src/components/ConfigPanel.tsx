@@ -353,23 +353,27 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       {contextMenu && (
         <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <div className="context-menu-item" onClick={() => {
-            onStartTerminal(profiles.find((p) => p.id === contextMenu.profileId)!);
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            if (target) onStartTerminal(target);
             closeContextMenu();
           }}>启动</div>
           {extraParamPresets.map((preset) => (
             <div key={preset.id} className="context-menu-item" onClick={() => {
-              onStartTerminal(profiles.find((p) => p.id === contextMenu.profileId)!, preset.params);
+              const target = profiles.find((p) => p.id === contextMenu.profileId);
+              if (target) onStartTerminal(target, preset.params);
               closeContextMenu();
             }}>
               启动[<span style={{ color: '#FFD700' }}>{preset.name}</span>]
             </div>
           ))}
           <div className="context-menu-item" onClick={() => {
-            onEditProfile(profiles.find((p) => p.id === contextMenu.profileId)!);
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            if (target) onEditProfile(target);
             closeContextMenu();
           }}>编辑</div>
           <div className="context-menu-item" onClick={() => {
-            onCopyProfile(profiles.find((p) => p.id === contextMenu.profileId)!);
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            if (target) onCopyProfile(target);
             closeContextMenu();
           }}>复制</div>
           <div className="context-menu-item" onClick={() => {
@@ -392,7 +396,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
           <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
             添加连接
           </div>
-          <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
+          <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group + '/新分组'); closeContextMenu(); }}>
             添加子分组
           </div>
           <div className="context-menu-item" onClick={() => handleStartRename(groupContextMenu.group)}>

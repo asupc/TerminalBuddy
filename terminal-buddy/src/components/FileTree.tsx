@@ -264,7 +264,7 @@ export const FileTree: FC = () => {
       }
     };
     loadRoot();
-  }, []);
+  }, [exclusionPatterns]);
 
   const navigateTo = useCallback((path: string) => {
     setCurrentDirectory(path);
@@ -291,9 +291,14 @@ export const FileTree: FC = () => {
       groupId: 'default',
     });
     setSessionDirectory(terminalId, dir);
-    setTimeout(() => {
-      writeToTerminal(terminalId, `cd "${dir}"\r`).catch(console.error);
-    }, 500);
+    const sendCdWithRetry = (retries = 5) => {
+      writeToTerminal(terminalId, `cd "${dir}"\r`).catch(() => {
+        if (retries > 0) {
+          setTimeout(() => sendCdWithRetry(retries - 1), 200);
+        }
+      });
+    };
+    setTimeout(sendCdWithRetry, 100);
   }, [setSessionDirectory]);
 
   // Load directory when currentDirectory changes
@@ -311,7 +316,7 @@ export const FileTree: FC = () => {
       }
     };
     loadDirectory();
-  }, [currentDirectory]);
+  }, [currentDirectory, exclusionPatterns]);
 
   const handleSelect = useCallback((path: string) => {
     setSelectedPath(path);
