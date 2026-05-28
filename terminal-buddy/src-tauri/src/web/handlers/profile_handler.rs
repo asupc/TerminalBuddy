@@ -17,6 +17,13 @@ pub async fn create(
     _claims: ClaimsFromRequest,
     Json(profile): Json<Profile>,
 ) -> Result<Json<Profile>, ApiError> {
+    if profile.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("连接名称不能为空".to_string()));
+    }
+    let valid_types = ["powershell", "cmd", "ssh", "docker", "k8s", "mstsc"];
+    if !valid_types.contains(&profile.terminal_type.as_str()) {
+        return Err(ApiError::BadRequest(format!("不支持的终端类型: {}", profile.terminal_type)));
+    }
     let created = ProfileService::create_profile(&profile.name, &profile.group, &profile.terminal_type)
         .map_err(|e| ApiError::Internal(e))?;
     let mut full = profile;

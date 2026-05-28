@@ -172,8 +172,15 @@ pub fn rename_path(path: String, new_name: String) -> Result<(), String> {
     Ok(())
 }
 
+const MAX_READ_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
 #[command]
 pub fn read_file_content(path: String) -> Result<String, String> {
+    let metadata = fs::metadata(&path)
+        .map_err(|e| format!("Failed to read file metadata: {}", e))?;
+    if metadata.len() > MAX_READ_FILE_SIZE {
+        return Err(format!("文件过大 ({}MB)，最大支持 10MB", metadata.len() / 1024 / 1024));
+    }
     fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
 }
 

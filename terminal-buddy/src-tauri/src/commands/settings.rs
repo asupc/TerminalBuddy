@@ -193,6 +193,20 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     let data: Value = serde_json::from_str(&content)
         .map_err(|e| format!("解析JSON失败: {}", e))?;
 
+    // 验证顶层结构必须是 Object
+    if !data.is_object() {
+        return Err("导入文件格式错误：顶层必须是 JSON 对象".to_string());
+    }
+
+    // 验证可识别的 key
+    let valid_keys: &[&str] = &["Profiles", "Themes", "Workspaces", "ClientData",
+                                 "command_history", "command_templates", "settings"];
+    for key in data.as_object().unwrap().keys() {
+        if !valid_keys.contains(&key.as_str()) {
+            return Err(format!("导入文件包含未知数据类型: {}", key));
+        }
+    }
+
     let data_dir = PathService::get_data_dir();
     fs::create_dir_all(&data_dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
 

@@ -288,44 +288,32 @@ impl TerminalService {
 
     pub fn write_to_terminal(&self, id: &str, data: &str) -> Result<(), String> {
         let bytes = data.as_bytes();
-        if bytes.len() <= 256 {
-            // Fast path: single write, single lock
-            let mut instances = self.instances.lock().unwrap();
-            if let Some(instance) = instances.get_mut(id) {
-                if let Some(ref mut writer) = instance.writer {
+        let mut instances = self.instances.lock().unwrap();
+        if let Some(instance) = instances.get_mut(id) {
+            if let Some(ref mut writer) = instance.writer {
+                if bytes.len() <= 256 {
                     writer.write_all(bytes)
                         .map_err(|e| format!("Write failed: {}", e))?;
                     writer.flush()
                         .map_err(|e| format!("Flush failed: {}", e))?;
-                    return Ok(());
                 } else {
-                    return Err("Terminal writer not available".to_string());
+                    for (i, chunk) in bytes.chunks(256).enumerate() {
+                        if i > 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(2));
+                        }
+                        writer.write_all(chunk)
+                            .map_err(|e| format!("Write failed: {}", e))?;
+                        writer.flush()
+                            .map_err(|e| format!("Flush failed: {}", e))?;
+                    }
                 }
+                Ok(())
             } else {
-                return Err("Terminal not found".to_string());
+                Err("Terminal writer not available".to_string())
             }
+        } else {
+            Err("Terminal not found".to_string())
         }
-        // Chunked path for large pastes — acquire lock per chunk with sleep between
-        let chunk_size = 256;
-        for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
-            if i > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(2));
-            }
-            let mut instances = self.instances.lock().unwrap();
-            if let Some(instance) = instances.get_mut(id) {
-                if let Some(ref mut writer) = instance.writer {
-                    writer.write_all(chunk)
-                        .map_err(|e| format!("Write failed: {}", e))?;
-                    writer.flush()
-                        .map_err(|e| format!("Flush failed: {}", e))?;
-                } else {
-                    return Err("Terminal writer not available".to_string());
-                }
-            } else {
-                return Err("Terminal not found".to_string());
-            }
-        }
-        Ok(())
     }
 
     pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16, allow_shrink: bool) -> Result<(), String> {
@@ -499,8 +487,13 @@ impl TerminalService {
             instances.insert(terminal_id.clone(), instance);
         }
 
-        // Launch the actual shell
-        let shell_cmd = if effective_type == "cmd" { "cmd.exe".to_string() } else { "powershell.exe".to_string() };
+        // For "cmd" type: cmd.exe is already the base shell, no need to start another one
+        // For "powershell" type: need to start powershell.exe
+        let shell_cmd = if effective_type == "cmd" {
+            String::new()
+        } else {
+            "powershell.exe".to_string()
+        };
         let tid = terminal_id.clone();
         let instances = self.instances.clone();
 
@@ -511,9 +504,11 @@ impl TerminalService {
             let mut instances_lock = instances.lock().unwrap();
             if let Some(instance) = instances_lock.get_mut(&tid) {
                 if let Some(ref mut writer) = instance.writer {
-                    let _ = writer.write_all(shell_cmd.as_bytes());
-                    let _ = writer.write_all(b"\r");
-                    let _ = writer.flush();
+                    if !shell_cmd.is_empty() {
+                        let _ = writer.write_all(shell_cmd.as_bytes());
+                        let _ = writer.write_all(b"\r");
+                        let _ = writer.flush();
+                    }
                 }
             }
         });
