@@ -173,7 +173,6 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6,
         padding: '6px 8px', background: '#16162e',
-        borderTop: '1px solid #2a2a4a',
       }}>
         <input
           value={value}
@@ -201,7 +200,8 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
       {/* Row 2: Special keys */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 4,
-        padding: '4px 8px 6px', background: '#16162e',
+        padding: '3px 8px 3px', background: '#16162e',
+        borderTop: '1px solid #2a2a4a',
       }}>
         {[
           { key: 'ArrowUp', label: '↑' },
@@ -222,6 +222,13 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
               fontSize: 13, fontWeight: 500,
               WebkitTapHighlightColor: 'transparent',
               userSelect: 'none', cursor: 'pointer',
+              transition: 'opacity 0.1s',
+            }}
+            onMouseDown={(e) => (e.currentTarget.style.opacity = '0.7')}
+            onMouseUp={(e) => (e.currentTarget.style.opacity = '1')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            onTouchStart={(e) => (e.currentTarget.style.opacity = '0.7')}
+            onTouchEnd={(e) => (e.currentTarget.style.opacity = '1')}
             }}
           >
             {label}
