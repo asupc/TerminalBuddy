@@ -27,7 +27,7 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
   const [ctrlActive, setCtrlActive] = useState(false);
   const historyRef = useRef(loadHistory());
   const draftRef = useRef('');
-  const ctrlTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const ctrlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleSubmit = useCallback(() => {
     if (!value) {
