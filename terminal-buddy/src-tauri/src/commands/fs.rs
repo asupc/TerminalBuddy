@@ -77,10 +77,61 @@ pub fn list_directory(path: String, exclusions: Option<Vec<String>>) -> Result<V
 
 #[command]
 pub fn open_path(path: String) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/c", "start", "", &path])
-        .spawn()
-        .map_err(|e| format!("Failed to open: {}", e))?;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            hwnd: *mut std::ffi::c_void,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show_cmd: i32,
+        ) -> *mut std::ffi::c_void;
+    }
+
+    let operation: Vec<u16> = std::ffi::OsStr::new("open")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let file: Vec<u16> = std::ffi::OsStr::new(&path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let directory: Vec<u16> = std::path::Path::new(&path)
+        .parent()
+        .map(|p| {
+            std::ffi::OsStr::new(p)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            operation.as_ptr(),
+            file.as_ptr(),
+            ptr::null(),
+            if directory.is_empty() {
+                ptr::null()
+            } else {
+                directory.as_ptr()
+            },
+            1, // SW_SHOWNORMAL
+        )
+    };
+
+    // ShellExecuteW returns a value > 32 on success
+    if result as isize <= 32 {
+        return Err(format!("Failed to open: {}", path));
+    }
+
     Ok(())
 }
 
