@@ -6,10 +6,12 @@
 
 ## 功能特性
 
-- **多终端类型** — 支持 PowerShell、CMD、SSH、Docker、Kubernetes
+- **多终端类型** — 支持 PowerShell、CMD、SSH、Docker、Kubernetes、远程桌面（MSTSC）
 - **配置文件管理** — 创建和组织终端配置，支持自定义启动路径、命令、环境变量、配置专属颜色和层级分组
-- **标签页界面** — 垂直侧边栏或水平标签栏，分组标签页、颜色标签、拖拽排序、递归分组折叠
-- **文件树浏览器** — 内置文件浏览器，支持书签、排除规则、拖拽文件到终端、内联重命名
+- **标签页界面** — 垂直侧边栏或水平标签栏，分组标签页、颜色标签、呼吸灯效果、拖拽排序、递归分组折叠
+- **文件树浏览器** — 内置本地文件浏览器，支持书签、排除规则、拖拽文件到终端、内联重命名
+- **远程文件管理器** — SSH 远程文件浏览，面包屑导航，右键菜单（上传、下载、重命名、复制、移动、修改权限、删除），传输进度显示
+- **服务器监控** — 实时 SSH 服务器监控：CPU、内存、交换分区、磁盘使用、网络速度、运行时间，可配置刷新间隔
 - **主题系统** — 8 款内置主题 + 自定义 16 色 ANSI 主题编辑器，支持深色/浅色/跟随系统
 - **智能补全** — 基于模板和历史记录的命令自动补全，支持模糊匹配
 - **命令历史** — 可搜索的命令历史，支持添加备注、导入/导出
@@ -20,7 +22,7 @@
 - **Web 链接** — Ctrl+点击在浏览器中打开 URL
 - **工作区管理** — 保存和恢复终端布局
 - **系统托盘** — 关闭到托盘、单实例模式
-- **AI 用量监控** — 查看智谱 GLM、百度千帆和 Deepseek 的 API 用量
+- **AI 用量监控** — 查看智谱 GLM、百度千帆、Minimax 和 Deepseek 的 API 用量
 - **Web 远程访问** — 内置 HTTP/WebSocket 服务器，支持浏览器远程终端访问，JWT 认证，移动端友好输入栏
 - **文本编辑器** — 集成 Monaco Editor，双击文件树中的文本文件打开编辑器标签页，语法高亮、查找替换、格式化文档
 - **数据可移植** — 所有数据以 JSON 文件存储，支持完整导入/导出
@@ -81,45 +83,74 @@ terminal-buddy/
 │   │   ├── ConfigPanel.tsx       # 配置文件列表面板（支持层级分组）
 │   │   ├── ConfigEditDialog.tsx  # 配置文件创建/编辑弹窗
 │   │   ├── GroupCascader.tsx     # 多级分组级联选择器
-│   │   ├── FileTree.tsx          # 文件浏览器（含书签、内联重命名）
+│   │   ├── FileTree.tsx          # 本地文件浏览器（含书签、内联重命名）
+│   │   ├── RemoteFileTree.tsx    # SSH 远程文件浏览器（上传/下载/权限管理）
+│   │   ├── ServerMonitor.tsx     # SSH 实时服务器监控面板
+│   │   ├── ChmodDialog.tsx       # 远程文件权限编辑器
+│   │   ├── ExtraParamsDialog.tsx # SSH 参数预设
 │   │   ├── TerminalInstance.tsx  # xterm.js 终端（含插件）
 │   │   ├── TerminalPanel.tsx     # 终端路由与分屏布局
+│   │   ├── TerminalTab.tsx       # 单个标签页组件
 │   │   ├── TabSidebar.tsx        # 垂直标签导航
+│   │   ├── TabGroup.tsx          # 标签页分组组件
 │   │   ├── TerminalTabBar.tsx    # 水平标签栏
+│   │   ├── Toolbar.tsx           # 终端工具栏
+│   │   ├── TreeView.tsx          # 通用树形视图组件
 │   │   ├── SettingsPage.tsx      # 设置面板（8 个分区）
 │   │   ├── TextEditor.tsx        # Monaco Editor 文本编辑器
-│   │   ├── AiUsagePanel.tsx      # AI 用量悬浮面板
-│   │   └── ...
+│   │   └── AiUsagePanel.tsx      # AI 用量悬浮面板
 │   ├── stores/appStore.ts        # Zustand 状态管理
 │   ├── services/tauri.ts         # Tauri invoke 封装
 │   ├── services/aiUsage.ts       # AI API 用量获取
 │   ├── data/commandTemplates.ts  # 模板定义与历史记录
-│   ├── utils/settings.ts         # 前端设置（localStorage）
+│   ├── utils/                    # 工具模块
+│   │   ├── settings.ts           # 前端设置（localStorage）
+│   │   ├── fileExtensions.ts     # 文件扩展名映射
+│   │   ├── groupHierarchy.ts     # 分组层级工具
+│   │   ├── groupTree.ts          # 分组树构建
+│   │   ├── migration.ts          # 数据迁移辅助
+│   │   └── tabColor.ts           # 标签颜色工具
 │   └── types/index.ts            # TypeScript 类型与预设
 ├── src-tauri/                    # 后端（Rust/Tauri）
 │   └── src/
-│       ├── lib.rs                # 应用初始化、托盘、单实例、Web API
+│       ├── lib.rs                # 应用初始化、托盘、单实例、Web API（79 个命令）
 │       ├── commands/             # Tauri 命令处理
 │       │   ├── terminal.rs       # PTY 管理（TerminalService）
 │       │   ├── profile.rs        # 配置文件 CRUD + 导入/导出
-│       │   ├── history.rs        # 命令历史
 │       │   ├── settings.rs       # 应用设置、数据路径、Web API 设置
 │       │   ├── window.rs         # 窗口控制（最小化/最大化/关闭）
-│       │   ├── ai_usage.rs       # 百度千帆 API 用量
-│       │   └── ...
-│       ├── services/             # 业务逻辑（JSON 文件读写）
-│       │   └── web_service.rs    # 终端输出发布/订阅（WebSocket）
-│       ├── models/               # 数据结构
+│       │   ├── remote_file.rs    # SSH 远程文件操作（11 个命令）
+│       │   ├── server_monitor.rs # SSH 服务器状态监控
+│       │   ├── client_data.rs    # 客户端数据持久化
+│       │   ├── ai_usage.rs       # AI API 用量（千帆、Deepseek、Minimax）
+│       │   ├── clipboard.rs      # 剪贴板操作
+│       │   ├── fs.rs             # 本地文件系统操作
+│       │   ├── templates.rs      # 命令模板管理
+│       │   ├── theme.rs          # 自定义主题 CRUD
+│       │   ├── web.rs            # Web API 服务器控制
+│       │   └── workspace.rs      # 工作区 CRUD
+│       ├── services/             # 业务逻辑
+│       │   ├── profile_service.rs     # 配置文件 JSON 读写
+│       │   ├── settings_service.rs    # 设置 JSON 读写
+│       │   ├── template_service.rs    # 模板 JSON 读写
+│       │   ├── theme_service.rs       # 主题 JSON 读写
+│       │   ├── workspace_service.rs   # 工作区 JSON 读写
+│       │   ├── web_service.rs         # 终端输出发布/订阅（WebSocket）
+│       │   ├── path_service.rs        # 数据目录解析与迁移
+│       │   ├── ssh_session_service.rs # SSH 会话管理
+│       │   └── client_data_service.rs # 客户端数据持久化
+│       ├── models/               # 数据结构（Profile、AppSettings 等）
 │       ├── web/                  # Web API 模块（axum）
 │       │   ├── server.rs         # Axum 路由与 SPA 服务
 │       │   ├── auth.rs           # JWT 认证
 │       │   ├── ws.rs             # WebSocket 终端 I/O
+│       │   ├── error.rs          # 错误类型
 │       │   └── handlers/         # REST 处理器（认证、配置、终端）
 │       └── portable-pty-patched/ # portable-pty 本地补丁
 └── web/                          # Web 前端（独立 React SPA）
     └── src/
-        ├── components/           # 登录页、主布局、终端视图、移动端输入栏
-        ├── api/                  # 认证、配置、终端 API 客户端
+        ├── components/           # 登录页、主布局、侧边栏、终端视图、移动端输入栏
+        ├── api/                  # 认证、配置、终端、客户端 API
         └── hooks/useTerminal.ts  # WebSocket 终端 Hook
 ```
 
@@ -147,8 +178,8 @@ terminal-buddy/
 | 主题管理 | 8 款预设 + 自定义 16 色编辑器，实时预览 |
 | 命令历史 | 搜索、编辑命令和备注、清空 |
 | 文件排除 | 文件树排除规则（精确名称、`*.ext`、`**/*.ext`） |
-| AI 用量 | 智谱 GLM API Key、百度千帆 Cookie、Deepseek API Key |
-| Web 远程管理 | 启用/禁用 Web API、端口、凭据、服务器控制 |
+| AI 用量 | 智谱 GLM API Key、百度千帆 Cookie、Deepseek API Key、Minimax API Key |
+| Web 远程管理 | 启用/禁用 Web API、端口、凭据、服务器控制、会话共享 |
 
 ## 开源协议
 
