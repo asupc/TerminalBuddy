@@ -16,6 +16,7 @@ cd terminal-buddy
 # Development
 npm run tauri dev    # Run full Tauri app in dev mode (Rust + frontend)
 npm run dev          # Frontend only (Vite dev server on port 1420)
+# Or from repo root: dev.bat (Windows shortcut for tauri dev)
 
 # Build
 npm run tauri build  # Production build (outputs NSIS installer)
@@ -76,6 +77,8 @@ Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (b
 - `TabSidebar.tsx` — Vertical tab navigation panel (resizable, grouped, context menus)
 - `TerminalTabBar.tsx` — Horizontal tab bar (shown when Tab Navigation is disabled)
 - `SettingsPage.tsx` — Full settings overlay with 8 sections (general, profiles, commands, themes, history, exclusions, AI usage, web management)
+- `TextEditor.tsx` — Monaco Editor integration for editing files, double-click files in FileTree to open editor tabs
+- `GroupCascader.tsx` — Multi-level group cascade selector for profile grouping
 - `AiUsagePanel.tsx` — Hover panel showing AI usage bars for Zhipu GLM and Baidu Qianfan
 
 **Types** (`types/index.ts`): `Profile`, `TerminalSession`, `CustomTheme`, `TabGroup`, `SplitNode`, `Workspace`, plus `PRESET_THEMES` (8 themes) and `TAB_COLORS` (25 colors).
