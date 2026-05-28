@@ -151,8 +151,14 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
 
     // Other keys: Ctrl+combo or raw character
     if (ctrlActive) {
-      const code = key.toUpperCase().charCodeAt(0) - 64;
-      onSend(String.fromCharCode(code));
+      if (key === 'Esc') {
+        onSend('\x1b');
+      } else if (key === 'Tab') {
+        onSend('\t');
+      } else {
+        const code = key.toUpperCase().charCodeAt(0) - 64;
+        onSend(String.fromCharCode(code));
+      }
       if (ctrlTimerRef.current) {
         clearTimeout(ctrlTimerRef.current);
         ctrlTimerRef.current = null;
@@ -229,7 +235,7 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
             onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
             onTouchStart={(e) => (e.currentTarget.style.opacity = '0.7')}
             onTouchEnd={(e) => (e.currentTarget.style.opacity = '1')}
-            }}
+            onTouchCancel={(e) => (e.currentTarget.style.opacity = '1')}
           >
             {label}
           </button>
