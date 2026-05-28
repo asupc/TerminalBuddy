@@ -66,6 +66,21 @@ lazy_static! {
     static ref CONPTY: ConPtyFuncs = load_conpty();
 }
 
+/// Returns the Windows build number via RtlGetVersion (reliable, no compatibility shim).
+fn windows_build_number() -> u32 {
+    use winapi::um::winnt::OSVERSIONINFOW;
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn RtlGetVersion(lpVersionInformation: *mut OSVERSIONINFOW) -> i32;
+    }
+    let mut vi: OSVERSIONINFOW = unsafe { mem::zeroed() };
+    vi.dwOSVersionInfoSize = mem::size_of::<OSVERSIONINFOW>() as u32;
+    unsafe {
+        RtlGetVersion(&mut vi);
+    }
+    vi.dwBuildNumber
+}
+
 pub struct PsuedoCon {
     con: HPCON,
 }
@@ -82,17 +97,25 @@ impl Drop for PsuedoCon {
 impl PsuedoCon {
     pub fn new(size: COORD, input: FileDescriptor, output: FileDescriptor) -> Result<Self, Error> {
         let mut con: HPCON = INVALID_HANDLE_VALUE;
-        // Use dwFlags=0 (standard mode), matching VS Code's default behavior.
+        // Use PSEUDOCONSOLE_PASSTHROUGH_MODE when available (Windows 11 22621+).
+        // This tells ConPTY to pass VT sequences through without "cooking" them,
+        // which is essential for TUI programs (Claude Code, vim, etc.) that use
+        // alternate screen buffers, cursor positioning, and dialog/popup rendering.
         // PSEUDOCONSOLE_INHERIT_CURSOR is intentionally NOT used — it causes
         // ConPTY to inject DSR (\e[6n) queries that desync from xterm.js
         // cursor state during rapid TUI output (e.g., Claude Code spinners).
-        // VS Code / node-pty also defaults to flags=0 (conptyInheritCursor=false).
+        let build = windows_build_number();
+        let flags = if build >= 22621 {
+            PSEUDOCONSOLE_PASSTHROUGH_MODE
+        } else {
+            0
+        };
         let result = unsafe {
             (CONPTY.CreatePseudoConsole)(
                 size,
                 input.as_raw_handle() as _,
                 output.as_raw_handle() as _,
-                0,
+                flags,
                 &mut con,
             )
         };
@@ -101,7 +124,11 @@ impl PsuedoCon {
             "failed to create psuedo console: HRESULT {}",
             result
         );
-        log::info!("ConPTY created with dwFlags=0 (standard mode, matching VS Code)");
+        if flags != 0 {
+            log::info!("ConPTY created with PASSTHROUGH mode (build {})", build);
+        } else {
+            log::info!("ConPTY created with dwFlags=0 (standard mode, build {})", build);
+        }
         Ok(Self { con })
     }
 
