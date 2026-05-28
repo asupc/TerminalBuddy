@@ -30,12 +30,15 @@ impl SshSessionService {
         terminal_id: &str,
         profile: &Profile,
     ) -> Result<(), String> {
-        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        if sessions.contains_key(terminal_id) {
-            return Ok(());
+        // Check if session already exists (fast path, no network I/O)
+        {
+            let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+            if sessions.contains_key(terminal_id) {
+                return Ok(());
+            }
         }
-        drop(sessions);
 
+        // Not found — create new connection outside the lock.
         let host = profile.ssh_host.as_ref().ok_or("SSH host not set")?;
         let port = profile.ssh_port.unwrap_or(22);
         let user = profile.ssh_user.as_ref().ok_or("SSH user not set")?;
@@ -76,7 +79,14 @@ impl SshSessionService {
         let sftp = session.sftp()
             .map_err(|e| format!("SFTP subsystem failed: {}", e))?;
 
+        // Double-check: another thread might have created it while we were connecting
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        if sessions.contains_key(terminal_id) {
+            // Another thread beat us — drop our connection
+            drop(sftp);
+            drop(session);
+            return Ok(());
+        }
         sessions.insert(terminal_id.to_string(), Arc::new(Mutex::new(SshSession { session, sftp })));
         Ok(())
     }

@@ -14,6 +14,15 @@ use crate::services::PathService;
 use crate::services::SettingsService;
 use crate::services::ssh_session_service::SshSessionService;
 
+/// 转义 shell 特殊字符，防止命令注入
+fn shell_escape(s: &str) -> String {
+    if s.contains(|c: char| c == ' ' || c == '"' || c == '\'' || c == '&' || c == '|' || c == '>' || c == '<' || c == '^') {
+        format!("\"{}\"", s.replace('"', "\\\""))
+    } else {
+        s.to_string()
+    }
+}
+
 pub struct TerminalInstance {
     pub id: String,
     pub profile_id: String,
@@ -211,9 +220,12 @@ impl TerminalService {
                 let auth_type = p.and_then(|p| p.ssh_auth_type.clone()).unwrap_or_else(|| "key".to_string());
                 let key_path = p.and_then(|p| p.ssh_key_path.clone()).unwrap_or_default();
                 let ssh_cmd = if auth_type == "key" && !key_path.is_empty() {
-                    format!("ssh -i {} -p {} {}@{}", key_path, port, user, host)
+                    format!("ssh -i {} -p {} {}@{}",
+                        shell_escape(&key_path), port,
+                        shell_escape(&user), shell_escape(&host))
                 } else {
-                    format!("ssh -p {} {}@{}", port, user, host)
+                    format!("ssh -p {} {}@{}",
+                        port, shell_escape(&user), shell_escape(&host))
                 };
                 vec![ssh_cmd]
             }
@@ -222,15 +234,15 @@ impl TerminalService {
                     .and_then(|p| p.docker_container_name.clone())
                     .or_else(|| profile.as_ref().and_then(|p| p.docker_container_id.clone()))
                     .unwrap_or_default();
-                vec![format!("docker exec -it {} cmd.exe", container)]
+                vec![format!("docker exec -it {} cmd.exe", shell_escape(&container))]
             }
             "k8s" => {
                 let ns = profile.as_ref().and_then(|p| p.k8s_namespace.clone()).unwrap_or_default();
                 let pod = profile.as_ref().and_then(|p| p.k8s_pod_name.clone()).unwrap_or_default();
                 let container = profile.as_ref().and_then(|p| p.k8s_container_name.clone()).unwrap_or_default();
-                let mut cmd = format!("kubectl exec -it -n {} {}", ns, pod);
+                let mut cmd = format!("kubectl exec -it -n {} {}", shell_escape(&ns), shell_escape(&pod));
                 if !container.is_empty() {
-                    cmd = format!("{} -c {} -- cmd.exe", cmd, container);
+                    cmd = format!("{} -c {} -- cmd.exe", cmd, shell_escape(&container));
                 } else {
                     cmd = format!("{} -- cmd.exe", cmd);
                 }
@@ -391,6 +403,28 @@ impl TerminalService {
         if let Some(mut instance) = instances.remove(id) {
             instance.writer = None;
             instance.child.kill().ok();
+            let _ = instance.child.wait();
+            Ok(())
+        } else {
+            Err("Terminal not found".to_string())
+        }
+    }
+
+    pub fn close_terminal_with_check(&self, id: &str, required_owner: Option<TerminalOwner>) -> Result<(), String> {
+        let mut instances = self.instances.lock().unwrap();
+        if let Some(instance) = instances.get(id) {
+            if let Some(expected) = required_owner {
+                if instance.owner != expected {
+                    return Err("无权限关闭此终端".to_string());
+                }
+            }
+        } else {
+            return Err("Terminal not found".to_string());
+        }
+        if let Some(mut instance) = instances.remove(id) {
+            instance.writer = None;
+            instance.child.kill().ok();
+            let _ = instance.child.wait();
             Ok(())
         } else {
             Err("Terminal not found".to_string())
@@ -623,65 +657,6 @@ fn bring_window_to_front(pid: u32) -> bool {
     false
 }
 
-/// 获取指定 HWND 的窗口标题
-unsafe fn get_window_title(hwnd: windows::Win32::Foundation::HWND) -> String {
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowTextW;
-    let mut buf = [0u16; 512];
-    let len = unsafe { GetWindowTextW(hwnd, &mut buf) } as usize;
-    String::from_utf16_lossy(&buf[..len])
-}
-
-/// 通过类名和标题关键词查找 mstsc 窗口并修改标题
-/// 返回 true 表示成功找到并修改了标题
-fn set_mstsc_window_title(new_title: &str) -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, SetWindowTextW, IsWindowVisible,
-    };
-    use windows::Win32::Foundation::{HWND, LPARAM};
-
-    let new_title_wide: Vec<u16> = new_title.encode_utf16().chain(std::iter::once(0)).collect();
-
-    struct EnumCtx {
-        new_title: Vec<u16>,
-        found: bool,
-    }
-
-    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
-        let ctx = unsafe { &mut *(lparam.0 as *mut EnumCtx) };
-
-        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
-            return windows::core::BOOL(1);
-        }
-
-        let mut class_name = [0u16; 64];
-        let len = unsafe { GetClassNameW(hwnd, &mut class_name) } as usize;
-        if len == 0 {
-            return windows::core::BOOL(1);
-        }
-        let class_str = String::from_utf16_lossy(&class_name[..len]);
-        if !class_str.contains("TscMainDesktopWindow") {
-            return windows::core::BOOL(1);
-        }
-
-        let cur_title = unsafe { get_window_title(hwnd) };
-        if cur_title.contains("远程桌面连接") || cur_title.contains("Remote Desktop Connection") {
-            let pcwstr = windows::core::PCWSTR(ctx.new_title.as_ptr());
-            unsafe { let _ = SetWindowTextW(hwnd, pcwstr); }
-            ctx.found = true;
-            return windows::core::BOOL(0);
-        }
-
-        windows::core::BOOL(1)
-    }
-
-    let mut ctx = EnumCtx { new_title: new_title_wide, found: false };
-    unsafe {
-        let _ = EnumWindows(Some(enum_callback), LPARAM(&mut ctx as *mut _ as isize));
-    }
-
-    ctx.found
-}
-
 #[command]
 pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
     let profile = ProfileService::get_profile(&profile_id)
@@ -756,17 +731,6 @@ pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
         let mut processes = mstsc_processes().lock().unwrap();
         processes.insert(profile_id.clone(), pid);
     }
-
-    // 后台线程：等待窗口出现后修改标题
-    let title = profile.name.clone();
-    std::thread::spawn(move || {
-        for wait_ms in [500, 1000, 2000, 3000] {
-            std::thread::sleep(std::time::Duration::from_millis(wait_ms));
-            if set_mstsc_window_title(&title) {
-                break;
-            }
-        }
-    });
 
     Ok(())
 }

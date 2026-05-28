@@ -158,7 +158,14 @@ fn parse_disk(output: &str) -> Vec<DiskStats> {
         }
         let mount = fields.last().unwrap_or(&"").to_string();
         // Skip pseudo filesystems
-        if mount.starts_with("/dev") || mount.starts_with("/") {
+        if mount.starts_with('/')
+            && !mount.starts_with("/dev")
+            && !mount.starts_with("/sys")
+            && !mount.starts_with("/proc")
+            && !mount.starts_with("/run")
+            && !mount.starts_with("/snap")
+            && !mount.starts_with("/tmp")
+        {
             let total: u64 = fields[1].parse().unwrap_or(0);
             let used: u64 = fields[2].parse().unwrap_or(0);
             let available: u64 = fields[3].parse().unwrap_or(0);

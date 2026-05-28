@@ -60,6 +60,9 @@ impl WorkspaceService {
         };
 
         let path = Self::get_workspaces_dir().join(format!("{}.json", sanitize_filename(&workspace.name)));
+        if path.exists() {
+            return Err(format!("工作区 '{}' 已存在", name));
+        }
         let content = serde_json::to_string_pretty(&workspace)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         fs::write(&path, content)
