@@ -24,7 +24,10 @@ pub async fn login(
     }
 
     let valid = verify(&req.password, &settings.web_api_password_hash)
-        .map_err(|e| ApiError::Internal(format!("密码验证失败: {}", e)))?;
+        .map_err(|e| {
+            eprintln!("[WebAPI] bcrypt verify error: {}", e);
+            ApiError::Unauthorized("用户名或密码错误".to_string())
+        })?;
     if !valid {
         return Err(ApiError::Unauthorized("用户名或密码错误".into()));
     }

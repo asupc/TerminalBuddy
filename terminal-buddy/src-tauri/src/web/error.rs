@@ -19,7 +19,10 @@ impl IntoResponse for ApiError {
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, "forbidden", msg),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg),
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", msg),
-            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", msg),
+            ApiError::Internal(msg) => {
+                eprintln!("[WebAPI] Internal error: {}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "服务器内部错误".to_string())
+            }
         };
         (status, Json(json!({ "error": error, "message": message }))).into_response()
     }

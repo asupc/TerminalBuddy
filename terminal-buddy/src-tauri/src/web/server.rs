@@ -1,6 +1,7 @@
 use axum::Router;
+use axum::http::{header, Method};
 use axum::routing::{get, post, put, delete};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -28,7 +29,7 @@ impl HasJwtSecret for AppState {
 #[cfg(not(debug_assertions))]
 static WEB_DIST: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
 
-pub fn build_router(state: AppState) -> Router {
+pub fn build_router(state: AppState, port: u16) -> Router {
     let mut router = Router::new()
         .route("/api/auth/login", post(handlers::auth_handler::login))
         .route("/api/auth/status", get(handlers::auth_handler::status))
@@ -55,7 +56,16 @@ pub fn build_router(state: AppState) -> Router {
 
     router
         .with_state(state)
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+        .layer(
+            CorsLayer::new()
+                .allow_origin([
+                    format!("http://localhost:{}", port).parse().unwrap(),
+                    format!("http://127.0.0.1:{}", port).parse().unwrap(),
+                    format!("http://localhost:{}", 1420).parse().unwrap(),
+                ])
+                .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+        )
 }
 
 #[cfg(not(debug_assertions))]
@@ -99,9 +109,9 @@ fn guess_content_type(path: &str) -> &'static str {
 
 pub async fn run_server(port: u16, jwt_secret: String, app_handle: tauri::AppHandle, mut shutdown_rx: watch::Receiver<bool>) {
     let state = AppState { jwt_secret, app_handle };
-    let app = build_router(state);
+    let app = build_router(state, port);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
