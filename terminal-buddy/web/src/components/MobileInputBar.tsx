@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 
 interface Props {
   onSend: (data: string) => void;
@@ -17,7 +17,8 @@ const KEY_BUTTONS = [
 const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
   const [panelOpen, setPanelOpen] = useState(false);
   const [ctrlActive, setCtrlActive] = useState(false);
-  const ctrlTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ctrlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [fabBottom, setFabBottom] = useState(10);
 
   const clearCtrlTimer = useCallback(() => {
     if (ctrlTimerRef.current) {
@@ -26,7 +27,28 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
     }
   }, []);
 
-  React.useEffect(() => () => clearCtrlTimer(), [clearCtrlTimer]);
+  // Position FAB above the virtual keyboard
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const update = () => {
+      // keyboard height = layout viewport - visual viewport - visual viewport offset
+      const kbHeight = window.innerHeight - vv.height - vv.offsetTop;
+      setFabBottom(Math.max(kbHeight + 10, 10));
+    };
+
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
+
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, []);
+
+  useEffect(() => () => clearCtrlTimer(), [clearCtrlTimer]);
 
   const handleKeyBtn = useCallback((key: string) => {
     if (key === 'Ctrl') {
@@ -75,7 +97,7 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
         <div
           onTouchStart={(e) => e.stopPropagation()}
           style={{
-            position: 'absolute', inset: 0, zIndex: 998,
+            position: 'fixed', inset: 0, zIndex: 998,
           }}
         />
       )}
@@ -85,7 +107,7 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
         <div
           onTouchStart={(e) => e.stopPropagation()}
           style={{
-            position: 'absolute', bottom: 56, left: 8, right: 8,
+            position: 'fixed', bottom: fabBottom + 50, left: 8, right: 8,
             display: 'flex', gap: 4, padding: '6px 8px',
             background: '#16162e', border: '1px solid #2a2a4a',
             borderRadius: 8, zIndex: 999,
@@ -117,7 +139,7 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
         onClick={() => setPanelOpen((o) => !o)}
         onTouchStart={(e) => e.stopPropagation()}
         style={{
-          position: 'absolute', bottom: 10, right: 10,
+          position: 'fixed', bottom: fabBottom, right: 10,
           width: 44, height: 44, borderRadius: 22,
           border: 'none',
           background: panelOpen ? '#6a6ad5' : '#2a2a4a',

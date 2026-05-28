@@ -194,15 +194,27 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     }
   }, [hidden]);
 
+  // Re-fit when isMobile changes (FAB visibility changes terminal height)
+  useEffect(() => {
+    if (termRef.current) {
+      requestAnimationFrame(() => {
+        fitAddonRef.current?.fit();
+        const term = termRef.current;
+        if (term) sendResize(term.cols, term.rows);
+      });
+    }
+  }, [isMobile]);
+
   return (
     <div style={{
-      height: '100%', position: 'relative',
+      height: '100%', display: 'flex', flexDirection: 'column',
     }}>
       <div
         ref={containerRef}
         style={{
-          width: '100%',
-          height: '100%',
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
           display: 'block',
           visibility: hidden ? 'hidden' : 'visible',
           pointerEvents: hidden ? 'none' : 'auto',

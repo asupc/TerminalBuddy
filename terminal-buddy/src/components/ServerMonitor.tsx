@@ -57,7 +57,7 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
   }, [terminalId, ensureConnected]);
 
   useEffect(() => {
-    if (!isSsh || !expanded || interval <= 0) {
+    if (!isSsh || interval <= 0) {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -74,7 +74,7 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
         timerRef.current = null;
       }
     };
-  }, [isSsh, expanded, interval, fetchStats]);
+  }, [isSsh, interval, fetchStats]);
 
   if (!isSsh) return null;
 

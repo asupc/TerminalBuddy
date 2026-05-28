@@ -125,14 +125,21 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     }
   }, [terminalId, setSessionDirectory]);
 
-  // Reset connection state when switching to a different SSH terminal
+  // Reset and auto-connect when switching to a different SSH terminal
   useEffect(() => {
     connectedRef.current = false;
     setConnected(false);
     setError(null);
     setFiles([]);
     setCurrentPath('/');
-  }, [terminalId]);
+
+    // Auto-connect if we have a valid session
+    if (session?.profileId) {
+      connectSession().then(ok => {
+        if (ok) loadDirectory('/');
+      });
+    }
+  }, [terminalId, session?.profileId]);
 
   // Transfer progress listener
   useEffect(() => {
@@ -195,6 +202,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const handleDoubleClick = (file: RemoteFileEntry) => {
     if (file.isDir) {
       loadDirectory(file.path);
+    } else if (isTextFile(file.name)) {
+      handleEdit(file);
     }
   };
 
