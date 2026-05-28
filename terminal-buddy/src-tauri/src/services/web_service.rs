@@ -29,6 +29,14 @@ impl WebServiceState {
         (sub_id, rx)
     }
 
+    pub fn get_subscriber_count(&self, terminal_id: &str) -> usize {
+        if let Ok(subs) = self.output_subscribers.lock() {
+            subs.get(terminal_id).map_or(0, |v| v.len())
+        } else {
+            0
+        }
+    }
+
     pub fn unsubscribe(&self, terminal_id: &str, sub_id: &str) {
         let mut subs = self.output_subscribers.lock().unwrap();
         if let Some(senders) = subs.get_mut(terminal_id) {

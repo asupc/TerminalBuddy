@@ -3,6 +3,7 @@ use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::commands::TerminalService;
 use crate::models::TerminalOwner;
 use crate::models::web_api::{WsClientMessage, WsServerMessage};
@@ -10,6 +11,11 @@ use crate::services::{SettingsService, WebServiceState};
 use crate::web::auth::verify_token;
 use crate::web::server::AppState;
 use tauri::Manager;
+
+static WS_CONNECTION_COUNT: AtomicUsize = AtomicUsize::new(0);
+const MAX_GLOBAL_WS_CONNECTIONS: usize = 50;
+const MAX_PER_TERMINAL_WS_CONNECTIONS: usize = 5;
+const MAX_WS_MESSAGE_SIZE: usize = 64 * 1024; // 64KB
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -36,9 +42,26 @@ pub async fn ws_handler(
 }
 
 async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, is_web_client: bool) {
+    // Global connection limit check
+    let current_count = WS_CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
+    if current_count >= MAX_GLOBAL_WS_CONNECTIONS {
+        WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
+        eprintln!("[WS] Global connection limit reached: {}", MAX_GLOBAL_WS_CONNECTIONS);
+        return;
+    }
+
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     let web_state = state.app_handle.state::<WebServiceState>();
+
+    // Per-terminal connection limit check
+    let sub_count = web_state.get_subscriber_count(&terminal_id);
+    if sub_count >= MAX_PER_TERMINAL_WS_CONNECTIONS {
+        WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
+        eprintln!("[WS] Per-terminal connection limit reached for {}", terminal_id);
+        return;
+    }
+
     let (sub_id, mut output_rx) = web_state.subscribe(&terminal_id);
 
     // Send historical output (peek without clearing, so reconnecting viewers also get history)
@@ -94,6 +117,16 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
         while let Some(Ok(msg)) = ws_receiver.next().await {
             match msg {
                 Message::Text(text) => {
+                    // Message size limit
+                    if text.len() > MAX_WS_MESSAGE_SIZE {
+                        eprintln!("[WS] Message too large: {} bytes, max: {}", text.len(), MAX_WS_MESSAGE_SIZE);
+                        let err_msg = serde_json::to_string(&WsServerMessage::Error {
+                            message: "消息过大".to_string(),
+                        }).unwrap_or_default();
+                        let _ = error_tx.send(err_msg);
+                        continue;
+                    }
+
                     if let Ok(cmd) = serde_json::from_str::<WsClientMessage>(&text) {
                         match cmd {
                             WsClientMessage::Input { data } => {
@@ -119,6 +152,8 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                                 let _ = ts.write_to_terminal(&tid, &data);
                             }
                             WsClientMessage::Resize { cols, rows } => {
+                                let cols = cols.clamp(1, 500);
+                                let rows = rows.clamp(1, 500);
                                 // 权限检查：不共享模式下，PC 端不能 resize Web 端的终端
                                 let settings = SettingsService::get_settings();
                                 if !settings.web_api_share_sessions && !is_web_client {
@@ -158,4 +193,5 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
     }
 
     web_state.unsubscribe(&terminal_id, &sub_id);
+    WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
 }
