@@ -168,33 +168,66 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
   if (!visible) return null;
 
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 6,
-      padding: '6px 8px', background: '#16162e',
-      borderTop: '1px solid #2a2a4a', flexShrink: 0,
-    }}>
-      <input
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="输入命令..."
-        style={{
-          flex: 1, background: '#12122a', border: '1px solid #2a2a4a',
-          borderRadius: 6, color: '#e0e0e0', padding: '8px 10px',
-          fontSize: 14, outline: 'none',
-        }}
-      />
-      <button
-        onClick={handleSubmit}
-        style={{
-          width: 36, height: 36, borderRadius: 6, border: 'none',
-          background: '#6a6ad5', color: '#fff', fontSize: 16,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexShrink: 0,
-        }}
-      >
-        ↑
-      </button>
+    <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+      {/* Row 1: Input */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '6px 8px', background: '#16162e',
+        borderTop: '1px solid #2a2a4a',
+      }}>
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="输入命令..."
+          style={{
+            flex: 1, background: '#12122a', border: '1px solid #2a2a4a',
+            borderRadius: 6, color: '#e0e0e0', padding: '8px 10px',
+            fontSize: 14, outline: 'none',
+          }}
+        />
+        <button
+          onClick={handleSubmit}
+          style={{
+            width: 36, height: 36, borderRadius: 6, border: 'none',
+            background: '#6a6ad5', color: '#fff', fontSize: 16,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          ↑
+        </button>
+      </div>
+      {/* Row 2: Special keys */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        padding: '4px 8px 6px', background: '#16162e',
+      }}>
+        {[
+          { key: 'ArrowUp', label: '↑' },
+          { key: 'ArrowDown', label: '↓' },
+          { key: 'Tab', label: 'Tab' },
+          { key: 'Ctrl', label: 'Ctrl' },
+          { key: 'Esc', label: 'Esc' },
+          { key: 'Enter', label: '⏎' },
+        ].map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => handleKeyBtn(key)}
+            style={{
+              flex: 1, height: 30, borderRadius: 4,
+              border: '1px solid #2a2a4a',
+              background: ctrlActive && key === 'Ctrl' ? '#6a6ad5' : '#1e1e3a',
+              color: ctrlActive && key === 'Ctrl' ? '#fff' : '#b0b0b0',
+              fontSize: 13, fontWeight: 500,
+              WebkitTapHighlightColor: 'transparent',
+              userSelect: 'none', cursor: 'pointer',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 };
