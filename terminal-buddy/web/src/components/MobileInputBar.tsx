@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 
 const HISTORY_KEY = 'terminalbuddy_cmd_history';
 const MAX_HISTORY = 50;
@@ -24,8 +24,10 @@ interface Props {
 const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
   const [value, setValue] = useState('');
   const [historyIdx, setHistoryIdx] = useState(-1);
+  const [ctrlActive, setCtrlActive] = useState(false);
   const historyRef = useRef(loadHistory());
   const draftRef = useRef('');
+  const ctrlTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleSubmit = useCallback(() => {
     if (!value) {
@@ -79,6 +81,89 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
       return;
     }
   }, [value, historyIdx, handleSubmit]);
+
+  useEffect(() => {
+    return () => {
+      if (ctrlTimerRef.current) {
+        clearTimeout(ctrlTimerRef.current);
+        ctrlTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleKeyBtn = useCallback((key: string) => {
+    const history = historyRef.current;
+
+    if (key === 'ArrowUp') {
+      if (history.length === 0) return;
+      if (historyIdx === -1) {
+        draftRef.current = value;
+      }
+      const next = Math.min(historyIdx + 1, history.length - 1);
+      setHistoryIdx(next);
+      setValue(history[next]);
+      return;
+    }
+
+    if (key === 'ArrowDown') {
+      if (historyIdx === -1) return;
+      const prev = historyIdx - 1;
+      if (prev === -1) {
+        setHistoryIdx(-1);
+        setValue(draftRef.current);
+      } else {
+        setHistoryIdx(prev);
+        setValue(history[prev]);
+      }
+      return;
+    }
+
+    if (key === 'Ctrl') {
+      if (ctrlActive) {
+        if (ctrlTimerRef.current) {
+          clearTimeout(ctrlTimerRef.current);
+          ctrlTimerRef.current = null;
+        }
+        setCtrlActive(false);
+      } else {
+        setCtrlActive(true);
+        ctrlTimerRef.current = setTimeout(() => {
+          setCtrlActive(false);
+          ctrlTimerRef.current = null;
+        }, 5000);
+      }
+      return;
+    }
+
+    if (key === 'Enter') {
+      if (ctrlActive) {
+        onSend('\r');
+        if (ctrlTimerRef.current) {
+          clearTimeout(ctrlTimerRef.current);
+          ctrlTimerRef.current = null;
+        }
+        setCtrlActive(false);
+      } else {
+        handleSubmit();
+      }
+      return;
+    }
+
+    // Other keys: Ctrl+combo or raw character
+    if (ctrlActive) {
+      const code = key.toUpperCase().charCodeAt(0) - 64;
+      onSend(String.fromCharCode(code));
+      if (ctrlTimerRef.current) {
+        clearTimeout(ctrlTimerRef.current);
+        ctrlTimerRef.current = null;
+      }
+      setCtrlActive(false);
+    } else {
+      const keyMap: Record<string, string> = { Tab: '\t', Esc: '\x1b' };
+      const mapped = keyMap[key];
+      if (mapped) onSend(mapped);
+    }
+  }, [ctrlActive, historyIdx, value, onSend, handleSubmit]);
 
   if (!visible) return null;
 
