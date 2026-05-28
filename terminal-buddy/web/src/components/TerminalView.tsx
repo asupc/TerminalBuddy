@@ -106,8 +106,7 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     // Intercept Shift+Enter / Ctrl+Enter to insert newline instead of submit
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type === 'keydown' && (event.shiftKey || event.ctrlKey) && event.key === 'Enter') {
-        sendInput('\r');
-        term.write('\r\n');
+        sendInput('\n');
         return false;
       }
       return true;

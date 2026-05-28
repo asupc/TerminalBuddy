@@ -19,6 +19,9 @@ client.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       useWebAppStore.getState().logout();
+      if (window.location.pathname !== '/login') {
+        alert('登录已过期，请重新登录');
+      }
     }
     return Promise.reject(error);
   }

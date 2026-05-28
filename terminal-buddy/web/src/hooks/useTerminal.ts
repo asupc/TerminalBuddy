@@ -10,6 +10,8 @@ interface TerminalCallbacks {
 export function useTerminal(terminalId: string | null, callbacks: TerminalCallbacks) {
   const wsRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef(0);
+  const disposedRef = useRef(false);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
   // Queue the latest resize so it's sent as soon as WebSocket opens
@@ -54,10 +56,10 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
     };
 
     ws.onclose = () => {
-      if (retryCountRef.current < 5) {
+      if (!disposedRef.current && retryCountRef.current < 5) {
         retryCountRef.current++;
         const delay = Math.min(Math.pow(2, retryCountRef.current) * 1000, 16000);
-        setTimeout(connect, delay);
+        reconnectTimerRef.current = setTimeout(connect, delay);
       }
     };
 
@@ -86,9 +88,13 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
 
   useEffect(() => {
     retryCountRef.current = 0;
+    disposedRef.current = false;
     connect();
     return () => {
-      retryCountRef.current = 99;
+      disposedRef.current = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
       wsRef.current?.close();
     };
   }, [connect]);

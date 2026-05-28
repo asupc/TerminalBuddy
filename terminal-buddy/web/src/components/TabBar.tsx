@@ -11,7 +11,11 @@ const TabBar: React.FC = () => {
 
   const handleClose = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    try { await closeTerminal(id); } catch {}
+    try {
+      await closeTerminal(id);
+    } catch (err) {
+      console.error('关闭终端失败:', err);
+    }
     removeSession(id);
   };
 

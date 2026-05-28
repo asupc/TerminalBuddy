@@ -71,7 +71,13 @@ export const useWebAppStore = create<WebAppState>((set) => ({
   removeProfile: (id) => set((s) => ({ profiles: s.profiles.filter((p) => p.id !== id) })),
 
   addSession: (session) =>
-    set((s) => ({ sessions: [...s.sessions, session], activeSessionId: session.id })),
+    set((s) => {
+      const exists = s.sessions.find((ss) => ss.id === session.id);
+      if (exists) {
+        return { sessions: s.sessions.map((ss) => ss.id === session.id ? { ...ss, ...session } : ss) };
+      }
+      return { sessions: [...s.sessions, session], activeSessionId: session.id };
+    }),
   removeSession: (id) =>
     set((s) => {
       const sessions = s.sessions.filter((t) => t.id !== id);

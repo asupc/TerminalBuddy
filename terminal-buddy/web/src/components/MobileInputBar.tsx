@@ -28,6 +28,11 @@ const MobileInputBar: React.FC<Props> = ({ onSend, visible }) => {
   const draftRef = useRef('');
 
   const handleSubmit = useCallback(() => {
+    if (!value) {
+      // Empty input = send carriage return (Enter key)
+      onSend('\r');
+      return;
+    }
     const text = value.trim();
     if (!text) return;
     onSend(text);

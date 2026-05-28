@@ -17,9 +17,23 @@ const ProfileDialog: React.FC<Props> = ({ profile, onClose, onSaved }) => {
   const [sshUser, setSshUser] = useState(profile?.sshUser || '');
   const [dockerName, setDockerName] = useState(profile?.dockerContainerName || '');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSave = async () => {
+    if (!name.trim()) {
+      setError('请输入连接名称');
+      return;
+    }
+    if (terminalType === 'ssh' && !sshHost.trim()) {
+      setError('请输入 SSH 主机地址');
+      return;
+    }
+    if (terminalType === 'docker' && !dockerName.trim()) {
+      setError('请输入 Docker 容器名称');
+      return;
+    }
     setSaving(true);
+    setError('');
     try {
       const data: Profile = {
         id: profile?.id || crypto.randomUUID(),
@@ -40,8 +54,10 @@ const ProfileDialog: React.FC<Props> = ({ profile, onClose, onSaved }) => {
         await createProfile(data);
       }
       onSaved();
-    } catch (err) { console.error('保存连接失败', err); }
-    finally { setSaving(false); }
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || '保存连接失败';
+      setError(msg);
+    } finally { setSaving(false); }
   };
 
   return (
@@ -92,6 +108,8 @@ const ProfileDialog: React.FC<Props> = ({ profile, onClose, onSaved }) => {
             <input value={dockerName} onChange={(e) => setDockerName(e.target.value)} placeholder="例如：mysql-container" />
           </>
         )}
+
+        {error && <div style={{ color: '#ff6b6b', fontSize: 13, marginTop: 12 }}>{error}</div>}
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 24 }}>
           <button onClick={onClose} style={{
