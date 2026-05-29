@@ -8,9 +8,9 @@ import { FileTree } from './components/FileTree';
 import { TabSidebar } from './components/TabSidebar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
-import { initTheme, applyTheme, getAppSettings, initAppSettings } from './utils/settings';
+import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings } from './services/tauri';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
 
@@ -63,11 +63,29 @@ function App() {
       await initCustomCommands();
 
       const settings = getAppSettings();
-      setEnableTabNav(settings.enableTabNavigation);
-      useAppStore.setState({
-        configPanelVisible: settings.configPanelAutoExpand,
-        fileTreeVisible: settings.fileTreeAutoExpand,
-      });
+
+      // Sync backend settings (source of truth) into frontend cache
+      try {
+        const backend = await getBackendAppSettings();
+        const synced = {
+          ...settings,
+          closeBehavior: backend.closeBehavior,
+          enableTabNavigation: backend.enableTabNavigation,
+          singleInstance: backend.singleInstance,
+        };
+        saveAppSettings(synced);
+        setEnableTabNav(synced.enableTabNavigation);
+        useAppStore.setState({
+          configPanelVisible: synced.configPanelAutoExpand,
+          fileTreeVisible: synced.fileTreeAutoExpand,
+        });
+      } catch {
+        setEnableTabNav(settings.enableTabNavigation);
+        useAppStore.setState({
+          configPanelVisible: settings.configPanelAutoExpand,
+          fileTreeVisible: settings.fileTreeAutoExpand,
+        });
+      }
 
       initPersistedTemplates();
       loadProfiles();
