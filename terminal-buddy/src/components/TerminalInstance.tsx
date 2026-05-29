@@ -777,49 +777,17 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         document.removeEventListener('keyup', handleKeyUpGlobal);
       });
 
-      // Throttle + trailing resize to prevent ConPTY reflow corruption.
-      // Leading edge: immediate resize on first event.
-      // During drag: at most one resize per 150ms (~7/s) — manageable for ConPTY.
-      // Trailing edge: guaranteed final resize 150ms after last event.
-      // lastCols/lastRows are seeded from the initial fit() above so the first
-      // ResizeObserver callback can skip a redundant PTY resize.
-      let lastResizeTime = Date.now();
+      // Coalesced resize via requestAnimationFrame — batches rapid
+      // ResizeObserver callbacks (e.g. during CSS transitions) into one
+      // fit per frame.  lastCols/lastRows skip redundant PTY resizes.
       let lastCols = initCols;
       let lastRows = initRows;
-      let trailingTimer: ReturnType<typeof setTimeout> | null = null;
-      const RESIZE_THROTTLE_MS = 150;
-
-      // Custom fit that doesn't subtract scrollbar width — the native
-      // scrollbar is hidden via CSS (overflow-y: hidden), so FitAddon's
-      // default subtraction of ~15px wastes ~2 terminal columns.
-      const doFit = () => {
-        if (!terminal.element || !terminal.element.parentElement) return;
-        // Compute cell dimensions from rendered element size and current cols/rows
-        const rect = terminal.element.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0 || terminal.cols <= 0 || terminal.rows <= 0) return;
-        const cellW = rect.width / terminal.cols;
-        const cellH = rect.height / terminal.rows;
-        if (cellW <= 0 || cellH <= 0) return;
-        const parentStyle = window.getComputedStyle(terminal.element.parentElement);
-        const parentW = Math.max(0, parseInt(parentStyle.getPropertyValue('width')));
-        const parentH = parseInt(parentStyle.getPropertyValue('height'));
-        const elStyle = window.getComputedStyle(terminal.element);
-        const padH = parseInt(elStyle.getPropertyValue('padding-left'))
-                    + parseInt(elStyle.getPropertyValue('padding-right'));
-        const padV = parseInt(elStyle.getPropertyValue('padding-top'))
-                    + parseInt(elStyle.getPropertyValue('padding-bottom'));
-        const cols = Math.max(2, Math.floor((parentW - padH) / cellW));
-        const rows = Math.max(1, Math.floor((parentH - padV) / cellH));
-        if (terminal.rows !== rows || terminal.cols !== cols) {
-          terminal.write('\x1b[2J');
-          terminal.resize(cols, rows);
-        }
-      };
+      let trailingRaf: number | null = null;
 
       const doResize = () => {
         if (disposed) return;
         try {
-          doFit();
+          fitAddon.fit();
         } catch {
           return;
         }
@@ -833,22 +801,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       const resizeObserver = new ResizeObserver(() => {
         if (disposed) return;
-        const now = Date.now();
-        if (now - lastResizeTime >= RESIZE_THROTTLE_MS) {
-          lastResizeTime = now;
+        if (trailingRaf !== null) return;
+        trailingRaf = requestAnimationFrame(() => {
+          trailingRaf = null;
           doResize();
-        }
-        if (trailingTimer) clearTimeout(trailingTimer);
-        trailingTimer = setTimeout(() => {
-          trailingTimer = null;
-          lastResizeTime = Date.now();
-          doResize();
-        }, RESIZE_THROTTLE_MS);
+        });
       });
       resizeObserver.observe(terminalRef.current!);
       cleanupFns.push(() => {
         resizeObserver.disconnect();
-        if (trailingTimer) clearTimeout(trailingTimer);
+        if (trailingRaf !== null) cancelAnimationFrame(trailingRaf);
       });
     };
 
@@ -906,28 +868,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     if (isActive && xtermRef.current) {
       xtermRef.current.focus();
       requestAnimationFrame(() => {
+        const fitAddon = fitAddonRef.current;
+        if (!fitAddon) return;
+        fitAddon.fit();
         const terminal = xtermRef.current;
-        if (!terminal?.element?.parentElement) return;
-        // Compute cell dimensions from rendered element size and current cols/rows
-        const rect = terminal.element.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0 || terminal.cols <= 0 || terminal.rows <= 0) return;
-        const cellW = rect.width / terminal.cols;
-        const cellH = rect.height / terminal.rows;
-        if (cellW <= 0 || cellH <= 0) return;
-        const parentStyle = window.getComputedStyle(terminal.element.parentElement);
-        const parentW = Math.max(0, parseInt(parentStyle.getPropertyValue('width')));
-        const parentH = parseInt(parentStyle.getPropertyValue('height'));
-        const elStyle = window.getComputedStyle(terminal.element);
-        const padH = parseInt(elStyle.getPropertyValue('padding-left'))
-                    + parseInt(elStyle.getPropertyValue('padding-right'));
-        const padV = parseInt(elStyle.getPropertyValue('padding-top'))
-                    + parseInt(elStyle.getPropertyValue('padding-bottom'));
-        const cols = Math.max(2, Math.floor((parentW - padH) / cellW));
-        const rows = Math.max(1, Math.floor((parentH - padV) / cellH));
-        if (terminal.rows !== rows || terminal.cols !== cols) {
-          terminal.write('\x1b[2J');
-          terminal.resize(cols, rows);
-          resizeTerminal(terminalId, rows, cols).catch(() => {});
+        if (terminal && terminal.cols > 0 && terminal.rows > 0) {
+          resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
         }
       });
     }
