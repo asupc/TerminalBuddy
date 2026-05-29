@@ -91,6 +91,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let textareaObserver: MutationObserver | null = null;
     let postCompositionTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // IME deduplication — on Windows, xterm.js may fire onData twice for a
+    // single IME commit (once from compositionend, once from the subsequent
+    // input/textInput event).  The compositionend listener uses capture phase
+    // to set imeCommittedText BEFORE xterm.js fires onData, enabling the
+    // dedup check to work.  A secondary CJK short-window dedup provides
+    // additional safety for edge cases.
+    let imeCommittedText = '';
+    let imeCommitTime = 0;
+    let imeDataSent = false;
+    let lastSentCjkData = '';
+    let lastSentCjkTime = 0;
+
     // Validate that a textarea position is within the terminal's visible
     // screen area.  Prevents saving (and locking to) coordinates that would
     // place the IME candidate window off-screen or on another monitor.
@@ -303,6 +315,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         textareaEl.addEventListener('compositionstart', () => {
           isComposing = true;
           isProtectingPosition = true;
+          // Reset IME dedup state for the new composition
+          imeCommittedText = '';
+          imeDataSent = false;
           if (postCompositionTimer) {
             clearTimeout(postCompositionTimer);
             postCompositionTimer = null;
@@ -345,8 +360,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
         });
 
-        textareaEl.addEventListener('compositionend', () => {
+        // Use capture phase so this handler runs BEFORE xterm.js's internal
+        // compositionend handler.  This ensures imeCommittedText is set before
+        // xterm.js fires onData, making the dedup check effective.
+        textareaEl.addEventListener('compositionend', ((e: CompositionEvent) => {
           isComposing = false;
+          // Track IME committed text for deduplication
+          imeCommittedText = e.data || '';
+          imeCommitTime = Date.now();
+          imeDataSent = false;
           // Keep protecting the textarea position for a short grace
           // period after composition ends.  TUI output (spinners,
           // progress bars) can arrive immediately and xterm.js will
@@ -363,7 +385,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               saveTextPosition(textareaEl.style.left, textareaEl.style.top);
             }
           }, 100);
-        });
+        }) as EventListener, true);
       }
 
       // Prevent horizontal content shift during IME composition.
@@ -443,6 +465,28 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       terminal.onData((data) => {
+        // IME deduplication: after composition ends, xterm.js may fire
+        // onData twice with the same committed text.  The first occurrence
+        // is sent normally; subsequent duplicates within 500ms are skipped.
+        if (imeCommittedText && data === imeCommittedText && Date.now() - imeCommitTime < 500) {
+          if (imeDataSent) {
+            imeCommittedText = '';
+            return;
+          }
+          imeDataSent = true;
+        }
+        // Secondary dedup: catch IME duplicates that slip through the
+        // primary check (e.g., async onData dispatch in certain WebView2
+        // versions).  Identical CJK text within 200ms is skipped.
+        if (data.length > 1 && data === lastSentCjkData && Date.now() - lastSentCjkTime < 200) {
+          return;
+        }
+        // Track CJK data for secondary dedup
+        if (data.length > 1 && /[一-鿿぀-ゟ゠-ヿ가-힯]/.test(data)) {
+          lastSentCjkData = data;
+          lastSentCjkTime = Date.now();
+        }
+
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
           useAppStore.getState().setSessionWorking(terminalId, true);
