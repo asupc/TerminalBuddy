@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats } from '../types';
 import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath } from '../services/tauri';
+import { getAppSettings, saveAppSettings } from '../utils/settings';
 
 let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
 function debouncedSaveTabs(sessions: any[], activeSessionId: string | null) {
@@ -266,8 +267,18 @@ export const useAppStore = create<AppState>((set) => ({
   // UI State
   configPanelVisible: true,
   fileTreeVisible: true,
-  toggleConfigPanel: () => set((state) => ({ configPanelVisible: !state.configPanelVisible })),
-  toggleFileTree: () => set((state) => ({ fileTreeVisible: !state.fileTreeVisible })),
+  toggleConfigPanel: () => set((state) => {
+    const next = !state.configPanelVisible;
+    const s = getAppSettings();
+    saveAppSettings({ ...s, configPanelAutoExpand: next });
+    return { configPanelVisible: next };
+  }),
+  toggleFileTree: () => set((state) => {
+    const next = !state.fileTreeVisible;
+    const s = getAppSettings();
+    saveAppSettings({ ...s, fileTreeAutoExpand: next });
+    return { fileTreeVisible: next };
+  }),
   configSearchQuery: '',
   configSortBy: 'name-asc',
   setConfigSearchQuery: (query) => set({ configSearchQuery: query }),

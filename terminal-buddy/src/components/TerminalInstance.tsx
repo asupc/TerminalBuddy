@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber, resizeTerminal } from '../services/tauri';
+import { resizeTerminal, openPath, readClipboardFilePaths, readClipboardImageAsFile, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../services/tauri';
 import { ServerMonitor } from './ServerMonitor';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -612,18 +612,40 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           // Try reading file paths from clipboard first (files copied in Explorer)
           readClipboardFilePaths().then((paths) => {
             if (paths.length > 0) {
-              // Paste file paths wrapped in quotes
-              const text = paths.map(p => `"${p}"`).join(' ');
-              onOutputRef.current(terminalId, text);
+              const IMAGE_EXT = /\.(png|jpg|jpeg|gif|bmp|ico|svg|webp|tiff|tif)$/i;
+              if (paths.length === 1 && IMAGE_EXT.test(paths[0])) {
+                onOutputRef.current(terminalId, `[图片:${paths[0]}]`);
+              } else {
+                const text = paths.map(p => `"${p}"`).join(' ');
+                onOutputRef.current(terminalId, text);
+              }
             } else {
-              // Fallback: read as plain text
+              // No file paths — try clipboard image (e.g. screenshot), then text
+              readClipboardImageAsFile().then((imagePath) => {
+                onOutputRef.current(terminalId, `[图片:${imagePath}]`);
+              }).catch(() => {
+                navigator.clipboard.readText().then((text) => {
+                  if (text) {
+                    const trimmed = text.trim();
+                    if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
+                      onOutputRef.current(terminalId, `"${trimmed.replace(/"/g, '\\"')}"`);
+                    } else if (text.includes('\n') || text.includes('\r')) {
+                      const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                      onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+                    } else {
+                      terminal.paste(text);
+                    }
+                  }
+                }).catch(() => {});
+              });
+            }
+          }).catch(() => {
+            readClipboardImageAsFile().then((imagePath) => {
+              onOutputRef.current(terminalId, `[图片:${imagePath}]`);
+            }).catch(() => {
               navigator.clipboard.readText().then((text) => {
                 if (text) {
-                  const trimmed = text.trim();
-                  // Detect single Windows file path in text — wrap in quotes
-                  if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
-                    onOutputRef.current(terminalId, `"${trimmed.replace(/"/g, '\\"')}"`);
-                  } else if (text.includes('\n') || text.includes('\r')) {
+                  if (text.includes('\n') || text.includes('\r')) {
                     const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
                     onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
                   } else {
@@ -631,19 +653,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   }
                 }
               }).catch(() => {});
-            }
-          }).catch(() => {
-            // Fallback: read as plain text
-            navigator.clipboard.readText().then((text) => {
-              if (text) {
-                if (text.includes('\n') || text.includes('\r')) {
-                  const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                  onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
-                } else {
-                  terminal.paste(text);
-                }
-              }
-            }).catch(() => {});
+            });
           });
           return;
         }
@@ -666,17 +676,22 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (!readOnly) {
           const settings = getAppSettings();
           if (settings.rightClickPaste && !terminal.hasSelection()) {
-            navigator.clipboard.readText().then((text) => {
-              if (text) {
-                if (text.includes('\n') || text.includes('\r')) {
-                  const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                  onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
-                } else {
-                  terminal.paste(text);
+            readClipboardImageAsFile().then((imagePath) => {
+              onOutputRef.current(terminalId, `[图片:${imagePath}]`);
+              terminal.focus();
+            }).catch(() => {
+              navigator.clipboard.readText().then((text) => {
+                if (text) {
+                  if (text.includes('\n') || text.includes('\r')) {
+                    const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                    onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+                  } else {
+                    terminal.paste(text);
+                  }
+                  terminal.focus();
                 }
-                terminal.focus();
-              }
-            }).catch(() => {});
+              }).catch(() => {});
+            });
             return;
           }
         }
@@ -799,17 +814,22 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         navigator.clipboard.writeText(selection).catch(() => {});
       }
     } else if (!readOnly) {
-      navigator.clipboard.readText().then((text) => {
-        if (text) {
-          if (text.includes('\n') || text.includes('\r')) {
-            const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-            onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
-          } else {
-            terminal.paste(text);
+      readClipboardImageAsFile().then((imagePath) => {
+        onOutputRef.current(terminalId, `[图片:${imagePath}]`);
+        terminal.focus();
+      }).catch(() => {
+        navigator.clipboard.readText().then((text) => {
+          if (text) {
+            if (text.includes('\n') || text.includes('\r')) {
+              const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+              onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+            } else {
+              terminal.paste(text);
+            }
+            terminal.focus();
           }
-          terminal.focus();
-        }
-      }).catch(() => {});
+        }).catch(() => {});
+      });
     }
     setContextMenu({ x: 0, y: 0, visible: false });
   }, []);

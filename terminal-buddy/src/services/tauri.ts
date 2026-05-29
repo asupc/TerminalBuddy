@@ -200,6 +200,10 @@ export async function readClipboardFilePaths(): Promise<string[]> {
   return invoke('read_clipboard_file_paths');
 }
 
+export async function readClipboardImageAsFile(): Promise<string> {
+  return invoke('read_clipboard_image_as_file');
+}
+
 // Template Commands
 export async function getCommandTemplates(): Promise<string> {
   return invoke('get_command_templates');
