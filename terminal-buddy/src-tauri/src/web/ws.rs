@@ -64,25 +64,36 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
 
     let (sub_id, mut output_rx) = web_state.subscribe(&terminal_id);
 
-    // Send historical output (peek without clearing, so reconnecting viewers also get history)
-    {
+    // Peek historical output — will be sent AFTER the frontend sends its first
+    // resize, so the output is formatted for the correct terminal dimensions.
+    let history: String = {
         let ts = state.app_handle.state::<TerminalService>();
-        if let Ok(history) = ts.peek_terminal_output(&terminal_id) {
-            if !history.is_empty() {
-                if let Ok(msg) = serde_json::to_string(&WsServerMessage::Output { data: history }) {
-                    let _ = ws_sender.send(Message::Text(msg.into())).await;
-                }
-            }
-        }
-    }
+        ts.peek_terminal_output(&terminal_id).unwrap_or_default()
+    };
 
-    // Channel for error messages from recv_task to send_task
+    // Channel for error messages and historical output from recv_task to send_task
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // Signal from recv_task → send_task: frontend has sent its first resize,
+    // safe to replay historical output now.
+    let (ready_tx, mut ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let mut ready_tx = Some(ready_tx);
 
     // Forward PTY output to WebSocket
     let send_task = tokio::spawn(async move {
+        // Wait for frontend's first resize before sending historical output,
+        // so escape sequences (cursor positioning, etc.) are correct.
+        let mut history_sent = false;
         loop {
             tokio::select! {
+                biased;
+                ready = &mut ready_rx, if !history_sent => {
+                    if ready.is_ok() && !history.is_empty() {
+                        if let Ok(msg) = serde_json::to_string(&WsServerMessage::Output { data: history.clone() }) {
+                            let _ = ws_sender.send(Message::Text(msg.into())).await;
+                        }
+                    }
+                    history_sent = true;
+                }
                 data = output_rx.recv() => {
                     match data {
                         Some(data) => {
@@ -119,6 +130,7 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
     let app = state.app_handle.clone();
     let tid = terminal_id.clone();
     let recv_task = tokio::spawn(async move {
+        let mut ready_sent = false;
         while let Some(Ok(msg)) = ws_receiver.next().await {
             match msg {
                 Message::Text(text) => {
@@ -182,6 +194,15 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                                 let allow_shrink = !settings.web_api_share_sessions && is_web_client;
                                 let ts = app.state::<TerminalService>();
                                 let _ = ts.resize_terminal(&tid, rows, cols, allow_shrink);
+
+                                // Signal send_task that the frontend has sent its first
+                                // resize — historical output can now be safely replayed.
+                                if !ready_sent {
+                                    ready_sent = true;
+                                    if let Some(tx) = ready_tx.take() {
+                                        let _ = tx.send(());
+                                    }
+                                }
                             }
                         }
                     }

@@ -131,14 +131,37 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
       outputBufferRef.current.length = 0;
     }
 
+    // Throttled fit to prevent ConPTY re-emission duplication.
+    // fitAddon.fit() + sendResize at 60fps overwhelms ConPTY, causing it to
+    // re-emit the visible buffer which overlaps with xterm rendering.
+    let lastFitTime = 0;
+    let trailingTimer: ReturnType<typeof setTimeout> | null = null;
+    const FIT_THROTTLE_MS = 150;
+
     const doFit = () => {
-      fitAddon.fit();
-      sendResize(term.cols, term.rows);
+      const now = Date.now();
+      if (now - lastFitTime >= FIT_THROTTLE_MS) {
+        lastFitTime = now;
+        fitAddon.fit();
+        sendResize(term.cols, term.rows);
+      }
     };
 
-    // ResizeObserver for container size changes
+    // ResizeObserver for container size changes (RAF coalescing + throttle)
+    let trailingRaf: number | null = null;
     const resizeObserver = new ResizeObserver(() => {
-      doFit();
+      if (trailingRaf !== null) return;
+      trailingRaf = requestAnimationFrame(() => {
+        trailingRaf = null;
+        doFit();
+      });
+      // Trailing timer: fire ~150ms after the last event to catch final dimensions
+      if (trailingTimer) clearTimeout(trailingTimer);
+      trailingTimer = setTimeout(() => {
+        trailingTimer = null;
+        lastFitTime = 0; // bypass throttle for trailing fit
+        doFit();
+      }, FIT_THROTTLE_MS);
     });
     resizeObserver.observe(containerRef.current);
 
@@ -162,20 +185,13 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
       }
     }
 
-    // Double-fit to ensure stable layout
-    requestAnimationFrame(() => {
-      doFit();
-    });
-
-    // Delayed fit after sidebar transition (200ms) settles
-    const settleTimer = setTimeout(() => doFit(), 250);
-
     return () => {
-      clearTimeout(settleTimer);
+      if (trailingTimer) clearTimeout(trailingTimer);
       if (pendingRafRef.current) {
         cancelAnimationFrame(pendingRafRef.current);
         pendingRafRef.current = null;
       }
+      if (trailingRaf !== null) cancelAnimationFrame(trailingRaf);
       pendingChunksRef.current.length = 0;
       outputBufferRef.current.length = 0;
       resizeObserver.disconnect();

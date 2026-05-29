@@ -33,6 +33,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const doResizeRef = useRef<(() => void) | null>(null);
   const onOutputRef = useRef(onOutput);
   onOutputRef.current = onOutput;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false });
@@ -777,26 +778,37 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         document.removeEventListener('keyup', handleKeyUpGlobal);
       });
 
-      // Coalesced resize via requestAnimationFrame — batches rapid
-      // ResizeObserver callbacks (e.g. during CSS transitions) into one
-      // fit per frame.  lastCols/lastRows skip redundant PTY resizes.
+      // Throttled resize to prevent ConPTY re-emission duplication.
+      // fitAddon.fit() triggers core._renderService.clear() + terminal.resize(),
+      // which causes ConPTY to re-emit the visible buffer. At 60fps (RAF-only),
+      // ConPTY can't keep up and re-emissions overlap with xterm rendering,
+      // producing duplicate text. Throttle to ~7 resizes/s (150ms) for ConPTY
+      // stability, keep RAF for ResizeObserver callback coalescing, and add a
+      // trailing timer so the final fit lands ~150ms after the last event.
       let lastCols = initCols;
       let lastRows = initRows;
       let trailingRaf: number | null = null;
+      let trailingTimer: ReturnType<typeof setTimeout> | null = null;
+      let lastFitTime = 0;
+      const FIT_THROTTLE_MS = 150;
 
       const doResize = () => {
         if (disposed) return;
-        try {
-          fitAddon.fit();
-        } catch {
-          return;
+        const now = Date.now();
+        if (now - lastFitTime >= FIT_THROTTLE_MS) {
+          lastFitTime = now;
+          try {
+            fitAddon.fit();
+          } catch {
+            return;
+          }
+          const { rows, cols } = terminal;
+          if (cols <= 0 || rows <= 0) return;
+          if (cols === lastCols && rows === lastRows) return;
+          lastCols = cols;
+          lastRows = rows;
+          resizeTerminal(terminalId, rows, cols).catch(() => {});
         }
-        const { rows, cols } = terminal;
-        if (cols <= 0 || rows <= 0) return;
-        if (cols === lastCols && rows === lastRows) return;
-        lastCols = cols;
-        lastRows = rows;
-        resizeTerminal(terminalId, rows, cols).catch(() => {});
       };
 
       const resizeObserver = new ResizeObserver(() => {
@@ -806,12 +818,23 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           trailingRaf = null;
           doResize();
         });
+        // Trailing timer: fire ~150ms after the last ResizeObserver callback
+        // to catch the final settled dimensions (e.g. after CSS transitions).
+        if (trailingTimer) clearTimeout(trailingTimer);
+        trailingTimer = setTimeout(() => {
+          trailingTimer = null;
+          lastFitTime = 0; // bypass throttle for trailing fit
+          doResize();
+        }, FIT_THROTTLE_MS);
       });
       resizeObserver.observe(terminalRef.current!);
       cleanupFns.push(() => {
         resizeObserver.disconnect();
         if (trailingRaf !== null) cancelAnimationFrame(trailingRaf);
+        if (trailingTimer) clearTimeout(trailingTimer);
       });
+
+      doResizeRef.current = doResize;
     };
 
     // Register Tauri event listener, then drain buffered backend output
@@ -860,6 +883,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
+      doResizeRef.current = null;
     };
   }, [terminalId]);
 
@@ -868,13 +892,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     if (isActive && xtermRef.current) {
       xtermRef.current.focus();
       requestAnimationFrame(() => {
-        const fitAddon = fitAddonRef.current;
-        if (!fitAddon) return;
-        fitAddon.fit();
-        const terminal = xtermRef.current;
-        if (terminal && terminal.cols > 0 && terminal.rows > 0) {
-          resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
-        }
+        doResizeRef.current?.();
       });
     }
   }, [isActive, terminalId]);
