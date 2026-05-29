@@ -30,7 +30,7 @@ pub async fn ws_handler(
     let settings = SettingsService::get_settings();
     if !settings.web_api_share_sessions {
         let ts = state.app_handle.state::<TerminalService>();
-        let instances = ts.instances.lock().unwrap();
+        let instances = ts.instances.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(terminal) = instances.get(&terminal_id) {
             if terminal.owner == TerminalOwner::Pc {
                 return Err(axum::http::StatusCode::FORBIDDEN);
@@ -139,7 +139,7 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                                 let settings = SettingsService::get_settings();
                                 if !settings.web_api_share_sessions && !is_web_client {
                                     let ts = app.state::<TerminalService>();
-                                    let instances = ts.instances.lock().unwrap();
+                                    let instances = ts.instances.lock().unwrap_or_else(|e| e.into_inner());
                                     if let Some(terminal) = instances.get(&tid) {
                                         if terminal.owner == TerminalOwner::Web {
                                             let error_msg = serde_json::to_string(
@@ -163,7 +163,7 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                                 let settings = SettingsService::get_settings();
                                 if !settings.web_api_share_sessions && !is_web_client {
                                     let ts = app.state::<TerminalService>();
-                                    let instances = ts.instances.lock().unwrap();
+                                    let instances = ts.instances.lock().unwrap_or_else(|e| e.into_inner());
                                     if let Some(terminal) = instances.get(&tid) {
                                         if terminal.owner == TerminalOwner::Web {
                                             let error_msg = serde_json::to_string(

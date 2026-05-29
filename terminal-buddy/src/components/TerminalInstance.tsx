@@ -750,9 +750,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // default subtraction of ~15px wastes ~2 terminal columns.
       const doFit = () => {
         if (!terminal.element || !terminal.element.parentElement) return;
-        const core = (terminal as any)._core;
-        const dims = core._renderService.dimensions;
-        if (!dims?.css?.cell?.width || !dims?.css?.cell?.height) return;
+        // Compute cell dimensions from rendered element size and current cols/rows
+        const rect = terminal.element.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0 || terminal.cols <= 0 || terminal.rows <= 0) return;
+        const cellW = rect.width / terminal.cols;
+        const cellH = rect.height / terminal.rows;
+        if (cellW <= 0 || cellH <= 0) return;
         const parentStyle = window.getComputedStyle(terminal.element.parentElement);
         const parentW = Math.max(0, parseInt(parentStyle.getPropertyValue('width')));
         const parentH = parseInt(parentStyle.getPropertyValue('height'));
@@ -761,10 +764,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                     + parseInt(elStyle.getPropertyValue('padding-right'));
         const padV = parseInt(elStyle.getPropertyValue('padding-top'))
                     + parseInt(elStyle.getPropertyValue('padding-bottom'));
-        const cols = Math.max(2, Math.floor((parentW - padH) / dims.css.cell.width));
-        const rows = Math.max(1, Math.floor((parentH - padV) / dims.css.cell.height));
+        const cols = Math.max(2, Math.floor((parentW - padH) / cellW));
+        const rows = Math.max(1, Math.floor((parentH - padV) / cellH));
         if (terminal.rows !== rows || terminal.cols !== cols) {
-          core._renderService.clear();
+          terminal.write('\x1b[2J');
           terminal.resize(cols, rows);
         }
       };
@@ -861,9 +864,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       requestAnimationFrame(() => {
         const terminal = xtermRef.current;
         if (!terminal?.element?.parentElement) return;
-        const core = (terminal as any)._core;
-        const dims = core._renderService.dimensions;
-        if (!dims?.css?.cell?.width || !dims?.css?.cell?.height) return;
+        // Compute cell dimensions from rendered element size and current cols/rows
+        const rect = terminal.element.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0 || terminal.cols <= 0 || terminal.rows <= 0) return;
+        const cellW = rect.width / terminal.cols;
+        const cellH = rect.height / terminal.rows;
+        if (cellW <= 0 || cellH <= 0) return;
         const parentStyle = window.getComputedStyle(terminal.element.parentElement);
         const parentW = Math.max(0, parseInt(parentStyle.getPropertyValue('width')));
         const parentH = parseInt(parentStyle.getPropertyValue('height'));
@@ -872,10 +878,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                     + parseInt(elStyle.getPropertyValue('padding-right'));
         const padV = parseInt(elStyle.getPropertyValue('padding-top'))
                     + parseInt(elStyle.getPropertyValue('padding-bottom'));
-        const cols = Math.max(2, Math.floor((parentW - padH) / dims.css.cell.width));
-        const rows = Math.max(1, Math.floor((parentH - padV) / dims.css.cell.height));
+        const cols = Math.max(2, Math.floor((parentW - padH) / cellW));
+        const rows = Math.max(1, Math.floor((parentH - padV) / cellH));
         if (terminal.rows !== rows || terminal.cols !== cols) {
-          core._renderService.clear();
+          terminal.write('\x1b[2J');
           terminal.resize(cols, rows);
           resizeTerminal(terminalId, rows, cols).catch(() => {});
         }

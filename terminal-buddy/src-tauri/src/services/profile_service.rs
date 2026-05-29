@@ -38,8 +38,9 @@ impl ProfileService {
             for entry in entries.flatten() {
                 if entry.path().extension().map_or(false, |e| e == "json") {
                     if let Ok(content) = fs::read_to_string(entry.path()) {
-                        if let Ok(profile) = serde_json::from_str::<Profile>(&content) {
+                        if let Ok(mut profile) = serde_json::from_str::<Profile>(&content) {
                             if seen_ids.insert(profile.id.clone()) {
+                                profile.decrypt_sensitive_fields();
                                 profiles.push(profile);
                             }
                         }
@@ -146,8 +147,12 @@ impl ProfileService {
             }
         }
 
-        let path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
-        let content = serde_json::to_string_pretty(profile)
+        // Encrypt sensitive fields before writing to disk
+        let mut to_save = profile.clone();
+        to_save.encrypt_sensitive_fields();
+
+        let path = Self::get_profiles_dir().join(format!("{}.json", to_save.id));
+        let content = serde_json::to_string_pretty(&to_save)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         fs::write(&path, content)
             .map_err(|e| format!("Failed to write file: {}", e))?;
@@ -191,11 +196,14 @@ impl ProfileService {
             profile.id = Uuid::new_v4().to_string();
             profile.created_at = chrono::Utc::now().to_rfc3339();
             profile.last_used_at = None;
+            profile.encrypt_sensitive_fields();
             let save_path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
             let json = serde_json::to_string_pretty(&profile)
                 .map_err(|e| format!("Failed to serialize: {}", e))?;
             fs::write(&save_path, json)
                 .map_err(|e| format!("Failed to write file: {}", e))?;
+            // Decrypt for return value (frontend needs plaintext)
+            profile.decrypt_sensitive_fields();
             imported.push(profile);
         }
         Self::invalidate_cache();

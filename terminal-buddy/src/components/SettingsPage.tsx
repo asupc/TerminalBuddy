@@ -1,11 +1,17 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
-import { open, save } from '@tauri-apps/plugin-dialog';
-import { getAllThemes, createTheme, updateTheme, deleteTheme, getBackendAppSettings, saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, getDataPath, setDataPath as setDataPathCmd, exportAllData, importAllData, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress, getDownloadsDirectory, saveSshDownloadDir, saveServerMonitorInterval, saveWebApiShareSessions } from '../services/tauri';
+import { getBackendAppSettings, syncLaunchAtLogin, getDataPath, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress, getDownloadsDirectory } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
-import { PRESET_THEMES, BREATHING_LIGHT_COLORS, type CustomTheme, type Profile } from '../types';
-import { type AppSettings, type BreathingLightColorMode, getAppSettings, saveAppSettings } from '../utils/settings';
+import { type Profile } from '../types';
+import { type AppSettings, getAppSettings, saveAppSettings } from '../utils/settings';
 import { ConfigEditDialog } from './ConfigEditDialog';
 import { getCmdOverrides, saveCmdOverrides, getCustomCommands, saveCustomCommands, getEffectiveTemplates, type CmdOverride, type CommandItem } from '../data/commandTemplates';
+import { SshSettings } from './settings/SshSettings';
+import { AiUsageSettings } from './settings/AiUsageSettings';
+import { BehaviorSettings } from './settings/BehaviorSettings';
+import { DataSettings } from './settings/DataSettings';
+import { ExclusionSettings } from './settings/ExclusionSettings';
+import { ThemesSettings } from './settings/ThemesSettings';
+import { WebSettings } from './settings/WebSettings';
 import './SettingsPage.css';
 
 interface SettingsPageProps {
@@ -36,21 +42,13 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [addingCustom, setAddingCustom] = useState(false);
   const [newCmd, setNewCmd] = useState({ name: '', command: '', desc: '' });
   const [dataPath, setDataPath] = useState('');
-  const [pendingDataPath, setPendingDataPath] = useState('');
-  const [isMigrating, setIsMigrating] = useState(false);
   const [activeSection, setActiveSection] = useState('behavior');
-  const [newPattern, setNewPattern] = useState('');
-  const [exclusionContextMenu, setExclusionContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [profileSearch, setProfileSearch] = useState('');
   const [profileGroupTab, setProfileGroupTab] = useState('');
   const [showProfileDialog, setShowProfileDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [profileContextMenu, setProfileContextMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
-  const [zhipuApiKeyVisible, setZhipuApiKeyVisible] = useState(false);
-  const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
-  const [deepseekApiKeyVisible, setDeepseekApiKeyVisible] = useState(false);
-  const [minimaxApiKeyVisible, setMinimaxApiKeyVisible] = useState(false);
   const [webPassword, setWebPassword] = useState('');
   const [hasPassword, setHasPassword] = useState(false);
   const [serverAddress, setServerAddress] = useState('');
@@ -62,17 +60,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     setConfirmDialog({ message, onConfirm });
   };
 
-  const customThemes = useAppStore(s => s.customThemes);
-  const setCustomThemes = useAppStore(s => s.setCustomThemes);
-  const addCustomTheme = useAppStore(s => s.addCustomTheme);
-  const updateCustomTheme = useAppStore(s => s.updateCustomTheme);
-  const removeCustomTheme = useAppStore(s => s.removeCustomTheme);
-  const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
-  const setExclusionPatterns = useAppStore(s => s.setExclusionPatterns);
   const profiles = useAppStore(s => s.profiles);
   const setProfiles = useAppStore(s => s.setProfiles);
-  const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
-  const [editingTheme, setEditingTheme] = useState<CustomTheme | null>(null);
 
   const contentRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -105,6 +94,14 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
       }
     }).catch(() => {});
+    syncLaunchAtLogin().then(enabled => {
+      const prev = getAppSettings();
+      if (prev.launchAtLogin !== enabled) {
+        const synced = { ...prev, launchAtLogin: enabled };
+        setSettings(synced);
+        saveAppSettings(synced);
+      }
+    }).catch(() => {});
     getDataPath().then(setDataPath).catch(() => {});
     // Load default downloads directory for SSH settings
     if (!getAppSettings().sshDownloadDir) {
@@ -121,10 +118,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       return next;
     });
   };
-
-  useEffect(() => {
-    getAllThemes().then(setCustomThemes).catch(console.error);
-  }, []);
 
   // Close profile context menu on outside click
   useEffect(() => {
@@ -182,49 +175,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const scrollToSection = (id: string) => {
     sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
-
-  const handleCreateTheme = async () => {
-    try {
-      const newTheme = await createTheme('新主题');
-      addCustomTheme(newTheme);
-      setEditingTheme(newTheme);
-      setSelectedThemeId(newTheme.id);
-    } catch (err) {
-      console.error('Failed to create theme:', err);
-    }
-  };
-
-  const handleSaveTheme = async () => {
-    if (!editingTheme) return;
-    try {
-      await updateTheme(editingTheme);
-      updateCustomTheme(editingTheme);
-      setEditingTheme(null);
-    } catch (err) {
-      console.error('Failed to save theme:', err);
-    }
-  };
-
-  const handleDeleteTheme = (id: string) => {
-    askConfirm('确定要删除此主题吗？正在使用此主题的连接将回退到默认主题。', async () => {
-      setConfirmDialog(null);
-      try {
-        await deleteTheme(id);
-        removeCustomTheme(id);
-        if (selectedThemeId === id) setSelectedThemeId(null);
-        if (editingTheme?.id === id) setEditingTheme(null);
-      } catch (err) {
-        console.error('Failed to delete theme:', err);
-      }
-    });
-  };
-
-  const handleColorChange = (field: keyof CustomTheme, value: string) => {
-    if (!editingTheme) return;
-    setEditingTheme({ ...editingTheme, [field]: value });
-  };
-
-  const allThemes = [...PRESET_THEMES, ...customThemes];
 
   const profileGroupsWithCount = useMemo(() => {
     const countMap = new Map<string, number>();
@@ -349,143 +299,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
             className="settings-section-block"
           >
             <h3 className="settings-section-title">行为设置</h3>
-            <div className="settings-general">
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.restoreTabsOnStartup}
-                    onChange={(e) => updateSetting('restoreTabsOnStartup', e.target.checked)}
-                  />
-                  <span>启动时恢复标签</span>
-                </label>
-                <p className="settings-desc">关闭程序时自动保存打开的终端标签，下次启动时自动恢复</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.configPanelAutoExpand}
-                    onChange={(e) => updateSetting('configPanelAutoExpand', e.target.checked)}
-                  />
-                  <span>启动时展开连接面板</span>
-                </label>
-                <p className="settings-desc">启动时自动展开左侧连接面板</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.fileTreeAutoExpand}
-                    onChange={(e) => updateSetting('fileTreeAutoExpand', e.target.checked)}
-                  />
-                  <span>启动时展开文件面板</span>
-                </label>
-                <p className="settings-desc">启动时自动展开左侧文件面板</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.closeBehavior === 'tray'}
-                    onChange={(e) => {
-                      const value = e.target.checked ? 'tray' : 'exit';
-                      updateSetting('closeBehavior', value);
-                      saveCloseBehavior(value).catch(console.error);
-                    }}
-                  />
-                  <span>关闭时最小化到托盘</span>
-                </label>
-                <p className="settings-desc">关闭窗口时应用将隐藏到系统托盘，双击托盘图标或右键选择"打开窗口"可重新显示</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.enableTabNavigation}
-                    onChange={(e) => {
-                      const value = e.target.checked;
-                      updateSetting('enableTabNavigation', value);
-                      saveEnableTabNavigation(value).catch(console.error);
-                      window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
-                    }}
-                  />
-                  <span>侧边标签栏</span>
-                </label>
-                <p className="settings-desc">开启后标签显示在左侧面板，关闭后以选项卡形式显示在终端上方</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.rightClickPaste}
-                    onChange={(e) => {
-                      updateSetting('rightClickPaste', e.target.checked);
-                    }}
-                  />
-                  <span>右键粘贴</span>
-                </label>
-                <p className="settings-desc">右键时若无选中文本，直接粘贴剪贴板内容到终端</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.singleInstance}
-                    onChange={(e) => {
-                      const value = e.target.checked;
-                      updateSetting('singleInstance', value);
-                      saveSingleInstance(value).catch(console.error);
-                    }}
-                  />
-                  <span>仅单窗口运行</span>
-                </label>
-                <p className="settings-desc">重复启动时激活已有窗口，而非打开新窗口。需重启生效</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-label">活动指示灯颜色</label>
-                <div className="breathing-light-mode-options">
-                  <label className={`breathing-light-mode ${settings.breathingLightColorMode === 'tab' ? 'active' : ''}`}>
-                    <input
-                      type="radio"
-                      name="breathingLightColorMode"
-                      checked={settings.breathingLightColorMode === 'tab'}
-                      onChange={() => updateSetting('breathingLightColorMode', 'tab' as BreathingLightColorMode)}
-                    />
-                    <span>跟随标签颜色</span>
-                  </label>
-                  <label className={`breathing-light-mode ${settings.breathingLightColorMode === 'custom' ? 'active' : ''}`}>
-                    <input
-                      type="radio"
-                      name="breathingLightColorMode"
-                      checked={settings.breathingLightColorMode === 'custom'}
-                      onChange={() => updateSetting('breathingLightColorMode', 'custom' as BreathingLightColorMode)}
-                    />
-                    <span>自定义颜色</span>
-                  </label>
-                </div>
-                {settings.breathingLightColorMode === 'custom' && (
-                  <div className="tab-color-options" style={{ marginTop: 8 }}>
-                    {BREATHING_LIGHT_COLORS.map((c) => (
-                      <label
-                        key={c.id}
-                        className={`tab-color-chip ${settings.breathingLightCustomColor === c.color ? 'active' : ''}`}
-                      >
-                        <input
-                          type="radio"
-                          name="breathingLightCustomColor"
-                          checked={settings.breathingLightCustomColor === c.color}
-                          onChange={() => updateSetting('breathingLightCustomColor', c.color)}
-                        />
-                        <span className="tab-color-swatch" style={{ background: c.color }} />
-                        {c.name}
-                      </label>
-                    ))}
-                  </div>
-                )}
-                <p className="settings-desc">终端执行命令时指示灯使用的颜色</p>
-              </div>
-            </div>
+            <BehaviorSettings settings={settings} updateSetting={updateSetting} />
           </section>
 
           {/* Data Section */}
@@ -495,92 +309,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
             className="settings-section-block"
           >
             <h3 className="settings-section-title">数据管理</h3>
-            <div className="settings-general">
-              <div className="settings-section">
-                <label className="settings-label">数据存储路径</label>
-                <div className="data-path-row">
-                  <input
-                    className="data-path-input"
-                    type="text"
-                    value={pendingDataPath || dataPath}
-                    readOnly
-                  />
-                  <button
-                    className="btn-secondary"
-                    disabled={isMigrating}
-                    onClick={async () => {
-                      try {
-                        const selected = await open({ directory: true, title: '选择数据存储目录' });
-                        if (selected) setPendingDataPath(selected as string);
-                      } catch {}
-                    }}
-                  >浏览</button>
-                  {pendingDataPath && pendingDataPath !== dataPath && (
-                    <button
-                      className="btn-primary"
-                      disabled={isMigrating}
-                      onClick={() => {
-                        askConfirm(`将把数据迁移到:\n${pendingDataPath}\n\n原数据不会删除。确定继续？`, async () => {
-                          setConfirmDialog(null);
-                          setIsMigrating(true);
-                          try {
-                            await setDataPathCmd(pendingDataPath);
-                            setDataPath(pendingDataPath);
-                            setPendingDataPath('');
-                          } catch (err) {
-                            alert('迁移失败: ' + String(err));
-                          }
-                          setIsMigrating(false);
-                        });
-                      }}
-                    >{isMigrating ? '迁移中...' : '应用'}</button>
-                  )}
-                </div>
-                <p className="settings-desc">修改路径后数据将自动复制到新位置，原数据保留</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-label">数据导入/导出</label>
-                <div className="data-path-row">
-                  <button className="btn-secondary" onClick={async () => {
-                    try {
-                      const selected = await save({
-                        filters: [{ name: 'JSON', extensions: ['json'] }],
-                        title: '选择导出文件路径',
-                      });
-                      if (selected) {
-                        await exportAllData(selected as string);
-                        alert('数据导出成功');
-                      }
-                    } catch (err) {
-                      alert('导出失败: ' + String(err));
-                    }
-                  }}>导出全部数据</button>
-                  <button className="btn-secondary" onClick={async () => {
-                    try {
-                      const selected = await open({
-                        multiple: false,
-                        filters: [{ name: 'JSON', extensions: ['json'] }],
-                        title: '选择导入文件',
-                      });
-                      if (selected) {
-                        askConfirm('导入将覆盖现有数据，确定继续？', async () => {
-                          setConfirmDialog(null);
-                          try {
-                            await importAllData(selected as string);
-                            alert('数据导入成功，部分设置需要重启后生效');
-                          } catch (err) {
-                            alert('导入失败: ' + String(err));
-                          }
-                        });
-                      }
-                    } catch (err) {
-                      alert('导入失败: ' + String(err));
-                    }
-                  }}>导入全部数据</button>
-                </div>
-                <p className="settings-desc">将所有数据（连接、主题、命令模板等）导出为单个 JSON 文件，导入时同理</p>
-              </div>
-            </div>
+            <DataSettings dataPath={dataPath} askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />
           </section>
 
           {/* Profiles Section */}
@@ -895,98 +624,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
             className="settings-section-block"
           >
             <h3 className="settings-section-title">主题管理</h3>
-            <div className="theme-manager">
-              <div className="theme-list">
-                {allThemes.map((t) => {
-                  const isCustom = 'cursor' in t;
-                  return (
-                    <div
-                      key={t.id}
-                      className={`theme-card ${selectedThemeId === t.id ? 'active' : ''}`}
-                      onClick={() => {
-                        setSelectedThemeId(t.id);
-                        if (isCustom && !editingTheme) setEditingTheme(t as CustomTheme);
-                      }}
-                    >
-                      <div className="theme-swatch" style={{ background: t.background }} />
-                      <span className="theme-card-name">{t.name}</span>
-                      {isCustom ? (
-                        <span className="theme-badge custom">自定义</span>
-                      ) : (
-                        <span className="theme-badge preset">预设</span>
-                      )}
-                      {isCustom && editingTheme?.id !== t.id && (
-                        <button
-                          className="theme-card-delete"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteTheme(t.id);
-                          }}
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-                <button className="theme-create-btn" onClick={handleCreateTheme}>
-                  + 新建主题
-                </button>
-              </div>
-
-              {editingTheme && (
-                <div className="theme-editor">
-                  <div className="theme-editor-header">
-                    <input
-                      className="theme-editor-name"
-                      value={editingTheme.name}
-                      onChange={(e) => handleColorChange('name', e.target.value)}
-                    />
-                    <div className="theme-editor-actions">
-                      <button className="btn-primary" onClick={handleSaveTheme}>保存</button>
-                      <button className="btn-secondary" onClick={() => setEditingTheme(null)}>取消</button>
-                    </div>
-                  </div>
-                  <div className="color-slots">
-                    {([
-                      ['background', '背景'],
-                      ['foreground', '前景'],
-                      ['cursor', '光标'],
-                      ['black', '黑色'],
-                      ['red', '红色'],
-                      ['green', '绿色'],
-                      ['yellow', '黄色'],
-                      ['blue', '蓝色'],
-                      ['magenta', '品红'],
-                      ['cyan', '青色'],
-                      ['white', '白色'],
-                    ] as [keyof CustomTheme, string][]).map(([field, label]) => (
-                      <div key={field} className="color-slot">
-                        <label>{label}</label>
-                        <div className="color-input-wrap">
-                          <input
-                            type="color"
-                            value={editingTheme[field] as string}
-                            onChange={(e) => handleColorChange(field, e.target.value)}
-                          />
-                          <input
-                            type="text"
-                            value={editingTheme[field] as string}
-                            onChange={(e) => handleColorChange(field, e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="theme-preview" style={{ background: editingTheme.background, color: editingTheme.foreground }}>
-                    <div>PS C:\Projects&gt; <span style={{ color: editingTheme.green }}>npm run dev</span></div>
-                    <div style={{ color: editingTheme.cyan }}>  VITE v5.2.0  ready in 312 ms</div>
-                    <div style={{ color: editingTheme.foreground }}>  ➜  Local:   http://localhost:1420/</div>
-                    <div>PS C:\Projects&gt;<span style={{ background: editingTheme.cursor }}> </span></div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <ThemesSettings />
           </section>
 
           {/* Exclusions Section */}
@@ -996,79 +634,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
             className="settings-section-block"
           >
             <h3 className="settings-section-title">文件排除</h3>
-            <div className="settings-general">
-              <p className="settings-desc">配置文件导航中需要屏蔽的文件和文件夹规则</p>
-              <div className="exclusion-list">
-                {exclusionPatterns.map((pattern, idx) => (
-                  <div key={idx} className="cmd-cat-item" onContextMenu={(e) => {
-                    e.preventDefault();
-                    setExclusionContextMenu({ x: e.clientX, y: e.clientY, idx });
-                  }}>
-                    <code className="cmd-cat-cmd">{pattern}</code>
-                    <span className="cmd-cat-desc">
-                      {pattern.startsWith('*.') ? '匹配后缀' : pattern.startsWith('**/') ? '匹配扩展名' : '精确匹配名称'}
-                    </span>
-                    <div className="cmd-cat-actions">
-                      <button
-                        className="cmd-action-btn danger"
-                        title="删除"
-                        onClick={() => {
-                          askConfirm(`确定删除排除规则「${pattern}」？`, () => {
-                            setConfirmDialog(null);
-                            setExclusionPatterns(exclusionPatterns.filter((_, i) => i !== idx));
-                          });
-                        }}
-                      >×</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="cmd-add-form">
-                <input
-                  placeholder="例: node_modules, *.log, **/*.html"
-                  value={newPattern}
-                  onChange={(e) => setNewPattern(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && newPattern.trim()) {
-                      setExclusionPatterns([...exclusionPatterns, newPattern.trim()]);
-                      setNewPattern('');
-                    }
-                  }}
-                />
-                <button className="btn-primary" onClick={() => {
-                  if (newPattern.trim()) {
-                    setExclusionPatterns([...exclusionPatterns, newPattern.trim()]);
-                    setNewPattern('');
-                  }
-                }}>添加</button>
-              </div>
-              <button
-                className="btn-secondary"
-                style={{ marginTop: 8, alignSelf: 'flex-start' }}
-                onClick={() => {
-                  askConfirm('确定重置排除规则为默认？当前规则将被覆盖。', () => {
-                    setConfirmDialog(null);
-                    setExclusionPatterns(['node_modules', '.git']);
-                  });
-                }}
-              >重置为默认</button>
-              {exclusionContextMenu && (
-                <div className="context-menu-overlay" onClick={() => setExclusionContextMenu(null)} />
-              )}
-              {exclusionContextMenu && (
-                <div className="context-menu" style={{ left: exclusionContextMenu.x, top: exclusionContextMenu.y }}>
-                  <div className="context-menu-item danger" onClick={() => {
-                    const idx = exclusionContextMenu.idx;
-                    const pattern = exclusionPatterns[idx];
-                    setExclusionContextMenu(null);
-                    askConfirm(`确定删除排除规则「${pattern}」？`, () => {
-                      setConfirmDialog(null);
-                      setExclusionPatterns(exclusionPatterns.filter((_, i) => i !== idx));
-                    });
-                  }}>删除</div>
-                </div>
-              )}
-            </div>
+            <ExclusionSettings askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />
           </section>
 
           {/* AI Usage Section */}
@@ -1078,86 +644,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
             className="settings-section-block"
           >
             <h3 className="settings-section-title">AI用量</h3>
-            <div className="settings-general">
-              {/* 智谱 GLM API Key */}
-              <div className="settings-section">
-                <label className="settings-label">智谱 GLM API Key</label>
-                <div className="data-path-row">
-                  <input
-                    className="data-path-input"
-                    type={zhipuApiKeyVisible ? 'text' : 'password'}
-                    value={settings.zhipuApiKey}
-                    onChange={(e) => updateSetting('zhipuApiKey', e.target.value)}
-                    placeholder="请输入智谱 GLM API Key"
-                    style={{ flex: 1 }}
-                  />
-                  <button
-                    className="btn-secondary"
-                    onClick={() => setZhipuApiKeyVisible(!zhipuApiKeyVisible)}
-                  >{zhipuApiKeyVisible ? '隐藏' : '显示'}</button>
-                </div>
-                <p className="settings-desc">填入智谱 GLM 的 API Key 用于查询 AI 用量信息。可在 <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>open.bigmodel.cn</a> 获取</p>
-              </div>
-
-              {/* 百度千帆 Cookie */}
-              <div className="settings-section">
-                <label className="settings-label">百度千帆 Cookie</label>
-                <div className="data-path-row">
-                  <input
-                    className="data-path-input"
-                    type={qianfanCookieVisible ? 'text' : 'password'}
-                    value={settings.qianfanCookie}
-                    onChange={(e) => updateSetting('qianfanCookie', e.target.value)}
-                    placeholder="请输入百度千帆的 Cookie"
-                    style={{ flex: 1 }}
-                  />
-                  <button
-                    className="btn-secondary"
-                    onClick={() => setQianfanCookieVisible(!qianfanCookieVisible)}
-                  >{qianfanCookieVisible ? '隐藏' : '显示'}</button>
-                </div>
-                <p className="settings-desc">填入百度千帆控制台的 Cookie 用于查询 AI 用量。登录 <a href="https://console.bce.baidu.com/qianfan/resource/subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>百度千帆控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值</p>
-              </div>
-
-              {/* DeepSeek API Key */}
-              <div className="settings-section">
-                <label className="settings-label">DeepSeek 认证 Token</label>
-                <div className="data-path-row">
-                  <input
-                    className="data-path-input"
-                    type={deepseekApiKeyVisible ? 'text' : 'password'}
-                    value={settings.deepseekApiKey}
-                    onChange={(e) => updateSetting('deepseekApiKey', e.target.value)}
-                    placeholder="请输入 DeepSeek 认证Token"
-                    style={{ flex: 1 }}
-                  />
-                  <button
-                    className="btn-secondary"
-                    onClick={() => setDeepseekApiKeyVisible(!deepseekApiKeyVisible)}
-                  >{deepseekApiKeyVisible ? '隐藏' : '显示'}</button>
-                </div>
-                <p className="settings-desc">填入 DeepSeek 的 认证Token 用于查询 AI 用量。可在 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com/usage</a> 登录后打开浏览器开发者工具，查看网络请求获取 Authorization Bearer 值</p>
-              </div>
-
-              {/* MiniMax API Key */}
-              <div className="settings-section">
-                <label className="settings-label">MiniMax API Key</label>
-                <div className="data-path-row">
-                  <input
-                    className="data-path-input"
-                    type={minimaxApiKeyVisible ? 'text' : 'password'}
-                    value={settings.minimaxApiKey}
-                    onChange={(e) => updateSetting('minimaxApiKey', e.target.value)}
-                    placeholder="请输入 MiniMax API Key"
-                    style={{ flex: 1 }} />
-                  <button
-                    className="btn-secondary"
-                    onClick={() => setMinimaxApiKeyVisible(!minimaxApiKeyVisible)}
-                  >{minimaxApiKeyVisible ? '隐藏' : '显示'}</button>
-                </div>
-                <p className="settings-desc">填入 MiniMax 的 API Key 用于查询 AI 用量。可在 <a href="https://platform.minimax.chat/api_keys" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.minimax.chat</a> 获取</p>
-              </div>
-            </div>
+            <AiUsageSettings settings={settings} updateSetting={updateSetting} />
           </section>
 
           {/* Web Management Section */}
@@ -1167,112 +654,18 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
             className="settings-section-block"
           >
             <h3 className="settings-section-title">Web 远程管理</h3>
-            <div className="settings-general">
-              <p className="settings-desc" style={{ marginLeft: 0 }}>启用后可通过浏览器远程访问终端</p>
-
-              <div className="settings-section">
-                <label className="settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={settings.webApiEnabled}
-                    onChange={(e) => setSettings({ ...settings, webApiEnabled: e.target.checked })}
-                  />
-                  <span>启用远程访问</span>
-                </label>
-              </div>
-
-              {settings.webApiEnabled && (
-                <>
-                  <div className="settings-section">
-                    <label className="settings-label">端口</label>
-                    <div className="data-path-row">
-                      <input
-                        className="data-path-input"
-                        type="number"
-                        value={settings.webApiPort}
-                        min={1024}
-                        max={65535}
-                        onChange={(e) => setSettings({ ...settings, webApiPort: parseInt(e.target.value) || 9600 })}
-                        style={{ flex: 1 }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <label className="settings-label">用户名</label>
-                    <div className="data-path-row">
-                      <input
-                        className="data-path-input"
-                        type="text"
-                        value={settings.webApiUsername}
-                        onChange={(e) => setSettings({ ...settings, webApiUsername: e.target.value })}
-                        style={{ flex: 1 }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <label className="settings-label">密码</label>
-                    <div className="data-path-row">
-                      <input
-                        className="data-path-input"
-                        type="password"
-                        value={webPassword}
-                        onChange={(e) => setWebPassword(e.target.value)}
-                        placeholder="留空则不修改密码"
-                        style={{ flex: 1 }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <label className="settings-toggle">
-                      <input
-                        type="checkbox"
-                        checked={settings.webApiShareSessions ?? false}
-                        onChange={(e) => {
-                          const value = e.target.checked;
-                          updateSetting('webApiShareSessions', value);
-                          saveWebApiShareSessions(value).catch(console.error);
-                        }}
-                      />
-                      <span>共享会话窗口</span>
-                    </label>
-                    <p className="settings-desc">开启后 Web 端和 PC 端可以看到并操作所有终端；关闭后 Web 端只能看到自己创建的终端，PC 端可以看到 Web 端创建的终端但不能操作</p>
-                  </div>
-
-                  <div className="settings-section">
-                    <label className="settings-label">服务状态</label>
-                    <div className="data-path-row" style={{ alignItems: 'center', gap: 12 }}>
-                      <span style={{ color: serverRunning ? '#4caf50' : '#8a8aaa', fontSize: 13 }}>
-                        ● {serverRunning ? serverAddress : '已停止'}
-                      </span>
-                      <button
-                        onClick={handleToggleServer}
-                        disabled={serverLoading}
-                        style={{
-                          padding: '8px 20px',
-                          border: 'none',
-                          borderRadius: 6,
-                          background: serverRunning ? '#d32f2f' : '#4a4aaa',
-                          color: '#fff',
-                          fontSize: 13,
-                          cursor: 'pointer',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {serverLoading ? '处理中...' : serverRunning ? '停止服务' : '启动服务'}
-                      </button>
-                    </div>
-                    {serverError && (
-                      <div style={{ color: '#ff6b6b', fontSize: 12, marginTop: 6 }}>
-                        {serverError}
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
+            <WebSettings
+              settings={settings}
+              setSettings={setSettings}
+              updateSetting={updateSetting}
+              webPassword={webPassword}
+              setWebPassword={setWebPassword}
+              serverRunning={serverRunning}
+              serverAddress={serverAddress}
+              serverError={serverError}
+              serverLoading={serverLoading}
+              handleToggleServer={handleToggleServer}
+            />
           </section>
 
           {/* SSH Settings Section */}
@@ -1282,53 +675,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
             className="settings-section-block"
           >
             <h3 className="settings-section-title">SSH 设置</h3>
-            <div className="settings-general">
-              <div className="settings-section">
-                <label className="settings-label">下载目录</label>
-                <div className="data-path-row">
-                  <input
-                    className="data-path-input"
-                    type="text"
-                    value={settings.sshDownloadDir}
-                    readOnly
-                  />
-                  <button
-                    className="btn-secondary"
-                    onClick={async () => {
-                      try {
-                        const selected = await open({ directory: true, title: '选择 SSH 下载目录' });
-                        if (selected) {
-                          updateSetting('sshDownloadDir', selected as string);
-                          saveSshDownloadDir(selected as string).catch(console.error);
-                        }
-                      } catch {}
-                    }}
-                  >浏览</button>
-                </div>
-                <p className="settings-desc">SSH 远程文件下载的本地保存目录，默认为系统下载文件夹</p>
-              </div>
-              <div className="settings-section">
-                <label className="settings-label">监控刷新间隔</label>
-                <div className="data-path-row">
-                  <select
-                    className="data-path-input"
-                    value={settings.serverMonitorInterval}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value);
-                      updateSetting('serverMonitorInterval', val);
-                      saveServerMonitorInterval(val).catch(console.error);
-                    }}
-                  >
-                    <option value={1}>1 秒</option>
-                    <option value={3}>3 秒</option>
-                    <option value={5}>5 秒</option>
-                    <option value={10}>10 秒</option>
-                    <option value={0}>关闭</option>
-                  </select>
-                </div>
-                <p className="settings-desc">SSH 远程服务器状态监控的自动刷新间隔，设为"关闭"可停止自动刷新</p>
-              </div>
-            </div>
+            <SshSettings settings={settings} updateSetting={updateSetting} />
           </section>
         </div>
 

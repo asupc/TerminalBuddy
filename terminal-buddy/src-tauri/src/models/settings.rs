@@ -50,6 +50,8 @@ pub struct AppSettings {
     pub server_monitor_interval: u32,
     #[serde(default)]
     pub web_api_share_sessions: bool,
+    #[serde(default = "default_launch_at_login")]
+    pub launch_at_login: bool,
 }
 
 impl Default for AppSettings {
@@ -67,6 +69,7 @@ impl Default for AppSettings {
             ssh_download_dir: None,
             server_monitor_interval: 3,
             web_api_share_sessions: false,
+            launch_at_login: false,
         }
     }
 }
@@ -89,4 +92,8 @@ fn default_web_api_password_hash() -> String {
 
 fn default_server_monitor_interval() -> u32 {
     3
+}
+
+fn default_launch_at_login() -> bool {
+    false
 }

@@ -1,9 +1,99 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs;
+use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use crate::models::{AppSettings, CloseBehavior};
 use crate::services::{SettingsService, PathService, copy_dir_recursive};
 use serde_json::{json, Value};
+
+fn to_wide(s: &str) -> Vec<u16> {
+    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+}
+
+fn set_autostart_registry(enabled: bool) -> Result<(), String> {
+    use windows::Win32::System::Registry::*;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+
+    let key_wide = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
+    let name_wide = to_wide("TerminalBuddy");
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        let result = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            windows::core::PCWSTR(key_wide.as_ptr()),
+            Some(0),
+            KEY_SET_VALUE,
+            &mut hkey,
+        );
+        if result != ERROR_SUCCESS {
+            return Err(format!("打开注册表失败: {}", result.to_hresult().0));
+        }
+
+        if enabled {
+            let exe_path = std::env::current_exe()
+                .map_err(|e| format!("获取程序路径失败: {}", e))?;
+            let path_str = format!("\"{}\"", exe_path.to_string_lossy());
+            let wide = to_wide(&path_str);
+            let bytes: Vec<u8> = wide.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let result = RegSetValueExW(
+                hkey,
+                windows::core::PCWSTR(name_wide.as_ptr()),
+                Some(0),
+                REG_SZ,
+                Some(&bytes),
+            );
+            let _ = RegCloseKey(hkey);
+            if result != ERROR_SUCCESS {
+                return Err(format!("写入注册表失败: {}", result.to_hresult().0));
+            }
+        } else {
+            let result = RegDeleteValueW(hkey, windows::core::PCWSTR(name_wide.as_ptr()));
+            let _ = RegCloseKey(hkey);
+            if result != ERROR_SUCCESS && result.to_hresult().0 != 2 {
+                return Err(format!("删除注册表项失败: {}", result.to_hresult().0));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_autostart_registry() -> bool {
+    use windows::Win32::System::Registry::*;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+
+    let key_wide = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
+    let name_wide = to_wide("TerminalBuddy");
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        let result = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            windows::core::PCWSTR(key_wide.as_ptr()),
+            Some(0),
+            KEY_READ,
+            &mut hkey,
+        );
+        if result != ERROR_SUCCESS {
+            return false;
+        }
+
+        let mut buf = [0u16; 512];
+        let mut buf_len = (buf.len() * 2) as u32;
+        let mut reg_type = REG_SZ;
+        let result = RegQueryValueExW(
+            hkey,
+            windows::core::PCWSTR(name_wide.as_ptr()),
+            None,
+            Some(&mut reg_type),
+            Some(buf.as_mut_ptr() as *mut u8),
+            Some(&mut buf_len),
+        );
+        let _ = RegCloseKey(hkey);
+        result == ERROR_SUCCESS
+    }
+}
 
 #[tauri::command]
 pub fn get_app_settings() -> AppSettings {
@@ -54,9 +144,7 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn save_enable_tab_navigation(enabled: bool) -> Result<(), String> {
-    let mut settings = SettingsService::get_settings();
-    settings.enable_tab_navigation = enabled;
-    SettingsService::save_settings(&settings)
+    SettingsService::mutate_settings(|s| s.enable_tab_navigation = enabled)
 }
 
 #[tauri::command]
@@ -68,9 +156,7 @@ pub fn save_tab_sidebar_width(width: u32) -> Result<(), String> {
 
 #[tauri::command]
 pub fn save_single_instance(enabled: bool) -> Result<(), String> {
-    let mut settings = SettingsService::get_settings();
-    settings.single_instance = enabled;
-    SettingsService::save_settings(&settings)
+    SettingsService::mutate_settings(|s| s.single_instance = enabled)
 }
 
 #[tauri::command]
@@ -82,23 +168,34 @@ pub fn get_downloads_directory() -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_ssh_download_dir(dir: String) -> Result<(), String> {
-    let mut settings = SettingsService::get_settings();
-    settings.ssh_download_dir = Some(dir);
-    SettingsService::save_settings(&settings)
+    SettingsService::mutate_settings(|s| s.ssh_download_dir = Some(dir))
 }
 
 #[tauri::command]
 pub fn save_server_monitor_interval(interval: u32) -> Result<(), String> {
-    let mut settings = SettingsService::get_settings();
-    settings.server_monitor_interval = interval;
-    SettingsService::save_settings(&settings)
+    SettingsService::mutate_settings(|s| s.server_monitor_interval = interval)
 }
 
 #[tauri::command]
 pub fn save_web_api_share_sessions(enabled: bool) -> Result<(), String> {
+    SettingsService::mutate_settings(|s| s.web_api_share_sessions = enabled)
+}
+
+#[tauri::command]
+pub fn save_launch_at_login(enabled: bool) -> Result<(), String> {
+    set_autostart_registry(enabled)?;
+    SettingsService::mutate_settings(|s| s.launch_at_login = enabled)
+}
+
+#[tauri::command]
+pub fn sync_launch_at_login() -> bool {
+    let registry_enabled = read_autostart_registry();
     let mut settings = SettingsService::get_settings();
-    settings.web_api_share_sessions = enabled;
-    SettingsService::save_settings(&settings)
+    if settings.launch_at_login != registry_enabled {
+        settings.launch_at_login = registry_enabled;
+        let _ = SettingsService::save_settings(&settings);
+    }
+    registry_enabled
 }
 
 fn read_json_files(dir: &PathBuf) -> Result<HashMap<String, Value>, String> {

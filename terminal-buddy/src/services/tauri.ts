@@ -187,6 +187,14 @@ export async function saveSingleInstance(enabled: boolean): Promise<void> {
   return invoke('save_single_instance', { enabled });
 }
 
+export async function saveLaunchAtLogin(enabled: boolean): Promise<void> {
+  return invoke('save_launch_at_login', { enabled });
+}
+
+export async function syncLaunchAtLogin(): Promise<boolean> {
+  return invoke('sync_launch_at_login');
+}
+
 // Clipboard Commands
 export async function readClipboardFilePaths(): Promise<string[]> {
   return invoke('read_clipboard_file_paths');

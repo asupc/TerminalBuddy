@@ -41,6 +41,24 @@ impl SettingsService {
         AppSettings::default()
     }
 
+    /// Modify a single field in settings, saving immediately.
+    /// Avoids the clone-on-read of `get_settings()` for write-heavy callers.
+    pub fn mutate_settings(f: impl FnOnce(&mut AppSettings)) -> Result<(), String> {
+        let mut settings = {
+            if let Ok(cache) = CACHED_SETTINGS.read() {
+                if let Some(ref s) = *cache {
+                    s.clone()
+                } else {
+                    Self::read_settings_from_disk()
+                }
+            } else {
+                Self::read_settings_from_disk()
+            }
+        };
+        f(&mut settings);
+        Self::save_settings(&settings)
+    }
+
     pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
         let path = Self::get_settings_path();
         let content = serde_json::to_string_pretty(settings)

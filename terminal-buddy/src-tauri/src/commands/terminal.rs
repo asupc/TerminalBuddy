@@ -74,7 +74,7 @@ fn spawn_output_forwarder(
                     };
                     if !output.is_empty() {
                         {
-                            let mut buffer = output_buffer.lock().unwrap();
+                            let mut buffer = output_buffer.lock().unwrap_or_else(|e| e.into_inner());
                             buffer.push_back(output.clone());
                             if buffer.len() > 1000 {
                                 buffer.drain(0..500);
@@ -200,7 +200,7 @@ impl TerminalService {
         };
 
         {
-            let mut instances = self.instances.lock().unwrap();
+            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.insert(terminal_id.clone(), instance);
         }
 
@@ -265,7 +265,7 @@ impl TerminalService {
                 thread::sleep(std::time::Duration::from_millis(300));
                 log_debug(&format!("[init-cmds] sending {} commands for {}", commands.len(), tid));
 
-                let mut instances_lock = instances.lock().unwrap();
+                let mut instances_lock = instances.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(instance) = instances_lock.get_mut(&tid) {
                     if let Some(ref mut writer) = instance.writer {
                         for cmd_str in &commands {
@@ -288,7 +288,7 @@ impl TerminalService {
 
     pub fn write_to_terminal(&self, id: &str, data: &str) -> Result<(), String> {
         let bytes = data.as_bytes();
-        let mut instances = self.instances.lock().unwrap();
+        let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(instance) = instances.get_mut(id) {
             if let Some(ref mut writer) = instance.writer {
                 if bytes.len() <= 256 {
@@ -317,7 +317,7 @@ impl TerminalService {
     }
 
     pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16, allow_shrink: bool) -> Result<(), String> {
-        let mut instances = self.instances.lock().unwrap();
+        let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(instance) = instances.get_mut(id) {
             let (new_rows, new_cols) = if allow_shrink {
                 (rows, cols)
@@ -349,12 +349,12 @@ impl TerminalService {
     pub fn drain_terminal_output(&self, id: &str) -> Result<String, String> {
         // Get buffer reference while holding instances lock briefly
         let buf_arc = {
-            let instances = self.instances.lock().unwrap();
+            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.get(id)
                 .map(|inst| inst.output_buffer.clone())
                 .ok_or("Terminal not found".to_string())?
         };
-        let mut buffer = buf_arc.lock().unwrap();
+        let mut buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
         let result: String = buffer.iter().map(|s| s.as_ref()).collect();
         buffer.clear();
         Ok(result)
@@ -362,12 +362,12 @@ impl TerminalService {
 
     pub fn peek_terminal_output(&self, id: &str) -> Result<String, String> {
         let buf_arc = {
-            let instances = self.instances.lock().unwrap();
+            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.get(id)
                 .map(|inst| inst.output_buffer.clone())
                 .ok_or("Terminal not found".to_string())?
         };
-        let buffer = buf_arc.lock().unwrap();
+        let buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
         Ok(buffer.iter().map(|s| s.as_ref()).collect())
     }
 
@@ -376,7 +376,7 @@ impl TerminalService {
     pub fn check_pc_permission(&self, id: &str) -> Result<(), String> {
         let settings = SettingsService::get_settings();
         if !settings.web_api_share_sessions {
-            let instances = self.instances.lock().unwrap();
+            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(terminal) = instances.get(id) {
                 if terminal.owner == TerminalOwner::Web {
                     return Err("终端由 Web 端管理，PC 端只读".to_string());
@@ -387,36 +387,37 @@ impl TerminalService {
     }
 
     pub fn close_terminal(&self, id: &str) -> Result<(), String> {
-        let mut instances = self.instances.lock().unwrap();
-        if let Some(mut instance) = instances.remove(id) {
-            instance.writer = None;
-            instance.child.kill().ok();
-            let _ = instance.child.wait();
-            Ok(())
-        } else {
-            Err("Terminal not found".to_string())
-        }
+        let mut instance = {
+            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            instances.remove(id).ok_or("Terminal not found".to_string())?
+        };
+        instance.writer = None;
+        instance.child.kill().ok();
+        let _ = instance.child.wait();
+        Ok(())
     }
 
     pub fn close_terminal_with_check(&self, id: &str, required_owner: Option<TerminalOwner>) -> Result<(), String> {
-        let mut instances = self.instances.lock().unwrap();
-        if let Some(instance) = instances.get(id) {
-            if let Some(expected) = required_owner {
-                if instance.owner != expected {
-                    return Err("无权限关闭此终端".to_string());
+        {
+            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(instance) = instances.get(id) {
+                if let Some(expected) = required_owner {
+                    if instance.owner != expected {
+                        return Err("无权限关闭此终端".to_string());
+                    }
                 }
+            } else {
+                return Err("Terminal not found".to_string());
             }
-        } else {
-            return Err("Terminal not found".to_string());
         }
-        if let Some(mut instance) = instances.remove(id) {
-            instance.writer = None;
-            instance.child.kill().ok();
-            let _ = instance.child.wait();
-            Ok(())
-        } else {
-            Err("Terminal not found".to_string())
-        }
+        let mut instance = {
+            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            instances.remove(id).ok_or("Terminal not found".to_string())?
+        };
+        instance.writer = None;
+        instance.child.kill().ok();
+        let _ = instance.child.wait();
+        Ok(())
     }
 
     pub fn create_blank_terminal(&self, terminal_type: &str, initial_rows: u16, initial_cols: u16, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
@@ -483,7 +484,7 @@ impl TerminalService {
         };
 
         {
-            let mut instances = self.instances.lock().unwrap();
+            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.insert(terminal_id.clone(), instance);
         }
 
@@ -501,7 +502,7 @@ impl TerminalService {
             thread::sleep(std::time::Duration::from_millis(300));
             log_debug(&format!("[init-blank] sending shell command for {}", tid));
 
-            let mut instances_lock = instances.lock().unwrap();
+            let mut instances_lock = instances.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(instance) = instances_lock.get_mut(&tid) {
                 if let Some(ref mut writer) = instance.writer {
                     if !shell_cmd.is_empty() {
@@ -663,7 +664,7 @@ pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
 
     // 检查是否已有该 Profile 的 mstsc 进程在运行
     {
-        let mut processes = mstsc_processes().lock().unwrap();
+        let mut processes = mstsc_processes().lock().unwrap_or_else(|e| e.into_inner());
         if let Some(&pid) = processes.get(&profile_id) {
             if is_process_running(pid) {
                 bring_window_to_front(pid);
@@ -723,7 +724,7 @@ pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
 
     // 记录进程 PID
     {
-        let mut processes = mstsc_processes().lock().unwrap();
+        let mut processes = mstsc_processes().lock().unwrap_or_else(|e| e.into_inner());
         processes.insert(profile_id.clone(), pid);
     }
 

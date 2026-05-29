@@ -24,6 +24,7 @@ export interface AppSettings {
   sshDownloadDir: string;
   serverMonitorInterval: number;
   webApiShareSessions: boolean;
+  launchAtLogin: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -46,6 +47,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sshDownloadDir: '',
   serverMonitorInterval: 3,
   webApiShareSessions: false,
+  launchAtLogin: false,
 };
 
 let _cachedSettings: AppSettings | null = null;

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+const DPAPI_MARKER: &str = "dpapi:";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
@@ -33,6 +35,44 @@ pub struct Profile {
     pub mstsc_resolution: Option<String>,
     pub created_at: String,
     pub last_used_at: Option<String>,
+}
+
+impl Profile {
+    /// Decrypt password fields after loading from disk (transparent decryption).
+    pub fn decrypt_sensitive_fields(&mut self) {
+        self.ssh_password = self.ssh_password.as_ref().and_then(|p| {
+            decrypt_password(p).ok().filter(|d| !d.is_empty()).or_else(|| Some(p.clone()))
+        });
+        self.mstsc_password = self.mstsc_password.as_ref().and_then(|p| {
+            decrypt_password(p).ok().filter(|d| !d.is_empty()).or_else(|| Some(p.clone()))
+        });
+    }
+
+    /// Encrypt password fields before saving to disk (transparent encryption).
+    pub fn encrypt_sensitive_fields(&mut self) {
+        if let Some(ref p) = self.ssh_password {
+            if !p.is_empty() && !p.starts_with(DPAPI_MARKER) {
+                if let Ok(encrypted) = crate::services::crypto_service::encrypt_string(p) {
+                    self.ssh_password = Some(format!("{}{}", DPAPI_MARKER, encrypted));
+                }
+            }
+        }
+        if let Some(ref p) = self.mstsc_password {
+            if !p.is_empty() && !p.starts_with(DPAPI_MARKER) {
+                if let Ok(encrypted) = crate::services::crypto_service::encrypt_string(p) {
+                    self.mstsc_password = Some(format!("{}{}", DPAPI_MARKER, encrypted));
+                }
+            }
+        }
+    }
+}
+
+fn decrypt_password(value: &str) -> Result<String, String> {
+    if let Some(encoded) = value.strip_prefix(DPAPI_MARKER) {
+        crate::services::crypto_service::decrypt_string(encoded)
+    } else {
+        Ok(value.to_string())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
