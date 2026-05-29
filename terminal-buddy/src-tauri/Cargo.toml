@@ -42,9 +42,13 @@ windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsA
 [patch.crates-io]
 portable-pty = { path = "portable-pty-patched" }
 
+[profile.dev]
+opt-level = 1
+incremental = true
+
 [profile.release]
 panic = "abort"
-codegen-units = 1
-lto = true
+codegen-units = 4
+lto = "thin"
 opt-level = "s"
 strip = true
