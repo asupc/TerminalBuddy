@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats } from '../types';
-import { readClientData, writeClientData } from '../services/tauri';
+import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath } from '../services/tauri';
 
 let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
 function debouncedSaveTabs(sessions: any[], activeSessionId: string | null) {
@@ -95,6 +95,35 @@ export async function initBookmarkHeight() {
   } catch {}
 }
 
+// --- Draft management ---
+
+export interface DraftEntry {
+  filePath: string;
+  createdAt: number;
+}
+
+async function loadDraftIndex(): Promise<DraftEntry[]> {
+  try {
+    const raw = await readClientData('drafts_index');
+    if (raw) {
+      const data = JSON.parse(raw);
+      return Array.isArray(data) ? data : [];
+    }
+  } catch {}
+  return [];
+}
+
+async function saveDraftIndex(drafts: DraftEntry[]): Promise<void> {
+  await writeClientData('drafts_index', JSON.stringify(drafts));
+}
+
+async function ensureDraftsDir(): Promise<string> {
+  const dataPath = await getDataPath();
+  const draftsDir = dataPath + '\\ClientData\\drafts';
+  await ensureDir(draftsDir);
+  return draftsDir;
+}
+
 interface AppState {
   // Profiles
   profiles: Profile[];
@@ -173,6 +202,9 @@ interface AppState {
   ensureEditorGroup: () => void;
   openEditorSession: (filePath: string, sshRemotePath?: string, sshTerminalId?: string) => void;
   closeEditorSession: (id: string) => void;
+  openDraftSession: () => Promise<void>;
+  removeDraftFile: (draftPath: string) => Promise<void>;
+  restoreDraftTabs: () => Promise<void>;
   sessionDirectories: Record<string, string>;
   setSessionDirectory: (sessionId: string, path: string) => void;
 
@@ -417,6 +449,82 @@ export const useAppStore = create<AppState>((set) => ({
       saveTabsToStorage(sessions, activeSessionId);
       return { sessions, activeSessionId };
     }),
+  openDraftSession: async () => {
+    const draftsDir = await ensureDraftsDir();
+    const draftId = `draft_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const filePath = draftsDir + '\\' + draftId + '.txt';
+    await writeFileContent(filePath, '');
+    const drafts = await loadDraftIndex();
+    drafts.push({ filePath, createdAt: Date.now() });
+    await saveDraftIndex(drafts);
+
+    const state = useAppStore.getState();
+    const id = crypto.randomUUID();
+    const session: TerminalSession = {
+      id,
+      profileId: filePath,
+      profileName: '未命名',
+      terminalType: 'editor',
+      colorTheme: { background: '#1e1e1e', foreground: '#d4d4d4' },
+      tabColor: null,
+      groupId: 'editor-group',
+      sessionType: 'editor',
+      isDirty: false,
+    };
+    const groups = state.groups.some(g => g.id === 'editor-group')
+      ? state.groups
+      : [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }];
+    const sessions = [...state.sessions, session];
+    saveTabsToStorage(sessions, id);
+    set({ sessions, activeSessionId: id, settingsTabOpen: false, groups });
+  },
+  removeDraftFile: async (draftPath: string) => {
+    try { await deletePath(draftPath); } catch {}
+    const drafts = await loadDraftIndex();
+    const next = drafts.filter(d => d.filePath !== draftPath);
+    await saveDraftIndex(next);
+  },
+  restoreDraftTabs: async () => {
+    const drafts = await loadDraftIndex();
+    if (drafts.length === 0) return;
+    const state = useAppStore.getState();
+    useAppStore.setState({ _skipSaveTabs: true });
+    try {
+      for (const draft of drafts) {
+        // Skip if already restored (e.g. by restoreTabs)
+        const existing = useAppStore.getState().sessions.find(
+          s => s.sessionType === 'editor' && s.profileId === draft.filePath
+        );
+        if (existing) continue;
+        try {
+          const { getFileSize } = await import('../services/tauri');
+          await getFileSize(draft.filePath);
+          state.ensureEditorGroup();
+          const id = crypto.randomUUID();
+          const session: TerminalSession = {
+            id,
+            profileId: draft.filePath,
+            profileName: '未命名',
+            terminalType: 'editor',
+            colorTheme: { background: '#1e1e1e', foreground: '#d4d4d4' },
+            tabColor: null,
+            groupId: 'editor-group',
+            sessionType: 'editor',
+            isDirty: false,
+          };
+          state.addSession(session, true);
+        } catch {
+          // Draft file no longer exists, remove from index
+          const remaining = (await loadDraftIndex()).filter(d => d.filePath !== draft.filePath);
+          await saveDraftIndex(remaining);
+        }
+      }
+    } finally {
+      useAppStore.setState({ _skipSaveTabs: false });
+      const { sessions, activeSessionId } = useAppStore.getState();
+      saveTabsToStorage(sessions, activeSessionId);
+    }
+  },
   sessionDirectories: {},
   setSessionDirectory: (sessionId, path) => set((state) => ({
     sessionDirectories: { ...state.sessionDirectories, [sessionId]: path },

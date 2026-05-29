@@ -84,6 +84,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'c' && e.ctrlKey && !e.shiftKey) {
+      if (renameInputRef.current === document.activeElement) return;
       e.preventDefault();
       e.stopPropagation();
       navigator.clipboard.writeText(node.path).catch(() => {});

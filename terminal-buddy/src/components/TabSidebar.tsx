@@ -1,8 +1,9 @@
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation } from '../services/tauri';
+import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getWorkingDotColor } from '../utils/tabColor';
 import { TreeView, type TreeItem } from './TreeView';
 import { buildGroupTree, type GroupNode } from '../utils/groupTree';
@@ -13,9 +14,10 @@ interface TabSidebarProps {
   profiles: Profile[];
   onStartTerminal: (profile: Profile) => void;
   onStartBlankTerminal: (terminalType: 'powershell' | 'cmd') => void;
+  onStartTextEditor: () => void;
 }
 
-export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal }) => {
+export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
@@ -37,6 +39,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const [draftCloseDialog, setDraftCloseDialog] = useState<{ sessionId: string; filePath: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -217,6 +220,21 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const handleCloseTerminal = async (sessionId: string) => {
     const session = sessions.find(s => s.id === sessionId);
     if (session?.sessionType === 'editor') {
+      const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
+      if (isDraft) {
+        // For drafts, check if file has content (even if not dirty in memory)
+        try {
+          const content = await readFileContent(session.profileId);
+          if (content) {
+            setDraftCloseDialog({ sessionId, filePath: session.profileId });
+            return;
+          }
+        } catch {}
+        // Empty draft, clean up directly
+        useAppStore.getState().removeDraftFile(session.profileId);
+        removeSession(sessionId);
+        return;
+      }
       if (session.isDirty) {
         setConfirmDialog({
           title: '未保存的更改',
@@ -235,14 +253,50 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     }
   };
 
+  const handleDraftSaveAs = async () => {
+    if (!draftCloseDialog) return;
+    const session = sessions.find(s => s.id === draftCloseDialog.sessionId);
+    if (!session) { setDraftCloseDialog(null); return; }
+    try {
+      const content = await readFileContent(draftCloseDialog.filePath);
+      const savedPath = await saveDialog({
+        defaultPath: session.profileName + '.txt',
+        filters: [{ name: '文本文件', extensions: ['txt'] }, { name: '所有文件', extensions: ['*'] }],
+      });
+      if (savedPath) {
+        await writeFileContent(savedPath, content);
+        await useAppStore.getState().removeDraftFile(draftCloseDialog.filePath);
+        removeSession(draftCloseDialog.sessionId);
+        setDraftCloseDialog(null);
+      }
+      // If cancelled, dialog stays open
+    } catch (err) {
+      console.error('Save as failed:', err);
+      setDraftCloseDialog(null);
+    }
+  };
+
+  const handleDraftDiscard = async () => {
+    if (!draftCloseDialog) return;
+    await useAppStore.getState().removeDraftFile(draftCloseDialog.filePath);
+    removeSession(draftCloseDialog.sessionId);
+    setDraftCloseDialog(null);
+  };
+
   const handleCloseGroup = async (groupName: string, groupSessions: typeof sessions) => {
     setConfirmDialog({
       title: '确认关闭分组',
       message: `确定要关闭分组「${groupName}」中的所有 ${groupSessions.length} 个终端吗？`,
       onConfirm: async () => {
         setConfirmDialog(null);
+        const store = useAppStore.getState();
         for (const session of groupSessions) {
-          try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
+          if (session.sessionType !== 'editor') {
+            try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
+          } else {
+            const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
+            if (isDraft) store.removeDraftFile(session.profileId);
+          }
           removeSession(session.id);
         }
       },
@@ -259,12 +313,16 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
         : `确定关闭所有 ${sessions.length} 个标签吗？`,
       onConfirm: async () => {
         setConfirmDialog(null);
+        const store = useAppStore.getState();
         for (const session of sessions) {
           if (session.sessionType !== 'editor') {
             try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
+          } else {
+            const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
+            if (isDraft) store.removeDraftFile(session.profileId);
           }
         }
-        useAppStore.getState().setSessions([]);
+        store.setSessions([]);
         setShowContextMenu(false);
       },
     });
@@ -536,7 +594,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
           <div className="context-menu-overlay" onClick={() => setShowContextMenu(false)} />
           <div className="context-menu" ref={contextMenuRef} style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
             <div className="context-menu-item has-submenu">
-              <span>添加连接</span>
+              <span>新建</span>
               <span className="submenu-arrow">›</span>
               <div
                 className="context-submenu"
@@ -583,6 +641,9 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 />
               </div>
             </div>
+            <div className="context-menu-item" onClick={() => { onStartTextEditor(); setShowContextMenu(false); }}>
+              文本编辑器
+            </div>
             <div className="context-menu-separator" />
             <div className="context-menu-item danger" onClick={handleCloseAllTabs}>
               关闭所有标签
@@ -606,6 +667,19 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
             <div className="confirm-dialog-buttons">
               <button className="btn-secondary" onClick={() => setConfirmDialog(null)}>取消</button>
               <button className="btn-danger" onClick={confirmDialog.onConfirm}>确定</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {draftCloseDialog && (
+        <div className="confirm-dialog-overlay" onClick={() => setDraftCloseDialog(null)}>
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-dialog-title">草稿有未保存的内容</div>
+            <div className="confirm-dialog-message">是否保存此草稿？</div>
+            <div className="confirm-dialog-buttons">
+              <button className="btn-secondary" onClick={() => setDraftCloseDialog(null)}>取消</button>
+              <button className="btn-danger" onClick={handleDraftDiscard}>不保存</button>
+              <button className="btn-primary" onClick={handleDraftSaveAs}>另存为...</button>
             </div>
           </div>
         </div>

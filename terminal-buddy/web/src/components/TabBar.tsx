@@ -19,13 +19,23 @@ const TabBar: React.FC = () => {
     removeSession(id);
   };
 
+  // Count occurrences per profileId to add numeric suffixes
+  const profileCounts: Record<string, number> = {};
+  sessions.forEach((s) => { profileCounts[s.profileId] = (profileCounts[s.profileId] || 0) + 1; });
+  const profileIndex: Record<string, number> = {};
+
   return (
     <div style={{
       display: 'flex', background: '#16162e', borderBottom: '1px solid #2a2a4a',
       padding: isMobile ? '0 4px' : '0 8px',
       height: isMobile ? 32 : 40, gap: 2, overflowX: 'auto', flexShrink: 0,
     }}>
-      {sessions.map((session) => (
+      {sessions.map((session) => {
+        const idx = (profileIndex[session.profileId] = (profileIndex[session.profileId] || 0) + 1);
+        const label = profileCounts[session.profileId] > 1
+          ? `${session.profileName} (${idx})`
+          : session.profileName;
+        return (
         <div
           key={session.id}
           onClick={() => setActiveSession(session.id)}
@@ -44,7 +54,7 @@ const TabBar: React.FC = () => {
             width: isMobile ? 6 : 8, height: isMobile ? 6 : 8,
             borderRadius: '50%', background: '#4caf50', flexShrink: 0,
           }} />
-          {session.profileName}
+          {label}
           <button
             onClick={(e) => handleClose(e, session.id)}
             style={{
@@ -55,7 +65,8 @@ const TabBar: React.FC = () => {
             }}
           >×</button>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

@@ -92,7 +92,12 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                                 break;
                             }
                         }
-                        None => break,
+                        None => {
+                            // 广播通道关闭 = PTY 进程已退出，通知 web 端
+                            let exited = serde_json::to_string(&WsServerMessage::Exited { code: 0 }).unwrap_or_default();
+                            let _ = ws_sender.send(Message::Text(exited.into())).await;
+                            break;
+                        }
                     }
                 }
                 error_msg = error_rx.recv() => {

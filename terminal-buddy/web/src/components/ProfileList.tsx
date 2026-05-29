@@ -44,6 +44,7 @@ const ProfileList: React.FC = () => {
     ssh: { bg: '#1a3a1a', color: '#4caf50', label: 'SSH' },
     docker: { bg: '#1a2a3a', color: '#2496ed', label: 'DK' },
     k8s: { bg: '#1a1a3a', color: '#326ce5', label: 'K8' },
+    mstsc: { bg: '#3a1a1a', color: '#e04040', label: 'RDP' },
   };
 
   const toggleGroup = (group: string) => {
@@ -61,35 +62,20 @@ const ProfileList: React.FC = () => {
       useWebAppStore.getState().setSidebarOpen(false);
     }
 
-    // Check if a terminal for this profile is already running (in our local sessions)
-    const existingSession = sessions.find((s) => s.profileId === profile.id);
-    if (existingSession) {
-      useWebAppStore.getState().setActiveSession(existingSession.id);
-      return;
-    }
-
-    // Check from server list
-    const existingTerminal = runningTerminals.find((t) => t.profileId === profile.id);
-    if (existingTerminal) {
-      useWebAppStore.getState().addSession({
-        id: existingTerminal.id,
-        profileId: existingTerminal.profileId,
-        profileName: existingTerminal.profileName,
-        terminalType: existingTerminal.terminalType as any,
-        owner: existingTerminal.owner,
-      });
+    // mstsc (远程桌面) is a GUI application, cannot run in web terminal
+    if (profile.terminalType === 'mstsc') {
+      alert('远程桌面 (RDP) 需要从桌面客户端启动，Web 端无法使用');
       return;
     }
 
     try {
       const info = await startTerminal(profile.id);
-      setRunningTerminals((prev) => [...prev, info]);
       useWebAppStore.getState().addSession({
         id: info.id,
         profileId: info.profileId,
         profileName: info.profileName,
         terminalType: info.terminalType as any,
-        owner: info.owner,
+        owner: info.owner as any,
       });
     } catch (err: any) {
       const msg = err?.response?.data?.message || err?.message || '启动终端失败';
@@ -115,12 +101,12 @@ const ProfileList: React.FC = () => {
         <div
           onClick={() => toggleGroup(node.path)}
           style={{
-            fontSize: 11, color: '#6a6a8a', padding: '8px 8px 4px',
-            letterSpacing: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-            userSelect: 'none', paddingLeft: 8 + depth * 16,
+            fontSize: 10, color: '#6a6a8a', padding: '4px 6px 2px',
+            letterSpacing: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3,
+            userSelect: 'none', paddingLeft: 6 + depth * 14,
           }}
         >
-          <span style={{ fontSize: 10, transition: 'transform 0.2s', display: 'inline-block',
+          <span style={{ fontSize: 9, transition: 'transform 0.2s', display: 'inline-block',
             transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0)' }}>
             ▼
           </span>
@@ -138,30 +124,31 @@ const ProfileList: React.FC = () => {
                   onClick={() => handleStartOrConnect(profile)}
                   onContextMenu={(e) => { e.preventDefault(); setEditingProfile(profile); setDialogOpen(true); }}
                   style={{
-                    padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2,
-                    paddingLeft: 24 + depth * 16,
+                    padding: '5px 8px', borderRadius: 6, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 8, marginBottom: 1,
+                    paddingLeft: 20 + depth * 14,
                   }}
                 >
                   <div style={{
-                    width: 32, height: 32, borderRadius: 6, background: icon.bg,
+                    width: 26, height: 26, borderRadius: 5, background: icon.bg,
                     color: icon.color, display: 'flex', alignItems: 'center',
-                    justifyContent: 'center', fontSize: 14, flexShrink: 0, position: 'relative',
+                    justifyContent: 'center', fontSize: 11, flexShrink: 0, position: 'relative',
                   }}>
                     {icon.label}
                     {isRunning && (
                       <div style={{
-                        position: 'absolute', bottom: -2, right: -2, width: 10, height: 10,
-                        borderRadius: '50%', background: '#4caf50', border: '2px solid #16162e',
+                        position: 'absolute', bottom: -2, right: -2, width: 8, height: 8,
+                        borderRadius: '50%', background: '#4caf50', border: '1.5px solid #16162e',
                       }} />
                     )}
                   </div>
                   <div>
-                    <div style={{ fontSize: 13, color: '#d0d0e0' }}>{profile.name}</div>
-                    <div style={{ fontSize: 11, color: '#6a6a8a' }}>
+                    <div style={{ fontSize: 12, color: '#d0d0e0', lineHeight: 1.3 }}>{profile.name}</div>
+                    <div style={{ fontSize: 10, color: '#6a6a8a', lineHeight: 1.3 }}>
                       {profile.terminalType === 'ssh' ? profile.sshHost :
                        profile.terminalType === 'docker' ? profile.dockerContainerName :
-                       profile.terminalType === 'k8s' ? profile.k8sPodName : '本地'}
+                       profile.terminalType === 'k8s' ? profile.k8sPodName :
+                       profile.terminalType === 'mstsc' ? profile.mstscHost : '本地'}
                     </div>
                   </div>
                 </div>
@@ -174,11 +161,11 @@ const ProfileList: React.FC = () => {
   };
 
   return (
-    <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
+    <div style={{ flex: 1, overflow: 'auto', padding: '4px 6px' }}>
       {/* Running terminals that can be connected */}
       {activeTerminals.length > 0 && (
         <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 11, color: '#6a6a8a', padding: '8px 8px 4px', letterSpacing: 1 }}>
+          <div style={{ fontSize: 10, color: '#6a6a8a', padding: '6px 8px 2px', letterSpacing: 1 }}>
             运行中 ({activeTerminals.length})
           </div>
           {activeTerminals.map((t) => {
@@ -197,29 +184,29 @@ const ProfileList: React.FC = () => {
                   });
                 }}
                 style={{
-                  padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2,
+                  padding: '5px 8px', borderRadius: 6, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 8, marginBottom: 1,
                 }}
               >
                 <div style={{
-                  width: 32, height: 32, borderRadius: 6, background: icon.bg,
+                  width: 26, height: 26, borderRadius: 5, background: icon.bg,
                   color: icon.color, display: 'flex', alignItems: 'center',
-                  justifyContent: 'center', fontSize: 14, flexShrink: 0, position: 'relative',
+                  justifyContent: 'center', fontSize: 11, flexShrink: 0, position: 'relative',
                 }}>
                   {icon.label}
                   <div style={{
-                    position: 'absolute', bottom: -2, right: -2, width: 10, height: 10,
-                    borderRadius: '50%', background: '#4caf50', border: '2px solid #16162e',
+                    position: 'absolute', bottom: -2, right: -2, width: 8, height: 8,
+                    borderRadius: '50%', background: '#4caf50', border: '1.5px solid #16162e',
                   }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: '#d0d0e0', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ fontSize: 12, color: '#d0d0e0', display: 'flex', alignItems: 'center', gap: 4, lineHeight: 1.3 }}>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.profileName}</span>
                     <span className={`terminal-owner-badge ${t.owner}`}>
                       {t.owner === 'pc' ? 'PC' : 'Web'}
                     </span>
                   </div>
-                  <div style={{ fontSize: 11, color: '#4caf50' }}>运行中 - 点击连接</div>
+                  <div style={{ fontSize: 10, color: '#4caf50', lineHeight: 1.3 }}>运行中 - 点击连接</div>
                 </div>
               </div>
             );

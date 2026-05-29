@@ -174,3 +174,9 @@ body {
   border: none;
   color: white;
 }
+
+.confirm-dialog-buttons .btn-primary {
+  background: #0078d4;
+  border: none;
+  color: white;
+}

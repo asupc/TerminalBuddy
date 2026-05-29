@@ -75,6 +75,7 @@ function App() {
       if (!import.meta.env.DEV && settings.restoreTabsOnStartup && !restoredRef.current) {
         restoredRef.current = true;
         restoreTabs();
+        useAppStore.getState().restoreDraftTabs();
       }
     })();
   }, []);
@@ -331,6 +332,10 @@ function App() {
     }
   }, [addSession]);
 
+  const handleStartTextEditor = useCallback(() => {
+    useAppStore.getState().openDraftSession();
+  }, []);
+
   const handleAddProfile = useCallback((defaultGroup?: string) => {
     setDefaultGroupForNewProfile(defaultGroup);
     setEditingProfile(null);
@@ -369,6 +374,7 @@ function App() {
             profiles={profiles}
             onStartTerminal={handleStartTerminal}
             onStartBlankTerminal={handleStartBlankTerminal}
+            onStartTextEditor={handleStartTextEditor}
           />
         )}
         <TerminalPanel />

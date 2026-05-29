@@ -64,6 +64,12 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     },
   });
 
+  const requestFocus = useCallback(() => {
+    if (termRef.current) {
+      termRef.current.focus();
+    }
+  }, []);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -152,7 +158,7 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     if (isMobile) {
       const viewport = term.element?.querySelector('.xterm-viewport') as HTMLElement | null;
       if (viewport) {
-        viewport.style.touchAction = 'pan-y';
+        viewport.style.touchAction = 'auto';
       }
     }
 
@@ -183,13 +189,17 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     };
   }, [session.id]);
 
-  // Re-fit when visibility changes
+  // Re-fit when visibility changes and focus the terminal
   useEffect(() => {
     if (!hidden && termRef.current) {
       setTimeout(() => {
         fitAddonRef.current?.fit();
         const term = termRef.current;
-        if (term) sendResize(term.cols, term.rows);
+        if (term) {
+          sendResize(term.cols, term.rows);
+          // Re-focus terminal so it accepts keyboard input
+          term.focus();
+        }
       }, 50);
     }
   }, [hidden]);
@@ -205,12 +215,19 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     }
   }, [isMobile]);
 
+  const handleContainerClick = useCallback(() => {
+    if (isMobile) {
+      requestFocus();
+    }
+  }, [isMobile, requestFocus]);
+
   return (
     <div style={{
       height: '100%', display: 'flex', flexDirection: 'column',
     }}>
       <div
         ref={containerRef}
+        onClick={handleContainerClick}
         style={{
           flex: 1,
           minWidth: 0,

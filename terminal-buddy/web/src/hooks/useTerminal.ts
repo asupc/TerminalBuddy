@@ -15,6 +15,7 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
   // Queue the latest resize so it's sent as soon as WebSocket opens
+  const exitedRef = useRef(false);
   const pendingResizeRef = useRef<{ cols: number; rows: number } | null>(null);
 
   const flushPendingResize = useCallback(() => {
@@ -44,6 +45,7 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
             callbacksRef.current.onOutput(msg.data);
             break;
           case 'exited':
+            exitedRef.current = true;
             callbacksRef.current.onExited(msg.code);
             break;
           case 'error':
@@ -56,7 +58,7 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
     };
 
     ws.onclose = () => {
-      if (!disposedRef.current && retryCountRef.current < 5) {
+      if (!disposedRef.current && !exitedRef.current && retryCountRef.current < 5) {
         retryCountRef.current++;
         const delay = Math.min(Math.pow(2, retryCountRef.current) * 1000, 16000);
         reconnectTimerRef.current = setTimeout(connect, delay);
@@ -65,6 +67,7 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
 
     ws.onopen = () => {
       retryCountRef.current = 0;
+      exitedRef.current = false;
       // Send any resize that was queued before WebSocket was ready
       flushPendingResize();
       callbacksRef.current.onConnected?.();

@@ -49,34 +49,6 @@ pub async fn start(
 ) -> Result<Json<TerminalInfo>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
 
-    // 获取设置
-    let settings = SettingsService::get_settings();
-
-    // Reuse existing terminal for the same profile if already running
-    {
-        let instances = ts.instances.lock().unwrap();
-        for inst in instances.values() {
-            if inst.profile_id == req.profile_id {
-                // 不共享模式下，只能复用 Web 端创建的终端
-                if !settings.web_api_share_sessions && inst.owner != TerminalOwner::Web {
-                    continue;
-                }
-
-                let profile = ProfileService::get_profile(&req.profile_id)
-                    .map_err(|e| ApiError::Internal(e))?;
-                let info = TerminalInfo {
-                    id: inst.id.clone(),
-                    profile_id: req.profile_id,
-                    profile_name: profile.name,
-                    terminal_type: profile.terminal_type,
-                    owner: inst.owner.clone(),
-                };
-                let _ = state.app_handle.emit("terminal-created", info.clone());
-                return Ok(Json(info));
-            }
-        }
-    }
-
     let terminal_id = ts.create_terminal(&req.profile_id, None, req.rows.unwrap_or(0), req.cols.unwrap_or(0), state.app_handle.clone(), TerminalOwner::Web)
         .map_err(|e| ApiError::Internal(e))?;
     let profile = ProfileService::get_profile(&req.profile_id)

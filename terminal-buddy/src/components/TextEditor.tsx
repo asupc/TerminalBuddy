@@ -72,6 +72,32 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
     }
   }, [filePath]);
 
+  // Auto-save for draft files (files in ClientData/drafts/)
+  const isDraft = filePath.includes('\\drafts\\draft_') || filePath.includes('/drafts/draft_');
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentRef = useRef(content);
+  contentRef.current = content;
+
+  useEffect(() => {
+    if (!isDraft) return;
+    const autoSave = () => {
+      const current = contentRef.current;
+      if (current !== null && current !== lastLoadedContentRef.current) {
+        writeFileContent(filePath, current).then(() => {
+          lastLoadedContentRef.current = current;
+          getFileMeta(filePath).then(meta => { diskModTimeRef.current = meta.lastModified; }).catch(() => {});
+        }).catch(console.error);
+      }
+    };
+    autoSaveTimerRef.current = setInterval(autoSave, 3000);
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearInterval(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [isDraft, filePath]);
+
   // Initial load
   useEffect(() => {
     let cancelled = false;

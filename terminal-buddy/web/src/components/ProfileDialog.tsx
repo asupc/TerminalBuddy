@@ -16,6 +16,9 @@ const ProfileDialog: React.FC<Props> = ({ profile, onClose, onSaved }) => {
   const [sshPort, setSshPort] = useState(profile?.sshPort?.toString() || '22');
   const [sshUser, setSshUser] = useState(profile?.sshUser || '');
   const [dockerName, setDockerName] = useState(profile?.dockerContainerName || '');
+  const [mstscHost, setMstscHost] = useState(profile?.mstscHost || '');
+  const [mstscPort, setMstscPort] = useState(profile?.mstscPort?.toString() || '3389');
+  const [mstscUser, setMstscUser] = useState(profile?.mstscUser || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -32,6 +35,10 @@ const ProfileDialog: React.FC<Props> = ({ profile, onClose, onSaved }) => {
       setError('请输入 Docker 容器名称');
       return;
     }
+    if (terminalType === 'mstsc' && !mstscHost.trim()) {
+      setError('请输入远程桌面主机地址');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -45,6 +52,9 @@ const ProfileDialog: React.FC<Props> = ({ profile, onClose, onSaved }) => {
         sshPort: terminalType === 'ssh' ? parseInt(sshPort) || 22 : undefined,
         sshUser: terminalType === 'ssh' ? sshUser : undefined,
         dockerContainerName: terminalType === 'docker' ? dockerName : undefined,
+        mstscHost: terminalType === 'mstsc' ? mstscHost : undefined,
+        mstscPort: terminalType === 'mstsc' ? parseInt(mstscPort) || 3389 : undefined,
+        mstscUser: terminalType === 'mstsc' ? mstscUser : undefined,
         createdAt: profile?.createdAt || new Date().toISOString(),
         lastUsedAt: profile?.lastUsedAt || null,
       };
@@ -89,6 +99,7 @@ const ProfileDialog: React.FC<Props> = ({ profile, onClose, onSaved }) => {
           <option value="ssh">SSH</option>
           <option value="docker">Docker</option>
           <option value="k8s">Kubernetes</option>
+          <option value="mstsc">远程桌面 (RDP)</option>
         </select>
 
         {terminalType === 'ssh' && (
@@ -106,6 +117,17 @@ const ProfileDialog: React.FC<Props> = ({ profile, onClose, onSaved }) => {
           <>
             <label style={{ display: 'block', fontSize: 13, color: '#8a8aaa', marginBottom: 4, marginTop: 12 }}>容器名称</label>
             <input value={dockerName} onChange={(e) => setDockerName(e.target.value)} placeholder="例如：mysql-container" />
+          </>
+        )}
+
+        {terminalType === 'mstsc' && (
+          <>
+            <label style={{ display: 'block', fontSize: 13, color: '#8a8aaa', marginBottom: 4, marginTop: 12 }}>主机地址</label>
+            <input value={mstscHost} onChange={(e) => setMstscHost(e.target.value)} placeholder="例如：192.168.1.100" />
+            <label style={{ display: 'block', fontSize: 13, color: '#8a8aaa', marginBottom: 4, marginTop: 12 }}>端口</label>
+            <input value={mstscPort} onChange={(e) => setMstscPort(e.target.value)} />
+            <label style={{ display: 'block', fontSize: 13, color: '#8a8aaa', marginBottom: 4, marginTop: 12 }}>用户名</label>
+            <input value={mstscUser} onChange={(e) => setMstscUser(e.target.value)} placeholder="例如：Administrator" />
           </>
         )}
 
