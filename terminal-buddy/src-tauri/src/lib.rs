@@ -59,6 +59,11 @@ pub fn run() {
                             }
                         }
                         "quit" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.unminimize();
+                                window.show().ok();
+                                window.set_focus().ok();
+                            }
                             let _ = app.emit("tray-exit-requested", ());
                         }
                         _ => {}
