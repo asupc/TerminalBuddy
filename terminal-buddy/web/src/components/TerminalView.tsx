@@ -108,6 +108,26 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     term.unicode.activeVersion = '11';
     term.open(containerRef.current);
     fitAddon.fit();
+    // Send initial dimensions to PTY backend
+    sendResize(term.cols, term.rows);
+
+    // ResizeObserver: respond immediately to container size changes.
+    // TUI programs need the PTY resize signal ASAP to re-render correctly.
+    let lastSentCols = term.cols;
+    let lastSentRows = term.rows;
+    const doFit = () => {
+      if (!termRef.current || !fitAddonRef.current) return;
+      fitAddonRef.current.fit();
+      if (termRef.current.cols !== lastSentCols || termRef.current.rows !== lastSentRows) {
+        lastSentCols = termRef.current.cols;
+        lastSentRows = termRef.current.rows;
+        sendResize(lastSentCols, lastSentRows);
+      }
+    };
+    const observer = new ResizeObserver(() => {
+      doFit();
+    });
+    observer.observe(containerRef.current);
 
     // Intercept Shift+Enter / Ctrl+Enter to insert newline instead of submit
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
@@ -131,52 +151,6 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
       outputBufferRef.current.length = 0;
     }
 
-    // Throttled fit to prevent ConPTY re-emission duplication.
-    // fitAddon.fit() + sendResize at 60fps overwhelms ConPTY, causing it to
-    // re-emit the visible buffer which overlaps with xterm rendering.
-    let lastFitTime = 0;
-    let trailingTimer: ReturnType<typeof setTimeout> | null = null;
-    const FIT_THROTTLE_MS = 150;
-
-    const doFit = () => {
-      const now = Date.now();
-      if (now - lastFitTime >= FIT_THROTTLE_MS) {
-        lastFitTime = now;
-        fitAddon.fit();
-        sendResize(term.cols, term.rows);
-      }
-    };
-
-    // ResizeObserver for container size changes (RAF coalescing + throttle)
-    let trailingRaf: number | null = null;
-    const resizeObserver = new ResizeObserver(() => {
-      if (trailingRaf !== null) return;
-      trailingRaf = requestAnimationFrame(() => {
-        trailingRaf = null;
-        doFit();
-      });
-      // Trailing timer: fire ~150ms after the last event to catch final dimensions
-      if (trailingTimer) clearTimeout(trailingTimer);
-      trailingTimer = setTimeout(() => {
-        trailingTimer = null;
-        lastFitTime = 0; // bypass throttle for trailing fit
-        doFit();
-      }, FIT_THROTTLE_MS);
-    });
-    resizeObserver.observe(containerRef.current);
-
-    // Window resize fallback
-    const handleResize = () => doFit();
-    window.addEventListener('resize', handleResize);
-
-    // visualViewport for mobile virtual keyboard
-    let vvHandler: (() => void) | null = null;
-    if (window.visualViewport) {
-      vvHandler = () => doFit();
-      window.visualViewport.addEventListener('resize', vvHandler);
-      window.visualViewport.addEventListener('scroll', vvHandler);
-    }
-
     // Mobile: enable touch scrolling on xterm viewport
     if (isMobile) {
       const viewport = term.element?.querySelector('.xterm-viewport') as HTMLElement | null;
@@ -186,50 +160,17 @@ const TerminalView: React.FC<Props> = ({ session, hidden }) => {
     }
 
     return () => {
-      if (trailingTimer) clearTimeout(trailingTimer);
+      observer.disconnect();
       if (pendingRafRef.current) {
         cancelAnimationFrame(pendingRafRef.current);
         pendingRafRef.current = null;
       }
-      if (trailingRaf !== null) cancelAnimationFrame(trailingRaf);
       pendingChunksRef.current.length = 0;
       outputBufferRef.current.length = 0;
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', handleResize);
-      if (vvHandler && window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', vvHandler);
-        window.visualViewport.removeEventListener('scroll', vvHandler);
-      }
       term.dispose();
       termRef.current = null;
     };
   }, [session.id]);
-
-  // Re-fit when visibility changes and focus the terminal
-  useEffect(() => {
-    if (!hidden && termRef.current) {
-      setTimeout(() => {
-        fitAddonRef.current?.fit();
-        const term = termRef.current;
-        if (term) {
-          sendResize(term.cols, term.rows);
-          // Re-focus terminal so it accepts keyboard input
-          term.focus();
-        }
-      }, 50);
-    }
-  }, [hidden]);
-
-  // Re-fit when isMobile changes (FAB visibility changes terminal height)
-  useEffect(() => {
-    if (termRef.current) {
-      requestAnimationFrame(() => {
-        fitAddonRef.current?.fit();
-        const term = termRef.current;
-        if (term) sendResize(term.cols, term.rows);
-      });
-    }
-  }, [isMobile]);
 
   const handleContainerClick = useCallback(() => {
     if (isMobile) {

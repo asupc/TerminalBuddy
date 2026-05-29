@@ -11,7 +11,7 @@ export function useTerminal(terminalId: string | null, callbacks: TerminalCallba
   const wsRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef(0);
   const disposedRef = useRef(false);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
   // Queue the latest resize so it's sent as soon as WebSocket opens

@@ -21,7 +21,7 @@ export const TitleBar: FC<TitleBarProps> = ({
   onToggleFileTree,
 }) => {
   const [aiUsageHover, setAiUsageHover] = useState(false);
-  const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     return () => {

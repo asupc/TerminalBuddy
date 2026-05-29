@@ -51,7 +51,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [cmdSuggestions, setCmdSuggestions] = useState<{ name: string; command: string }[]>([]);
   const [cmdSelectedIndex, setCmdSelectedIndex] = useState(-1);
   const cmdSuggestionsRef = useRef<HTMLDivElement>(null);
-  const blurTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const dragStateRef = useRef<{ startIndex: number; startY: number } | null>(null);
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>(
     profile?.environmentVariables

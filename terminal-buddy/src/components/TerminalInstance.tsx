@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../services/tauri';
+import { openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber, resizeTerminal } from '../services/tauri';
 import { ServerMonitor } from './ServerMonitor';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -33,7 +33,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const doResizeRef = useRef<(() => void) | null>(null);
   const onOutputRef = useRef(onOutput);
   onOutputRef.current = onOutput;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false });
@@ -59,6 +58,23 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     setAutocomplete(val);
   }, []);
 
+  // Resize-related refs (learned from VS Code's terminal implementation)
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
+  const lastPtyDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
+  const [termBg, setTermBg] = useState(colorTheme?.background || '#1e1e1e');
+  const inAltBufferRef = useRef(false);
+
+  // Output tracking refs (learned from VS Code's terminalInstance.ts)
+  // These track write/parse state to ensure cursor position stays in sync
+  const latestWriteDataRef = useRef(0);
+  const latestParseDataRef = useRef(0);
+
+  // Sync background color when colorTheme prop changes
+  useEffect(() => {
+    setTermBg(colorTheme?.background || '#1e1e1e');
+  }, [colorTheme?.background]);
+
   useEffect(() => {
     if (!terminalRef.current) return;
     let disposed = false;
@@ -70,123 +86,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
-
-    // IME position lock — Chinese/Japanese/Korean input method candidate
-    // windows follow the .xterm-helper-textarea position.  During TUI
-    // output (spinners, status lines), xterm.js repositions this element
-    // to match the canvas cursor on every write(), causing the candidate
-    // window to jump or even drift to another monitor.
-    //
-    // Solution: MutationObserver watches for style changes on the textarea
-    // during and briefly after composition.  When xterm.js tries to
-    // reposition it (via _syncTextArea after write()), the observer
-    // immediately restores the locked position.  CSS !important rules
-    // provide a secondary defense.
-    let isComposing = false;
-    let isProtectingPosition = false; // true during + briefly after composition
-    let savedLeft = '';
-    let savedTop = '';
-    let hasUserPosition = false;
-    let textareaEl: HTMLTextAreaElement | null = null;
-    let compViewEl: HTMLElement | null = null;
-    let textareaObserver: MutationObserver | null = null;
-    let postCompositionTimer: ReturnType<typeof setTimeout> | null = null;
-
-    // IME deduplication — on Windows, xterm.js may fire onData twice for a
-    // single IME commit (once from compositionend, once from the subsequent
-    // input/textInput event).  The compositionend listener uses capture phase
-    // to set imeCommittedText BEFORE xterm.js fires onData, enabling the
-    // dedup check to work.  A secondary CJK short-window dedup provides
-    // additional safety for edge cases.
-    let imeCommittedText = '';
-    let imeCommitTime = 0;
-    let imeDataSent = false;
-    let lastSentCjkData = '';
-    let lastSentCjkTime = 0;
-
-    // Validate that a textarea position is within the terminal's visible
-    // screen area.  Prevents saving (and locking to) coordinates that would
-    // place the IME candidate window off-screen or on another monitor.
-    const isPositionInBounds = (left: string, top: string): boolean => {
-      if (!xtermRef.current) return false;
-      const screenEl = xtermRef.current.element?.querySelector('.xterm-screen') as HTMLElement | null;
-      if (!screenEl) return true; // can't check, assume ok
-      const rect = screenEl.getBoundingClientRect();
-      const x = parseFloat(left);
-      const y = parseFloat(top);
-      if (isNaN(x) || isNaN(y)) return false;
-      return x >= 0 && y >= 0 && x < rect.width && y < rect.height;
-    };
-
-    // Save textarea position with bounds validation
-    const saveTextPosition = (left: string, top: string) => {
-      if (left && top && isPositionInBounds(left, top)) {
-        savedLeft = left;
-        savedTop = top;
-        hasUserPosition = true;
-      }
-    };
-
-    // Apply position lock: CSS !important + MutationObserver for bulletproof locking.
-    // The observer intercepts xterm.js's _syncTextArea style updates during composition.
-    const applyImeLock = () => {
-      if (!textareaEl || !savedLeft || !savedTop) return;
-
-      // Set locked position via inline style (primary) and CSS class (backup)
-      textareaEl.style.left = savedLeft;
-      textareaEl.style.top = savedTop;
-      textareaEl.style.setProperty('--ime-lock-left', savedLeft);
-      textareaEl.style.setProperty('--ime-lock-top', savedTop);
-      textareaEl.classList.add('ime-locked');
-      if (compViewEl) {
-        compViewEl.style.left = savedLeft;
-        compViewEl.style.top = savedTop;
-        compViewEl.style.setProperty('--ime-lock-left', savedLeft);
-        compViewEl.style.setProperty('--ime-lock-top', savedTop);
-        compViewEl.classList.add('ime-locked');
-      }
-
-      // Start MutationObserver to intercept xterm.js style changes
-      if (!textareaObserver && textareaEl) {
-        textareaObserver = new MutationObserver(() => {
-          if (!isProtectingPosition || !textareaEl) return;
-          // Force position back to saved values
-          if (textareaEl.style.left !== savedLeft) textareaEl.style.left = savedLeft;
-          if (textareaEl.style.top !== savedTop) textareaEl.style.top = savedTop;
-          if (compViewEl) {
-            if (compViewEl.style.left !== savedLeft) compViewEl.style.left = savedLeft;
-            if (compViewEl.style.top !== savedTop) compViewEl.style.top = savedTop;
-          }
-        });
-        textareaObserver.observe(textareaEl, {
-          attributes: true,
-          attributeFilter: ['style'],
-        });
-      }
-    };
-
-    // Remove position lock and disconnect observer
-    const removeImeLock = () => {
-      isProtectingPosition = false;
-      if (postCompositionTimer) {
-        clearTimeout(postCompositionTimer);
-        postCompositionTimer = null;
-      }
-      if (textareaObserver) {
-        textareaObserver.disconnect();
-        textareaObserver = null;
-      }
-      if (textareaEl) {
-        textareaEl.classList.remove('ime-locked');
-        textareaEl.style.removeProperty('--ime-lock-left');
-        textareaEl.style.removeProperty('--ime-lock-top');
-      }
-      if (compViewEl) {
-        compViewEl.classList.remove('ime-locked');
-        compViewEl.style.removeProperty('--ime-lock-left');
-        compViewEl.style.removeProperty('--ime-lock-top');
-      }
-    };
 
     const checkBufferForPrompt = () => {
       if (disposed || !xtermRef.current) return false;
@@ -214,16 +113,17 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             if (disposed) return;
             const combined = pendingChunks.join('');
             pendingChunks.length = 0;
-            xtermRef.current?.write(combined);
+            // Use write callback to track parse state (learned from VS Code's _writeProcessData)
+            // This ensures cursor position stays in sync when TUI programs update the screen
+            const messageId = ++latestWriteDataRef.current;
+            xtermRef.current?.write(combined, () => {
+              latestParseDataRef.current = messageId;
+            });
           });
         }
       } else {
         outputBuffer.push(output);
       }
-
-      // During composition, the CSS .ime-locked class prevents xterm.js
-      // from moving the textarea.  No action needed here — the proactive
-      // CSS approach is sufficient.
 
       // Working state: reset debounce on each output, check xterm buffer for prompt
       if (workingDebounce) clearTimeout(workingDebounce);
@@ -289,16 +189,73 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       terminal.open(terminalRef.current!);
 
       fitAddon.fit();
-      // Immediately sync PTY size — the PTY was created with 80x24,
-      // but the container may be much larger.  Without this, TUI programs
-      // (Claude Code, vim, etc.) that start before ResizeObserver fires
-      // will detect the wrong terminal width.
-      const { rows: initRows, cols: initCols } = terminal;
-      if (initCols > 0 && initRows > 0) {
-        resizeTerminal(terminalId, initRows, initCols).catch(() => {});
-      }
 
       xtermRef.current = terminal;
+
+      // --- IME candidate window stabilization ---
+      // Problem: xterm.js's CompositionHelper.updateCompositionElements() moves
+      // the textarea to follow the cursor during composition.  When a TUI program
+      // (claude, vim) updates the screen rapidly, the cursor moves on every
+      // write(), causing the IME candidate window to jump.
+      //
+      // Solution: Monkey-patch the CompositionHelper to skip position updates
+      // during composition.  The textarea stays at the position where the user
+      // started typing, keeping the candidate window stable.
+      try {
+        const core = (terminal as any)._core;
+        const compositionHelper = core?._compositionHelper;
+        if (compositionHelper) {
+          const originalUpdate = compositionHelper.updateCompositionElements?.bind(compositionHelper);
+          if (originalUpdate) {
+            let isImeComposing = false;
+            let lockedLeft = '';
+            let lockedTop = '';
+
+            // Track composition state via events on the textarea
+            const ta = compositionHelper._textarea as HTMLTextAreaElement | undefined;
+            if (ta) {
+              ta.addEventListener('compositionstart', () => {
+                isImeComposing = true;
+                // Capture position where composition started
+                lockedLeft = ta.style.left || '0px';
+                lockedTop = ta.style.top || '0px';
+              });
+              ta.addEventListener('compositionend', () => {
+                // Delay clearing to prevent post-composition jumps from TUI output
+                setTimeout(() => {
+                  isImeComposing = false;
+                  lockedLeft = '';
+                  lockedTop = '';
+                }, 200);
+              });
+            }
+
+            compositionHelper.updateCompositionElements = function(dontRecurse?: boolean) {
+              if (isImeComposing) {
+                // Skip position update during composition to keep candidate window stable.
+                // Just update the composition view text content if needed.
+                const cv = compositionHelper._compositionView as HTMLElement | undefined;
+                if (cv && compositionHelper._compositionSuffix) {
+                  cv.textContent = compositionHelper._compositionSuffix;
+                }
+                // Restore locked position on both textarea and composition view
+                if (ta && lockedLeft && lockedTop) {
+                  ta.style.left = lockedLeft;
+                  ta.style.top = lockedTop;
+                }
+                if (cv && lockedLeft && lockedTop) {
+                  cv.style.left = lockedLeft;
+                  cv.style.top = lockedTop;
+                }
+                return;
+              }
+              originalUpdate(dontRecurse);
+            };
+          }
+        }
+      } catch {
+        // xterm.js internal API may change between versions
+      }
       // Flush buffered output that arrived before xterm was ready
       if (outputBuffer.length > 0) {
         terminal.write(outputBuffer.join(''));
@@ -306,100 +263,128 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       }
       fitAddonRef.current = fitAddon;
 
+      // --- Resize handling (learned from VS Code's terminalResizeDebouncer) ---
+      const doFit = () => {
+        if (disposed || !xtermRef.current || !fitAddonRef.current) return;
+
+        // Check if terminal is still parsing data (learned from VS Code's _flushXtermData)
+        // If data is being parsed, delay resize to avoid cursor position issues
+        // This prevents the cursor from jumping when TUI programs update the screen
+        if (latestWriteDataRef.current !== latestParseDataRef.current) {
+          // Data is being parsed, schedule a retry after a short delay
+          setTimeout(() => {
+            if (!disposed) doFit();
+          }, 16); // ~1 frame at 60fps
+          return;
+        }
+
+        const prevCols = terminal.cols;
+        const prevRows = terminal.rows;
+        fitAddonRef.current.fit();
+        // Sync new dimensions with PTY backend, avoiding redundant calls
+        if (terminal.cols !== prevCols || terminal.rows !== prevRows) {
+          if (!lastPtyDimensionsRef.current ||
+              lastPtyDimensionsRef.current.cols !== terminal.cols ||
+              lastPtyDimensionsRef.current.rows !== terminal.rows) {
+            lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
+            resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
+          }
+        }
+        lastDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
+      };
+
+      // Force an immediate resize (bypasses debounce) for tab switches and other
+      // visibility changes where we need the correct dimensions right away.
+      const forceFit = () => {
+        if (disposed) return;
+        if (resizeTimerRef.current) {
+          clearTimeout(resizeTimerRef.current);
+          resizeTimerRef.current = null;
+        }
+        doFit();
+      };
+
+      // ResizeObserver: respond to container size changes with debouncing.
+      // Learned from VS Code's TerminalResizeDebouncer:
+      // - Vertical resize is cheap, apply immediately
+      // - Horizontal resize is expensive (reflow), debounce it
+      // - When buffer is small (< 200 lines), apply immediately to avoid visual glitches
+      const DEBOUNCE_THRESHOLD = 200; // Buffer length threshold for debouncing
+      const HORIZONTAL_DEBOUNCE_MS = 100;
+
+      let pendingResizeTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const applyResize = (immediate: boolean) => {
+        if (disposed || !xtermRef.current) return;
+
+        const bufferLength = xtermRef.current.buffer.normal.length;
+        const isSmallBuffer = bufferLength < DEBOUNCE_THRESHOLD;
+
+        // Apply immediately if requested or buffer is small
+        if (immediate || isSmallBuffer) {
+          if (pendingResizeTimer) {
+            clearTimeout(pendingResizeTimer);
+            pendingResizeTimer = null;
+          }
+          forceFit();
+          return;
+        }
+
+        // For large buffers, debounce resize to avoid expensive reflow
+        // blocking the UI during TUI program updates
+        if (pendingResizeTimer) {
+          clearTimeout(pendingResizeTimer);
+        }
+        pendingResizeTimer = setTimeout(() => {
+          pendingResizeTimer = null;
+          if (!disposed) {
+            forceFit();
+          }
+        }, HORIZONTAL_DEBOUNCE_MS);
+      };
+
+      const resizeObserver = new ResizeObserver(() => {
+        if (disposed || !xtermRef.current) return;
+        applyResize(false);
+      });
+      const activateTimer = setTimeout(() => {
+        if (!disposed) resizeObserver.observe(terminalRef.current!);
+      }, 500);
+      cleanupFns.push(() => {
+        clearTimeout(activateTimer);
+        resizeObserver.disconnect();
+        if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+        if (pendingResizeTimer) clearTimeout(pendingResizeTimer);
+      });
+
+      // Expose forceFit for the isActive effect below
+      (terminal as any)._tbForceFit = forceFit;
+
+      // --- TUI buffer tracking (learned from VS Code's terminalInstance.ts) ---
+      // Track alternate buffer to detect TUI programs (vim, claude, htop, etc.)
+      const checkAltBuffer = () => {
+        const inAlt = terminal.buffer.active === terminal.buffer.alternate;
+        if (inAltBufferRef.current && !inAlt) {
+          // TUI program just exited: force viewport refresh to clear stale content.
+          // This mirrors VS Code's forceRefresh() which calls viewport._innerRefresh().
+          try {
+            const core = (terminal as any)._core;
+            core?.viewport?._innerRefresh?.();
+          } catch { /* xterm internal API may change */ }
+          // Schedule a deferred fit to handle any dimension mismatch
+          setTimeout(() => {
+            if (!disposed) forceFit();
+          }, 100);
+        }
+        inAltBufferRef.current = inAlt;
+      };
+      terminal.buffer.onBufferChange(checkAltBuffer);
+      checkAltBuffer();
+
+
       // Auto-focus after initialization
       terminal.focus();
 
-      // Capture textarea elements for IME position lock
-      textareaEl = terminal.element!.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
-      compViewEl = terminal.element!.querySelector('.xterm-composition-view') as HTMLElement | null;
-      if (textareaEl) {
-        textareaEl.addEventListener('compositionstart', () => {
-          isComposing = true;
-          isProtectingPosition = true;
-          // Reset IME dedup state for the new composition
-          imeCommittedText = '';
-          imeDataSent = false;
-          if (postCompositionTimer) {
-            clearTimeout(postCompositionTimer);
-            postCompositionTimer = null;
-          }
-          // Save textarea position at composition start.  If we have a
-          // position from prior user input (click / keystroke), use that
-          // — the textarea may currently be at a TUI cursor position.
-          // Otherwise, read from the DOM (xterm.js positions the textarea
-          // on compositionstart via _syncTextArea, matching VS Code's
-          // approach).
-          //
-          // Validate saved position: TUI output between keystrokes can
-          // have moved the textarea, so re-check whether the saved
-          // coordinates still fall within the visible screen area.
-          if (hasUserPosition && textareaEl) {
-            const curLeft = textareaEl.style.left;
-            const curTop = textareaEl.style.top;
-            // If xterm.js already moved the textarea to a new position
-            // (TUI output arrived), the saved coords may be stale.
-            // Accept the DOM position when it differs from our saved one.
-            if (curLeft !== savedLeft || curTop !== savedTop) {
-              // TUI output moved the textarea — use current DOM position
-              // as the best available location for the candidate window.
-              if (isPositionInBounds(curLeft, curTop)) {
-                saveTextPosition(curLeft, curTop);
-              }
-            }
-            applyImeLock();
-          } else {
-            // No prior position — save current and lock
-            saveTextPosition(textareaEl!.style.left, textareaEl!.style.top);
-            applyImeLock();
-            // After one frame, xterm.js may have repositioned — update
-            // the lock if composition is still active.
-            requestAnimationFrame(() => {
-              if (!isComposing || disposed) return;
-              saveTextPosition(textareaEl!.style.left, textareaEl!.style.top);
-              applyImeLock();
-            });
-          }
-        });
-
-        // Use capture phase so this handler runs BEFORE xterm.js's internal
-        // compositionend handler.  This ensures imeCommittedText is set before
-        // xterm.js fires onData, making the dedup check effective.
-        textareaEl.addEventListener('compositionend', ((e: CompositionEvent) => {
-          isComposing = false;
-          // Track IME committed text for deduplication
-          imeCommittedText = e.data || '';
-          imeCommitTime = Date.now();
-          imeDataSent = false;
-          // Keep protecting the textarea position for a short grace
-          // period after composition ends.  TUI output (spinners,
-          // progress bars) can arrive immediately and xterm.js will
-          // reposition the textarea via _syncTextArea.  If we disconnect
-          // the observer instantly, the textarea jumps and the saved
-          // position (captured 50ms later) may be stale.
-          if (postCompositionTimer) clearTimeout(postCompositionTimer);
-          postCompositionTimer = setTimeout(() => {
-            postCompositionTimer = null;
-            isProtectingPosition = false;
-            // Now save the final position — the observer is off so
-            // xterm.js can place the textarea at the real cursor.
-            if (!disposed && textareaEl) {
-              saveTextPosition(textareaEl.style.left, textareaEl.style.top);
-            }
-          }, 100);
-        }) as EventListener, true);
-      }
-
-      // Prevent horizontal content shift during IME composition.
-      // When the cursor is near the right edge, the browser's
-      // scroll-into-view behavior for the composition textarea can set
-      // scrollLeft on the viewport / terminal element, causing the
-      // entire terminal content to drift left.
-      const preventHScroll = () => {
-        const vp = terminal.element?.querySelector('.xterm-viewport') as HTMLElement;
-        if (vp && vp.scrollLeft !== 0) vp.scrollLeft = 0;
-        const xt = terminal.element as HTMLElement;
-        if (xt && xt.scrollLeft !== 0) xt.scrollLeft = 0;
-      };
       const xtermViewport = terminal.element!.querySelector('.xterm-viewport') as HTMLElement;
       if (xtermViewport) {
         scrollViewportRef.current = xtermViewport;
@@ -426,21 +411,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           xtermViewport.removeEventListener('scroll', syncScrollbar);
           ro.disconnect();
         });
-        xtermViewport.addEventListener('scroll', preventHScroll, { passive: true });
-        cleanupFns.push(() => xtermViewport.removeEventListener('scroll', preventHScroll));
-      }
-      (terminal.element as HTMLElement).addEventListener('scroll', preventHScroll, { passive: true });
-      cleanupFns.push(() => (terminal.element as HTMLElement).removeEventListener('scroll', preventHScroll));
-
-      // Also reset scrollLeft after IME composition ends — the browser
-      // may set it during composition without firing a scroll event
-      if (textareaEl) {
-        const compositionEndHandler = () => {
-          requestAnimationFrame(preventHScroll);
-        };
-        const capturedTextarea = textareaEl;
-        capturedTextarea.addEventListener('compositionend', compositionEndHandler);
-        cleanupFns.push(() => capturedTextarea.removeEventListener('compositionend', compositionEndHandler));
       }
 
       // Chunk large paste data to prevent SSH/PTY buffer overflow
@@ -466,47 +436,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       terminal.onData((data) => {
-        // IME deduplication: after composition ends, xterm.js may fire
-        // onData twice with the same committed text.  The first occurrence
-        // is sent normally; subsequent duplicates within 500ms are skipped.
-        if (imeCommittedText && data === imeCommittedText && Date.now() - imeCommitTime < 500) {
-          if (imeDataSent) {
-            imeCommittedText = '';
-            return;
-          }
-          imeDataSent = true;
-        }
-        // Secondary dedup: catch IME duplicates that slip through the
-        // primary check (e.g., async onData dispatch in certain WebView2
-        // versions).  Identical CJK text within 200ms is skipped.
-        if (data.length > 1 && data === lastSentCjkData && Date.now() - lastSentCjkTime < 200) {
-          return;
-        }
-        // Track CJK data for secondary dedup
-        if (data.length > 1 && /[一-鿿぀-ゟ゠-ヿ가-힯]/.test(data)) {
-          lastSentCjkData = data;
-          lastSentCjkTime = Date.now();
-        }
-
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
           useAppStore.getState().setSessionWorking(terminalId, true);
           updateAutocomplete(null);
-          // Prompt will move to a new line after Enter
-          hasUserPosition = false;
         }
 
-        // Save textarea position from user input.  After a short delay
-        // the PTY echo will have moved the cursor and xterm.js will have
-        // repositioned the textarea at the correct input-line location.
-        // This position is used when the next composition starts to lock
-        // the textarea via CSS .ime-locked, preventing IME jumps.
-        if (textareaEl && !isComposing && data.length <= 2) {
-          setTimeout(() => {
-            if (disposed || !textareaEl || isComposing) return;
-            saveTextPosition(textareaEl.style.left, textareaEl.style.top);
-          }, 50);
-        }
         const isBracketedPaste = data.startsWith('\x1b[200~');
         if (isBracketedPaste) {
           const inner = data.slice(6, -5);
@@ -725,20 +660,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Right-click context menu
       const xtermEl = terminal.element!;
 
-      // Update saved textarea position on click — the user clicked at a
-      // specific cursor location, so the textarea will be repositioned
-      // there by xterm.js after the click is processed.
-      const handleClickForPosition = () => {
-        if (textareaEl && !isComposing) {
-          setTimeout(() => {
-            if (disposed || !textareaEl) return;
-            saveTextPosition(textareaEl.style.left, textareaEl.style.top);
-          }, 50);
-        }
-      };
-      xtermEl.addEventListener('click', handleClickForPosition);
-      cleanupFns.push(() => xtermEl.removeEventListener('click', handleClickForPosition));
-
       const handleContextMenu = (e: MouseEvent) => {
         e.preventDefault();
         // In readOnly mode, block paste but still allow copy from context menu
@@ -778,63 +699,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         document.removeEventListener('keyup', handleKeyUpGlobal);
       });
 
-      // Throttled resize to prevent ConPTY re-emission duplication.
-      // fitAddon.fit() triggers core._renderService.clear() + terminal.resize(),
-      // which causes ConPTY to re-emit the visible buffer. At 60fps (RAF-only),
-      // ConPTY can't keep up and re-emissions overlap with xterm rendering,
-      // producing duplicate text. Throttle to ~7 resizes/s (150ms) for ConPTY
-      // stability, keep RAF for ResizeObserver callback coalescing, and add a
-      // trailing timer so the final fit lands ~150ms after the last event.
-      let lastCols = initCols;
-      let lastRows = initRows;
-      let trailingRaf: number | null = null;
-      let trailingTimer: ReturnType<typeof setTimeout> | null = null;
-      let lastFitTime = 0;
-      const FIT_THROTTLE_MS = 150;
-
-      const doResize = () => {
-        if (disposed) return;
-        const now = Date.now();
-        if (now - lastFitTime >= FIT_THROTTLE_MS) {
-          lastFitTime = now;
-          try {
-            fitAddon.fit();
-          } catch {
-            return;
-          }
-          const { rows, cols } = terminal;
-          if (cols <= 0 || rows <= 0) return;
-          if (cols === lastCols && rows === lastRows) return;
-          lastCols = cols;
-          lastRows = rows;
-          resizeTerminal(terminalId, rows, cols).catch(() => {});
-        }
-      };
-
-      const resizeObserver = new ResizeObserver(() => {
-        if (disposed) return;
-        if (trailingRaf !== null) return;
-        trailingRaf = requestAnimationFrame(() => {
-          trailingRaf = null;
-          doResize();
-        });
-        // Trailing timer: fire ~150ms after the last ResizeObserver callback
-        // to catch the final settled dimensions (e.g. after CSS transitions).
-        if (trailingTimer) clearTimeout(trailingTimer);
-        trailingTimer = setTimeout(() => {
-          trailingTimer = null;
-          lastFitTime = 0; // bypass throttle for trailing fit
-          doResize();
-        }, FIT_THROTTLE_MS);
-      });
-      resizeObserver.observe(terminalRef.current!);
-      cleanupFns.push(() => {
-        resizeObserver.disconnect();
-        if (trailingRaf !== null) cancelAnimationFrame(trailingRaf);
-        if (trailingTimer) clearTimeout(trailingTimer);
-      });
-
-      doResizeRef.current = doResize;
     };
 
     // Register Tauri event listener, then drain buffered backend output
@@ -874,28 +738,41 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         cancelAnimationFrame(pendingRaf);
         pendingRaf = null;
       }
-      if (postCompositionTimer) {
-        clearTimeout(postCompositionTimer);
-        postCompositionTimer = null;
-      }
-      removeImeLock();
+      // Reset output tracking refs
+      latestWriteDataRef.current = 0;
+      latestParseDataRef.current = 0;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
-      doResizeRef.current = null;
     };
   }, [terminalId]);
 
-  // Focus and re-fit terminal when tab becomes active
+  // When tab becomes visible (isActive changes to true), force a fit to ensure
+  // correct dimensions. This mirrors VS Code's setVisible() which flushes pending
+  // resizes and re-evaluates dimensions on visibility change.
   useEffect(() => {
-    if (isActive && xtermRef.current) {
-      xtermRef.current.focus();
-      requestAnimationFrame(() => {
-        doResizeRef.current?.();
+    if (!isActive) return;
+    // Use double rAF to ensure the CSS visibility transition has completed
+    // and layout is stable before measuring
+    let raf1: number;
+    let raf2: number;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const term = xtermRef.current;
+        if (!term) return;
+        const forceFit = (term as any)._tbForceFit;
+        if (typeof forceFit === 'function') {
+          forceFit();
+        }
+        term.focus();
       });
-    }
-  }, [isActive, terminalId]);
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [isActive]);
 
   const handleSearch = useCallback((direction: 'next' | 'prev' = 'next') => {
     const searchAddon = searchAddonRef.current;
@@ -1036,6 +913,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     <div
       ref={terminalRef}
       className={`terminal-instance${dragOver || internalDragOver ? ' drag-over' : ''}`}
+      style={{ backgroundColor: termBg }}
     >
       {searchVisible && (
         <div className="terminal-search-bar">

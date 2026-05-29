@@ -21,21 +21,21 @@
   overscroll-behavior: none;
 }
 
-/* IME position lock — CSS !important overrides xterm.js inline style
-   updates during composition, preventing the candidate window from
-   jumping when TUI programs update status lines / spinners. */
-.xterm-helper-textarea.ime-locked {
-  left: var(--ime-lock-left) !important;
-  top: var(--ime-lock-top) !important;
-}
-
-.xterm-composition-view.ime-locked {
-  left: var(--ime-lock-left) !important;
-  top: var(--ime-lock-top) !important;
-}
-
 .terminal-instance .xterm-viewport {
   overflow-y: hidden !important;
+  background-color: transparent !important;
+}
+
+/* IME support: ensure xterm-helpers layer is above canvas for IME candidate windows.
+ * VS Code sets z-index: 5 on .xterm-helpers to achieve this. */
+.terminal-instance .xterm-helpers {
+  z-index: 5;
+}
+
+/* IME support: keep the hidden textarea invisible even if global styles set opacity:1.
+ * xterm.js uses this textarea to receive keyboard/IME composition events. */
+.terminal-instance .xterm-helper-textarea:focus {
+  opacity: 0 !important;
 }
 
 /* 自定义终端滚动条容器 */
