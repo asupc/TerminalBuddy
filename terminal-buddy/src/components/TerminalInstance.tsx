@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { resizeTerminal, openPath, readClipboardFilePaths, readClipboardImageAsFile, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../services/tauri';
 import { ServerMonitor } from './ServerMonitor';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -154,9 +155,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const terminal = new Terminal({
         cursorBlink: true,
         fontSize: 14,
-        fontFamily: "Cascadia Code, Consolas, 'Courier New', monospace",
+        fontFamily: "'Cascadia Mono', Consolas, 'Courier New', monospace",
         fontWeight: 'normal',
         fontWeightBold: 'bold',
+        lineHeight: 1,
+        letterSpacing: 0,
         scrollback: 50000,
         theme: {
           background: colorTheme?.background || '#1e1e1e',
@@ -187,6 +190,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       terminal.unicode.activeVersion = '11';
 
       terminal.open(terminalRef.current!);
+
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+      });
+      try {
+        terminal.loadAddon(webglAddon);
+      } catch {
+        // WebGL not supported, fall back to canvas renderer
+      }
 
       fitAddon.fit();
 

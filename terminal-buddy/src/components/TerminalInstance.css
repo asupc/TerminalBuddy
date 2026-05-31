@@ -19,6 +19,8 @@
   box-sizing: border-box;
   overflow: hidden !important;
   overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .terminal-instance .xterm-viewport {
