@@ -205,6 +205,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       xtermRef.current = terminal;
 
+      // Immediately sync PTY dimensions so TUI programs (claude code, vim, etc.)
+      // get the correct size from the start instead of the estimated values
+      resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
+      lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
+
       // --- IME candidate window stabilization ---
       // Problem: xterm.js's CompositionHelper.updateCompositionElements() moves
       // the textarea to follow the cursor during composition.  When a TUI program
