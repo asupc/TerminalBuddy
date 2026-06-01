@@ -136,6 +136,14 @@ pub fn remote_upload(
 }
 
 #[command]
+pub fn get_ssh_home_dir(
+    terminal_id: String,
+    ssh_service: State<'_, SshSessionService>,
+) -> Result<String, String> {
+    ssh_service.get_home_dir(&terminal_id)
+}
+
+#[command]
 pub fn get_ssh_temp_directory() -> Result<String, String> {
     Ok(std::env::temp_dir()
         .join("TerminalBuddy")

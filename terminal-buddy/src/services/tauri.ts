@@ -316,6 +316,10 @@ export async function connectSshSession(terminalId: string, profileId: string): 
   return invoke('connect_ssh_session', { terminalId, profileId });
 }
 
+export async function getSshHomeDir(terminalId: string): Promise<string> {
+  return invoke('get_ssh_home_dir', { terminalId });
+}
+
 export async function getSshTempDirectory(): Promise<string> {
   return invoke('get_ssh_temp_directory');
 }

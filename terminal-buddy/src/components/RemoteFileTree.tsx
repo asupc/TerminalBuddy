@@ -5,7 +5,7 @@ import {
   remoteListDir, remoteCreateDir, remoteCreateFile, remoteRemove,
   remoteRename, remoteMove, remoteCopy, remoteChmod, remoteUpload,
   remoteDownload, writeToTerminal, getSshTempDirectory, ensureDir,
-  connectSshSession, openPath, onTransferProgress, onTransferError,
+  connectSshSession, getSshHomeDir, openPath, onTransferProgress, onTransferError,
 } from '../services/tauri';
 import { isTextFile } from '../utils/fileExtensions';
 import { ChmodDialog } from './ChmodDialog';
@@ -126,8 +126,15 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setSelectedPaths(new Set());
 
     if (session?.profileId) {
-      connectSession().then(ok => {
-        if (ok) loadDirectory('/');
+      connectSession().then(async ok => {
+        if (ok) {
+          try {
+            const homeDir = await getSshHomeDir(terminalId);
+            loadDirectory(homeDir || '/');
+          } catch {
+            loadDirectory('/');
+          }
+        }
       });
     }
   }, [terminalId, session?.profileId]);
@@ -602,7 +609,14 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
               disabled={connecting}
               onClick={async () => {
                 const ok = await connectSession();
-                if (ok) loadDirectory('/');
+                if (ok) {
+                  try {
+                    const homeDir = await getSshHomeDir(terminalId);
+                    loadDirectory(homeDir || '/');
+                  } catch {
+                    loadDirectory('/');
+                  }
+                }
               }}
               style={{ padding: '6px 20px', cursor: connecting ? 'default' : 'pointer' }}
             >

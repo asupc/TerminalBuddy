@@ -474,6 +474,11 @@ impl SshSessionService {
         })
     }
 
+    pub fn get_home_dir(&self, terminal_id: &str) -> Result<String, String> {
+        let output = self.exec(terminal_id, "echo ~")?;
+        Ok(output.trim().to_string())
+    }
+
     pub fn close_session(&self, terminal_id: &str) {
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.remove(terminal_id);
