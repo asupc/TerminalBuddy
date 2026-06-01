@@ -212,7 +212,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   }, [creating]);
 
   // Breadcrumb segments
-  const breadcrumbs = currentPath.split('/').filter(Boolean);
+  const breadcrumbs = currentPath.replace(/\\/g, '/').split('/').filter(Boolean);
 
   const navigateToBreadcrumb = (index: number) => {
     const path = '/' + breadcrumbs.slice(0, index + 1).join('/');
@@ -567,21 +567,21 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       ) : (
         <>
       {/* Breadcrumb navigation */}
-      <div className="file-tree-path" style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
-        <span
-          style={{ cursor: 'pointer', flexShrink: 0 }}
-          onClick={() => loadDirectory('/')}
-          title="根目录"
-        >/</span>
+      <div className="file-tree-path" style={{ display: 'flex', alignItems: 'center', gap: 2, overflow: 'hidden' }}>
         {breadcrumbs.map((seg, i) => (
-          <span key={i} style={{ display: 'inline', whiteSpace: 'nowrap' }}>
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            {i > 0 && <span style={{ color: 'var(--text-tertiary)', fontSize: 10 }}>/</span>}
             <span
-              style={{ cursor: 'pointer', color: i === breadcrumbs.length - 1 ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+              style={{
+                cursor: 'pointer',
+                padding: '1px 6px', borderRadius: 3, fontSize: 12,
+                background: i === breadcrumbs.length - 1 ? 'var(--bg-tertiary)' : 'transparent',
+                color: i === breadcrumbs.length - 1 ? 'var(--text-primary)' : 'var(--text-secondary)',
+              }}
               onClick={() => navigateToBreadcrumb(i)}
             >
-              {seg}
+              {i === 0 ? '/' + seg : seg}
             </span>
-            {i < breadcrumbs.length - 1 && <span>/</span>}
           </span>
         ))}
         {selectedFileCount > 1 && (
