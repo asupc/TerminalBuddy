@@ -31,30 +31,28 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
   const connectedRef = useRef(false);
   const session = useAppStore(s => s.sessions.find(s => s.id === terminalId));
 
-  const ensureConnected = useCallback(async () => {
-    if (connectedRef.current || !session?.profileId) return;
-    try {
-      await connectSshSession(terminalId, session.profileId);
-      connectedRef.current = true;
-    } catch (e) {
-      console.error('SSH session connect failed:', e);
-    }
-  }, [terminalId, session?.profileId]);
-
   const fetchStats = useCallback(async () => {
-    await ensureConnected();
+    if (!connectedRef.current && session?.profileId) {
+      try {
+        await connectSshSession(terminalId, session.profileId);
+        connectedRef.current = true;
+      } catch (e) {
+        console.error('SSH session connect failed:', e);
+      }
+    }
     try {
       const data = await getServerStats(terminalId);
       setStats(data);
       setError(null);
       consecutiveErrorsRef.current = 0;
     } catch (err) {
+      console.error('ServerMonitor fetchStats error:', err);
       consecutiveErrorsRef.current += 1;
       if (consecutiveErrorsRef.current >= 3) {
-        setError('连接断开');
+        setError('连接断开: ' + String(err));
       }
     }
-  }, [terminalId, ensureConnected]);
+  }, [terminalId, session?.profileId]);
 
   useEffect(() => {
     if (!isSsh || interval <= 0) {
@@ -109,6 +107,7 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
             刷新间隔:
             <select
               value={interval}
+              onClick={e => e.stopPropagation()}
               onChange={e => setInterval_(Number(e.target.value))}
               style={{
                 background: '#3c3c3c',
