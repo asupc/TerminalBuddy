@@ -230,13 +230,10 @@ interface AppState {
   lastClickRegion: 'config' | 'tab' | null;
   setLastClickRegion: (region: 'config' | 'tab' | null) => void;
 
-  // Remote file state
-  remoteFiles: RemoteFileEntry[];
-  remoteCurrentPath: string;
-  remoteLoading: boolean;
-  setRemoteFiles: (files: RemoteFileEntry[]) => void;
-  setRemoteCurrentPath: (path: string) => void;
-  setRemoteLoading: (loading: boolean) => void;
+  // Remote file cache (per session)
+  remoteFileCache: Record<string, { files: RemoteFileEntry[]; currentPath: string }>;
+  setRemoteFileCache: (terminalId: string, cache: { files: RemoteFileEntry[]; currentPath: string }) => void;
+  clearRemoteFileCache: (terminalId: string) => void;
 
   // Remote clipboard
   remoteClipboard: { items: string[]; operation: 'copy' | 'move' } | null;
@@ -402,8 +399,9 @@ export const useAppStore = create<AppState>((set) => ({
         state.activeSessionId === id
           ? sessions[0]?.id ?? null
           : state.activeSessionId;
+      const { [id]: _, ...restCache } = state.remoteFileCache;
       debouncedSaveTabs(sessions, activeSessionId);
-      return { sessions, activeSessionId };
+      return { sessions, activeSessionId, remoteFileCache: restCache };
     }),
   setSessions: (sessions) => {
     const activeSessionId = sessions[0]?.id ?? null;
@@ -577,13 +575,15 @@ export const useAppStore = create<AppState>((set) => ({
   lastClickRegion: null,
   setLastClickRegion: (region) => set({ lastClickRegion: region }),
 
-  // Remote file state
-  remoteFiles: [],
-  remoteCurrentPath: '/',
-  remoteLoading: false,
-  setRemoteFiles: (files) => set({ remoteFiles: files }),
-  setRemoteCurrentPath: (path) => set({ remoteCurrentPath: path }),
-  setRemoteLoading: (loading) => set({ remoteLoading: loading }),
+  // Remote file cache
+  remoteFileCache: {},
+  setRemoteFileCache: (terminalId, cache) => set((state) => ({
+    remoteFileCache: { ...state.remoteFileCache, [terminalId]: cache },
+  })),
+  clearRemoteFileCache: (terminalId) => set((state) => {
+    const { [terminalId]: _, ...rest } = state.remoteFileCache;
+    return { remoteFileCache: rest };
+  }),
 
   // Remote clipboard
   remoteClipboard: null,

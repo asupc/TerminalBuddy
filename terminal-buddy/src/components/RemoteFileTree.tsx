@@ -44,6 +44,28 @@ function formatPermissions(mode: number): string {
   return (mode & 0o040000 ? 'd' : '-') + perms.join('');
 }
 
+function waitForDownload(transferId: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenError: (() => void) | undefined;
+    const cleanup = () => { unlistenProgress?.(); unlistenError?.(); };
+
+    onTransferProgress((progress) => {
+      if (progress.transferId === transferId && progress.percent >= 100) {
+        cleanup();
+        resolve();
+      }
+    }).then(fn => { unlistenProgress = fn; });
+
+    onTransferError((evt) => {
+      if (evt.transferId === transferId) {
+        cleanup();
+        reject(new Error(evt.error));
+      }
+    }).then(fn => { unlistenError = fn; });
+  });
+}
+
 interface RemoteFileTreeProps {
   terminalId: string;
 }
@@ -76,6 +98,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
   const session = useAppStore(s => s.sessions.find(s => s.id === terminalId));
   const addTransfer = useAppStore(s => s.addTransfer);
+  const remoteFileCache = useAppStore(s => s.remoteFileCache[terminalId]);
+  const setRemoteFileCache = useAppStore(s => s.setRemoteFileCache);
   const connectedRef = useRef(false);
   const [showTransferPanel, setShowTransferPanel] = useState(false);
 
@@ -108,31 +132,45 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       setCurrentPath(path);
       setSessionDirectory(terminalId, path);
       setSelectedPaths(new Set());
+      setRemoteFileCache(terminalId, { files: entries, currentPath: path });
     } catch (err) {
       console.error('Failed to list remote directory:', err);
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [terminalId, setSessionDirectory]);
+  }, [terminalId, setSessionDirectory, setRemoteFileCache]);
 
   // Reset and auto-connect when switching to a different SSH terminal
   useEffect(() => {
     connectedRef.current = false;
     setConnected(false);
     setError(null);
-    setFiles([]);
-    setCurrentPath('/');
     setSelectedPaths(new Set());
+
+    // Restore from cache for instant display
+    if (remoteFileCache) {
+      setFiles(remoteFileCache.files);
+      setCurrentPath(remoteFileCache.currentPath);
+    } else {
+      setFiles([]);
+      setCurrentPath('/');
+    }
 
     if (session?.profileId) {
       connectSession().then(async ok => {
         if (ok) {
-          try {
-            const homeDir = await getSshHomeDir(terminalId);
-            loadDirectory(homeDir || '/');
-          } catch {
-            loadDirectory('/');
+          // If we had a cache, refresh the cached directory in the background
+          const cachedPath = remoteFileCache?.currentPath;
+          if (cachedPath) {
+            loadDirectory(cachedPath);
+          } else {
+            try {
+              const homeDir = await getSshHomeDir(terminalId);
+              loadDirectory(homeDir || '/');
+            } catch {
+              loadDirectory('/');
+            }
           }
         }
       });
@@ -234,6 +272,10 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     if (file.isDir) {
       loadDirectory(file.path);
     } else if (isTextFile(file.name)) {
+      if (file.size > 10 * 1024 * 1024) {
+        alert('超大文件不支持编辑（>10MB）');
+        return;
+      }
       handleEdit(file);
     }
   };
@@ -323,6 +365,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       const localPath = `${tempDir}/${file.name}`;
       const id = crypto.randomUUID();
       await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
+      await waitForDownload(id);
       await openPath(localPath);
     } catch (err) {
       console.error('Open in system failed:', err);
@@ -339,6 +382,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       const localPath = `${tempDir}/${file.name}`;
       const id = crypto.randomUUID();
       await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
+      await waitForDownload(id);
       useAppStore.getState().openEditorSession(localPath, file.path, terminalId);
     } catch (err) {
       console.error('Edit failed:', err);
@@ -719,7 +763,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
                   在系统中打开
                 </div>
               )}
-              {!contextMenu.file.isDir && isTextFile(contextMenu.file.name) && (
+              {!contextMenu.file.isDir && isTextFile(contextMenu.file.name) && contextMenu.file.size <= 10 * 1024 * 1024 && (
                 <div className="context-menu-item" onClick={() => handleEdit(contextMenu.file!)}>
                   用本地编辑器打开
                 </div>
