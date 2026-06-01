@@ -1,5 +1,6 @@
 import { FC, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   remoteListDir, remoteCreateDir, remoteCreateFile, remoteRemove,
   remoteRename, remoteMove, remoteCopy, remoteChmod, remoteUpload,
@@ -69,7 +70,6 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const rafRef = useRef<number | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const createInputRef = useRef<HTMLInputElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const remoteClipboard = useAppStore(s => s.remoteClipboard);
   const setRemoteClipboard = useAppStore(s => s.setRemoteClipboard);
@@ -333,6 +333,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       const id = crypto.randomUUID();
       await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
       useAppStore.getState().openEditorSession(localPath, file.path, terminalId);
+    } catch (err) {
       console.error('Edit failed:', err);
       alert('打开编辑器失败: ' + String(err));
     }
@@ -453,39 +454,38 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setCreating(null);
   };
 
-  const handleUpload = () => {
+  const handleUpload = async () => {
     setContextMenu(null);
-    fileInputRef.current?.click();
-  };
-
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const localPath = (file as any).path || file.name;
-    const remotePath = `${currentPath}/${file.name}`;
-    const id = crypto.randomUUID();
-    addTransfer({
-      id,
-      terminalId,
-      direction: 'upload',
-      remotePath,
-      localPath,
-      fileName: file.name,
-      status: 'active',
-      transferred: 0,
-      total: file.size,
-      percent: 0,
-    });
-    setShowTransferPanel(true);
-    remoteUpload(terminalId, localPath, remotePath, id, session?.profileId || '')
-      .then(() => handleRefresh())
-      .catch(err => {
-        console.error('Upload failed:', err);
-        const store = useAppStore.getState();
-        store.failTransfer(id, String(err));
-        alert('上传失败: ' + String(err));
+    const selected = await openDialog({ multiple: true, title: '选择上传文件' });
+    if (!selected) return;
+    const files = Array.isArray(selected) ? selected : [selected];
+    for (const f of files) {
+      const localPath = f;
+      const fileName = localPath.split(/[/\\]/).pop() || localPath;
+      const remotePath = `${currentPath}/${fileName}`;
+      const id = crypto.randomUUID();
+      addTransfer({
+        id,
+        terminalId,
+        direction: 'upload',
+        remotePath,
+        localPath,
+        fileName,
+        status: 'active',
+        transferred: 0,
+        total: 0,
+        percent: 0,
       });
-    if (fileInputRef.current) fileInputRef.current.value = '';
+      setShowTransferPanel(true);
+      remoteUpload(terminalId, localPath, remotePath, id, session?.profileId || '')
+        .then(() => handleRefresh())
+        .catch(err => {
+          console.error('Upload failed:', err);
+          const store = useAppStore.getState();
+          store.failTransfer(id, String(err));
+          alert('上传失败: ' + String(err));
+        });
+    }
   };
 
   // Resize handlers
@@ -678,14 +678,6 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
           </div>
         )}
       </div>
-
-      {/* Hidden file input for upload */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        style={{ display: 'none' }}
-        onChange={handleFileSelected}
-      />
       </>
       )}
 

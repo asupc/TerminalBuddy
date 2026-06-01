@@ -111,6 +111,9 @@ pub fn remote_download(
     app: AppHandle,
     ssh_service: State<'_, SshSessionService>,
 ) -> Result<(), String> {
+    if profile_id.is_empty() {
+        return Err("profileId is empty".to_string());
+    }
     let profile = ProfileService::get_profile(&profile_id)?;
     ssh_service.download_async(&transfer_id, &terminal_id, &remote_path, &local_path, profile, app)
 }
@@ -125,6 +128,9 @@ pub fn remote_upload(
     app: AppHandle,
     ssh_service: State<'_, SshSessionService>,
 ) -> Result<(), String> {
+    if profile_id.is_empty() {
+        return Err("profileId is empty".to_string());
+    }
     let profile = ProfileService::get_profile(&profile_id)?;
     ssh_service.upload_async(&transfer_id, &terminal_id, &local_path, &remote_path, profile, app)
 }
