@@ -567,17 +567,12 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       ) : (
         <>
       {/* Breadcrumb navigation */}
-      <div className="file-tree-path" style={{ display: 'flex', alignItems: 'center', gap: 2, overflow: 'hidden' }}>
+      <div className="file-tree-path" style={{ display: 'flex', alignItems: 'center' }}>
         {breadcrumbs.map((seg, i) => (
-          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, whiteSpace: 'nowrap', flexShrink: 0 }}>
-            {i > 0 && <span style={{ color: 'var(--text-tertiary)', fontSize: 10 }}>/</span>}
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+            {i > 0 && <span className="breadcrumb-sep">/</span>}
             <span
-              style={{
-                cursor: 'pointer',
-                padding: '1px 6px', borderRadius: 3, fontSize: 12,
-                background: i === breadcrumbs.length - 1 ? 'var(--bg-tertiary)' : 'transparent',
-                color: i === breadcrumbs.length - 1 ? 'var(--text-primary)' : 'var(--text-secondary)',
-              }}
+              className={'breadcrumb-seg' + (i === breadcrumbs.length - 1 ? ' active' : '')}
               onClick={() => navigateToBreadcrumb(i)}
             >
               {i === 0 ? '/' + seg : seg}
