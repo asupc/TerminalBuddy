@@ -208,3 +208,19 @@ export interface NetworkStats {
   rxSpeed: number;
   txSpeed: number;
 }
+
+export type TransferStatus = 'active' | 'completed' | 'failed';
+export type TransferDirection = 'upload' | 'download';
+export interface TransferItem {
+  id: string;
+  terminalId: string;
+  direction: TransferDirection;
+  remotePath: string;
+  localPath: string;
+  fileName: string;
+  status: TransferStatus;
+  transferred: number;
+  total: number;
+  percent: number;
+  error?: string;
+}

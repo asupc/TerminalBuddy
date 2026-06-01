@@ -8,6 +8,7 @@ import {
 } from '../services/tauri';
 import { isTextFile } from '../utils/fileExtensions';
 import { ChmodDialog } from './ChmodDialog';
+import { TransferPanel } from './TransferPanel';
 import type { RemoteFileEntry } from '../types';
 import './FileTree.css';
 
@@ -48,13 +49,6 @@ function formatPermissions(mode: number): string {
   return (mode & 0o040000 ? 'd' : '-') + perms.join('');
 }
 
-function formatDate(timestamp: number): string {
-  if (!timestamp) return '-';
-  const d = new Date(timestamp * 1000);
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 interface RemoteFileTreeProps {
   terminalId: string;
 }
@@ -87,7 +81,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const setRemoteClipboard = useAppStore(s => s.setRemoteClipboard);
   const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
   const session = useAppStore(s => s.sessions.find(s => s.id === terminalId));
+  const addTransfer = useAppStore(s => s.addTransfer);
   const connectedRef = useRef(false);
+  const [showTransferPanel, setShowTransferPanel] = useState(false);
 
   const connectSession = useCallback(async () => {
     if (connectedRef.current) return true;
@@ -141,16 +137,28 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     }
   }, [terminalId, session?.profileId]);
 
-  // Transfer progress listener
+  // Transfer progress listener — updates both store transfers and legacy bar
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     import('../services/tauri').then(mod => {
       mod.onTransferProgress((progress) => {
-        if (progress.terminalId === terminalId) {
-          setTransferProgress(progress);
+        if (progress.terminalId !== terminalId) return;
+        // Update store transfers — match active transfer for this terminal
+        const store = useAppStore.getState();
+        const activeTransfer = store.transfers.find(t =>
+          t.terminalId === terminalId && t.status === 'active'
+        );
+        if (activeTransfer) {
+          store.updateTransferProgress(activeTransfer.id, progress.transferred, progress.total, progress.percent);
           if (progress.percent >= 100) {
-            setTimeout(() => setTransferProgress(null), 1500);
+            store.completeTransfer(activeTransfer.id);
           }
+          return;
+        }
+        // Legacy direct-transfer progress bar (handleEdit / handleOpenInSystem)
+        setTransferProgress(progress);
+        if (progress.percent >= 100) {
+          setTimeout(() => setTransferProgress(null), 1500);
         }
       }).then(fn => { unlisten = fn; });
     });
@@ -232,13 +240,33 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       const tempDir = `${baseTempDir}/${terminalId}`;
       await ensureDir(tempDir);
       const localPath = `${tempDir}/${file.name}`;
+      const id = crypto.randomUUID();
+      addTransfer({
+        id,
+        terminalId,
+        direction: 'download',
+        remotePath: file.path,
+        localPath,
+        fileName: file.name,
+        status: 'active',
+        transferred: 0,
+        total: file.size,
+        percent: 0,
+      });
+      setShowTransferPanel(true);
       await remoteDownload(terminalId, file.path, localPath);
-      // Open the file's directory in explorer
-      const { openInExplorer } = await import('../services/tauri');
-      await openInExplorer(localPath);
+      // Ensure complete if progress event didn't fire
+      const store = useAppStore.getState();
+      const item = store.transfers.find(t => t.id === id);
+      if (item && item.status !== 'completed') {
+        store.completeTransfer(id);
+      }
     } catch (err) {
       console.error('Download failed:', err);
-      alert('下载失败: ' + String(err));
+      const store = useAppStore.getState();
+      const item = store.transfers.find(t => t.terminalId === terminalId && t.fileName === file.name && t.status === 'active');
+      if (item) store.failTransfer(item.id, String(err));
+      else alert('下载失败: ' + String(err));
     }
   };
 
@@ -444,16 +472,38 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     return a.name.localeCompare(b.name);
   });
 
+  const allTransfers = useAppStore((s) => s.transfers);
+  const activeTransferCount = allTransfers.filter(
+    t => t.terminalId === terminalId && t.status === 'active'
+  ).length;
+
   return (
     <div ref={containerRef} className="file-tree" style={{ width }}>
       <div className="panel-titlebar">
-        <span className="panel-title">远程文件</span>
+        <span className="panel-title">{showTransferPanel ? '传输列表' : '远程文件'}</span>
         <div className="file-tree-actions">
-          <button onClick={handleGoUp} title="上级目录">⬆</button>
-          <button onClick={handleRefresh} title="刷新">↻</button>
+          {showTransferPanel ? (
+            <button onClick={() => setShowTransferPanel(false)} title="文件列表">文件列表</button>
+          ) : (
+            <>
+              <button
+                onClick={() => setShowTransferPanel(true)}
+                title="传输列表"
+                style={activeTransferCount > 0 ? { color: 'var(--accent)' } : {}}
+              >
+                ↓↑{activeTransferCount > 0 ? activeTransferCount : ''}
+              </button>
+              <button onClick={handleGoUp} title="上级目录">⬆</button>
+              <button onClick={handleRefresh} title="刷新">↻</button>
+            </>
+          )}
         </div>
       </div>
 
+      {showTransferPanel ? (
+        <TransferPanel terminalId={terminalId} />
+      ) : (
+        <>
       {/* Breadcrumb navigation */}
       <div className="file-tree-path" style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
         <span
@@ -543,9 +593,6 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
             <span style={{ fontSize: 10, color: 'var(--text-secondary)', flexShrink: 0, marginLeft: 4, fontFamily: 'monospace' }}>
               {formatPermissions(file.permissions).slice(1)}
             </span>
-            <span style={{ fontSize: 10, color: 'var(--text-secondary)', flexShrink: 0, marginLeft: 4 }}>
-              {formatDate(file.modified)}
-            </span>
           </div>
         ))}
 
@@ -579,6 +626,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
         style={{ display: 'none' }}
         onChange={handleFileSelected}
       />
+      </>
+      )}
 
       <div
         className={`resize-handle ${isResizing ? 'active' : ''}`}
