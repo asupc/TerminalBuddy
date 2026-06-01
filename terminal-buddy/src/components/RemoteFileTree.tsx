@@ -1,10 +1,10 @@
-import { FC, useState, useEffect, useCallback, useRef } from 'react';
+import { FC, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAppStore } from '../stores/appStore';
 import {
   remoteListDir, remoteCreateDir, remoteCreateFile, remoteRemove,
   remoteRename, remoteMove, remoteCopy, remoteChmod, remoteUpload,
   remoteDownload, writeToTerminal, getSshTempDirectory, ensureDir,
-  connectSshSession, openPath,
+  connectSshSession, openPath, onTransferProgress, onTransferError,
 } from '../services/tauri';
 import { isTextFile } from '../utils/fileExtensions';
 import { ChmodDialog } from './ChmodDialog';
@@ -36,15 +36,9 @@ function formatSize(bytes: number): string {
 
 function formatPermissions(mode: number): string {
   const perms = [
-    mode & 0o400 ? 'r' : '-',
-    mode & 0o200 ? 'w' : '-',
-    mode & 0o100 ? 'x' : '-',
-    mode & 0o040 ? 'r' : '-',
-    mode & 0o020 ? 'w' : '-',
-    mode & 0o010 ? 'x' : '-',
-    mode & 0o004 ? 'r' : '-',
-    mode & 0o002 ? 'w' : '-',
-    mode & 0o001 ? 'x' : '-',
+    mode & 0o400 ? 'r' : '-', mode & 0o200 ? 'w' : '-', mode & 0o100 ? 'x' : '-',
+    mode & 0o040 ? 'r' : '-', mode & 0o020 ? 'w' : '-', mode & 0o010 ? 'x' : '-',
+    mode & 0o004 ? 'r' : '-', mode & 0o002 ? 'w' : '-', mode & 0o001 ? 'x' : '-',
   ];
   return (mode & 0o040000 ? 'd' : '-') + perms.join('');
 }
@@ -67,7 +61,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const [createValue, setCreateValue] = useState('');
   const [chmodFile, setChmodFile] = useState<RemoteFileEntry | null>(null);
   const [transferProgress, setTransferProgress] = useState<TransferProgress | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [width, setWidth] = useState(250);
   const [isResizing, setIsResizing] = useState(false);
 
@@ -113,6 +107,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       setFiles(entries);
       setCurrentPath(path);
       setSessionDirectory(terminalId, path);
+      setSelectedPaths(new Set());
     } catch (err) {
       console.error('Failed to list remote directory:', err);
       setError(String(err));
@@ -128,8 +123,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setError(null);
     setFiles([]);
     setCurrentPath('/');
+    setSelectedPaths(new Set());
 
-    // Auto-connect if we have a valid session
     if (session?.profileId) {
       connectSession().then(ok => {
         if (ok) loadDirectory('/');
@@ -137,32 +132,53 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     }
   }, [terminalId, session?.profileId]);
 
-  // Transfer progress listener — updates both store transfers and legacy bar
+  // Transfer progress listener — match by transferId for async transfers
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    import('../services/tauri').then(mod => {
-      mod.onTransferProgress((progress) => {
-        if (progress.terminalId !== terminalId) return;
-        // Update store transfers — match active transfer for this terminal
-        const store = useAppStore.getState();
-        const activeTransfer = store.transfers.find(t =>
-          t.terminalId === terminalId && t.status === 'active'
-        );
-        if (activeTransfer) {
-          store.updateTransferProgress(activeTransfer.id, progress.transferred, progress.total, progress.percent);
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenError: (() => void) | undefined;
+
+    onTransferProgress((progress) => {
+      if (progress.terminalId !== terminalId) return;
+      const store = useAppStore.getState();
+
+      // Match by transferId (async transfers)
+      if (progress.transferId) {
+        const item = store.transfers.find(t => t.id === progress.transferId);
+        if (item) {
+          store.updateTransferProgress(item.id, progress.transferred, progress.total, progress.percent);
           if (progress.percent >= 100) {
-            store.completeTransfer(activeTransfer.id);
+            store.completeTransfer(item.id);
           }
           return;
         }
-        // Legacy direct-transfer progress bar (handleEdit / handleOpenInSystem)
-        setTransferProgress(progress);
+      }
+
+      // Legacy: match by active transfer (handleEdit / handleOpenInSystem)
+      const activeTransfer = store.transfers.find(t =>
+        t.terminalId === terminalId && t.status === 'active'
+      );
+      if (activeTransfer) {
+        store.updateTransferProgress(activeTransfer.id, progress.transferred, progress.total, progress.percent);
         if (progress.percent >= 100) {
-          setTimeout(() => setTransferProgress(null), 1500);
+          store.completeTransfer(activeTransfer.id);
         }
-      }).then(fn => { unlisten = fn; });
-    });
-    return () => { unlisten?.(); };
+        return;
+      }
+      setTransferProgress(progress);
+      if (progress.percent >= 100) {
+        setTimeout(() => setTransferProgress(null), 1500);
+      }
+    }).then(fn => { unlistenProgress = fn; });
+
+    onTransferError((evt) => {
+      const store = useAppStore.getState();
+      const item = store.transfers.find(t => t.id === evt.transferId);
+      if (item) {
+        store.failTransfer(item.id, evt.error);
+      }
+    }).then(fn => { unlistenError = fn; });
+
+    return () => { unlistenProgress?.(); unlistenError?.(); };
   }, [terminalId]);
 
   // Close context menu on outside click
@@ -218,8 +234,23 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const handleContextMenu = (e: React.MouseEvent, file?: RemoteFileEntry) => {
     e.preventDefault();
     e.stopPropagation();
-    if (file) setSelectedPath(file.path);
+    if (file && !selectedPaths.has(file.path)) {
+      setSelectedPaths(new Set([file.path]));
+    }
     setContextMenu({ x: e.clientX, y: e.clientY, file });
+  };
+
+  const handleFileClick = (e: React.MouseEvent, file: RemoteFileEntry) => {
+    if (e.ctrlKey || e.metaKey) {
+      setSelectedPaths(prev => {
+        const next = new Set(prev);
+        if (next.has(file.path)) next.delete(file.path);
+        else next.add(file.path);
+        return next;
+      });
+    } else {
+      setSelectedPaths(new Set([file.path]));
+    }
   };
 
   const handleOpen = (file: RemoteFileEntry) => {
@@ -227,46 +258,52 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     if (file.isDir) {
       loadDirectory(file.path);
     } else {
-      // cd to parent directory in terminal
       const parent = file.path.substring(0, file.path.lastIndexOf('/'));
       writeToTerminal(terminalId, `cd "${parent}"\r`).catch(console.error);
     }
   };
 
-  const handleDownload = async (file: RemoteFileEntry) => {
+  const startDownload = async (file: RemoteFileEntry) => {
+    const baseTempDir = await getSshTempDirectory();
+    const tempDir = `${baseTempDir}/${terminalId}`;
+    await ensureDir(tempDir);
+    const localPath = `${tempDir}/${file.name}`;
+    const id = crypto.randomUUID();
+    addTransfer({
+      id,
+      terminalId,
+      direction: 'download',
+      remotePath: file.path,
+      localPath,
+      fileName: file.name,
+      status: 'active',
+      transferred: 0,
+      total: file.size,
+      percent: 0,
+    });
+    setShowTransferPanel(true);
+    // Fire and forget — progress/error handled by event listeners
+    remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '').catch(err => {
+      const store = useAppStore.getState();
+      store.failTransfer(id, String(err));
+    });
+  };
+
+  const handleDownload = (file: RemoteFileEntry) => {
     setContextMenu(null);
-    try {
-      const baseTempDir = await getSshTempDirectory();
-      const tempDir = `${baseTempDir}/${terminalId}`;
-      await ensureDir(tempDir);
-      const localPath = `${tempDir}/${file.name}`;
-      const id = crypto.randomUUID();
-      addTransfer({
-        id,
-        terminalId,
-        direction: 'download',
-        remotePath: file.path,
-        localPath,
-        fileName: file.name,
-        status: 'active',
-        transferred: 0,
-        total: file.size,
-        percent: 0,
-      });
-      setShowTransferPanel(true);
-      await remoteDownload(terminalId, file.path, localPath);
-      // Ensure complete if progress event didn't fire
-      const store = useAppStore.getState();
-      const item = store.transfers.find(t => t.id === id);
-      if (item && item.status !== 'completed') {
-        store.completeTransfer(id);
-      }
-    } catch (err) {
+    startDownload(file).catch(err => {
       console.error('Download failed:', err);
-      const store = useAppStore.getState();
-      const item = store.transfers.find(t => t.terminalId === terminalId && t.fileName === file.name && t.status === 'active');
-      if (item) store.failTransfer(item.id, String(err));
-      else alert('下载失败: ' + String(err));
+      alert('下载失败: ' + String(err));
+    });
+  };
+
+  const handleBatchDownload = () => {
+    setContextMenu(null);
+    const selected = files.filter(f => selectedPaths.has(f.path) && !f.isDir);
+    for (const file of selected) {
+      startDownload(file).catch(err => {
+        console.error('Download failed:', err);
+      });
     }
   };
 
@@ -277,7 +314,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       const tempDir = `${baseTempDir}/${terminalId}`;
       await ensureDir(tempDir);
       const localPath = `${tempDir}/${file.name}`;
-      await remoteDownload(terminalId, file.path, localPath);
+      const id = crypto.randomUUID();
+      await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
       await openPath(localPath);
     } catch (err) {
       console.error('Open in system failed:', err);
@@ -292,9 +330,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       const tempDir = `${baseTempDir}/${terminalId}`;
       await ensureDir(tempDir);
       const localPath = `${tempDir}/${file.name}`;
-      await remoteDownload(terminalId, file.path, localPath);
+      const id = crypto.randomUUID();
+      await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
       useAppStore.getState().openEditorSession(localPath, file.path, terminalId);
-    } catch (err) {
       console.error('Edit failed:', err);
       alert('打开编辑器失败: ' + String(err));
     }
@@ -423,17 +461,30 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // With Tauri file input, the value is the file path
     const localPath = (file as any).path || file.name;
     const remotePath = `${currentPath}/${file.name}`;
-    try {
-      await remoteUpload(terminalId, localPath, remotePath);
-      await handleRefresh();
-    } catch (err) {
-      console.error('Upload failed:', err);
-      alert('上传失败: ' + String(err));
-    }
-    // Reset input
+    const id = crypto.randomUUID();
+    addTransfer({
+      id,
+      terminalId,
+      direction: 'upload',
+      remotePath,
+      localPath,
+      fileName: file.name,
+      status: 'active',
+      transferred: 0,
+      total: file.size,
+      percent: 0,
+    });
+    setShowTransferPanel(true);
+    remoteUpload(terminalId, localPath, remotePath, id, session?.profileId || '')
+      .then(() => handleRefresh())
+      .catch(err => {
+        console.error('Upload failed:', err);
+        const store = useAppStore.getState();
+        store.failTransfer(id, String(err));
+        alert('上传失败: ' + String(err));
+      });
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -472,10 +523,14 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     return a.name.localeCompare(b.name);
   });
 
-  const allTransfers = useAppStore((s) => s.transfers);
-  const activeTransferCount = allTransfers.filter(
-    t => t.terminalId === terminalId && t.status === 'active'
-  ).length;
+  const activeTransferCount = useAppStore((s) =>
+    s.transfers.filter(t => t.terminalId === terminalId && t.status === 'active').length
+  );
+
+  const selectedFileCount = useMemo(
+    () => [...selectedPaths].filter(p => { const f = files.find(ff => ff.path === p); return f && !f.isDir; }).length,
+    [selectedPaths, files]
+  );
 
   return (
     <div ref={containerRef} className="file-tree" style={{ width }}>
@@ -522,6 +577,11 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
             {i < breadcrumbs.length - 1 && <span>/</span>}
           </span>
         ))}
+        {selectedFileCount > 1 && (
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--accent)', flexShrink: 0 }}>
+            已选 {selectedFileCount} 个文件
+          </span>
+        )}
       </div>
 
       {/* Transfer progress */}
@@ -562,9 +622,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
         {connected && !loading && !error && sortedFiles.map((file) => (
           <div
             key={file.path}
-            className={`tree-item ${selectedPath === file.path ? 'selected' : ''}`}
+            className={`tree-item ${selectedPaths.has(file.path) ? 'selected' : ''}`}
             style={{ paddingLeft: 8 }}
-            onClick={() => setSelectedPath(file.path)}
+            onClick={(e) => handleFileClick(e, file)}
             onDoubleClick={() => handleDoubleClick(file)}
             onContextMenu={(e) => handleContextMenu(e, file)}
           >
@@ -678,6 +738,14 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
               </div>
               <div className="context-menu-item danger" onClick={() => handleDelete(contextMenu.file!)}>
                 删除
+              </div>
+            </>
+          )}
+          {selectedFileCount > 1 && (
+            <>
+              <div className="context-menu-separator" />
+              <div className="context-menu-item" onClick={handleBatchDownload}>
+                下载选中的 {selectedFileCount} 个文件
               </div>
             </>
           )}
