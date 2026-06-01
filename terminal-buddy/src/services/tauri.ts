@@ -368,6 +368,10 @@ export async function remoteDownload(terminalId: string, remotePath: string, loc
   return invoke('remote_download', { terminalId, remotePath, localPath, transferId, profileId });
 }
 
+export async function remoteDownloadDir(terminalId: string, remotePath: string, localPath: string, transferId: string, profileId: string): Promise<void> {
+  return invoke('remote_download_dir', { terminalId, remotePath, localPath, transferId, profileId });
+}
+
 export async function getServerStats(terminalId: string): Promise<ServerStats> {
   return invoke('get_server_stats', { terminalId });
 }

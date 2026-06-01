@@ -1,5 +1,6 @@
-import { FC, useMemo } from 'react';
+import { FC, useMemo, useState, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { openInExplorer } from '../services/tauri';
 import type { TransferItem } from '../types';
 
 function formatSize(bytes: number): string {
@@ -25,6 +26,8 @@ export const TransferPanel: FC<TransferPanelProps> = ({ terminalId }) => {
   const clearCompletedTransfers = useAppStore((s) => s.clearCompletedTransfers);
   const removeTransfer = useAppStore((s) => s.removeTransfer);
 
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: TransferItem } | null>(null);
+
   const transfers = useMemo(
     () => allTransfers.filter((t) => t.terminalId === terminalId),
     [allTransfers, terminalId]
@@ -37,6 +40,19 @@ export const TransferPanel: FC<TransferPanelProps> = ({ terminalId }) => {
   }), [transfers]);
 
   const completedCount = transfers.filter((t) => t.status === 'completed').length;
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', close);
+    document.addEventListener('wheel', close);
+    return () => {
+      document.removeEventListener('click', close);
+      document.removeEventListener('keydown', close);
+      document.removeEventListener('wheel', close);
+    };
+  }, [contextMenu]);
 
   if (sorted.length === 0) {
     return (
@@ -51,7 +67,14 @@ export const TransferPanel: FC<TransferPanelProps> = ({ terminalId }) => {
   return (
     <div className="transfer-panel">
       {sorted.map((item) => (
-        <div key={item.id} className={`transfer-item transfer-item-${item.status}`}>
+        <div
+          key={item.id}
+          className={`transfer-item transfer-item-${item.status}`}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY, item });
+          }}
+        >
           <div className="transfer-item-header">
             <span className="transfer-direction-icon">
               {item.direction === 'download' ? '↓' : '↑'}
@@ -96,6 +119,20 @@ export const TransferPanel: FC<TransferPanelProps> = ({ terminalId }) => {
           <button className="transfer-clear-btn" onClick={() => clearCompletedTransfers(terminalId)}>
             清除已完成
           </button>
+        </div>
+      )}
+      {contextMenu && contextMenu.item.status === 'completed' && contextMenu.item.direction === 'download' && (
+        <div
+          className="context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="context-menu-item" onClick={() => {
+            openInExplorer(contextMenu.item.localPath).catch(console.error);
+            setContextMenu(null);
+          }}>
+            在资源管理器中打开
+          </div>
         </div>
       )}
     </div>

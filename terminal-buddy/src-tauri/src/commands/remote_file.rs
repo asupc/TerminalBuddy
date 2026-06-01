@@ -119,6 +119,23 @@ pub fn remote_download(
 }
 
 #[command]
+pub fn remote_download_dir(
+    terminal_id: String,
+    remote_path: String,
+    local_path: String,
+    transfer_id: String,
+    profile_id: String,
+    app: AppHandle,
+    ssh_service: State<'_, SshSessionService>,
+) -> Result<(), String> {
+    if profile_id.is_empty() {
+        return Err("profileId is empty".to_string());
+    }
+    let profile = ProfileService::get_profile(&profile_id)?;
+    ssh_service.download_dir_async(&transfer_id, &terminal_id, &remote_path, &local_path, profile, app)
+}
+
+#[command]
 pub fn remote_upload(
     terminal_id: String,
     local_path: String,

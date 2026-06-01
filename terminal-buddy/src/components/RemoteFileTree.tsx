@@ -4,10 +4,11 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   remoteListDir, remoteCreateDir, remoteCreateFile, remoteRemove,
   remoteRename, remoteMove, remoteCopy, remoteChmod, remoteUpload,
-  remoteDownload, writeToTerminal, getSshTempDirectory, ensureDir,
+  remoteDownload, remoteDownloadDir, writeToTerminal, getSshTempDirectory, ensureDir, getDownloadsDirectory,
   connectSshSession, getSshHomeDir, openPath, onTransferProgress, onTransferError,
 } from '../services/tauri';
 import { isTextFile } from '../utils/fileExtensions';
+import { getAppSettings } from '../utils/settings';
 import { ChmodDialog } from './ChmodDialog';
 import { TransferPanel } from './TransferPanel';
 import type { RemoteFileEntry } from '../types';
@@ -312,11 +313,15 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     }
   };
 
+  const getDownloadDir = async () => {
+    const settings = getAppSettings();
+    if (settings.sshDownloadDir) return settings.sshDownloadDir;
+    return getDownloadsDirectory();
+  };
+
   const startDownload = async (file: RemoteFileEntry) => {
-    const baseTempDir = await getSshTempDirectory();
-    const tempDir = `${baseTempDir}/${terminalId}`;
-    await ensureDir(tempDir);
-    const localPath = `${tempDir}/${file.name}`;
+    const baseDir = await getDownloadDir();
+    const localPath = `${baseDir}/${file.name}`;
     const id = crypto.randomUUID();
     addTransfer({
       id,
@@ -327,12 +332,12 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       fileName: file.name,
       status: 'active',
       transferred: 0,
-      total: file.size,
+      total: file.isDir ? 0 : file.size,
       percent: 0,
     });
     setShowTransferPanel(true);
-    // Fire and forget — progress/error handled by event listeners
-    remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '').catch(err => {
+    const downloadFn = file.isDir ? remoteDownloadDir : remoteDownload;
+    downloadFn(terminalId, file.path, localPath, id, session?.profileId || '').catch(err => {
       const store = useAppStore.getState();
       store.failTransfer(id, String(err));
     });
@@ -753,11 +758,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
               <div className="context-menu-item" onClick={() => handleOpen(contextMenu.file!)}>
                 {contextMenu.file.isDir ? '打开' : '打开目录(cd)'}
               </div>
-              {!contextMenu.file.isDir && (
-                <div className="context-menu-item" onClick={() => handleDownload(contextMenu.file!)}>
-                  下载
-                </div>
-              )}
+              <div className="context-menu-item" onClick={() => handleDownload(contextMenu.file!)}>
+                {contextMenu.file.isDir ? '下载文件夹' : '下载'}
+              </div>
               {!contextMenu.file.isDir && (
                 <div className="context-menu-item" onClick={() => handleOpenInSystem(contextMenu.file!)}>
                   在系统中打开

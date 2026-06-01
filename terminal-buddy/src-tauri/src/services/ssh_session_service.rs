@@ -375,6 +375,128 @@ impl SshSessionService {
         Ok(())
     }
 
+    pub fn download_dir_async(
+        &self,
+        transfer_id: &str,
+        terminal_id: &str,
+        remote_path: &str,
+        local_path: &str,
+        profile: Profile,
+        app: AppHandle,
+    ) -> Result<(), String> {
+        let transfer_id = transfer_id.to_string();
+        let terminal_id = terminal_id.to_string();
+        let remote_path = remote_path.to_string();
+        let local_path = local_path.to_string();
+
+        std::thread::spawn(move || {
+            let result = (|| -> Result<(), String> {
+                let (_session, sftp) = connect_ssh(&profile)?;
+
+                // Collect all files recursively: (remote_path, relative_path, size)
+                let mut files: Vec<(String, String, u64)> = Vec::new();
+                let mut dirs: Vec<String> = Vec::new();
+                let mut stack: Vec<String> = vec![remote_path.clone()];
+
+                while let Some(dir) = stack.pop() {
+                    let entries = sftp.readdir(Path::new(&dir))
+                        .map_err(|e| format!("readdir {} failed: {}", dir, e))?;
+                    for (pathbuf, stat) in entries {
+                        let p = pathbuf.to_string_lossy().to_string();
+                        let name = pathbuf.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        if name == "." || name == ".." { continue; }
+                        let relative = if &dir == &remote_path {
+                            name.clone()
+                        } else {
+                            format!("{}/{}", &dir[remote_path.len()..].trim_start_matches('/'), name)
+                        };
+                        if stat.is_dir() {
+                            stack.push(p);
+                            dirs.push(relative);
+                        } else {
+                            let size = stat.size.unwrap_or(0);
+                            files.push((p, relative, size));
+                        }
+                    }
+                }
+
+                let total: u64 = files.iter().map(|(_, _, s)| *s).sum();
+
+                // Create local directories
+                std::fs::create_dir_all(&local_path)
+                    .map_err(|e| format!("Failed to create local dir: {}", e))?;
+                for dir in &dirs {
+                    let local_dir = format!("{}/{}", local_path, dir);
+                    std::fs::create_dir_all(&local_dir)
+                        .map_err(|e| format!("Failed to create dir {}: {}", local_dir, e))?;
+                }
+
+                // Download files
+                let mut transferred: u64 = 0;
+                let mut last_emit = Instant::now();
+
+                for (remote_file_path, relative, _file_size) in &files {
+                    let local_file_path = format!("{}/{}", local_path, relative);
+                    // Ensure parent dir exists
+                    if let Some(parent) = Path::new(&local_file_path).parent() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| format!("Failed to create dir: {}", e))?;
+                    }
+                    let mut remote_file = sftp.open(Path::new(remote_file_path))
+                        .map_err(|e| format!("Failed to open {}: {}", remote_file_path, e))?;
+                    let mut local_file = std::fs::File::create(&local_file_path)
+                        .map_err(|e| format!("Failed to create {}: {}", local_file_path, e))?;
+
+                    let mut buf = [0u8; 131072];
+                    loop {
+                        let n = match remote_file.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => n,
+                            Err(e) => return Err(format!("Read error {}: {}", remote_file_path, e)),
+                        };
+                        if let Err(e) = std::io::Write::write_all(&mut local_file, &buf[..n]) {
+                            return Err(format!("Write error {}: {}", local_file_path, e));
+                        }
+                        transferred += n as u64;
+                        let now = Instant::now();
+                        if now.duration_since(last_emit).as_millis() >= 200 {
+                            last_emit = now;
+                            let _ = app.emit("remote_transfer_progress", TransferProgress {
+                                transfer_id: transfer_id.clone(),
+                                terminal_id: terminal_id.clone(),
+                                transferred,
+                                total,
+                                percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
+                                direction: "download".to_string(),
+                            });
+                        }
+                    }
+                }
+
+                let _ = app.emit("remote_transfer_progress", TransferProgress {
+                    transfer_id: transfer_id.clone(),
+                    terminal_id: terminal_id.clone(),
+                    transferred,
+                    total,
+                    percent: 100.0,
+                    direction: "download".to_string(),
+                });
+                Ok(())
+            })();
+
+            if let Err(error) = result {
+                let _ = app.emit("remote_transfer_error", TransferError {
+                    transfer_id: transfer_id.clone(),
+                    error: error.clone(),
+                });
+            }
+        });
+
+        Ok(())
+    }
+
     pub fn upload_async(
         &self,
         transfer_id: &str,
