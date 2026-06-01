@@ -162,3 +162,54 @@
 .editor-conflict-btn.discard:hover {
   background: #4c4c4c;
 }
+
+.editor-save-notify {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #e0e0e0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: editor-notify-in 0.2s ease;
+  pointer-events: none;
+}
+
+.editor-save-notify-saving {
+  background: #2d2d2d;
+  border: 1px solid #555;
+}
+
+.editor-save-notify-success {
+  background: #1a3a1a;
+  border: 1px solid #2ea043;
+}
+
+.editor-save-notify-error {
+  background: #3a1a1a;
+  border: 1px solid #f44747;
+}
+
+.editor-save-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #555;
+  border-top-color: #aaa;
+  border-radius: 50%;
+  animation: editor-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes editor-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes editor-notify-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}

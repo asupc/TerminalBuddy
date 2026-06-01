@@ -1,7 +1,7 @@
 import { FC, useEffect, useRef, useState, useCallback } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { editor as MonacoEditor, KeyMod, KeyCode } from 'monaco-editor';
-import { readFileContent, writeFileContent, remoteUpload, getFileMeta } from '../services/tauri';
+import { readFileContent, writeFileContent, remoteUpload, getFileMeta, onTransferProgress, onTransferError } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { getMonacoLanguage } from '../utils/fileExtensions';
 import './TextEditor.css';
@@ -38,6 +38,8 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   const [error, setError] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [conflictDialog, setConflictDialog] = useState<'overwrite' | 'discard' | null>(null);
+  const [saveNotify, setSaveNotify] = useState<{ type: 'saving' | 'success' | 'error'; msg: string } | null>(null);
+  const saveNotifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const diskModTimeRef = useRef<number>(0);
   const isDirtyRef = useRef(isDirty);
   const lastLoadedContentRef = useRef<string | null>(null);
@@ -175,6 +177,14 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
     editorRef.current = editor;
     editor.updateOptions({ contextmenu: false });
 
+    const showSaveNotify = (type: 'saving' | 'success' | 'error', msg: string) => {
+      if (saveNotifyTimerRef.current) clearTimeout(saveNotifyTimerRef.current);
+      setSaveNotify({ type, msg });
+      if (type !== 'saving') {
+        saveNotifyTimerRef.current = setTimeout(() => setSaveNotify(null), 3000);
+      }
+    };
+
     editor.addAction({
       id: 'save-file',
       label: '保存文件',
@@ -187,13 +197,43 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
             s => s.sessionType === 'editor' && s.profileId === filePath
           );
           if (session?.sshRemotePath && session?.sshTerminalId) {
+            showSaveNotify('saving', '正在上传到服务器...');
+            const transferId = crypto.randomUUID();
             try {
               const terminalSession = useAppStore.getState().sessions.find(s => s.id === session.sshTerminalId);
-              await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath, crypto.randomUUID(), terminalSession?.profileId || '');
+              await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath, transferId, terminalSession?.profileId || '');
             } catch (uploadErr) {
-              console.error('Auto-upload to server failed:', uploadErr);
-              alert('已保存到本地，但上传到服务器失败: ' + String(uploadErr));
+              showSaveNotify('error', '上传失败: ' + String(uploadErr));
+              return;
             }
+            // Wait for async upload to complete
+            await new Promise<void>((resolve) => {
+              let done = false;
+              let unlistenProgress: (() => void) | undefined;
+              let unlistenError: (() => void) | undefined;
+              const finish = () => { unlistenProgress?.(); unlistenError?.(); resolve(); };
+
+              onTransferProgress((progress) => {
+                if (progress.transferId === transferId && progress.percent >= 100 && !done) {
+                  done = true;
+                  showSaveNotify('success', '已保存并上传到服务器');
+                  finish();
+                }
+              }).then(fn => { unlistenProgress = fn; if (done) fn(); });
+
+              onTransferError((evt) => {
+                if (evt.transferId === transferId && !done) {
+                  done = true;
+                  showSaveNotify('error', '上传失败: ' + evt.error);
+                  finish();
+                }
+              }).then(fn => { unlistenError = fn; if (done) fn(); });
+
+              // Timeout fallback
+              setTimeout(() => { if (!done) { done = true; finish(); } }, 30000);
+            });
+          } else {
+            showSaveNotify('success', '已保存');
           }
           onDirtyChange(false);
           const meta = await getFileMeta(filePath).catch(() => null);
@@ -201,6 +241,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
           lastLoadedContentRef.current = value;
         } catch (err) {
           console.error('Failed to save file:', err);
+          showSaveNotify('error', '保存失败');
         }
       },
     });
@@ -317,6 +358,12 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
           if (value !== undefined) setContent(value);
         }}
       />
+      {saveNotify && (
+        <div className={`editor-save-notify editor-save-notify-${saveNotify.type}`}>
+          {saveNotify.type === 'saving' && <span className="editor-save-spinner" />}
+          {saveNotify.msg}
+        </div>
+      )}
       {ctxMenu && (
         <>
           <div className="editor-ctx-overlay" onClick={() => setCtxMenu(null)} />

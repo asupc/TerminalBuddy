@@ -4,10 +4,11 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   remoteListDir, remoteCreateDir, remoteCreateFile, remoteRemove,
   remoteRename, remoteMove, remoteCopy, remoteChmod, remoteUpload,
-  remoteDownload, writeToTerminal, getSshTempDirectory, ensureDir,
-  connectSshSession, openPath, onTransferProgress, onTransferError,
+  remoteDownload, remoteDownloadDir, writeToTerminal, getSshTempDirectory, ensureDir, getDownloadsDirectory,
+  connectSshSession, getSshHomeDir, openPath, onTransferProgress, onTransferError,
 } from '../services/tauri';
 import { isTextFile } from '../utils/fileExtensions';
+import { getAppSettings } from '../utils/settings';
 import { ChmodDialog } from './ChmodDialog';
 import { TransferPanel } from './TransferPanel';
 import type { RemoteFileEntry } from '../types';
@@ -44,6 +45,28 @@ function formatPermissions(mode: number): string {
   return (mode & 0o040000 ? 'd' : '-') + perms.join('');
 }
 
+function waitForDownload(transferId: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenError: (() => void) | undefined;
+    const cleanup = () => { unlistenProgress?.(); unlistenError?.(); };
+
+    onTransferProgress((progress) => {
+      if (progress.transferId === transferId && progress.percent >= 100) {
+        cleanup();
+        resolve();
+      }
+    }).then(fn => { unlistenProgress = fn; });
+
+    onTransferError((evt) => {
+      if (evt.transferId === transferId) {
+        cleanup();
+        reject(new Error(evt.error));
+      }
+    }).then(fn => { unlistenError = fn; });
+  });
+}
+
 interface RemoteFileTreeProps {
   terminalId: string;
 }
@@ -76,6 +99,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
   const session = useAppStore(s => s.sessions.find(s => s.id === terminalId));
   const addTransfer = useAppStore(s => s.addTransfer);
+  const remoteFileCache = useAppStore(s => s.remoteFileCache[terminalId]);
+  const setRemoteFileCache = useAppStore(s => s.setRemoteFileCache);
   const connectedRef = useRef(false);
   const [showTransferPanel, setShowTransferPanel] = useState(false);
 
@@ -108,26 +133,47 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       setCurrentPath(path);
       setSessionDirectory(terminalId, path);
       setSelectedPaths(new Set());
+      setRemoteFileCache(terminalId, { files: entries, currentPath: path });
     } catch (err) {
       console.error('Failed to list remote directory:', err);
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [terminalId, setSessionDirectory]);
+  }, [terminalId, setSessionDirectory, setRemoteFileCache]);
 
   // Reset and auto-connect when switching to a different SSH terminal
   useEffect(() => {
     connectedRef.current = false;
     setConnected(false);
     setError(null);
-    setFiles([]);
-    setCurrentPath('/');
     setSelectedPaths(new Set());
 
+    // Restore from cache for instant display
+    if (remoteFileCache) {
+      setFiles(remoteFileCache.files);
+      setCurrentPath(remoteFileCache.currentPath);
+    } else {
+      setFiles([]);
+      setCurrentPath('/');
+    }
+
     if (session?.profileId) {
-      connectSession().then(ok => {
-        if (ok) loadDirectory('/');
+      connectSession().then(async ok => {
+        if (ok) {
+          // If we had a cache, refresh the cached directory in the background
+          const cachedPath = remoteFileCache?.currentPath;
+          if (cachedPath) {
+            loadDirectory(cachedPath);
+          } else {
+            try {
+              const homeDir = await getSshHomeDir(terminalId);
+              loadDirectory(homeDir || '/');
+            } catch {
+              loadDirectory('/');
+            }
+          }
+        }
       });
     }
   }, [terminalId, session?.profileId]);
@@ -205,7 +251,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   }, [creating]);
 
   // Breadcrumb segments
-  const breadcrumbs = currentPath.split('/').filter(Boolean);
+  const breadcrumbs = currentPath.replace(/\\/g, '/').split('/').filter(Boolean);
 
   const navigateToBreadcrumb = (index: number) => {
     const path = '/' + breadcrumbs.slice(0, index + 1).join('/');
@@ -227,6 +273,10 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     if (file.isDir) {
       loadDirectory(file.path);
     } else if (isTextFile(file.name)) {
+      if (file.size > 10 * 1024 * 1024) {
+        alert('超大文件不支持编辑（>10MB）');
+        return;
+      }
       handleEdit(file);
     }
   };
@@ -263,11 +313,15 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     }
   };
 
+  const getDownloadDir = async () => {
+    const settings = getAppSettings();
+    if (settings.sshDownloadDir) return settings.sshDownloadDir;
+    return getDownloadsDirectory();
+  };
+
   const startDownload = async (file: RemoteFileEntry) => {
-    const baseTempDir = await getSshTempDirectory();
-    const tempDir = `${baseTempDir}/${terminalId}`;
-    await ensureDir(tempDir);
-    const localPath = `${tempDir}/${file.name}`;
+    const baseDir = await getDownloadDir();
+    const localPath = `${baseDir}/${file.name}`;
     const id = crypto.randomUUID();
     addTransfer({
       id,
@@ -278,12 +332,12 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       fileName: file.name,
       status: 'active',
       transferred: 0,
-      total: file.size,
+      total: file.isDir ? 0 : file.size,
       percent: 0,
     });
     setShowTransferPanel(true);
-    // Fire and forget — progress/error handled by event listeners
-    remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '').catch(err => {
+    const downloadFn = file.isDir ? remoteDownloadDir : remoteDownload;
+    downloadFn(terminalId, file.path, localPath, id, session?.profileId || '').catch(err => {
       const store = useAppStore.getState();
       store.failTransfer(id, String(err));
     });
@@ -316,6 +370,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       const localPath = `${tempDir}/${file.name}`;
       const id = crypto.randomUUID();
       await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
+      await waitForDownload(id);
       await openPath(localPath);
     } catch (err) {
       console.error('Open in system failed:', err);
@@ -332,6 +387,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       const localPath = `${tempDir}/${file.name}`;
       const id = crypto.randomUUID();
       await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
+      await waitForDownload(id);
       useAppStore.getState().openEditorSession(localPath, file.path, terminalId);
     } catch (err) {
       console.error('Edit failed:', err);
@@ -560,21 +616,16 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       ) : (
         <>
       {/* Breadcrumb navigation */}
-      <div className="file-tree-path" style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
-        <span
-          style={{ cursor: 'pointer', flexShrink: 0 }}
-          onClick={() => loadDirectory('/')}
-          title="根目录"
-        >/</span>
+      <div className="file-tree-path" style={{ display: 'flex', alignItems: 'center' }}>
         {breadcrumbs.map((seg, i) => (
-          <span key={i} style={{ display: 'inline', whiteSpace: 'nowrap' }}>
+          <span key={i} style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+            {i > 0 && <span className="breadcrumb-sep">/</span>}
             <span
-              style={{ cursor: 'pointer', color: i === breadcrumbs.length - 1 ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+              className={'breadcrumb-seg' + (i === breadcrumbs.length - 1 ? ' active' : '')}
               onClick={() => navigateToBreadcrumb(i)}
             >
-              {seg}
+              {i === 0 ? '/' + seg : seg}
             </span>
-            {i < breadcrumbs.length - 1 && <span>/</span>}
           </span>
         ))}
         {selectedFileCount > 1 && (
@@ -602,7 +653,14 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
               disabled={connecting}
               onClick={async () => {
                 const ok = await connectSession();
-                if (ok) loadDirectory('/');
+                if (ok) {
+                  try {
+                    const homeDir = await getSshHomeDir(terminalId);
+                    loadDirectory(homeDir || '/');
+                  } catch {
+                    loadDirectory('/');
+                  }
+                }
               }}
               style={{ padding: '6px 20px', cursor: connecting ? 'default' : 'pointer' }}
             >
@@ -700,17 +758,15 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
               <div className="context-menu-item" onClick={() => handleOpen(contextMenu.file!)}>
                 {contextMenu.file.isDir ? '打开' : '打开目录(cd)'}
               </div>
-              {!contextMenu.file.isDir && (
-                <div className="context-menu-item" onClick={() => handleDownload(contextMenu.file!)}>
-                  下载
-                </div>
-              )}
+              <div className="context-menu-item" onClick={() => handleDownload(contextMenu.file!)}>
+                {contextMenu.file.isDir ? '下载文件夹' : '下载'}
+              </div>
               {!contextMenu.file.isDir && (
                 <div className="context-menu-item" onClick={() => handleOpenInSystem(contextMenu.file!)}>
                   在系统中打开
                 </div>
               )}
-              {!contextMenu.file.isDir && isTextFile(contextMenu.file.name) && (
+              {!contextMenu.file.isDir && isTextFile(contextMenu.file.name) && contextMenu.file.size <= 10 * 1024 * 1024 && (
                 <div className="context-menu-item" onClick={() => handleEdit(contextMenu.file!)}>
                   用本地编辑器打开
                 </div>

@@ -144,7 +144,7 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
             .map_err(|e| format!("Failed to open explorer: {}", e))?;
     } else {
         std::process::Command::new("explorer")
-            .args(["/select,", &path])
+            .arg(format!("/select,\"{}\"", path))
             .spawn()
             .map_err(|e| format!("Failed to open explorer: {}", e))?;
     }

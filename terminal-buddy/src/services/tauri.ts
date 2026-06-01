@@ -316,6 +316,10 @@ export async function connectSshSession(terminalId: string, profileId: string): 
   return invoke('connect_ssh_session', { terminalId, profileId });
 }
 
+export async function getSshHomeDir(terminalId: string): Promise<string> {
+  return invoke('get_ssh_home_dir', { terminalId });
+}
+
 export async function getSshTempDirectory(): Promise<string> {
   return invoke('get_ssh_temp_directory');
 }
@@ -362,6 +366,10 @@ export async function remoteUpload(terminalId: string, localPath: string, remote
 
 export async function remoteDownload(terminalId: string, remotePath: string, localPath: string, transferId: string, profileId: string): Promise<void> {
   return invoke('remote_download', { terminalId, remotePath, localPath, transferId, profileId });
+}
+
+export async function remoteDownloadDir(terminalId: string, remotePath: string, localPath: string, transferId: string, profileId: string): Promise<void> {
+  return invoke('remote_download_dir', { terminalId, remotePath, localPath, transferId, profileId });
 }
 
 export async function getServerStats(terminalId: string): Promise<ServerStats> {
