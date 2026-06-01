@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats } from '../types';
+import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem } from '../types';
 import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 
@@ -245,6 +245,17 @@ interface AppState {
   // Server stats
   serverStats: ServerStats | null;
   setServerStats: (stats: ServerStats | null) => void;
+
+  // Transfer state
+  transfers: TransferItem[];
+  showTransferPanel: Record<string, boolean>;
+  addTransfer: (item: TransferItem) => void;
+  updateTransferProgress: (id: string, transferred: number, total: number, percent: number) => void;
+  completeTransfer: (id: string) => void;
+  failTransfer: (id: string, error: string) => void;
+  removeTransfer: (id: string) => void;
+  clearCompletedTransfers: (terminalId: string) => void;
+  setShowTransferPanel: (terminalId: string, show: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -581,6 +592,39 @@ export const useAppStore = create<AppState>((set) => ({
   // Server stats
   serverStats: null,
   setServerStats: (stats) => set({ serverStats: stats }),
+
+  // Transfer state
+  transfers: [],
+  showTransferPanel: {},
+  addTransfer: (item) => set((state) => ({ transfers: [...state.transfers, item] })),
+  updateTransferProgress: (id, transferred, total, percent) =>
+    set((state) => ({
+      transfers: state.transfers.map((t) =>
+        t.id === id ? { ...t, transferred, total, percent } : t
+      ),
+    })),
+  completeTransfer: (id) =>
+    set((state) => ({
+      transfers: state.transfers.map((t) =>
+        t.id === id ? { ...t, status: 'completed' as const, percent: 100 } : t
+      ),
+    })),
+  failTransfer: (id, error) =>
+    set((state) => ({
+      transfers: state.transfers.map((t) =>
+        t.id === id ? { ...t, status: 'failed' as const, error } : t
+      ),
+    })),
+  removeTransfer: (id) =>
+    set((state) => ({ transfers: state.transfers.filter((t) => t.id !== id) })),
+  clearCompletedTransfers: (terminalId) =>
+    set((state) => ({
+      transfers: state.transfers.filter(
+        (t) => t.terminalId !== terminalId || t.status !== 'completed'
+      ),
+    })),
+  setShowTransferPanel: (terminalId, show) =>
+    set((state) => ({ showTransferPanel: { ...state.showTransferPanel, [terminalId]: show } })),
 }));
 
 // Listen for app-settings-changed events and increment version to trigger re-renders

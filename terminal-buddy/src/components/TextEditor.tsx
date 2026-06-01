@@ -188,7 +188,8 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
           );
           if (session?.sshRemotePath && session?.sshTerminalId) {
             try {
-              await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath);
+              const terminalSession = useAppStore.getState().sessions.find(s => s.id === session.sshTerminalId);
+              await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath, crypto.randomUUID(), terminalSession?.profileId || '');
             } catch (uploadErr) {
               console.error('Auto-upload to server failed:', uploadErr);
               alert('已保存到本地，但上传到服务器失败: ' + String(uploadErr));
@@ -254,7 +255,8 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
         );
         if (session?.sshRemotePath && session?.sshTerminalId) {
           try {
-            await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath);
+            const terminalSession = useAppStore.getState().sessions.find(s => s.id === session.sshTerminalId);
+            await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath, crypto.randomUUID(), terminalSession?.profileId || '');
           } catch (uploadErr) {
             console.error('Auto-upload to server failed:', uploadErr);
             alert('已保存到本地，但上传到服务器失败: ' + String(uploadErr));

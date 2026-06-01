@@ -236,7 +236,7 @@ pub fn get_server_stats(
     let mut disk_section = "";
     let mut net_section = "";
 
-    let mut i = 0;
+    let mut i = 1;
     while i + 1 < sections.len() {
         let label = sections[i].trim();
         let content = sections[i + 1];
@@ -285,7 +285,7 @@ pub fn get_server_stats(
         );
     }
 
-    Ok(ServerStats {
+    let result = ServerStats {
         uptime,
         cpu_usage,
         memory,
@@ -297,5 +297,13 @@ pub fn get_server_stats(
             tx_speed,
         },
         timestamp: now,
-    })
+    };
+    eprintln!("[ServerMonitor] result: cpu={:.1}%, mem_used={}/{} ({:.1}%), disk_count={}, net_rx_speed={:.1}, net_tx_speed={:.1}",
+        result.cpu_usage, result.memory.used, result.memory.total, result.memory.usage_percent,
+        result.disk.len(), result.network.rx_speed, result.network.tx_speed);
+    for d in &result.disk {
+        eprintln!("[ServerMonitor]   disk: {} {:.0}%", d.mount, d.usage_percent);
+    }
+
+    Ok(result)
 }

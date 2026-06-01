@@ -2,12 +2,57 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use ssh2::Session;
 use tauri::{AppHandle, Emitter};
 
 use crate::models::profile::Profile;
-use crate::models::ssh_types::{RemoteFileEntry, TransferProgress};
+use crate::models::ssh_types::{RemoteFileEntry, TransferProgress, TransferError};
+
+fn connect_ssh(profile: &Profile) -> Result<(Session, ssh2::Sftp), String> {
+    let host = profile.ssh_host.as_ref().ok_or("SSH host not set")?;
+    let port = profile.ssh_port.unwrap_or(22);
+    let user = profile.ssh_user.as_ref().ok_or("SSH user not set")?;
+
+    let tcp = std::net::TcpStream::connect(format!("{}:{}", host, port))
+        .map_err(|e| format!("TCP connection failed: {}", e))?;
+
+    let mut session = Session::new()
+        .map_err(|e| format!("Session creation failed: {}", e))?;
+    session.set_tcp_stream(tcp);
+    session.handshake()
+        .map_err(|e| format!("SSH handshake failed: {}", e))?;
+
+    match profile.ssh_auth_type.as_deref() {
+        Some("key") => {
+            let key_path = profile.ssh_key_path.as_ref()
+                .ok_or("SSH key path not set")?;
+            session.userauth_pubkey_file(user, None, Path::new(key_path), None)
+                .map_err(|e| format!("Key auth failed: {}", e))?;
+        }
+        Some("password") => {
+            let password = profile.ssh_password.as_deref()
+                .ok_or("SSH password not set")?;
+            session.userauth_password(user, password)
+                .map_err(|e| format!("Password auth failed: {}", e))?;
+        }
+        _ => {
+            if session.userauth_agent(user).is_err() {
+                return Err("Agent authentication failed".to_string());
+            }
+        }
+    }
+
+    if !session.authenticated() {
+        return Err("SSH authentication failed".to_string());
+    }
+
+    let sftp = session.sftp()
+        .map_err(|e| format!("SFTP subsystem failed: {}", e))?;
+
+    Ok((session, sftp))
+}
 
 pub struct SshSession {
     pub session: Session,
@@ -39,50 +84,11 @@ impl SshSessionService {
         }
 
         // Not found — create new connection outside the lock.
-        let host = profile.ssh_host.as_ref().ok_or("SSH host not set")?;
-        let port = profile.ssh_port.unwrap_or(22);
-        let user = profile.ssh_user.as_ref().ok_or("SSH user not set")?;
-
-        let tcp = std::net::TcpStream::connect(format!("{}:{}", host, port))
-            .map_err(|e| format!("TCP connection failed: {}", e))?;
-
-        let mut session = Session::new()
-            .map_err(|e| format!("Session creation failed: {}", e))?;
-        session.set_tcp_stream(tcp);
-        session.handshake()
-            .map_err(|e| format!("SSH handshake failed: {}", e))?;
-
-        match profile.ssh_auth_type.as_deref() {
-            Some("key") => {
-                let key_path = profile.ssh_key_path.as_ref()
-                    .ok_or("SSH key path not set")?;
-                session.userauth_pubkey_file(user, None, Path::new(key_path), None)
-                    .map_err(|e| format!("Key auth failed: {}", e))?;
-            }
-            Some("password") => {
-                let password = profile.ssh_password.as_deref()
-                    .ok_or("SSH password not set")?;
-                session.userauth_password(user, password)
-                    .map_err(|e| format!("Password auth failed: {}", e))?;
-            }
-            _ => {
-                if session.userauth_agent(user).is_err() {
-                    return Err("Agent authentication failed. Password auth not supported — use key-based authentication.".to_string());
-                }
-            }
-        }
-
-        if !session.authenticated() {
-            return Err("SSH authentication failed".to_string());
-        }
-
-        let sftp = session.sftp()
-            .map_err(|e| format!("SFTP subsystem failed: {}", e))?;
+        let (session, sftp) = connect_ssh(profile)?;
 
         // Double-check: another thread might have created it while we were connecting
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         if sessions.contains_key(terminal_id) {
-            // Another thread beat us — drop our connection
             drop(sftp);
             drop(session);
             return Ok(());
@@ -95,10 +101,13 @@ impl SshSessionService {
     where
         F: FnOnce(&Mutex<SshSession>) -> Result<R, String>,
     {
-        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        let arc = sessions.get(terminal_id).cloned().ok_or("SSH session not found")?;
-        drop(sessions);
+        let arc = self.get_session_arc(terminal_id)?;
         f(&arc)
+    }
+
+    fn get_session_arc(&self, terminal_id: &str) -> Result<Arc<Mutex<SshSession>>, String> {
+        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        sessions.get(terminal_id).cloned().ok_or("SSH session not found".to_string())
     }
 
     pub fn list_dir(&self, terminal_id: &str, path: &str) -> Result<Vec<RemoteFileEntry>, String> {
@@ -199,8 +208,9 @@ impl SshSessionService {
                 ssh2::OpenType::File,
             ).map_err(|e| format!("Failed to open remote file: {}", e))?;
 
-            let mut buf = [0u8; 32768];
+            let mut buf = [0u8; 131072];
             let mut transferred: u64 = 0;
+            let mut last_emit = Instant::now();
             loop {
                 let n = local_file.read(&mut buf)
                     .map_err(|e| format!("Read error: {}", e))?;
@@ -208,14 +218,27 @@ impl SshSessionService {
                 remote_file.write(&buf[..n])
                     .map_err(|e| format!("Write error: {}", e))?;
                 transferred += n as u64;
-                let _ = app.emit("remote_transfer_progress", TransferProgress {
-                    terminal_id: terminal_id.to_string(),
-                    transferred,
-                    total,
-                    percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
-                    direction: "upload".to_string(),
-                });
+                let now = Instant::now();
+                if now.duration_since(last_emit).as_millis() >= 200 {
+                    last_emit = now;
+                    let _ = app.emit("remote_transfer_progress", TransferProgress {
+                        transfer_id: String::new(),
+                        terminal_id: terminal_id.to_string(),
+                        transferred,
+                        total,
+                        percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
+                        direction: "upload".to_string(),
+                    });
+                }
             }
+            let _ = app.emit("remote_transfer_progress", TransferProgress {
+                transfer_id: String::new(),
+                terminal_id: terminal_id.to_string(),
+                transferred,
+                total,
+                percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
+                direction: "upload".to_string(),
+            });
             Ok(())
         })
     }
@@ -240,8 +263,9 @@ impl SshSessionService {
             let mut local_file = std::fs::File::create(local_path)
                 .map_err(|e| format!("Failed to create local file: {}", e))?;
 
-            let mut buf = [0u8; 32768];
+            let mut buf = [0u8; 131072];
             let mut transferred: u64 = 0;
+            let mut last_emit = Instant::now();
             loop {
                 let n = remote_file.read(&mut buf)
                     .map_err(|e| format!("Read error: {}", e))?;
@@ -249,17 +273,185 @@ impl SshSessionService {
                 std::io::Write::write_all(&mut local_file, &buf[..n])
                     .map_err(|e| format!("Write error: {}", e))?;
                 transferred += n as u64;
-                // Emit while holding per-session lock (outer map lock already released)
+                let now = Instant::now();
+                if now.duration_since(last_emit).as_millis() >= 200 {
+                    last_emit = now;
+                    let _ = app.emit("remote_transfer_progress", TransferProgress {
+                        transfer_id: String::new(),
+                        terminal_id: terminal_id.to_string(),
+                        transferred,
+                        total,
+                        percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
+                        direction: "download".to_string(),
+                    });
+                }
+            }
+            let _ = app.emit("remote_transfer_progress", TransferProgress {
+                transfer_id: String::new(),
+                terminal_id: terminal_id.to_string(),
+                transferred,
+                total,
+                percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
+                direction: "download".to_string(),
+            });
+            Ok(())
+        })
+    }
+
+    pub fn download_async(
+        &self,
+        transfer_id: &str,
+        terminal_id: &str,
+        remote_path: &str,
+        local_path: &str,
+        profile: Profile,
+        app: AppHandle,
+    ) -> Result<(), String> {
+        let transfer_id = transfer_id.to_string();
+        let terminal_id = terminal_id.to_string();
+        let remote_path = remote_path.to_string();
+        let local_path = local_path.to_string();
+
+        std::thread::spawn(move || {
+            let result = (|| -> Result<(), String> {
+                // Create a dedicated SSH+SFTP connection — no shared mutex
+                let (_session, sftp) = connect_ssh(&profile)?;
+
+                let stat = sftp.stat(Path::new(&remote_path))
+                    .map_err(|e| format!("stat failed: {}", e))?;
+                let total = stat.size.unwrap_or(0);
+
+                let mut remote_file = sftp.open(Path::new(&remote_path))
+                    .map_err(|e| format!("Failed to open remote file: {}", e))?;
+
+                let mut local_file = std::fs::File::create(&local_path)
+                    .map_err(|e| format!("Failed to create local file: {}", e))?;
+
+                let mut buf = [0u8; 131072];
+                let mut transferred: u64 = 0;
+                let mut last_emit = Instant::now();
+                loop {
+                    let n = match remote_file.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(e) => return Err(format!("Read error: {}", e)),
+                    };
+                    if let Err(e) = std::io::Write::write_all(&mut local_file, &buf[..n]) {
+                        return Err(format!("Write error: {}", e));
+                    }
+                    transferred += n as u64;
+                    let now = Instant::now();
+                    if now.duration_since(last_emit).as_millis() >= 200 {
+                        last_emit = now;
+                        let _ = app.emit("remote_transfer_progress", TransferProgress {
+                            transfer_id: transfer_id.clone(),
+                            terminal_id: terminal_id.clone(),
+                            transferred,
+                            total,
+                            percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
+                            direction: "download".to_string(),
+                        });
+                    }
+                }
                 let _ = app.emit("remote_transfer_progress", TransferProgress {
-                    terminal_id: terminal_id.to_string(),
+                    transfer_id: transfer_id.clone(),
+                    terminal_id: terminal_id.clone(),
                     transferred,
                     total,
                     percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
                     direction: "download".to_string(),
                 });
+                Ok(())
+            })();
+
+            if let Err(error) = result {
+                let _ = app.emit("remote_transfer_error", TransferError {
+                    transfer_id: transfer_id.clone(),
+                    error: error.clone(),
+                });
             }
-            Ok(())
-        })
+        });
+
+        Ok(())
+    }
+
+    pub fn upload_async(
+        &self,
+        transfer_id: &str,
+        terminal_id: &str,
+        local_path: &str,
+        remote_path: &str,
+        profile: Profile,
+        app: AppHandle,
+    ) -> Result<(), String> {
+        let transfer_id = transfer_id.to_string();
+        let terminal_id = terminal_id.to_string();
+        let local_path = local_path.to_string();
+        let remote_path = remote_path.to_string();
+
+        std::thread::spawn(move || {
+            let result = (|| -> Result<(), String> {
+                // Create a dedicated SSH+SFTP connection — no shared mutex
+                let (_session, sftp) = connect_ssh(&profile)?;
+
+                let mut local_file = std::fs::File::open(&local_path)
+                    .map_err(|e| format!("Failed to open local file: {}", e))?;
+                let metadata = local_file.metadata()
+                    .map_err(|e| e.to_string())?;
+                let total = metadata.len();
+
+                let mut remote_file = sftp.open_mode(
+                    Path::new(&remote_path),
+                    ssh2::OpenFlags::WRITE | ssh2::OpenFlags::CREATE | ssh2::OpenFlags::TRUNCATE,
+                    0o644,
+                    ssh2::OpenType::File,
+                ).map_err(|e| format!("Failed to open remote file: {}", e))?;
+
+                let mut buf = [0u8; 131072];
+                let mut transferred: u64 = 0;
+                let mut last_emit = Instant::now();
+                loop {
+                    let n = match local_file.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(e) => return Err(format!("Read error: {}", e)),
+                    };
+                    remote_file.write(&buf[..n])
+                        .map_err(|e| format!("Write error: {}", e))?;
+                    transferred += n as u64;
+                    let now = Instant::now();
+                    if now.duration_since(last_emit).as_millis() >= 200 {
+                        last_emit = now;
+                        let _ = app.emit("remote_transfer_progress", TransferProgress {
+                            transfer_id: transfer_id.clone(),
+                            terminal_id: terminal_id.clone(),
+                            transferred,
+                            total,
+                            percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
+                            direction: "upload".to_string(),
+                        });
+                    }
+                }
+                let _ = app.emit("remote_transfer_progress", TransferProgress {
+                    transfer_id: transfer_id.clone(),
+                    terminal_id: terminal_id.clone(),
+                    transferred,
+                    total,
+                    percent: if total > 0 { transferred as f64 / total as f64 * 100.0 } else { 100.0 },
+                    direction: "upload".to_string(),
+                });
+                Ok(())
+            })();
+
+            if let Err(error) = result {
+                let _ = app.emit("remote_transfer_error", TransferError {
+                    transfer_id: transfer_id.clone(),
+                    error: error.clone(),
+                });
+            }
+        });
+
+        Ok(())
     }
 
     pub fn exec(&self, terminal_id: &str, cmd: &str) -> Result<String, String> {

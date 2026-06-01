@@ -102,25 +102,37 @@ pub fn remote_chmod(
 }
 
 #[command]
-pub fn remote_upload(
-    terminal_id: String,
-    local_path: String,
-    remote_path: String,
-    app: AppHandle,
-    ssh_service: State<'_, SshSessionService>,
-) -> Result<(), String> {
-    ssh_service.upload(&terminal_id, &local_path, &remote_path, &app)
-}
-
-#[command]
 pub fn remote_download(
     terminal_id: String,
     remote_path: String,
     local_path: String,
+    transfer_id: String,
+    profile_id: String,
     app: AppHandle,
     ssh_service: State<'_, SshSessionService>,
 ) -> Result<(), String> {
-    ssh_service.download(&terminal_id, &remote_path, &local_path, &app)
+    if profile_id.is_empty() {
+        return Err("profileId is empty".to_string());
+    }
+    let profile = ProfileService::get_profile(&profile_id)?;
+    ssh_service.download_async(&transfer_id, &terminal_id, &remote_path, &local_path, profile, app)
+}
+
+#[command]
+pub fn remote_upload(
+    terminal_id: String,
+    local_path: String,
+    remote_path: String,
+    transfer_id: String,
+    profile_id: String,
+    app: AppHandle,
+    ssh_service: State<'_, SshSessionService>,
+) -> Result<(), String> {
+    if profile_id.is_empty() {
+        return Err("profileId is empty".to_string());
+    }
+    let profile = ProfileService::get_profile(&profile_id)?;
+    ssh_service.upload_async(&transfer_id, &terminal_id, &local_path, &remote_path, profile, app)
 }
 
 #[command]

@@ -57,9 +57,17 @@ pub struct NetworkStats {
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferProgress {
+    pub transfer_id: String,
     pub terminal_id: String,
     pub transferred: u64,
     pub total: u64,
     pub percent: f64,
     pub direction: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferError {
+    pub transfer_id: String,
+    pub error: String,
 }

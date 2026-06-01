@@ -356,12 +356,12 @@ export async function remoteChmod(terminalId: string, path: string, mode: number
   return invoke('remote_chmod', { terminalId, path, mode });
 }
 
-export async function remoteUpload(terminalId: string, localPath: string, remotePath: string): Promise<void> {
-  return invoke('remote_upload', { terminalId, localPath, remotePath });
+export async function remoteUpload(terminalId: string, localPath: string, remotePath: string, transferId: string, profileId: string): Promise<void> {
+  return invoke('remote_upload', { terminalId, localPath, remotePath, transferId, profileId });
 }
 
-export async function remoteDownload(terminalId: string, remotePath: string, localPath: string): Promise<void> {
-  return invoke('remote_download', { terminalId, remotePath, localPath });
+export async function remoteDownload(terminalId: string, remotePath: string, localPath: string, transferId: string, profileId: string): Promise<void> {
+  return invoke('remote_download', { terminalId, remotePath, localPath, transferId, profileId });
 }
 
 export async function getServerStats(terminalId: string): Promise<ServerStats> {
@@ -369,9 +369,17 @@ export async function getServerStats(terminalId: string): Promise<ServerStats> {
 }
 
 export async function onTransferProgress(
-  callback: (progress: { terminalId: string; transferred: number; total: number; percent: number; direction: string }) => void
+  callback: (progress: { transferId: string; terminalId: string; transferred: number; total: number; percent: number; direction: string }) => void
 ): Promise<UnlistenFn> {
   return listen('remote_transfer_progress', (event) => {
+    callback(event.payload as any);
+  });
+}
+
+export async function onTransferError(
+  callback: (error: { transferId: string; error: string }) => void
+): Promise<UnlistenFn> {
+  return listen('remote_transfer_error', (event) => {
     callback(event.payload as any);
   });
 }
