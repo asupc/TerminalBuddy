@@ -19,18 +19,20 @@ const statusLabels: Record<TransferItem['status'], string> = {
 
 interface TransferPanelProps {
   terminalId: string;
+  profileId?: string;
 }
 
-export const TransferPanel: FC<TransferPanelProps> = ({ terminalId }) => {
+export const TransferPanel: FC<TransferPanelProps> = ({ terminalId, profileId }) => {
   const allTransfers = useAppStore((s) => s.transfers);
   const clearCompletedTransfers = useAppStore((s) => s.clearCompletedTransfers);
+  const clearCompletedTransfersByProfile = useAppStore((s) => s.clearCompletedTransfersByProfile);
   const removeTransfer = useAppStore((s) => s.removeTransfer);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: TransferItem } | null>(null);
 
   const transfers = useMemo(
-    () => allTransfers.filter((t) => t.terminalId === terminalId),
-    [allTransfers, terminalId]
+    () => allTransfers.filter((t) => profileId ? t.profileId === profileId : t.terminalId === terminalId),
+    [allTransfers, terminalId, profileId]
   );
 
   const sorted = useMemo(() =>
@@ -109,6 +111,9 @@ export const TransferPanel: FC<TransferPanelProps> = ({ terminalId }) => {
           </div>
           {(item.status === 'completed' || item.status === 'failed') && (
             <div className="transfer-item-actions">
+              <span className="transfer-item-path" title={(item.direction === 'download' ? item.localPath : item.remotePath).replace(/\//g, '\\')}>
+                {(item.direction === 'download' ? item.localPath : item.remotePath).replace(/\//g, '\\')}
+              </span>
               <button onClick={() => removeTransfer(item.id)}>移除</button>
             </div>
           )}
@@ -116,7 +121,7 @@ export const TransferPanel: FC<TransferPanelProps> = ({ terminalId }) => {
       ))}
       {completedCount > 0 && (
         <div className="transfer-footer">
-          <button className="transfer-clear-btn" onClick={() => clearCompletedTransfers(terminalId)}>
+          <button className="transfer-clear-btn" onClick={() => profileId ? clearCompletedTransfersByProfile(profileId) : clearCompletedTransfers(terminalId)}>
             清除已完成
           </button>
         </div>
@@ -128,7 +133,10 @@ export const TransferPanel: FC<TransferPanelProps> = ({ terminalId }) => {
           onClick={(e) => e.stopPropagation()}
         >
           <div className="context-menu-item" onClick={() => {
-            openInExplorer(contextMenu.item.localPath).catch(console.error);
+            const path = contextMenu.item.localPath.replace(/\//g, '\\');
+            const sep = path.lastIndexOf('\\');
+            const dir = sep >= 0 ? path.substring(0, sep) : path;
+            openInExplorer(dir).catch(console.error);
             setContextMenu(null);
           }}>
             在资源管理器中打开

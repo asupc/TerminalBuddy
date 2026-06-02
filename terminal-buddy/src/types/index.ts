@@ -214,6 +214,7 @@ export type TransferDirection = 'upload' | 'download';
 export interface TransferItem {
   id: string;
   terminalId: string;
+  profileId: string;
   direction: TransferDirection;
   remotePath: string;
   localPath: string;

@@ -252,6 +252,7 @@ interface AppState {
   failTransfer: (id: string, error: string) => void;
   removeTransfer: (id: string) => void;
   clearCompletedTransfers: (terminalId: string) => void;
+  clearCompletedTransfersByProfile: (profileId: string) => void;
   setShowTransferPanel: (terminalId: string, show: boolean) => void;
 }
 
@@ -594,35 +595,68 @@ export const useAppStore = create<AppState>((set) => ({
   setServerStats: (stats) => set({ serverStats: stats }),
 
   // Transfer state
-  transfers: [],
+  transfers: (() => {
+    try {
+      const saved = localStorage.getItem('terminalbuddy_transfers');
+      if (!saved) return [];
+      const items: TransferItem[] = JSON.parse(saved);
+      return items.map((t) =>
+        t.status === 'active' ? { ...t, status: 'failed' as const, error: '应用重启' } : t
+      );
+    } catch { return []; }
+  })(),
   showTransferPanel: {},
-  addTransfer: (item) => set((state) => ({ transfers: [...state.transfers, item] })),
+  addTransfer: (item) => set((state) => {
+    const transfers = [...state.transfers, item];
+    localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+    return { transfers };
+  }),
   updateTransferProgress: (id, transferred, total, percent) =>
-    set((state) => ({
-      transfers: state.transfers.map((t) =>
+    set((state) => {
+      const transfers = state.transfers.map((t) =>
         t.id === id ? { ...t, transferred, total, percent } : t
-      ),
-    })),
+      );
+      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      return { transfers };
+    }),
   completeTransfer: (id) =>
-    set((state) => ({
-      transfers: state.transfers.map((t) =>
+    set((state) => {
+      const transfers = state.transfers.map((t) =>
         t.id === id ? { ...t, status: 'completed' as const, percent: 100 } : t
-      ),
-    })),
+      );
+      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      return { transfers };
+    }),
   failTransfer: (id, error) =>
-    set((state) => ({
-      transfers: state.transfers.map((t) =>
+    set((state) => {
+      const transfers = state.transfers.map((t) =>
         t.id === id ? { ...t, status: 'failed' as const, error } : t
-      ),
-    })),
+      );
+      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      return { transfers };
+    }),
   removeTransfer: (id) =>
-    set((state) => ({ transfers: state.transfers.filter((t) => t.id !== id) })),
+    set((state) => {
+      const transfers = state.transfers.filter((t) => t.id !== id);
+      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      return { transfers };
+    }),
   clearCompletedTransfers: (terminalId) =>
-    set((state) => ({
-      transfers: state.transfers.filter(
+    set((state) => {
+      const transfers = state.transfers.filter(
         (t) => t.terminalId !== terminalId || t.status !== 'completed'
-      ),
-    })),
+      );
+      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      return { transfers };
+    }),
+  clearCompletedTransfersByProfile: (profileId) =>
+    set((state) => {
+      const transfers = state.transfers.filter(
+        (t) => t.profileId !== profileId || t.status !== 'completed'
+      );
+      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      return { transfers };
+    }),
   setShowTransferPanel: (terminalId, show) =>
     set((state) => ({ showTransferPanel: { ...state.showTransferPanel, [terminalId]: show } })),
 }));

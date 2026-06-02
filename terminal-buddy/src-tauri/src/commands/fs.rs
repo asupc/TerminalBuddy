@@ -137,14 +137,20 @@ pub fn open_path(path: String) -> Result<(), String> {
 
 #[command]
 pub fn open_in_explorer(path: String) -> Result<(), String> {
+    let path = path.replace('/', "\\");
     if fs::metadata(&path).map_or(false, |m| m.is_dir()) {
         std::process::Command::new("explorer")
             .arg(&path)
             .spawn()
             .map_err(|e| format!("Failed to open explorer: {}", e))?;
-    } else {
+    } else if fs::metadata(&path).is_ok() {
         std::process::Command::new("explorer")
             .arg(format!("/select,\"{}\"", path))
+            .spawn()
+            .map_err(|e| format!("Failed to open explorer: {}", e))?;
+    } else if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::process::Command::new("explorer")
+            .arg(parent)
             .spawn()
             .map_err(|e| format!("Failed to open explorer: {}", e))?;
     }
