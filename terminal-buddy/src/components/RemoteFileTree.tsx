@@ -79,6 +79,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
   const [renaming, setRenaming] = useState<RemoteFileEntry | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [creating, setCreating] = useState<'file' | 'dir' | null>(null);
@@ -239,6 +241,28 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       document.removeEventListener('keydown', close);
       document.removeEventListener('wheel', close);
     };
+  }, [contextMenu]);
+
+  // Adjust context menu position to stay within viewport
+  useEffect(() => {
+    if (!contextMenu) {
+      setMenuPos(null);
+      return;
+    }
+    if (!contextMenuRef.current) return;
+    const menu = contextMenuRef.current;
+    const menuWidth = menu.offsetWidth;
+    const menuHeight = menu.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = contextMenu.x;
+    let top = contextMenu.y;
+
+    if (left + menuWidth > vw) left = Math.max(0, vw - menuWidth);
+    if (top + menuHeight > vh) top = Math.max(0, vh - menuHeight);
+
+    setMenuPos({ left, top });
   }, [contextMenu]);
 
   // Auto-focus rename/create inputs
@@ -749,8 +773,13 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       {/* Context menu */}
       {contextMenu && (
         <div
+          ref={contextMenuRef}
           className="context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={{
+            left: menuPos?.left ?? contextMenu.x,
+            top: menuPos?.top ?? contextMenu.y,
+            visibility: menuPos ? 'visible' : 'hidden',
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="context-menu-item" onClick={handleRefresh}>刷新</div>
