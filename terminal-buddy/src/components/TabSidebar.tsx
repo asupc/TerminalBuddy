@@ -593,29 +593,23 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
         <>
           <div className="context-menu-overlay" onClick={() => setShowContextMenu(false)} />
           <div className="context-menu" ref={contextMenuRef} style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
+            <div className="context-menu-item" onClick={() => { onStartBlankTerminal('powershell'); setShowContextMenu(false); }}>
+              PowerShell
+            </div>
+            <div className="context-menu-item" onClick={() => { onStartBlankTerminal('cmd'); setShowContextMenu(false); }}>
+              CMD
+            </div>
+            <div className="context-menu-item" onClick={() => { onStartTextEditor(); setShowContextMenu(false); }}>
+              文本编辑器
+            </div>
             <div className="context-menu-item has-submenu">
-              <span>新建</span>
+              <span>新建配置终端</span>
               <span className="submenu-arrow">›</span>
               <div
                 className="context-submenu"
                 ref={submenuRef}
                 style={{ maxHeight: `${Math.max(200, window.innerHeight - contextMenuPos.y - 16)}px` }}
               >
-                {/* PowerShell / CMD — always at top */}
-                <div
-                  className={`context-menu-item submenu-item ${highlightedIndex === 0 ? 'highlighted' : ''}`}
-                  onClick={() => { onStartBlankTerminal('powershell'); setShowContextMenu(false); }}
-                  onMouseEnter={() => setHighlightedIndex(0)}
-                >
-                  PowerShell
-                </div>
-                <div
-                  className={`context-menu-item submenu-item ${highlightedIndex === 1 ? 'highlighted' : ''}`}
-                  onClick={() => { onStartBlankTerminal('cmd'); setShowContextMenu(false); }}
-                  onMouseEnter={() => setHighlightedIndex(1)}
-                >
-                  CMD
-                </div>
                 <TreeView
                   items={submenuTree}
                   expandedIds={submenuExpandedGroups}
@@ -640,9 +634,6 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                   indent={12}
                 />
               </div>
-            </div>
-            <div className="context-menu-item" onClick={() => { onStartTextEditor(); setShowContextMenu(false); }}>
-              文本编辑器
             </div>
             <div className="context-menu-separator" />
             <div className="context-menu-item danger" onClick={handleCloseAllTabs}>

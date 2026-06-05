@@ -2,6 +2,7 @@ import { FC, useEffect, useRef, useState, useCallback } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { editor as MonacoEditor, KeyMod, KeyCode } from 'monaco-editor';
 import { readFileContent, writeFileContent, remoteUpload, getFileMeta, onTransferProgress, onTransferError } from '../services/tauri';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '../stores/appStore';
 import { getMonacoLanguage } from '../utils/fileExtensions';
 import './TextEditor.css';
@@ -192,16 +193,50 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       run: async (ed) => {
         const value = ed.getValue();
         try {
-          await writeFileContent(filePath, value);
+          let savePath = filePath;
+          let isNewSave = false;
+
+          // If this is a draft file, prompt for save location
+          if (isDraft) {
+            const savedPath = await saveDialog({
+              defaultPath: '未命名.txt',
+              filters: [{ name: '文本文件', extensions: ['txt'] }, { name: '所有文件', extensions: ['*'] }],
+            });
+            if (!savedPath) return; // User cancelled
+            savePath = savedPath;
+            isNewSave = true;
+          }
+
+          await writeFileContent(savePath, value);
+
+          // If this was a draft that was saved to a new location, clean up
+          if (isNewSave) {
+            // Remove draft file and update draft index
+            const { removeDraftFile, updateSession } = useAppStore.getState();
+            await removeDraftFile(filePath);
+
+            // Update session with new path and name
+            const session = useAppStore.getState().sessions.find(
+              s => s.sessionType === 'editor' && s.profileId === filePath
+            );
+            if (session) {
+              const fileName = savePath.split(/[/\\]/).pop() || '未命名';
+              updateSession(session.id, {
+                profileId: savePath,
+                profileName: fileName,
+              });
+            }
+          }
+
           const session = useAppStore.getState().sessions.find(
-            s => s.sessionType === 'editor' && s.profileId === filePath
+            s => s.sessionType === 'editor' && s.profileId === savePath
           );
           if (session?.sshRemotePath && session?.sshTerminalId) {
             showSaveNotify('saving', '正在上传到服务器...');
             const transferId = crypto.randomUUID();
             try {
               const terminalSession = useAppStore.getState().sessions.find(s => s.id === session.sshTerminalId);
-              await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath, transferId, terminalSession?.profileId || '');
+              await remoteUpload(session.sshTerminalId, savePath, session.sshRemotePath, transferId, terminalSession?.profileId || '');
             } catch (uploadErr) {
               showSaveNotify('error', '上传失败: ' + String(uploadErr));
               return;
@@ -236,7 +271,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
             showSaveNotify('success', '已保存');
           }
           onDirtyChange(false);
-          const meta = await getFileMeta(filePath).catch(() => null);
+          const meta = await getFileMeta(savePath).catch(() => null);
           if (meta) diskModTimeRef.current = meta.lastModified;
           lastLoadedContentRef.current = value;
         } catch (err) {

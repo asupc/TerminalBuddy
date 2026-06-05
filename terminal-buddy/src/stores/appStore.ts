@@ -422,11 +422,13 @@ export const useAppStore = create<AppState>((set) => ({
       return { sessions: newSessions };
     }),
   updateSession: (id, updates) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) =>
+    set((state) => {
+      const newSessions = state.sessions.map((s) =>
         s.id === id ? { ...s, ...updates } : s
-      ),
-    })),
+      );
+      debouncedSaveTabs(newSessions, state.activeSessionId);
+      return { sessions: newSessions };
+    }),
   ensureEditorGroup: () => set((state) => {
     if (state.groups.some(g => g.id === 'editor-group')) return state;
     return { groups: [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }] };
