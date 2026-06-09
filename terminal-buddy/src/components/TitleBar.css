@@ -101,3 +101,9 @@
   background: #e81123;
   color: #fff;
 }
+
+.ai-usage-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+}

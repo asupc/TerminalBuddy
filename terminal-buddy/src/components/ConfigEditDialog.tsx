@@ -1,22 +1,25 @@
-import { FC, useState, useRef } from 'react';
+import { FC, useState, useRef, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { open } from '@tauri-apps/plugin-dialog';
 import { createProfile, updateProfile, deleteProfile } from '../services/tauri';
 import { PRESET_THEMES, TAB_COLORS, type Profile } from '../types';
-import { COMMAND_TEMPLATES, getCommandHistory, addCommandToHistory } from '../data/commandTemplates';
+import { COMMAND_TEMPLATES } from '../data/commandTemplates';
 import { useDraggable } from '../hooks/useDraggable';
+import { GroupCascader } from './GroupCascader';
 import './ConfigEditDialog.css';
 
 interface ConfigEditDialogProps {
   profile: Profile | null;
   onClose: () => void;
   onSave: () => void;
+  defaultGroup?: string;
+  profiles: Profile[];
 }
 
 interface FormData {
   name: string;
   group: string;
-  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s';
+  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
   startupPath: string;
   colorTheme: string;
   tabColor: string;
@@ -26,11 +29,13 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   profile,
   onClose,
   onSave,
+  defaultGroup,
+  profiles,
 }) => {
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormData>({
     defaultValues: {
       name: profile?.name || '',
-      group: profile?.group || '默认',
+      group: defaultGroup || profile?.group || '默认',
       terminalType: profile?.terminalType || 'powershell',
       startupPath: profile?.startupPath || '',
       colorTheme: profile?.colorTheme || 'dark-default',
@@ -46,7 +51,8 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [cmdSuggestions, setCmdSuggestions] = useState<{ name: string; command: string }[]>([]);
   const [cmdSelectedIndex, setCmdSelectedIndex] = useState(-1);
   const cmdSuggestionsRef = useRef<HTMLDivElement>(null);
-  const [dragEnabledIndex, setDragEnabledIndex] = useState<number | null>(null);
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const dragStateRef = useRef<{ startIndex: number; startY: number } | null>(null);
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>(
     profile?.environmentVariables
       ? Object.entries(profile.environmentVariables).map(([key, value]) => ({ key, value }))
@@ -60,12 +66,24 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [sshUser, setSshUser] = useState(profile?.sshUser || '');
   const [sshAuthType, setSshAuthType] = useState(profile?.sshAuthType || 'key');
   const [sshKeyPath, setSshKeyPath] = useState(profile?.sshKeyPath || '');
+  const [sshPassword, setSshPassword] = useState(profile?.sshPassword || '');
   const [dockerContainerName, setDockerContainerName] = useState(profile?.dockerContainerName || '');
   const [k8sNamespace, setK8sNamespace] = useState(profile?.k8sNamespace || '');
   const [k8sPodName, setK8sPodName] = useState(profile?.k8sPodName || '');
   const [k8sContainerName, setK8sContainerName] = useState(profile?.k8sContainerName || '');
+  const [mstscHost, setMstscHost] = useState(profile?.mstscHost || '');
+  const [mstscPort, setMstscPort] = useState(profile?.mstscPort || 3389);
+  const [mstscUser, setMstscUser] = useState(profile?.mstscUser || '');
+  const [mstscPassword, setMstscPassword] = useState(profile?.mstscPassword || '');
+  const [mstscResolution, setMstscResolution] = useState(profile?.mstscResolution || '');
   const dialogRef = useRef<HTMLDivElement>(null);
   const { offset: dialogOffset, dragHandleProps } = useDraggable('.dialog-content');
+
+  useEffect(() => {
+    return () => {
+      if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+    };
+  }, []);
 
   const addCommand = () => {
     setStartupCommands([...startupCommands, '']);
@@ -108,17 +126,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
       fuzzyMatch(cmd.command) || fuzzyMatch(cmd.desc)
     );
 
-    // History: only show entries with notes that aren't already in built-in results
-    const builtInCommands = new Set(builtIn.map(c => c.command));
-    const history = getCommandHistory()
-      .filter(entry => {
-        if (builtInCommands.has(entry.command)) return false;
-        if (!entry.note) return false;
-        return fuzzyMatch(entry.command) || fuzzyMatch(entry.note);
-      })
-      .map(entry => ({ name: entry.command, command: entry.command }));
-
-    setCmdSuggestions([...builtIn, ...history]);
+    setCmdSuggestions(builtIn);
     setActiveCmdIndex(index);
     setCmdSelectedIndex(-1);
   };
@@ -129,17 +137,33 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
     setCmdSelectedIndex(-1);
   };
 
-  const handleDragHandleMouseDown = (index: number) => {
-    setDragEnabledIndex(index);
-  };
-
-  const handleDragStart = (index: number) => {
-    if (dragEnabledIndex !== index) return;
-    setDragIndex(index);
-  };
-
-  const handleDragOver = (e: React.DragEvent, index: number) => {
+  const handleDragHandleMouseDown = (e: React.MouseEvent, index: number) => {
     e.preventDefault();
+    e.stopPropagation();
+    dragStateRef.current = { startIndex: index, startY: e.clientY };
+    setDragIndex(index);
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!dragStateRef.current) return;
+      const dy = ev.clientY - dragStateRef.current.startY;
+      if (Math.abs(dy) > 5) {
+        document.body.style.cursor = 'grabbing';
+      }
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      dragStateRef.current = null;
+      setDragIndex(null);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleMouseEnter = (index: number) => {
     if (dragIndex === null || dragIndex === index) return;
     const next = [...startupCommands];
     const [removed] = next.splice(dragIndex, 1);
@@ -148,16 +172,10 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
     setDragIndex(index);
   };
 
-  const handleDragEnd = () => {
-    setDragIndex(null);
-    setDragEnabledIndex(null);
-  };
-
   const onSubmit = async (data: FormData) => {
     try {
       setSaveError(null);
       const commands = startupCommands.filter(c => c.trim() !== '');
-      commands.forEach(cmd => addCommandToHistory(cmd).catch(() => {}));
       if (profile) {
         await updateProfile({
           ...profile,
@@ -172,9 +190,10 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             if (key.trim()) acc[key.trim()] = value;
             return acc;
           }, {} as Record<string, string>),
-          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath,
+          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath, sshPassword,
           dockerContainerName,
           k8sNamespace, k8sPodName, k8sContainerName,
+          mstscHost, mstscPort, mstscUser, mstscPassword, mstscResolution,
         });
       } else {
         const newProfile = await createProfile(data.name, data.group, data.terminalType);
@@ -188,9 +207,10 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             if (key.trim()) acc[key.trim()] = value;
             return acc;
           }, {} as Record<string, string>),
-          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath,
+          sshHost, sshPort, sshUser, sshAuthType, sshKeyPath, sshPassword,
           dockerContainerName,
           k8sNamespace, k8sPodName, k8sContainerName,
+          mstscHost, mstscPort, mstscUser, mstscPassword, mstscResolution,
         });
       }
       onSave();
@@ -249,17 +269,20 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
         <form onSubmit={handleSubmit(onSubmit)} className="dialog-content">
           <div className="form-row">
             <div className="form-group">
+              <label>分组</label>
+              <GroupCascader
+                value={watch('group')}
+                onChange={(val) => setValue('group', val)}
+                profiles={profiles}
+              />
+            </div>
+            <div className="form-group">
               <label>名称</label>
               <input
                 {...register('name', { required: '请输入连接名称' })}
                 placeholder="连接名称"
               />
               {errors.name && <span className="error">{errors.name.message}</span>}
-            </div>
-
-            <div className="form-group">
-              <label>分组</label>
-              <input {...register('group')} placeholder="默认" />
             </div>
           </div>
 
@@ -272,23 +295,25 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                 <div
                   key={index}
                   className={`cmd-item ${dragIndex === index ? 'dragging' : ''}`}
-                  draggable={dragEnabledIndex === index}
-                  onDragStart={() => handleDragStart(index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDragEnd={handleDragEnd}
+                  onMouseEnter={() => handleMouseEnter(index)}
                 >
                   <span
                     className="cmd-drag-handle"
                     title="拖拽排序"
-                    onMouseDown={() => handleDragHandleMouseDown(index)}
+                    onMouseDown={(e) => handleDragHandleMouseDown(e, index)}
                   >⠿</span>
                   <span className="cmd-num">{index + 1}.</span>
                   <div className="cmd-input-wrapper">
                     <input
                       value={cmd}
                       onChange={(e) => handleCmdInputChange(index, e.target.value)}
-                      onFocus={() => setActiveCmdIndex(index)}
-                      onBlur={() => setTimeout(() => setCmdSuggestions([]), 200)}
+                      onFocus={() => {
+                        if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+                        setActiveCmdIndex(index);
+                      }}
+                      onBlur={() => {
+                        blurTimerRef.current = setTimeout(() => setCmdSuggestions([]), 200);
+                      }}
                       placeholder="输入命令..."
                       style={{ fontFamily: 'monospace' }}
                     />
@@ -399,6 +424,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                 <option value="ssh">SSH</option>
                 <option value="docker">Docker</option>
                 <option value="k8s">Kubernetes</option>
+                <option value="mstsc">远程桌面 (RDP)</option>
               </select>
             </div>
             <div className="form-group">
@@ -440,6 +466,12 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                   <input value={sshKeyPath} onChange={e => setSshKeyPath(e.target.value)} placeholder="~/.ssh/id_ed25519" />
                 </div>
               )}
+              {sshAuthType === 'password' && (
+                <div className="form-group">
+                  <label>密码</label>
+                  <input type="password" value={sshPassword} onChange={e => setSshPassword(e.target.value)} placeholder="输入 SSH 密码" />
+                </div>
+              )}
             </>
           )}
 
@@ -463,6 +495,39 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
               <div className="form-group">
                 <label>Container 名称</label>
                 <input value={k8sContainerName} onChange={e => setK8sContainerName(e.target.value)} />
+              </div>
+            </>
+          )}
+
+          {watch('terminalType') === 'mstsc' && (
+            <>
+              <div className="form-group">
+                <label>主机地址 *</label>
+                <input value={mstscHost} onChange={e => setMstscHost(e.target.value)} placeholder="192.168.1.100 或 remote.example.com" required />
+              </div>
+              <div className="form-group">
+                <label>端口</label>
+                <input type="number" value={mstscPort} onChange={e => setMstscPort(Number(e.target.value))} placeholder="3389" />
+              </div>
+              <div className="form-group">
+                <label>用户名</label>
+                <input value={mstscUser} onChange={e => setMstscUser(e.target.value)} placeholder="Administrator" />
+              </div>
+              <div className="form-group">
+                <label>密码</label>
+                <input type="password" value={mstscPassword} onChange={e => setMstscPassword(e.target.value)} placeholder="将存储到 Windows 凭据管理器" />
+              </div>
+              <div className="form-group">
+                <label>分辨率</label>
+                <select value={mstscResolution} onChange={e => setMstscResolution(e.target.value)}>
+                  <option value="">全屏</option>
+                  <option value="1280x720">1280 x 720</option>
+                  <option value="1366x768">1366 x 768</option>
+                  <option value="1600x900">1600 x 900</option>
+                  <option value="1920x1080">1920 x 1080</option>
+                  <option value="2560x1440">2560 x 1440</option>
+                  <option value="3840x2160">3840 x 2160</option>
+                </select>
               </div>
             </>
           )}

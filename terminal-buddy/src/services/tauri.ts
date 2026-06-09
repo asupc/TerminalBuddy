@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Profile, CustomTheme, Workspace } from '../types';
+import type { Profile, CustomTheme, Workspace, RemoteFileEntry, ServerStats } from '../types';
 
 // Profile Commands
 export async function getAllProfiles(): Promise<Profile[]> {
@@ -14,7 +14,7 @@ export async function getProfile(id: string): Promise<Profile> {
 export async function createProfile(
   name: string,
   group: string,
-  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s'
+  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc'
 ): Promise<Profile> {
   return invoke('create_profile', { name, group, terminalType });
 }
@@ -40,12 +40,16 @@ export async function importAllProfiles(path: string): Promise<Profile[]> {
 }
 
 // Terminal Commands
-export async function startTerminal(profileId: string): Promise<string> {
-  return invoke('start_terminal', { profileId });
+export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number): Promise<string> {
+  return invoke('start_terminal', { profileId, extraStartupParams: extraStartupParams || null, initialRows: initialRows || 0, initialCols: initialCols || 0 });
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s'): Promise<string> {
-  return invoke('start_blank_terminal', { terminalType });
+export async function startMstsc(profileId: string): Promise<void> {
+  return invoke('start_mstsc', { profileId });
+}
+
+export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number): Promise<string> {
+  return invoke('start_blank_terminal', { terminalType, initialRows: initialRows || 0, initialCols: initialCols || 0 });
 }
 
 export async function writeToTerminal(id: string, data: string): Promise<void> {
@@ -104,6 +108,11 @@ export async function deletePath(path: string): Promise<void> {
 export async function renamePath(path: string, newName: string): Promise<void> {
   return invoke('rename_path', { path, newName });
 }
+
+export const readFileContent = (path: string) => invoke<string>('read_file_content', { path });
+export const writeFileContent = (path: string, content: string) => invoke<boolean>('write_file_content', { path, content });
+export const getFileSize = (path: string) => invoke<number>('get_file_size', { path });
+export const getFileMeta = (path: string) => invoke<{ lastModified: number; size: number }>('get_file_meta', { path });
 
 // Theme Commands
 export async function getAllThemes(): Promise<CustomTheme[]> {
@@ -178,43 +187,21 @@ export async function saveSingleInstance(enabled: boolean): Promise<void> {
   return invoke('save_single_instance', { enabled });
 }
 
+export async function saveLaunchAtLogin(enabled: boolean): Promise<void> {
+  return invoke('save_launch_at_login', { enabled });
+}
+
+export async function syncLaunchAtLogin(): Promise<boolean> {
+  return invoke('sync_launch_at_login');
+}
+
 // Clipboard Commands
 export async function readClipboardFilePaths(): Promise<string[]> {
   return invoke('read_clipboard_file_paths');
 }
 
-// History Commands
-export interface HistoryEntryFE {
-  command: string;
-  note: string;
-}
-
-export async function getCommandHistory(): Promise<HistoryEntryFE[]> {
-  return invoke('get_command_history');
-}
-
-export async function addCommandToHistory(command: string): Promise<void> {
-  return invoke('add_command_to_history', { command });
-}
-
-export async function deleteCommandFromHistory(command: string): Promise<void> {
-  return invoke('delete_command_from_history', { command });
-}
-
-export async function updateCommandInHistory(oldCommand: string, newCommand: string): Promise<void> {
-  return invoke('update_command_in_history', { oldCommand, newCommand });
-}
-
-export async function updateCommandNote(command: string, note: string): Promise<void> {
-  return invoke('update_command_note', { command, note });
-}
-
-export async function clearCommandHistory(): Promise<void> {
-  return invoke('clear_command_history');
-}
-
-export async function importCommandHistory(commands: string[]): Promise<void> {
-  return invoke('import_command_history', { commands });
+export async function readClipboardImageAsFile(): Promise<string> {
+  return invoke('read_clipboard_image_as_file');
 }
 
 // Template Commands
@@ -228,6 +215,19 @@ export async function saveCommandTemplates(content: string): Promise<void> {
 
 export async function initCommandTemplates(defaultContent: string): Promise<boolean> {
   return invoke('init_command_templates', { defaultContent });
+}
+
+// System Commands
+let _windowsBuildNumber: number | null | undefined = undefined;
+
+export async function getWindowsBuildNumber(): Promise<number | null> {
+  if (_windowsBuildNumber !== undefined) return _windowsBuildNumber;
+  try {
+    _windowsBuildNumber = await invoke<number>('get_windows_build_number');
+  } catch {
+    _windowsBuildNumber = null;
+  }
+  return _windowsBuildNumber;
 }
 
 // Window Commands (bypass ACL bug)
@@ -254,4 +254,140 @@ export async function exportAllData(filePath: string): Promise<void> {
 
 export async function importAllData(filePath: string): Promise<void> {
   return invoke('import_all_data', { filePath });
+}
+
+// Web API Commands
+export async function saveWebApiSettings(
+  enabled: boolean,
+  port: number,
+  username: string,
+  password: string,
+  shareSessions: boolean
+): Promise<void> {
+  return invoke('save_web_api_settings', { enabled, port, username, password, shareSessions });
+}
+
+export async function getWebApiStatus(): Promise<{
+  enabled: boolean;
+  port: number;
+  username: string;
+  hasPassword: boolean;
+}> {
+  return invoke('get_web_api_status');
+}
+
+export async function restartWebServer(): Promise<string> {
+  return invoke('restart_web_server');
+}
+
+export async function getWebServerAddress(): Promise<string> {
+  return invoke('get_web_server_address');
+}
+
+// Client Data Commands
+export async function readClientData(key: string): Promise<string | null> {
+  return invoke<string | null>('read_client_data', { key });
+}
+
+export async function writeClientData(key: string, content: string): Promise<void> {
+  return invoke('write_client_data', { key, content });
+}
+
+// SSH Settings Commands
+export async function getDownloadsDirectory(): Promise<string> {
+  return invoke('get_downloads_directory');
+}
+
+export async function saveSshDownloadDir(dir: string): Promise<void> {
+  return invoke('save_ssh_download_dir', { dir });
+}
+
+export async function saveServerMonitorInterval(interval: number): Promise<void> {
+  return invoke('save_server_monitor_interval', { interval });
+}
+
+export async function saveWebApiShareSessions(enabled: boolean): Promise<void> {
+  return invoke('save_web_api_share_sessions', { enabled });
+}
+
+// ============ SSH Remote File Commands ============
+
+export async function connectSshSession(terminalId: string, profileId: string): Promise<void> {
+  return invoke('connect_ssh_session', { terminalId, profileId });
+}
+
+export async function getSshHomeDir(terminalId: string): Promise<string> {
+  return invoke('get_ssh_home_dir', { terminalId });
+}
+
+export async function getSshTempDirectory(): Promise<string> {
+  return invoke('get_ssh_temp_directory');
+}
+
+export async function ensureDir(path: string): Promise<void> {
+  return invoke('ensure_dir', { path });
+}
+
+export async function remoteListDir(terminalId: string, path: string): Promise<RemoteFileEntry[]> {
+  return invoke('remote_list_dir', { terminalId, path });
+}
+
+export async function remoteCreateDir(terminalId: string, path: string): Promise<void> {
+  return invoke('remote_create_dir', { terminalId, path });
+}
+
+export async function remoteCreateFile(terminalId: string, path: string): Promise<void> {
+  return invoke('remote_create_file', { terminalId, path });
+}
+
+export async function remoteRemove(terminalId: string, path: string, isDir: boolean): Promise<void> {
+  return invoke('remote_remove', { terminalId, path, isDir });
+}
+
+export async function remoteRename(terminalId: string, from: string, to: string): Promise<void> {
+  return invoke('remote_rename', { terminalId, from, to });
+}
+
+export async function remoteMove(terminalId: string, from: string, to: string): Promise<void> {
+  return invoke('remote_move', { terminalId, from, to });
+}
+
+export async function remoteCopy(terminalId: string, from: string, to: string): Promise<void> {
+  return invoke('remote_copy', { terminalId, from, to });
+}
+
+export async function remoteChmod(terminalId: string, path: string, mode: number): Promise<void> {
+  return invoke('remote_chmod', { terminalId, path, mode });
+}
+
+export async function remoteUpload(terminalId: string, localPath: string, remotePath: string, transferId: string, profileId: string): Promise<void> {
+  return invoke('remote_upload', { terminalId, localPath, remotePath, transferId, profileId });
+}
+
+export async function remoteDownload(terminalId: string, remotePath: string, localPath: string, transferId: string, profileId: string): Promise<void> {
+  return invoke('remote_download', { terminalId, remotePath, localPath, transferId, profileId });
+}
+
+export async function remoteDownloadDir(terminalId: string, remotePath: string, localPath: string, transferId: string, profileId: string): Promise<void> {
+  return invoke('remote_download_dir', { terminalId, remotePath, localPath, transferId, profileId });
+}
+
+export async function getServerStats(terminalId: string): Promise<ServerStats> {
+  return invoke('get_server_stats', { terminalId });
+}
+
+export async function onTransferProgress(
+  callback: (progress: { transferId: string; terminalId: string; transferred: number; total: number; percent: number; direction: string }) => void
+): Promise<UnlistenFn> {
+  return listen('remote_transfer_progress', (event) => {
+    callback(event.payload as any);
+  });
+}
+
+export async function onTransferError(
+  callback: (error: { transferId: string; error: string }) => void
+): Promise<UnlistenFn> {
+  return listen('remote_transfer_error', (event) => {
+    callback(event.payload as any);
+  });
 }

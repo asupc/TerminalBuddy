@@ -38,8 +38,13 @@
 
 .terminal-tab.active {
   background: var(--bg-primary);
-  border-bottom: 2px solid var(--accent);
+  border-bottom: 3px solid var(--accent);
   margin-bottom: -1px;
+}
+
+.terminal-tab.active .terminal-tab-name {
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .terminal-tab-dot {
@@ -47,6 +52,15 @@
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.terminal-tab-dot.working {
+  animation: working-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes working-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .terminal-tab-name {
@@ -84,4 +98,40 @@
 .context-menu-item.disabled {
   opacity: 0.4;
   pointer-events: none;
+}
+
+.tab-bar-rename-input {
+  font-size: 12px;
+  padding: 1px 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text-primary);
+  outline: none;
+  width: 120px;
+}
+
+.tab-file-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tab-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e8e8e8;
+  display: inline-block;
+  margin-right: 2px;
+}
+
+.terminal-owner-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  font-weight: 500;
+  line-height: 1;
+  flex-shrink: 0;
 }

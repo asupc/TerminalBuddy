@@ -78,6 +78,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
 }
 
 .main-content {
@@ -85,6 +86,8 @@ body {
   flex: 1;
   overflow: hidden;
   position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 /* Confirm dialog */
@@ -168,6 +171,12 @@ body {
 
 .confirm-dialog-buttons .btn-danger {
   background: #f44747;
+  border: none;
+  color: white;
+}
+
+.confirm-dialog-buttons .btn-primary {
+  background: #0078d4;
   border: none;
   color: white;
 }

@@ -1,7 +1,14 @@
 pub mod profile;
 pub mod settings;
+pub mod ssh_types;
+pub mod terminal_owner;
 pub mod theme;
+pub mod web_api;
 pub mod workspace;
 pub use profile::*;
 pub use settings::*;
+pub use ssh_types::*;
+pub use terminal_owner::*;
 pub use theme::*;
+pub use web_api::*;
+pub use workspace::*;

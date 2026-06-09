@@ -24,13 +24,32 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 portable-pty = "0.9"
 clipboard-win = { version = "5.4.1", features = ["std"] }
+reqwest = { version = "0.12", features = ["json"] }
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+tokio-tungstenite = "0.26"
+jsonwebtoken = "9"
+bcrypt = "0.17"
+futures-util = "0.3"
+include_dir = "0.7"
+hex = "0.4"
+rand = "0.8"
+ssh2 = "0.9"
+image = { version = "0.25", default-features = false, features = ["png"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_Registry", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_Graphics_Gdi"] }
+
 
 [patch.crates-io]
 portable-pty = { path = "portable-pty-patched" }
 
+[profile.dev]
+opt-level = 1
+incremental = true
+
 [profile.release]
 panic = "abort"
-codegen-units = 1
-lto = true
+codegen-units = 4
+lto = "thin"
 opt-level = "s"
 strip = true

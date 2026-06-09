@@ -1,4 +1,4 @@
-export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s';
+export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
 
 export interface Profile {
   id: string;
@@ -16,11 +16,17 @@ export interface Profile {
   sshUser?: string;
   sshAuthType?: 'password' | 'key';
   sshKeyPath?: string;
+  sshPassword?: string;
   dockerContainerId?: string;
   dockerContainerName?: string;
   k8sNamespace?: string;
   k8sPodName?: string;
   k8sContainerName?: string;
+  mstscHost?: string;
+  mstscPort?: number;
+  mstscUser?: string;
+  mstscPassword?: string;
+  mstscResolution?: string;
   createdAt: string;
   lastUsedAt: string | null;
 }
@@ -90,6 +96,10 @@ export const TAB_COLORS: (TabColorOption | null)[] = [
   { id: 'white', name: '白色', color: '#FAFAFA' },
 ];
 
+export const BREATHING_LIGHT_COLORS: TabColorOption[] = TAB_COLORS.filter(
+  (c): c is TabColorOption => c !== null && !['grey', 'white'].includes(c.id)
+);
+
 export interface TerminalSession {
   id: string;
   profileId: string;
@@ -98,6 +108,11 @@ export interface TerminalSession {
   colorTheme: { background: string; foreground: string };
   tabColor: string | null;
   groupId: string;
+  sessionType?: 'terminal' | 'editor';
+  isDirty?: boolean;
+  sshRemotePath?: string;
+  sshTerminalId?: string;
+  owner?: 'pc' | 'web';
 }
 
 export interface Workspace {
@@ -142,4 +157,70 @@ export interface TabGroup {
   name: string;
   color?: string;
   collapsed: boolean;
+}
+
+export interface ExtraParamPreset {
+  id: string;
+  name: string;
+  params: string;
+}
+
+export interface RemoteFileEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  permissions: number;
+  modified: number;
+  owner: string;
+  group: string;
+}
+
+export interface ServerStats {
+  uptime: string;
+  cpuUsage: number;
+  memory: MemoryStats;
+  disk: DiskStats[];
+  network: NetworkStats;
+  timestamp: number;
+}
+
+export interface MemoryStats {
+  total: number;
+  used: number;
+  available: number;
+  usagePercent: number;
+  swapTotal: number;
+  swapUsed: number;
+}
+
+export interface DiskStats {
+  mount: string;
+  total: number;
+  used: number;
+  available: number;
+  usagePercent: number;
+}
+
+export interface NetworkStats {
+  rxBytes: number;
+  txBytes: number;
+  rxSpeed: number;
+  txSpeed: number;
+}
+
+export type TransferStatus = 'active' | 'completed' | 'failed';
+export type TransferDirection = 'upload' | 'download';
+export interface TransferItem {
+  id: string;
+  terminalId: string;
+  direction: TransferDirection;
+  remotePath: string;
+  localPath: string;
+  fileName: string;
+  status: TransferStatus;
+  transferred: number;
+  total: number;
+  percent: number;
+  error?: string;
 }

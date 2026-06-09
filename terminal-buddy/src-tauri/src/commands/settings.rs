@@ -1,9 +1,99 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs;
+use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use crate::models::{AppSettings, CloseBehavior};
 use crate::services::{SettingsService, PathService, copy_dir_recursive};
 use serde_json::{json, Value};
+
+fn to_wide(s: &str) -> Vec<u16> {
+    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+}
+
+fn set_autostart_registry(enabled: bool) -> Result<(), String> {
+    use windows::Win32::System::Registry::*;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+
+    let key_wide = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
+    let name_wide = to_wide("TerminalBuddy");
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        let result = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            windows::core::PCWSTR(key_wide.as_ptr()),
+            Some(0),
+            KEY_SET_VALUE,
+            &mut hkey,
+        );
+        if result != ERROR_SUCCESS {
+            return Err(format!("打开注册表失败: {}", result.to_hresult().0));
+        }
+
+        if enabled {
+            let exe_path = std::env::current_exe()
+                .map_err(|e| format!("获取程序路径失败: {}", e))?;
+            let path_str = format!("\"{}\"", exe_path.to_string_lossy());
+            let wide = to_wide(&path_str);
+            let bytes: Vec<u8> = wide.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let result = RegSetValueExW(
+                hkey,
+                windows::core::PCWSTR(name_wide.as_ptr()),
+                Some(0),
+                REG_SZ,
+                Some(&bytes),
+            );
+            let _ = RegCloseKey(hkey);
+            if result != ERROR_SUCCESS {
+                return Err(format!("写入注册表失败: {}", result.to_hresult().0));
+            }
+        } else {
+            let result = RegDeleteValueW(hkey, windows::core::PCWSTR(name_wide.as_ptr()));
+            let _ = RegCloseKey(hkey);
+            if result != ERROR_SUCCESS && result.to_hresult().0 != 2 {
+                return Err(format!("删除注册表项失败: {}", result.to_hresult().0));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_autostart_registry() -> bool {
+    use windows::Win32::System::Registry::*;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+
+    let key_wide = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
+    let name_wide = to_wide("TerminalBuddy");
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        let result = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            windows::core::PCWSTR(key_wide.as_ptr()),
+            Some(0),
+            KEY_READ,
+            &mut hkey,
+        );
+        if result != ERROR_SUCCESS {
+            return false;
+        }
+
+        let mut buf = [0u16; 512];
+        let mut buf_len = (buf.len() * 2) as u32;
+        let mut reg_type = REG_SZ;
+        let result = RegQueryValueExW(
+            hkey,
+            windows::core::PCWSTR(name_wide.as_ptr()),
+            None,
+            Some(&mut reg_type),
+            Some(buf.as_mut_ptr() as *mut u8),
+            Some(&mut buf_len),
+        );
+        let _ = RegCloseKey(hkey);
+        result == ERROR_SUCCESS
+    }
+}
 
 #[tauri::command]
 pub fn get_app_settings() -> AppSettings {
@@ -37,7 +127,7 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
         return Ok(());
     }
 
-    for subdir in &["Profiles", "Themes"] {
+    for subdir in &["Profiles", "Themes", "Workspaces", "ClientData"] {
         let src = old_dir.join(subdir);
         let dst = new_dir.join(subdir);
         if src.exists() {
@@ -54,9 +144,7 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn save_enable_tab_navigation(enabled: bool) -> Result<(), String> {
-    let mut settings = SettingsService::get_settings();
-    settings.enable_tab_navigation = enabled;
-    SettingsService::save_settings(&settings)
+    SettingsService::mutate_settings(|s| s.enable_tab_navigation = enabled)
 }
 
 #[tauri::command]
@@ -68,9 +156,46 @@ pub fn save_tab_sidebar_width(width: u32) -> Result<(), String> {
 
 #[tauri::command]
 pub fn save_single_instance(enabled: bool) -> Result<(), String> {
+    SettingsService::mutate_settings(|s| s.single_instance = enabled)
+}
+
+#[tauri::command]
+pub fn get_downloads_directory() -> Result<String, String> {
+    dirs::download_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| "Failed to get downloads directory".to_string())
+}
+
+#[tauri::command]
+pub fn save_ssh_download_dir(dir: String) -> Result<(), String> {
+    SettingsService::mutate_settings(|s| s.ssh_download_dir = Some(dir))
+}
+
+#[tauri::command]
+pub fn save_server_monitor_interval(interval: u32) -> Result<(), String> {
+    SettingsService::mutate_settings(|s| s.server_monitor_interval = interval)
+}
+
+#[tauri::command]
+pub fn save_web_api_share_sessions(enabled: bool) -> Result<(), String> {
+    SettingsService::mutate_settings(|s| s.web_api_share_sessions = enabled)
+}
+
+#[tauri::command]
+pub fn save_launch_at_login(enabled: bool) -> Result<(), String> {
+    set_autostart_registry(enabled)?;
+    SettingsService::mutate_settings(|s| s.launch_at_login = enabled)
+}
+
+#[tauri::command]
+pub fn sync_launch_at_login() -> bool {
+    let registry_enabled = read_autostart_registry();
     let mut settings = SettingsService::get_settings();
-    settings.single_instance = enabled;
-    SettingsService::save_settings(&settings)
+    if settings.launch_at_login != registry_enabled {
+        settings.launch_at_login = registry_enabled;
+        let _ = SettingsService::save_settings(&settings);
+    }
+    registry_enabled
 }
 
 fn read_json_files(dir: &PathBuf) -> Result<HashMap<String, Value>, String> {
@@ -110,7 +235,7 @@ pub fn export_all_data(file_path: String) -> Result<(), String> {
     });
 
     // Collect subdirectory data (Profiles, Themes, Workspaces)
-    for subdir in &["Profiles", "Themes", "Workspaces"] {
+    for subdir in &["Profiles", "Themes", "Workspaces", "ClientData"] {
         let dir = data_dir.join(subdir);
         match read_json_files(&dir) {
             Ok(map) => {
@@ -165,11 +290,25 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     let data: Value = serde_json::from_str(&content)
         .map_err(|e| format!("解析JSON失败: {}", e))?;
 
+    // 验证顶层结构必须是 Object
+    if !data.is_object() {
+        return Err("导入文件格式错误：顶层必须是 JSON 对象".to_string());
+    }
+
+    // 验证可识别的 key
+    let valid_keys: &[&str] = &["Profiles", "Themes", "Workspaces", "ClientData",
+                                 "command_history", "command_templates", "settings"];
+    for key in data.as_object().unwrap().keys() {
+        if !valid_keys.contains(&key.as_str()) {
+            return Err(format!("导入文件包含未知数据类型: {}", key));
+        }
+    }
+
     let data_dir = PathService::get_data_dir();
     fs::create_dir_all(&data_dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
 
     // Restore subdirectory data
-    for subdir in &["Profiles", "Themes", "Workspaces"] {
+    for subdir in &["Profiles", "Themes", "Workspaces", "ClientData"] {
         if let Some(obj) = data.get(subdir).and_then(|v| v.as_object()) {
             let mut map = HashMap::new();
             for (key, value) in obj {
@@ -191,4 +330,35 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn save_web_api_settings(
+    enabled: bool,
+    port: u16,
+    username: String,
+    password: String,
+    share_sessions: bool,
+) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.web_api_enabled = enabled;
+    settings.web_api_port = port;
+    settings.web_api_username = username;
+    if !password.is_empty() {
+        settings.web_api_password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
+            .map_err(|e| format!("密码加密失败: {}", e))?;
+    }
+    settings.web_api_share_sessions = share_sessions;
+    SettingsService::save_settings(&settings)
+}
+
+#[tauri::command]
+pub fn get_web_api_status() -> serde_json::Value {
+    let settings = SettingsService::get_settings();
+    serde_json::json!({
+        "enabled": settings.web_api_enabled,
+        "port": settings.web_api_port,
+        "username": settings.web_api_username,
+        "hasPassword": !settings.web_api_password_hash.is_empty(),
+    })
 }

@@ -1,6 +1,8 @@
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
-import { listDirectory, openPath, openInExplorer, deletePath, renamePath, writeToTerminal, type FileNode } from '../services/tauri';
+import { listDirectory, openPath, openInExplorer, startBlankTerminal, deletePath, renamePath, writeToTerminal, getFileSize, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
+import { isTextFile } from '../utils/fileExtensions';
+import { RemoteFileTree } from './RemoteFileTree';
 import './FileTree.css';
 
 interface TreeNodeProps {
@@ -23,13 +25,27 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
   const itemRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
+  const setDragPaths = useAppStore(s => s.setDragPaths);
 
   const isSelected = selectedPath === node.path;
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     onSelect(node.path);
+    if (node.is_directory) {
+      if (!expanded) {
+        setLoading(true);
+        listDirectory(node.path, exclusionPatterns).then((entries) => {
+          setChildren(entries);
+          setLoading(false);
+        }).catch((err) => {
+          console.error('Failed to load directory:', err);
+          setLoading(false);
+        });
+      }
+      setExpanded(!expanded);
+    }
     (e.currentTarget as HTMLElement).focus();
-  }, [node.path, onSelect]);
+  }, [node.path, node.is_directory, expanded, exclusionPatterns, onSelect]);
 
   const handleArrowClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -50,6 +66,17 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
   const handleDoubleClick = useCallback(async () => {
     if (node.is_directory) {
       onNavigate(node.path);
+    } else if (isTextFile(node.path)) {
+      try {
+        const size = await getFileSize(node.path);
+        if (size > 1024 * 1024) {
+          alert('文件过大，无法在编辑器中打开（超过 1MB）');
+          return;
+        }
+      } catch {
+        // 无法获取大小时尝试打开
+      }
+      useAppStore.getState().openEditorSession(node.path);
     } else {
       openPath(node.path).catch((err) => console.error('Failed to open file:', err));
     }
@@ -57,6 +84,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'c' && e.ctrlKey && !e.shiftKey) {
+      if (renameInputRef.current === document.activeElement) return;
       e.preventDefault();
       e.stopPropagation();
       navigator.clipboard.writeText(node.path).catch(() => {});
@@ -99,6 +127,35 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
         className={`tree-item ${isSelected ? 'selected' : ''}`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         tabIndex={-1}
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          const startX = e.clientX;
+          const startY = e.clientY;
+          let dragging = false;
+          let ghost: HTMLDivElement | null = null;
+          const onMove = (ev: MouseEvent) => {
+            if (!dragging && (Math.abs(ev.clientX - startX) > 4 || Math.abs(ev.clientY - startY) > 4)) {
+              dragging = true;
+              setDragPaths([node.path]);
+              ghost = document.createElement('div');
+              ghost.className = 'file-drag-ghost';
+              ghost.textContent = node.name;
+              document.body.appendChild(ghost);
+            }
+            if (ghost) {
+              ghost.style.left = `${ev.clientX + 12}px`;
+              ghost.style.top = `${ev.clientY + 12}px`;
+            }
+          };
+          const onUp = () => {
+            if (ghost) ghost.remove();
+            if (!dragging) setDragPaths(null);
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+          };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        }}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onKeyDown={handleKeyDown}
@@ -162,7 +219,16 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
 };
 
 export const FileTree: FC = () => {
-  const { currentDirectory, setCurrentDirectory, fileTreeVisible, bookmarks, addBookmark, removeBookmark, exclusionPatterns } = useAppStore();
+  const currentDirectory = useAppStore(s => s.currentDirectory);
+  const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
+  const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
+  const activeSessionId = useAppStore(s => s.activeSessionId);
+  const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
+  const bookmarks = useAppStore(s => s.bookmarks);
+  const addBookmark = useAppStore(s => s.addBookmark);
+  const removeBookmark = useAppStore(s => s.removeBookmark);
+  const renameBookmark = useAppStore(s => s.renameBookmark);
+  const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
   const [rootNodes, setRootNodes] = useState<FileNode[]>([]);
   const [width, setWidth] = useState(250);
   const [isResizing, setIsResizing] = useState(false);
@@ -173,8 +239,13 @@ export const FileTree: FC = () => {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
-  const [bookmarksExpanded, setBookmarksExpanded] = useState(true);
   const [confirmBookmarkDelete, setConfirmBookmarkDelete] = useState<string | null>(null);
+  const [bookmarkCtxMenu, setBookmarkCtxMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const [renamingBookmark, setRenamingBookmark] = useState<string | null>(null);
+  const [renamingBookmarkValue, setRenamingBookmarkValue] = useState('');
+  const bookmarkHeight = useAppStore(s => s.bookmarkHeight);
+  const setBookmarkHeightStore = useAppStore(s => s.setBookmarkHeight);
+  const renameBookmarkInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -194,7 +265,42 @@ export const FileTree: FC = () => {
       }
     };
     loadRoot();
-  }, []);
+  }, [exclusionPatterns]);
+
+  const navigateTo = useCallback((path: string) => {
+    setCurrentDirectory(path);
+    if (activeSessionId) {
+      setSessionDirectory(activeSessionId, path);
+    }
+  }, [setCurrentDirectory, setSessionDirectory, activeSessionId]);
+
+  const openTerminalInDir = useCallback(async (dir: string) => {
+    const content = document.querySelector('.terminal-content');
+    let estRows = 0, estCols = 0;
+    if (content) {
+      estCols = Math.max(2, Math.floor((content.clientWidth - 20) / 8.4));
+      estRows = Math.max(1, Math.floor((content.clientHeight - 20) / 17));
+    }
+    const terminalId = await startBlankTerminal('powershell', estRows, estCols);
+    useAppStore.getState().addSession({
+      id: terminalId,
+      profileId: '',
+      profileName: 'PowerShell',
+      terminalType: 'powershell',
+      colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
+      tabColor: null,
+      groupId: 'default',
+    });
+    setSessionDirectory(terminalId, dir);
+    const sendCdWithRetry = (retries = 5) => {
+      writeToTerminal(terminalId, `cd "${dir}"\r`).catch(() => {
+        if (retries > 0) {
+          setTimeout(() => sendCdWithRetry(retries - 1), 200);
+        }
+      });
+    };
+    setTimeout(sendCdWithRetry, 100);
+  }, [setSessionDirectory]);
 
   // Load directory when currentDirectory changes
   useEffect(() => {
@@ -211,15 +317,15 @@ export const FileTree: FC = () => {
       }
     };
     loadDirectory();
-  }, [currentDirectory]);
+  }, [currentDirectory, exclusionPatterns]);
 
   const handleSelect = useCallback((path: string) => {
     setSelectedPath(path);
   }, []);
 
   const handleNavigate = useCallback((path: string) => {
-    setCurrentDirectory(path);
-  }, [setCurrentDirectory]);
+    navigateTo(path);
+  }, [navigateTo]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -276,7 +382,7 @@ export const FileTree: FC = () => {
     if (!currentDirectory) return;
     const parent = currentDirectory.substring(0, currentDirectory.lastIndexOf('\\'));
     if (parent.length >= 3) {
-      setCurrentDirectory(parent);
+      navigateTo(parent);
     }
   };
 
@@ -300,7 +406,7 @@ export const FileTree: FC = () => {
     }
     listDirectory(normalizedPath, exclusionPatterns).then(() => {
       setPathError(false);
-      setCurrentDirectory(normalizedPath);
+      navigateTo(normalizedPath);
       setIsEditing(false);
     }).catch(() => {
       setPathError(true);
@@ -329,17 +435,17 @@ export const FileTree: FC = () => {
     setCtxMenu(null);
   }, [ctxMenu]);
 
-  const handleCdToDir = useCallback(async () => {
+  const handleOpenInSystem = useCallback(async () => {
     if (!ctxMenu?.path) return;
-    const { activeSessionId } = useAppStore.getState();
-    if (activeSessionId) {
-      try {
-        await writeToTerminal(activeSessionId, `cd "${ctxMenu.path}"\r`);
-      } catch (err) { console.error(err); }
-    }
-    setCurrentDirectory(ctxMenu.path);
+    try { await openPath(ctxMenu.path); } catch (err) { console.error(err); }
     setCtxMenu(null);
-  }, [ctxMenu, setCurrentDirectory]);
+  }, [ctxMenu]);
+
+  const handleShowCurrentDirInExplorer = useCallback(async () => {
+    if (!currentDirectory) return;
+    try { await openInExplorer(currentDirectory); } catch (err) { console.error(err); }
+    setCtxMenu(null);
+  }, [currentDirectory]);
 
   const handleDeleteItem = useCallback(() => {
     setConfirmDelete(ctxMenu?.path || null);
@@ -397,34 +503,17 @@ export const FileTree: FC = () => {
     };
   }, [ctxMenu]);
 
+  const sessions = useAppStore(s => s.sessions);
+  const activeTerminalId = useAppStore(s => s.activeSessionId);
+  const activeSession = sessions.find(s => s.id === activeTerminalId);
+  const isSsh = activeSession?.terminalType === 'ssh';
+
+  if (isSsh && activeSession) {
+    return <RemoteFileTree terminalId={activeSession.id} />;
+  }
+
   return (
     <div ref={containerRef} className={`file-tree ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
-      {bookmarks.length > 0 && (
-        <div className="bookmark-bar">
-          <button
-            className="bookmark-toggle"
-            onClick={() => setBookmarksExpanded(!bookmarksExpanded)}
-            title={bookmarksExpanded ? '收起书签' : '展开书签'}
-          >
-            {bookmarksExpanded ? '▼' : '▶'}
-          </button>
-          {bookmarksExpanded && bookmarks.map((bm) => (
-            <div
-              key={bm.path}
-              className="bookmark-tag"
-              onClick={() => setCurrentDirectory(bm.path)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setConfirmBookmarkDelete(bm.path);
-              }}
-              title={bm.path}
-            >
-              <span className="bookmark-icon">📁</span>
-              <span className="bookmark-name">{bm.name}</span>
-            </div>
-          ))}
-        </div>
-      )}
       <div className="panel-titlebar">
         <span className="panel-title">文件导航</span>
         <div className="file-tree-actions">
@@ -474,6 +563,80 @@ export const FileTree: FC = () => {
           />
         ))}
       </div>
+      {bookmarks.length > 0 && (
+        <div className="bookmark-section" style={{ height: bookmarkHeight }}>
+          <div
+            className="bookmark-resize-handle"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startY = e.clientY;
+              const startH = bookmarkHeight;
+              const onMove = (ev: MouseEvent) => {
+                const newH = Math.max(32, Math.min(300, startH - (ev.clientY - startY)));
+                setBookmarkHeightStore(newH);
+              };
+              const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+              };
+              document.addEventListener('mousemove', onMove);
+              document.addEventListener('mouseup', onUp);
+            }}
+          />
+          <div className="bookmark-bar">
+          {bookmarks.map((bm) => (
+            <div
+              key={bm.path}
+              className="bookmark-tag"
+              onClick={() => { if (!renamingBookmark || renamingBookmark !== bm.path) navigateTo(bm.path); }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setBookmarkCtxMenu({ x: e.clientX, y: e.clientY, path: bm.path });
+              }}
+              title={bm.path}
+            >
+              <span className="bookmark-icon">📁</span>
+              {renamingBookmark === bm.path ? (
+                <input
+                  ref={renameBookmarkInputRef}
+                  className="bookmark-rename-input"
+                  value={renamingBookmarkValue}
+                  onChange={(e) => setRenamingBookmarkValue(e.target.value)}
+                  onBlur={() => {
+                    const trimmed = renamingBookmarkValue.trim();
+                    if (trimmed) renameBookmark(renamingBookmark!, trimmed);
+                    setRenamingBookmark(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const trimmed = renamingBookmarkValue.trim();
+                      if (trimmed) renameBookmark(renamingBookmark!, trimmed);
+                      setRenamingBookmark(null);
+                    } else if (e.key === 'Escape') {
+                      setRenamingBookmark(null);
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  autoFocus
+                />
+              ) : (
+                <span className="bookmark-name">{bm.name}</span>
+              )}
+              <button
+                className="bookmark-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmBookmarkDelete(bm.path);
+                }}
+                title="删除书签"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          </div>
+        </div>
+      )}
       <div
         className={`resize-handle ${isResizing ? 'active' : ''}`}
         onMouseDown={handleMouseDown}
@@ -491,15 +654,46 @@ export const FileTree: FC = () => {
           <div className="context-menu-item" onClick={() => { setCtxMenu(null); handleGoUp(); }}>
             上一级目录
           </div>
+          {!ctxMenu.path && currentDirectory && (
+            <>
+              <div className="context-menu-separator" />
+              <div className="context-menu-item" onClick={async () => {
+                const dir = currentDirectory;
+                setCtxMenu(null);
+                try { await openTerminalInDir(dir); } catch (err) { console.error(err); }
+              }}>
+                在当前目录打开命令窗口
+              </div>
+              <div className="context-menu-item" onClick={() => {
+                const name = currentDirectory.split('\\').filter(Boolean).pop() || currentDirectory;
+                addBookmark(name, currentDirectory);
+                setCtxMenu(null);
+              }}>
+                添加到书签
+              </div>
+              <div className="context-menu-item" onClick={handleShowCurrentDirInExplorer}>
+                在文件资源管理器中显示
+              </div>
+            </>
+          )}
           {ctxMenu.path && (
             <>
               <div className="context-menu-separator" />
               <div className="context-menu-item" onClick={handleShowInExplorer}>
                 在文件资源管理器中显示
               </div>
+              {!ctxMenu.isDir && (
+                <div className="context-menu-item" onClick={handleOpenInSystem}>
+                  在系统中打开
+                </div>
+              )}
               {ctxMenu.isDir && (
-                <div className="context-menu-item" onClick={handleCdToDir}>
-                  cd 到当前目录
+                <div className="context-menu-item" onClick={async () => {
+                  const dir = ctxMenu.path!;
+                  setCtxMenu(null);
+                  try { await openTerminalInDir(dir); } catch (err) { console.error(err); }
+                }}>
+                  在当前目录打开命令窗口
                 </div>
               )}
               {ctxMenu.isDir && (
@@ -553,6 +747,32 @@ export const FileTree: FC = () => {
           </div>
         </div>
       )}
+      {bookmarkCtxMenu && (() => {
+        const menuH = 64;
+        const top = bookmarkCtxMenu.y + menuH > window.innerHeight
+          ? bookmarkCtxMenu.y - menuH
+          : bookmarkCtxMenu.y;
+        return (
+        <>
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 9998 }} onClick={() => setBookmarkCtxMenu(null)} />
+          <div className="context-menu" style={{ left: bookmarkCtxMenu.x, top, zIndex: 9999 }}>
+            <div className="context-menu-item" onClick={() => {
+              const bm = bookmarks.find(b => b.path === bookmarkCtxMenu.path);
+              if (bm) {
+                setRenamingBookmarkValue(bm.name);
+                setRenamingBookmark(bm.path);
+                setTimeout(() => renameBookmarkInputRef.current?.select(), 0);
+              }
+              setBookmarkCtxMenu(null);
+            }}>重命名</div>
+            <div className="context-menu-item danger" onClick={() => {
+              setConfirmBookmarkDelete(bookmarkCtxMenu.path);
+              setBookmarkCtxMenu(null);
+            }}>删除</div>
+          </div>
+        </>
+        );
+      })()}
     </div>
   );
 };

@@ -1,4 +1,5 @@
 use crate::models::workspace::Workspace;
+use crate::services::PathService;
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -16,12 +17,9 @@ pub struct WorkspaceService;
 
 impl WorkspaceService {
     fn get_workspaces_dir() -> PathBuf {
-        let base = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("TerminalBuddy")
-            .join("Workspaces");
-        fs::create_dir_all(&base).ok();
-        base
+        let dir = PathService::get_data_dir().join("Workspaces");
+        fs::create_dir_all(&dir).ok();
+        dir
     }
 
     pub fn get_all_workspaces() -> Result<Vec<Workspace>, String> {
@@ -62,6 +60,9 @@ impl WorkspaceService {
         };
 
         let path = Self::get_workspaces_dir().join(format!("{}.json", sanitize_filename(&workspace.name)));
+        if path.exists() {
+            return Err(format!("工作区 '{}' 已存在", name));
+        }
         let content = serde_json::to_string_pretty(&workspace)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         fs::write(&path, content)

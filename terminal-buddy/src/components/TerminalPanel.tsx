@@ -1,5 +1,6 @@
-import { FC } from 'react';
+import { FC, useCallback, useState, useEffect } from 'react';
 import { TerminalInstance } from './TerminalInstance';
+import { TextEditor } from './TextEditor';
 import { TerminalTabBar } from './TerminalTabBar';
 import { SettingsPage } from './SettingsPage';
 import { useAppStore } from '../stores/appStore';
@@ -8,17 +9,30 @@ import { getAppSettings } from '../utils/settings';
 import './TerminalPanel.css';
 
 export const TerminalPanel: FC = () => {
-  const { sessions, activeSessionId,
-          settingsTabOpen, closeSettingsTab } = useAppStore();
-  const settings = getAppSettings();
+  const sessions = useAppStore(s => s.sessions);
+  const activeSessionId = useAppStore(s => s.activeSessionId);
+  const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
+  const closeSettingsTab = useAppStore(s => s.closeSettingsTab);
+  const updateSession = useAppStore(s => s.updateSession);
+  const [settings, setSettings] = useState(() => getAppSettings());
 
-  const handleTerminalInput = async (sessionId: string, data: string) => {
+  useEffect(() => {
+    const handler = () => setSettings(getAppSettings());
+    window.addEventListener('tab-navigation-changed', handler);
+    window.addEventListener('app-settings-changed', handler);
+    return () => {
+      window.removeEventListener('tab-navigation-changed', handler);
+      window.removeEventListener('app-settings-changed', handler);
+    };
+  }, []);
+
+  const handleTerminalInput = useCallback(async (sessionId: string, data: string) => {
     try {
       await writeToTerminal(sessionId, data);
     } catch (err) {
       console.error('Failed to write to terminal:', err);
     }
-  };
+  }, []);
 
   return (
     <div className="terminal-panel">
@@ -38,12 +52,22 @@ export const TerminalPanel: FC = () => {
             key={session.id}
             className={`terminal-tab-content ${activeSessionId === session.id ? 'active' : ''}`}
           >
-            <TerminalInstance
-              terminalId={session.id}
-              colorTheme={session.colorTheme}
-              onOutput={(data) => handleTerminalInput(session.id, data)}
-              isActive={activeSessionId === session.id}
-            />
+            {session.sessionType === 'editor' ? (
+              <TextEditor
+                filePath={session.profileId}
+                isDirty={session.isDirty ?? false}
+                onDirtyChange={(dirty) => updateSession(session.id, { isDirty: dirty })}
+                isActive={activeSessionId === session.id}
+              />
+            ) : (
+              <TerminalInstance
+                terminalId={session.id}
+                colorTheme={session.colorTheme}
+                onOutput={handleTerminalInput}
+                isActive={activeSessionId === session.id}
+                readOnly={!settings.webApiShareSessions && session.owner === 'web'}
+              />
+            )}
           </div>
         ))}
       </div>

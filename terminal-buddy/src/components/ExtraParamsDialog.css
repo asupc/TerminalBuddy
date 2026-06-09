@@ -1,0 +1,68 @@
+.extra-params-dialog-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.extra-params-input-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.extra-params-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.extra-params-empty {
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+  padding: 20px 0;
+}
+
+.extra-param-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+.extra-param-name {
+  font-weight: 600;
+  font-size: 13px;
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+.extra-param-params {
+  flex: 1;
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extra-param-delete {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.extra-param-delete:hover {
+  color: #f44747;
+  background: rgba(244, 71, 71, 0.1);
+}
