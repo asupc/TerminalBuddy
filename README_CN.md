@@ -68,6 +68,138 @@ npm run tauri build
 npm run build
 ```
 
+## 配置效率指南
+
+配置文件让你**一键启动**常用的工作环境，告别重复操作。
+
+### 项目开发终端
+
+```json
+{
+  "name": "前端开发",
+  "group": "项目A",
+  "terminalType": "powershell",
+  "startupPath": "D:\\projects\\my-app",
+  "startupCommands": ["npm run dev"]
+}
+```
+
+点击配置 → 自动进入目录 → 自动启动开发服务器
+
+### 多 Node.js 版本切换
+
+不同项目需要不同 Node 版本？为每个项目配置专用终端：
+
+```json
+{
+  "name": "旧项目 (Node 16)",
+  "group": "项目A",
+  "terminalType": "powershell",
+  "startupPath": "D:\\old-project",
+  "startupCommands": ["nvm use 16.20.2", "npm run dev"]
+}
+```
+
+```json
+{
+  "name": "新项目 (Node 18)",
+  "group": "项目B",
+  "terminalType": "powershell",
+  "startupPath": "D:\\new-project",
+  "startupCommands": ["nvm use 18.19.0", "npm run dev"]
+}
+```
+
+支持 nvm-windows、nvs、fnm 等版本管理器。
+
+### 批量操作
+
+一键拉取所有项目代码：
+
+```json
+{
+  "name": "批量 Git Pull",
+  "group": "运维",
+  "terminalType": "powershell",
+  "startupCommands": [
+    "cd D:\\project-a && git pull",
+    "cd D:\\project-b && git pull",
+    "cd D:\\project-c && git pull"
+  ]
+}
+```
+
+### SSH 快速连接
+
+```json
+{
+  "name": "测试服务器",
+  "group": "服务器/测试",
+  "terminalType": "ssh",
+  "sshHost": "192.168.1.100",
+  "sshUser": "admin",
+  "sshAuthType": "password",
+  "sshPassword": "your-password"
+}
+```
+
+### 远程桌面
+
+```json
+{
+  "name": "开发机",
+  "group": "远程桌面",
+  "terminalType": "mstsc",
+  "mstscHost": "192.168.77.24",
+  "mstscUser": "administrator",
+  "mstscPassword": "your-password",
+  "mstscResolution": "1920x1080"
+}
+```
+
+### 全栈开发（前后端同时启动）
+
+```json
+{
+  "name": "后端",
+  "group": "全栈项目",
+  "terminalType": "powershell",
+  "startupPath": "D:\\project\\backend",
+  "startupCommands": ["npm run start:dev"]
+}
+```
+
+```json
+{
+  "name": "前端",
+  "group": "全栈项目",
+  "terminalType": "powershell",
+  "startupPath": "D:\\project\\frontend",
+  "startupCommands": ["npm run dev"]
+}
+```
+
+打开两个配置，前后端同时开发。
+
+### 分组管理建议
+
+```
+📁 项目A
+  ├── 前端开发
+  └── 后端开发
+📁 服务器
+  ├── 测试环境
+  └── 生产环境
+📁 远程桌面
+  └── 开发机
+```
+
+使用 `/` 创建层级：`"group": "服务器/测试环境"`
+
+> 更多配置示例请参考 [配置效率指南](terminal-buddy/docs/profile-guide.md)
+
+---
+
 ## 项目结构
 
 ```

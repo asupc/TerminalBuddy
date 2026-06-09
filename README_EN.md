@@ -68,6 +68,138 @@ npm run tauri build
 npm run build
 ```
 
+## Profile Efficiency Guide
+
+Profiles let you **launch your work environment with one click** — no more repetitive typing.
+
+### Project Development Terminal
+
+```json
+{
+  "name": "Frontend Dev",
+  "group": "ProjectA",
+  "terminalType": "powershell",
+  "startupPath": "D:\\projects\\my-app",
+  "startupCommands": ["npm run dev"]
+}
+```
+
+Click profile → Auto cd to directory → Auto start dev server
+
+### Multi Node.js Version Switching
+
+Different projects need different Node versions? Create dedicated terminals:
+
+```json
+{
+  "name": "Legacy (Node 16)",
+  "group": "ProjectA",
+  "terminalType": "powershell",
+  "startupPath": "D:\\old-project",
+  "startupCommands": ["nvm use 16.20.2", "npm run dev"]
+}
+```
+
+```json
+{
+  "name": "Modern (Node 18)",
+  "group": "ProjectB",
+  "terminalType": "powershell",
+  "startupPath": "D:\\new-project",
+  "startupCommands": ["nvm use 18.19.0", "npm run dev"]
+}
+```
+
+Supports nvm-windows, nvs, fnm, and other version managers.
+
+### Batch Operations
+
+Pull all project repos at once:
+
+```json
+{
+  "name": "Git Pull All",
+  "group": "DevOps",
+  "terminalType": "powershell",
+  "startupCommands": [
+    "cd D:\\project-a && git pull",
+    "cd D:\\project-b && git pull",
+    "cd D:\\project-c && git pull"
+  ]
+}
+```
+
+### Quick SSH Connection
+
+```json
+{
+  "name": "Test Server",
+  "group": "Servers/Test",
+  "terminalType": "ssh",
+  "sshHost": "192.168.1.100",
+  "sshUser": "admin",
+  "sshAuthType": "password",
+  "sshPassword": "your-password"
+}
+```
+
+### Remote Desktop
+
+```json
+{
+  "name": "Dev Machine",
+  "group": "RDP",
+  "terminalType": "mstsc",
+  "mstscHost": "192.168.77.24",
+  "mstscUser": "administrator",
+  "mstscPassword": "your-password",
+  "mstscResolution": "1920x1080"
+}
+```
+
+### Full-Stack Development (Frontend + Backend)
+
+```json
+{
+  "name": "Backend",
+  "group": "FullStack",
+  "terminalType": "powershell",
+  "startupPath": "D:\\project\\backend",
+  "startupCommands": ["npm run start:dev"]
+}
+```
+
+```json
+{
+  "name": "Frontend",
+  "group": "FullStack",
+  "terminalType": "powershell",
+  "startupPath": "D:\\project\\frontend",
+  "startupCommands": ["npm run dev"]
+}
+```
+
+Open both profiles for simultaneous frontend + backend development.
+
+### Group Organization
+
+```
+📁 ProjectA
+  ├── Frontend
+  └── Backend
+📁 Servers
+  ├── Test
+  └── Production
+📁 RDP
+  └── Dev Machine
+```
+
+Use `/` for hierarchy: `"group": "Servers/Test"`
+
+> For more examples, see [Profile Efficiency Guide](terminal-buddy/docs/profile-guide.md)
+
+---
+
 ## Architecture
 
 ```
