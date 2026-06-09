@@ -11,6 +11,7 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
   const [qianfanCookieVisible, setQianfanCookieVisible] = useState(false);
   const [deepseekApiKeyVisible, setDeepseekApiKeyVisible] = useState(false);
   const [minimaxApiKeyVisible, setMinimaxApiKeyVisible] = useState(false);
+  const [arkCookieVisible, setArkCookieVisible] = useState(false);
 
   return (
     <div className="settings-general">
@@ -87,6 +88,25 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
           >{minimaxApiKeyVisible ? '隐藏' : '显示'}</button>
         </div>
         <p className="settings-desc">填入 MiniMax 的 API Key 用于查询 AI 用量。可在 <a href="https://platform.minimax.chat/api_keys" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.minimax.chat</a> 获取</p>
+      </div>
+
+      <div className="settings-section">
+        <label className="settings-label">火山方舟 Cookie</label>
+        <div className="data-path-row">
+          <input
+            className="data-path-input"
+            type={arkCookieVisible ? 'text' : 'password'}
+            value={settings.arkCookie}
+            onChange={(e) => updateSetting('arkCookie', e.target.value)}
+            placeholder="请输入火山方舟控制台的 Cookie"
+            style={{ flex: 1 }}
+          />
+          <button
+            className="btn-secondary"
+            onClick={() => setArkCookieVisible(!arkCookieVisible)}
+          >{arkCookieVisible ? '隐藏' : '显示'}</button>
+        </div>
+        <p className="settings-desc">填入火山方舟控制台的 Cookie 用于查询 Coding 套餐用量。登录 <a href="https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>火山方舟控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值（须包含 csrfToken）</p>
       </div>
     </div>
   );

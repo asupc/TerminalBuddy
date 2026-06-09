@@ -16,6 +16,7 @@ export interface AppSettings {
   qianfanCookie: string;
   deepseekApiKey: string;
   minimaxApiKey: string;
+  arkCookie: string;
   webApiEnabled: boolean;
   webApiPort: number;
   webApiUsername: string;
@@ -39,6 +40,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   qianfanCookie: '',
   deepseekApiKey: '',
   minimaxApiKey: '',
+  arkCookie: '',
   webApiEnabled: false,
   webApiPort: 9600,
   webApiUsername: 'admin',

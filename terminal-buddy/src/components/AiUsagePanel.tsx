@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useCallback, Fragment } from 'react';
-import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, fetchMinimaxUsage, tierDisplayName, utilizationColor, countdownStr, formatTokens, type AiUsageData, type DeepseekUsageData, type DeepseekDayUsage } from '../services/aiUsage';
+import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, fetchMinimaxUsage, fetchArkUsage, tierDisplayName, utilizationColor, countdownStr, formatTokens, type AiUsageData, type DeepseekUsageData, type DeepseekDayUsage } from '../services/aiUsage';
 import { getAppSettings } from '../utils/settings';
 import './AiUsagePanel.css';
 
@@ -172,13 +172,15 @@ export const AiUsagePanel: FC = () => {
   const hasQianfan = !!settings.qianfanCookie;
   const hasMinimax = !!settings.minimaxApiKey;
   const hasDeepseek = !!settings.deepseekApiKey;
+  const hasArk = !!settings.arkCookie;
 
   const fetchZhipu = useCallback(() => fetchZhipuUsage(settings.zhipuApiKey), [settings.zhipuApiKey]);
   const fetchQianfan = useCallback(() => fetchQianfanUsage(settings.qianfanCookie), [settings.qianfanCookie]);
   const fetchMinimaxCb = useCallback(() => fetchMinimaxUsage(settings.minimaxApiKey), [settings.minimaxApiKey]);
   const fetchDeepseekCb = useCallback(() => fetchDeepseekUsage(settings.deepseekApiKey), [settings.deepseekApiKey]);
+  const fetchArkCb = useCallback(() => fetchArkUsage(settings.arkCookie), [settings.arkCookie]);
 
-  if (!hasZhipu && !hasQianfan && !hasDeepseek && !hasMinimax) {
+  if (!hasZhipu && !hasQianfan && !hasDeepseek && !hasMinimax && !hasArk) {
     return (
       <div className="ai-usage-tooltip">
         <span className="ai-usage-text">未配置，请在设置中填入</span>
@@ -190,6 +192,7 @@ export const AiUsagePanel: FC = () => {
     hasZhipu && <ProviderBlock key="zhipu" cacheKey="zhipu" label="智谱 GLM" fetchFn={fetchZhipu} />,
     hasQianfan && <ProviderBlock key="qianfan" cacheKey="qianfan" label="百度千帆" fetchFn={fetchQianfan} />,
     hasMinimax && <ProviderBlock key="minimax" cacheKey="minimax" label="MiniMax" fetchFn={fetchMinimaxCb} />,
+    hasArk && <ProviderBlock key="ark" cacheKey="ark" label="火山方舟" fetchFn={fetchArkCb} />,
     hasDeepseek && <ProviderBlock key="deepseek" cacheKey="deepseek" label="DeepSeek" fetchFn={fetchDeepseekCb} isDeepseek />,
   ].filter(Boolean);
 
