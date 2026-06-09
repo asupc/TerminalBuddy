@@ -1,9 +1,9 @@
 import { FC, useState, useEffect, useCallback, Fragment } from 'react';
-import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, fetchMinimaxUsage, tierDisplayName, utilizationColor, countdownStr, formatTokens, type AiUsageData, type DeepseekUsageData, type DeepseekDayUsage } from '../services/aiUsage';
+import { fetchZhipuUsage, fetchQianfanUsage, fetchDeepseekUsage, fetchMinimaxUsage, fetchArkUsage, tierDisplayName, utilizationColor, countdownStr, formatTokens, type AiUsageData, type DeepseekUsageData, type DeepseekDayUsage } from '../services/aiUsage';
 import { getAppSettings } from '../utils/settings';
 import './AiUsagePanel.css';
 
-const cache: Record<string, { data: any; timestamp: number }> = {};
+const cache: Record<string, { data: any; timestamp: number; success: boolean }> = {};
 const CACHE_TTL = 60_000; // 1 minute
 
 interface TierRowProps {
@@ -125,16 +125,24 @@ interface ProviderBlockProps {
   isDeepseek?: boolean;
 }
 
+const isCacheFresh = (entry: { timestamp: number; success: boolean } | undefined) =>
+  !!entry && entry.success && Date.now() - entry.timestamp <= CACHE_TTL;
+
 const ProviderBlock: FC<ProviderBlockProps> = ({ cacheKey, label, fetchFn, isDeepseek }) => {
   const cached = cache[cacheKey];
   const [data, setData] = useState<any>(cached?.data);
-  const [refreshing, setRefreshing] = useState(!cached || Date.now() - cached.timestamp > CACHE_TTL);
+  const [refreshing, setRefreshing] = useState(!isCacheFresh(cached));
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     const start = Date.now();
     const result = await fetchFn();
-    cache[cacheKey] = { data: result, timestamp: Date.now() };
+    // 只缓存成功的结果，失败时清掉缓存以便下次重新拉取
+    if (result?.success) {
+      cache[cacheKey] = { data: result, timestamp: Date.now(), success: true };
+    } else {
+      delete cache[cacheKey];
+    }
     setData(result);
     const elapsed = Date.now() - start;
     if (elapsed < 600) {
@@ -145,8 +153,8 @@ const ProviderBlock: FC<ProviderBlockProps> = ({ cacheKey, label, fetchFn, isDee
   }, [cacheKey, fetchFn]);
 
   useEffect(() => {
-    if (cached && Date.now() - cached.timestamp <= CACHE_TTL) {
-      setData(cached.data);
+    if (isCacheFresh(cached)) {
+      setData(cached!.data);
       setRefreshing(false);
       return;
     }
@@ -172,13 +180,15 @@ export const AiUsagePanel: FC = () => {
   const hasQianfan = !!settings.qianfanCookie;
   const hasMinimax = !!settings.minimaxApiKey;
   const hasDeepseek = !!settings.deepseekApiKey;
+  const hasArk = !!settings.arkCookie;
 
   const fetchZhipu = useCallback(() => fetchZhipuUsage(settings.zhipuApiKey), [settings.zhipuApiKey]);
   const fetchQianfan = useCallback(() => fetchQianfanUsage(settings.qianfanCookie), [settings.qianfanCookie]);
   const fetchMinimaxCb = useCallback(() => fetchMinimaxUsage(settings.minimaxApiKey), [settings.minimaxApiKey]);
   const fetchDeepseekCb = useCallback(() => fetchDeepseekUsage(settings.deepseekApiKey), [settings.deepseekApiKey]);
+  const fetchArkCb = useCallback(() => fetchArkUsage(settings.arkCookie), [settings.arkCookie]);
 
-  if (!hasZhipu && !hasQianfan && !hasDeepseek && !hasMinimax) {
+  if (!hasZhipu && !hasQianfan && !hasDeepseek && !hasMinimax && !hasArk) {
     return (
       <div className="ai-usage-tooltip">
         <span className="ai-usage-text">未配置，请在设置中填入</span>
@@ -190,6 +200,7 @@ export const AiUsagePanel: FC = () => {
     hasZhipu && <ProviderBlock key="zhipu" cacheKey="zhipu" label="智谱 GLM" fetchFn={fetchZhipu} />,
     hasQianfan && <ProviderBlock key="qianfan" cacheKey="qianfan" label="百度千帆" fetchFn={fetchQianfan} />,
     hasMinimax && <ProviderBlock key="minimax" cacheKey="minimax" label="MiniMax" fetchFn={fetchMinimaxCb} />,
+    hasArk && <ProviderBlock key="ark" cacheKey="ark" label="火山方舟" fetchFn={fetchArkCb} />,
     hasDeepseek && <ProviderBlock key="deepseek" cacheKey="deepseek" label="DeepSeek" fetchFn={fetchDeepseekCb} isDeepseek />,
   ].filter(Boolean);
 

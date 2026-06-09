@@ -79,6 +79,8 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
   const [renaming, setRenaming] = useState<RemoteFileEntry | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [creating, setCreating] = useState<'file' | 'dir' | null>(null);
@@ -241,6 +243,28 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     };
   }, [contextMenu]);
 
+  // Adjust context menu position to stay within viewport
+  useEffect(() => {
+    if (!contextMenu) {
+      setMenuPos(null);
+      return;
+    }
+    if (!contextMenuRef.current) return;
+    const menu = contextMenuRef.current;
+    const menuWidth = menu.offsetWidth;
+    const menuHeight = menu.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = contextMenu.x;
+    let top = contextMenu.y;
+
+    if (left + menuWidth > vw) left = Math.max(0, vw - menuWidth);
+    if (top + menuHeight > vh) top = Math.max(0, vh - menuHeight);
+
+    setMenuPos({ left, top });
+  }, [contextMenu]);
+
   // Auto-focus rename/create inputs
   useEffect(() => {
     if (renaming) renameInputRef.current?.select();
@@ -321,11 +345,12 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
 
   const startDownload = async (file: RemoteFileEntry) => {
     const baseDir = await getDownloadDir();
-    const localPath = `${baseDir}/${file.name}`;
+    const localPath = `${baseDir}\\${file.name}`;
     const id = crypto.randomUUID();
     addTransfer({
       id,
       terminalId,
+      profileId: session?.profileId || '',
       direction: 'download',
       remotePath: file.path,
       localPath,
@@ -365,9 +390,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setContextMenu(null);
     try {
       const baseTempDir = await getSshTempDirectory();
-      const tempDir = `${baseTempDir}/${terminalId}`;
+      const tempDir = `${baseTempDir}\\${terminalId}`;
       await ensureDir(tempDir);
-      const localPath = `${tempDir}/${file.name}`;
+      const localPath = `${tempDir}\\${file.name}`;
       const id = crypto.randomUUID();
       await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
       await waitForDownload(id);
@@ -382,9 +407,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setContextMenu(null);
     try {
       const baseTempDir = await getSshTempDirectory();
-      const tempDir = `${baseTempDir}/${terminalId}`;
+      const tempDir = `${baseTempDir}\\${terminalId}`;
       await ensureDir(tempDir);
-      const localPath = `${tempDir}/${file.name}`;
+      const localPath = `${tempDir}\\${file.name}`;
       const id = crypto.randomUUID();
       await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
       await waitForDownload(id);
@@ -523,6 +548,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       addTransfer({
         id,
         terminalId,
+        profileId: session?.profileId || '',
         direction: 'upload',
         remotePath,
         localPath,
@@ -612,7 +638,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       </div>
 
       {showTransferPanel ? (
-        <TransferPanel terminalId={terminalId} />
+        <TransferPanel terminalId={terminalId} profileId={session?.profileId} />
       ) : (
         <>
       {/* Breadcrumb navigation */}
@@ -747,8 +773,13 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       {/* Context menu */}
       {contextMenu && (
         <div
+          ref={contextMenuRef}
           className="context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={{
+            left: menuPos?.left ?? contextMenu.x,
+            top: menuPos?.top ?? contextMenu.y,
+            visibility: menuPos ? 'visible' : 'hidden',
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="context-menu-item" onClick={handleRefresh}>刷新</div>

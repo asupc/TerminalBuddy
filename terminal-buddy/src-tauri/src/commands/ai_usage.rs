@@ -549,6 +549,169 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
     }
 }
 
+// --- Volcengine Ark (火山方舟) types ---
+
+#[derive(Serialize)]
+pub struct ArkTier {
+    pub name: String,
+    pub utilization: f64,
+    pub resets_at: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ArkUsageResult {
+    pub success: bool,
+    pub tiers: Vec<ArkTier>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn fetch_ark_usage(cookie: String) -> ArkUsageResult {
+    if cookie.trim().is_empty() {
+        return ArkUsageResult {
+            success: false,
+            tiers: vec![],
+            error: Some("Cookie 为空".into()),
+        };
+    }
+
+    // 从 cookie 字符串里提取 csrfToken
+    let csrf_token = cookie
+        .split(';')
+        .map(|s| s.trim())
+        .find_map(|kv| {
+            let mut it = kv.splitn(2, '=');
+            let k = it.next()?.trim();
+            let v = it.next()?.trim();
+            if k.eq_ignore_ascii_case("csrfToken") { Some(v.to_string()) } else { None }
+        });
+
+    let csrf_token = match csrf_token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return ArkUsageResult {
+                success: false,
+                tiers: vec![],
+                error: Some("Cookie 中未找到 csrfToken，请重新复制完整 Cookie".into()),
+            }
+        }
+    };
+
+    let client = get_http_client();
+    let resp = match client
+        .post("https://console.volcengine.com/api/top/ark/cn-beijing/2024-01-01/GetCodingPlanUsage")
+        .header("Cookie", &cookie)
+        .header("X-Csrf-Token", &csrf_token)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Referer", "https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe")
+        .header("Origin", "https://console.volcengine.com")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+        .body("{}")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return ArkUsageResult {
+                success: false,
+                tiers: vec![],
+                error: Some(format!("网络错误: {}", e)),
+            }
+        }
+    };
+
+    let status = resp.status();
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        return ArkUsageResult {
+            success: false,
+            tiers: vec![],
+            error: Some("Cookie 无效或已过期".into()),
+        };
+    }
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return ArkUsageResult {
+                success: false,
+                tiers: vec![],
+                error: Some(format!("解析响应失败: {}", e)),
+            }
+        }
+    };
+
+    // 错误形态:{"ResponseMetadata":{...,"Error":{"Code":"...","Message":"..."}}}
+    if let Some(err) = body
+        .get("ResponseMetadata")
+        .and_then(|m| m.get("Error"))
+    {
+        let msg = err
+            .get("Message")
+            .or_else(|| err.get("CodeN"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("接口返回错误");
+        return ArkUsageResult {
+            success: false,
+            tiers: vec![],
+            error: Some(msg.to_string()),
+        };
+    }
+
+    let quota_usage = match body
+        .get("Result")
+        .and_then(|r| r.get("QuotaUsage"))
+        .and_then(|v| v.as_array())
+    {
+        Some(arr) => arr,
+        None => {
+            return ArkUsageResult {
+                success: false,
+                tiers: vec![],
+                error: Some("未找到用量数据（未订阅 Coding 套餐？）".into()),
+            }
+        }
+    };
+
+    let mut tiers = Vec::new();
+    for item in quota_usage {
+        let level = item.get("Level").and_then(|v| v.as_str()).unwrap_or("");
+        let percent = item.get("Percent").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let reset_ts = item.get("ResetTimestamp").and_then(|v| v.as_i64()).unwrap_or(0);
+        let name = match level {
+            "session" => "5小时",
+            "weekly" => "每周",
+            "monthly" => "每月",
+            other => other,
+        };
+        let resets_at = if reset_ts > 0 {
+            chrono::DateTime::from_timestamp(reset_ts, 0)
+                .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        } else {
+            None
+        };
+        tiers.push(ArkTier {
+            name: name.to_string(),
+            utilization: percent,
+            resets_at,
+        });
+    }
+
+    if tiers.is_empty() {
+        return ArkUsageResult {
+            success: false,
+            tiers: vec![],
+            error: Some("未找到用量数据".into()),
+        };
+    }
+
+    ArkUsageResult {
+        success: true,
+        tiers,
+        error: None,
+    }
+}
+
 // --- MiniMax types ---
 
 #[derive(Serialize)]

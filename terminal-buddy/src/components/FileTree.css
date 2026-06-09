@@ -395,8 +395,17 @@
 
 .transfer-item-actions {
   display: flex;
+  align-items: center;
   gap: 4px;
-  justify-content: flex-end;
+}
+
+.transfer-item-path {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .transfer-item-actions button {
