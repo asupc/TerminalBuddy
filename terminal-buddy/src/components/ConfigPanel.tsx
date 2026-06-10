@@ -11,7 +11,7 @@ const TYPE_ICONS: Record<string, string> = {
 };
 
 interface ConfigPanelProps {
-  onStartTerminal: (profile: Profile, extraParams?: string) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string) => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
   onAddProfile: (defaultGroup?: string) => void;
@@ -360,7 +360,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
           {extraParamPresets.map((preset) => (
             <div key={preset.id} className="context-menu-item" onClick={() => {
               const target = profiles.find((p) => p.id === contextMenu.profileId);
-              if (target) onStartTerminal(target, preset.params);
+              if (target) onStartTerminal(target, preset.params, preset.name);
               closeContextMenu();
             }}>
               启动[<span style={{ color: '#FFD700' }}>{preset.name}</span>]
