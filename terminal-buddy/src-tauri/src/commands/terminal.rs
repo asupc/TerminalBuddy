@@ -88,6 +88,9 @@ fn spawn_output_forwarder(
                 Err(_) => break,
             }
         }
+        // Notify frontend that the PTY has exited (e.g. SSH disconnect, `exit` command).
+        // removeSession is idempotent, so the extra event is safe even on intentional close.
+        let _ = app.emit("terminal-closed", &terminal_id);
     });
 }
 

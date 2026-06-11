@@ -82,6 +82,14 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     return () => window.removeEventListener('app-settings-changed', handler);
   }, []);
 
+  // Dismiss open dialogs when all sessions are closed
+  useEffect(() => {
+    if (sessions.length === 0) {
+      setConfirmDialog(null);
+      setDraftCloseDialog(null);
+    }
+  }, [sessions.length]);
+
   const { width, setWidth, isResizing, resizeHandleProps } = useResizablePanel({
     defaultWidth: 200,
     minWidth: 150,

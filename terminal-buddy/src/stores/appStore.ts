@@ -294,8 +294,8 @@ export const useAppStore = create<AppState>((set) => ({
   setConfigSortBy: (sortBy) => set({ configSortBy: sortBy }),
 
   settingsTabOpen: false,
-  openSettingsTab: () => set({ settingsTabOpen: true, activeSessionId: 'settings' }),
-  closeSettingsTab: () => set({ settingsTabOpen: false, activeSessionId: '' }),
+  openSettingsTab: () => set({ settingsTabOpen: true }),
+  closeSettingsTab: () => set({ settingsTabOpen: false }),
 
   exclusionPatterns: ['node_modules', '.git'],
   setExclusionPatterns: (patterns) => set({ exclusionPatterns: patterns }),
