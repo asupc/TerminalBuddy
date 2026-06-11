@@ -70,6 +70,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   // These track write/parse state to ensure cursor position stays in sync
   const latestWriteDataRef = useRef(0);
   const latestParseDataRef = useRef(0);
+  const lastWriteTimeRef = useRef(0);
 
   // Sync background color when colorTheme prop changes
   useEffect(() => {
@@ -117,6 +118,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             // Use write callback to track parse state (learned from VS Code's _writeProcessData)
             // This ensures cursor position stays in sync when TUI programs update the screen
             const messageId = ++latestWriteDataRef.current;
+            lastWriteTimeRef.current = Date.now();
             xtermRef.current?.write(combined, () => {
               latestParseDataRef.current = messageId;
             });
@@ -211,14 +213,21 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
 
       // --- IME candidate window stabilization ---
-      // Problem: xterm.js's CompositionHelper.updateCompositionElements() moves
-      // the textarea to follow the cursor during composition.  When a TUI program
-      // (claude, vim) updates the screen rapidly, the cursor moves on every
-      // write(), causing the IME candidate window to jump.
+      // Problem: xterm.js's CompositionHelper.updateCompositionElements() repositions
+      // the hidden textarea to follow the cursor on every compositionupdate.  When a
+      // TUI program (Claude Code, vim, htop) updates the screen during active IME
+      // composition, the cursor moves → textarea repositions → IME candidate window jumps.
       //
-      // Solution: Monkey-patch the CompositionHelper to skip position updates
-      // during composition.  The textarea stays at the position where the user
-      // started typing, keeping the candidate window stable.
+      // Root cause (from xterm.js source):
+      //   compositionupdate → updateCompositionElements() → textarea.style.left/top = cursor
+      //   recursive setTimeout(0) → updateCompositionElements(true) → same reposition
+      //
+      // Solution (modeled after VSCode's approach):
+      //   1. On compositionstart: let xterm.js position textarea ONCE (correct position),
+      //      then set a flag to freeze all subsequent position updates.
+      //   2. During composition: block ALL calls to updateCompositionElements — no position
+      //      changes, no text content updates.  The IME window stays where it started.
+      //   3. On compositionend: clear the flag so normal operation resumes.
       try {
         const core = (terminal as any)._core;
         const compositionHelper = core?._compositionHelper;
@@ -226,45 +235,26 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           const originalUpdate = compositionHelper.updateCompositionElements?.bind(compositionHelper);
           if (originalUpdate) {
             let isImeComposing = false;
-            let lockedLeft = '';
-            let lockedTop = '';
 
-            // Track composition state via events on the textarea
             const ta = compositionHelper._textarea as HTMLTextAreaElement | undefined;
             if (ta) {
               ta.addEventListener('compositionstart', () => {
+                // xterm.js's own handler has already set _isComposing = true and
+                // our wrapper will see isImeComposing = false, so calling
+                // originalUpdate() here correctly positions the textarea at the
+                // current cursor BEFORE we lock it.
+                try { originalUpdate(); } catch { /* internal API */ }
                 isImeComposing = true;
-                // Capture position where composition started
-                lockedLeft = ta.style.left || '0px';
-                lockedTop = ta.style.top || '0px';
               });
               ta.addEventListener('compositionend', () => {
-                // Delay clearing to prevent post-composition jumps from TUI output
-                setTimeout(() => {
-                  isImeComposing = false;
-                  lockedLeft = '';
-                  lockedTop = '';
-                }, 200);
+                isImeComposing = false;
               });
             }
 
             compositionHelper.updateCompositionElements = function(dontRecurse?: boolean) {
               if (isImeComposing) {
-                // Skip position update during composition to keep candidate window stable.
-                // Just update the composition view text content if needed.
-                const cv = compositionHelper._compositionView as HTMLElement | undefined;
-                if (cv && compositionHelper._compositionSuffix) {
-                  cv.textContent = compositionHelper._compositionSuffix;
-                }
-                // Restore locked position on both textarea and composition view
-                if (ta && lockedLeft && lockedTop) {
-                  ta.style.left = lockedLeft;
-                  ta.style.top = lockedTop;
-                }
-                if (cv && lockedLeft && lockedTop) {
-                  cv.style.left = lockedLeft;
-                  cv.style.top = lockedTop;
-                }
+                // Complete freeze: prevent IME candidate window from jumping
+                // when TUI programs update the screen during composition.
                 return;
               }
               originalUpdate(dontRecurse);
@@ -284,6 +274,21 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // --- Resize handling (learned from VS Code's terminalResizeDebouncer) ---
       const doFit = () => {
         if (disposed || !xtermRef.current || !fitAddonRef.current) return;
+
+        // Don't resize while TUI is active in alternate buffer.
+        // TUI programs (claude code, vim, htop) manage their own screen layout
+        // and expect stable terminal dimensions.  Resize is triggered when
+        // exiting the alt buffer via checkAltBuffer().
+        if (inAltBufferRef.current) return;
+
+        // Defer resize briefly after a write batch to let the renderer catch up.
+        // This prevents cursor drift when TUI apps update the screen rapidly
+        // (e.g., spinners, progress bars updating via escape sequences).
+        const writeAge = Date.now() - lastWriteTimeRef.current;
+        if (lastWriteTimeRef.current > 0 && writeAge < 100) {
+          setTimeout(() => { if (!disposed) doFit(); }, 100 - writeAge);
+          return;
+        }
 
         // Check if terminal is still parsing data (learned from VS Code's _flushXtermData)
         // If data is being parsed, delay resize to avoid cursor position issues
@@ -774,6 +779,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Reset output tracking refs
       latestWriteDataRef.current = 0;
       latestParseDataRef.current = 0;
+      lastWriteTimeRef.current = 0;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;
