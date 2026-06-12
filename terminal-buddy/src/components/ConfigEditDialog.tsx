@@ -245,7 +245,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
         setValue('startupPath', selected, { shouldDirty: true, shouldValidate: true });
       }
     } catch (err) {
-      console.error('[DEBUG] dialog error:', err);
+      console.error('打开目录对话框失败:', err);
       alert('打开目录对话框失败: ' + String(err));
     }
   };

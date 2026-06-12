@@ -241,10 +241,9 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         // 停止：先关闭开关，保存，再重启（restart_web_server 会检测 enabled=false 并停止）
         setSettings(prev => ({ ...prev, webApiEnabled: false }));
         await saveWebApiSettings(false, settings.webApiPort, settings.webApiUsername, '', settings.webApiShareSessions);
-        const result = await restartWebServer();
+        await restartWebServer();
         setServerRunning(false);
         setServerAddress('已停止');
-        console.log('[WebAPI]', result);
       } else {
         if (!webPassword && !hasPassword) {
           setServerError('请先设置密码');
@@ -260,7 +259,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         const addr = await getWebServerAddress();
         setServerAddress(addr);
         setServerRunning(addr.startsWith('http'));
-        console.log('[WebAPI]', result);
         if (!addr.startsWith('http')) {
           setServerError(result || '服务启动失败');
         }

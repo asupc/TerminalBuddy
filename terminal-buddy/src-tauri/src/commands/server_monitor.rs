@@ -298,12 +298,5 @@ pub fn get_server_stats(
         },
         timestamp: now,
     };
-    eprintln!("[ServerMonitor] result: cpu={:.1}%, mem_used={}/{} ({:.1}%), disk_count={}, net_rx_speed={:.1}, net_tx_speed={:.1}",
-        result.cpu_usage, result.memory.used, result.memory.total, result.memory.usage_percent,
-        result.disk.len(), result.network.rx_speed, result.network.tx_speed);
-    for d in &result.disk {
-        eprintln!("[ServerMonitor]   disk: {} {:.0}%", d.mount, d.usage_percent);
-    }
-
     Ok(result)
 }

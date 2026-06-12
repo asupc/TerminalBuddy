@@ -71,6 +71,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const latestWriteDataRef = useRef(0);
   const latestParseDataRef = useRef(0);
   const lastWriteTimeRef = useRef(0);
+  // IME composition state — buffered output during composition prevents cursor drift
+  const isComposingRef = useRef(false);
 
   // Sync background color when colorTheme prop changes
   useEffect(() => {
@@ -84,7 +86,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const cleanupFns: (() => void)[] = [];
     const outputBuffer: string[] = [];
     const pendingChunks: string[] = [];
-    let pendingRaf: number | null = null;
+    let pendingMicrotask: boolean = false;
+    // Output queued during IME composition — flushed when composition ends
+    const compositionBuffer: string[] = [];
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -105,24 +109,49 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       return false;
     };
 
+    const flushPendingChunks = () => {
+      pendingMicrotask = false;
+      if (disposed || !xtermRef.current) return;
+      const combined = pendingChunks.join('');
+      pendingChunks.length = 0;
+      if (!combined) return;
+      // Use write callback to track parse state (learned from VS Code's _writeProcessData)
+      // This ensures cursor position stays in sync when TUI programs update the screen
+      const messageId = ++latestWriteDataRef.current;
+      lastWriteTimeRef.current = Date.now();
+      xtermRef.current.write(combined, () => {
+        latestParseDataRef.current = messageId;
+        // Force an immediate render after write completes, instead of waiting for
+        // xterm.js's internal requestAnimationFrame. This ensures the cursor position
+        // and screen content are rendered in the same frame as the data write,
+        // preventing the 1-frame cursor drift that TUI programs (claude code, vim)
+        // cause when they update the screen rapidly.
+        try {
+          const core = (xtermRef.current as any)?._core;
+          core?._renderService?.refresh?.(0, core._bufferService.rows - 1);
+        } catch { /* xterm internal API may change */ }
+      });
+    };
+
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
       if (xtermRef.current) {
+        // During IME composition: buffer output to prevent screen updates
+        // from moving the cursor and causing the IME candidate window to jump.
+        // Flush happens on compositionend.
+        if (isComposingRef.current) {
+          compositionBuffer.push(output);
+          return;
+        }
         pendingChunks.push(output);
-        if (!pendingRaf) {
-          pendingRaf = requestAnimationFrame(() => {
-            pendingRaf = null;
-            if (disposed) return;
-            const combined = pendingChunks.join('');
-            pendingChunks.length = 0;
-            // Use write callback to track parse state (learned from VS Code's _writeProcessData)
-            // This ensures cursor position stays in sync when TUI programs update the screen
-            const messageId = ++latestWriteDataRef.current;
-            lastWriteTimeRef.current = Date.now();
-            xtermRef.current?.write(combined, () => {
-              latestParseDataRef.current = messageId;
-            });
-          });
+        // Use microtask (queueMicrotask) instead of requestAnimationFrame.
+        // Microtasks run before the browser's paint cycle, so the write + xterm render
+        // completes in the same frame as the data arrival. rAF can introduce a 1-frame
+        // delay because the callback might fire after the browser has already committed
+        // the current frame's paint.
+        if (!pendingMicrotask) {
+          pendingMicrotask = true;
+          queueMicrotask(flushPendingChunks);
         }
       } else {
         outputBuffer.push(output);
@@ -224,35 +253,47 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       //
       // Solution (modeled after VSCode's approach):
       //   1. On compositionstart: let xterm.js position textarea ONCE (correct position),
-      //      then set a flag to freeze all subsequent position updates.
-      //   2. During composition: block ALL calls to updateCompositionElements — no position
-      //      changes, no text content updates.  The IME window stays where it started.
-      //   3. On compositionend: clear the flag so normal operation resumes.
+      //      then freeze all subsequent position updates AND buffer terminal output.
+      //   2. During composition: block ALL calls to updateCompositionElements and queue
+      //      incoming PTY output instead of writing to xterm.js. This prevents the
+      //      cursor from moving at all while the user is composing — the IME window
+      //      stays exactly where it started.
+      //   3. On compositionend: clear the freeze, flush buffered output, and resume
+      //      normal operation. The screen catches up with all pending updates at once.
       try {
         const core = (terminal as any)._core;
         const compositionHelper = core?._compositionHelper;
         if (compositionHelper) {
           const originalUpdate = compositionHelper.updateCompositionElements?.bind(compositionHelper);
           if (originalUpdate) {
-            let isImeComposing = false;
-
             const ta = compositionHelper._textarea as HTMLTextAreaElement | undefined;
             if (ta) {
               ta.addEventListener('compositionstart', () => {
                 // xterm.js's own handler has already set _isComposing = true and
-                // our wrapper will see isImeComposing = false, so calling
+                // our wrapper will see isComposingRef = false, so calling
                 // originalUpdate() here correctly positions the textarea at the
                 // current cursor BEFORE we lock it.
                 try { originalUpdate(); } catch { /* internal API */ }
-                isImeComposing = true;
+                isComposingRef.current = true;
               });
               ta.addEventListener('compositionend', () => {
-                isImeComposing = false;
+                isComposingRef.current = false;
+                // Flush any output that was buffered during composition.
+                // Write it via microtask to batch with any pending chunks.
+                if (compositionBuffer.length > 0) {
+                  const buffered = compositionBuffer.join('');
+                  compositionBuffer.length = 0;
+                  pendingChunks.push(buffered);
+                  if (!pendingMicrotask) {
+                    pendingMicrotask = true;
+                    queueMicrotask(flushPendingChunks);
+                  }
+                }
               });
             }
 
             compositionHelper.updateCompositionElements = function(dontRecurse?: boolean) {
-              if (isImeComposing) {
+              if (isComposingRef.current) {
                 // Complete freeze: prevent IME candidate window from jumping
                 // when TUI programs update the screen during composition.
                 return;
@@ -772,14 +813,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         clearTimeout(workingFallback);
         workingFallback = null;
       }
-      if (pendingRaf) {
-        cancelAnimationFrame(pendingRaf);
-        pendingRaf = null;
-      }
+      // Microtask cannot be cancelled; flush guard via disposed flag is sufficient
+      pendingMicrotask = false;
       // Reset output tracking refs
       latestWriteDataRef.current = 0;
       latestParseDataRef.current = 0;
       lastWriteTimeRef.current = 0;
+      isComposingRef.current = false;
+      compositionBuffer.length = 0;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;

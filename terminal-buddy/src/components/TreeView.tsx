@@ -76,7 +76,10 @@ const TreeNode: FC<{
           onSelect?.(item);
           if (isGroup) onToggle(item.id);
         }}
-        onDoubleClick={() => onDoubleClick?.(item)}
+        onDoubleClick={() => {
+          if (renamingId === item.id || renamingProfileId === item.id) return;
+          onDoubleClick?.(item);
+        }}
         onContextMenu={(e) => onContextMenu?.(e, item)}
       >
         {isGroup && (

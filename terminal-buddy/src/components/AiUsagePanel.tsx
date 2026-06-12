@@ -39,9 +39,6 @@ const DayBlock: FC<{
   return (
     <div className="ds-section" style={{ borderLeftColor: accent }}>
       <div className="ds-section-head">
-        {/* <span className="ds-section-title">{title} <span className="ds-date">{date}</span></span> */}
-
-        
         <span className="ds-label">{title}</span>
 
         <span className="ds-request">{formatTokens(data.request)}次/<span className="ds-cost">¥{data.cost.toFixed(2)}</span></span>
