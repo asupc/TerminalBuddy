@@ -89,6 +89,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let pendingMicrotask: boolean = false;
     // Output queued during IME composition — flushed when composition ends
     const compositionBuffer: string[] = [];
+    // IME candidate-window anchor: the textarea position captured during ordinary
+    // (non-IME) typing, i.e. the input box. Used to pin the candidate window there on
+    // compositionstart instead of wherever the cursor happens to be (often the spinner).
+    let inputBoxPos = { left: '', top: '' };
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -269,11 +273,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             const ta = compositionHelper._textarea as HTMLTextAreaElement | undefined;
             if (ta) {
               ta.addEventListener('compositionstart', () => {
-                // xterm.js's own handler has already set _isComposing = true and
-                // our wrapper will see isComposingRef = false, so calling
-                // originalUpdate() here correctly positions the textarea at the
-                // current cursor BEFORE we lock it.
                 try { originalUpdate(); } catch { /* internal API */ }
+                // Anchor the IME candidate window to the input-box position (captured
+                // from ordinary typing), NOT the cursor at this instant — which is often
+                // on claude code's spinner. The monkey-patch freeze below keeps it there.
+                if (inputBoxPos.left) {
+                  ta.style.left = inputBoxPos.left;
+                  ta.style.top = inputBoxPos.top;
+                  const cv = (compositionHelper as any)._compositionView as HTMLElement | undefined;
+                  if (cv) { cv.style.left = inputBoxPos.left; cv.style.top = inputBoxPos.top; }
+                }
                 isComposingRef.current = true;
               });
               ta.addEventListener('compositionend', () => {
@@ -500,6 +509,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       terminal.onData((data) => {
+        // Capture the input-box anchor during ordinary typing (the cursor is then in
+        // the input box). Used to pin the IME candidate window on compositionstart.
+        if (!isComposingRef.current && !data.startsWith('\x1b')) {
+          const ta2 = (terminal as any).textarea as HTMLTextAreaElement | undefined;
+          if (ta2 && ta2.style.left) {
+            inputBoxPos.left = ta2.style.left;
+            inputBoxPos.top = ta2.style.top;
+          }
+        }
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
           useAppStore.getState().setSessionWorking(terminalId, true);
