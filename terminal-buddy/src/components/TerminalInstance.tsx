@@ -77,9 +77,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const cleanupFns: (() => void)[] = [];
     const outputBuffer: string[] = [];
-    // ===== [TEMP INSTRUMENTATION] shared state for IME drift verification =====
-    const __imeLog = { lines: [] as string[], path: '' };
-    // ===== [END TEMP INSTRUMENTATION] =====
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -103,16 +100,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
       if (xtermRef.current) {
-        // ===== [TEMP INSTRUMENTATION] capture cursor-move sequences during composition =====
-        if ((window as any).__composeActive && /\x1b\[.*?[HABCDEFGf`]/.test(output)) {
-          const visible = output
-            .replace(/\x1b/g, 'ESC')
-            .replace(/\r/g, '\\r')
-            .replace(/\n/g, '\\n')
-            .slice(0, 160);
-          __imeLog.lines.push(`cursormove t=${performance.now().toFixed(0)} len=${output.length} ${JSON.stringify(visible)}`);
-        }
-        // ===== [END TEMP INSTRUMENTATION] =====
         xtermRef.current.write(output);
       } else {
         outputBuffer.push(output);
@@ -198,51 +185,73 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       xtermRef.current = terminal;
 
-      // ===== [TEMP INSTRUMENTATION] IME drift mechanism verification =====
-      // Purpose: confirm whether buffer.x/y transiently leaves the input box
-      // (visits the spinner row) during composition. Logs to <dataDir>/ime-instrument.log.
-      // REMOVE after verification.
-      const __instrumentTa = (terminal as any).textarea as HTMLTextAreaElement | undefined;
-      if (__instrumentTa) {
-        let __lastPos = '';
-        let __sampleHandle: ReturnType<typeof setInterval> | null = null;
-        const __flush = () => {
-          if (!__imeLog.path || __imeLog.lines.length === 0) return;
-          writeFileContent(__imeLog.path, __imeLog.lines.join('\n') + '\n').catch(() => {});
+      // ===== [IME position guard] Pin candidate window to input-box during composition =====
+      // Background: xterm repositions the hidden textarea (the OS IME candidate-window
+      // anchor) to buffer.x/y on every compositionupdate. When a TUI (claude code)
+      // redraws its spinner/status during composition, the buffer cursor roams away from
+      // the input box and drags the candidate window with it. This guard captures the
+      // input-box position once (confirmed against the compositionstart cursor) and
+      // re-asserts it every animation frame, so the candidate window stays put while the
+      // screen (spinner) keeps updating normally.
+      const __guardTa = (terminal as any).textarea as HTMLTextAreaElement | undefined;
+      if (__guardTa) {
+        let __composing = false;
+        let __pinCaptured = false;
+        let __pinLeft = '';
+        let __pinTop = '';
+        let __startBufX = -1;
+        let __startBufY = -1;
+        let __rafHandle: number | null = null;
+        // [VERIFY] lightweight log — capture events only, written to <dataDir>/ime-instrument.log
+        const __vlog: string[] = [];
+        let __vlogPath = '';
+        const __vflush = () => { if (__vlogPath && __vlog.length) writeFileContent(__vlogPath, __vlog.join('\n') + '\n').catch(() => {}); };
+        getDataPath().then(p => { __vlogPath = ((p && p.length > 0) ? p + '/' : '') + 'ime-instrument.log'; });
+
+        const __applyPin = () => {
+          if (!__pinCaptured) return;
+          __guardTa.style.left = __pinLeft;
+          __guardTa.style.top = __pinTop;
         };
-        getDataPath().then(p => {
-          const base = (p && p.length > 0) ? p : '';
-          __imeLog.path = (base ? base + '/' : '') + 'ime-instrument.log';
-          __imeLog.lines.push(`==== capture ${new Date().toISOString()} term=${terminalId} cols=${terminal.cols} rows=${terminal.rows} baseY=${terminal.buffer.active.baseY} ====`);
-          __flush();
+        const __tick = () => {
+          if (!__composing) { __rafHandle = null; return; }
+          __applyPin();
+          __rafHandle = requestAnimationFrame(__tick);
+        };
+
+        __guardTa.addEventListener('compositionstart', () => {
+          __composing = true;
+          __pinCaptured = false;
+          const b = terminal.buffer.active;
+          __startBufX = b.cursorX;
+          __startBufY = b.cursorY;
+          __vlog.push(`guard START t=${performance.now().toFixed(0)} startBuf=${__startBufX},${__startBufY}`);
+          if (__rafHandle == null) __rafHandle = requestAnimationFrame(__tick);
         });
-        const __sample = () => {
-          if (!disposed && xtermRef.current) {
-            const b = xtermRef.current.buffer.active;
-            const pos = `${b.cursorX},${b.cursorY}`;
-            if (pos !== __lastPos) {
-              __lastPos = pos;
-              __imeLog.lines.push(`cursor t=${performance.now().toFixed(0)} x=${b.cursorX} y=${b.cursorY} absY=${b.baseY + b.cursorY}`);
+        // Capture the pin only when the cursor is confirmed still at the input box,
+        // so we never pin to a roamed (spinner) position.
+        __guardTa.addEventListener('compositionupdate', () => {
+          if (!__composing || __pinCaptured) return;
+          const b = terminal.buffer.active;
+          if (b.cursorX === __startBufX && b.cursorY === __startBufY) {
+            const l = __guardTa.style.left;
+            const t = __guardTa.style.top;
+            if (l && t) {
+              __pinLeft = l; __pinTop = t; __pinCaptured = true;
+              __vlog.push(`guard PINNED t=${performance.now().toFixed(0)} left=${l} top=${t}`);
             }
           }
-        };
-        __instrumentTa.addEventListener('compositionstart', () => {
-          (window as any).__composeActive = true;
-          __lastPos = '';
-          __imeLog.lines.push(`--- compose START t=${performance.now().toFixed(0)} ---`);
-          if (__sampleHandle) clearInterval(__sampleHandle);
-          __sampleHandle = setInterval(__sample, 4);
-          __sample();
         });
-        __instrumentTa.addEventListener('compositionend', () => {
-          (window as any).__composeActive = false;
-          if (__sampleHandle) { clearInterval(__sampleHandle); __sampleHandle = null; }
-          __imeLog.lines.push(`--- compose END t=${performance.now().toFixed(0)} ---`);
-          __flush();
+        __guardTa.addEventListener('compositionend', () => {
+          __vlog.push(`guard END t=${performance.now().toFixed(0)} pinned=${__pinCaptured}`);
+          __vflush();
+          __composing = false;
+          __pinCaptured = false;
+          if (__rafHandle != null) { cancelAnimationFrame(__rafHandle); __rafHandle = null; }
         });
-        cleanupFns.push(() => { if (__sampleHandle) clearInterval(__sampleHandle); __flush(); });
+        cleanupFns.push(() => { if (__rafHandle != null) cancelAnimationFrame(__rafHandle); });
       }
-      // ===== [END TEMP INSTRUMENTATION] =====
+      // ===== [END IME position guard] =====
 
       // Immediately sync PTY dimensions so TUI programs (claude code, vim, etc.)
       // get the correct size from the start instead of the estimated values
