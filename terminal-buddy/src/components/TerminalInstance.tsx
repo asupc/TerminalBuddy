@@ -71,8 +71,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const latestWriteDataRef = useRef(0);
   const latestParseDataRef = useRef(0);
   const lastWriteTimeRef = useRef(0);
-  // IME composition state — buffered output during composition prevents cursor drift
-  const isComposingRef = useRef(false);
 
   // Sync background color when colorTheme prop changes
   useEffect(() => {
@@ -87,12 +85,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const outputBuffer: string[] = [];
     const pendingChunks: string[] = [];
     let pendingMicrotask: boolean = false;
-    // Output queued during IME composition — flushed when composition ends
-    const compositionBuffer: string[] = [];
-    // IME candidate-window anchor: the textarea position captured during ordinary
-    // (non-IME) typing, i.e. the input box. Used to pin the candidate window there on
-    // compositionstart instead of wherever the cursor happens to be (often the spinner).
-    let inputBoxPos = { left: '', top: '' };
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -140,13 +132,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
       if (xtermRef.current) {
-        // During IME composition: buffer output to prevent screen updates
-        // from moving the cursor and causing the IME candidate window to jump.
-        // Flush happens on compositionend.
-        if (isComposingRef.current) {
-          compositionBuffer.push(output);
-          return;
-        }
         pendingChunks.push(output);
         // Use microtask (queueMicrotask) instead of requestAnimationFrame.
         // Microtasks run before the browser's paint cycle, so the write + xterm render
@@ -245,75 +230,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
       lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
 
-      // --- IME candidate window stabilization ---
-      // Problem: xterm.js's CompositionHelper.updateCompositionElements() repositions
-      // the hidden textarea to follow the cursor on every compositionupdate.  When a
-      // TUI program (Claude Code, vim, htop) updates the screen during active IME
-      // composition, the cursor moves → textarea repositions → IME candidate window jumps.
-      //
-      // Root cause (from xterm.js source):
-      //   compositionupdate → updateCompositionElements() → textarea.style.left/top = cursor
-      //   recursive setTimeout(0) → updateCompositionElements(true) → same reposition
-      //
-      // Solution (modeled after VSCode's approach):
-      //   1. On compositionstart: let xterm.js position textarea ONCE (correct position),
-      //      then freeze all subsequent position updates AND buffer terminal output.
-      //   2. During composition: block ALL calls to updateCompositionElements and queue
-      //      incoming PTY output instead of writing to xterm.js. This prevents the
-      //      cursor from moving at all while the user is composing — the IME window
-      //      stays exactly where it started.
-      //   3. On compositionend: clear the freeze, flush buffered output, and resume
-      //      normal operation. The screen catches up with all pending updates at once.
-      try {
-        const core = (terminal as any)._core;
-        const compositionHelper = core?._compositionHelper;
-        if (compositionHelper) {
-          const originalUpdate = compositionHelper.updateCompositionElements?.bind(compositionHelper);
-          if (originalUpdate) {
-            const ta = compositionHelper._textarea as HTMLTextAreaElement | undefined;
-            if (ta) {
-              ta.addEventListener('compositionstart', () => {
-                try { originalUpdate(); } catch { /* internal API */ }
-                // Anchor the IME candidate window to the input-box position (captured
-                // from ordinary typing), NOT the cursor at this instant — which is often
-                // on claude code's spinner. The monkey-patch freeze below keeps it there.
-                if (inputBoxPos.left) {
-                  ta.style.left = inputBoxPos.left;
-                  ta.style.top = inputBoxPos.top;
-                  const cv = (compositionHelper as any)._compositionView as HTMLElement | undefined;
-                  if (cv) { cv.style.left = inputBoxPos.left; cv.style.top = inputBoxPos.top; }
-                }
-                isComposingRef.current = true;
-              });
-              ta.addEventListener('compositionend', () => {
-                isComposingRef.current = false;
-                // Flush any output that was buffered during composition.
-                // Write it via microtask to batch with any pending chunks.
-                if (compositionBuffer.length > 0) {
-                  const buffered = compositionBuffer.join('');
-                  compositionBuffer.length = 0;
-                  pendingChunks.push(buffered);
-                  if (!pendingMicrotask) {
-                    pendingMicrotask = true;
-                    queueMicrotask(flushPendingChunks);
-                  }
-                }
-              });
-            }
-
-            compositionHelper.updateCompositionElements = function(dontRecurse?: boolean) {
-              if (isComposingRef.current) {
-                // Complete freeze: prevent IME candidate window from jumping
-                // when TUI programs update the screen during composition.
-                return;
-              }
-              originalUpdate(dontRecurse);
-            };
-          }
-        }
-      } catch {
-        // xterm.js internal API may change between versions
-      }
       // Flush buffered output that arrived before xterm was ready
       if (outputBuffer.length > 0) {
         terminal.write(outputBuffer.join(''));
@@ -509,15 +425,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       terminal.onData((data) => {
-        // Capture the input-box anchor during ordinary typing (the cursor is then in
-        // the input box). Used to pin the IME candidate window on compositionstart.
-        if (!isComposingRef.current && !data.startsWith('\x1b')) {
-          const ta2 = (terminal as any).textarea as HTMLTextAreaElement | undefined;
-          if (ta2 && ta2.style.left) {
-            inputBoxPos.left = ta2.style.left;
-            inputBoxPos.top = ta2.style.top;
-          }
-        }
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
           useAppStore.getState().setSessionWorking(terminalId, true);
@@ -837,8 +744,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       latestWriteDataRef.current = 0;
       latestParseDataRef.current = 0;
       lastWriteTimeRef.current = 0;
-      isComposingRef.current = false;
-      compositionBuffer.length = 0;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;
