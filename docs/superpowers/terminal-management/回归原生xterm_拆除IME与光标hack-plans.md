@@ -371,13 +371,15 @@ cd terminal-buddy && grep -nE "latestWriteDataRef|latestParseDataRef|lastWriteTi
 
 期望：**无任何输出**。
 
-补充检查（确认 `_core` 私有 API 都拆干净了）：
+补充检查（确认 ④ `_renderService` 强制刷帧拆干净了）：
 
 ```bash
-cd terminal-buddy && grep -nE "\(.+ as any\)\._core|terminal as any\)\._core|xtermRef\.current as any\)\._core" src/components/TerminalInstance.tsx
+cd terminal-buddy && grep -nE "\._renderService|\._bufferService" src/components/TerminalInstance.tsx
 ```
 
 期望：**无任何输出**。
+
+> 注意：`_core?.viewport?._innerRefresh?.()`（在 `checkAltBuffer` 里，vim 退出 alt-buffer 时清残影）**不属本次拆除范围**——它服务独立的真问题，按 surgical changes 保留。如执行时 grep `_core` 整体会命中它，属正常。
 
 - [ ] **Step 2.8: Commit**
   **Skills:** _none_
