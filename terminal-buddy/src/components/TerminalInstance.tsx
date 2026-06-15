@@ -66,12 +66,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [termBg, setTermBg] = useState(colorTheme?.background || '#1e1e1e');
   const inAltBufferRef = useRef(false);
 
-  // Output tracking refs (learned from VS Code's terminalInstance.ts)
-  // These track write/parse state to ensure cursor position stays in sync
-  const latestWriteDataRef = useRef(0);
-  const latestParseDataRef = useRef(0);
-  const lastWriteTimeRef = useRef(0);
-
   // Sync background color when colorTheme prop changes
   useEffect(() => {
     setTermBg(colorTheme?.background || '#1e1e1e');
@@ -83,8 +77,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const cleanupFns: (() => void)[] = [];
     const outputBuffer: string[] = [];
-    const pendingChunks: string[] = [];
-    let pendingMicrotask: boolean = false;
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -105,43 +97,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       return false;
     };
 
-    const flushPendingChunks = () => {
-      pendingMicrotask = false;
-      if (disposed || !xtermRef.current) return;
-      const combined = pendingChunks.join('');
-      pendingChunks.length = 0;
-      if (!combined) return;
-      // Use write callback to track parse state (learned from VS Code's _writeProcessData)
-      // This ensures cursor position stays in sync when TUI programs update the screen
-      const messageId = ++latestWriteDataRef.current;
-      lastWriteTimeRef.current = Date.now();
-      xtermRef.current.write(combined, () => {
-        latestParseDataRef.current = messageId;
-        // Force an immediate render after write completes, instead of waiting for
-        // xterm.js's internal requestAnimationFrame. This ensures the cursor position
-        // and screen content are rendered in the same frame as the data write,
-        // preventing the 1-frame cursor drift that TUI programs (claude code, vim)
-        // cause when they update the screen rapidly.
-        try {
-          const core = (xtermRef.current as any)?._core;
-          core?._renderService?.refresh?.(0, core._bufferService.rows - 1);
-        } catch { /* xterm internal API may change */ }
-      });
-    };
-
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
       if (xtermRef.current) {
-        pendingChunks.push(output);
-        // Use microtask (queueMicrotask) instead of requestAnimationFrame.
-        // Microtasks run before the browser's paint cycle, so the write + xterm render
-        // completes in the same frame as the data arrival. rAF can introduce a 1-frame
-        // delay because the callback might fire after the browser has already committed
-        // the current frame's paint.
-        if (!pendingMicrotask) {
-          pendingMicrotask = true;
-          queueMicrotask(flushPendingChunks);
-        }
+        xtermRef.current.write(output);
       } else {
         outputBuffer.push(output);
       }
@@ -237,7 +196,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       }
       fitAddonRef.current = fitAddon;
 
-      // --- Resize handling (learned from VS Code's terminalResizeDebouncer) ---
+      // --- Resize handling ---
       const doFit = () => {
         if (disposed || !xtermRef.current || !fitAddonRef.current) return;
 
@@ -246,26 +205,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // and expect stable terminal dimensions.  Resize is triggered when
         // exiting the alt buffer via checkAltBuffer().
         if (inAltBufferRef.current) return;
-
-        // Defer resize briefly after a write batch to let the renderer catch up.
-        // This prevents cursor drift when TUI apps update the screen rapidly
-        // (e.g., spinners, progress bars updating via escape sequences).
-        const writeAge = Date.now() - lastWriteTimeRef.current;
-        if (lastWriteTimeRef.current > 0 && writeAge < 100) {
-          setTimeout(() => { if (!disposed) doFit(); }, 100 - writeAge);
-          return;
-        }
-
-        // Check if terminal is still parsing data (learned from VS Code's _flushXtermData)
-        // If data is being parsed, delay resize to avoid cursor position issues
-        // This prevents the cursor from jumping when TUI programs update the screen
-        if (latestWriteDataRef.current !== latestParseDataRef.current) {
-          // Data is being parsed, schedule a retry after a short delay
-          setTimeout(() => {
-            if (!disposed) doFit();
-          }, 16); // ~1 frame at 60fps
-          return;
-        }
 
         const prevCols = terminal.cols;
         const prevRows = terminal.rows;
@@ -738,12 +677,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         clearTimeout(workingFallback);
         workingFallback = null;
       }
-      // Microtask cannot be cancelled; flush guard via disposed flag is sufficient
-      pendingMicrotask = false;
-      // Reset output tracking refs
-      latestWriteDataRef.current = 0;
-      latestParseDataRef.current = 0;
-      lastWriteTimeRef.current = 0;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;
