@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::windows::process::CommandExt;
 use serde::Serialize;
 use tauri::command;
 
@@ -144,8 +145,9 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open explorer: {}", e))?;
     } else if fs::metadata(&path).is_ok() {
+        // File exists: open explorer with /select to highlight it
         std::process::Command::new("explorer")
-            .arg(format!("/select,\"{}\"", path))
+            .raw_arg(format!("/select,\"{}\"", path))
             .spawn()
             .map_err(|e| format!("Failed to open explorer: {}", e))?;
     } else if let Some(parent) = std::path::Path::new(&path).parent() {
