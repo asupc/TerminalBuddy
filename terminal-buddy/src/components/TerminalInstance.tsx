@@ -6,7 +6,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { resizeTerminal, openPath, readClipboardFilePaths, readClipboardImageAsFile, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber, getDataPath, writeFileContent } from '../services/tauri';
+import { resizeTerminal, openPath, readClipboardFilePaths, readClipboardImageAsFile, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../services/tauri';
 import { ServerMonitor } from './ServerMonitor';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -185,73 +185,49 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       xtermRef.current = terminal;
 
-      // ===== [IME position guard] Pin candidate window to input-box during composition =====
-      // Background: xterm repositions the hidden textarea (the OS IME candidate-window
-      // anchor) to buffer.x/y on every compositionupdate. When a TUI (claude code)
-      // redraws its spinner/status during composition, the buffer cursor roams away from
-      // the input box and drags the candidate window with it. This guard captures the
-      // input-box position once (confirmed against the compositionstart cursor) and
-      // re-asserts it every animation frame, so the candidate window stays put while the
-      // screen (spinner) keeps updating normally.
-      const __guardTa = (terminal as any).textarea as HTMLTextAreaElement | undefined;
-      if (__guardTa) {
-        let __composing = false;
-        let __pinCaptured = false;
-        let __pinLeft = '';
-        let __pinTop = '';
-        let __startBufX = -1;
-        let __startBufY = -1;
-        let __rafHandle: number | null = null;
-        // [VERIFY] lightweight log — capture events only, written to <dataDir>/ime-instrument.log
-        const __vlog: string[] = [];
-        let __vlogPath = '';
-        const __vflush = () => { if (__vlogPath && __vlog.length) writeFileContent(__vlogPath, __vlog.join('\n') + '\n').catch(() => {}); };
-        getDataPath().then(p => { __vlogPath = ((p && p.length > 0) ? p + '/' : '') + 'ime-instrument.log'; });
-
-        const __applyPin = () => {
-          if (!__pinCaptured) return;
-          __guardTa.style.left = __pinLeft;
-          __guardTa.style.top = __pinTop;
-        };
-        const __tick = () => {
-          if (!__composing) { __rafHandle = null; return; }
-          __applyPin();
-          __rafHandle = requestAnimationFrame(__tick);
-        };
-
-        __guardTa.addEventListener('compositionstart', () => {
-          __composing = true;
-          __pinCaptured = false;
+      // ===== [IME position lock] Freeze candidate window during composition =====
+      // xterm's CompositionHelper.updateCompositionElements() repositions the hidden
+      // textarea (the OS IME candidate-window anchor) to buffer.x/y on every
+      // compositionupdate plus a recursive setTimeout(0). When a TUI (claude code)
+      // redraws its spinner/status during composition, the buffer cursor roams and
+      // drags the candidate window all over the screen.
+      //
+      // We wrap updateCompositionElements so the original styling pass still runs (the
+      // composition preview keeps rendering), then synchronously overwrite left/top back
+      // to the pixel position captured at compositionstart. The override lands in the same
+      // frame, so the browser only ever paints the locked position — no jitter. The spot
+      // may not sit exactly on claude code's input box (that is not knowable from the
+      // buffer), but it is stable: the candidate window stops roaming.
+      const __core = (terminal as any)._core;
+      const __ch = __core?._compositionHelper;
+      if (__ch && typeof __ch.updateCompositionElements === 'function') {
+        let __lockLeft = '';
+        let __lockTop = '';
+        const __ta = (terminal as any).textarea as HTMLTextAreaElement | undefined;
+        const __capture = () => {
           const b = terminal.buffer.active;
-          __startBufX = b.cursorX;
-          __startBufY = b.cursorY;
-          __vlog.push(`guard START t=${performance.now().toFixed(0)} startBuf=${__startBufX},${__startBufY}`);
-          if (__rafHandle == null) __rafHandle = requestAnimationFrame(__tick);
-        });
-        // Capture the pin only when the cursor is confirmed still at the input box,
-        // so we never pin to a roamed (spinner) position.
-        __guardTa.addEventListener('compositionupdate', () => {
-          if (!__composing || __pinCaptured) return;
-          const b = terminal.buffer.active;
-          if (b.cursorX === __startBufX && b.cursorY === __startBufY) {
-            const l = __guardTa.style.left;
-            const t = __guardTa.style.top;
-            if (l && t) {
-              __pinLeft = l; __pinTop = t; __pinCaptured = true;
-              __vlog.push(`guard PINNED t=${performance.now().toFixed(0)} left=${l} top=${t}`);
-            }
+          const cell = __core?._renderService?.dimensions?.css?.cell;
+          if (cell?.width && cell?.height) {
+            const x = Math.min(b.cursorX, terminal.cols - 1);
+            __lockLeft = `${Math.round(x * cell.width)}px`;
+            __lockTop = `${Math.round(b.cursorY * cell.height)}px`;
           }
-        });
-        __guardTa.addEventListener('compositionend', () => {
-          __vlog.push(`guard END t=${performance.now().toFixed(0)} pinned=${__pinCaptured}`);
-          __vflush();
-          __composing = false;
-          __pinCaptured = false;
-          if (__rafHandle != null) { cancelAnimationFrame(__rafHandle); __rafHandle = null; }
-        });
-        cleanupFns.push(() => { if (__rafHandle != null) cancelAnimationFrame(__rafHandle); });
+        };
+        __ta?.addEventListener('compositionstart', __capture);
+        __ta?.addEventListener('compositionend', () => { __lockLeft = ''; __lockTop = ''; });
+        const __origUpdate = __ch.updateCompositionElements.bind(__ch);
+        __ch.updateCompositionElements = function (dontRecurse?: boolean) {
+          __origUpdate(true);
+          if (__lockLeft && __lockTop) {
+            const cv = (__ch as any)._compositionView as HTMLElement | undefined;
+            const ta = (__ch as any)._textarea as HTMLTextAreaElement | undefined;
+            if (cv) { cv.style.left = __lockLeft; cv.style.top = __lockTop; }
+            if (ta) { ta.style.left = __lockLeft; ta.style.top = __lockTop; }
+          }
+          if (!dontRecurse) setTimeout(() => __ch.updateCompositionElements(true), 0);
+        };
       }
-      // ===== [END IME position guard] =====
+      // ===== [END IME position lock] =====
 
       // Immediately sync PTY dimensions so TUI programs (claude code, vim, etc.)
       // get the correct size from the start instead of the estimated values
