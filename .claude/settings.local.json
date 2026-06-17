@@ -20,7 +20,11 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(npx tsc *)",
-      "Bash(xxd \"D:/gitee/TerminalBuddy/terminal-buddy/src-tauri/src/models/mod.rs\")"
+      "Bash(xxd \"D:/gitee/TerminalBuddy/terminal-buddy/src-tauri/src/models/mod.rs\")",
+      "mcp__codegraph__codegraph_context",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(echo \"=== exit: $? ===\")"
     ]
   }
 }
