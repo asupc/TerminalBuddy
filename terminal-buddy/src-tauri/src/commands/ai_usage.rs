@@ -791,116 +791,65 @@ pub async fn fetch_minimax_usage(api_key: String) -> MinimaxUsageResult {
         };
     }
 
-    // 使用 category_remains 中的 text_generation（文本生成）数据作为主要用量指标
-    let category_remains = body.get("category_remains").and_then(|v| v.as_array());
+    // 新接口使用 model_remains 数组，筛选 model_name == "general" 的编程套餐
+    let model_remains = body.get("model_remains").and_then(|v| v.as_array());
 
-    if let Some(categories) = category_remains {
-        for cat in categories {
-            let cat_name = cat.get("category").and_then(|v| v.as_str()).unwrap_or("");
-            if cat_name == "text_generation" {
-                let total = cat.get("current_interval_total_count").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let used = cat.get("current_interval_usage_count").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let weekly_total = cat.get("current_weekly_total_count").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let weekly_used = cat.get("current_weekly_usage_count").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let reset_ts = cat.get("end_time").and_then(|v| v.as_i64()).unwrap_or(0);
-                let weekly_reset_ts = cat.get("weekly_end_time").and_then(|v| v.as_i64()).unwrap_or(0);
+    if let Some(models) = model_remains {
+        // 只取 model_name == "general" 的条目，跳过 video 等非编程模型
+        if let Some(item) = models.iter().find(|item| {
+            item.get("model_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s == "general")
+                .unwrap_or(false)
+        }) {
+            let mut tiers = Vec::new();
 
-                let mut tiers = Vec::new();
+            // 5小时桶：剩余百分比 → 已用百分比
+            if let Some(remain_pct) = item
+                .get("current_interval_remaining_percent")
+                .and_then(|v| v.as_f64())
+            {
+                let reset_ts = item.get("end_time").and_then(|v| v.as_i64()).unwrap_or(0);
+                let resets_at = if reset_ts > 0 {
+                    chrono::DateTime::from_timestamp(reset_ts / 1000, 0)
+                        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                } else {
+                    None
+                };
+                tiers.push(MinimaxTier {
+                    name: "5小时".to_string(),
+                    utilization: 100.0 - remain_pct,
+                    resets_at,
+                });
+            }
 
-                if total > 0.0 {
-                    let utilization = ((total - used) / total * 100.0).min(100.0);
-                    let resets_at = if reset_ts > 0 {
-                        Some(chrono::DateTime::from_timestamp(reset_ts / 1000, 0)
-                            .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-                            .unwrap_or_default())
-                    } else {
-                        None
-                    };
-                    tiers.push(MinimaxTier {
-                        name: "5小时".to_string(),
-                        utilization,
-                        resets_at,
-                    });
-                }
-
-                if weekly_total > 0.0 {
-                    let utilization = ((weekly_total - weekly_used) / weekly_total * 100.0).min(100.0);
+            // 周桶：仅当 current_weekly_status == 1 时激活
+            if item.get("current_weekly_status").and_then(|v| v.as_i64()) == Some(1) {
+                if let Some(remain_pct) = item
+                    .get("current_weekly_remaining_percent")
+                    .and_then(|v| v.as_f64())
+                {
+                    let weekly_reset_ts = item.get("weekly_end_time").and_then(|v| v.as_i64()).unwrap_or(0);
                     let resets_at = if weekly_reset_ts > 0 {
-                        Some(chrono::DateTime::from_timestamp(weekly_reset_ts / 1000, 0)
+                        chrono::DateTime::from_timestamp(weekly_reset_ts / 1000, 0)
                             .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-                            .unwrap_or_default())
                     } else {
                         None
                     };
                     tiers.push(MinimaxTier {
                         name: "每周".to_string(),
-                        utilization,
+                        utilization: 100.0 - remain_pct,
                         resets_at,
                     });
-                }
-
-                if !tiers.is_empty() {
-                    return MinimaxUsageResult {
-                        success: true,
-                        tiers,
-                        error: None,
-                    };
                 }
             }
-        }
 
-        // 如果没有 text_generation，使用第一个有数据的分类
-        for cat in categories {
-            let total = cat.get("current_interval_total_count").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let used = cat.get("current_interval_usage_count").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let weekly_total = cat.get("current_weekly_total_count").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let weekly_used = cat.get("current_weekly_usage_count").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let display_name = cat.get("display_name").and_then(|v| v.as_str()).unwrap_or("用量");
-            let reset_ts = cat.get("end_time").and_then(|v| v.as_i64()).unwrap_or(0);
-            let weekly_reset_ts = cat.get("weekly_end_time").and_then(|v| v.as_i64()).unwrap_or(0);
-
-            if total > 0.0 || weekly_total > 0.0 {
-                let mut tiers = Vec::new();
-
-                if total > 0.0 {
-                    let utilization = ((total - used) / total * 100.0).min(100.0);
-                    let resets_at = if reset_ts > 0 {
-                        Some(chrono::DateTime::from_timestamp(reset_ts / 1000, 0)
-                            .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-                            .unwrap_or_default())
-                    } else {
-                        None
-                    };
-                    tiers.push(MinimaxTier {
-                        name: format!("{} 5小时", display_name),
-                        utilization,
-                        resets_at,
-                    });
-                }
-
-                if weekly_total > 0.0 {
-                    let utilization = ((weekly_total - weekly_used) / weekly_total * 100.0).min(100.0);
-                    let resets_at = if weekly_reset_ts > 0 {
-                        Some(chrono::DateTime::from_timestamp(weekly_reset_ts / 1000, 0)
-                            .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-                            .unwrap_or_default())
-                    } else {
-                        None
-                    };
-                    tiers.push(MinimaxTier {
-                        name: format!("{} 每周", display_name),
-                        utilization,
-                        resets_at,
-                    });
-                }
-
-                if !tiers.is_empty() {
-                    return MinimaxUsageResult {
-                        success: true,
-                        tiers,
-                        error: None,
-                    };
-                }
+            if !tiers.is_empty() {
+                return MinimaxUsageResult {
+                    success: true,
+                    tiers,
+                    error: None,
+                };
             }
         }
     }

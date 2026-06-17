@@ -197,6 +197,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         allowProposedApi: true,
         disableStdin: !!readOnly,
         ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),
+        screenReaderMode: false,
       });
       void bootLog(`initTerminal[${terminalId}]: new Terminal() took ${(performance.now() - tNewTerm).toFixed(0)}ms`);
 
@@ -243,75 +244,55 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       xtermRef.current = terminal;
 
+      // ===== [IME position lock] Freeze candidate window during composition =====
+      // xterm's CompositionHelper.updateCompositionElements() repositions the hidden
+      // textarea (the OS IME candidate-window anchor) to buffer.x/y on every
+      // compositionupdate plus a recursive setTimeout(0). When a TUI (claude code)
+      // redraws its spinner/status during composition, the buffer cursor roams and
+      // drags the candidate window all over the screen.
+      //
+      // We wrap updateCompositionElements so the original styling pass still runs (the
+      // composition preview keeps rendering), then synchronously overwrite left/top back
+      // to the pixel position captured at compositionstart. The override lands in the same
+      // frame, so the browser only ever paints the locked position — no jitter. The spot
+      // may not sit exactly on claude code's input box (that is not knowable from the
+      // buffer), but it is stable: the candidate window stops roaming.
+      const __core = (terminal as any)._core;
+      const __ch = __core?._compositionHelper;
+      if (__ch && typeof __ch.updateCompositionElements === 'function') {
+        let __lockLeft = '';
+        let __lockTop = '';
+        const __ta = (terminal as any).textarea as HTMLTextAreaElement | undefined;
+        const __capture = () => {
+          const b = terminal.buffer.active;
+          const cell = __core?._renderService?.dimensions?.css?.cell;
+          if (cell?.width && cell?.height) {
+            const x = Math.min(b.cursorX, terminal.cols - 1);
+            __lockLeft = `${Math.round(x * cell.width)}px`;
+            __lockTop = `${Math.round(b.cursorY * cell.height)}px`;
+          }
+        };
+        __ta?.addEventListener('compositionstart', __capture);
+        __ta?.addEventListener('compositionend', () => { __lockLeft = ''; __lockTop = ''; });
+        const __origUpdate = __ch.updateCompositionElements.bind(__ch);
+        __ch.updateCompositionElements = function (dontRecurse?: boolean) {
+          __origUpdate(true);
+          if (__lockLeft && __lockTop) {
+            const cv = (__ch as any)._compositionView as HTMLElement | undefined;
+            const ta = (__ch as any)._textarea as HTMLTextAreaElement | undefined;
+            if (cv) { cv.style.left = __lockLeft; cv.style.top = __lockTop; }
+            if (ta) { ta.style.left = __lockLeft; ta.style.top = __lockTop; }
+          }
+          if (!dontRecurse) setTimeout(() => __ch.updateCompositionElements(true), 0);
+        };
+      }
+      // ===== [END IME position lock] =====
+
       // Immediately sync PTY dimensions so TUI programs (claude code, vim, etc.)
       // get the correct size from the start instead of the estimated values
       resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
       lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
 
-      // --- IME candidate window stabilization ---
-      // Problem: xterm.js's CompositionHelper.updateCompositionElements() moves
-      // the textarea to follow the cursor during composition.  When a TUI program
-      // (claude, vim) updates the screen rapidly, the cursor moves on every
-      // write(), causing the IME candidate window to jump.
-      //
-      // Solution: Monkey-patch the CompositionHelper to skip position updates
-      // during composition.  The textarea stays at the position where the user
-      // started typing, keeping the candidate window stable.
-      try {
-        const core = (terminal as any)._core;
-        const compositionHelper = core?._compositionHelper;
-        if (compositionHelper) {
-          const originalUpdate = compositionHelper.updateCompositionElements?.bind(compositionHelper);
-          if (originalUpdate) {
-            let isImeComposing = false;
-            let lockedLeft = '';
-            let lockedTop = '';
-
-            // Track composition state via events on the textarea
-            const ta = compositionHelper._textarea as HTMLTextAreaElement | undefined;
-            if (ta) {
-              ta.addEventListener('compositionstart', () => {
-                isImeComposing = true;
-                // Capture position where composition started
-                lockedLeft = ta.style.left || '0px';
-                lockedTop = ta.style.top || '0px';
-              });
-              ta.addEventListener('compositionend', () => {
-                // Delay clearing to prevent post-composition jumps from TUI output
-                setTimeout(() => {
-                  isImeComposing = false;
-                  lockedLeft = '';
-                  lockedTop = '';
-                }, 200);
-              });
-            }
-
-            compositionHelper.updateCompositionElements = function(dontRecurse?: boolean) {
-              if (isImeComposing) {
-                // Skip position update during composition to keep candidate window stable.
-                // Just update the composition view text content if needed.
-                const cv = compositionHelper._compositionView as HTMLElement | undefined;
-                if (cv && compositionHelper._compositionSuffix) {
-                  cv.textContent = compositionHelper._compositionSuffix;
-                }
-                // Restore locked position on both textarea and composition view
-                if (ta && lockedLeft && lockedTop) {
-                  ta.style.left = lockedLeft;
-                  ta.style.top = lockedTop;
-                }
-                if (cv && lockedLeft && lockedTop) {
-                  cv.style.left = lockedLeft;
-                  cv.style.top = lockedTop;
-                }
-                return;
-              }
-              originalUpdate(dontRecurse);
-            };
-          }
-        }
-      } catch {
-        // xterm.js internal API may change between versions
-      }
       // Flush buffered output that arrived before xterm was ready
       if (outputBuffer.length > 0) {
         terminal.write(outputBuffer.join(''));
@@ -325,16 +306,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const doFit = () => {
         if (disposed || !xtermRef.current || !fitAddonRef.current) return;
 
-        // Check if terminal is still parsing data (learned from VS Code's _flushXtermData)
-        // If data is being parsed, delay resize to avoid cursor position issues
-        // This prevents the cursor from jumping when TUI programs update the screen
-        if (latestWriteDataRef.current !== latestParseDataRef.current) {
-          // Data is being parsed, schedule a retry after a short delay
-          setTimeout(() => {
-            if (!disposed) doFit();
-          }, 16); // ~1 frame at 60fps
-          return;
-        }
+        // Don't resize while TUI is active in alternate buffer.
+        // TUI programs (claude code, vim, htop) manage their own screen layout
+        // and expect stable terminal dimensions.  Resize is triggered when
+        // exiting the alt buffer via checkAltBuffer().
+        if (inAltBufferRef.current) return;
 
         const prevCols = terminal.cols;
         const prevRows = terminal.rows;

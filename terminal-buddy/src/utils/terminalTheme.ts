@@ -18,11 +18,11 @@ export const isLightBackground = (hex: string): boolean => {
 };
 
 const LIGHT_SAFE_FOREGROUND = '38;2;31;35;40';
-// 白板模式下的中性块背景（如输入框/消息块）。用稍深一点的浅蓝，
-// 在白底里有足够区分度，同时不显得突兀。
-const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;221;236;255';
-const LIGHT_SAFE_ADD_BACKGROUND = '48;2;246;255;248';
-const LIGHT_SAFE_DELETE_BACKGROUND = '48;2;255;246;247';
+// 白板模式下的中性块背景（如输入框/消息块）。只保留较轻的蓝色底，
+// 避免大块背景在白板里显得过深，同时保证可辨识。
+const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;222;236;255';
+const LIGHT_SAFE_ADD_BACKGROUND = '48;2;241;255;245';
+const LIGHT_SAFE_DELETE_BACKGROUND = '48;2;255;244;245';
 
 const rgbBrightness = (r: number, g: number, b: number) => (r * 299 + g * 587 + b * 114) / 1000;
 const isNearWhiteRgb = (r: number, g: number, b: number) => r >= 235 && g >= 235 && b >= 235;
