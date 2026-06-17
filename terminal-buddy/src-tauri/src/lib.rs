@@ -11,9 +11,47 @@ use tauri::Manager;
 use tauri::Emitter;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
+use std::sync::OnceLock;
+use std::time::Instant;
+use std::fs::OpenOptions;
+use std::io::Write;
+
+/// 进程启动时间锚点；全链路启动日志统一以此为 0 点。
+static BOOT_START: OnceLock<Instant> = OnceLock::new();
+
+fn boot_ms() -> u128 {
+    BOOT_START.get().map(|b| b.elapsed().as_millis()).unwrap_or(0)
+}
+
+/// 启动日志：同时输出到 stderr 和临时文件（temp_dir/terminalbuddy_boot.log），
+/// 便于自动化启动后读取分析（不依赖终端重定向，dev/release 均生效）。
+pub(crate) fn boot_log(msg: impl AsRef<str>) {
+    let line = format!("[boot] rust+{}ms {}", boot_ms(), msg.as_ref());
+    eprintln!("{}", line);
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::env::temp_dir().join("terminalbuddy_boot.log"))
+    {
+        let _ = writeln!(f, "{}", line);
+    }
+}
+
+/// 前端通过 invoke 调用，把 JS 侧启动日志转发过来（与 Rust 日志并排写入同一文件，统一时间线）。
+#[tauri::command]
+fn log_boot(msg: String, ts: Option<f64>) {
+    let js_ms = ts.map(|t| format!("{:.0}ms", t)).unwrap_or_else(|| "-".to_string());
+    boot_log(format!("js+{} {}", js_ms, msg));
+}
 
 pub fn run() {
+    let _ = BOOT_START.set(Instant::now());
+    boot_log("=== TerminalBuddy process start ===");
     let settings = SettingsService::get_settings();
+    boot_log(format!(
+        "settings loaded (single_instance={}, web_api_enabled={})",
+        settings.single_instance, settings.web_api_enabled
+    ));
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -34,6 +72,7 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            boot_log("setup enter");
             let show_item = MenuItemBuilder::with_id("show", "打开窗口").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let menu = MenuBuilder::new(app)
@@ -79,14 +118,17 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+            boot_log("tray built");
 
             // Sync launch_at_login setting with Windows Registry
             let _ = commands::sync_launch_at_login();
+            boot_log("after sync_launch_at_login");
 
             // Conditionally start Web API server
             let app_handle = app.handle().clone();
             let settings_clone = SettingsService::get_settings();
             if settings_clone.web_api_enabled && !settings_clone.web_api_password_hash.is_empty() {
+                boot_log(format!("starting Web API server on port {}", settings_clone.web_api_port));
                 let jwt_secret = crate::web::auth::generate_jwt_secret();
                 let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
                 *crate::commands::web::SHUTDOWN_TX.lock().unwrap() = Some(shutdown_tx);
@@ -98,8 +140,10 @@ pub fn run() {
                     app_handle,
                     shutdown_rx,
                 ));
+                boot_log("Web API server task spawned");
             }
 
+            boot_log("setup done — WebView about to load URL");
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -197,6 +241,7 @@ pub fn run() {
             save_web_api_share_sessions,
             save_launch_at_login,
             sync_launch_at_login,
+            log_boot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

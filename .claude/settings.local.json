@@ -20,7 +20,12 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(npx tsc *)",
-      "Bash(xxd \"D:/gitee/TerminalBuddy/terminal-buddy/src-tauri/src/models/mod.rs\")"
+      "Bash(xxd \"D:/gitee/TerminalBuddy/terminal-buddy/src-tauri/src/models/mod.rs\")",
+      "Bash(echo \"tauri dev started in background, PID=$!\")",
+      "Bash(npx vite *)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //F //PID 29376)",
+      "Bash(taskkill //F //PID 34156)"
     ]
   }
 }

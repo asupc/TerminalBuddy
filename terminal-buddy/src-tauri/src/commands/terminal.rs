@@ -137,6 +137,7 @@ impl TerminalService {
 
         log_debug(&format!("[create] type={}, path={:?}, commands={}, envs={}",
             terminal_type, startup_path, startup_commands.len(), env_vars.len()));
+        crate::boot_log(format!("[create_terminal] start type={} profile={}", terminal_type, profile_id));
 
         let pty_system = native_pty_system();
 
@@ -175,6 +176,7 @@ impl TerminalService {
             log_debug(&msg);
             msg
         })?;
+        crate::boot_log("[terminal] after spawn_command (cmd.exe spawned)");
 
         let writer = pty_pair.master.take_writer().map_err(|e| {
             let msg = format!("take_writer FAILED: {}", e);
@@ -286,6 +288,7 @@ impl TerminalService {
         spawn_output_forwarder(master_reader, terminal_id.clone(), app, output_buffer);
 
         log_debug(&format!("[create] DONE, id={}", terminal_id));
+        crate::boot_log("[create_terminal] DONE");
         Ok(terminal_id)
     }
 
@@ -426,6 +429,7 @@ impl TerminalService {
     pub fn create_blank_terminal(&self, terminal_type: &str, initial_rows: u16, initial_cols: u16, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create-blank] start, id={}, type={}", terminal_id, terminal_type));
+        crate::boot_log(format!("[create_blank_terminal] start type={}", terminal_type));
 
         // Blank terminals only support cmd and powershell;
         // ssh/docker/k8s require connection parameters from a profile
@@ -459,6 +463,7 @@ impl TerminalService {
             log_debug(&msg);
             msg
         })?;
+        crate::boot_log("[terminal] after spawn_command (cmd.exe spawned)");
 
         let writer = pty_pair.master.take_writer().map_err(|e| {
             let msg = format!("take_writer FAILED: {}", e);
@@ -521,6 +526,7 @@ impl TerminalService {
         spawn_output_forwarder(master_reader, terminal_id.clone(), app, output_buffer);
 
         log_debug(&format!("[create-blank] DONE, id={}", terminal_id));
+        crate::boot_log("[create_blank_terminal] DONE");
         Ok(terminal_id)
     }
 }

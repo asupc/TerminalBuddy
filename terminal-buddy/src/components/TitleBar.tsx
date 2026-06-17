@@ -3,7 +3,7 @@ import { windowMinimize, windowToggleMaximize, windowClose, getWebApiStatus, sav
 import { AiUsagePanel } from './AiUsagePanel';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
-import { getStoredTheme, applyTheme, getAppSettings } from '../utils/settings';
+import { getStoredTheme, applyTheme, getAppSettings, saveTheme } from '../utils/settings';
 
 interface TitleBarProps {
   onSettings: () => void;
@@ -37,6 +37,7 @@ export const TitleBar: FC<TitleBarProps> = ({
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
+    saveTheme(next);
     applyTheme(next);
   };
 

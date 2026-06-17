@@ -26,6 +26,7 @@ export interface AppSettings {
   serverMonitorInterval: number;
   webApiShareSessions: boolean;
   launchAtLogin: boolean;
+  terminalFollowAppTheme: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -50,6 +51,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   serverMonitorInterval: 3,
   webApiShareSessions: false,
   launchAtLogin: false,
+  terminalFollowAppTheme: true,
 };
 
 let _cachedSettings: AppSettings | null = null;
@@ -78,6 +80,11 @@ export const getStoredTheme = (): ThemeMode => {
   return _cachedTheme || 'dark';
 };
 
+export const saveTheme = (theme: ThemeMode) => {
+  _cachedTheme = theme;
+  writeClientData('theme', theme).catch(() => {});
+};
+
 export const initTheme = async (): Promise<ThemeMode> => {
   try {
     const raw = await readClientData('theme');
@@ -86,12 +93,20 @@ export const initTheme = async (): Promise<ThemeMode> => {
   return _cachedTheme || 'dark';
 };
 
+// 读取当前生效的主题（dark/light）。system 模式下 applyTheme 已解析成具体值写入 data-theme。
+export const getEffectiveThemeMode = (): 'dark' | 'light' => {
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+};
+
 export const applyTheme = (theme: ThemeMode) => {
   const root = document.documentElement;
+  let effective: 'dark' | 'light';
   if (theme === 'system') {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+    effective = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   } else {
-    root.setAttribute('data-theme', theme);
+    effective = theme;
   }
+  root.setAttribute('data-theme', effective);
+  // 广播当前生效主题，供终端等组件跟随应用主题切换
+  window.dispatchEvent(new CustomEvent('app-theme-changed', { detail: { mode: effective } }));
 };
