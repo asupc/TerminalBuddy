@@ -1,0 +1,240 @@
+import type { Profile } from '../types';
+import { PRESET_THEMES } from '../types';
+
+/**
+ * 判断背景色是否偏亮（浅色背景）。
+ * 用 ITU-R BT.601 亮度近似公式。浅色背景下需启用最低对比度增强，
+ * 以保证 truecolor 输出（PSReadLine / Oh My Posh / 各类 CLI 硬编码的颜色）
+ * 在白底也能看清——这些 24-bit 颜色不受 16 色 ANSI 调色板影响。
+ */
+export const isLightBackground = (hex: string): boolean => {
+  const m = hex.replace('#', '');
+  if (m.length < 6) return false;
+  const r = parseInt(m.slice(0, 2), 16);
+  const g = parseInt(m.slice(2, 4), 16);
+  const b = parseInt(m.slice(4, 6), 16);
+  if ([r, g, b].some((n) => Number.isNaN(n))) return false;
+  return (r * 299 + g * 587 + b * 114) / 1000 >= 128;
+};
+
+const LIGHT_SAFE_FOREGROUND = '38;2;31;35;40';
+const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;246;248;250';
+const LIGHT_SAFE_ADD_BACKGROUND = '48;2;218;251;225';
+const LIGHT_SAFE_DELETE_BACKGROUND = '48;2;255;235;233';
+
+const rgbBrightness = (r: number, g: number, b: number) => (r * 299 + g * 587 + b * 114) / 1000;
+const isNearWhiteRgb = (r: number, g: number, b: number) => r >= 235 && g >= 235 && b >= 235;
+const isDarkRgb = (r: number, g: number, b: number) => rgbBrightness(r, g, b) <= 96;
+const isGrayRgb = (r: number, g: number, b: number) => Math.max(r, g, b) - Math.min(r, g, b) <= 16;
+const isRedBgRgb = (r: number, g: number, b: number) => r > g * 1.25 && r > b * 1.25;
+const isGreenBgRgb = (r: number, g: number, b: number) => g > r * 1.15 && g > b * 1.15;
+
+const mapLightBackgroundColor = (r: number, g: number, b: number): string | null => {
+  if (isGreenBgRgb(r, g, b)) return LIGHT_SAFE_ADD_BACKGROUND;
+  if (isRedBgRgb(r, g, b)) return LIGHT_SAFE_DELETE_BACKGROUND;
+  if (isDarkRgb(r, g, b) || isGrayRgb(r, g, b)) return LIGHT_SAFE_NEUTRAL_BACKGROUND;
+  return null;
+};
+
+/**
+ * 浅色终端兜底：把深色终端专用的前景/背景 ANSI 改成白底可读版本。
+ *
+ * 有些程序会输出「白色文字 + 无背景」或「黑色/深灰背景」的 ANSI，这在深色
+ * 终端没问题，但白底下会出现白字消失、黑色输入框、diff 行灰底不协调等问题。
+ * xterm 的 theme 只能覆盖 16 色表，minimumContrastRatio 在部分 truecolor/WebGL
+ * 场景也可能不生效，所以这里在写入前做一次较窄的修正。
+ */
+export const normalizeAnsiForLightBackground = (data: string, lightBackground: boolean): string => {
+  if (!lightBackground || !data.includes('\x1b[')) return data;
+  return data.replace(/\x1b\[([0-9;]*)m/g, (match, raw: string) => {
+    if (!raw) return match;
+    const parts = raw.split(';').filter(Boolean);
+    const out: string[] = [];
+    let changed = false;
+
+    for (let i = 0; i < parts.length; i++) {
+      const n = Number(parts[i]);
+
+      // ANSI white / bright white foreground
+      if (n === 37 || n === 97) {
+        out.push(LIGHT_SAFE_FOREGROUND);
+        changed = true;
+        continue;
+      }
+
+      // ANSI background: black/bright black -> neutral, red/green -> diff colors
+      if (n === 40 || n === 100) {
+        out.push(LIGHT_SAFE_NEUTRAL_BACKGROUND);
+        changed = true;
+        continue;
+      }
+      if (n === 41 || n === 101) {
+        out.push(LIGHT_SAFE_DELETE_BACKGROUND);
+        changed = true;
+        continue;
+      }
+      if (n === 42 || n === 102) {
+        out.push(LIGHT_SAFE_ADD_BACKGROUND);
+        changed = true;
+        continue;
+      }
+
+      // 256-color foreground: 15/231 常见为白色或近白色
+      if (n === 38 && parts[i + 1] === '5' && (parts[i + 2] === '15' || parts[i + 2] === '231')) {
+        out.push(LIGHT_SAFE_FOREGROUND);
+        i += 2;
+        changed = true;
+        continue;
+      }
+
+      // 256-color background: map common dark/gray/red/green backgrounds
+      if (n === 48 && parts[i + 1] === '5') {
+        const idx = Number(parts[i + 2]);
+        if (idx === 0 || idx === 8 || idx === 235 || idx === 236 || idx === 237 || idx === 238 || idx === 240) {
+          out.push(LIGHT_SAFE_NEUTRAL_BACKGROUND);
+          i += 2;
+          changed = true;
+          continue;
+        }
+        if (idx === 1 || idx === 9 || idx === 52 || idx === 88 || idx === 124 || idx === 160 || idx === 196) {
+          out.push(LIGHT_SAFE_DELETE_BACKGROUND);
+          i += 2;
+          changed = true;
+          continue;
+        }
+        if (idx === 2 || idx === 10 || idx === 22 || idx === 28 || idx === 34 || idx === 40 || idx === 46) {
+          out.push(LIGHT_SAFE_ADD_BACKGROUND);
+          i += 2;
+          changed = true;
+          continue;
+        }
+      }
+
+      // Truecolor foreground: 38;2;r;g;b，近白色改深灰
+      if (n === 38 && parts[i + 1] === '2') {
+        const r = Number(parts[i + 2]);
+        const g = Number(parts[i + 3]);
+        const b = Number(parts[i + 4]);
+        if ([r, g, b].every((v) => Number.isFinite(v)) && isNearWhiteRgb(r, g, b)) {
+          out.push(LIGHT_SAFE_FOREGROUND);
+          i += 4;
+          changed = true;
+          continue;
+        }
+      }
+
+      // Truecolor background: 48;2;r;g;b，深/灰/红/绿背景改成浅色主题背景
+      if (n === 48 && parts[i + 1] === '2') {
+        const r = Number(parts[i + 2]);
+        const g = Number(parts[i + 3]);
+        const b = Number(parts[i + 4]);
+        if ([r, g, b].every((v) => Number.isFinite(v))) {
+          const mapped = mapLightBackgroundColor(r, g, b);
+          if (mapped) {
+            out.push(mapped);
+            i += 4;
+            changed = true;
+            continue;
+          }
+        }
+      }
+
+      out.push(parts[i]);
+    }
+
+    return changed ? `\x1b[${out.join(';')}m` : match;
+  });
+};
+
+/**
+ * 终端配色。background/foreground 必填，其余 ANSI 16 色与光标/选中色为可选——
+ * 缺省时由 xterm.js 使用其默认深色调色板，浅色场景下我们会显式填充一套适配白底的调色板。
+ */
+export interface TerminalColors {
+  background: string;
+  foreground: string;
+  cursor?: string;
+  cursorAccent?: string;
+  selectionBackground?: string;
+  black?: string;
+  red?: string;
+  green?: string;
+  yellow?: string;
+  blue?: string;
+  magenta?: string;
+  cyan?: string;
+  white?: string;
+  brightBlack?: string;
+  brightRed?: string;
+  brightGreen?: string;
+  brightYellow?: string;
+  brightBlue?: string;
+  brightMagenta?: string;
+  brightCyan?: string;
+  brightWhite?: string;
+}
+
+const DARK_COLORS: TerminalColors = { background: '#1E1E1E', foreground: '#CCCCCC' };
+
+// 浅色（白底）调色板：参考 GitHub Light 终端配色。
+// 关键点：绿色/黄色/亮绿等在纯白底(#FFFFFF)上天生对比度低，
+// VS Code Light+ 那套(#00BC00/#949800/#14CE14)在白底仅 2~3:1，会看不清；
+// GitHub Light 这套每个颜色在白底对比度都 ≥4.5:1(WCAG AA)，
+// git status / ls / log 等彩色输出在白底下也能清晰阅读。
+const LIGHT_COLORS: TerminalColors = {
+  background: '#FFFFFF',
+  foreground: '#1F2328',
+  cursor: '#1F2328',
+  cursorAccent: '#FFFFFF',
+  selectionBackground: '#ADD6FF',
+  black: '#24292F',
+  red: '#CF222E',
+  green: '#116329',
+  yellow: '#4D2D00',
+  blue: '#0969DA',
+  magenta: '#8250DF',
+  cyan: '#1B7C83',
+  white: '#6E7781',
+  brightBlack: '#57606A',
+  brightRed: '#A40E26',
+  brightGreen: '#1A7F37',
+  brightYellow: '#633C01',
+  brightBlue: '#218BFF',
+  brightMagenta: '#A475F9',
+  brightCyan: '#3192AA',
+  brightWhite: '#8C959F',
+};
+
+// preset 分支按 themeId 缓存返回值，保证同一 profile 多次解析得到稳定引用，
+// 避免 TerminalInstance 的 useEffect 因引用变化而误触发 xterm 重新设置 theme。
+const presetCache = new Map<string, TerminalColors>();
+
+/**
+ * 解析终端实际使用的配色。
+ *
+ * 终端配色（profile.colorTheme）与应用主题（dark/light）是两套独立系统，
+ * 切换浅色模式时终端默认不会跟着变。本函数统一处理跟随逻辑：
+ * - 开启「终端跟随应用主题」且 profile 未显式指定非默认配色时，
+ *   终端配色随应用主题切换（浅色模式→白底浅色调色板，深色模式→深色底）。
+ * - 否则使用 profile 自身配置的配色（默认为深色）。
+ */
+export const resolveTerminalColors = (
+  profile: Pick<Profile, 'colorTheme'> | undefined,
+  appTheme: 'dark' | 'light',
+  followEnabled: boolean,
+): TerminalColors => {
+  const themeId = profile?.colorTheme;
+  // 跟随开关开启且未显式指定非默认配色 → 跟随应用主题
+  if (followEnabled && (!themeId || themeId === 'dark-default')) {
+    return appTheme === 'light' ? LIGHT_COLORS : DARK_COLORS;
+  }
+  const key = themeId || '__default__';
+  const cached = presetCache.get(key);
+  if (cached) return cached;
+  const preset = PRESET_THEMES.find((t) => t.id === themeId);
+  const colors: TerminalColors = preset
+    ? { background: preset.background, foreground: preset.foreground }
+    : DARK_COLORS;
+  presetCache.set(key, colors);
+  return colors;
+};

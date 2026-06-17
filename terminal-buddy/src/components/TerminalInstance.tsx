@@ -11,15 +11,17 @@ import { ServerMonitor } from './ServerMonitor';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getAppSettings } from '../utils/settings';
+import { bootLog } from '../utils/bootLog';
 import { useAppStore } from '../stores/appStore';
 import { getAllSuggestions, type SuggestionItem } from '../data/commandTemplates';
+import { isLightBackground, normalizeAnsiForLightBackground, type TerminalColors } from '../utils/terminalTheme';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
 interface TerminalInstanceProps {
   terminalId: string;
   onOutput: (sessionId: string, data: string) => void;
-  colorTheme?: { background: string; foreground: string };
+  colorTheme?: TerminalColors;
   isActive?: boolean;
   readOnly?: boolean;
 }
@@ -64,6 +66,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const lastDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
   const lastPtyDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
   const [termBg, setTermBg] = useState(colorTheme?.background || '#1e1e1e');
+  const isLightBackgroundRef = useRef(isLightBackground(colorTheme?.background || '#1e1e1e'));
   const inAltBufferRef = useRef(false);
 
   // Output tracking refs (learned from VS Code's terminalInstance.ts)
@@ -71,10 +74,23 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const latestWriteDataRef = useRef(0);
   const latestParseDataRef = useRef(0);
 
-  // Sync background color when colorTheme prop changes
+  // Sync terminal theme (xterm canvas + outer div) when colorTheme prop changes.
+  // xterm 在 options.theme 变化后自动重绘（canvas/webgl 渲染器均支持），
+  // 因此切换应用主题时运行中的终端也能实时换色，而非只有外层 div 背景变化。
+  // 注意 resolveTerminalColors 返回的引用稳定（cache），不会因无关渲染误触发。
   useEffect(() => {
-    setTermBg(colorTheme?.background || '#1e1e1e');
-  }, [colorTheme?.background]);
+    const bg = colorTheme?.background || '#1e1e1e';
+    const fg = colorTheme?.foreground || '#cccccc';
+    const isLight = isLightBackground(bg);
+    isLightBackgroundRef.current = isLight;
+    setTermBg(bg);
+    const term = xtermRef.current;
+    if (term) {
+      term.options.theme = colorTheme as any || { background: bg, foreground: fg };
+      // 浅色背景启用最低对比度增强（兜底 truecolor），深色背景关闭
+      term.options.minimumContrastRatio = isLight ? 4.5 : 1;
+    }
+  }, [colorTheme]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -106,8 +122,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
+      const normalizedOutput = normalizeAnsiForLightBackground(output, isLightBackgroundRef.current);
       if (xtermRef.current) {
-        pendingChunks.push(output);
+        pendingChunks.push(normalizedOutput);
         if (!pendingRaf) {
           pendingRaf = requestAnimationFrame(() => {
             pendingRaf = null;
@@ -123,7 +140,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           });
         }
       } else {
-        outputBuffer.push(output);
+        outputBuffer.push(normalizedOutput);
       }
 
       // Working state: reset debounce on each output, check xterm buffer for prompt
@@ -145,13 +162,21 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     };
 
     const initTerminal = async () => {
+      const tTotal = performance.now();
+      void bootLog(`initTerminal[${terminalId}]: START`);
+
       // Wait for fonts to be fully loaded so xterm measures correct cell dimensions
+      const tFontStart = performance.now();
       await document.fonts.ready;
+      void bootLog(`initTerminal[${terminalId}]: fonts.ready took ${(performance.now() - tFontStart).toFixed(0)}ms`);
 
       if (disposed || !terminalRef.current) return;
 
+      const tBuildNum = performance.now();
       const buildNumber = await getWindowsBuildNumber();
+      void bootLog(`initTerminal[${terminalId}]: getWindowsBuildNumber took ${(performance.now() - tBuildNum).toFixed(0)}ms, val=${buildNumber}`);
 
+      const tNewTerm = performance.now();
       const terminal = new Terminal({
         cursorBlink: true,
         fontSize: 14,
@@ -161,15 +186,21 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         lineHeight: 1,
         letterSpacing: 0,
         scrollback: 50000,
-        theme: {
-          background: colorTheme?.background || '#1e1e1e',
-          foreground: colorTheme?.foreground || '#cccccc',
+        theme: colorTheme || {
+          background: '#1e1e1e',
+          foreground: '#cccccc',
         },
+        // 浅色背景下启用最低对比度增强：渲染层兜底，对 16 色 ANSI 和 24-bit
+        // truecolor 输出都生效（PSReadLine/Oh My Posh/各类 CLI 硬编码的深色终端
+        // 颜色在白底会被自动加深到可读）。深色背景设 1（不调整）。
+        minimumContrastRatio: isLightBackground(colorTheme?.background || '#1e1e1e') ? 4.5 : 1,
         allowProposedApi: true,
         disableStdin: !!readOnly,
         ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),
       });
+      void bootLog(`initTerminal[${terminalId}]: new Terminal() took ${(performance.now() - tNewTerm).toFixed(0)}ms`);
 
+      const tAddons = performance.now();
       const fitAddon = new FitAddon();
       const clipboardAddon = new ClipboardAddon();
       const unicode11Addon = new Unicode11Addon();
@@ -188,9 +219,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       terminal.loadAddon(unicode11Addon);
       terminal.unicode.activeVersion = '11';
+      void bootLog(`initTerminal[${terminalId}]: loadAddons (fit/weblinks/clipboard/search/unicode11) took ${(performance.now() - tAddons).toFixed(0)}ms`);
 
+      const tOpen = performance.now();
       terminal.open(terminalRef.current!);
+      void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
+      const tWebgl = performance.now();
       const webglAddon = new WebglAddon();
       webglAddon.onContextLoss(() => {
         webglAddon.dispose();
@@ -200,8 +235,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       } catch {
         // WebGL not supported, fall back to canvas renderer
       }
+      void bootLog(`initTerminal[${terminalId}]: WebGL addon took ${(performance.now() - tWebgl).toFixed(0)}ms`);
 
+      const tFit = performance.now();
       fitAddon.fit();
+      void bootLog(`initTerminal[${terminalId}]: fitAddon.fit() took ${(performance.now() - tFit).toFixed(0)}ms`);
 
       xtermRef.current = terminal;
 
@@ -280,6 +318,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         outputBuffer.length = 0;
       }
       fitAddonRef.current = fitAddon;
+
+      void bootLog(`initTerminal[${terminalId}]: TOTAL took ${(performance.now() - tTotal).toFixed(0)}ms`);
 
       // --- Resize handling (learned from VS Code's terminalResizeDebouncer) ---
       const doFit = () => {
@@ -736,21 +776,27 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     // Register Tauri event listener, then drain buffered backend output
     (async () => {
+      const tListener = performance.now();
+      void bootLog(`initTerminal[${terminalId}]: registering onTerminalOutput listener`);
       const unlisten = await onTerminalOutput(terminalId, handleOutput);
       if (disposed) { unlisten(); return; }
       cleanupFns.push(unlisten);
+      void bootLog(`initTerminal[${terminalId}]: onTerminalOutput registered in ${(performance.now() - tListener).toFixed(0)}ms`);
 
       // Drain any output buffered in the backend before the listener was active
       try {
+        const tDrain = performance.now();
         const drained = await drainTerminalOutput(terminalId);
         if (drained && !disposed) {
           handleOutput(drained);
         }
+        void bootLog(`initTerminal[${terminalId}]: drainTerminalOutput took ${(performance.now() - tDrain).toFixed(0)}ms, len=${drained?.length ?? 0}`);
       } catch (err) {
         console.error('Failed to drain terminal output:', err);
       }
     })();
 
+    void bootLog(`initTerminal[${terminalId}]: calling initTerminal()`);
     initTerminal();
 
     return () => {

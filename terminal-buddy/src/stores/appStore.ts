@@ -21,6 +21,7 @@ interface SavedTab {
   sessionType?: 'terminal' | 'editor';
   isDirty?: boolean;
   owner?: 'pc' | 'web';
+  extraParams?: string;
 }
 
 export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: string | null) {
@@ -35,6 +36,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
       sessionType: s.sessionType,
       isDirty: s.sessionType === 'editor' ? false : undefined,
       owner: s.owner,
+      extraParams: s.extraParams,
     }));
     const activeIndex = activeSessionId
       ? sessions.findIndex(s => s.id === activeSessionId)

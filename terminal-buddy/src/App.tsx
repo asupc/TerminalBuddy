@@ -49,6 +49,11 @@ function App() {
   const closeConfirmedRef = useRef(false);
   const restoredRef = useRef(false);
 
+  // 预加载终端组件 chunk（xterm.js + addons），让 restoreTabs 时不需等待网络/IO
+  useEffect(() => {
+    void import('./components/TerminalInstance');
+  }, []);
+
   useEffect(() => {
     (async () => {
       await migrateLocalStorageToBackend();
@@ -212,7 +217,7 @@ function App() {
           } else {
             const { rows: estRows, cols: estCols } = estimateTerminalSize();
             const terminalId = tab.profileId
-              ? await startTerminal(tab.profileId, undefined, estRows, estCols)
+              ? await startTerminal(tab.profileId, tab.extraParams, estRows, estCols)
               : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols);
             store.addSession({
               id: terminalId,
@@ -223,6 +228,7 @@ function App() {
               tabColor: tab.tabColor,
               groupId: tab.groupId || 'default',
               owner: 'pc',
+              extraParams: tab.extraParams,
             });
             if (i === activeIndex) {
               store.setActiveSession(terminalId);
@@ -273,6 +279,7 @@ function App() {
         tabColor: profile.tabColor || null,
         groupId: 'default',
         owner: 'pc',
+        extraParams,
       });
       if (profile.startupPath) {
         setSessionDirectory(terminalId, profile.startupPath);

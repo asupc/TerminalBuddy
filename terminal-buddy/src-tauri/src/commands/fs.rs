@@ -137,23 +137,75 @@ pub fn open_path(path: String) -> Result<(), String> {
 
 #[command]
 pub fn open_in_explorer(path: String) -> Result<(), String> {
-    let path = path.replace('/', "\\");
-    if fs::metadata(&path).map_or(false, |m| m.is_dir()) {
-        std::process::Command::new("explorer")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open explorer: {}", e))?;
-    } else if fs::metadata(&path).is_ok() {
-        std::process::Command::new("explorer")
-            .arg(format!("/select,\"{}\"", path))
-            .spawn()
-            .map_err(|e| format!("Failed to open explorer: {}", e))?;
-    } else if let Some(parent) = std::path::Path::new(&path).parent() {
-        std::process::Command::new("explorer")
-            .arg(parent)
-            .spawn()
-            .map_err(|e| format!("Failed to open explorer: {}", e))?;
+    // Launch explorer.exe directly via ShellExecuteW. We deliberately do NOT use
+    // std::process::Command here: Rust's Command applies CRT argument escaping,
+    // which corrupts Windows paths (trailing backslashes, the "/select,\"...\""
+    // form) and makes Explorer open the wrong folder. ShellExecuteW's lpParameters
+    // is passed verbatim to the target program, so explorer.exe receives the path
+    // exactly as built below.
+    //
+    // We always launch explorer.exe (rather than relying on the "explore" shell
+    // verb) because that verb is not guaranteed to be registered on every system,
+    // and a missing verb makes ShellExecuteW fail silently.
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            hwnd: *mut std::ffi::c_void,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show_cmd: i32,
+        ) -> *mut std::ffi::c_void;
     }
+
+    let path = path.replace('/', "\\");
+
+    // Build the parameter string explorer.exe expects:
+    //   - directory          -> just the path
+    //   - existing file      -> /select,"<path>"  (highlights the file in its folder)
+    //   - missing path       -> the parent directory (best-effort)
+    let params: String = {
+        if fs::metadata(&path).map_or(false, |m| m.is_dir()) {
+            path
+        } else if fs::metadata(&path).is_ok() {
+            format!("/select,\"{}\"", path)
+        } else if let Some(parent) = std::path::Path::new(&path).parent() {
+            parent.to_string_lossy().into_owned()
+        } else {
+            return Err(format!("Path not found: {}", path));
+        }
+    };
+
+    let file_wide: Vec<u16> = std::ffi::OsStr::new("explorer.exe")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let params_wide: Vec<u16> = std::ffi::OsStr::new(&params)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            ptr::null(), // default verb ("open")
+            file_wide.as_ptr(),
+            params_wide.as_ptr(),
+            ptr::null(),
+            1, // SW_SHOWNORMAL
+        )
+    };
+
+    // ShellExecuteW returns a value > 32 on success
+    if result as isize <= 32 {
+        return Err(format!("Failed to open explorer (code {}): {}",
+            result as isize, params));
+    }
+
     Ok(())
 }
 
