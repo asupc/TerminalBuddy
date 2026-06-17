@@ -14,7 +14,7 @@ import { getAppSettings } from '../utils/settings';
 import { bootLog } from '../utils/bootLog';
 import { useAppStore } from '../stores/appStore';
 import { getAllSuggestions, type SuggestionItem } from '../data/commandTemplates';
-import { isLightBackground, normalizeAnsiForLightBackground, type TerminalColors } from '../utils/terminalTheme';
+import { normalizeAnsiForLightBackground, type TerminalColors } from '../utils/terminalTheme';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
@@ -66,7 +66,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const lastDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
   const lastPtyDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
   const [termBg, setTermBg] = useState(colorTheme?.background || '#1e1e1e');
-  const isLightBackgroundRef = useRef(isLightBackground(colorTheme?.background || '#1e1e1e'));
+  const lightOptimizedRef = useRef(!!colorTheme?.lightOptimized);
   const inAltBufferRef = useRef(false);
 
   // Output tracking refs (learned from VS Code's terminalInstance.ts)
@@ -81,14 +81,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   useEffect(() => {
     const bg = colorTheme?.background || '#1e1e1e';
     const fg = colorTheme?.foreground || '#cccccc';
-    const isLight = isLightBackground(bg);
-    isLightBackgroundRef.current = isLight;
+    const lightOptimized = !!colorTheme?.lightOptimized;
+    lightOptimizedRef.current = lightOptimized;
     setTermBg(bg);
     const term = xtermRef.current;
     if (term) {
-      term.options.theme = colorTheme as any || { background: bg, foreground: fg };
-      // 浅色背景启用最低对比度增强（兜底 truecolor），深色背景关闭
-      term.options.minimumContrastRatio = isLight ? 4.5 : 1;
+      const { lightOptimized: _lightOptimized, ...xtermTheme } = colorTheme || { background: bg, foreground: fg };
+      term.options.theme = xtermTheme;
+      // 仅自动白板模式启用最低对比度增强；黑板/自定义终端配色保持原样
+      term.options.minimumContrastRatio = lightOptimized ? 4.5 : 1;
     }
   }, [colorTheme]);
 
@@ -122,7 +123,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
-      const normalizedOutput = normalizeAnsiForLightBackground(output, isLightBackgroundRef.current);
+      const normalizedOutput = normalizeAnsiForLightBackground(output, lightOptimizedRef.current);
       if (xtermRef.current) {
         pendingChunks.push(normalizedOutput);
         if (!pendingRaf) {
@@ -177,6 +178,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       void bootLog(`initTerminal[${terminalId}]: getWindowsBuildNumber took ${(performance.now() - tBuildNum).toFixed(0)}ms, val=${buildNumber}`);
 
       const tNewTerm = performance.now();
+      const { lightOptimized: initialLightOptimized, ...initialTheme } = colorTheme || {
+        background: '#1e1e1e',
+        foreground: '#cccccc',
+      };
       const terminal = new Terminal({
         cursorBlink: true,
         fontSize: 14,
@@ -186,14 +191,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         lineHeight: 1,
         letterSpacing: 0,
         scrollback: 50000,
-        theme: colorTheme || {
-          background: '#1e1e1e',
-          foreground: '#cccccc',
-        },
-        // 浅色背景下启用最低对比度增强：渲染层兜底，对 16 色 ANSI 和 24-bit
-        // truecolor 输出都生效（PSReadLine/Oh My Posh/各类 CLI 硬编码的深色终端
-        // 颜色在白底会被自动加深到可读）。深色背景设 1（不调整）。
-        minimumContrastRatio: isLightBackground(colorTheme?.background || '#1e1e1e') ? 4.5 : 1,
+        theme: initialTheme,
+        // 仅自动白板模式启用最低对比度增强；黑板/自定义终端配色保持原样
+        minimumContrastRatio: initialLightOptimized ? 4.5 : 1,
         allowProposedApi: true,
         disableStdin: !!readOnly,
         ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),

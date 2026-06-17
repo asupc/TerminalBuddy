@@ -80,6 +80,11 @@ export const getStoredTheme = (): ThemeMode => {
   return _cachedTheme || 'dark';
 };
 
+export const saveTheme = (theme: ThemeMode) => {
+  _cachedTheme = theme;
+  writeClientData('theme', theme).catch(() => {});
+};
+
 export const initTheme = async (): Promise<ThemeMode> => {
   try {
     const raw = await readClientData('theme');

@@ -18,9 +18,11 @@ export const isLightBackground = (hex: string): boolean => {
 };
 
 const LIGHT_SAFE_FOREGROUND = '38;2;31;35;40';
-const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;246;248;250';
-const LIGHT_SAFE_ADD_BACKGROUND = '48;2;218;251;225';
-const LIGHT_SAFE_DELETE_BACKGROUND = '48;2;255;235;233';
+// 白板模式下的中性块背景（如输入框/消息块）。用稍深一点的浅蓝，
+// 在白底里有足够区分度，同时不显得突兀。
+const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;221;236;255';
+const LIGHT_SAFE_ADD_BACKGROUND = '48;2;246;255;248';
+const LIGHT_SAFE_DELETE_BACKGROUND = '48;2;255;246;247';
 
 const rgbBrightness = (r: number, g: number, b: number) => (r * 299 + g * 587 + b * 114) / 1000;
 const isNearWhiteRgb = (r: number, g: number, b: number) => r >= 235 && g >= 235 && b >= 235;
@@ -90,7 +92,8 @@ export const normalizeAnsiForLightBackground = (data: string, lightBackground: b
       // 256-color background: map common dark/gray/red/green backgrounds
       if (n === 48 && parts[i + 1] === '5') {
         const idx = Number(parts[i + 2]);
-        if (idx === 0 || idx === 8 || idx === 235 || idx === 236 || idx === 237 || idx === 238 || idx === 240) {
+        // 232-246 是 xterm 256 色里的黑到中灰阶，很多 TUI 会用它画输入框/消息块。
+        if (idx === 0 || idx === 8 || (idx >= 232 && idx <= 246)) {
           out.push(LIGHT_SAFE_NEUTRAL_BACKGROUND);
           i += 2;
           changed = true;
@@ -172,6 +175,8 @@ export interface TerminalColors {
   brightMagenta?: string;
   brightCyan?: string;
   brightWhite?: string;
+  /** 仅自动白板模式使用：开启 ANSI 输出修正与最低对比度增强 */
+  lightOptimized?: boolean;
 }
 
 const DARK_COLORS: TerminalColors = { background: '#1E1E1E', foreground: '#CCCCCC' };
@@ -184,6 +189,7 @@ const DARK_COLORS: TerminalColors = { background: '#1E1E1E', foreground: '#CCCCC
 const LIGHT_COLORS: TerminalColors = {
   background: '#FFFFFF',
   foreground: '#1F2328',
+  lightOptimized: true,
   cursor: '#1F2328',
   cursorAccent: '#FFFFFF',
   selectionBackground: '#ADD6FF',
