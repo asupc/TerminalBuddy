@@ -140,3 +140,15 @@
   font-size: 12px;
   padding: 4px 12px;
 }
+
+/* 懒加载组件（Monaco 编辑器 / 设置页）按需加载时的占位 */
+.lazy-panel-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 14px;
+}

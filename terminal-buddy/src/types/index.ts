@@ -113,6 +113,7 @@ export interface TerminalSession {
   sshRemotePath?: string;
   sshTerminalId?: string;
   owner?: 'pc' | 'web';
+  extraParams?: string;
 }
 
 export interface Workspace {

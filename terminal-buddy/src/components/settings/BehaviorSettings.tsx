@@ -15,6 +15,17 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         <label className="settings-toggle">
           <input
             type="checkbox"
+            checked={settings.terminalFollowAppTheme}
+            onChange={(e) => updateSetting('terminalFollowAppTheme', e.target.checked)}
+          />
+          <span>终端跟随应用主题</span>
+        </label>
+        <p className="settings-desc">开启后终端配色随应用主题切换（浅色模式→浅色底）；在连接配置里单独选择了其他配色的连接不受影响</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
             checked={settings.restoreTabsOnStartup}
             onChange={(e) => updateSetting('restoreTabsOnStartup', e.target.checked)}
           />
