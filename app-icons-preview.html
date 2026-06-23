@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TerminalBuddy · 应用图标设计</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --bg-grad-1: #eef2ff;
+    --bg-grad-2: #ecfeff;
+    --card: #ffffff;
+    --ink: #0f172a;
+    --ink-soft: #475569;
+    --line: #e2e8f0;
+    --brand: #2563eb;
+    --brand-soft: #dbeafe;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(1200px 600px at 10% -10%, var(--bg-grad-1), transparent 60%),
+      radial-gradient(1000px 600px at 100% 0%, var(--bg-grad-2), transparent 55%),
+      var(--bg);
+    min-height: 100vh;
+    padding: 48px 24px 80px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header { text-align: center; margin-bottom: 44px; }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600; letter-spacing: .04em;
+    color: var(--brand);
+    background: var(--brand-soft);
+    padding: 6px 14px; border-radius: 999px;
+    margin-bottom: 18px;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); }
+
+  h1 {
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 800; letter-spacing: -.02em; line-height: 1.15;
+  }
+  h1 .accent {
+    background: linear-gradient(90deg, #06b6d4, #3b82f6 55%, #8b5cf6);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sub { color: var(--ink-soft); margin-top: 12px; font-size: 15px; line-height: 1.6; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 22px;
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    position: relative;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 24px 20px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  }
+  .card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 18px 40px -16px rgba(37, 99, 235, .28);
+    border-color: #c7d2fe;
+  }
+  .card.selected {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px var(--brand-soft), 0 18px 40px -16px rgba(37, 99, 235, .4);
+  }
+
+  .num {
+    position: absolute; top: 12px; left: 14px;
+    font-size: 12px; font-weight: 700; color: var(--ink-soft);
+    background: #f1f5f9; border-radius: 7px; padding: 3px 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .check {
+    position: absolute; top: 12px; right: 14px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--brand); color: #fff;
+    display: none; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 700;
+  }
+  .card.selected .check { display: flex; }
+
+  .icon-wrap {
+    width: 132px; height: 132px; margin: 6px auto 18px;
+    border-radius: 30px; overflow: hidden;
+    box-shadow: 0 14px 30px -12px rgba(15, 23, 42, .35);
+  }
+  .icon-wrap svg { display: block; width: 100%; height: 100%; }
+
+  .name { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .desc { font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; min-height: 36px; }
+  .tags { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; }
+  .tag {
+    font-size: 11px; color: var(--ink-soft); background: #f8fafc;
+    border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px;
+  }
+
+  .toolbar {
+    position: sticky; bottom: 0; margin-top: 36px;
+    background: rgba(255,255,255,.85); backdrop-filter: blur(10px);
+    border: 1px solid var(--line); border-radius: 18px;
+    padding: 14px 20px; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; box-shadow: 0 12px 30px -18px rgba(15,23,42,.3);
+  }
+  .status { font-size: 14px; color: var(--ink-soft); }
+  .status b { color: var(--ink); }
+  .actions { display: flex; gap: 10px; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    border-radius: 12px; padding: 11px 20px; border: 1px solid transparent;
+    transition: background .15s, transform .1s;
+  }
+  button:active { transform: scale(.97); }
+  .btn-ghost { background: #fff; color: var(--ink); border-color: var(--line); }
+  .btn-ghost:hover { background: #f8fafc; }
+  .btn-primary { background: linear-gradient(90deg, #3b82f6, #2563eb); color: #fff; }
+  .btn-primary:hover { filter: brightness(1.05); }
+  .btn-primary:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+
+  .hint { text-align: center; color: var(--ink-soft); font-size: 13px; margin-top: 18px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow"><span class="dot"></span> TerminalBuddy · 应用图标设计</div>
+    <h1>选择你喜欢的 <span class="accent">应用图标</span></h1>
+    <p class="sub">8 款明亮风格的矢量图标设计，紧扣「终端模拟器」定位。<br>点击卡片选择，确认后可导出对应方案。</p>
+  </header>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="toolbar">
+    <div class="status" id="status">尚未选择 · 请点击下方任一图标</div>
+    <div class="actions">
+      <button class="btn-ghost" onclick="clearSel()">清除选择</button>
+      <button class="btn-primary" id="confirmBtn" disabled onclick="confirmSel()">确认使用此图标</button>
+    </div>
+  </div>
+  <p class="hint">所有图标均为 SVG 矢量，明亮渐变配色，可无损缩放至任意尺寸（用于 .ico / .png / .icns）。</p>
+</div>
+
+<script>
+/* ---------- 8 款图标 SVG 定义 ---------- */
+const ICONS = [
+  {
+    name: "终端蓝",
+    desc: "经典 >_ 提示符，青蓝渐变，最正统的终端气质。",
+    tags: ["经典", "提示符", "青蓝"],
+    svg: `
+      <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g1bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#2563eb"/>
+          </linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="56" fill="url(#g1bg)"/>
+        <rect x="0" y="0" width="256" height="120" rx="56" fill="#fff" opacity=".10"/>
+        <path d="M72 86 L128 128 L72 170" stroke="#fff" stroke-width="18"
+              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <rect x="146" y="154" width="58" height="18" rx="6" fill="#fff"/>
+      </svg>`
+  },
+  {
+    name: "窗口橙",
+    desc: "带标题栏的终端窗口，暖橙金渐变，亲切友好。",
+    tags: ["窗口", "暖色", "橙金"],
+    svg: `
+      <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g2bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#f97316"/>
+          </linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="56" fill="url(#g2bg)"/>
+        <rect x="0" y="0" width="256" height="120" rx="56" fill="#fff" opacity=".10"/>
+        <rect x="50" y="60" width="156" height="136" rx="20" fill="#fff"/>
+        <rect x="50" y="60" width="156" height="34" rx="20" fill="#f59e0b"/>
+        <rect x="50" y="80" width="156" height="14" fill="#f59e0b"/>
+        <circle cx="72" cy="77" r="6" fill="#fff"/>
+        <circle cx="92" cy="77" r="6" fill="#fff"/>
+        <circle cx="112" cy="77" r="6" fill="#fff"/>
+        <path d="M74 124 L98 142 L74 160" stroke="#f97316" stroke-width="8"
+              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <rect x="108" y="154" width="50" height="8" rx="4" fill="#f97316"/>
+      </svg>`
+  },
+  {
+    name: "矩阵绿",
+    desc: "$ 提示符搭配代码行，翠绿渐变，致敬经典终端。",
+    tags: ["提示符", "翠绿", "极客"],
+    svg: `
+      <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g3bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#059669"/>
+          </linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="56" fill="url(#g3bg)"/>
+        <rect x="0" y="0" width="256" height="120" rx="56" fill="#fff" opacity=".10"/>
+        <text x="74" y="150" font-family="Consolas, monospace" font-size="96"
+              font-weight="700" fill="#fff">$</text>
+        <rect x="140" y="118" width="52" height="14" rx="5" fill="#fff" opacity=".95"/>
+        <rect x="140" y="142" width="34" height="14" rx="5" fill="#fff" opacity=".7"/>
+        <rect x="140" y="166" width="44" height="14" rx="5" fill="#fff" opacity=".45"/>
+      </svg>`
+  },
+  {
+    name: "代码紫",
+    desc: "</> 代码括号，紫粉渐变，开发者气质十足。",
+    tags: ["代码", "紫粉", "现代"],
+    svg: `
+      <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g4bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#a855f7"/><stop offset="1" stop-color="#ec4899"/>
+          </linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="56" fill="url(#g4bg)"/>
+        <rect x="0" y="0" width="256" height="120" rx="56" fill="#fff" opacity=".10"/>
+        <path d="M96 80 L52 128 L96 176" stroke="#fff" stroke-width="16"
+              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <path d="M160 80 L204 128 L160 176" stroke="#fff" stroke-width="16"
+              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <rect x="122" y="70" width="12" height="116" rx="6" fill="#fff" transform="rotate(12 128 128)"/>
+      </svg>`
+  },
+  {
+    name: "多标签",
+    desc: "叠加的标签页，蓝靛渐变，呼应多标签终端特性。",
+    tags: ["多标签", "蓝靛", "层叠"],
+    svg: `
+      <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g5bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#6366f1"/>
+          </linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="56" fill="url(#g5bg)"/>
+        <rect x="0" y="0" width="256" height="120" rx="56" fill="#fff" opacity=".10"/>
+        <path d="M60 92 h64 l18 18 h54 a14 14 0 0 1 14 14 v60 a14 14 0 0 1 -14 14 H74 a14 14 0 0 1 -14 -14 z"
+              fill="#fff" opacity=".45"/>
+        <path d="M52 104 h64 l18 18 h54 a14 14 0 0 1 14 14 v60 a14 14 0 0 1 -14 14 H66 a14 14 0 0 1 -14 -14 z"
+              fill="#fff" opacity=".75"/>
+        <path d="M44 116 h64 l18 18 h54 a14 14 0 0 1 14 14 v52 a14 14 0 0 1 -14 14 H58 a14 14 0 0 1 -14 -14 z"
+              fill="#fff"/>
+        <path d="M70 144 L96 160 L70 176" stroke="#6366f1" stroke-width="7"
+              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <rect x="108" y="170" width="40" height="8" rx="4" fill="#6366f1"/>
+      </svg>`
+  },
+  {
+    name: "闪电",
+    desc: "> 提示符与闪电融合，电光蓝渐变，强调速度与效率。",
+    tags: ["闪电", "速度", "电蓝"],
+    svg: `
+      <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g6bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#60a5fa"/><stop offset="1" stop-color="#1d4ed8"/>
+          </linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="56" fill="url(#g6bg)"/>
+        <rect x="0" y="0" width="256" height="120" rx="56" fill="#fff" opacity=".10"/>
+        <path d="M150 50 L74 146 H120 L106 206 L182 110 H136 Z"
+              fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/>
+        <path d="M150 50 L74 146 H120 L106 206 L182 110 H136 Z"
+              fill="#fde047" opacity="0"/>
+        <path d="M72 92 L104 118" stroke="#bfdbfe" stroke-width="14"
+              stroke-linecap="round" fill="none" opacity="0"/>
+      </svg>`
+  },
+  {
+    name: "伙伴 Buddy",
+    desc: ">_ 融入可爱笑脸，珊瑚粉渐变，呼应「终端伙伴」之意。",
+    tags: ["拟人", "伙伴", "珊瑚粉"],
+    svg: `
+      <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g7bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#fb7185"/><stop offset="1" stop-color="#f472b6"/>
+          </linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="56" fill="url(#g7bg)"/>
+        <rect x="0" y="0" width="256" height="120" rx="56" fill="#fff" opacity=".10"/>
+        <path d="M64 96 L108 128 L64 160" stroke="#fff" stroke-width="18"
+              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <rect x="124" y="146" width="64" height="18" rx="6" fill="#fff"/>
+        <circle cx="150" cy="86" r="9" fill="#fff"/>
+        <circle cx="196" cy="86" r="9" fill="#fff"/>
+        <circle cx="153" cy="89" r="4" fill="#9f1239"/>
+        <circle cx="199" cy="89" r="4" fill="#9f1239"/>
+      </svg>`
+  },
+  {
+    name: "极光",
+    desc: "多彩极光渐变 + 抽象终端符号，最时尚抢眼。",
+    tags: ["极光", "多彩", "潮流"],
+    svg: `
+      <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="g8bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#06b6d4"/>
+            <stop offset="0.5" stop-color="#6366f1"/>
+            <stop offset="1" stop-color="#d946ef"/>
+          </linearGradient>
+        </defs>
+        <rect width="256" height="256" rx="56" fill="url(#g8bg)"/>
+        <rect x="0" y="0" width="256" height="120" rx="56" fill="#fff" opacity=".10"/>
+        <circle cx="200" cy="60" r="60" fill="#fff" opacity=".12"/>
+        <path d="M64 84 L110 128 L64 172" stroke="#fff" stroke-width="18"
+              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <rect x="128" y="156" width="64" height="18" rx="6" fill="#fff"/>
+        <circle cx="208" cy="165" r="9" fill="#fde047"/>
+      </svg>`
+  }
+];
+
+/* ---------- 渲染 ---------- */
+const grid = document.getElementById('grid');
+const status = document.getElementById('status');
+const confirmBtn = document.getElementById('confirmBtn');
+let selected = null;
+
+ICONS.forEach((ic, i) => {
+  const idx = i + 1;
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.dataset.idx = idx;
+  card.innerHTML = `
+    <span class="num">#${idx}</span>
+    <span class="check">✓</span>
+    <div class="icon-wrap">${ic.svg.trim()}</div>
+    <div class="name">${ic.name}</div>
+    <div class="desc">${ic.desc}</div>
+    <div class="tags">${ic.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
+  `;
+  card.addEventListener('click', () => select(card, idx));
+  grid.appendChild(card);
+});
+
+function select(card, idx) {
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+  selected = idx;
+  const ic = ICONS[idx - 1];
+  status.innerHTML = `已选择 <b>#${idx} · ${ic.name}</b>`;
+  confirmBtn.disabled = false;
+}
+
+function clearSel() {
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('selected'));
+  selected = null;
+  status.textContent = '尚未选择 · 请点击下方任一图标';
+  confirmBtn.disabled = true;
+}
+
+function confirmSel() {
+  if (!selected) return;
+  const ic = ICONS[selected - 1];
+  alert(`已确认选择：#${selected} · ${ic.name}\n\n下一步：我会基于这个方案导出 .ico / .png / .icns 全套应用图标（替换 src-tauri/icons 目录）。`);
+}
+</script>
+</body>
+</html>
