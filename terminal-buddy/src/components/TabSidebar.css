@@ -365,6 +365,11 @@
   background: #e8e8e8;
 }
 
+/* 浅色模式：原 #e8e8e8 浅灰圆点在浅底上不可见，改用次级文字色保证可见 */
+[data-theme="light"] .tab-sidebar-dirty-dot {
+  background: var(--text-secondary);
+}
+
 .tab-sidebar-owner-badge {
   font-size: 9px;
   padding: 1px 4px;

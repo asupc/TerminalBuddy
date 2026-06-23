@@ -73,6 +73,11 @@
   color: var(--text-primary);
 }
 
+/* 浅色模式：白色叠加在浅底上不可见，改为黑色低透明度，保持 hover 背景反馈 */
+[data-theme="light"] .dialog-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
 .dialog-content {
   padding: 20px;
   overflow-y: auto;

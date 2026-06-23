@@ -145,6 +145,11 @@
   border-left: 2px solid var(--border);
 }
 
+/* 浅色模式：白色叠加在浅底上不可见，改为黑色低透明度，保留分区底色区分 */
+[data-theme="light"] .ds-section {
+  background: rgba(0, 0, 0, 0.03);
+}
+
 .ds-section-title {
   font-size: 11px;
   font-weight: 600;
