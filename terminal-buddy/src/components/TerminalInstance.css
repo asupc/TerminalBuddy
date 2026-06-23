@@ -93,12 +93,23 @@
 
 .context-menu-item {
   padding: 6px 16px;
-  color: #ccc;
+  color: var(--text-primary);
   cursor: pointer;
   font-size: 13px;
 }
 
 .context-menu-item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* 终端画布右键菜单容器（.terminal-context-menu）为固定深色，其菜单项沿用深色配色，不随应用主题切换。
+   用 .terminal-context-menu 作用域限定，避免污染通用 .context-menu（连接面板、标签栏等跟随主题的菜单）。 */
+.terminal-context-menu .context-menu-item {
+  color: #ccc;
+}
+
+.terminal-context-menu .context-menu-item:hover {
   background: #3d3d3d;
   color: #fff;
 }

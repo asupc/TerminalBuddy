@@ -82,13 +82,15 @@ export const getStoredTheme = (): ThemeMode => {
 
 export const saveTheme = (theme: ThemeMode) => {
   _cachedTheme = theme;
-  writeClientData('theme', theme).catch(() => {});
+  // 后端 client_data_service.write 要求 content 为合法 JSON，裸字符串 'light'/'dark' 会被拒绝，
+  // 故用 JSON.stringify 包成 "light"；读取时 initTheme 用 JSON.parse 还原。
+  writeClientData('theme', JSON.stringify(theme)).catch(e => console.error('Failed to save theme:', e));
 };
 
 export const initTheme = async (): Promise<ThemeMode> => {
   try {
     const raw = await readClientData('theme');
-    if (raw) _cachedTheme = raw as ThemeMode;
+    if (raw) _cachedTheme = JSON.parse(raw) as ThemeMode;
   } catch {}
   return _cachedTheme || 'dark';
 };
