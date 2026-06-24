@@ -18,6 +18,88 @@ import { normalizeAnsiForLightBackground, type TerminalColors } from '../utils/t
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
+// ==================== TEMP DEBUG [ansi-capture] ====================
+// 诊断白板（lightOptimized）下外部 CLI（如 claude code 的 /ui slash 提示）
+// 输出的原始 ANSI 颜色码，定位「选中项高亮文字看不清」的根因。
+// 捕获每个含背景/反色/前景色的 SGR，标注 normalizeAnsiForLightBackground 是否覆盖到它。
+// fixbug 结束后整段删除 + 移除 handleOutput 里的 captureAnsiForDebug 调用。
+import { writeFileContent } from '../services/tauri';
+const ANSI_DEBUG_PATH = 'C:/Users/wiggins.wang/Desktop/terminal-buddy/ansi-debug.log';
+const ansiSeen = new Map<string, { count: number; line: string }>();
+let ansiFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const ansiBrightness = (r: number, g: number, b: number) => (r * 299 + g * 587 + b * 114) / 1000;
+
+function describeSgr(raw: string): string {
+  const original = `\x1b[${raw}m`;
+  const rewritten = normalizeAnsiForLightBackground(original, true);
+  const changed = rewritten !== original;
+  const parts = raw.split(';');
+  let tag = 'OTHER';
+  let detail = '';
+  for (let i = 0; i < parts.length; i++) {
+    const n = Number(parts[i]);
+    if (n === 7) tag = 'REVERSE';
+    else if (n === 40 || n === 100) tag = 'BG-black';
+    else if (n === 41 || n === 101) tag = 'BG-red';
+    else if (n === 42 || n === 102) tag = 'BG-green';
+    else if (n === 43 || n === 103) tag = 'BG-yellow';
+    else if (n === 44 || n === 104) tag = 'BG-blue';
+    else if (n === 45 || n === 105) tag = 'BG-magenta';
+    else if (n === 46 || n === 106) tag = 'BG-cyan';
+    else if (n === 47 || n === 107) tag = 'BG-white';
+    else if (n === 48 && parts[i + 1] === '2') {
+      const r = Number(parts[i + 2]), g = Number(parts[i + 3]), b = Number(parts[i + 4]);
+      tag = 'BG-truecolor'; detail = `rgb=(${r},${g},${b}) bright=${ansiBrightness(r, g, b).toFixed(0)}`;
+    } else if (n === 48 && parts[i + 1] === '5') tag = `BG-256(idx=${parts[i + 2]})`;
+    else if (n === 38 && parts[i + 1] === '2') {
+      const r = Number(parts[i + 2]), g = Number(parts[i + 3]), b = Number(parts[i + 4]);
+      tag = 'FG-truecolor'; detail = `rgb=(${r},${g},${b}) bright=${ansiBrightness(r, g, b).toFixed(0)}`;
+    } else if (n === 38 && parts[i + 1] === '5') tag = `FG-256(idx=${parts[i + 2]})`;
+    else if (n === 97 || n === 37) tag = 'FG-white';
+    else if (n >= 90 && n <= 96) tag = `FG-bright(${n})`;
+    else if (n >= 30 && n <= 36) tag = `FG-normal(${n})`;
+  }
+  const result = changed ? `-> ${rewritten.replace(/\x1b\[/g, 'ESC[')}` : '(UNCHANGED)';
+  return `[${tag}] raw=${raw}${detail ? ' ' + detail : ''} ${result}`;
+}
+
+function captureAnsiForDebug(text: string) {
+  const re = /\x1b\[([0-9;]*)m/g;
+  let m: RegExpExecArray | null;
+  let any = false;
+  while ((m = re.exec(text))) {
+    const raw = m[1];
+    if (!raw) continue;
+    const parts = raw.split(';');
+    const interesting = parts.some((p) => {
+      const n = Number(p);
+      return n === 7 || (n >= 40 && n <= 49) || (n >= 100 && n <= 109) ||
+        n === 38 || n === 97 || n === 37 || (n >= 90 && n <= 96) || (n >= 30 && n <= 37);
+    });
+    if (!interesting) continue;
+    const line = describeSgr(raw);
+    const prev = ansiSeen.get(raw);
+    if (prev) prev.count++;
+    else ansiSeen.set(raw, { count: 1, line });
+    any = true;
+  }
+  if (!any) return;
+  if (ansiFlushTimer) clearTimeout(ansiFlushTimer);
+  ansiFlushTimer = setTimeout(async () => {
+    ansiFlushTimer = null;
+    const rows = [...ansiSeen.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .map(([, v]) => `x${v.count}\t${v.line}`);
+    const content =
+      `=== ANSI capture (lightOptimized=true) ===\n` +
+      `SAFE_FG=38;2;31;35;40  SAFE_NEUTRAL_BG=48;2;222;236;255  SAFE_ADD_BG=48;2;241;255;245  SAFE_DEL_BG=48;2;255;244;245\n` +
+      `(count=出现次数；UNCHANGED=白板改写未覆盖到该 SGR —— 嫌疑根因)\n\n` +
+      rows.join('\n') + '\n';
+    try { await writeFileContent(ANSI_DEBUG_PATH, content); } catch { /* debug only */ }
+  }, 300);
+}
+// ==================== TEMP DEBUG END ====================
+
 interface TerminalInstanceProps {
   terminalId: string;
   onOutput: (sessionId: string, data: string) => void;
@@ -101,6 +183,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const outputBuffer: string[] = [];
     const pendingChunks: string[] = [];
     let pendingRaf: number | null = null;
+    // 上一帧末尾未闭合的 CSI 序列（ESC[ 后缺终结符）。PTY 输出边界任意，一个 SGR
+    // 序列可能被切到两个 RAF 帧：切断后两侧都不匹配 normalize 的 CSI 正则，深色
+    // 背景 SGR 会原样写进 xterm，白板模式下就闪一块深色（xterm 自己能跨 write 解析，
+    // 所以"一会儿自愈"）。这里把帧尾半截 CSI 暂存，下一帧拼到开头再整体 normalize。
+    let csiTail = '';
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -123,25 +210,53 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
-      const normalizedOutput = normalizeAnsiForLightBackground(output, lightOptimizedRef.current);
       if (xtermRef.current) {
-        pendingChunks.push(normalizedOutput);
+        // 先存原始 chunk，等 RAF 里 join 成完整串后再做 ANSI 改写。
+        // normalizeAnsiForLightBackground 用正则匹配「完整的」CSI 序列（\x1b[...m），
+        // 而 PTY 每次读取的输出边界是任意的，可能把一个序列切成两半。若逐 chunk 改写，
+        // 被切断的序列两边都不匹配正则、原样保留，白板模式下就会偶发出现 claude code
+        // 原始的深色背景块（有概率闪、闪一会儿自愈、非纯黑）。RAF join 解决了同一帧
+        // 内的切断；跨帧切断（序列一半在上一帧尾、一半在本帧头）由 csiTail 兜住——
+        // 帧尾未闭合的 CSI 暂存到下一帧拼接，保证整串先拼完整再改写。
+        pendingChunks.push(output);
         if (!pendingRaf) {
           pendingRaf = requestAnimationFrame(() => {
             pendingRaf = null;
             if (disposed) return;
-            const combined = pendingChunks.join('');
+            // 先拼上上一帧遗留的半截 CSI，再 join 本帧所有 chunk
+            const combined = csiTail + pendingChunks.join('');
             pendingChunks.length = 0;
+
+            // 切出帧尾未闭合的 CSI（ESC[ 后缺终结符 @-~）暂存到 csiTail，下帧再拼。
+            // 完整 CSI 形如 ESC[ 参数串 终结符；不匹配即说明被切断，需保留半个。
+            let toWrite = combined;
+            const esc = combined.lastIndexOf('\x1b');
+            if (esc !== -1) {
+              const tail = combined.slice(esc);
+              const isCompleteCsi = /^\x1b\[[0-9;?<=>!"#$%&'()*+,\-./]*[\x40-\x7e]/.test(tail);
+              if (tail === '\x1b' || (tail.startsWith('\x1b[') && !isCompleteCsi)) {
+                csiTail = tail;
+                toWrite = combined.slice(0, esc);
+              } else {
+                csiTail = '';
+              }
+            } else {
+              csiTail = '';
+            }
+
+            // TEMP DEBUG [ansi-capture]：白板模式下捕获原始 SGR，定位 /ui 选中项看不清
+            if (lightOptimizedRef.current) captureAnsiForDebug(toWrite);
+            const normalized = normalizeAnsiForLightBackground(toWrite, lightOptimizedRef.current);
             // Use write callback to track parse state (learned from VS Code's _writeProcessData)
             // This ensures cursor position stays in sync when TUI programs update the screen
             const messageId = ++latestWriteDataRef.current;
-            xtermRef.current?.write(combined, () => {
+            xtermRef.current?.write(normalized, () => {
               latestParseDataRef.current = messageId;
             });
           });
         }
       } else {
-        outputBuffer.push(normalizedOutput);
+        outputBuffer.push(output);
       }
 
       // Working state: reset debounce on each output, check xterm buffer for prompt
@@ -293,10 +408,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
       lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
 
-      // Flush buffered output that arrived before xterm was ready
+      // Flush buffered output that arrived before xterm was ready.
+      // 同样在 join 后做 ANSI 改写，保持与 RAF 写入路径一致（见 handleOutput 注释）。
       if (outputBuffer.length > 0) {
-        terminal.write(outputBuffer.join(''));
+        const combined = outputBuffer.join('');
         outputBuffer.length = 0;
+        const normalized = normalizeAnsiForLightBackground(combined, lightOptimizedRef.current);
+        terminal.write(normalized);
       }
       fitAddonRef.current = fitAddon;
 

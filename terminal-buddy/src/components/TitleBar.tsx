@@ -3,7 +3,7 @@ import { windowMinimize, windowToggleMaximize, windowClose, getWebApiStatus, sav
 import { AiUsagePanel } from './AiUsagePanel';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
-import { getStoredTheme, applyTheme, getAppSettings, saveTheme } from '../utils/settings';
+import { getEffectiveThemeMode, applyTheme, getAppSettings, saveTheme } from '../utils/settings';
 
 interface TitleBarProps {
   onSettings: () => void;
@@ -32,7 +32,20 @@ export const TitleBar: FC<TitleBarProps> = ({
   }, []);
   const [webRunning, setWebRunning] = useState(false);
   const [webToggling, setWebToggling] = useState(false);
-  const [theme, setTheme] = useState(getStoredTheme);
+  const [theme, setTheme] = useState<'dark' | 'light'>(getEffectiveThemeMode);
+
+  // 监听应用主题变化。App 启动时 initTheme() 是异步的，applyTheme 会晚于本组件
+  // 首次渲染执行，并派发 app-theme-changed。若不订阅，白板启动时按钮的内部 state
+  // 会停在默认 'dark'，而已被 applyTheme 切成 light 的 DOM 与之不同步，
+  // 导致第一次点击只是在「对齐 state」、界面不变，需点两次才真正切换。
+  useEffect(() => {
+    const onTheme = (e: Event) => {
+      const mode = (e as CustomEvent<{ mode: 'dark' | 'light' }>).detail?.mode;
+      if (mode === 'dark' || mode === 'light') setTheme(state => (state === mode ? state : mode));
+    };
+    window.addEventListener('app-theme-changed', onTheme);
+    return () => window.removeEventListener('app-theme-changed', onTheme);
+  }, []);
 
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';

@@ -223,6 +223,13 @@
   color: #fff;
 }
 
+/* 白板（浅色）模式适配：--accent(#0078d4) 配白字对比度仅约 4.5（临界），
+   13px 选中文字偏淡看不清；改用更深的蓝底（白字对比度约 7:1），让选中条目清晰突出。
+   黑板（深色）模式下 #0078d4 已足够明显，保持不变。 */
+[data-theme="light"] .autocomplete-item.selected {
+  background: #005a9e;
+}
+
 .autocomplete-cmd {
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
   white-space: nowrap;
