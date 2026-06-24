@@ -26,47 +26,56 @@ import './TerminalInstance.css';
 import { writeFileContent } from '../services/tauri';
 const ANSI_DEBUG_PATH = 'C:/Users/wiggins.wang/Desktop/terminal-buddy/ansi-debug.log';
 const ansiSeen = new Map<string, { count: number; line: string }>();
+const ansiCombos = new Map<string, { count: number; line: string }>();
 let ansiFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const ansiBrightness = (r: number, g: number, b: number) => (r * 299 + g * 587 + b * 114) / 1000;
+
+// 解析单个 SGR raw（如 "38;2;177;185;249"）。只看首码 + 可选 2/5 子模式，
+// 不遍历颜色分量，避免把分量值（如 102）误判成 16 色 SGR 码。
+function parseSgrRaw(raw: string): { kind: string; detail: string } {
+  const p = raw.split(';');
+  const n = Number(p[0]);
+  if ((n === 38 || n === 48) && p[1] === '2') {
+    const r = Number(p[2]), g = Number(p[3]), b = Number(p[4]);
+    if ([r, g, b].every(Number.isFinite))
+      return { kind: n === 48 ? 'BG-truecolor' : 'FG-truecolor', detail: `rgb=(${r},${g},${b}) bright=${ansiBrightness(r, g, b).toFixed(0)}` };
+  }
+  if ((n === 38 || n === 48) && p[1] === '5') return { kind: n === 48 ? 'BG-256' : 'FG-256', detail: `idx=${p[2]}` };
+  if (n === 7) return { kind: 'REVERSE', detail: '' };
+  const bg: Record<number, string> = { 40: 'BG-black', 41: 'BG-red', 42: 'BG-green', 43: 'BG-yellow', 44: 'BG-blue', 45: 'BG-magenta', 46: 'BG-cyan', 47: 'BG-white', 100: 'BG-bblack', 101: 'BG-bred', 102: 'BG-bgreen', 103: 'BG-byellow', 104: 'BG-bblue', 105: 'BG-bmagenta', 106: 'BG-bcyan', 107: 'BG-bwhite' };
+  if (bg[n]) return { kind: bg[n], detail: '' };
+  const fg: Record<number, string> = { 30: 'FG-black', 31: 'FG-red', 32: 'FG-green', 33: 'FG-yellow', 34: 'FG-blue', 35: 'FG-magenta', 36: 'FG-cyan', 37: 'FG-white', 90: 'FG-bblack', 91: 'FG-bred', 92: 'FG-bgreen', 93: 'FG-byellow', 94: 'FG-bblue', 95: 'FG-bmagenta', 96: 'FG-bcyan', 97: 'FG-bwhite' };
+  if (fg[n]) return { kind: fg[n], detail: '' };
+  return { kind: 'OTHER', detail: raw };
+}
 
 function describeSgr(raw: string): string {
   const original = `\x1b[${raw}m`;
   const rewritten = normalizeAnsiForLightBackground(original, true);
   const changed = rewritten !== original;
+  const { kind, detail } = parseSgrRaw(raw);
+  const result = changed ? `-> ${rewritten.replace(/\x1b\[/g, 'ESC[')}` : '(UNCHANGED)';
+  return `[${kind}] raw=${raw}${detail ? ' ' + detail : ''} ${result}`;
+}
+
+// 判断 SGR raw 是否设置背景或反色（选中高亮/色块的关键信号）。
+// 遇到 truecolor/256 前景要跳过其参数，避免把 fg 分量误判为背景码。
+function sgrSetsBgOrReverse(raw: string): boolean {
   const parts = raw.split(';');
-  let tag = 'OTHER';
-  let detail = '';
   for (let i = 0; i < parts.length; i++) {
     const n = Number(parts[i]);
-    if (n === 7) tag = 'REVERSE';
-    else if (n === 40 || n === 100) tag = 'BG-black';
-    else if (n === 41 || n === 101) tag = 'BG-red';
-    else if (n === 42 || n === 102) tag = 'BG-green';
-    else if (n === 43 || n === 103) tag = 'BG-yellow';
-    else if (n === 44 || n === 104) tag = 'BG-blue';
-    else if (n === 45 || n === 105) tag = 'BG-magenta';
-    else if (n === 46 || n === 106) tag = 'BG-cyan';
-    else if (n === 47 || n === 107) tag = 'BG-white';
-    else if (n === 48 && parts[i + 1] === '2') {
-      const r = Number(parts[i + 2]), g = Number(parts[i + 3]), b = Number(parts[i + 4]);
-      tag = 'BG-truecolor'; detail = `rgb=(${r},${g},${b}) bright=${ansiBrightness(r, g, b).toFixed(0)}`;
-    } else if (n === 48 && parts[i + 1] === '5') tag = `BG-256(idx=${parts[i + 2]})`;
-    else if (n === 38 && parts[i + 1] === '2') {
-      const r = Number(parts[i + 2]), g = Number(parts[i + 3]), b = Number(parts[i + 4]);
-      tag = 'FG-truecolor'; detail = `rgb=(${r},${g},${b}) bright=${ansiBrightness(r, g, b).toFixed(0)}`;
-    } else if (n === 38 && parts[i + 1] === '5') tag = `FG-256(idx=${parts[i + 2]})`;
-    else if (n === 97 || n === 37) tag = 'FG-white';
-    else if (n >= 90 && n <= 96) tag = `FG-bright(${n})`;
-    else if (n >= 30 && n <= 36) tag = `FG-normal(${n})`;
+    if (n === 7 || n === 48 || (n >= 40 && n <= 47) || (n >= 100 && n <= 107)) return true;
+    if ((n === 38 || n === 48) && parts[i + 1] === '2') { i += 4; continue; }
+    if ((n === 38 || n === 48) && parts[i + 1] === '5') { i += 2; continue; }
   }
-  const result = changed ? `-> ${rewritten.replace(/\x1b\[/g, 'ESC[')}` : '(UNCHANGED)';
-  return `[${tag}] raw=${raw}${detail ? ' ' + detail : ''} ${result}`;
+  return false;
 }
 
 function captureAnsiForDebug(text: string) {
+  let any = false;
+  // 1) 单 SGR 去重统计
   const re = /\x1b\[([0-9;]*)m/g;
   let m: RegExpExecArray | null;
-  let any = false;
   while ((m = re.exec(text))) {
     const raw = m[1];
     if (!raw) continue;
@@ -83,6 +92,19 @@ function captureAnsiForDebug(text: string) {
     else ansiSeen.set(raw, { count: 1, line });
     any = true;
   }
+  // 2) 连续 SGR 组合（相邻多个 \x1b[..m，中间无可见字符）= 一个单元格/区域的完整样式。
+  //    只记录含背景/反色的组合 —— 这正是选中高亮 / 色块样式。
+  const comboRe = /(?:\x1b\[[0-9;]*m)+/g;
+  let cm: RegExpExecArray | null;
+  while ((cm = comboRe.exec(text))) {
+    const sgrs = cm[0].match(/\x1b\[([0-9;]*)m/g) || [];
+    if (!sgrs.some((s) => sgrSetsBgOrReverse(s.slice(2, -1)))) continue;
+    const line = sgrs.map((s) => describeSgr(s.slice(2, -1))).join(' | ');
+    const prev = ansiCombos.get(line);
+    if (prev) prev.count++;
+    else ansiCombos.set(line, { count: 1, line });
+    any = true;
+  }
   if (!any) return;
   if (ansiFlushTimer) clearTimeout(ansiFlushTimer);
   ansiFlushTimer = setTimeout(async () => {
@@ -90,11 +112,18 @@ function captureAnsiForDebug(text: string) {
     const rows = [...ansiSeen.entries()]
       .sort((a, b) => b[1].count - a[1].count)
       .map(([, v]) => `x${v.count}\t${v.line}`);
+    const comboRows = [...ansiCombos.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 50)
+      .map(([, v]) => `x${v.count}\t${v.line}`);
     const content =
       `=== ANSI capture (lightOptimized=true) ===\n` +
       `SAFE_FG=38;2;31;35;40  SAFE_NEUTRAL_BG=48;2;222;236;255  SAFE_ADD_BG=48;2;241;255;245  SAFE_DEL_BG=48;2;255;244;245\n` +
-      `(count=出现次数；UNCHANGED=白板改写未覆盖到该 SGR —— 嫌疑根因)\n\n` +
-      rows.join('\n') + '\n';
+      `(UNCHANGED=白板改写未覆盖到该 SGR)\n\n` +
+      `--- 单个 SGR ---\n` + rows.join('\n') + '\n\n' +
+      `--- 连续 SGR 组合（含背景/反色 = 选中高亮/色块完整样式）---\n` +
+      `(关注：BG 已改浅 但 FG 仍 UNCHANGED 的组合 = 浅底亮字，看不清的根因)\n` +
+      comboRows.join('\n') + '\n';
     try { await writeFileContent(ANSI_DEBUG_PATH, content); } catch { /* debug only */ }
   }, 300);
 }
@@ -421,14 +450,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       void bootLog(`initTerminal[${terminalId}]: TOTAL took ${(performance.now() - tTotal).toFixed(0)}ms`);
 
       // --- Resize handling (learned from VS Code's terminalResizeDebouncer) ---
-      const doFit = () => {
+      const doFit = (force?: boolean) => {
         if (disposed || !xtermRef.current || !fitAddonRef.current) return;
 
         // Don't resize while TUI is active in alternate buffer.
         // TUI programs (claude code, vim, htop) manage their own screen layout
         // and expect stable terminal dimensions.  Resize is triggered when
         // exiting the alt buffer via checkAltBuffer().
-        if (inAltBufferRef.current) return;
+        // `force` bypasses this guard for deliberate split-screen layout changes.
+        if (inAltBufferRef.current && !force) return;
 
         const prevCols = terminal.cols;
         const prevRows = terminal.rows;
@@ -447,13 +477,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Force an immediate resize (bypasses debounce) for tab switches and other
       // visibility changes where we need the correct dimensions right away.
-      const forceFit = () => {
+      const forceFit = (force?: boolean) => {
         if (disposed) return;
         if (resizeTimerRef.current) {
           clearTimeout(resizeTimerRef.current);
           resizeTimerRef.current = null;
         }
-        doFit();
+        doFit(force);
       };
 
       // ResizeObserver: respond to container size changes with debouncing.
@@ -946,6 +976,35 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       cancelAnimationFrame(raf2);
     };
   }, [isActive]);
+
+  // Split-screen layout changes (enter/exit/2x1<->2x2) must force a resize even
+  // when a TUI (vim/claude code) is running, so the program redraws via SIGWINCH.
+  // Incidental resizes still respect the alt-buffer guard inside doFit.
+  useEffect(() => {
+    let raf1 = 0;
+    let raf2 = 0;
+    const onSplitResize = (e: Event) => {
+      const ids = (e as CustomEvent<{ terminalIds: string[] }>).detail?.terminalIds;
+      if (!ids || !ids.includes(terminalId)) return;
+      cancelAnimationFrame(raf1);
+      raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => {
+          const term = xtermRef.current;
+          if (!term) return;
+          const forceFit = (term as any)._tbForceFit;
+          if (typeof forceFit === 'function') forceFit(true);
+          // Only the focused pane should steal keyboard focus on a layout change.
+          if (useAppStore.getState().activeSessionId === terminalId) term.focus();
+        });
+      });
+    };
+    window.addEventListener('tb-split-resize', onSplitResize);
+    return () => {
+      window.removeEventListener('tb-split-resize', onSplitResize);
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [terminalId]);
 
   const handleSearch = useCallback((direction: 'next' | 'prev' = 'next') => {
     const searchAddon = searchAddonRef.current;

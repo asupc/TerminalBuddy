@@ -180,3 +180,40 @@ body {
   border: none;
   color: white;
 }
+/* ===== Toast ===== */
+.tb-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 10000;
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  animation: tb-toast-in 0.18s ease-out;
+  pointer-events: none;
+  max-width: 80vw;
+}
+.tb-toast-info {
+  background: #2d2d2d;
+  border: 1px solid #555;
+}
+.tb-toast-success {
+  background: #1a3a1a;
+  border: 1px solid #2ea043;
+}
+.tb-toast-error {
+  background: #3a1a1a;
+  border: 1px solid #f44747;
+}
+@keyframes tb-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Split toggle button active state in the title bar */
+.titlebar-split-btn.split-active {
+  color: var(--accent, #0078d4);
+}

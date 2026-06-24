@@ -215,6 +215,19 @@ interface AppState {
   workingSessions: Record<string, boolean>;
   setSessionWorking: (sessionId: string, working: boolean) => void;
 
+  // Split Screen mode
+  splitMode: 'off' | '2x1' | '2x2';
+  splitSlots: (string | null)[];
+  cycleSplitMode: () => void;
+  closeSplitPane: (slotIndex: number) => void;
+  swapSplitSlots: (i: number, j: number) => void;
+  placeSessionInSplitSlot: (sessionId: string) => void;
+
+  // Toast (transient notifications, e.g. "split grid full")
+  toast: { id: number; message: string; type: 'info' | 'success' | 'error' } | null;
+  showToast: (message: string, type?: 'info' | 'success' | 'error') => void;
+  dismissToast: (id: number) => void;
+
   // Settings version (incremented when settings change, triggers re-render in subscribers)
   settingsVersion: number;
   incrementSettingsVersion: () => void;
@@ -258,7 +271,7 @@ interface AppState {
   setShowTransferPanel: (terminalId: string, show: boolean) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   // Profiles
   profiles: [],
   selectedProfileId: null,
@@ -398,13 +411,23 @@ export const useAppStore = create<AppState>((set) => ({
   removeSession: (id) =>
     set((state) => {
       const sessions = state.sessions.filter((s) => s.id !== id);
-      const activeSessionId =
+      let activeSessionId =
         state.activeSessionId === id
           ? sessions[0]?.id ?? null
           : state.activeSessionId;
       const { [id]: _, ...restCache } = state.remoteFileCache;
+      // Split-slot cleanup: free any slot referencing the closed session.
+      // If the closed pane was focused, refocus the first remaining filled slot
+      // (split mode is preserved even if all slots become blank).
+      let splitSlots = state.splitSlots;
+      if (state.splitMode !== 'off' && splitSlots.includes(id)) {
+        splitSlots = splitSlots.map((s) => (s === id ? null : s));
+        if (state.activeSessionId === id) {
+          activeSessionId = splitSlots.find((s) => s !== null) ?? null;
+        }
+      }
       debouncedSaveTabs(sessions, activeSessionId);
-      return { sessions, activeSessionId, remoteFileCache: restCache };
+      return { sessions, activeSessionId, remoteFileCache: restCache, splitSlots };
     }),
   setSessions: (sessions) => {
     const activeSessionId = sessions[0]?.id ?? null;
@@ -436,7 +459,12 @@ export const useAppStore = create<AppState>((set) => ({
     if (state.groups.some(g => g.id === 'editor-group')) return state;
     return { groups: [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }] };
   }),
-  openEditorSession: (filePath, sshRemotePath?, sshTerminalId?) => set((state) => {
+  openEditorSession: (filePath, sshRemotePath?, sshTerminalId?) => {
+    if (get().splitMode !== 'off') {
+      get().showToast('请先退出分屏模式再编辑文件', 'info');
+      return;
+    }
+    set((state) => {
     const existing = state.sessions.find(s => s.sessionType === 'editor' && s.profileId === filePath);
     if (existing) {
       saveTabsToStorage(state.sessions, existing.id);
@@ -463,7 +491,8 @@ export const useAppStore = create<AppState>((set) => ({
     const sessions = [...state.sessions, session];
     saveTabsToStorage(sessions, id);
     return { sessions, activeSessionId: id, settingsTabOpen: false, groups };
-  }),
+    });
+  },
   closeEditorSession: (id) =>
     set((state) => {
       const sessions = state.sessions.filter((s) => s.id !== id);
@@ -475,6 +504,10 @@ export const useAppStore = create<AppState>((set) => ({
       return { sessions, activeSessionId };
     }),
   openDraftSession: async () => {
+    if (get().splitMode !== 'off') {
+      get().showToast('请先退出分屏模式再编辑文件', 'info');
+      return;
+    }
     const draftsDir = await ensureDraftsDir();
     const draftId = `draft_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const filePath = draftsDir + '\\' + draftId + '.txt';
@@ -558,6 +591,62 @@ export const useAppStore = create<AppState>((set) => ({
   setSessionWorking: (sessionId, working) => set((state) => ({
     workingSessions: { ...state.workingSessions, [sessionId]: working },
   })),
+
+  // --- Split Screen ---
+  splitMode: 'off',
+  splitSlots: [],
+  cycleSplitMode: () => set((state) => {
+    const cur = state.splitMode;
+    if (cur === 'off') {
+      // Entry: populate from terminal-session count (editors & web sessions excluded).
+      const N = 2;
+      const terms = state.sessions.filter(s => s.sessionType !== 'editor' && s.owner !== 'web');
+      let slots: (string | null)[];
+      if (terms.length <= N) {
+        slots = terms.slice(0, N).map(s => s.id);
+        while (slots.length < N) slots.push(null);
+      } else {
+        slots = new Array(N).fill(null);
+      }
+      // Focus: keep current active if it ended up in a slot; else first filled slot; else unchanged.
+      let activeSessionId = state.activeSessionId;
+      if (activeSessionId && !slots.includes(activeSessionId)) {
+        activeSessionId = slots.find(s => s !== null) ?? activeSessionId;
+      }
+      return { splitMode: '2x1' as const, splitSlots: slots, activeSessionId };
+    }
+    if (cur === '2x1') {
+      // Grow: preserve existing slot contents in place, append blank slots.
+      return { splitMode: '2x2' as const, splitSlots: [...state.splitSlots, null, null] };
+    }
+    // 2x2 -> off: exit. Sessions become normal tabs; activeSessionId (focused pane) stays, shown full-screen.
+    return { splitMode: 'off' as const, splitSlots: [] };
+  }),
+  closeSplitPane: (slotIndex) => {
+    const sid = get().splitSlots[slotIndex];
+    if (sid) get().removeSession(sid);
+  },
+  swapSplitSlots: (i, j) => set((state) => {
+    const slots = [...state.splitSlots];
+    if (i < 0 || j < 0 || i >= slots.length || j >= slots.length) return state;
+    [slots[i], slots[j]] = [slots[j], slots[i]];
+    return { splitSlots: slots };
+  }),
+  placeSessionInSplitSlot: (sessionId) => set((state) => {
+    if (state.splitMode === 'off') return state;
+    const idx = state.splitSlots.indexOf(null);
+    if (idx === -1) return state;
+    const splitSlots = [...state.splitSlots];
+    splitSlots[idx] = sessionId;
+    return { splitSlots, activeSessionId: sessionId };
+  }),
+
+  // --- Toast ---
+  toast: null,
+  showToast: (message, type = 'info') => set({
+    toast: { id: Date.now() + Math.random(), message, type },
+  }),
+  dismissToast: (id) => set((state) => (state.toast?.id === id ? { toast: null } : {})),
 
   settingsVersion: 0,
   incrementSettingsVersion: () => set((state) => ({ settingsVersion: state.settingsVersion + 1 })),

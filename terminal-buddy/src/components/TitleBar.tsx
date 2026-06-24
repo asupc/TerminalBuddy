@@ -4,6 +4,7 @@ import { AiUsagePanel } from './AiUsagePanel';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
 import { getEffectiveThemeMode, applyTheme, getAppSettings, saveTheme } from '../utils/settings';
+import { useAppStore } from '../stores/appStore';
 
 interface TitleBarProps {
   onSettings: () => void;
@@ -33,6 +34,7 @@ export const TitleBar: FC<TitleBarProps> = ({
   const [webRunning, setWebRunning] = useState(false);
   const [webToggling, setWebToggling] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(getEffectiveThemeMode);
+  const splitMode = useAppStore(s => s.splitMode);
 
   // 监听应用主题变化。App 启动时 initTheme() 是异步的，applyTheme 会晚于本组件
   // 首次渲染执行，并派发 app-theme-changed。若不订阅，白板启动时按钮的内部 state
@@ -146,6 +148,27 @@ export const TitleBar: FC<TitleBarProps> = ({
         </div>
       </div>
       <div className="titlebar-right">
+        <button
+          className={`titlebar-btn titlebar-action-btn titlebar-split-btn ${splitMode !== 'off' ? 'split-active' : ''}`}
+          onClick={() => useAppStore.getState().cycleSplitMode()}
+          title={splitMode === 'off' ? '分屏：2×1' : splitMode === '2x1' ? '分屏：2×2' : '退出分屏'}
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            {splitMode === '2x2' ? (
+              <>
+                <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" fill="currentColor" />
+                <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" fill="currentColor" />
+                <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" fill="currentColor" />
+                <rect x="9" y="9" width="5.5" height="5.5" rx="1" fill="currentColor" />
+              </>
+            ) : (
+              <>
+                <rect x="1.5" y="1.5" width="5.5" height="13" rx="1" fill="currentColor" />
+                <rect x="9" y="1.5" width="5.5" height="13" rx="1" fill="currentColor" />
+              </>
+            )}
+          </svg>
+        </button>
         <button
           className="titlebar-btn titlebar-action-btn"
           onClick={toggleTheme}

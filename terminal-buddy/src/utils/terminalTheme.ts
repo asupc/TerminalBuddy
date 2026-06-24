@@ -18,9 +18,11 @@ export const isLightBackground = (hex: string): boolean => {
 };
 
 const LIGHT_SAFE_FOREGROUND = '38;2;31;35;40';
-// 白板模式下的中性块背景（如输入框/消息块）。只保留较轻的蓝色底，
-// 避免大块背景在白板里显得过深，同时保证可辨识。
-const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;222;236;255';
+// 白板模式下的中性块背景（输入框/消息块/选中高亮）。原 #DEECFF(222,236,255) 过浅，
+// 导致 claude code 等「选中项」的深色背景被映射后几乎与白底(#FFFFFF)融为一体、
+// 看不出选中了哪一条；改深一档为中浅蓝 #A8CBFF(168,203,255)，在白底上足够突出，
+// 又仍是浅色、不致成为刺眼的深块。
+const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;168;203;255';
 const LIGHT_SAFE_ADD_BACKGROUND = '48;2;241;255;245';
 const LIGHT_SAFE_DELETE_BACKGROUND = '48;2;255;244;245';
 
