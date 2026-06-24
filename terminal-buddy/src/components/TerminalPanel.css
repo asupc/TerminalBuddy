@@ -186,13 +186,26 @@
   overflow: hidden;
 }
 .terminal-content.split-grid .split-cell.active {
-  outline: 2px solid var(--accent, #0078d4);
-  outline-offset: -2px;
   z-index: 1;
 }
-.terminal-content.split-grid .split-cell.drag-over {
-  outline: 2px dashed var(--accent, #0078d4);
-  outline-offset: -2px;
+/* Focus frame: drawn via ::after with a high z-index so it sits ABOVE the xterm
+   WebGL canvas (which otherwise covers a plain outline on the left/right/bottom
+   edges, leaving only the header area visible at the top). */
+.terminal-content.split-grid .split-cell.active::after,
+.terminal-content.split-grid .split-cell.drag-over::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-sizing: border-box;
+  z-index: 5;
+}
+.terminal-content.split-grid .split-cell.active::after {
+  border: 2px solid var(--accent, #0078d4);
+}
+.terminal-content.split-grid .split-cell.drag-over::after {
+  border: 2px dashed var(--accent, #0078d4);
+  z-index: 6;
 }
 
 /* Non-slot background sessions in split mode: keep mounted, hide completely. */
