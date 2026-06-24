@@ -18,117 +18,6 @@ import { normalizeAnsiForLightBackground, type TerminalColors } from '../utils/t
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
-// ==================== TEMP DEBUG [ansi-capture] ====================
-// 诊断白板（lightOptimized）下外部 CLI（如 claude code 的 /ui slash 提示）
-// 输出的原始 ANSI 颜色码，定位「选中项高亮文字看不清」的根因。
-// 捕获每个含背景/反色/前景色的 SGR，标注 normalizeAnsiForLightBackground 是否覆盖到它。
-// fixbug 结束后整段删除 + 移除 handleOutput 里的 captureAnsiForDebug 调用。
-import { writeFileContent } from '../services/tauri';
-const ANSI_DEBUG_PATH = 'C:/Users/wiggins.wang/Desktop/terminal-buddy/ansi-debug.log';
-const ansiSeen = new Map<string, { count: number; line: string }>();
-const ansiCombos = new Map<string, { count: number; line: string }>();
-let ansiFlushTimer: ReturnType<typeof setTimeout> | null = null;
-const ansiBrightness = (r: number, g: number, b: number) => (r * 299 + g * 587 + b * 114) / 1000;
-
-// 解析单个 SGR raw（如 "38;2;177;185;249"）。只看首码 + 可选 2/5 子模式，
-// 不遍历颜色分量，避免把分量值（如 102）误判成 16 色 SGR 码。
-function parseSgrRaw(raw: string): { kind: string; detail: string } {
-  const p = raw.split(';');
-  const n = Number(p[0]);
-  if ((n === 38 || n === 48) && p[1] === '2') {
-    const r = Number(p[2]), g = Number(p[3]), b = Number(p[4]);
-    if ([r, g, b].every(Number.isFinite))
-      return { kind: n === 48 ? 'BG-truecolor' : 'FG-truecolor', detail: `rgb=(${r},${g},${b}) bright=${ansiBrightness(r, g, b).toFixed(0)}` };
-  }
-  if ((n === 38 || n === 48) && p[1] === '5') return { kind: n === 48 ? 'BG-256' : 'FG-256', detail: `idx=${p[2]}` };
-  if (n === 7) return { kind: 'REVERSE', detail: '' };
-  const bg: Record<number, string> = { 40: 'BG-black', 41: 'BG-red', 42: 'BG-green', 43: 'BG-yellow', 44: 'BG-blue', 45: 'BG-magenta', 46: 'BG-cyan', 47: 'BG-white', 100: 'BG-bblack', 101: 'BG-bred', 102: 'BG-bgreen', 103: 'BG-byellow', 104: 'BG-bblue', 105: 'BG-bmagenta', 106: 'BG-bcyan', 107: 'BG-bwhite' };
-  if (bg[n]) return { kind: bg[n], detail: '' };
-  const fg: Record<number, string> = { 30: 'FG-black', 31: 'FG-red', 32: 'FG-green', 33: 'FG-yellow', 34: 'FG-blue', 35: 'FG-magenta', 36: 'FG-cyan', 37: 'FG-white', 90: 'FG-bblack', 91: 'FG-bred', 92: 'FG-bgreen', 93: 'FG-byellow', 94: 'FG-bblue', 95: 'FG-bmagenta', 96: 'FG-bcyan', 97: 'FG-bwhite' };
-  if (fg[n]) return { kind: fg[n], detail: '' };
-  return { kind: 'OTHER', detail: raw };
-}
-
-function describeSgr(raw: string): string {
-  const original = `\x1b[${raw}m`;
-  const rewritten = normalizeAnsiForLightBackground(original, true);
-  const changed = rewritten !== original;
-  const { kind, detail } = parseSgrRaw(raw);
-  const result = changed ? `-> ${rewritten.replace(/\x1b\[/g, 'ESC[')}` : '(UNCHANGED)';
-  return `[${kind}] raw=${raw}${detail ? ' ' + detail : ''} ${result}`;
-}
-
-// 判断 SGR raw 是否设置背景或反色（选中高亮/色块的关键信号）。
-// 遇到 truecolor/256 前景要跳过其参数，避免把 fg 分量误判为背景码。
-function sgrSetsBgOrReverse(raw: string): boolean {
-  const parts = raw.split(';');
-  for (let i = 0; i < parts.length; i++) {
-    const n = Number(parts[i]);
-    if (n === 7 || n === 48 || (n >= 40 && n <= 47) || (n >= 100 && n <= 107)) return true;
-    if ((n === 38 || n === 48) && parts[i + 1] === '2') { i += 4; continue; }
-    if ((n === 38 || n === 48) && parts[i + 1] === '5') { i += 2; continue; }
-  }
-  return false;
-}
-
-function captureAnsiForDebug(text: string) {
-  let any = false;
-  // 1) 单 SGR 去重统计
-  const re = /\x1b\[([0-9;]*)m/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    const raw = m[1];
-    if (!raw) continue;
-    const parts = raw.split(';');
-    const interesting = parts.some((p) => {
-      const n = Number(p);
-      return n === 7 || (n >= 40 && n <= 49) || (n >= 100 && n <= 109) ||
-        n === 38 || n === 97 || n === 37 || (n >= 90 && n <= 96) || (n >= 30 && n <= 37);
-    });
-    if (!interesting) continue;
-    const line = describeSgr(raw);
-    const prev = ansiSeen.get(raw);
-    if (prev) prev.count++;
-    else ansiSeen.set(raw, { count: 1, line });
-    any = true;
-  }
-  // 2) 连续 SGR 组合（相邻多个 \x1b[..m，中间无可见字符）= 一个单元格/区域的完整样式。
-  //    只记录含背景/反色的组合 —— 这正是选中高亮 / 色块样式。
-  const comboRe = /(?:\x1b\[[0-9;]*m)+/g;
-  let cm: RegExpExecArray | null;
-  while ((cm = comboRe.exec(text))) {
-    const sgrs = cm[0].match(/\x1b\[([0-9;]*)m/g) || [];
-    if (!sgrs.some((s) => sgrSetsBgOrReverse(s.slice(2, -1)))) continue;
-    const line = sgrs.map((s) => describeSgr(s.slice(2, -1))).join(' | ');
-    const prev = ansiCombos.get(line);
-    if (prev) prev.count++;
-    else ansiCombos.set(line, { count: 1, line });
-    any = true;
-  }
-  if (!any) return;
-  if (ansiFlushTimer) clearTimeout(ansiFlushTimer);
-  ansiFlushTimer = setTimeout(async () => {
-    ansiFlushTimer = null;
-    const rows = [...ansiSeen.entries()]
-      .sort((a, b) => b[1].count - a[1].count)
-      .map(([, v]) => `x${v.count}\t${v.line}`);
-    const comboRows = [...ansiCombos.entries()]
-      .sort((a, b) => b[1].count - a[1].count)
-      .slice(0, 50)
-      .map(([, v]) => `x${v.count}\t${v.line}`);
-    const content =
-      `=== ANSI capture (lightOptimized=true) ===\n` +
-      `SAFE_FG=38;2;31;35;40  SAFE_NEUTRAL_BG=48;2;222;236;255  SAFE_ADD_BG=48;2;241;255;245  SAFE_DEL_BG=48;2;255;244;245\n` +
-      `(UNCHANGED=白板改写未覆盖到该 SGR)\n\n` +
-      `--- 单个 SGR ---\n` + rows.join('\n') + '\n\n' +
-      `--- 连续 SGR 组合（含背景/反色 = 选中高亮/色块完整样式）---\n` +
-      `(关注：BG 已改浅 但 FG 仍 UNCHANGED 的组合 = 浅底亮字，看不清的根因)\n` +
-      comboRows.join('\n') + '\n';
-    try { await writeFileContent(ANSI_DEBUG_PATH, content); } catch { /* debug only */ }
-  }, 300);
-}
-// ==================== TEMP DEBUG END ====================
-
 interface TerminalInstanceProps {
   terminalId: string;
   onOutput: (sessionId: string, data: string) => void;
@@ -273,8 +162,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               csiTail = '';
             }
 
-            // TEMP DEBUG [ansi-capture]：白板模式下捕获原始 SGR，定位 /ui 选中项看不清
-            if (lightOptimizedRef.current) captureAnsiForDebug(toWrite);
             const normalized = normalizeAnsiForLightBackground(toWrite, lightOptimizedRef.current);
             // Use write callback to track parse state (learned from VS Code's _writeProcessData)
             // This ensures cursor position stays in sync when TUI programs update the screen

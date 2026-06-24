@@ -524,7 +524,6 @@ export const FileTree: FC = () => {
       <div className="panel-titlebar">
         <span className="panel-title">文件导航</span>
         <div className="file-tree-actions">
-          <button onClick={handleGoUp} title="上级目录">⬆</button>
           <button onClick={handleRefresh} title="刷新">↻</button>
         </div>
       </div>
