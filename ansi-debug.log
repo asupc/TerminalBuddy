@@ -1,0 +1,41 @@
+=== ANSI capture (lightOptimized=true) ===
+SAFE_FG=38;2;31;35;40  SAFE_NEUTRAL_BG=48;2;222;236;255  SAFE_ADD_BG=48;2;241;255;245  SAFE_DEL_BG=48;2;255;244;245
+(UNCHANGED=白板改写未覆盖到该 SGR)
+
+--- 单个 SGR ---
+x2553	[FG-truecolor] raw=38;2;153;153;153 rgb=(153,153,153) bright=153 (UNCHANGED)
+x523	[FG-truecolor] raw=38;2;215;119;87 rgb=(215,119,87) bright=144 (UNCHANGED)
+x388	[FG-green] raw=32 (UNCHANGED)
+x348	[FG-bblue] raw=94 (UNCHANGED)
+x312	[FG-yellow] raw=33 (UNCHANGED)
+x186	[FG-truecolor] raw=38;2;136;136;136 rgb=(136,136,136) bright=136 (UNCHANGED)
+x182	[FG-cyan] raw=36 (UNCHANGED)
+x174	[BG-truecolor] raw=48;2;0;0;0 rgb=(0,0,0) bright=0 -> ESC[48;2;168;203;255m
+x171	[FG-red] raw=31 (UNCHANGED)
+x158	[OTHER] raw=49 49 (UNCHANGED)
+x118	[FG-truecolor] raw=38;2;255;107;128 rgb=(255,107,128) bright=154 (UNCHANGED)
+x88	[FG-magenta] raw=35 (UNCHANGED)
+x71	[FG-truecolor] raw=38;2;235;159;127 rgb=(235,159,127) bright=178 (UNCHANGED)
+x51	[REVERSE] raw=7 (UNCHANGED)
+x29	[FG-byellow] raw=93 (UNCHANGED)
+x28	[FG-bblack] raw=90 (UNCHANGED)
+x10	[FG-truecolor] raw=38;2;157;157;157 rgb=(157,157,157) bright=157 (UNCHANGED)
+x9	[FG-truecolor] raw=38;2;169;169;169 rgb=(169,169,169) bright=169 (UNCHANGED)
+x8	[FG-truecolor] raw=38;2;181;181;181 rgb=(181,181,181) bright=181 (UNCHANGED)
+x7	[FG-truecolor] raw=38;2;165;165;165 rgb=(165,165,165) bright=165 (UNCHANGED)
+x6	[FG-truecolor] raw=38;2;255;255;255 rgb=(255,255,255) bright=255 -> ESC[38;2;31;35;40m
+x6	[FG-truecolor] raw=38;2;173;173;173 rgb=(173,173,173) bright=173 (UNCHANGED)
+x6	[FG-truecolor] raw=38;2;185;185;185 rgb=(185,185,185) bright=185 (UNCHANGED)
+x5	[FG-truecolor] raw=38;2;177;185;249 rgb=(177,185,249) bright=190 (UNCHANGED)
+x3	[FG-truecolor] raw=38;2;80;80;80 rgb=(80,80,80) bright=80 (UNCHANGED)
+x3	[BG-truecolor] raw=48;2;55;55;55 rgb=(55,55,55) bright=55 -> ESC[48;2;168;203;255m
+x3	[FG-truecolor] raw=38;2;161;161;161 rgb=(161,161,161) bright=161 (UNCHANGED)
+x2	[FG-truecolor] raw=38;2;177;177;177 rgb=(177,177,177) bright=177 (UNCHANGED)
+
+--- 连续 SGR 组合（含背景/反色 = 选中高亮/色块完整样式）---
+(关注：BG 已改浅 但 FG 仍 UNCHANGED 的组合 = 浅底亮字，看不清的根因)
+x158	[BG-truecolor] raw=48;2;0;0;0 rgb=(0,0,0) bright=0 -> ESC[48;2;168;203;255m
+x47	[REVERSE] raw=7 (UNCHANGED)
+x16	[FG-truecolor] raw=38;2;215;119;87 rgb=(215,119,87) bright=144 (UNCHANGED) | [BG-truecolor] raw=48;2;0;0;0 rgb=(0,0,0) bright=0 -> ESC[48;2;168;203;255m
+x4	[OTHER] raw= (UNCHANGED) | [REVERSE] raw=7 (UNCHANGED)
+x3	[FG-truecolor] raw=38;2;80;80;80 rgb=(80,80,80) bright=80 (UNCHANGED) | [BG-truecolor] raw=48;2;55;55;55 rgb=(55,55,55) bright=55 -> ESC[48;2;168;203;255m

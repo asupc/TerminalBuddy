@@ -275,6 +275,11 @@ export const FileTree: FC = () => {
   }, [setCurrentDirectory, setSessionDirectory, activeSessionId]);
 
   const openTerminalInDir = useCallback(async (dir: string) => {
+    const store = useAppStore.getState();
+    if (store.splitMode !== 'off' && !store.splitSlots.includes(null)) {
+      store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
+      return;
+    }
     const content = document.querySelector('.terminal-content');
     let estRows = 0, estCols = 0;
     if (content) {
@@ -291,6 +296,8 @@ export const FileTree: FC = () => {
       tabColor: null,
       groupId: 'default',
     });
+    const st = useAppStore.getState();
+    if (st.splitMode !== 'off') st.placeSessionInSplitSlot(terminalId);
     setSessionDirectory(terminalId, dir);
     const sendCdWithRetry = (retries = 5) => {
       writeToTerminal(terminalId, `cd "${dir}"\r`).catch(() => {

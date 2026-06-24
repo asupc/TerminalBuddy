@@ -18,15 +18,16 @@ export const isLightBackground = (hex: string): boolean => {
 };
 
 const LIGHT_SAFE_FOREGROUND = '38;2;31;35;40';
-// 白板模式下的中性块背景（如输入框/消息块）。只保留较轻的蓝色底，
-// 避免大块背景在白板里显得过深，同时保证可辨识。
-const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;222;236;255';
+// 白板模式下的中性块背景（输入框/消息块/选中高亮）。原 #DEECFF(222,236,255) 过浅，
+// 导致 claude code 等「选中项」的深色背景被映射后几乎与白底(#FFFFFF)融为一体、
+// 看不出选中了哪一条；改深一档为中浅蓝 #A8CBFF(168,203,255)，在白底上足够突出，
+// 又仍是浅色、不致成为刺眼的深块。
+const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;168;203;255';
 const LIGHT_SAFE_ADD_BACKGROUND = '48;2;241;255;245';
 const LIGHT_SAFE_DELETE_BACKGROUND = '48;2;255;244;245';
 
 const rgbBrightness = (r: number, g: number, b: number) => (r * 299 + g * 587 + b * 114) / 1000;
 const isNearWhiteRgb = (r: number, g: number, b: number) => r >= 235 && g >= 235 && b >= 235;
-const isDarkRgb = (r: number, g: number, b: number) => rgbBrightness(r, g, b) <= 96;
 const isGrayRgb = (r: number, g: number, b: number) => Math.max(r, g, b) - Math.min(r, g, b) <= 16;
 const isRedBgRgb = (r: number, g: number, b: number) => r > g * 1.25 && r > b * 1.25;
 const isGreenBgRgb = (r: number, g: number, b: number) => g > r * 1.15 && g > b * 1.15;
@@ -34,7 +35,9 @@ const isGreenBgRgb = (r: number, g: number, b: number) => g > r * 1.15 && g > b 
 const mapLightBackgroundColor = (r: number, g: number, b: number): string | null => {
   if (isGreenBgRgb(r, g, b)) return LIGHT_SAFE_ADD_BACKGROUND;
   if (isRedBgRgb(r, g, b)) return LIGHT_SAFE_DELETE_BACKGROUND;
-  if (isDarkRgb(r, g, b) || isGrayRgb(r, g, b)) return LIGHT_SAFE_NEUTRAL_BACKGROUND;
+  // 亮度 < 128（与 isLightBackground 同一套阈值，视为偏暗）或灰色 → 中性浅蓝，
+  // 覆盖深蓝/深紫/深青等中深色背景，避免白板模式下漏出任何深色块。
+  if (rgbBrightness(r, g, b) < 128 || isGrayRgb(r, g, b)) return LIGHT_SAFE_NEUTRAL_BACKGROUND;
   return null;
 };
 
@@ -81,65 +84,81 @@ export const normalizeAnsiForLightBackground = (data: string, lightBackground: b
         continue;
       }
 
-      // 256-color foreground: 15/231 常见为白色或近白色
-      if (n === 38 && parts[i + 1] === '5' && (parts[i + 2] === '15' || parts[i + 2] === '231')) {
-        out.push(LIGHT_SAFE_FOREGROUND);
-        i += 2;
-        changed = true;
-        continue;
-      }
+      // 38/48 后面可能跟 truecolor(2;r;g;b) 或 256 色(5;idx) 子序列。无论是否命中
+      // 改写，都必须把整段参数消费掉——否则颜色分量（如 102/101/100）会被当成
+      // 独立的 16 色 SGR 码二次处理，破坏整串：白板下 claude code 等输出的彩色
+      // 文字、/ui 选中高亮会因此错乱看不清。命中→替换；不命中→原样保留整段。
+      if (n === 38 || n === 48) {
+        const isBg = n === 48;
 
-      // 256-color background: map common dark/gray/red/green backgrounds
-      if (n === 48 && parts[i + 1] === '5') {
-        const idx = Number(parts[i + 2]);
-        // 232-246 是 xterm 256 色里的黑到中灰阶，很多 TUI 会用它画输入框/消息块。
-        if (idx === 0 || idx === 8 || (idx >= 232 && idx <= 246)) {
-          out.push(LIGHT_SAFE_NEUTRAL_BACKGROUND);
-          i += 2;
-          changed = true;
-          continue;
-        }
-        if (idx === 1 || idx === 9 || idx === 52 || idx === 88 || idx === 124 || idx === 160 || idx === 196) {
-          out.push(LIGHT_SAFE_DELETE_BACKGROUND);
-          i += 2;
-          changed = true;
-          continue;
-        }
-        if (idx === 2 || idx === 10 || idx === 22 || idx === 28 || idx === 34 || idx === 40 || idx === 46) {
-          out.push(LIGHT_SAFE_ADD_BACKGROUND);
-          i += 2;
-          changed = true;
-          continue;
-        }
-      }
-
-      // Truecolor foreground: 38;2;r;g;b，近白色改深灰
-      if (n === 38 && parts[i + 1] === '2') {
-        const r = Number(parts[i + 2]);
-        const g = Number(parts[i + 3]);
-        const b = Number(parts[i + 4]);
-        if ([r, g, b].every((v) => Number.isFinite(v)) && isNearWhiteRgb(r, g, b)) {
-          out.push(LIGHT_SAFE_FOREGROUND);
-          i += 4;
-          changed = true;
-          continue;
-        }
-      }
-
-      // Truecolor background: 48;2;r;g;b，深/灰/红/绿背景改成浅色主题背景
-      if (n === 48 && parts[i + 1] === '2') {
-        const r = Number(parts[i + 2]);
-        const g = Number(parts[i + 3]);
-        const b = Number(parts[i + 4]);
-        if ([r, g, b].every((v) => Number.isFinite(v))) {
-          const mapped = mapLightBackgroundColor(r, g, b);
-          if (mapped) {
-            out.push(mapped);
-            i += 4;
-            changed = true;
-            continue;
+        // truecolor: 38/48;2;r;g;b
+        if (parts[i + 1] === '2') {
+          const r = Number(parts[i + 2]);
+          const g = Number(parts[i + 3]);
+          const b = Number(parts[i + 4]);
+          if ([r, g, b].every((v) => Number.isFinite(v))) {
+            if (!isBg && isNearWhiteRgb(r, g, b)) {
+              out.push(LIGHT_SAFE_FOREGROUND);
+              changed = true;
+              i += 4;
+              continue;
+            }
+            if (isBg) {
+              const mapped = mapLightBackgroundColor(r, g, b);
+              if (mapped) {
+                out.push(mapped);
+                changed = true;
+                i += 4;
+                continue;
+              }
+            }
           }
+          // 不命中：原样保留 38/48;2;r;g;b（由 xterm minimumContrastRatio 兜底前景对比）
+          out.push(parts[i], parts[i + 1], parts[i + 2], parts[i + 3], parts[i + 4]);
+          i += 4;
+          continue;
         }
+
+        // 256 色: 38/48;5;idx
+        if (parts[i + 1] === '5') {
+          const idx = Number(parts[i + 2]);
+          if (Number.isFinite(idx)) {
+            // 前景：15/231 常见为白色或近白色
+            if (!isBg && (idx === 15 || idx === 231)) {
+              out.push(LIGHT_SAFE_FOREGROUND);
+              changed = true;
+              i += 2;
+              continue;
+            }
+            // 背景：232-246 是 xterm 256 色里的黑到中灰阶，很多 TUI 用它画输入框/消息块
+            if (isBg && (idx === 0 || idx === 8 || (idx >= 232 && idx <= 246))) {
+              out.push(LIGHT_SAFE_NEUTRAL_BACKGROUND);
+              changed = true;
+              i += 2;
+              continue;
+            }
+            if (isBg && (idx === 1 || idx === 9 || idx === 52 || idx === 88 || idx === 124 || idx === 160 || idx === 196)) {
+              out.push(LIGHT_SAFE_DELETE_BACKGROUND);
+              changed = true;
+              i += 2;
+              continue;
+            }
+            if (isBg && (idx === 2 || idx === 10 || idx === 22 || idx === 28 || idx === 34 || idx === 40 || idx === 46)) {
+              out.push(LIGHT_SAFE_ADD_BACKGROUND);
+              changed = true;
+              i += 2;
+              continue;
+            }
+          }
+          // 不命中：原样保留 38/48;5;idx
+          out.push(parts[i], parts[i + 1], parts[i + 2]);
+          i += 2;
+          continue;
+        }
+
+        // 38/48 后面不是 2/5（异常序列）：保留单码
+        out.push(parts[i]);
+        continue;
       }
 
       out.push(parts[i]);

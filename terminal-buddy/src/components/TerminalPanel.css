@@ -57,6 +57,8 @@
   visibility: hidden;
   pointer-events: none;
   z-index: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .terminal-tab-content.active {
@@ -151,4 +153,113 @@
   background: var(--bg-primary);
   color: var(--text-secondary);
   font-size: 14px;
+}
+
+/* ===== Split Screen ===== */
+/* Container becomes a CSS grid; the 2px gap renders as divider lines. */
+.terminal-content.split-grid {
+  display: grid;
+  gap: 2px;
+  background: var(--border);
+}
+.terminal-content.split-2x1 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+.terminal-content.split-2x2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* A split cell is always visible regardless of .active (which only marks focus).
+   Overrides .terminal-tab-content's absolute/hidden positioning. */
+.terminal-content.split-grid .split-cell {
+  position: relative;
+  visibility: visible;
+  pointer-events: auto;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+.terminal-content.split-grid .split-cell.active {
+  outline: 2px solid var(--accent, #0078d4);
+  outline-offset: -2px;
+  z-index: 1;
+}
+.terminal-content.split-grid .split-cell.drag-over {
+  outline: 2px dashed var(--accent, #0078d4);
+  outline-offset: -2px;
+}
+
+/* Non-slot background sessions in split mode: keep mounted, hide completely. */
+.terminal-content.split-grid .split-hidden {
+  display: none !important;
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0 6px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+  font-size: 12px;
+}
+.pane-header:active {
+  cursor: grabbing;
+}
+.pane-name {
+  flex: 1;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pane-working-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #555;
+  flex-shrink: 0;
+}
+.pane-working-dot.on {
+  background: #f5a623;
+}
+.pane-close {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.pane-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+/* xterm measures .pane-body; min-height:0 lets it shrink inside the flex column. */
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.split-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  background: var(--bg-primary);
+  border: 1px dashed var(--border);
 }

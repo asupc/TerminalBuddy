@@ -8,6 +8,7 @@ import { FileTree } from './components/FileTree';
 import { TabSidebar } from './components/TabSidebar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
+import { Toast } from './components/Toast';
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight } from './stores/appStore';
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings } from './services/tauri';
@@ -40,6 +41,7 @@ function App() {
   const toggleFileTree = useAppStore(s => s.toggleFileTree);
   const openSettingsTab = useAppStore(s => s.openSettingsTab);
   const profiles = useAppStore(s => s.profiles);
+  const splitMode = useAppStore(s => s.splitMode);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [defaultGroupForNewProfile, setDefaultGroupForNewProfile] = useState<string | undefined>();
@@ -265,6 +267,12 @@ function App() {
         await updateProfileLastUsed(profile.id);
         return;
       }
+      // Split mode: block new connections when the grid is full (no blank slot).
+      const store = useAppStore.getState();
+      if (store.splitMode !== 'off' && !store.splitSlots.includes(null)) {
+        store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
+        return;
+      }
       const { rows, cols } = estimateTerminalSize();
       const terminalId = await startTerminal(profile.id, extraParams, rows, cols);
       await updateProfileLastUsed(profile.id);
@@ -281,6 +289,9 @@ function App() {
         owner: 'pc',
         extraParams,
       });
+      // Split mode: place the new session into the first blank slot (and focus it).
+      const st = useAppStore.getState();
+      if (st.splitMode !== 'off') st.placeSessionInSplitSlot(terminalId);
       if (profile.startupPath) {
         setSessionDirectory(terminalId, profile.startupPath);
         setCurrentDirectory(profile.startupPath);
@@ -339,6 +350,11 @@ function App() {
 
   const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'cmd') => {
     try {
+      const store = useAppStore.getState();
+      if (store.splitMode !== 'off' && !store.splitSlots.includes(null)) {
+        store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
+        return;
+      }
       const name = terminalType === 'powershell' ? 'PowerShell' : 'CMD';
       const { rows, cols } = estimateTerminalSize();
       const terminalId = await startBlankTerminal(terminalType, rows, cols);
@@ -352,6 +368,8 @@ function App() {
         groupId: 'default',
         owner: 'pc',
       });
+      const st = useAppStore.getState();
+      if (st.splitMode !== 'off') st.placeSessionInSplitSlot(terminalId);
     } catch (err) {
       console.error('Failed to start blank terminal:', err);
       alert('启动终端失败: ' + String(err));
@@ -395,7 +413,7 @@ function App() {
           onManageExtraParams={() => setShowExtraParamsDialog(true)}
         />
         <FileTree />
-        {enableTabNav && (
+        {enableTabNav && splitMode === 'off' && (
           <TabSidebar
             profiles={profiles}
             onStartTerminal={handleStartTerminal}
@@ -429,6 +447,7 @@ function App() {
           </div>
         </div>
       )}
+      <Toast />
     </div>
   );
 }
