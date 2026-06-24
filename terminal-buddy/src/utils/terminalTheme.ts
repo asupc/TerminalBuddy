@@ -18,11 +18,13 @@ export const isLightBackground = (hex: string): boolean => {
 };
 
 const LIGHT_SAFE_FOREGROUND = '38;2;31;35;40';
-// 白板模式下的中性块背景（输入框/消息块/选中高亮）。原 #DEECFF(222,236,255) 过浅，
-// 导致 claude code 等「选中项」的深色背景被映射后几乎与白底(#FFFFFF)融为一体、
-// 看不出选中了哪一条；改深一档为中浅蓝 #A8CBFF(168,203,255)，在白底上足够突出，
-// 又仍是浅色、不致成为刺眼的深块。
-const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;168;203;255';
+// 白板模式下的中性块背景（输入框/消息块/选中高亮）。映射后的文字前景是接近黑的
+// #1F2328(31,35,40)，背景若用蓝色（曾经的中浅蓝 #A8CBFF）会与黑字色相冲突、看着别扭；
+// 改用中性浅灰 #D3D8DF(211,216,223)——与深色文字同属无彩色系、天然协调，也正是浅色 UI
+// (GitHub Light / VS Code Light) 输入框与选中项的标准做法。亮度上不能太浅：早先
+// #DEECFF(222,236,255,亮度≈232) 几乎与白底(#FFFFFF)融为一体、看不出选中哪一条；
+// #D3D8DF 亮度≈215，与白底差约 40，选中项清晰可辨，又仍是轻盈的浅色、不致成为沉色块。
+const LIGHT_SAFE_NEUTRAL_BACKGROUND = '48;2;211;216;223';
 const LIGHT_SAFE_ADD_BACKGROUND = '48;2;241;255;245';
 const LIGHT_SAFE_DELETE_BACKGROUND = '48;2;255;244;245';
 
@@ -35,7 +37,7 @@ const isGreenBgRgb = (r: number, g: number, b: number) => g > r * 1.15 && g > b 
 const mapLightBackgroundColor = (r: number, g: number, b: number): string | null => {
   if (isGreenBgRgb(r, g, b)) return LIGHT_SAFE_ADD_BACKGROUND;
   if (isRedBgRgb(r, g, b)) return LIGHT_SAFE_DELETE_BACKGROUND;
-  // 亮度 < 128（与 isLightBackground 同一套阈值，视为偏暗）或灰色 → 中性浅蓝，
+  // 亮度 < 128（与 isLightBackground 同一套阈值，视为偏暗）或灰色 → 中性浅灰，
   // 覆盖深蓝/深紫/深青等中深色背景，避免白板模式下漏出任何深色块。
   if (rgbBrightness(r, g, b) < 128 || isGrayRgb(r, g, b)) return LIGHT_SAFE_NEUTRAL_BACKGROUND;
   return null;
