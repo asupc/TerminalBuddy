@@ -163,7 +163,6 @@ impl TerminalService {
         // out of sync, causing the visual cursor to appear in the wrong position.
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
-
         if let Some(ref path) = startup_path {
             cmd.cwd(path);
         }

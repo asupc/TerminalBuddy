@@ -26,6 +26,269 @@ interface TerminalInstanceProps {
   readOnly?: boolean;
 }
 
+type XtermCompositionHelper = {
+  updateCompositionElements?: (dontRecurse?: boolean) => void;
+  _compositionView?: HTMLElement;
+  _textarea?: HTMLTextAreaElement;
+};
+
+type XtermCore = {
+  _compositionHelper?: XtermCompositionHelper;
+  _renderService?: {
+    dimensions?: {
+      css?: {
+        cell?: {
+          width: number;
+          height: number;
+        };
+      };
+    };
+  };
+  _syncTextArea?: () => void;
+};
+
+type ImeAnchor = {
+  left: string;
+  top: string;
+  width: string;
+  height: string;
+  lineHeight: string;
+  fontFamily: string;
+  fontSize: string;
+};
+
+type ImeAnchorCell = {
+  x: number;
+  y: number;
+  widthCells: number;
+};
+
+function getLastNonBlankCell(line: ReturnType<Terminal['buffer']['active']['getLine']>, cols: number): number {
+  if (!line) return 0;
+
+  for (let x = cols - 1; x >= 0; x--) {
+    const cell = line.getCell(x);
+    const chars = cell?.getChars();
+    if (cell && chars && chars.trim().length > 0) {
+      return x + Math.max(cell.getWidth(), 1);
+    }
+  }
+
+  return 0;
+}
+
+function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null {
+  const buffer = terminal.buffer.active;
+
+  for (let y = terminal.rows - 1; y >= 0; y--) {
+    const line = buffer.getLine(buffer.viewportY + y);
+    if (!line) continue;
+
+    const text = line.translateToString(false);
+    const promptMatch = text.match(/^\s*(?:[│┃║]\s*)?[>›❯]\s?/u);
+    if (!promptMatch) continue;
+
+    const promptEnd = promptMatch[0].length;
+    const contentEnd = getLastNonBlankCell(line, terminal.cols);
+    return {
+      x: Math.min(Math.max(promptEnd, contentEnd), terminal.cols - 1),
+      y,
+      widthCells: 1,
+    };
+  }
+
+  return null;
+}
+
+function installStableImeAnchor(terminal: Terminal): (() => void) | undefined {
+  const core = (terminal as any)._core as XtermCore | undefined;
+  const compositionHelper = core?._compositionHelper as XtermCompositionHelper | undefined;
+  const textarea = terminal.textarea ?? compositionHelper?._textarea;
+  const compositionView = compositionHelper?._compositionView;
+  const originalUpdate = compositionHelper?.updateCompositionElements?.bind(compositionHelper);
+  const originalSyncTextArea = core?._syncTextArea?.bind(core);
+
+  if (!compositionHelper || !textarea || !compositionView || !originalUpdate) {
+    return undefined;
+  }
+
+  let anchor: ImeAnchor | null = null;
+  let recurseTimer: number | null = null;
+  let syncRaf: number | null = null;
+
+  const pxNumber = (value: string): number => {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const syncTextareaToInputAnchor = (): boolean => {
+    const cell = core?._renderService?.dimensions?.css?.cell;
+    const promptAnchor = findBottomPromptAnchor(terminal);
+    if (!cell?.width || !cell?.height || !promptAnchor) {
+      return false;
+    }
+
+    const height = `${cell.height}px`;
+    textarea.style.left = `${Math.round(promptAnchor.x * cell.width)}px`;
+    textarea.style.top = `${Math.round(promptAnchor.y * cell.height)}px`;
+    textarea.style.width = `${Math.max(promptAnchor.widthCells * cell.width, 1)}px`;
+    textarea.style.height = height;
+    textarea.style.lineHeight = height;
+    textarea.style.zIndex = '-5';
+    return true;
+  };
+
+  if (core && originalSyncTextArea) {
+    core._syncTextArea = () => {
+      originalSyncTextArea();
+      syncTextareaToInputAnchor();
+    };
+  }
+
+  const syncTextareaAnchor = () => {
+    if (!syncTextareaToInputAnchor()) {
+      originalSyncTextArea?.();
+    }
+  };
+  (terminal as any)._tbSyncImeAnchor = syncTextareaAnchor;
+
+  const syncBeforeImeReadsTextarea = () => {
+    syncTextareaAnchor();
+  };
+
+  const startFocusedSync = () => {
+    if (syncRaf !== null) return;
+    const tick = () => {
+      syncTextareaAnchor();
+      syncRaf = window.requestAnimationFrame(tick);
+    };
+    syncRaf = window.requestAnimationFrame(tick);
+  };
+
+  const stopFocusedSync = () => {
+    if (syncRaf === null) return;
+    window.cancelAnimationFrame(syncRaf);
+    syncRaf = null;
+  };
+
+  const readCursorAnchor = (): ImeAnchor => {
+    const cell = core?._renderService?.dimensions?.css?.cell;
+    const fallbackHeight = cell?.height ? `${cell.height}px` : '1px';
+    if (anchor) {
+      syncTextareaToInputAnchor();
+    } else {
+      syncTextareaAnchor();
+    }
+
+    if (cell?.width && cell?.height) {
+      const buffer = terminal.buffer.active;
+      const cursorX = Math.min(buffer.cursorX, terminal.cols - 1);
+      return {
+        left: textarea.style.left || `${Math.round(cursorX * cell.width)}px`,
+        top: textarea.style.top || `${Math.round(buffer.cursorY * cell.height)}px`,
+        width: textarea.style.width || `${cell.width}px`,
+        height: textarea.style.height || fallbackHeight,
+        lineHeight: textarea.style.lineHeight || fallbackHeight,
+        fontFamily: String(terminal.options.fontFamily ?? ''),
+        fontSize: `${terminal.options.fontSize ?? 14}px`,
+      };
+    }
+
+    return {
+      left: textarea.style.left || '0px',
+      top: textarea.style.top || '0px',
+      width: textarea.style.width || '1px',
+      height: textarea.style.height || fallbackHeight,
+      lineHeight: textarea.style.lineHeight || textarea.style.height || fallbackHeight,
+      fontFamily: String(terminal.options.fontFamily ?? ''),
+      fontSize: `${terminal.options.fontSize ?? 14}px`,
+    };
+  };
+
+  const applyAnchor = () => {
+    if (!anchor) return;
+
+    compositionView.style.left = anchor.left;
+    compositionView.style.top = anchor.top;
+    compositionView.style.height = anchor.height;
+    compositionView.style.lineHeight = anchor.lineHeight;
+    compositionView.style.fontFamily = anchor.fontFamily;
+    compositionView.style.fontSize = anchor.fontSize;
+
+    const bounds = compositionView.getBoundingClientRect();
+    const width = Math.max(bounds.width, pxNumber(anchor.width), 1);
+    const height = Math.max(bounds.height, pxNumber(anchor.height), 1);
+    textarea.style.left = anchor.left;
+    textarea.style.top = anchor.top;
+    textarea.style.width = `${width}px`;
+    textarea.style.height = `${height}px`;
+    textarea.style.lineHeight = `${height}px`;
+  };
+
+  const captureAnchor = () => {
+    anchor = readCursorAnchor();
+    applyAnchor();
+  };
+
+  const releaseAnchor = () => {
+    anchor = null;
+    if (recurseTimer !== null) {
+      window.clearTimeout(recurseTimer);
+      recurseTimer = null;
+    }
+  };
+
+  compositionHelper.updateCompositionElements = (dontRecurse?: boolean) => {
+    if (!anchor) {
+      originalUpdate(dontRecurse);
+      return;
+    }
+
+    syncTextareaToInputAnchor();
+    applyAnchor();
+    if (!dontRecurse) {
+      if (recurseTimer !== null) window.clearTimeout(recurseTimer);
+      recurseTimer = window.setTimeout(() => {
+        recurseTimer = null;
+        compositionHelper.updateCompositionElements?.(true);
+      }, 0);
+    }
+  };
+
+  textarea.addEventListener('keydown', syncBeforeImeReadsTextarea, true);
+  textarea.addEventListener('beforeinput', syncBeforeImeReadsTextarea, true);
+  textarea.addEventListener('focus', startFocusedSync);
+  textarea.addEventListener('blur', stopFocusedSync);
+  textarea.addEventListener('compositionstart', captureAnchor, true);
+  textarea.addEventListener('compositionend', releaseAnchor);
+  const cursorMoveDisposable = terminal.onCursorMove(syncTextareaAnchor);
+  const writeParsedDisposable = terminal.onWriteParsed(syncTextareaAnchor);
+  const renderDisposable = terminal.onRender(syncTextareaAnchor);
+  syncTextareaAnchor();
+  if (textarea.ownerDocument.activeElement === textarea) {
+    startFocusedSync();
+  }
+
+  return () => {
+    releaseAnchor();
+    stopFocusedSync();
+    cursorMoveDisposable.dispose();
+    writeParsedDisposable.dispose();
+    renderDisposable.dispose();
+    textarea.removeEventListener('keydown', syncBeforeImeReadsTextarea, true);
+    textarea.removeEventListener('beforeinput', syncBeforeImeReadsTextarea, true);
+    textarea.removeEventListener('focus', startFocusedSync);
+    textarea.removeEventListener('blur', stopFocusedSync);
+    textarea.removeEventListener('compositionstart', captureAnchor, true);
+    textarea.removeEventListener('compositionend', releaseAnchor);
+    if (core && originalSyncTextArea) {
+      core._syncTextArea = originalSyncTextArea;
+    }
+    delete (terminal as any)._tbSyncImeAnchor;
+    compositionHelper.updateCompositionElements = originalUpdate;
+  };
+}
+
 export const TerminalInstance: FC<TerminalInstanceProps> = ({
   terminalId,
   onOutput,
@@ -275,49 +538,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       xtermRef.current = terminal;
 
-      // ===== [IME position lock] Freeze candidate window during composition =====
-      // xterm's CompositionHelper.updateCompositionElements() repositions the hidden
-      // textarea (the OS IME candidate-window anchor) to buffer.x/y on every
-      // compositionupdate plus a recursive setTimeout(0). When a TUI (claude code)
-      // redraws its spinner/status during composition, the buffer cursor roams and
-      // drags the candidate window all over the screen.
-      //
-      // We wrap updateCompositionElements so the original styling pass still runs (the
-      // composition preview keeps rendering), then synchronously overwrite left/top back
-      // to the pixel position captured at compositionstart. The override lands in the same
-      // frame, so the browser only ever paints the locked position — no jitter. The spot
-      // may not sit exactly on claude code's input box (that is not knowable from the
-      // buffer), but it is stable: the candidate window stops roaming.
-      const __core = (terminal as any)._core;
-      const __ch = __core?._compositionHelper;
-      if (__ch && typeof __ch.updateCompositionElements === 'function') {
-        let __lockLeft = '';
-        let __lockTop = '';
-        const __ta = (terminal as any).textarea as HTMLTextAreaElement | undefined;
-        const __capture = () => {
-          const b = terminal.buffer.active;
-          const cell = __core?._renderService?.dimensions?.css?.cell;
-          if (cell?.width && cell?.height) {
-            const x = Math.min(b.cursorX, terminal.cols - 1);
-            __lockLeft = `${Math.round(x * cell.width)}px`;
-            __lockTop = `${Math.round(b.cursorY * cell.height)}px`;
-          }
-        };
-        __ta?.addEventListener('compositionstart', __capture);
-        __ta?.addEventListener('compositionend', () => { __lockLeft = ''; __lockTop = ''; });
-        const __origUpdate = __ch.updateCompositionElements.bind(__ch);
-        __ch.updateCompositionElements = function (dontRecurse?: boolean) {
-          __origUpdate(true);
-          if (__lockLeft && __lockTop) {
-            const cv = (__ch as any)._compositionView as HTMLElement | undefined;
-            const ta = (__ch as any)._textarea as HTMLTextAreaElement | undefined;
-            if (cv) { cv.style.left = __lockLeft; cv.style.top = __lockTop; }
-            if (ta) { ta.style.left = __lockLeft; ta.style.top = __lockTop; }
-          }
-          if (!dontRecurse) setTimeout(() => __ch.updateCompositionElements(true), 0);
-        };
-      }
-      // ===== [END IME position lock] =====
+      // Keep the OS IME candidate anchor stable while composing. Some TUIs
+      // repaint status areas while keeping their visual input prompt elsewhere.
+      const disposeStableImeAnchor = installStableImeAnchor(terminal);
+      if (disposeStableImeAnchor) cleanupFns.push(disposeStableImeAnchor);
 
       // Immediately sync PTY dimensions so TUI programs (claude code, vim, etc.)
       // get the correct size from the start instead of the estimated values
@@ -364,6 +588,25 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Force an immediate resize (bypasses debounce) for tab switches and other
       // visibility changes where we need the correct dimensions right away.
+      let imeAnchorSyncRaf: number | null = null;
+      const syncImeAnchorAfterLayout = () => {
+        const syncImeAnchor = (terminal as any)._tbSyncImeAnchor;
+        if (typeof syncImeAnchor === 'function') {
+          syncImeAnchor();
+        }
+        if (imeAnchorSyncRaf !== null) {
+          cancelAnimationFrame(imeAnchorSyncRaf);
+        }
+        imeAnchorSyncRaf = requestAnimationFrame(() => {
+          imeAnchorSyncRaf = null;
+          if (disposed) return;
+          const nextSyncImeAnchor = (terminal as any)._tbSyncImeAnchor;
+          if (typeof nextSyncImeAnchor === 'function') {
+            nextSyncImeAnchor();
+          }
+        });
+      };
+
       const forceFit = (force?: boolean) => {
         if (disposed) return;
         if (resizeTimerRef.current) {
@@ -371,6 +614,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           resizeTimerRef.current = null;
         }
         doFit(force);
+        syncImeAnchorAfterLayout();
       };
 
       // ResizeObserver: respond to container size changes with debouncing.
@@ -424,6 +668,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         resizeObserver.disconnect();
         if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
         if (pendingResizeTimer) clearTimeout(pendingResizeTimer);
+        if (imeAnchorSyncRaf !== null) cancelAnimationFrame(imeAnchorSyncRaf);
       });
 
       // Expose forceFit for the isActive effect below

@@ -41,14 +41,17 @@ export const TerminalPanel: FC = () => {
     return { gridColumn: (i % 2) + 1, gridRow: Math.floor(i / 2) + 1 };
   }, []);
 
-  // Notify visible split panes to force-resize on layout changes (enter/exit/grow/fill).
+  // Notify visible terminal panes to force-resize on layout changes (enter/exit/grow/fill).
   // Incidental window resizes are still handled by each pane's ResizeObserver.
   useEffect(() => {
-    if (splitMode === 'off') return;
-    const ids = splitSlots.filter((s): s is string => s !== null);
+    const ids = splitMode === 'off'
+      ? sessions
+          .filter(s => s.id === activeSessionId && s.sessionType !== 'editor')
+          .map(s => s.id)
+      : splitSlots.filter((s): s is string => s !== null);
     if (ids.length === 0) return;
     window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
-  }, [splitMode, splitSlots]);
+  }, [splitMode, splitSlots, sessions, activeSessionId]);
 
   useEffect(() => {
     const onSettings = () => setSettings(getAppSettings());
