@@ -23,11 +23,13 @@ interface SavedTab {
   owner?: 'pc' | 'web';
   extraParams?: string;
   directory?: string;
+  claudeSessionId?: string;
 }
 
 export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: string | null) {
   try {
     const dirs = useAppStore.getState().sessionDirectories;
+    const claudeIds = useAppStore.getState().claudeSessionIds;
     const tabs: SavedTab[] = sessions.map(s => ({
       profileId: s.profileId,
       profileName: s.profileName,
@@ -40,6 +42,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
       owner: s.owner,
       extraParams: s.extraParams,
       directory: dirs[s.id],
+      claudeSessionId: claudeIds[s.id],
     }));
     const activeIndex = activeSessionId
       ? sessions.findIndex(s => s.id === activeSessionId)
@@ -213,6 +216,10 @@ interface AppState {
   restoreDraftTabs: () => Promise<void>;
   sessionDirectories: Record<string, string>;
   setSessionDirectory: (sessionId: string, path: string) => void;
+
+  // Claude Code session IDs
+  claudeSessionIds: Record<string, string>;
+  setClaudeSessionId: (sessionId: string, claudeSessionId: string) => void;
 
   // Working state (yellow dot when command is running)
   workingSessions: Record<string, boolean>;
@@ -604,6 +611,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessionDirectories: {},
   setSessionDirectory: (sessionId, path) => set((state) => ({
     sessionDirectories: { ...state.sessionDirectories, [sessionId]: path },
+  })),
+  claudeSessionIds: {},
+  setClaudeSessionId: (sessionId, claudeSessionId) => set((state) => ({
+    claudeSessionIds: { ...state.claudeSessionIds, [sessionId]: claudeSessionId },
   })),
   workingSessions: {},
   setSessionWorking: (sessionId, working) => set((state) => ({

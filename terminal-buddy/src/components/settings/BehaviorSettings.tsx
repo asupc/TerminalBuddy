@@ -37,6 +37,17 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         <label className="settings-toggle">
           <input
             type="checkbox"
+            checked={settings.autoResumeClaudeSession}
+            onChange={(e) => updateSetting('autoResumeClaudeSession', e.target.checked)}
+          />
+          <span>自动恢复 Claude Code 会话</span>
+        </label>
+        <p className="settings-desc">启动时自动恢复上次的 Claude Code 会话（通过 claude --resume 继续对话）</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
             checked={settings.configPanelAutoExpand}
             onChange={(e) => updateSetting('configPanelAutoExpand', e.target.checked)}
           />

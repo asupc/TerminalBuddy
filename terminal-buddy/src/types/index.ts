@@ -114,6 +114,7 @@ export interface TerminalSession {
   sshTerminalId?: string;
   owner?: 'pc' | 'web';
   extraParams?: string;
+  claudeSessionId?: string;
 }
 
 export interface Workspace {

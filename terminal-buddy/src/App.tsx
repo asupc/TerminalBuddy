@@ -11,7 +11,7 @@ import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { Toast } from './components/Toast';
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, getClaudeSessionsForTerminals } from './services/tauri';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
 
@@ -105,6 +105,52 @@ function App() {
     })();
   }, []);
 
+  // 退出前保存 Claude Code 终端的 session ID（仅在设置开启时）
+  const saveClaudeSessionsBeforeExit = useCallback(async () => {
+    const settings = getAppSettings();
+    if (!settings.autoResumeClaudeSession) return;
+
+    const { sessions, profiles } = useAppStore.getState();
+    if (sessions.length === 0) return;
+
+    // 先筛选出 Claude 终端
+    const claudeTerminalIds: string[] = [];
+    for (const session of sessions) {
+      if (session.sessionType === 'editor') continue;
+      const profile = profiles.find(p => p.id === session.profileId);
+      const startupCommands = profile?.startupCommands || [];
+      const extraParams = session.extraParams || '';
+      const isClaudeTerminal = startupCommands.some(cmd => cmd.includes('claude')) || extraParams.includes('claude');
+      if (isClaudeTerminal) claudeTerminalIds.push(session.id);
+    }
+
+    if (claudeTerminalIds.length === 0) return;
+
+    // 一次性批量获取所有 Claude 终端的 session ID（单次进程快照）
+    let claudeIds: Record<string, string> = {};
+    try {
+      claudeIds = await getClaudeSessionsForTerminals(claudeTerminalIds);
+    } catch {}
+
+    if (Object.keys(claudeIds).length > 0) {
+      useAppStore.setState(state => ({
+        claudeSessionIds: { ...state.claudeSessionIds, ...claudeIds },
+      }));
+      // 保存标签（包含更新后的 claudeSessionIds）
+      const { sessions: updatedSessions, activeSessionId } = useAppStore.getState();
+      saveTabsToStorage(updatedSessions, activeSessionId);
+    }
+  }, []);
+
+  const handleCloseConfirm = useCallback(async () => {
+    closeConfirmedRef.current = true;
+    setCloseConfirm(null);
+
+    // 先保存 Claude 会话，然后再退出
+    await saveClaudeSessionsBeforeExit();
+    windowExitApp();
+  }, [saveClaudeSessionsBeforeExit]);
+
   useEffect(() => {
     const handler = () => setEnableTabNav(getAppSettings().enableTabNavigation);
     window.addEventListener('tab-navigation-changed', handler);
@@ -145,7 +191,8 @@ function App() {
       if (sessions.length > 0) {
         setCloseConfirm({ sessionCount: sessions.length });
       } else {
-        windowExitApp();
+        // 无终端时也需要保存 Claude 会话
+        saveClaudeSessionsBeforeExit().then(() => windowExitApp());
       }
     });
 
@@ -167,17 +214,13 @@ function App() {
       if (sessions.length > 0) {
         setCloseConfirm({ sessionCount: sessions.length });
       } else {
+        // 无终端时也需要保存 Claude 会话
+        await saveClaudeSessionsBeforeExit();
         windowExitApp();
       }
     });
     return () => { unlisten.then(fn => fn()); };
-  }, []);
-
-  const handleCloseConfirm = useCallback(() => {
-    closeConfirmedRef.current = true;
-    setCloseConfirm(null);
-    windowExitApp();
-  }, []);
+  }, [saveClaudeSessionsBeforeExit]);
 
   const handleCloseCancel = useCallback(() => {
     setCloseConfirm(null);
@@ -218,8 +261,22 @@ function App() {
             }
           } else {
             const { rows: estRows, cols: estCols } = estimateTerminalSize();
+            // 清理 extraParams 中已有的 --resume 参数（防止历史数据叠加）
+            const baseParams = (tab.extraParams || '')
+              .replace(/--resume\s+[0-9a-fA-F-]+/g, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+            // 构建启动参数：临时追加 --resume（不存入 session，避免下次叠加）
+            let launchParams = baseParams;
+            if (tab.claudeSessionId && tab.profileId) {
+              const settings = getAppSettings();
+              if (settings.autoResumeClaudeSession) {
+                const resumeParam = `--resume ${tab.claudeSessionId}`;
+                launchParams = launchParams ? `${launchParams} ${resumeParam}` : resumeParam;
+              }
+            }
             const terminalId = tab.profileId
-              ? await startTerminal(tab.profileId, tab.extraParams, estRows, estCols)
+              ? await startTerminal(tab.profileId, launchParams, estRows, estCols)
               : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols);
             store.addSession({
               id: terminalId,
@@ -230,8 +287,12 @@ function App() {
               tabColor: tab.tabColor,
               groupId: tab.groupId || 'default',
               owner: 'pc',
-              extraParams: tab.extraParams,
+              extraParams: baseParams,
             });
+            // 保存 claudeSessionId 到 store
+            if (tab.claudeSessionId) {
+              store.setClaudeSessionId(terminalId, tab.claudeSessionId);
+            }
             // 恢复上次记录的目录：同步 sessionDirectories 并发送 cd 命令
             if (tab.directory) {
               store.setSessionDirectory(terminalId, tab.directory);

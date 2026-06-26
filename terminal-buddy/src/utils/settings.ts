@@ -27,6 +27,7 @@ export interface AppSettings {
   webApiShareSessions: boolean;
   launchAtLogin: boolean;
   terminalFollowAppTheme: boolean;
+  autoResumeClaudeSession: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -52,6 +53,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   webApiShareSessions: false,
   launchAtLogin: false,
   terminalFollowAppTheme: true,
+  autoResumeClaudeSession: true,
 };
 
 let _cachedSettings: AppSettings | null = null;

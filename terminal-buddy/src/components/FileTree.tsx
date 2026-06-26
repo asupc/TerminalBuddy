@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
-import { listDirectory, openPath, openInExplorer, startBlankTerminal, deletePath, renamePath, writeToTerminal, getFileSize, type FileNode } from '../services/tauri';
+import { listDirectory, openPath, openInExplorer, startBlankTerminal, deletePath, renamePath, getFileSize, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
 import { RemoteFileTree } from './RemoteFileTree';
@@ -286,7 +286,7 @@ export const FileTree: FC = () => {
       estCols = Math.max(2, Math.floor((content.clientWidth - 20) / 8.4));
       estRows = Math.max(1, Math.floor((content.clientHeight - 20) / 17));
     }
-    const terminalId = await startBlankTerminal('powershell', estRows, estCols);
+    const terminalId = await startBlankTerminal('powershell', estRows, estCols, dir);
     useAppStore.getState().addSession({
       id: terminalId,
       profileId: '',
@@ -299,14 +299,6 @@ export const FileTree: FC = () => {
     const st = useAppStore.getState();
     if (st.splitMode !== 'off') st.placeSessionInSplitSlot(terminalId);
     setSessionDirectory(terminalId, dir);
-    const sendCdWithRetry = (retries = 5) => {
-      writeToTerminal(terminalId, `cd "${dir}"\r`).catch(() => {
-        if (retries > 0) {
-          setTimeout(() => sendCdWithRetry(retries - 1), 200);
-        }
-      });
-    };
-    setTimeout(sendCdWithRetry, 100);
   }, [setSessionDirectory]);
 
   // Load directory when currentDirectory changes

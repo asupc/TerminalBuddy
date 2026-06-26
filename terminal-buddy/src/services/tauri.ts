@@ -48,8 +48,24 @@ export async function startMstsc(profileId: string): Promise<void> {
   return invoke('start_mstsc', { profileId });
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number): Promise<string> {
-  return invoke('start_blank_terminal', { terminalType, initialRows: initialRows || 0, initialCols: initialCols || 0 });
+export async function getClaudeSessionForCwd(cwd: string): Promise<string | null> {
+  return invoke('get_claude_session_for_cwd', { cwd });
+}
+
+export async function getClaudeSessionForTerminal(terminalId: string): Promise<string | null> {
+  return invoke('get_claude_session_for_terminal', { terminalId });
+}
+
+export async function getClaudeSessionsForTerminals(terminalIds: string[]): Promise<Record<string, string>> {
+  return invoke('get_claude_sessions_for_terminals', { terminalIds });
+}
+
+export async function getTerminalProcessId(terminalId: string): Promise<number | null> {
+  return invoke('get_terminal_process_id', { terminalId });
+}
+
+export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string): Promise<string> {
+  return invoke('start_blank_terminal', { terminalType, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null });
 }
 
 export async function writeToTerminal(id: string, data: string): Promise<void> {

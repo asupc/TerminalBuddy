@@ -2,12 +2,14 @@ use tauri::{command, AppHandle, State, Emitter, Manager};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::collections::HashSet;
 use std::io::{Read, Write};
 use uuid::Uuid;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize, Child, MasterPty};
 use std::thread;
 use std::fs;
 use std::path::PathBuf;
+use serde::Deserialize;
 use crate::models::TerminalOwner;
 use crate::services::ProfileService;
 use crate::services::PathService;
@@ -425,7 +427,7 @@ impl TerminalService {
         Ok(())
     }
 
-    pub fn create_blank_terminal(&self, terminal_type: &str, initial_rows: u16, initial_cols: u16, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
+    pub fn create_blank_terminal(&self, terminal_type: &str, initial_rows: u16, initial_cols: u16, startup_path: Option<&str>, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create-blank] start, id={}, type={}", terminal_id, terminal_type));
         crate::boot_log(format!("[create_blank_terminal] start type={}", terminal_type));
@@ -456,6 +458,9 @@ impl TerminalService {
         let mut cmd = CommandBuilder::new("cmd.exe");
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        if let Some(path) = startup_path {
+            cmd.cwd(path);
+        }
 
         let child = pty_pair.slave.spawn_command(cmd).map_err(|e| {
             let msg = format!("spawn_command FAILED: {}", e);
@@ -596,10 +601,11 @@ pub fn start_blank_terminal(
     terminal_type: String,
     initial_rows: u16,
     initial_cols: u16,
+    startup_path: Option<String>,
     app: AppHandle,
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.create_blank_terminal(&terminal_type, initial_rows, initial_cols, app, TerminalOwner::Pc)
+    terminal_service.create_blank_terminal(&terminal_type, initial_rows, initial_cols, startup_path.as_deref(), app, TerminalOwner::Pc)
 }
 
 // 跟踪已启动的 mstsc 进程 PID，key = profile_id
@@ -737,4 +743,226 @@ pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Claude Code 会话文件结构 (位于 ~/.claude/sessions/<pid>.json)
+#[derive(Deserialize)]
+struct ClaudeSessionFile {
+    #[serde(rename = "sessionId")]
+    session_id: String,
+    cwd: String,
+    #[serde(rename = "updatedAt")]
+    updated_at: u64,
+}
+
+/// 获取终端进程的 PID
+#[command]
+pub fn get_terminal_process_id(terminal_id: String, service: State<'_, TerminalService>) -> Result<Option<u32>, String> {
+    let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(instance) = instances.get(&terminal_id) {
+        Ok(instance.child.process_id())
+    } else {
+        Ok(None)
+    }
+}
+
+/// 一次性获取所有进程的父子关系，返回 (pid, parent_pid, name)
+/// 使用 Windows API CreateToolhelp32Snapshot（几十毫秒），远快于 PowerShell/WMIC
+fn get_all_processes() -> Vec<(u32, u32, String)> {
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::Foundation::CloseHandle;
+
+    let mut result = Vec::new();
+    unsafe {
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            Ok(h) => h,
+            Err(_) => return result,
+        };
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                let pid = entry.th32ProcessID;
+                let ppid = entry.th32ParentProcessID;
+                let name_end = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+                let name = String::from_utf16_lossy(&entry.szExeFile[..name_end]).to_lowercase();
+                result.push((pid, ppid, name));
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snapshot);
+    }
+    result
+}
+
+/// 在进程树中查找 Claude Code 进程（基于预加载的进程列表）
+/// 只匹配进程名包含 "claude" 的进程，排除 node（避免 IDE/codegraph 误报）
+fn find_claude_pids_in_tree(parent_pid: u32, all_processes: &[(u32, u32, String)], visited: &mut HashSet<u32>) -> Vec<u32> {
+    let mut result = Vec::new();
+    if visited.contains(&parent_pid) {
+        return result;
+    }
+    visited.insert(parent_pid);
+
+    for &(pid, ppid, ref name) in all_processes {
+        if ppid == parent_pid {
+            if name.contains("claude") {
+                // 检查这个进程是否有对应的 session 文件
+                let home = dirs::home_dir().unwrap_or_default();
+                let session_file = home.join(".claude").join("sessions").join(format!("{}.json", pid));
+                if session_file.exists() {
+                    result.push(pid);
+                }
+            }
+            // 递归查找子进程（即使当前进程不是 claude，子进程也可能是）
+            result.extend(find_claude_pids_in_tree(pid, all_processes, visited));
+        }
+    }
+
+    result
+}
+
+/// 通过终端进程树查找 Claude Code 会话 ID
+/// 不限制 status，返回 updatedAt 最大的会话（最近活跃的）
+#[command]
+pub fn get_claude_session_for_terminal(terminal_id: String, service: State<'_, TerminalService>) -> Result<Option<String>, String> {
+    // 获取终端进程的 PID
+    let terminal_pid = {
+        let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
+        instances.get(&terminal_id)
+            .and_then(|instance| instance.child.process_id())
+    };
+
+    let Some(pid) = terminal_pid else {
+        return Ok(None);
+    };
+
+    // 一次性获取所有进程
+    let all_processes = get_all_processes();
+
+    // 在进程树中查找 Claude Code 进程
+    let mut visited = HashSet::new();
+    let claude_pids = find_claude_pids_in_tree(pid, &all_processes, &mut visited);
+
+    // 读取找到的 Claude Code 进程的 session 文件
+    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    let sessions_dir = home.join(".claude").join("sessions");
+
+    // 返回 updatedAt 最大的会话（最近活跃的），不限制 status
+    let mut best: Option<(String, u64)> = None;
+
+    for claude_pid in claude_pids {
+        let session_file = sessions_dir.join(format!("{}.json", claude_pid));
+        if let Ok(content) = fs::read_to_string(&session_file) {
+            if let Ok(session) = serde_json::from_str::<ClaudeSessionFile>(&content) {
+                match &best {
+                    Some((_, ts)) if session.updated_at <= *ts => {}
+                    _ => best = Some((session.session_id.clone(), session.updated_at)),
+                }
+            }
+        }
+    }
+
+    Ok(best.map(|(id, _)| id))
+}
+
+/// 批量获取多个终端的 Claude Code 会话 ID
+/// 只调用一次 CreateToolhelp32Snapshot，对所有终端在内存中查找，避免 N 次进程快照
+#[command]
+pub fn get_claude_sessions_for_terminals(
+    terminal_ids: Vec<String>,
+    service: State<'_, TerminalService>,
+) -> Result<HashMap<String, String>, String> {
+    // 1. 一次性获取所有终端的 PID
+    let terminal_pids: Vec<(String, u32)> = {
+        let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
+        terminal_ids.iter()
+            .filter_map(|id| {
+                instances.get(id)
+                    .and_then(|instance| instance.child.process_id())
+                    .map(|pid| (id.clone(), pid))
+            })
+            .collect()
+    };
+
+    if terminal_pids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // 2. 一次性获取所有进程（Windows API，几十毫秒）
+    let all_processes = get_all_processes();
+
+    // 3. 对每个终端在进程树中查找 Claude session
+    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    let sessions_dir = home.join(".claude").join("sessions");
+
+    let mut result = HashMap::new();
+
+    for (terminal_id, pid) in &terminal_pids {
+        let mut visited = HashSet::new();
+        let claude_pids = find_claude_pids_in_tree(*pid, &all_processes, &mut visited);
+
+        let mut best: Option<(String, u64)> = None;
+        for claude_pid in claude_pids {
+            let session_file = sessions_dir.join(format!("{}.json", claude_pid));
+            if let Ok(content) = fs::read_to_string(&session_file) {
+                if let Ok(session) = serde_json::from_str::<ClaudeSessionFile>(&content) {
+                    match &best {
+                        Some((_, ts)) if session.updated_at <= *ts => {}
+                        _ => best = Some((session.session_id.clone(), session.updated_at)),
+                    }
+                }
+            }
+        }
+
+        if let Some((id, _)) = best {
+            result.insert(terminal_id.clone(), id);
+        }
+    }
+
+    Ok(result)
+}
+
+/// 扫描 ~/.claude/sessions/*.json，返回指定 cwd 下最近活跃的 Claude Code 会话 ID
+/// 注意：当同一目录有多个终端时，此函数可能返回错误的结果，建议使用 get_claude_session_for_terminal
+#[command]
+pub fn get_claude_session_for_cwd(cwd: String) -> Result<Option<String>, String> {
+    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    let sessions_dir = home.join(".claude").join("sessions");
+
+    if !sessions_dir.exists() {
+        return Ok(None);
+    }
+
+    let cwd_normalized = cwd.replace('/', "\\").to_lowercase();
+    let mut best: Option<(String, u64)> = None;
+
+    let entries = fs::read_dir(&sessions_dir)
+        .map_err(|e| format!("读取 Claude sessions 目录失败: {}", e))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map_or(true, |ext| ext != "json") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else { continue };
+        let Ok(session) = serde_json::from_str::<ClaudeSessionFile>(&content) else { continue };
+
+        // 只考虑 cwd 匹配的会话（不限制 status，返回最近活跃的）
+        let session_cwd = session.cwd.replace('/', "\\").to_lowercase();
+        if session_cwd != cwd_normalized {
+            continue;
+        }
+
+        match &best {
+            Some((_, ts)) if session.updated_at <= *ts => {}
+            _ => best = Some((session.session_id.clone(), session.updated_at)),
+        }
+    }
+
+    Ok(best.map(|(id, _)| id))
 }
