@@ -236,7 +236,7 @@ export const FileTree: FC = () => {
   const [editValue, setEditValue] = useState('');
   const [pathError, setPathError] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean; dir?: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [confirmBookmarkDelete, setConfirmBookmarkDelete] = useState<string | null>(null);
@@ -448,9 +448,10 @@ export const FileTree: FC = () => {
     setCtxMenu(null);
   }, [ctxMenu]);
 
-  const handleShowCurrentDirInExplorer = useCallback(async () => {
-    if (!currentDirectory) return;
-    try { await openInExplorer(currentDirectory); } catch (err) { console.error(err); }
+  const handleShowCurrentDirInExplorer = useCallback(async (dir?: string) => {
+    const target = dir || currentDirectory;
+    if (!target) return;
+    try { await openInExplorer(target); } catch (err) { console.error(err); }
     setCtxMenu(null);
   }, [currentDirectory]);
 
@@ -551,7 +552,7 @@ export const FileTree: FC = () => {
           const target = e.target as HTMLElement;
           if (target.closest('.tree-item')) return;
           e.preventDefault();
-          setCtxMenu({ x: e.clientX, y: e.clientY });
+          setCtxMenu({ x: e.clientX, y: e.clientY, dir: currentDirectory });
         }}
       >
         {rootNodes.map((node) => (
@@ -660,24 +661,25 @@ export const FileTree: FC = () => {
           <div className="context-menu-item" onClick={() => { setCtxMenu(null); handleGoUp(); }}>
             上一级目录
           </div>
-          {!ctxMenu.path && currentDirectory && (
+          {!ctxMenu.path && ctxMenu.dir && (
             <>
               <div className="context-menu-separator" />
               <div className="context-menu-item" onClick={async () => {
-                const dir = currentDirectory;
+                const dir = ctxMenu.dir!;
                 setCtxMenu(null);
                 try { await openTerminalInDir(dir); } catch (err) { console.error(err); }
               }}>
                 在当前目录打开命令窗口
               </div>
               <div className="context-menu-item" onClick={() => {
-                const name = currentDirectory.split('\\').filter(Boolean).pop() || currentDirectory;
-                addBookmark(name, currentDirectory);
+                const dir = ctxMenu.dir!;
+                const name = dir.split('\\').filter(Boolean).pop() || dir;
+                addBookmark(name, dir);
                 setCtxMenu(null);
               }}>
                 添加到书签
               </div>
-              <div className="context-menu-item" onClick={handleShowCurrentDirInExplorer}>
+              <div className="context-menu-item" onClick={() => handleShowCurrentDirInExplorer(ctxMenu.dir)}>
                 在文件资源管理器中显示
               </div>
             </>

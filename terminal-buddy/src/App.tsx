@@ -11,7 +11,7 @@ import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { Toast } from './components/Toast';
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal } from './services/tauri';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
 
@@ -232,6 +232,11 @@ function App() {
               owner: 'pc',
               extraParams: tab.extraParams,
             });
+            // 恢复上次记录的目录：同步 sessionDirectories 并发送 cd 命令
+            if (tab.directory) {
+              store.setSessionDirectory(terminalId, tab.directory);
+              writeToTerminal(terminalId, `cd "${tab.directory}"\r`).catch(() => {});
+            }
             if (i === activeIndex) {
               store.setActiveSession(terminalId);
             }
@@ -239,9 +244,9 @@ function App() {
         } catch (err) {
           console.error('Failed to restore tab:', tab.profileName, err);
         }
-        // 让出主线程，避免 UI 卡顿
+        // 让出主线程，等待浏览器完成一帧绘制后再恢复下一个 tab
         if (i < tabs.length - 1) {
-          await new Promise(r => setTimeout(r, 100));
+          await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
         }
       }
     } finally {

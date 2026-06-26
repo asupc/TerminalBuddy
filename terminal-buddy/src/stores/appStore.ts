@@ -22,10 +22,12 @@ interface SavedTab {
   isDirty?: boolean;
   owner?: 'pc' | 'web';
   extraParams?: string;
+  directory?: string;
 }
 
 export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: string | null) {
   try {
+    const dirs = useAppStore.getState().sessionDirectories;
     const tabs: SavedTab[] = sessions.map(s => ({
       profileId: s.profileId,
       profileName: s.profileName,
@@ -37,6 +39,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
       isDirty: s.sessionType === 'editor' ? false : undefined,
       owner: s.owner,
       extraParams: s.extraParams,
+      directory: dirs[s.id],
     }));
     const activeIndex = activeSessionId
       ? sessions.findIndex(s => s.id === activeSessionId)
@@ -435,17 +438,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ sessions, activeSessionId });
   },
   setActiveSession: (id) => set((state) => {
-    // 文件导航跟随当前连接：优先定位到该 profile 设置的启动目录（startupPath）；
-    // 若该连接无启动目录，则回退到会话内已记录的目录或保持当前目录。
+    // 文件导航跟随当前连接：优先使用会话内已记录的目录（用户浏览或 cd 过的）；
+    // 若无记录，则回退到 profile 设置的启动目录（startupPath）。
     let currentDirectory = state.currentDirectory;
     if (id) {
-      const session = state.sessions.find(s => s.id === id);
-      if (session) {
-        const profile = state.profiles.find(p => p.id === session.profileId);
-        if (profile && profile.startupPath) {
-          currentDirectory = profile.startupPath;
-        } else if (state.sessionDirectories[id]) {
-          currentDirectory = state.sessionDirectories[id];
+      if (state.sessionDirectories[id]) {
+        currentDirectory = state.sessionDirectories[id];
+      } else {
+        const session = state.sessions.find(s => s.id === id);
+        if (session) {
+          const profile = state.profiles.find(p => p.id === session.profileId);
+          if (profile?.startupPath) {
+            currentDirectory = profile.startupPath;
+          }
         }
       }
     }

@@ -289,6 +289,52 @@ function installStableImeAnchor(terminal: Terminal): (() => void) | undefined {
   };
 }
 
+/**
+ * 解析 cd 命令的目标路径。
+ * 支持: cd path, cd .., cd ~, cd /, 以及无参数的 cd（回到 home）。
+ * 返回绝对路径或 null（无法解析时）。
+ */
+function resolveCdTarget(cwd: string, arg: string | undefined): string | null {
+  if (!arg || arg === '~') {
+    // 浏览器环境无法访问 process.env，使用常见默认值
+    return 'C:\\Users';
+  }
+  // 绝对路径
+  if (/^[A-Za-z]:\\/.test(arg) || arg.startsWith('/')) {
+    return arg.replace(/\//g, '\\');
+  }
+  // 从当前目录开始拼接并规范化
+  let parts = cwd.replace(/\\$/, '').split('\\');
+  for (const seg of arg.replace(/\//g, '\\').split('\\')) {
+    if (seg === '..') {
+      if (parts.length > 1) parts.pop();
+    } else if (seg && seg !== '.') {
+      parts.push(seg);
+    }
+  }
+  return parts.join('\\') || parts[0] + '\\';
+}
+
+/** 从终端缓冲区提取当前行命令，检测 cd 并更新 sessionDirectory */
+function detectAndTrackCd(terminal: Terminal, terminalId: string) {
+  const buffer = terminal.buffer.active;
+  const line = buffer.getLine(buffer.baseY + buffer.cursorY);
+  if (!line) return;
+  const text = line.translateToString(true, 0, buffer.cursorX);
+  // 从提示符后面提取命令
+  const promptIdx = text.lastIndexOf('>');
+  const input = promptIdx >= 0 ? text.substring(promptIdx + 1).trimStart() : text.trimStart();
+  if (!input) return;
+  const parts = input.split(/\s+/);
+  if (parts[0] === 'cd') {
+    const cwd = useAppStore.getState().sessionDirectories[terminalId] || '';
+    const target = resolveCdTarget(cwd, parts[1]);
+    if (target) {
+      useAppStore.getState().setSessionDirectory(terminalId, target);
+    }
+  }
+}
+
 export const TerminalInstance: FC<TerminalInstanceProps> = ({
   terminalId,
   onOutput,
@@ -754,11 +800,28 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (data === '\r' || data === '\n') {
           useAppStore.getState().setSessionWorking(terminalId, true);
           updateAutocomplete(null);
+          // Enter 后稍等缓冲区刷新，检测 cd 命令并记录目录
+          setTimeout(() => {
+            if (!disposed) detectAndTrackCd(terminal, terminalId);
+          }, 50);
         }
 
         const isBracketedPaste = data.startsWith('\x1b[200~');
         if (isBracketedPaste) {
           const inner = data.slice(6, -5);
+          // 粘贴内容中可能包含 cd 命令，提取最后一个 cd 的目标目录
+          const lines = inner.split(/\r?\n/);
+          for (const ln of lines) {
+            const trimmed = ln.trim();
+            if (/^cd(\s|$)/i.test(trimmed)) {
+              const args = trimmed.split(/\s+/);
+              const cwd = useAppStore.getState().sessionDirectories[terminalId] || '';
+              const target = resolveCdTarget(cwd, args[1]);
+              if (target) {
+                useAppStore.getState().setSessionDirectory(terminalId, target);
+              }
+            }
+          }
           if (inner.includes('\n')) {
             onOutputRef.current(terminalId, data);
           } else {
