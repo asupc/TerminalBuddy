@@ -1,6 +1,8 @@
 import { FC, useState, useRef, useEffect, useCallback } from 'react';
 import { windowMinimize, windowToggleMaximize, windowClose, getWebApiStatus, saveWebApiSettings, restartWebServer, getWebServerAddress } from '../services/tauri';
 import { AiUsagePanel } from './AiUsagePanel';
+import { AboutDialog } from './AboutDialog';
+import { APP_VERSION } from '../version';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
 import { getEffectiveThemeMode, applyTheme, getAppSettings, saveTheme } from '../utils/settings';
@@ -22,6 +24,7 @@ export const TitleBar: FC<TitleBarProps> = ({
   onToggleFileTree,
 }) => {
   const [aiUsageHover, setAiUsageHover] = useState(false);
+  const [showAboutDialog, setShowAboutDialog] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
@@ -103,6 +106,7 @@ export const TitleBar: FC<TitleBarProps> = ({
       <div className="titlebar-left">
         <img className="titlebar-logo" src={appIcon} alt="" draggable={false} />
         <span className="titlebar-title">TerminalBuddy</span>
+        <span className="titlebar-version">v{APP_VERSION}</span>
         <div className="titlebar-nav-btns">
           <button
             className={`titlebar-nav-btn ${configPanelVisible ? 'active' : ''}`}
@@ -176,6 +180,13 @@ export const TitleBar: FC<TitleBarProps> = ({
         >
           {theme === 'dark' ? '☀️' : '🌙'}
         </button>
+        <button
+          className="titlebar-btn titlebar-action-btn"
+          onClick={() => setShowAboutDialog(true)}
+          title="关于 TerminalBuddy"
+        >
+          ℹ
+        </button>
         <button className="titlebar-btn titlebar-action-btn" onClick={onSettings} title="设置">
           ⚙
         </button>
@@ -201,6 +212,10 @@ export const TitleBar: FC<TitleBarProps> = ({
           ✕
         </button>
       </div>
+
+      {showAboutDialog && (
+        <AboutDialog onClose={() => setShowAboutDialog(false)} />
+      )}
     </div>
   );
 };
