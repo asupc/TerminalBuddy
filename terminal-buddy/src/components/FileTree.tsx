@@ -1,4 +1,4 @@
-import { FC, useState, useEffect, useCallback, useRef } from 'react';
+import { FC, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { listDirectory, openPath, openInExplorer, startBlankTerminal, deletePath, renamePath, getFileSize, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
@@ -218,9 +218,37 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
   );
 };
 
+function sortLabel(by: 'name' | 'size' | 'modified'): string {
+  if (by === 'size') return '大小';
+  if (by === 'modified') return '修改';
+  return '名称';
+}
+
+function compareNodes(a: FileNode, b: FileNode, sortBy: 'name' | 'size' | 'modified', sortDir: 'asc' | 'desc'): number {
+  if (a.is_directory !== b.is_directory) return a.is_directory ? -1 : 1;
+  const dir = sortDir === 'asc' ? 1 : -1;
+  if (sortBy === 'size') {
+    if (a.size !== b.size) return (a.size - b.size) * dir;
+    return a.name.localeCompare(b.name);
+  }
+  if (sortBy === 'modified') {
+    if (a.lastModified !== b.lastModified) return (a.lastModified - b.lastModified) * dir;
+    return a.name.localeCompare(b.name);
+  }
+  return a.name.localeCompare(b.name) * dir;
+}
+
 export const FileTree: FC = () => {
   const currentDirectory = useAppStore(s => s.currentDirectory);
   const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
+  const navigateWithHistory = useAppStore(s => s.navigateWithHistory);
+  const navBack = useAppStore(s => s.navBack);
+  const navForward = useAppStore(s => s.navForward);
+  const navBackStack = useAppStore(s => s.navBackStack);
+  const navForwardStack = useAppStore(s => s.navForwardStack);
+  const fileSortBy = useAppStore(s => s.fileSortBy);
+  const fileSortDir = useAppStore(s => s.fileSortDir);
+  const setFileSort = useAppStore(s => s.setFileSort);
   const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
@@ -235,6 +263,7 @@ export const FileTree: FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [pathError, setPathError] = useState(false);
+  const [filterQuery, setFilterQuery] = useState('');
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean; dir?: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -268,11 +297,36 @@ export const FileTree: FC = () => {
   }, [exclusionPatterns]);
 
   const navigateTo = useCallback((path: string) => {
-    setCurrentDirectory(path);
+    navigateWithHistory(path);
     if (activeSessionId) {
       setSessionDirectory(activeSessionId, path);
     }
-  }, [setCurrentDirectory, setSessionDirectory, activeSessionId]);
+  }, [navigateWithHistory, setSessionDirectory, activeSessionId]);
+
+  const handleNavBack = useCallback(() => {
+    const target = navBack();
+    if (target && activeSessionId) {
+      setSessionDirectory(activeSessionId, target);
+    }
+  }, [navBack, setSessionDirectory, activeSessionId]);
+
+  const handleNavForward = useCallback(() => {
+    const target = navForward();
+    if (target && activeSessionId) {
+      setSessionDirectory(activeSessionId, target);
+    }
+  }, [navForward, setSessionDirectory, activeSessionId]);
+
+  const cycleSortField = useCallback(() => {
+    const fields: Array<'name' | 'size' | 'modified'> = ['name', 'size', 'modified'];
+    const idx = fields.indexOf(fileSortBy);
+    const next = fields[(idx + 1) % fields.length];
+    setFileSort(next, fileSortDir);
+  }, [fileSortBy, fileSortDir, setFileSort]);
+
+  const toggleSortDir = useCallback(() => {
+    setFileSort(fileSortBy, fileSortDir === 'asc' ? 'desc' : 'asc');
+  }, [fileSortBy, fileSortDir, setFileSort]);
 
   const openTerminalInDir = useCallback(async (dir: string) => {
     const store = useAppStore.getState();
@@ -321,6 +375,34 @@ export const FileTree: FC = () => {
   const handleSelect = useCallback((path: string) => {
     setSelectedPath(path);
   }, []);
+
+  const filteredSortedNodes = useMemo<FileNode[]>(() => {
+    const q = filterQuery.trim().toLowerCase();
+    const filtered = q
+      ? rootNodes.filter(n => n.name.toLowerCase().includes(q))
+      : rootNodes;
+    return [...filtered].sort((a, b) => compareNodes(a, b, fileSortBy, fileSortDir));
+  }, [rootNodes, filterQuery, fileSortBy, fileSortDir]);
+
+  // Alt+Left / Alt+Right back/forward — skip when terminal/editor has focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.closest('.xterm') || target.closest('.monaco-editor') || target.closest('input, textarea'))) {
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handleNavBack();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleNavForward();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [handleNavBack, handleNavForward]);
 
   const handleNavigate = useCallback((path: string) => {
     navigateTo(path);
@@ -517,8 +599,24 @@ export const FileTree: FC = () => {
       <div className="panel-titlebar">
         <span className="panel-title">文件导航</span>
         <div className="file-tree-actions">
+          <button onClick={handleNavBack} disabled={navBackStack.length === 0} title="后退 (Alt+←)">←</button>
+          <button onClick={handleNavForward} disabled={navForwardStack.length === 0} title="前进 (Alt+→)">→</button>
           <button onClick={handleRefresh} title="刷新">↻</button>
+          <button onClick={toggleSortDir} title={`方向：${fileSortDir === 'asc' ? '升序' : '降序'}（点击翻转）`}>
+            {fileSortDir === 'asc' ? '↑' : '↓'}
+          </button>
+          <button onClick={cycleSortField} title={`排序：${sortLabel(fileSortBy)}（点击切换）`}>
+            {sortLabel(fileSortBy)}
+          </button>
         </div>
+      </div>
+      <div className="file-tree-filter">
+        <input
+          className="filter-input"
+          placeholder="过滤当前目录…"
+          value={filterQuery}
+          onChange={(e) => setFilterQuery(e.target.value)}
+        />
       </div>
       <div className={`file-tree-path ${pathError ? 'error' : ''}`}>
         {isEditing ? (
@@ -547,7 +645,10 @@ export const FileTree: FC = () => {
           setCtxMenu({ x: e.clientX, y: e.clientY, dir: currentDirectory });
         }}
       >
-        {rootNodes.map((node) => (
+        {filteredSortedNodes.length === 0 && filterQuery.trim() && (
+          <div className="empty-hint">无匹配项</div>
+        )}
+        {filteredSortedNodes.map((node) => (
           <TreeNode
             key={node.path}
             node={node}

@@ -41,6 +41,16 @@
   color: var(--text-primary);
 }
 
+.file-tree-actions button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.file-tree-actions button:disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
 .file-tree-path {
   padding: 4px 12px;
   font-size: 11px;
@@ -441,4 +451,35 @@
 .transfer-clear-btn:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+/* File tree filter input */
+.file-tree-filter {
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.filter-input:focus {
+  border-color: var(--accent);
+}
+
+.empty-hint {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 11px;
 }
