@@ -103,6 +103,8 @@ export interface FileNode {
   name: string;
   path: string;
   is_directory: boolean;
+  size: number;
+  lastModified: number;
 }
 
 export async function listDirectory(path: string, exclusions?: string[]): Promise<FileNode[]> {

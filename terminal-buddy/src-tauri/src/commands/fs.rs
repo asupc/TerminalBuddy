@@ -39,6 +39,8 @@ pub struct FileNode {
     name: String,
     path: String,
     is_directory: bool,
+    size: u64,
+    last_modified: u64,
 }
 
 #[command]
@@ -53,10 +55,20 @@ pub fn list_directory(path: String, exclusions: Option<Vec<String>>) -> Result<V
                 if should_exclude(&name, exclusions.as_ref()) {
                     return None;
                 }
+                let meta = e.metadata().ok();
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let last_modified = meta
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
                 Some(FileNode {
                     name,
                     path: file_path.to_string_lossy().to_string(),
                     is_directory: file_path.is_dir(),
+                    size,
+                    last_modified,
                 })
             })
         })
