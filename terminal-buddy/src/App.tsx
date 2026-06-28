@@ -10,7 +10,7 @@ import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { Toast } from './components/Toast';
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings } from './utils/settings';
-import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight } from './stores/appStore';
+import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight, initFileTreeNav } from './stores/appStore';
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, getClaudeSessionsForTerminals } from './services/tauri';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
@@ -65,6 +65,7 @@ function App() {
       await initAppSettings();
       await initBookmarks();
       await initBookmarkHeight();
+      await initFileTreeNav();
       await initExtraParamPresets();
       await initCmdOverrides();
       await initCustomCommands();

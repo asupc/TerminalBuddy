@@ -104,6 +104,36 @@ export async function initBookmarkHeight() {
   } catch {}
 }
 
+export async function initFileTreeNav() {
+  try {
+    const raw = await readClientData('file_nav');
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (Array.isArray(data?.backStack)) {
+        useAppStore.setState({ navBackStack: data.backStack.filter((p: unknown) => typeof p === 'string') });
+      }
+      if (Array.isArray(data?.forwardStack)) {
+        useAppStore.setState({ navForwardStack: data.forwardStack.filter((p: unknown) => typeof p === 'string') });
+      }
+      if (data?.sortBy === 'name' || data?.sortBy === 'size' || data?.sortBy === 'modified') {
+        useAppStore.setState({ fileSortBy: data.sortBy });
+      }
+      if (data?.sortDir === 'asc' || data?.sortDir === 'desc') {
+        useAppStore.setState({ fileSortDir: data.sortDir });
+      }
+    }
+  } catch {}
+}
+
+function persistFileTreeNav(state: { navBackStack: string[]; navForwardStack: string[]; fileSortBy: 'name' | 'size' | 'modified'; fileSortDir: 'asc' | 'desc' }) {
+  writeClientData('file_nav', JSON.stringify({
+    backStack: state.navBackStack,
+    forwardStack: state.navForwardStack,
+    sortBy: state.fileSortBy,
+    sortDir: state.fileSortDir,
+  })).catch(() => {});
+}
+
 // --- Draft management ---
 
 export interface DraftEntry {
@@ -173,6 +203,18 @@ interface AppState {
   // Bookmark section height
   bookmarkHeight: number;
   setBookmarkHeight: (height: number) => void;
+
+  // File tree navigation history (back/forward across directories)
+  navBackStack: string[];
+  navForwardStack: string[];
+  navigateWithHistory: (path: string) => void;
+  navBack: () => string | null;
+  navForward: () => string | null;
+
+  // File tree sort preference
+  fileSortBy: 'name' | 'size' | 'modified';
+  fileSortDir: 'asc' | 'desc';
+  setFileSort: (by: 'name' | 'size' | 'modified', dir: 'asc' | 'desc') => void;
 
   // Custom themes
   customThemes: CustomTheme[];
@@ -349,6 +391,45 @@ export const useAppStore = create<AppState>((set, get) => ({
     writeClientData('bookmark_height', JSON.stringify(height)).catch(() => {});
     set({ bookmarkHeight: height });
   },
+
+  // File tree navigation history
+  navBackStack: [],
+  navForwardStack: [],
+  navigateWithHistory: (path) => set((state) => {
+    const current = state.currentDirectory;
+    if (!current || current === path) return state;
+    const back = [...state.navBackStack, current].slice(-50);
+    persistFileTreeNav({ ...state, navBackStack: back, navForwardStack: [] });
+    return { currentDirectory: path, navBackStack: back, navForwardStack: [] };
+  }),
+  navBack: () => {
+    const state = get();
+    if (state.navBackStack.length === 0) return null;
+    const target = state.navBackStack[state.navBackStack.length - 1];
+    const back = state.navBackStack.slice(0, -1);
+    const forward = state.currentDirectory ? [...state.navForwardStack, state.currentDirectory].slice(-50) : state.navForwardStack;
+    persistFileTreeNav({ ...state, navBackStack: back, navForwardStack: forward });
+    set({ currentDirectory: target, navBackStack: back, navForwardStack: forward });
+    return target;
+  },
+  navForward: () => {
+    const state = get();
+    if (state.navForwardStack.length === 0) return null;
+    const target = state.navForwardStack[state.navForwardStack.length - 1];
+    const forward = state.navForwardStack.slice(0, -1);
+    const back = state.currentDirectory ? [...state.navBackStack, state.currentDirectory].slice(-50) : state.navBackStack;
+    persistFileTreeNav({ ...state, navBackStack: back, navForwardStack: forward });
+    set({ currentDirectory: target, navBackStack: back, navForwardStack: forward });
+    return target;
+  },
+
+  // File tree sort
+  fileSortBy: 'name',
+  fileSortDir: 'asc',
+  setFileSort: (by, dir) => set((state) => {
+    persistFileTreeNav({ ...state, fileSortBy: by, fileSortDir: dir });
+    return { fileSortBy: by, fileSortDir: dir };
+  }),
 
   // Custom themes
   customThemes: [],
