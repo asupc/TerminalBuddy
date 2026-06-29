@@ -63,6 +63,8 @@ type ImeAnchorCell = {
   widthCells: number;
   inputTopY: number;
   inputBottomY: number;
+  cols: number;
+  rows: number;
 };
 
 function isHorizontalRuleLine(text: string): boolean {
@@ -101,6 +103,15 @@ function getLastNonBlankCell(line: ReturnType<Terminal['buffer']['active']['getL
 
 function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null {
   const buffer = terminal.buffer.active;
+  const horizontalRules: number[] = [];
+
+  for (let y = 0; y < terminal.rows; y++) {
+    const line = buffer.getLine(buffer.viewportY + y);
+    const text = line?.translateToString(true) ?? '';
+    if (isHorizontalRuleLine(text)) {
+      horizontalRules.push(y);
+    }
+  }
 
   for (let y = terminal.rows - 1; y >= 0; y--) {
     const line = buffer.getLine(buffer.viewportY + y);
@@ -134,6 +145,23 @@ function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null {
       widthCells: 1,
       inputTopY: y,
       inputBottomY,
+      cols: terminal.cols,
+      rows: terminal.rows,
+    };
+  }
+
+  if (horizontalRules.length >= 2) {
+    const [topRule, bottomRule] = horizontalRules;
+    const inputTopY = Math.min(topRule + 1, terminal.rows - 1);
+    const inputBottomY = Math.max(inputTopY, bottomRule - 1);
+    return {
+      x: 0,
+      y: inputTopY,
+      widthCells: 1,
+      inputTopY,
+      inputBottomY,
+      cols: terminal.cols,
+      rows: terminal.rows,
     };
   }
 
@@ -153,6 +181,7 @@ function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor: () =>
   }
 
   let anchor: ImeAnchor | null = null;
+  let lastPromptAnchor: ImeAnchorCell | null = null;
   let recurseTimer: number | null = null;
   let syncRaf: number | null = null;
 
@@ -169,7 +198,15 @@ function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor: () =>
 
   const syncTextareaToPromptAnchor = (force = false): boolean => {
     const cell = core?._renderService?.dimensions?.css?.cell;
-    const promptAnchor = findBottomPromptAnchor(terminal);
+    const foundPromptAnchor = findBottomPromptAnchor(terminal);
+    if (foundPromptAnchor) {
+      lastPromptAnchor = foundPromptAnchor;
+    }
+    const promptAnchor =
+      foundPromptAnchor ??
+      (lastPromptAnchor?.cols === terminal.cols && lastPromptAnchor.rows === terminal.rows
+        ? lastPromptAnchor
+        : null);
     if (!cell?.width || !cell?.height || !promptAnchor) {
       return false;
     }
@@ -416,10 +453,35 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const scrollThumbRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLElement | null>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
+  const colorThemeRef = useRef(colorTheme);
+  const hideCursorRef = useRef(false);
   const updateAutocomplete = useCallback((val: typeof autocomplete) => {
     autocompleteRef.current = val;
     setAutocomplete(val);
   }, []);
+  colorThemeRef.current = colorTheme;
+
+  const applyXtermTheme = useCallback((term: Terminal, hideCursor = hideCursorRef.current) => {
+    const currentTheme = colorThemeRef.current;
+    const bg = currentTheme?.background || '#1e1e1e';
+    const fg = currentTheme?.foreground || '#cccccc';
+    const lightOptimized = !!currentTheme?.lightOptimized;
+    const { lightOptimized: _lightOptimized, ...xtermTheme } = currentTheme || { background: bg, foreground: fg };
+    term.options.theme = hideCursor
+      ? { ...xtermTheme, cursor: 'rgba(0, 0, 0, 0)', cursorAccent: 'rgba(0, 0, 0, 0)' }
+      : xtermTheme;
+    term.options.minimumContrastRatio = lightOptimized ? 4.5 : 1;
+  }, []);
+
+  const setVisualCursorHidden = useCallback((term: Terminal, hidden: boolean) => {
+    if (hideCursorRef.current === hidden) return;
+    hideCursorRef.current = hidden;
+    applyXtermTheme(term, hidden);
+  }, [applyXtermTheme]);
+
+  const syncVisualCursorVisibility = useCallback((term: Terminal) => {
+    setVisualCursorHidden(term, hasTuiInputChrome(term));
+  }, [setVisualCursorHidden]);
 
   // Resize-related refs (learned from VS Code's terminal implementation)
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -440,18 +502,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   // 注意 resolveTerminalColors 返回的引用稳定（cache），不会因无关渲染误触发。
   useEffect(() => {
     const bg = colorTheme?.background || '#1e1e1e';
-    const fg = colorTheme?.foreground || '#cccccc';
     const lightOptimized = !!colorTheme?.lightOptimized;
     lightOptimizedRef.current = lightOptimized;
     setTermBg(bg);
     const term = xtermRef.current;
     if (term) {
-      const { lightOptimized: _lightOptimized, ...xtermTheme } = colorTheme || { background: bg, foreground: fg };
-      term.options.theme = xtermTheme;
-      // 仅自动白板模式启用最低对比度增强；黑板/自定义终端配色保持原样
-      term.options.minimumContrastRatio = lightOptimized ? 4.5 : 1;
+      applyXtermTheme(term);
     }
-  }, [colorTheme]);
+  }, [colorTheme, applyXtermTheme]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -689,6 +747,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Force an immediate resize (bypasses debounce) for tab switches and other
       // visibility changes where we need the correct dimensions right away.
       let imeAnchorSyncRaf: number | null = null;
+      const imeAnchorSyncTimers: number[] = [];
       const syncImeAnchorAfterLayout = () => {
         const syncImeAnchor = (terminal as any)._tbSyncImeAnchor;
         if (typeof syncImeAnchor === 'function') {
@@ -707,6 +766,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         });
       };
 
+      const syncImeAnchorThroughTuiRedraw = () => {
+        syncImeAnchorAfterLayout();
+        while (imeAnchorSyncTimers.length > 0) {
+          window.clearTimeout(imeAnchorSyncTimers.pop());
+        }
+        for (const delay of [50, 150]) {
+          imeAnchorSyncTimers.push(window.setTimeout(syncImeAnchorAfterLayout, delay));
+        }
+      };
+
       const forceFit = (force?: boolean) => {
         if (disposed) return;
         if (resizeTimerRef.current) {
@@ -714,7 +783,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           resizeTimerRef.current = null;
         }
         doFit(force);
-        syncImeAnchorAfterLayout();
+        if (force) {
+          syncImeAnchorThroughTuiRedraw();
+        } else {
+          syncImeAnchorAfterLayout();
+        }
       };
 
       // ResizeObserver: respond to container size changes with debouncing.
@@ -769,6 +842,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
         if (pendingResizeTimer) clearTimeout(pendingResizeTimer);
         if (imeAnchorSyncRaf !== null) cancelAnimationFrame(imeAnchorSyncRaf);
+        while (imeAnchorSyncTimers.length > 0) {
+          window.clearTimeout(imeAnchorSyncTimers.pop());
+        }
       });
 
       // Expose forceFit for the isActive effect below
@@ -778,6 +854,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Track alternate buffer to detect TUI programs (vim, claude, htop, etc.)
       const checkAltBuffer = () => {
         const inAlt = terminal.buffer.active === terminal.buffer.alternate;
+        syncVisualCursorVisibility(terminal);
         if (inAltBufferRef.current && !inAlt) {
           // TUI program just exited: force viewport refresh to clear stale content.
           // This mirrors VS Code's forceRefresh() which calls viewport._innerRefresh().
@@ -793,6 +870,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         inAltBufferRef.current = inAlt;
       };
       terminal.buffer.onBufferChange(checkAltBuffer);
+      const visualCursorWriteDisposable = terminal.onWriteParsed(() => syncVisualCursorVisibility(terminal));
+      const visualCursorRenderDisposable = terminal.onRender(() => syncVisualCursorVisibility(terminal));
+      cleanupFns.push(() => {
+        visualCursorWriteDisposable.dispose();
+        visualCursorRenderDisposable.dispose();
+      });
       checkAltBuffer();
 
 
@@ -1198,7 +1281,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [terminalId]);
+  }, [terminalId, syncVisualCursorVisibility]);
 
   // When tab becomes visible (isActive changes to true), force a fit to ensure
   // correct dimensions. This mirrors VS Code's setVisible() which flushes pending
