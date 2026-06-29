@@ -148,6 +148,7 @@ export const TerminalPanel: FC = () => {
                 onOutput={handleTerminalInput}
                 isActive={isActivePane}
                 readOnly={!settings.webApiShareSessions && session.owner === 'web'}
+                splitMode={splitMode}
               />
             </Suspense>
           )}
