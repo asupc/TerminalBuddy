@@ -46,7 +46,7 @@ export const TerminalPanel: FC = () => {
   useEffect(() => {
     const ids = splitMode === 'off'
       ? sessions
-          .filter(s => s.id === activeSessionId && s.sessionType !== 'editor')
+          .filter(s => s.sessionType !== 'editor' && s.owner !== 'web')
           .map(s => s.id)
       : splitSlots.filter((s): s is string => s !== null);
     if (ids.length === 0) return;
