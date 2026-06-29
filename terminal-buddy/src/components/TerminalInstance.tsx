@@ -61,7 +61,29 @@ type ImeAnchorCell = {
   x: number;
   y: number;
   widthCells: number;
+  inputTopY: number;
+  inputBottomY: number;
 };
+
+function isHorizontalRuleLine(text: string): boolean {
+  return /^[\s─━═-]{20,}$/u.test(text);
+}
+
+function hasTuiInputChrome(terminal: Terminal): boolean {
+  const buffer = terminal.buffer.active;
+  let horizontalRuleCount = 0;
+
+  for (let y = 0; y < terminal.rows; y++) {
+    const line = buffer.getLine(buffer.viewportY + y);
+    const text = line?.translateToString(true) ?? '';
+    if (/Version:.*Claude Code|MCP:|bypass permissions|for agents|ctx:|Opus|effort/u.test(text)) {
+      return true;
+    }
+    if (isHorizontalRuleLine(text)) horizontalRuleCount++;
+  }
+
+  return horizontalRuleCount >= 2;
+}
 
 function getLastNonBlankCell(line: ReturnType<Terminal['buffer']['active']['getLine']>, cols: number): number {
   if (!line) return 0;
@@ -89,18 +111,36 @@ function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null {
     if (!promptMatch) continue;
 
     const promptEnd = promptMatch[0].length;
-    const contentEnd = getLastNonBlankCell(line, terminal.cols);
+    let anchorY = y;
+    let inputBottomY = y;
+
+    for (let nextY = y + 1; nextY < terminal.rows; nextY++) {
+      const nextLine = buffer.getLine(buffer.viewportY + nextY);
+      const nextText = nextLine?.translateToString(true) ?? '';
+      if (isHorizontalRuleLine(nextText)) {
+        inputBottomY = nextY;
+        if (nextY > y + 1) {
+          anchorY = nextY - 1;
+        }
+        break;
+      }
+    }
+
+    const anchorLine = buffer.getLine(buffer.viewportY + anchorY);
+    const contentEnd = getLastNonBlankCell(anchorLine, terminal.cols);
     return {
-      x: Math.min(Math.max(promptEnd, contentEnd), terminal.cols - 1),
-      y,
+      x: Math.min(anchorY === y ? Math.max(promptEnd, contentEnd) : contentEnd, terminal.cols - 1),
+      y: anchorY,
       widthCells: 1,
+      inputTopY: y,
+      inputBottomY,
     };
   }
 
   return null;
 }
 
-function installStableImeAnchor(terminal: Terminal): (() => void) | undefined {
+function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor: () => boolean): (() => void) | undefined {
   const core = (terminal as any)._core as XtermCore | undefined;
   const compositionHelper = core?._compositionHelper as XtermCompositionHelper | undefined;
   const textarea = terminal.textarea ?? compositionHelper?._textarea;
@@ -121,11 +161,21 @@ function installStableImeAnchor(terminal: Terminal): (() => void) | undefined {
     return Number.isFinite(parsed) ? parsed : 0;
   };
 
-  const syncTextareaToInputAnchor = (): boolean => {
+  const isTextareaInInputArea = (promptAnchor: ImeAnchorCell, cellHeight: number): boolean => {
+    const top = pxNumber(textarea.style.top);
+    const row = Math.round(top / cellHeight);
+    return row >= promptAnchor.inputTopY && row <= promptAnchor.inputBottomY;
+  };
+
+  const syncTextareaToPromptAnchor = (force = false): boolean => {
     const cell = core?._renderService?.dimensions?.css?.cell;
     const promptAnchor = findBottomPromptAnchor(terminal);
     if (!cell?.width || !cell?.height || !promptAnchor) {
       return false;
+    }
+
+    if (!force && isTextareaInInputArea(promptAnchor, cell.height)) {
+      return true;
     }
 
     const height = `${cell.height}px`;
@@ -141,13 +191,16 @@ function installStableImeAnchor(terminal: Terminal): (() => void) | undefined {
   if (core && originalSyncTextArea) {
     core._syncTextArea = () => {
       originalSyncTextArea();
-      syncTextareaToInputAnchor();
+      if (shouldUsePromptAnchor()) {
+        syncTextareaToPromptAnchor();
+      }
     };
   }
 
   const syncTextareaAnchor = () => {
-    if (!syncTextareaToInputAnchor()) {
-      originalSyncTextArea?.();
+    originalSyncTextArea?.();
+    if (!shouldUsePromptAnchor() || !syncTextareaToPromptAnchor()) {
+      return;
     }
   };
   (terminal as any)._tbSyncImeAnchor = syncTextareaAnchor;
@@ -174,10 +227,9 @@ function installStableImeAnchor(terminal: Terminal): (() => void) | undefined {
   const readCursorAnchor = (): ImeAnchor => {
     const cell = core?._renderService?.dimensions?.css?.cell;
     const fallbackHeight = cell?.height ? `${cell.height}px` : '1px';
-    if (anchor) {
-      syncTextareaToInputAnchor();
-    } else {
-      syncTextareaAnchor();
+    originalSyncTextArea?.();
+    if (shouldUsePromptAnchor()) {
+      syncTextareaToPromptAnchor(true);
     }
 
     if (cell?.width && cell?.height) {
@@ -244,7 +296,6 @@ function installStableImeAnchor(terminal: Terminal): (() => void) | undefined {
       return;
     }
 
-    syncTextareaToInputAnchor();
     applyAnchor();
     if (!dontRecurse) {
       if (recurseTimer !== null) window.clearTimeout(recurseTimer);
@@ -586,7 +637,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Keep the OS IME candidate anchor stable while composing. Some TUIs
       // repaint status areas while keeping their visual input prompt elsewhere.
-      const disposeStableImeAnchor = installStableImeAnchor(terminal);
+      const disposeStableImeAnchor = installStableImeAnchor(
+        terminal,
+        () => inAltBufferRef.current || hasTuiInputChrome(terminal),
+      );
       if (disposeStableImeAnchor) cleanupFns.push(disposeStableImeAnchor);
 
       // Immediately sync PTY dimensions so TUI programs (claude code, vim, etc.)
