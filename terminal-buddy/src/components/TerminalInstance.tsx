@@ -1130,7 +1130,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               if (paths.length === 1 && IMAGE_EXT.test(paths[0])) {
                 onOutputRef.current(terminalId, `[图片:${paths[0]}]`);
               } else {
-                const text = paths.map(p => `"${p}"`).join(' ');
+                const text = paths.map(p => p).join(' ');
                 onOutputRef.current(terminalId, text);
               }
             } else {
@@ -1142,7 +1142,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                   if (text) {
                     const trimmed = text.trim();
                     if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
-                      onOutputRef.current(terminalId, `"${trimmed.replace(/"/g, '\\"')}"`);
+                      onOutputRef.current(terminalId, trimmed.replace(/"/g, '\\"'));
                     } else if (text.includes('\n') || text.includes('\r')) {
                       const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
                       onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
