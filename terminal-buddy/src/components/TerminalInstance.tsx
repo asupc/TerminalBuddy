@@ -18,12 +18,21 @@ import { normalizeAnsiForLightBackground, type TerminalColors } from '../utils/t
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
+// 终端基础字号。分屏模式下按比例缩小:2x1 → 0.9、2x2 → 0.8、单屏 → 1.0。
+const BASE_FONT_SIZE = 14;
+const SPLIT_FONT_SCALE: Record<'off' | '2x1' | '2x2', number> = {
+  off: 1,
+  '2x1': 0.9,
+  '2x2': 0.8,
+};
+
 interface TerminalInstanceProps {
   terminalId: string;
   onOutput: (sessionId: string, data: string) => void;
   colorTheme?: TerminalColors;
   isActive?: boolean;
   readOnly?: boolean;
+  splitMode?: 'off' | '2x1' | '2x2';
 }
 
 type XtermCompositionHelper = {
@@ -429,12 +438,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   colorTheme,
   isActive,
   readOnly,
+  splitMode = 'off',
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onOutputRef = useRef(onOutput);
   onOutputRef.current = onOutput;
+  // 让 initTerminal 在首次创建 xterm 时读到最新分屏模式,避免初次即处于分屏时字号漏改。
+  const splitModeRef = useRef(splitMode);
+  splitModeRef.current = splitMode;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false });
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -633,7 +646,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
       const terminal = new Terminal({
         cursorBlink: true,
-        fontSize: 14,
+        fontSize: Math.round(BASE_FONT_SIZE * SPLIT_FONT_SCALE[splitModeRef.current]),
         fontFamily: "'Cascadia Mono', Consolas, 'Courier New', monospace",
         fontWeight: 'normal',
         fontWeightBold: 'bold',
@@ -1337,6 +1350,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       cancelAnimationFrame(raf2);
     };
   }, [terminalId]);
+
+  // 分屏模式下按比例缩小终端字号(2x1→0.9、2x2→0.8),退出分屏恢复原值。
+  // 只改字号,不影响其他终端配置;改完强制重排以正确重算行列。
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term) return;
+    const newSize = Math.round(BASE_FONT_SIZE * SPLIT_FONT_SCALE[splitMode]);
+    if (term.options.fontSize === newSize) return;
+    term.options.fontSize = newSize;
+    const forceFit = (term as any)._tbForceFit;
+    if (typeof forceFit === 'function') forceFit(true);
+  }, [splitMode]);
 
   const handleSearch = useCallback((direction: 'next' | 'prev' = 'next') => {
     const searchAddon = searchAddonRef.current;
