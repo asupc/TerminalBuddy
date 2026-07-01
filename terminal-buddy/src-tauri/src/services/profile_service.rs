@@ -117,6 +117,7 @@ impl ProfileService {
             mstsc_resolution: None,
             created_at: chrono::Utc::now().to_rfc3339(),
             last_used_at: None,
+            pinned: false,
         };
 
         let path = Self::get_profiles_dir().join(format!("{}.json", profile.id));

@@ -10,6 +10,9 @@ const TYPE_ICONS: Record<string, string> = {
   powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
 };
 
+/** 虚拟置顶分组 id：置顶的连接聚合到此分组，永远显示在列表最顶部 */
+const PINNED_GROUP_ID = '__pinned__';
+
 interface ConfigPanelProps {
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string) => void;
   onEditProfile: (profile: Profile) => void;
@@ -40,7 +43,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set([PINNED_GROUP_ID]));
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; profileId: string;
   } | null>(null);
@@ -66,6 +69,10 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       filtered = profiles.filter(p => p.name.toLowerCase().includes(query));
     }
 
+    // 置顶项单独抽出，聚合到永远位于最顶部的虚拟【置顶】分组
+    const pinnedItems = filtered.filter(p => p.pinned);
+    const normalItems = filtered.filter(p => !p.pinned);
+
     const sortProfiles = (items: Profile[]): Profile[] => {
       return items.sort((a, b) => {
         switch (configSortBy) {
@@ -80,7 +87,15 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       });
     };
 
-    const tree = buildGroupTree<Profile>(filtered, p => p.group || '默认', sortProfiles);
+    const toLeaf = (p: Profile): TreeItem => ({
+      id: p.id,
+      label: p.name,
+      icon: <span className="config-icon-type">{TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
+      color: p.tabColor || undefined,
+      data: p,
+    });
+
+    const tree = buildGroupTree<Profile>(normalItems, p => p.group || '默认', sortProfiles);
 
     const toTreeItems = (nodes: ReturnType<typeof buildGroupTree<Profile>>): TreeItem[] =>
       nodes.map((node): TreeItem => ({
@@ -89,17 +104,23 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
         isGroup: true,
         children: [
           ...toTreeItems(node.children),
-          ...node.items.map((p): TreeItem => ({
-            id: p.id,
-            label: p.name,
-            icon: <span className="config-icon-type">{TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
-            color: p.tabColor || undefined,
-            data: p,
-          })),
+          ...node.items.map(toLeaf),
         ],
       }));
 
-    return toTreeItems(tree);
+    const result = toTreeItems(tree);
+
+    // 置顶分组永远在最前
+    if (pinnedItems.length > 0) {
+      result.unshift({
+        id: PINNED_GROUP_ID,
+        label: '置顶',
+        isGroup: true,
+        children: sortProfiles([...pinnedItems]).map(toLeaf),
+      });
+    }
+
+    return result;
   }, [profiles, configSearchQuery, configSortBy]);
 
   const handleToggle = (groupId: string) => {
@@ -131,7 +152,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       const profile = item.data as Profile;
       selectProfile(profile.id);
       setContextMenu({ x: e.clientX, y: e.clientY, profileId: profile.id });
-    } else if (item.isGroup) {
+    } else if (item.isGroup && item.id !== PINNED_GROUP_ID) {
       setGroupContextMenu({ x: e.clientX, y: e.clientY, group: item.id });
     }
   }, [selectProfile]);
@@ -173,6 +194,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   };
 
   const handleStartRename = (groupPath: string) => {
+    if (groupPath === PINNED_GROUP_ID) return;
     setRenamingGroup(groupPath);
     setNewGroupName(groupPath);
     setGroupContextMenu(null);
@@ -211,6 +233,16 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       setProfiles(data);
     } catch (err) {
       console.error('Failed to rename profile:', err);
+    }
+  };
+
+  const handleTogglePin = async (profile: Profile) => {
+    try {
+      await updateProfile({ ...profile, pinned: !profile.pinned });
+      const data = await getAllProfiles();
+      setProfiles(data);
+    } catch (err) {
+      console.error('Failed to toggle pin:', err);
     }
   };
 
@@ -371,6 +403,11 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
             if (target) onEditProfile(target);
             closeContextMenu();
           }}>编辑</div>
+          <div className="context-menu-item" onClick={() => {
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            if (target) handleTogglePin(target);
+            closeContextMenu();
+          }}>{profiles.find((p) => p.id === contextMenu.profileId)?.pinned ? '取消置顶' : '置顶'}</div>
           <div className="context-menu-item" onClick={() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             if (target) onCopyProfile(target);
