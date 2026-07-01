@@ -28,6 +28,11 @@ export interface AppSettings {
   launchAtLogin: boolean;
   terminalFollowAppTheme: boolean;
   autoResumeClaudeSession: boolean;
+  listSelectionStyle: 'default' | 'idea' | 'custom';
+  listSelectionBg: string;
+  listSelectionFg: string;
+  listSelectionBorderColor: string;
+  listSelectionBorderWidth: number;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -54,6 +59,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   terminalFollowAppTheme: true,
   autoResumeClaudeSession: true,
+  listSelectionStyle: 'idea',
+  listSelectionBg: '#4d7db9',
+  listSelectionFg: '#ffffff',
+  listSelectionBorderColor: '#ffffff',
+  listSelectionBorderWidth: 0,
 };
 
 let _cachedSettings: AppSettings | null = null;
@@ -113,4 +123,31 @@ export const applyTheme = (theme: ThemeMode) => {
   root.setAttribute('data-theme', effective);
   // 广播当前生效主题，供终端等组件跟随应用主题切换
   window.dispatchEvent(new CustomEvent('app-theme-changed', { detail: { mode: effective } }));
+};
+
+/**
+ * 根据设置应用列表选中样式（连接导航 / 文件导航的 .tree-item.selected 背景与文字色）。
+ * 行内 style 优先级最高，覆盖 global.css 里 :root 与 [data-theme="light"] 的默认值，
+ * 因此三种样式在深 / 浅主题下都生效（全局固定配色）。
+ */
+export const applyListSelectionStyle = (s: AppSettings) => {
+  const root = document.documentElement;
+  let bg = '#4d7db9';
+  let fg = '#ffffff';
+  // 默认 / IDEA 样式：边框透明 + 0 宽度（即无边框）；自定义：读用户设置
+  let borderColor = 'transparent';
+  let borderWidth = '0px';
+  if (s.listSelectionStyle === 'default') {
+    bg = '#37373d';
+    fg = '#ffffff';
+  } else if (s.listSelectionStyle === 'custom') {
+    bg = s.listSelectionBg || '#4d7db9';
+    fg = s.listSelectionFg || '#ffffff';
+    borderColor = s.listSelectionBorderColor || 'transparent';
+    borderWidth = `${s.listSelectionBorderWidth || 0}px`;
+  }
+  root.style.setProperty('--list-active-bg', bg);
+  root.style.setProperty('--list-active-fg', fg);
+  root.style.setProperty('--list-active-border-color', borderColor);
+  root.style.setProperty('--list-active-border-width', borderWidth);
 };

@@ -18,6 +18,12 @@ body {
   --text-secondary: #858585;
   --accent: #0078d4;
   --border: #3c3c3c;
+  /* List item hover/selection (tree views: ConfigPanel, FileTree) */
+  --list-hover-bg: #2a2d2e;
+  --list-active-bg: #4d7db9;
+  --list-active-fg: #ffffff;
+  --list-active-border-color: transparent;
+  --list-active-border-width: 0px;
   --scrollbar-bg: #2d2d2d;
   --scrollbar-thumb: #5a5a5a;
   --scrollbar-thumb-hover: #7a7a7a;
@@ -31,6 +37,11 @@ body {
   --text-secondary: #666666;
   --accent: #0078d4;
   --border: #d0d0d0;
+  --list-hover-bg: #e8e8e8;
+  --list-active-bg: rgba(0, 120, 212, 0.15);
+  --list-active-fg: var(--accent);
+  --list-active-border-color: transparent;
+  --list-active-border-width: 0px;
   --scrollbar-bg: #e8e8e8;
   --scrollbar-thumb: #b0b0b0;
   --scrollbar-thumb-hover: #999999;

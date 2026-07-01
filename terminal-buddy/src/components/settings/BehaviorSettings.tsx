@@ -183,6 +183,119 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         )}
         <p className="settings-desc">终端执行命令时指示灯使用的颜色</p>
       </div>
+      <div className="settings-section">
+        <label className="settings-label">列表选中样式</label>
+        <div className="breathing-light-mode-options">
+          <label className={`breathing-light-mode ${settings.listSelectionStyle === 'default' ? 'active' : ''}`}>
+            <input
+              type="radio"
+              name="listSelectionStyle"
+              checked={settings.listSelectionStyle === 'default'}
+              onChange={() => updateSetting('listSelectionStyle', 'default')}
+            />
+            <span>默认样式（灰）</span>
+          </label>
+          <label className={`breathing-light-mode ${settings.listSelectionStyle === 'idea' ? 'active' : ''}`}>
+            <input
+              type="radio"
+              name="listSelectionStyle"
+              checked={settings.listSelectionStyle === 'idea'}
+              onChange={() => updateSetting('listSelectionStyle', 'idea')}
+            />
+            <span>IDEA样式（蓝）</span>
+          </label>
+          <label className={`breathing-light-mode ${settings.listSelectionStyle === 'custom' ? 'active' : ''}`}>
+            <input
+              type="radio"
+              name="listSelectionStyle"
+              checked={settings.listSelectionStyle === 'custom'}
+              onChange={() => updateSetting('listSelectionStyle', 'custom')}
+            />
+            <span>自定义</span>
+          </label>
+        </div>
+        {settings.listSelectionStyle === 'custom' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+            <div className="color-slot">
+              <label>背景色</label>
+              <div className="color-input-wrap">
+                <input
+                  type="color"
+                  value={settings.listSelectionBg}
+                  onChange={(e) => updateSetting('listSelectionBg', e.target.value)}
+                />
+                <input
+                  type="text"
+                  value={settings.listSelectionBg}
+                  onChange={(e) => updateSetting('listSelectionBg', e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="color-slot">
+              <label>字体色</label>
+              <div className="color-input-wrap">
+                <input
+                  type="color"
+                  value={settings.listSelectionFg}
+                  onChange={(e) => updateSetting('listSelectionFg', e.target.value)}
+                />
+                <input
+                  type="text"
+                  value={settings.listSelectionFg}
+                  onChange={(e) => updateSetting('listSelectionFg', e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="color-slot">
+              <label>边框色</label>
+              <div className="color-input-wrap">
+                <input
+                  type="color"
+                  value={settings.listSelectionBorderColor}
+                  onChange={(e) => updateSetting('listSelectionBorderColor', e.target.value)}
+                />
+                <input
+                  type="text"
+                  value={settings.listSelectionBorderColor}
+                  onChange={(e) => updateSetting('listSelectionBorderColor', e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="color-slot">
+              <label>边框宽度</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={1}
+                value={settings.listSelectionBorderWidth}
+                onChange={(e) => updateSetting('listSelectionBorderWidth', Math.max(0, Number(e.target.value) || 0))}
+                style={{ width: 60 }}
+              />
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 4 }}>px</span>
+            </div>
+          </div>
+        )}
+        <div style={{ marginTop: 8 }}>
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              borderRadius: 3,
+              background: 'var(--list-active-bg)',
+              color: 'var(--list-active-fg)',
+              fontSize: 12,
+              boxShadow: 'inset 0 0 0 var(--list-active-border-width) var(--list-active-border-color)',
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>SSH</span>
+            <span>示例选中条目</span>
+          </div>
+        </div>
+        <p className="settings-desc">连接导航与文件导航中，被选中列表条目的配色（上方为实时预览）</p>
+      </div>
     </div>
   );
 };
