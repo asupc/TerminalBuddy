@@ -14,12 +14,13 @@
 }
 
 .tree-item:hover {
-  background: var(--bg-tertiary);
+  background: var(--list-hover-bg);
 }
 
 .tree-item.selected {
-  background: rgba(0, 120, 212, 0.15);
-  color: var(--accent);
+  background: var(--list-active-bg);
+  color: var(--list-active-fg);
+  box-shadow: inset 0 0 0 var(--list-active-border-width) var(--list-active-border-color);
 }
 
 .tree-arrow {
