@@ -114,6 +114,19 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         <label className="settings-toggle">
           <input
             type="checkbox"
+            checked={settings.doubleClickRunBat}
+            onChange={(e) => {
+              updateSetting('doubleClickRunBat', e.target.checked);
+            }}
+          />
+          <span>双击运行 .bat 文件</span>
+        </label>
+        <p className="settings-desc">开启后，在文件导航中双击 .bat 文件将直接运行（等同于“在系统中打开”）；关闭时双击在编辑器中打开</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
             checked={settings.singleInstance}
             onChange={(e) => {
               const value = e.target.checked;

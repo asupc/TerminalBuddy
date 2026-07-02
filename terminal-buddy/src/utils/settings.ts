@@ -12,6 +12,7 @@ export interface AppSettings {
   enableTabNavigation: boolean;
   singleInstance: boolean;
   rightClickPaste: boolean;
+  doubleClickRunBat: boolean;
   zhipuApiKey: string;
   qianfanCookie: string;
   deepseekApiKey: string;
@@ -43,6 +44,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   enableTabNavigation: true,
   singleInstance: true,
   rightClickPaste: false,
+  doubleClickRunBat: false,
   zhipuApiKey: '',
   qianfanCookie: '',
   deepseekApiKey: '',
