@@ -1,6 +1,7 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
 import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile } from '../services/tauri';
+import { openTerminalInDir } from '../utils/openTerminalInDir';
 import type { Profile } from '../types';
 import { TreeView, type TreeItem } from './TreeView';
 import { buildGroupTree, renameGroupInPath } from '../utils/groupTree';
@@ -398,6 +399,14 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
               启动[<span style={{ color: '#FFD700' }}>{preset.name}</span>]
             </div>
           ))}
+          <div className="context-menu-item" onClick={async () => {
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            closeContextMenu();
+            if (target) {
+              try { await openTerminalInDir(target.startupPath?.trim() || undefined); }
+              catch (err) { console.error(err); }
+            }
+          }}>命令行</div>
           <div className="context-menu-item" onClick={() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             if (target) onEditProfile(target);
