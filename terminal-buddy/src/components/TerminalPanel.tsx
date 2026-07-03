@@ -51,7 +51,23 @@ export const TerminalPanel: FC = () => {
           .map(s => s.id)
       : splitSlots.map(s => s.sessionId).filter((s): s is string => s !== null);
     if (ids.length === 0) return;
-    window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
+
+    // 双层 requestAnimationFrame 等 React commit + 浏览器布局完成后再派发事件，
+    // 确保终端 fit 时拿到的是已稳定的尺寸（包括 panels-hidden 切换的 grid 重排）。
+    // 之前多加 30ms setTimeout 反而让 fit 拿到陈旧尺寸、与 ResizeObserver 重复触发，
+    // 增加 fit 失败 → xterm 进入 0×0 不可见状态的风险。
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
   }, [splitMode, splitSlots, sessions, activeSessionId, windowMode]);
 
   useEffect(() => {

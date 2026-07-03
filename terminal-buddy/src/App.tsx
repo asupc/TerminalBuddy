@@ -93,15 +93,40 @@ function App() {
 
   // 监听窗口 resize 事件，确保终端在全屏切换后能正确重绘
   useEffect(() => {
-    const unlisten = listen('tauri://resize', () => {
-      // 使用 requestAnimationFrame 确保 DOM 已更新
-      requestAnimationFrame(() => {
+    let raf1 = 0;
+    let raf2 = 0;
+
+    const dispatchResize = () => {
+      const { sessions, splitMode } = useAppStore.getState();
+      const terminalIds = splitMode === 'off'
+        ? sessions.filter(s => s.sessionType !== 'editor' && s.owner !== 'web').map(s => s.id)
+        : sessions.map(s => s.id);
+      if (terminalIds.length > 0) {
         window.dispatchEvent(new CustomEvent('tb-split-resize', {
-          detail: { terminalIds: useAppStore.getState().sessions.map(s => s.id) }
+          detail: { terminalIds }
         }));
+      }
+    };
+
+    const unlisten = listen('tauri://resize', () => {
+      // 清除之前未完成的两帧调度，避免 resize 风暴时多次重复派发
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+
+      // 双层 rAF 等 React commit + 浏览器布局完成后再派发事件。
+      // 之前多加的 50ms setTimeout 反而让 fit 拿到陈旧尺寸、与 ResizeObserver
+      // 重复触发，增加 fit 失败 → xterm 进入 0×0 不可见状态的风险。
+      raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => {
+          dispatchResize();
+        });
       });
     });
-    return () => { unlisten.then(fn => fn()); };
+    return () => {
+      unlisten.then(fn => fn());
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
   }, []);
 
   useEffect(() => {

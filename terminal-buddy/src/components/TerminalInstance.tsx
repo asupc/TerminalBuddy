@@ -745,16 +745,31 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         const prevCols = terminal.cols;
         const prevRows = terminal.rows;
         fitAddonRef.current.fit();
-        // Sync new dimensions with PTY backend, avoiding redundant calls
-        if (terminal.cols !== prevCols || terminal.rows !== prevRows) {
+
+        // 防止 fit() 在容器尺寸为 0 时把 xterm 设为 0×0（布局过渡期间可能发生）。
+        // F11 切换 panels-hidden + 分屏场景：.terminal-content 宽度突变时，
+        // ResizeObserver 可能在过渡帧里先于 CSS 落定拿到 0 尺寸；若 fit 让
+        // xterm 进入 0×0 状态，后续因尺寸不再变化而无法自然恢复（容器已变宽
+        // 但 canvas 还是 0），表现为黑屏。立即用上一帧的有效尺寸 resize 拉回，
+        // 让 xterm canvas 保持可见；下一次 ResizeObserver 触发时 fit 会用稳定
+        // 尺寸把 xterm 拉回到正确大小。
+        if ((terminal.cols === 0 || terminal.rows === 0) && prevCols > 0 && prevRows > 0) {
+          terminal.resize(prevCols, prevRows);
+        }
+
+        // Sync new dimensions with PTY backend, avoiding redundant calls.
+        // PTY 至少需要 1×1（防御性，正常情况下 0×0 路径已被上面的恢复处理）。
+        const newCols = Math.max(1, terminal.cols);
+        const newRows = Math.max(1, terminal.rows);
+        if (newCols !== prevCols || newRows !== prevRows) {
           if (!lastPtyDimensionsRef.current ||
-              lastPtyDimensionsRef.current.cols !== terminal.cols ||
-              lastPtyDimensionsRef.current.rows !== terminal.rows) {
-            lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
-            resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
+              lastPtyDimensionsRef.current.cols !== newCols ||
+              lastPtyDimensionsRef.current.rows !== newRows) {
+            lastPtyDimensionsRef.current = { cols: newCols, rows: newRows };
+            resizeTerminal(terminalId, newRows, newCols).catch(() => {});
           }
         }
-        lastDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
+        lastDimensionsRef.current = { cols: newCols, rows: newRows };
       };
 
       // Force an immediate resize (bypasses debounce) for tab switches and other
