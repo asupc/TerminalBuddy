@@ -38,9 +38,6 @@ export const TitleBar: FC<TitleBarProps> = ({
   const [webToggling, setWebToggling] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(getEffectiveThemeMode);
   const splitMode = useAppStore(s => s.splitMode);
-  const windowMode = useAppStore(s => s.windowMode);
-
-  if (windowMode === 'fullscreen') return null;
 
   // 监听应用主题变化。App 启动时 initTheme() 是异步的，applyTheme 会晚于本组件
   // 首次渲染执行，并派发 app-theme-changed。若不订阅，白板启动时按钮的内部 state

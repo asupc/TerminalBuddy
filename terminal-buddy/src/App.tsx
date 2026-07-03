@@ -60,10 +60,13 @@ function App() {
   // F11 键监听：切换窗口模式
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F11') {
-        e.preventDefault();
-        cycleWindowMode();
-      }
+      if (e.key !== 'F11') return;
+      // 同一个 keydown 事件冒泡时会依次经过 document 和 window，两者上的监听器
+      // 都会收到。若不去重，一次 F11 会触发两次 cycleWindowMode，导致切换失效。
+      if ((e as any)._tbF11Handled) return;
+      (e as any)._tbF11Handled = true;
+      e.preventDefault();
+      cycleWindowMode();
     };
     // 监听 window 和 document，确保全屏模式下也能响应
     window.addEventListener('keydown', handleKeyDown);
@@ -73,23 +76,6 @@ function App() {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [cycleWindowMode]);
-
-  // fullscreen 模式切换
-  useEffect(() => {
-    const win = getCurrentWindow();
-    const applyFullscreen = async () => {
-      try {
-        if (windowMode === 'fullscreen') {
-          await win.setFullscreen(true);
-        } else {
-          await win.setFullscreen(false);
-        }
-      } catch (e) {
-        console.error('setFullscreen failed:', e);
-      }
-    };
-    applyFullscreen();
-  }, [windowMode]);
 
   // 监听窗口 resize 事件，确保终端在全屏切换后能正确重绘
   useEffect(() => {

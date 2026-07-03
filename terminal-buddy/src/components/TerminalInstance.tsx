@@ -20,10 +20,12 @@ import './TerminalInstance.css';
 
 // 终端基础字号。分屏模式下按比例缩小:2x1 → 0.9、2x2 → 0.8、单屏 → 1.0。
 const BASE_FONT_SIZE = 14;
-const SPLIT_FONT_SCALE: Record<'off' | '2x1' | '2x2', number> = {
-  off: 1,
-  '2x1': 0.9,
-  '2x2': 0.8,
+// 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
+// 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
+const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
+  off: BASE_FONT_SIZE,
+  '2x1': 12,
+  '2x2': 11,
 };
 
 interface TerminalInstanceProps {
@@ -647,7 +649,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
       const terminal = new Terminal({
         cursorBlink: true,
-        fontSize: Math.round(BASE_FONT_SIZE * SPLIT_FONT_SCALE[splitModeRef.current]),
+        fontSize: SPLIT_FONT_SIZE[splitModeRef.current],
         fontFamily: "'Cascadia Mono', Consolas, 'Courier New', monospace",
         fontWeight: 'normal',
         fontWeightBold: 'bold',
@@ -685,32 +687,46 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       terminal.unicode.activeVersion = '11';
       void bootLog(`initTerminal[${terminalId}]: loadAddons (fit/weblinks/clipboard/search/unicode11) took ${(performance.now() - tAddons).toFixed(0)}ms`);
 
+      // F11 默认会被 xterm 当作 VT 功能键消费（转成转义序列发给 PTY），终端持有
+      // 焦点时 App.tsx 的 window/document keydown 监听收不到，表现为「非分屏模式下
+      // 按 F11 没反应」。这里显式放行 F11，让它冒泡到 cycleWindowMode。返回 false
+      // 表示 xterm 不要处理该键。
+      terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+        if (e.type === 'keydown' && (e.key === 'F11')) return false;
+        return true;
+      });
+
       const tOpen = performance.now();
       terminal.open(terminalRef.current!);
       void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
       const tWebgl = performance.now();
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        // WebGL context 丢失（常见诱因：F11 panels-hidden 切换 + 分屏 grid 重排
-        // 时 canvas 瞬时变 0，GPU 抛 context-lost 事件）。dispose 后必须强制
-        // 触发一次重绘，否则 xterm 会停在"等 WebGL 写下一帧"的状态，表现为黑屏。
-        webglAddon.dispose();
+      // dispose 后 xterm 会永久回退到 CPU canvas 渲染器（字形抗锯齿变化、滚动卡顿，
+      // 看起来像「字体变了 / GPU 加速没了」）。这里在 context-loss 后重建 WebGL
+      // 渲染器恢复 GPU 加速；webglRetries 上限防 GPU 持续 lost 下的重建风暴，
+      // disposed 时不再重建以免组件卸载后还在创建 GL 上下文。
+      let webglRetries = 0;
+      const attachWebgl = () => {
+        const webglAddon = new WebglAddon();
+        webglAddon.onContextLoss(() => {
+          webglAddon.dispose();
+          try {
+            if (terminal.cols === 0 || terminal.rows === 0) {
+              terminal.resize(80, 24);
+            }
+            terminal.refresh(0, terminal.rows - 1);
+          } catch { /* refresh may throw during teardown */ }
+          if (disposed || webglRetries >= 5) return;
+          webglRetries += 1;
+          attachWebgl();
+        });
         try {
-          // 若 canvas 已被前面的 bad fit 推到 0，先恢复到一个能渲染的默认尺寸。
-          // 用固定 80×24 而不是 prevCols/prevRows：避免容器仍为 0 时 resize
-          // 越界写触发 WebView2 native crash。
-          if (terminal.cols === 0 || terminal.rows === 0) {
-            terminal.resize(80, 24);
-          }
-          terminal.refresh(0, terminal.rows - 1);
-        } catch { /* refresh may throw during teardown */ }
-      });
-      try {
-        terminal.loadAddon(webglAddon);
-      } catch {
-        // WebGL not supported, fall back to canvas renderer
-      }
+          terminal.loadAddon(webglAddon);
+        } catch {
+          // WebGL not supported, fall back to canvas renderer
+        }
+      };
+      attachWebgl();
       void bootLog(`initTerminal[${terminalId}]: WebGL addon took ${(performance.now() - tWebgl).toFixed(0)}ms`);
 
       const tFit = performance.now();
@@ -1376,22 +1392,22 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     };
   }, [terminalId]);
 
-  // 分屏模式下按比例缩小终端字号(2x1→0.9、2x2→0.8),退出分屏恢复原值。
+  // 分屏模式下缩小终端字号(2x1→12px)，退出分屏恢复原值。
   // 只改字号,不影响其他终端配置;改完强制重排以正确重算行列。
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
-    const newSize = Math.round(BASE_FONT_SIZE * SPLIT_FONT_SCALE[splitMode]);
+    const newSize = SPLIT_FONT_SIZE[splitMode];
     if (term.options.fontSize === newSize) return;
     term.options.fontSize = newSize;
     const forceFit = (term as any)._tbForceFit;
     if (typeof forceFit === 'function') forceFit(true);
   }, [splitMode]);
 
-  // F11 切换 windowMode（panels-hidden / fullscreen）时，.terminal-content
-  // 宽度突变，grid 重排需要时间落定。这里直接订阅 windowMode 再补一次 forceFit，
-  // 与 TerminalPanel 派发的 tb-split-resize 互为备份——任意一条路径被 ResizeObserver
-  // 卡住时另一条仍能触发 fit。
+  // F11 切换 windowMode（panels-hidden）时，.terminal-content 宽度突变，grid 重排
+  // 需要时间落定。这里直接订阅 windowMode 再补一次 forceFit，与 TerminalPanel 派发
+  // 的 tb-split-resize 互为备份——任意一条路径被 ResizeObserver 卡住时另一条仍能
+  // 触发 fit。
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;

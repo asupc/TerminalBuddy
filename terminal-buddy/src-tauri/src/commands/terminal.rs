@@ -324,6 +324,10 @@ impl TerminalService {
     }
 
     pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16, allow_shrink: bool) -> Result<(), String> {
+        // 与 web/ws.rs 的 Resize 处理对齐：clamp 到 1..=500，避免 0 或异常尺寸
+        // 传入 ConPTY 触发底层异常（前端在布局过渡帧可能短暂算出 0）。
+        let rows = rows.clamp(1, 500);
+        let cols = cols.clamp(1, 500);
         let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(instance) = instances.get_mut(id) {
             let (new_rows, new_cols) = if allow_shrink {

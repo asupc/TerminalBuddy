@@ -276,7 +276,7 @@ interface AppState {
   placeSessionInSplitSlot: (sessionId: string) => void;
 
   // Window mode (F11 cycle)
-  windowMode: 'normal' | 'panels-hidden' | 'fullscreen';
+  windowMode: 'normal' | 'panels-hidden';
   previousPanelState: { configPanelVisible: boolean; fileTreeVisible: boolean; enableTabNavigation: boolean } | null;
   cycleWindowMode: () => void;
 
@@ -793,12 +793,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     }
 
-    if (cur === 'panels-hidden') {
-      // panels-hidden → fullscreen
-      return { windowMode: 'fullscreen' as const };
-    }
-
-    // fullscreen → normal: 恢复之前的面板状态
+    // panels-hidden → normal: 恢复之前的面板状态
     const prev = state.previousPanelState;
     if (prev) {
       const settings = getAppSettings();
