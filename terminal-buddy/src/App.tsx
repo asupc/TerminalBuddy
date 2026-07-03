@@ -482,7 +482,7 @@ function App() {
   }, []);
 
   return (
-    <div className="app-container">
+    <div className={`app-container${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`}>
       <TitleBar
         onSettings={handleSettings}
         configPanelVisible={configPanelVisible}

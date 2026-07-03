@@ -213,6 +213,14 @@ body {
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+/* Panels hidden mode (F11) */
+.panels-hidden .config-panel,
+.panels-hidden .file-tree,
+.panels-hidden .remote-file-tree,
+.panels-hidden .tab-sidebar {
+  display: none !important;
+}
+
 /* Split toggle button active state in the title bar */
 .titlebar-split-btn.split-active {
   color: var(--accent, #0078d4);
