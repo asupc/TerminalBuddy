@@ -42,6 +42,8 @@ function App() {
   const openSettingsTab = useAppStore(s => s.openSettingsTab);
   const profiles = useAppStore(s => s.profiles);
   const splitMode = useAppStore(s => s.splitMode);
+  const windowMode = useAppStore(s => s.windowMode);
+  const cycleWindowMode = useAppStore(s => s.cycleWindowMode);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [defaultGroupForNewProfile, setDefaultGroupForNewProfile] = useState<string | undefined>();
@@ -55,6 +57,28 @@ function App() {
   useEffect(() => {
     void import('./components/TerminalInstance');
   }, []);
+
+  // F11 键监听：切换窗口模式
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F11') {
+        e.preventDefault();
+        cycleWindowMode();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [cycleWindowMode]);
+
+  // fullscreen 模式切换
+  useEffect(() => {
+    const win = getCurrentWindow();
+    if (windowMode === 'fullscreen') {
+      win.setFullscreen(true);
+    } else {
+      win.setFullscreen(false);
+    }
+  }, [windowMode]);
 
   useEffect(() => {
     (async () => {
