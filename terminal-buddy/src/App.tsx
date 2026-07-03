@@ -57,16 +57,21 @@ function App() {
     void import('./components/TerminalInstance');
   }, []);
 
-  // F11 键监听：切换窗口模式
+  // F11 键监听：切换窗口模式（同时监听 window 和 document，确保全屏模式下也能响应）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F11') {
         e.preventDefault();
+        e.stopPropagation();
         cycleWindowMode();
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
   }, [cycleWindowMode]);
 
   // fullscreen 模式切换
