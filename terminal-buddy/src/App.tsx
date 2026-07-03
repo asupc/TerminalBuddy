@@ -57,20 +57,20 @@ function App() {
     void import('./components/TerminalInstance');
   }, []);
 
-  // F11 键监听：切换窗口模式（同时监听 window 和 document，确保全屏模式下也能响应）
+  // F11 键监听：切换窗口模式
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F11') {
         e.preventDefault();
-        e.stopPropagation();
         cycleWindowMode();
       }
     };
-    window.addEventListener('keydown', handleKeyDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
+    // 监听 window 和 document，确保全屏模式下也能响应
+    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [cycleWindowMode]);
 
@@ -506,7 +506,7 @@ function App() {
   }, []);
 
   return (
-    <div className={`app-container${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`}>
+    <div className={`app-container${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`} tabIndex={0}>
       <TitleBar
         onSettings={handleSettings}
         configPanelVisible={configPanelVisible}
