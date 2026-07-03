@@ -159,7 +159,7 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
-      {!settings.enableTabNavigation && sessions.length > 0 && splitMode === 'off' && (
+      {!settings.enableTabNavigation && sessions.length > 0 && (
         <TerminalTabBar />
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
