@@ -334,12 +334,7 @@ function App() {
         await updateProfileLastUsed(profile.id);
         return;
       }
-      // Split mode: block new connections when the grid is full (no blank slot).
-      const store = useAppStore.getState();
-      if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
-        store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
-        return;
-      }
+      // Split mode: when the grid is full, placeSessionInSplitSlot will auto-replace the oldest slot.
       const { rows, cols } = estimateTerminalSize();
       const terminalId = await startTerminal(profile.id, extraParams, rows, cols);
       await updateProfileLastUsed(profile.id);
