@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem } from '../types';
-import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath } from '../services/tauri';
+import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath, saveEnableTabNavigation } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 
 let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
@@ -274,6 +274,11 @@ interface AppState {
   closeSplitPane: (slotIndex: number) => void;
   swapSplitSlots: (i: number, j: number) => void;
   placeSessionInSplitSlot: (sessionId: string) => void;
+
+  // Window mode (F11 cycle)
+  windowMode: 'normal' | 'panels-hidden' | 'fullscreen';
+  previousPanelState: { configPanelVisible: boolean; fileTreeVisible: boolean; enableTabNavigation: boolean } | null;
+  cycleWindowMode: () => void;
 
   // Toast (transient notifications, e.g. "split grid full")
   toast: { id: number; message: string; type: 'info' | 'success' | 'error' } | null;
@@ -767,6 +772,46 @@ export const useAppStore = create<AppState>((set, get) => ({
     const splitSlots = [...slots];
     splitSlots[oldestIdx] = { sessionId, enteredAt: Date.now() };
     return { splitSlots, activeSessionId: sessionId };
+  }),
+
+  // --- Window Mode (F11 cycle) ---
+  windowMode: 'normal',
+  previousPanelState: null,
+  cycleWindowMode: () => set((state) => {
+    const cur = state.windowMode;
+
+    if (cur === 'normal') {
+      // normal → panels-hidden: 保存当前面板状态
+      const settings = getAppSettings();
+      return {
+        windowMode: 'panels-hidden' as const,
+        previousPanelState: {
+          configPanelVisible: state.configPanelVisible,
+          fileTreeVisible: state.fileTreeVisible,
+          enableTabNavigation: settings.enableTabNavigation,
+        },
+      };
+    }
+
+    if (cur === 'panels-hidden') {
+      // panels-hidden → fullscreen
+      return { windowMode: 'fullscreen' as const };
+    }
+
+    // fullscreen → normal: 恢复之前的面板状态
+    const prev = state.previousPanelState;
+    if (prev) {
+      const settings = getAppSettings();
+      saveAppSettings({ ...settings, enableTabNavigation: prev.enableTabNavigation });
+      saveEnableTabNavigation(prev.enableTabNavigation).catch(() => {});
+      window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
+    }
+    return {
+      windowMode: 'normal' as const,
+      previousPanelState: null,
+      configPanelVisible: prev?.configPanelVisible ?? state.configPanelVisible,
+      fileTreeVisible: prev?.fileTreeVisible ?? state.fileTreeVisible,
+    };
   }),
 
   // --- Toast ---
