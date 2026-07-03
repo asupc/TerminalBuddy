@@ -72,12 +72,32 @@ function App() {
   // fullscreen 模式切换
   useEffect(() => {
     const win = getCurrentWindow();
-    if (windowMode === 'fullscreen') {
-      win.setFullscreen(true);
-    } else {
-      win.setFullscreen(false);
-    }
+    const applyFullscreen = async () => {
+      try {
+        if (windowMode === 'fullscreen') {
+          await win.setFullscreen(true);
+        } else {
+          await win.setFullscreen(false);
+        }
+      } catch (e) {
+        console.error('setFullscreen failed:', e);
+      }
+    };
+    applyFullscreen();
   }, [windowMode]);
+
+  // 监听窗口 resize 事件，确保终端在全屏切换后能正确重绘
+  useEffect(() => {
+    const unlisten = listen('tauri://resize', () => {
+      // 使用 requestAnimationFrame 确保 DOM 已更新
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent('tb-split-resize', {
+          detail: { terminalIds: useAppStore.getState().sessions.map(s => s.id) }
+        }));
+      });
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
 
   useEffect(() => {
     (async () => {
