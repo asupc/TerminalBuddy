@@ -9,7 +9,7 @@ export const TerminalTabBar: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const removeSession = useAppStore(s => s.removeSession);
-  const setActiveSession = useAppStore(s => s.setActiveSession);
+
   const renameSession = useAppStore(s => s.renameSession);
   const workingSessions = useAppStore(s => s.workingSessions);
   const settingsVersion = useAppStore(s => s.settingsVersion);
@@ -85,7 +85,18 @@ export const TerminalTabBar: FC = () => {
         <div
           key={session.id}
           className={`terminal-tab ${activeSessionId === session.id ? 'active' : ''}`}
-          onClick={() => setActiveSession(session.id)}
+          onClick={() => {
+            const store = useAppStore.getState();
+            if (store.splitMode !== 'off') {
+              if (!store.splitSlots.some(slot => slot.sessionId === session.id)) {
+                store.placeSessionInSplitSlot(session.id);
+              } else {
+                store.setActiveSession(session.id);
+              }
+            } else {
+              store.setActiveSession(session.id);
+            }
+          }}
           onAuxClick={(e) => {
             if (e.button === 1) {
               e.preventDefault();

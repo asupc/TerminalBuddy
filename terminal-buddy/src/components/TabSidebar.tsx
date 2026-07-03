@@ -23,7 +23,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
   const openSettingsTab = useAppStore(s => s.openSettingsTab);
   const removeSession = useAppStore(s => s.removeSession);
-  const setActiveSession = useAppStore(s => s.setActiveSession);
+
   const renameSession = useAppStore(s => s.renameSession);
   const workingSessions = useAppStore(s => s.workingSessions);
   const settingsVersion = useAppStore(s => s.settingsVersion);
@@ -501,7 +501,18 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 <div
                   className={`tree-item tab-sidebar-item ${activeSessionId === child.id ? 'active' : ''}`}
                   style={{ paddingLeft: `${indent + 12}px` }}
-                  onClick={() => setActiveSession(child.id)}
+                  onClick={() => {
+                    const store = useAppStore.getState();
+                    if (store.splitMode !== 'off') {
+                      if (!store.splitSlots.some(slot => slot.sessionId === child.id)) {
+                        store.placeSessionInSplitSlot(child.id);
+                      } else {
+                        store.setActiveSession(child.id);
+                      }
+                    } else {
+                      store.setActiveSession(child.id);
+                    }
+                  }}
                   onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTerminal(child.id); } }}
                   onContextMenu={(e) => {
                     e.preventDefault();
