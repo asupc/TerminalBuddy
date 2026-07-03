@@ -48,7 +48,7 @@ export const TerminalPanel: FC = () => {
       ? sessions
           .filter(s => s.sessionType !== 'editor' && s.owner !== 'web')
           .map(s => s.id)
-      : splitSlots.filter((s): s is string => s !== null);
+      : splitSlots.map(s => s.sessionId).filter((s): s is string => s !== null);
     if (ids.length === 0) return;
     window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
   }, [splitMode, splitSlots, sessions, activeSessionId]);
@@ -179,19 +179,19 @@ export const TerminalPanel: FC = () => {
         ) : (
           <>
             {/* Split slots, in order — filled cells keyed by session.id, blanks by index */}
-            {splitSlots.map((sid, i) => {
-              const session = sid ? sessions.find(s => s.id === sid) : undefined;
-              if (!sid || !session) {
+            {splitSlots.map((slot, i) => {
+              const session = slot.sessionId ? sessions.find(s => s.id === slot.sessionId) : undefined;
+              if (!slot.sessionId || !session) {
                 return (
                   <div key={`blank-${i}`} className="split-cell split-blank" style={gridStyleFor(splitMode, i)}>
                     点击左侧连接打开终端
                   </div>
                 );
               }
-              return renderPane(session, { slot: i, active: activeSessionId === sid, hidden: false });
+              return renderPane(session, { slot: i, active: activeSessionId === slot.sessionId, hidden: false });
             })}
             {/* Non-slot sessions: keep mounted but hidden (display:none) so PTY/xterm state survives */}
-            {sessions.filter(s => !splitSlots.includes(s.id)).map(session =>
+            {sessions.filter(s => !splitSlots.some(slot => slot.sessionId === s.id)).map(session =>
               renderPane(session, { active: false, hidden: true })
             )}
           </>

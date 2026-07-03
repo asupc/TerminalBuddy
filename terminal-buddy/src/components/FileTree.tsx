@@ -330,7 +330,7 @@ export const FileTree: FC = () => {
 
   const openTerminalInDir = useCallback(async (dir: string) => {
     const store = useAppStore.getState();
-    if (store.splitMode !== 'off' && !store.splitSlots.includes(null)) {
+    if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
       store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
       return;
     }

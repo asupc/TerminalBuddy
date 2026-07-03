@@ -336,7 +336,7 @@ function App() {
       }
       // Split mode: block new connections when the grid is full (no blank slot).
       const store = useAppStore.getState();
-      if (store.splitMode !== 'off' && !store.splitSlots.includes(null)) {
+      if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
         store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
         return;
       }
@@ -418,7 +418,7 @@ function App() {
   const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'cmd') => {
     try {
       const store = useAppStore.getState();
-      if (store.splitMode !== 'off' && !store.splitSlots.includes(null)) {
+      if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
         store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
         return;
       }

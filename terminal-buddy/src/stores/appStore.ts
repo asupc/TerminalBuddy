@@ -269,7 +269,7 @@ interface AppState {
 
   // Split Screen mode
   splitMode: 'off' | '2x1' | '2x2';
-  splitSlots: (string | null)[];
+  splitSlots: { sessionId: string | null; enteredAt: number }[];
   cycleSplitMode: () => void;
   closeSplitPane: (slotIndex: number) => void;
   swapSplitSlots: (i: number, j: number) => void;
@@ -511,10 +511,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       // If the closed pane was focused, refocus the first remaining filled slot
       // (split mode is preserved even if all slots become blank).
       let splitSlots = state.splitSlots;
-      if (state.splitMode !== 'off' && splitSlots.includes(id)) {
-        splitSlots = splitSlots.map((s) => (s === id ? null : s));
+      if (state.splitMode !== 'off' && splitSlots.some(s => s.sessionId === id)) {
+        splitSlots = splitSlots.map(s => s.sessionId === id ? { sessionId: null, enteredAt: 0 } : s);
         if (state.activeSessionId === id) {
-          activeSessionId = splitSlots.find((s) => s !== null) ?? null;
+          activeSessionId = splitSlots.find(s => s.sessionId !== null)?.sessionId ?? null;
         }
       }
       debouncedSaveTabs(sessions, activeSessionId);
@@ -711,30 +711,31 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Entry: populate from terminal-session count (editors & web sessions excluded).
       const N = 2;
       const terms = state.sessions.filter(s => s.sessionType !== 'editor' && s.owner !== 'web');
-      let slots: (string | null)[];
+      const now = Date.now();
+      let slots: { sessionId: string | null; enteredAt: number }[];
       if (terms.length <= N) {
-        slots = terms.slice(0, N).map(s => s.id);
-        while (slots.length < N) slots.push(null);
+        slots = terms.slice(0, N).map(s => ({ sessionId: s.id, enteredAt: now }));
+        while (slots.length < N) slots.push({ sessionId: null, enteredAt: 0 });
       } else {
-        slots = new Array(N).fill(null);
+        slots = new Array(N).fill(null).map(() => ({ sessionId: null, enteredAt: 0 }));
       }
       // Focus: keep current active if it ended up in a slot; else first filled slot; else unchanged.
       let activeSessionId = state.activeSessionId;
-      if (activeSessionId && !slots.includes(activeSessionId)) {
-        activeSessionId = slots.find(s => s !== null) ?? activeSessionId;
+      if (activeSessionId && !slots.some(s => s.sessionId === activeSessionId)) {
+        activeSessionId = slots.find(s => s.sessionId !== null)?.sessionId ?? activeSessionId;
       }
       return { splitMode: '2x1' as const, splitSlots: slots, activeSessionId };
     }
     if (cur === '2x1') {
       // Grow: preserve existing slot contents in place, append blank slots.
-      return { splitMode: '2x2' as const, splitSlots: [...state.splitSlots, null, null] };
+      return { splitMode: '2x2' as const, splitSlots: [...state.splitSlots, { sessionId: null, enteredAt: 0 }, { sessionId: null, enteredAt: 0 }] };
     }
     // 2x2 -> off: exit. Sessions become normal tabs; activeSessionId (focused pane) stays, shown full-screen.
     return { splitMode: 'off' as const, splitSlots: [] };
   }),
   closeSplitPane: (slotIndex) => {
-    const sid = get().splitSlots[slotIndex];
-    if (sid) get().removeSession(sid);
+    const slot = get().splitSlots[slotIndex];
+    if (slot?.sessionId) get().removeSession(slot.sessionId);
   },
   swapSplitSlots: (i, j) => set((state) => {
     const slots = [...state.splitSlots];
@@ -744,10 +745,27 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
   placeSessionInSplitSlot: (sessionId) => set((state) => {
     if (state.splitMode === 'off') return state;
-    const idx = state.splitSlots.indexOf(null);
-    if (idx === -1) return state;
-    const splitSlots = [...state.splitSlots];
-    splitSlots[idx] = sessionId;
+    const slots = state.splitSlots;
+
+    // 1. 找空位
+    const emptyIdx = slots.findIndex(s => s.sessionId === null);
+    if (emptyIdx !== -1) {
+      const splitSlots = [...slots];
+      splitSlots[emptyIdx] = { sessionId, enteredAt: Date.now() };
+      return { splitSlots, activeSessionId: sessionId };
+    }
+
+    // 2. 无空位，替换最旧的
+    let oldestIdx = 0;
+    let oldestTime = slots[0].enteredAt;
+    for (let i = 1; i < slots.length; i++) {
+      if (slots[i].enteredAt < oldestTime) {
+        oldestTime = slots[i].enteredAt;
+        oldestIdx = i;
+      }
+    }
+    const splitSlots = [...slots];
+    splitSlots[oldestIdx] = { sessionId, enteredAt: Date.now() };
     return { splitSlots, activeSessionId: sessionId };
   }),
 
