@@ -462,6 +462,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [dragOver, setDragOver] = useState(false);
   const [internalDragOver, setInternalDragOver] = useState(false);
   const isSsh = useAppStore(s => s.sessions.find(sess => sess.id === terminalId)?.terminalType === 'ssh');
+  const windowMode = useAppStore(s => s.windowMode);
   const [scrollInfo, setScrollInfo] = useState({ top: 0, height: 0, visible: false });
   const scrollThumbRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLElement | null>(null);
@@ -691,7 +692,19 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const tWebgl = performance.now();
       const webglAddon = new WebglAddon();
       webglAddon.onContextLoss(() => {
+        // WebGL context 丢失（常见诱因：F11 panels-hidden 切换 + 分屏 grid 重排
+        // 时 canvas 瞬时变 0，GPU 抛 context-lost 事件）。dispose 后必须强制
+        // 触发一次重绘，否则 xterm 会停在"等 WebGL 写下一帧"的状态，表现为黑屏。
         webglAddon.dispose();
+        try {
+          // 若 canvas 已被前面的 bad fit 推到 0，先恢复到一个能渲染的默认尺寸。
+          // 用固定 80×24 而不是 prevCols/prevRows：避免容器仍为 0 时 resize
+          // 越界写触发 WebView2 native crash。
+          if (terminal.cols === 0 || terminal.rows === 0) {
+            terminal.resize(80, 24);
+          }
+          terminal.refresh(0, terminal.rows - 1);
+        } catch { /* refresh may throw during teardown */ }
       });
       try {
         terminal.loadAddon(webglAddon);
@@ -1374,6 +1387,33 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const forceFit = (term as any)._tbForceFit;
     if (typeof forceFit === 'function') forceFit(true);
   }, [splitMode]);
+
+  // F11 切换 windowMode（panels-hidden / fullscreen）时，.terminal-content
+  // 宽度突变，grid 重排需要时间落定。这里直接订阅 windowMode 再补一次 forceFit，
+  // 与 TerminalPanel 派发的 tb-split-resize 互为备份——任意一条路径被 ResizeObserver
+  // 卡住时另一条仍能触发 fit。
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term) return;
+    const forceFit = (term as any)._tbForceFit;
+    if (typeof forceFit !== 'function') return;
+    let raf1 = 0;
+    let raf2 = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        timer = setTimeout(() => {
+          timer = null;
+          try { forceFit(true); } catch { /* terminal may be disposing */ }
+        }, 50);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      if (timer) clearTimeout(timer);
+    };
+  }, [windowMode]);
 
   const handleSearch = useCallback((direction: 'next' | 'prev' = 'next') => {
     const searchAddon = searchAddonRef.current;
