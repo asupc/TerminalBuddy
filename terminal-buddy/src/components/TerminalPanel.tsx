@@ -52,21 +52,26 @@ export const TerminalPanel: FC = () => {
       : splitSlots.map(s => s.sessionId).filter((s): s is string => s !== null);
     if (ids.length === 0) return;
 
-    // 双层 requestAnimationFrame 等 React commit + 浏览器布局完成后再派发事件，
-    // 确保终端 fit 时拿到的是已稳定的尺寸（包括 panels-hidden 切换的 grid 重排）。
-    // 之前多加 30ms setTimeout 反而让 fit 拿到陈旧尺寸、与 ResizeObserver 重复触发，
-    // 增加 fit 失败 → xterm 进入 0×0 不可见状态的风险。
+    // 双层 rAF + 30ms 延迟确保 F11 切 panels-hidden 时 .terminal-content.split-grid
+    // 的 grid 重排已完全落定后再派发事件，让 fit 拿到稳定尺寸（避免拿到过渡帧的 0
+    // 尺寸把 xterm 推到 0×0 不可见状态——黑屏）。
     let raf1 = 0;
     let raf2 = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
+        timer = setTimeout(() => {
+          timer = null;
+          window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
+        }, 30);
       });
     });
 
     return () => {
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
+      if (timer) clearTimeout(timer);
     };
   }, [splitMode, splitSlots, sessions, activeSessionId, windowMode]);
 

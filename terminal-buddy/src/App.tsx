@@ -93,37 +93,38 @@ function App() {
 
   // 监听窗口 resize 事件，确保终端在全屏切换后能正确重绘
   useEffect(() => {
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     let raf1 = 0;
     let raf2 = 0;
 
-    const dispatchResize = () => {
-      const { sessions, splitMode } = useAppStore.getState();
-      const terminalIds = splitMode === 'off'
-        ? sessions.filter(s => s.sessionType !== 'editor' && s.owner !== 'web').map(s => s.id)
-        : sessions.map(s => s.id);
-      if (terminalIds.length > 0) {
-        window.dispatchEvent(new CustomEvent('tb-split-resize', {
-          detail: { terminalIds }
-        }));
-      }
-    };
-
     const unlisten = listen('tauri://resize', () => {
-      // 清除之前未完成的两帧调度，避免 resize 风暴时多次重复派发
+      // 清除之前的定时器，避免重复触发
+      if (resizeTimer) clearTimeout(resizeTimer);
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
 
-      // 双层 rAF 等 React commit + 浏览器布局完成后再派发事件。
-      // 之前多加的 50ms setTimeout 反而让 fit 拿到陈旧尺寸、与 ResizeObserver
-      // 重复触发，增加 fit 失败 → xterm 进入 0×0 不可见状态的风险。
+      // 使用双层 requestAnimationFrame + setTimeout 确保 CSS 网格布局已完成计算
+      // 分屏模式下网格布局更复杂，需要更多时间稳定
       raf1 = requestAnimationFrame(() => {
         raf2 = requestAnimationFrame(() => {
-          dispatchResize();
+          resizeTimer = setTimeout(() => {
+            resizeTimer = null;
+            const { sessions, splitMode } = useAppStore.getState();
+            const terminalIds = splitMode === 'off'
+              ? sessions.filter(s => s.sessionType !== 'editor' && s.owner !== 'web').map(s => s.id)
+              : sessions.map(s => s.id);
+            if (terminalIds.length > 0) {
+              window.dispatchEvent(new CustomEvent('tb-split-resize', {
+                detail: { terminalIds }
+              }));
+            }
+          }, 50); // 额外 50ms 延迟确保布局完全稳定
         });
       });
     });
     return () => {
       unlisten.then(fn => fn());
+      if (resizeTimer) clearTimeout(resizeTimer);
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
     };
