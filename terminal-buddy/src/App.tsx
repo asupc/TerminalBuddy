@@ -41,7 +41,6 @@ function App() {
   const toggleFileTree = useAppStore(s => s.toggleFileTree);
   const openSettingsTab = useAppStore(s => s.openSettingsTab);
   const profiles = useAppStore(s => s.profiles);
-  const splitMode = useAppStore(s => s.splitMode);
   const windowMode = useAppStore(s => s.windowMode);
   const cycleWindowMode = useAppStore(s => s.cycleWindowMode);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -499,7 +498,7 @@ function App() {
           onManageExtraParams={() => setShowExtraParamsDialog(true)}
         />
         <FileTree />
-        {enableTabNav && splitMode === 'off' && (
+        {enableTabNav && (
           <TabSidebar
             profiles={profiles}
             onStartTerminal={handleStartTerminal}

@@ -26,6 +26,7 @@ export const TerminalPanel: FC = () => {
   const splitSlots = useAppStore(s => s.splitSlots);
   const workingSessions = useAppStore(s => s.workingSessions);
   const setActiveSession = useAppStore(s => s.setActiveSession);
+  const windowMode = useAppStore(s => s.windowMode);
   const closeSplitPane = useAppStore(s => s.closeSplitPane);
   const swapSplitSlots = useAppStore(s => s.swapSplitSlots);
   const [settings, setSettings] = useState(() => getAppSettings());
@@ -51,7 +52,7 @@ export const TerminalPanel: FC = () => {
       : splitSlots.map(s => s.sessionId).filter((s): s is string => s !== null);
     if (ids.length === 0) return;
     window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
-  }, [splitMode, splitSlots, sessions, activeSessionId]);
+  }, [splitMode, splitSlots, sessions, activeSessionId, windowMode]);
 
   useEffect(() => {
     const onSettings = () => setSettings(getAppSettings());
