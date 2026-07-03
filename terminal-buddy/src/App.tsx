@@ -9,7 +9,7 @@ import { TabSidebar } from './components/TabSidebar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { Toast } from './components/Toast';
-import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings } from './utils/settings';
+import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight, initFileTreeNav } from './stores/appStore';
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, getClaudeSessionsForTerminals } from './services/tauri';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
@@ -128,6 +128,14 @@ function App() {
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
     };
+  }, []);
+
+  // 应用列表选中样式（连接/文件导航 .tree-item.selected 配色）：启动一次 + 设置变更时刷新
+  useEffect(() => {
+    const apply = () => applyListSelectionStyle(getAppSettings());
+    apply();
+    window.addEventListener('app-settings-changed', apply);
+    return () => window.removeEventListener('app-settings-changed', apply);
   }, []);
 
   useEffect(() => {

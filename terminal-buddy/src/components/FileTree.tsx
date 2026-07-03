@@ -1,7 +1,9 @@
 import { FC, useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { listDirectory, openPath, openInExplorer, startBlankTerminal, deletePath, renamePath, getFileSize, type FileNode } from '../services/tauri';
+import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
+import { getAppSettings } from '../utils/settings';
+import { openTerminalInDir } from '../utils/openTerminalInDir';
 import { RemoteFileTree } from './RemoteFileTree';
 import './FileTree.css';
 
@@ -66,7 +68,11 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
   const handleDoubleClick = useCallback(async () => {
     if (node.is_directory) {
       onNavigate(node.path);
-    } else if (isTextFile(node.path)) {
+      return;
+    }
+    // 开关开启时，双击 .bat 直接运行（等同“在系统中打开”）；否则按文本文件在编辑器中打开
+    const runBat = node.path.toLowerCase().endsWith('.bat') && getAppSettings().doubleClickRunBat;
+    if (!runBat && isTextFile(node.path)) {
       try {
         const size = await getFileSize(node.path);
         if (size > 1024 * 1024) {
@@ -327,33 +333,6 @@ export const FileTree: FC = () => {
   const toggleSortDir = useCallback(() => {
     setFileSort(fileSortBy, fileSortDir === 'asc' ? 'desc' : 'asc');
   }, [fileSortBy, fileSortDir, setFileSort]);
-
-  const openTerminalInDir = useCallback(async (dir: string) => {
-    const store = useAppStore.getState();
-    if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
-      store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
-      return;
-    }
-    const content = document.querySelector('.terminal-content');
-    let estRows = 0, estCols = 0;
-    if (content) {
-      estCols = Math.max(2, Math.floor((content.clientWidth - 20) / 8.4));
-      estRows = Math.max(1, Math.floor((content.clientHeight - 20) / 17));
-    }
-    const terminalId = await startBlankTerminal('powershell', estRows, estCols, dir);
-    useAppStore.getState().addSession({
-      id: terminalId,
-      profileId: '',
-      profileName: 'PowerShell',
-      terminalType: 'powershell',
-      colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
-      tabColor: null,
-      groupId: 'default',
-    });
-    const st = useAppStore.getState();
-    if (st.splitMode !== 'off') st.placeSessionInSplitSlot(terminalId);
-    setSessionDirectory(terminalId, dir);
-  }, [setSessionDirectory]);
 
   // Load directory when currentDirectory changes
   useEffect(() => {

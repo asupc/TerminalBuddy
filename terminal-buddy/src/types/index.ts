@@ -29,6 +29,7 @@ export interface Profile {
   mstscResolution?: string;
   createdAt: string;
   lastUsedAt: string | null;
+  pinned?: boolean;
 }
 
 export interface ColorTheme {

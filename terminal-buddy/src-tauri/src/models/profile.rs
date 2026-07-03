@@ -35,6 +35,8 @@ pub struct Profile {
     pub mstsc_resolution: Option<String>,
     pub created_at: String,
     pub last_used_at: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl Profile {

@@ -398,7 +398,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     setProfileContextMenu(null);
                     try {
                       const copied = await createProfile(`${p.name} (副本)`, p.group || '默认', p.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s');
-                      await updateProfile({ ...p, id: copied.id, name: `${p.name} (副本)` });
+                      await updateProfile({ ...p, id: copied.id, name: `${p.name} (副本)`, pinned: false });
                       loadProfiles();
                     } catch (err) {
                       alert('复制失败: ' + String(err));
