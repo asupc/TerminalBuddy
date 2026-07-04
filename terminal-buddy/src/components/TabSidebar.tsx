@@ -590,6 +590,18 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
               }
               setTabContextMenu(null);
             }}>重命名</div>
+            {(() => {
+              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
+              if (!session || session.sessionType === 'editor') return null;
+              const profile = profiles.find(p => p.id === session.profileId);
+              if (!profile) return null;
+              return (
+                <div className="context-menu-item" onClick={() => {
+                  onStartTerminal(profile);
+                  setTabContextMenu(null);
+                }}>以此配置新建终端</div>
+              );
+            })()}
             <div className="context-menu-item danger" onClick={() => {
               handleCloseTerminal(tabContextMenu.sessionId);
               setTabContextMenu(null);
