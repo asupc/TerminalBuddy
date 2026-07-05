@@ -315,14 +315,14 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   return (
     <div ref={containerRef} className={`config-nav ${!configPanelVisible ? 'collapsed' : ''}`} style={{ width }} onClick={closeContextMenu}>
       <div className="panel-titlebar">
-        <span className="panel-title">连接</span>
+        <span className="panel-title">配置</span>
         <span className="panel-title-count">{profiles.length}</span>
       </div>
       <div className="config-nav-search-bar">
         <input
           type="text"
           className="config-nav-search-input"
-          placeholder="搜索连接..."
+          placeholder="搜索配置..."
           value={configSearchQuery}
           onChange={(e) => setConfigSearchQuery(e.target.value)}
         />
@@ -379,7 +379,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           onRenamingProfileCancel={() => setRenamingProfileId(null)}
         />
         {profiles.length === 0 && (
-          <div className="empty-state">暂无连接，点击新建</div>
+          <div className="empty-state">暂无配置，点击新建</div>
         )}
       </div>
 
