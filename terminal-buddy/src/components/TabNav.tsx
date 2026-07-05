@@ -325,10 +325,10 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
     if (sessions.length === 0) return;
     const hasDirty = sessions.some(s => s.sessionType === 'editor' && s.isDirty);
     setConfirmDialog({
-      title: '确认关闭所有标签',
+      title: '确认关闭所有选项卡',
       message: hasDirty
-        ? `有未保存的文件更改，确定关闭所有 ${sessions.length} 个标签吗？`
-        : `确定关闭所有 ${sessions.length} 个标签吗？`,
+        ? `有未保存的文件更改，确定关闭所有 ${sessions.length} 个选项卡吗？`
+        : `确定关闭所有 ${sessions.length} 个选项卡吗？`,
       onConfirm: async () => {
         setConfirmDialog(null);
         const store = useAppStore.getState();
@@ -574,7 +574,7 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
         <input
           className="tab-nav-search"
           type="text"
-          placeholder="搜索标签..."
+          placeholder="搜索选项卡..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -740,7 +740,7 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
             </div>
             <div className="context-menu-separator" />
             <div className="context-menu-item danger" onClick={handleCloseAllTabs}>
-              关闭所有标签
+              关闭所有选项卡
             </div>
             <div className="context-menu-separator" />
             <div className="context-menu-item" onClick={() => {

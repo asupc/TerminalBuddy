@@ -29,9 +29,9 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
             checked={settings.restoreTabsOnStartup}
             onChange={(e) => updateSetting('restoreTabsOnStartup', e.target.checked)}
           />
-          <span>启动时恢复标签</span>
+          <span>启动时恢复选项卡</span>
         </label>
-        <p className="settings-desc">关闭程序时自动保存打开的终端标签，下次启动时自动恢复</p>
+        <p className="settings-desc">关闭程序时自动保存打开的终端选项卡，下次启动时自动恢复</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
@@ -163,7 +163,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
               checked={settings.breathingLightColorMode === 'tab'}
               onChange={() => updateSetting('breathingLightColorMode', 'tab' as BreathingLightColorMode)}
             />
-            <span>跟随标签颜色</span>
+            <span>跟随选项卡颜色</span>
           </label>
           <label className={`breathing-light-mode ${settings.breathingLightColorMode === 'custom' ? 'active' : ''}`}>
             <input
