@@ -380,3 +380,9 @@
   line-height: 1;
   flex-shrink: 0;
 }
+
+.tab-nav-uptime {
+  color: var(--text-muted, #888);
+  font-size: 11px;
+  margin-left: 2px;
+}

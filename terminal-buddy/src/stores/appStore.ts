@@ -493,7 +493,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   _skipSaveTabs: false,
   addSession: (session, keepActive) =>
     set((state) => {
-      const s = { ...session, groupId: session.groupId || 'default' };
+      const s = {
+        ...session,
+        groupId: session.groupId || 'default',
+        createdAt: session.createdAt ?? Date.now(),
+      };
       const sessions = [...state.sessions, s];
       if (!state._skipSaveTabs) {
         debouncedSaveTabs(sessions, s.id);
@@ -526,9 +530,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { sessions, activeSessionId, remoteFileCache: restCache, splitSlots };
     }),
   setSessions: (sessions) => {
-    const activeSessionId = sessions[0]?.id ?? null;
-    saveTabsToStorage(sessions, activeSessionId);
-    set({ sessions, activeSessionId });
+    const normalized = sessions.map(s => ({ ...s, createdAt: s.createdAt ?? Date.now() }));
+    const activeSessionId = normalized[0]?.id ?? null;
+    saveTabsToStorage(normalized, activeSessionId);
+    set({ sessions: normalized, activeSessionId });
   },
   setActiveSession: (id) => set((state) => {
     // 文件导航跟随当前连接：优先使用会话内已记录的目录（用户浏览或 cd 过的）；

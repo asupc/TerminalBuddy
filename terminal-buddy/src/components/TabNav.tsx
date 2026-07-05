@@ -3,11 +3,12 @@ import { useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
+import { formatDuration } from '../utils/formatDuration';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getWorkingDotColor } from '../utils/tabColor';
 import { TreeView, type TreeItem } from './TreeView';
 import { buildGroupTree, type GroupNode } from '../utils/groupTree';
-import type { Profile } from '../types';
+import type { Profile, TerminalSession } from '../types';
 import './TabNav.css';
 
 interface TabSidebarProps {
@@ -45,6 +46,12 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [submenuExpandedGroups, setSubmenuExpandedGroups] = useState<Set<string>>(new Set());
   const [, setSettingsTick] = useState(0);
+  // 终端运行时长后缀每 60s 刷新一次
+  const [, setUptimeTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setUptimeTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   // F2 快速重命名标签
   useEffect(() => {
@@ -525,7 +532,16 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
                       style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
                     />
                   )}
-                  <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>{child.label}</span>
+                  <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
+                    {child.label}
+                    {(() => {
+                      const childSession = child.data as TerminalSession | undefined;
+                      if (childSession && childSession.sessionType !== 'editor' && childSession.createdAt) {
+                        return <span className="tab-nav-uptime"> · {formatDuration(Date.now() - childSession.createdAt)}</span>;
+                      }
+                      return null;
+                    })()}
+                  </span>
                   {(child.data as any)?.owner === 'web' && <span className="tab-nav-owner-badge">Web</span>}
                   <span className="tree-item-end">
                     <button
