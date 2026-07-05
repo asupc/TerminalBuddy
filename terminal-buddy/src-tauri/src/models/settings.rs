@@ -15,6 +15,14 @@ fn default_tab_sidebar_width() -> u32 {
     200
 }
 
+fn default_config_nav_width() -> u32 {
+    250
+}
+
+fn default_file_nav_width() -> u32 {
+    250
+}
+
 fn default_enable_tab_navigation() -> bool {
     true
 }
@@ -32,6 +40,10 @@ pub struct AppSettings {
     pub data_path: Option<String>,
     #[serde(default = "default_tab_sidebar_width")]
     pub tab_sidebar_width: u32,
+    #[serde(default = "default_config_nav_width")]
+    pub config_nav_width: u32,
+    #[serde(default = "default_file_nav_width")]
+    pub file_nav_width: u32,
     #[serde(default = "default_enable_tab_navigation")]
     pub enable_tab_navigation: bool,
     #[serde(default = "default_single_instance")]
@@ -60,6 +72,8 @@ impl Default for AppSettings {
             close_behavior: CloseBehavior::Exit,
             data_path: None,
             tab_sidebar_width: 200,
+            config_nav_width: 250,
+            file_nav_width: 250,
             enable_tab_navigation: true,
             single_instance: true,
             web_api_enabled: false,

@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, type FileNode } from '../services/tauri';
+import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
 import { getAppSettings } from '../utils/settings';
@@ -265,6 +265,7 @@ export const FileNav: FC = () => {
   const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
   const [rootNodes, setRootNodes] = useState<FileNode[]>([]);
   const [width, setWidth] = useState(250);
+  const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -284,6 +285,15 @@ export const FileNav: FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number | null>(null);
+
+  // 启动时从后端恢复宽度
+  useEffect(() => {
+    getBackendAppSettings().then(s => {
+      const w = s.fileNavWidth || 250;
+      setWidth(w);
+      widthRef.current = w;
+    }).catch(() => {});
+  }, []);
 
   // Load root directory on mount
   useEffect(() => {
@@ -405,6 +415,7 @@ export const FileNav: FC = () => {
         const newWidth = e.clientX - rect.left;
         if (newWidth >= 150 && newWidth <= 500) {
           setWidth(newWidth);
+          widthRef.current = newWidth;
         }
       }
     });
@@ -415,6 +426,7 @@ export const FileNav: FC = () => {
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
     }
+    saveFileNavWidth(widthRef.current).catch(() => {});
   }, []);
 
   useEffect(() => {

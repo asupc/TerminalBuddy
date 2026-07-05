@@ -1,6 +1,6 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile } from '../services/tauri';
+import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings } from '../services/tauri';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
 import type { Profile } from '../types';
 import { TreeView, type TreeItem } from './TreeView';
@@ -41,9 +41,19 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const setConfigSortBy = useAppStore(s => s.setConfigSortBy);
   const extraParamPresets = useAppStore(s => s.extraParamPresets);
   const [width, setWidth] = useState(250);
+  const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
+
+  // 启动时从后端恢复宽度
+  useEffect(() => {
+    getBackendAppSettings().then(s => {
+      const w = s.configNavWidth || 250;
+      setWidth(w);
+      widthRef.current = w;
+    }).catch(() => {});
+  }, []);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set([PINNED_GROUP_ID]));
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; profileId: string;
@@ -259,7 +269,10 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         const newWidth = e.clientX - rect.left;
-        if (newWidth >= 150 && newWidth <= 500) setWidth(newWidth);
+        if (newWidth >= 150 && newWidth <= 500) {
+          setWidth(newWidth);
+          widthRef.current = newWidth;
+        }
       }
     });
   }, [isResizing]);
@@ -267,6 +280,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const handleResizeMouseUp = useCallback(() => {
     setIsResizing(false);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    saveConfigNavWidth(widthRef.current).catch(() => {});
   }, []);
 
   useEffect(() => {
