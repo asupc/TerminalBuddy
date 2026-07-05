@@ -18,7 +18,7 @@ body {
   --text-secondary: #858585;
   --accent: #0078d4;
   --border: #3c3c3c;
-  /* List item hover/selection (tree views: ConfigPanel, FileTree) */
+  /* List item hover/selection (tree views: ConfigNav, FileTree) */
   --list-hover-bg: #2a2d2e;
   --list-active-bg: #4d7db9;
   --list-active-fg: #ffffff;
@@ -154,7 +154,7 @@ body {
   color: var(--text-primary);
 }
 
-/* Shared panel titlebar (FileTree, ConfigPanel, TabSidebar) */
+/* Shared panel titlebar (FileTree, ConfigNav, TabSidebar) */
 .panel-titlebar {
   display: flex;
   align-items: center;
@@ -225,7 +225,7 @@ body {
 }
 
 /* Panels hidden mode (F11) */
-.panels-hidden .config-panel,
+.panels-hidden .config-nav,
 .panels-hidden .file-tree,
 .panels-hidden .remote-file-tree,
 .panels-hidden .tab-sidebar {

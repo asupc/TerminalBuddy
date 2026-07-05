@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from './components/TitleBar';
-import { ConfigPanel } from './components/ConfigPanel';
+import { ConfigNav } from './components/ConfigNav';
 import { TerminalPanel } from './components/TerminalPanel';
 import { FileTree } from './components/FileTree';
 import { TabSidebar } from './components/TabSidebar';
@@ -535,7 +535,7 @@ function App() {
         onToggleFileTree={toggleFileTree}
       />
       <div className="main-content">
-        <ConfigPanel
+        <ConfigNav
           onStartTerminal={handleStartTerminal}
           onEditProfile={handleEditProfile}
           onCopyProfile={handleCopyProfile}

@@ -5,7 +5,7 @@ import { openTerminalInDir } from '../utils/openTerminalInDir';
 import type { Profile } from '../types';
 import { TreeView, type TreeItem } from './TreeView';
 import { buildGroupTree, renameGroupInPath } from '../utils/groupTree';
-import './ConfigPanel.css';
+import './ConfigNav.css';
 
 const TYPE_ICONS: Record<string, string> = {
   powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
@@ -22,7 +22,7 @@ interface ConfigPanelProps {
   onManageExtraParams: () => void;
 }
 
-export const ConfigPanel: FC<ConfigPanelProps> = ({
+export const ConfigNav: FC<ConfigPanelProps> = ({
   onStartTerminal,
   onEditProfile,
   onCopyProfile,
@@ -91,7 +91,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
     const toLeaf = (p: Profile): TreeItem => ({
       id: p.id,
       label: p.name,
-      icon: <span className="config-icon-type">{TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
+      icon: <span className="config-nav-icon-type">{TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
       color: p.tabColor || undefined,
       data: p,
     });
@@ -313,29 +313,29 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   }, [selectedProfileId, treeItems]);
 
   return (
-    <div ref={containerRef} className={`config-panel ${!configPanelVisible ? 'collapsed' : ''}`} style={{ width }} onClick={closeContextMenu}>
+    <div ref={containerRef} className={`config-nav ${!configPanelVisible ? 'collapsed' : ''}`} style={{ width }} onClick={closeContextMenu}>
       <div className="panel-titlebar">
-        <span className="panel-title">连接导航</span>
+        <span className="panel-title">连接</span>
         <span className="panel-title-count">{profiles.length}</span>
       </div>
-      <div className="config-search-bar">
+      <div className="config-nav-search-bar">
         <input
           type="text"
-          className="config-search-input"
+          className="config-nav-search-input"
           placeholder="搜索连接..."
           value={configSearchQuery}
           onChange={(e) => setConfigSearchQuery(e.target.value)}
         />
-        <div className="config-sort-wrapper">
+        <div className="config-nav-sort-wrapper">
           <button
-            className="config-sort-btn"
+            className="config-nav-sort-btn"
             onClick={() => setSortDropdownOpen(!sortDropdownOpen)}
             title="排序"
           >
             ⇅
           </button>
           {sortDropdownOpen && (
-            <div className="config-sort-dropdown">
+            <div className="config-nav-sort-dropdown">
               {([
                 ['name-asc', '名称 A-Z'], ['name-desc', '名称 Z-A'],
                 ['recent', '最近使用'], ['oldest', '最久未用'],
@@ -343,7 +343,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
               ] as const).map(([key, label]) => (
                 <div
                   key={key}
-                  className={`config-sort-option ${configSortBy === key ? 'active' : ''}`}
+                  className={`config-nav-sort-option ${configSortBy === key ? 'active' : ''}`}
                   onClick={() => { setConfigSortBy(key); setSortDropdownOpen(false); }}
                 >
                   {label}
@@ -353,7 +353,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
           )}
         </div>
       </div>
-      <div className="config-list" onContextMenu={(e) => {
+      <div className="config-nav-list" onContextMenu={(e) => {
         if ((e.target as HTMLElement).closest('.tree-item')) return;
         e.preventDefault();
         setBlankContextMenu({ x: e.clientX, y: e.clientY });
@@ -440,7 +440,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       {groupContextMenu && (
         <div className="context-menu" style={{ left: groupContextMenu.x, top: groupContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
-            添加连接
+            添加配置
           </div>
           <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group + '/新分组'); closeContextMenu(); }}>
             添加子分组
@@ -454,7 +454,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       {blankContextMenu && (
         <div className="context-menu" style={{ left: blankContextMenu.x, top: blankContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <div className="context-menu-item" onClick={() => { onAddProfile('默认'); closeContextMenu(); }}>
-            添加连接
+            添加配置
           </div>
           <div className="context-menu-item" onClick={() => { onManageExtraParams(); closeContextMenu(); }}>
             添加额外参数
@@ -475,7 +475,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
         </div>
       )}
       <div
-        className={`config-resize-handle ${isResizing ? 'active' : ''}`}
+        className={`config-nav-resize-handle ${isResizing ? 'active' : ''}`}
         onMouseDown={handleResizeMouseDown}
       />
     </div>
