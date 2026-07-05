@@ -749,7 +749,7 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
               saveAppSettings({ ...s, enableTabNavigation: false });
               saveEnableTabNavigation(false).catch(console.error);
               window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
-            }}>禁用标签导航</div>
+            }}>切换为横向选项卡</div>
           </div>
         </>
       )}

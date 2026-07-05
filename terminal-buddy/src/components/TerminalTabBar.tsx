@@ -224,7 +224,7 @@ export const TerminalTabBar: FC = () => {
               saveAppSettings({ ...s, enableTabNavigation: true });
               saveEnableTabNavigation(true).catch(console.error);
               window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
-            }}>启用标签导航</div>
+            }}>切换为纵向选项卡</div>
             <div className="context-menu-separator" />
             <div className="context-menu-item danger" onClick={() => {
               handleCloseTerminal(contextMenu.sessionId);
