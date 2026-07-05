@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from './components/TitleBar';
 import { ConfigNav } from './components/ConfigNav';
 import { TerminalPanel } from './components/TerminalPanel';
-import { FileTree } from './components/FileTree';
+import { FileNav } from './components/FileNav';
 import { TabNav } from './components/TabNav';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
@@ -542,7 +542,7 @@ function App() {
           onAddProfile={handleAddProfile}
           onManageExtraParams={() => setShowExtraParamsDialog(true)}
         />
-        <FileTree />
+        <FileNav />
         {enableTabNav && (
           <TabNav
             profiles={profiles}

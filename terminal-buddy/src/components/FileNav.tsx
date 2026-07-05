@@ -5,7 +5,7 @@ import { isTextFile } from '../utils/fileExtensions';
 import { getAppSettings } from '../utils/settings';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
 import { RemoteFileTree } from './RemoteFileTree';
-import './FileTree.css';
+import './FileNav.css';
 
 interface TreeNodeProps {
   node: FileNode;
@@ -244,7 +244,7 @@ function compareNodes(a: FileNode, b: FileNode, sortBy: 'name' | 'size' | 'modif
   return a.name.localeCompare(b.name) * dir;
 }
 
-export const FileTree: FC = () => {
+export const FileNav: FC = () => {
   const currentDirectory = useAppStore(s => s.currentDirectory);
   const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
   const navigateWithHistory = useAppStore(s => s.navigateWithHistory);
@@ -574,10 +574,10 @@ export const FileTree: FC = () => {
   }
 
   return (
-    <div ref={containerRef} className={`file-tree ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
+    <div ref={containerRef} className={`file-nav ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
       <div className="panel-titlebar">
-        <span className="panel-title">文件导航</span>
-        <div className="file-tree-actions">
+        <span className="panel-title">文件</span>
+        <div className="file-nav-actions">
           <button onClick={handleNavBack} disabled={navBackStack.length === 0} title="后退 (Alt+←)">←</button>
           <button onClick={handleNavForward} disabled={navForwardStack.length === 0} title="前进 (Alt+→)">→</button>
           <button onClick={handleRefresh} title="刷新">↻</button>
@@ -589,7 +589,7 @@ export const FileTree: FC = () => {
           </button>
         </div>
       </div>
-      <div className="file-tree-filter">
+      <div className="file-nav-filter">
         <input
           className="filter-input"
           placeholder="过滤当前目录…"
@@ -597,7 +597,7 @@ export const FileTree: FC = () => {
           onChange={(e) => setFilterQuery(e.target.value)}
         />
       </div>
-      <div className={`file-tree-path ${pathError ? 'error' : ''}`}>
+      <div className={`file-nav-path ${pathError ? 'error' : ''}`}>
         {isEditing ? (
           <input
             ref={inputRef}
@@ -616,7 +616,7 @@ export const FileTree: FC = () => {
         {pathError && <span className="path-error">路径不存在</span>}
       </div>
       <div
-        className="file-tree-content"
+        className="file-nav-content"
         onContextMenu={(e) => {
           const target = e.target as HTMLElement;
           if (target.closest('.tree-item')) return;
