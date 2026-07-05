@@ -1,6 +1,6 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings } from '../services/tauri';
+import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../services/tauri';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
 import type { Profile } from '../types';
 import { TreeView, type TreeItem } from './TreeView';
@@ -174,6 +174,9 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     setBlankContextMenu(null);
     setSortDropdownOpen(false);
   };
+
+  const isLocalProfile = (p: Profile) => p.terminalType === 'powershell' || p.terminalType === 'cmd';
+  const hasStartupPath = (p: Profile) => !!p.startupPath && p.startupPath.trim() !== '';
 
   useEffect(() => {
     if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
@@ -421,6 +424,32 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
               catch (err) { console.error(err); }
             }
           }}>命令行</div>
+          <div className="context-menu-item" onClick={() => {
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            closeContextMenu();
+            if (target) onAddProfile(target.group || '默认');
+          }}>添加配置</div>
+          {(() => {
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            if (!target || !isLocalProfile(target) || !hasStartupPath(target)) return null;
+            return (
+              <>
+                <div className="context-menu-item" onClick={async () => {
+                  const t = profiles.find((p) => p.id === contextMenu.profileId);
+                  closeContextMenu();
+                  if (t) {
+                    try { await openInExplorer(t.startupPath!); }
+                    catch (err) { console.error(err); }
+                  }
+                }}>打开目录</div>
+                <div className="context-menu-item" onClick={() => {
+                  const t = profiles.find((p) => p.id === contextMenu.profileId);
+                  if (t) navigator.clipboard.writeText(t.startupPath!).catch(() => {});
+                  closeContextMenu();
+                }}>复制启动路径</div>
+              </>
+            );
+          })()}
           <div className="context-menu-item" onClick={() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             if (target) onEditProfile(target);
