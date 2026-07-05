@@ -93,9 +93,9 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
               window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
             }}
           />
-          <span>侧边标签栏</span>
+          <span>纵向选项卡</span>
         </label>
-        <p className="settings-desc">开启后标签显示在左侧面板，关闭后以选项卡形式显示在终端上方</p>
+        <p className="settings-desc">勾选时选项卡显示在左侧面板（纵向），未勾选时显示在终端上方（横向）</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
