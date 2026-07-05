@@ -40,6 +40,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const setConfigSearchQuery = useAppStore(s => s.setConfigSearchQuery);
   const setConfigSortBy = useAppStore(s => s.setConfigSortBy);
   const extraParamPresets = useAppStore(s => s.extraParamPresets);
+  const setDragProfileId = useAppStore(s => s.setDragProfileId);
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
@@ -394,6 +395,15 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           onRenamingProfileChange={setRenamingProfileName}
           onRenamingProfileSubmit={handleFinishRenameProfile}
           onRenamingProfileCancel={() => setRenamingProfileId(null)}
+          itemDraggable
+          onItemDragStart={(e, item) => {
+            const profile = item.data as Profile | undefined;
+            if (!profile) return;
+            setDragProfileId(profile.id);
+            e.dataTransfer.effectAllowed = 'copy';
+            e.dataTransfer.setData('text/plain', profile.id);
+          }}
+          onItemDragEnd={() => setDragProfileId(null)}
         />
         {profiles.length === 0 && (
           <div className="empty-state">暂无配置，点击新建</div>

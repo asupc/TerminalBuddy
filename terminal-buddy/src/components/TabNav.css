@@ -84,6 +84,12 @@
   padding: 4px 0;
 }
 
+.tab-nav-content.drop-target {
+  outline: 2px dashed var(--accent, #4d7db9);
+  outline-offset: -4px;
+  background: rgba(77, 125, 185, 0.08);
+}
+
 .tab-nav-group {
   margin-bottom: 12px;
 }

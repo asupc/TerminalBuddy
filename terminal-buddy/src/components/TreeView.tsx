@@ -35,6 +35,9 @@ interface TreeViewProps {
   onRenamingProfileChange?: (value: string) => void;
   onRenamingProfileSubmit?: () => void;
   onRenamingProfileCancel?: () => void;
+  itemDraggable?: boolean;
+  onItemDragStart?: (e: React.DragEvent, item: TreeItem) => void;
+  onItemDragEnd?: (e: React.DragEvent, item: TreeItem) => void;
 }
 
 const TreeNode: FC<{
@@ -60,7 +63,10 @@ const TreeNode: FC<{
   onRenamingProfileChange?: (value: string) => void;
   onRenamingProfileSubmit?: () => void;
   onRenamingProfileCancel?: () => void;
-}> = ({ item, depth, expandedIds, onToggle, selectedId, onSelect, onDoubleClick, onContextMenu, renderEnd, indent, itemClassName, renamingId, renameValue, onRenameValueChange, onRenameSubmit, onRenameCancel, onGroupRename, renamingProfileId, renamingProfileValue, onRenamingProfileChange, onRenamingProfileSubmit, onRenamingProfileCancel }) => {
+  itemDraggable?: boolean;
+  onItemDragStart?: (e: React.DragEvent, item: TreeItem) => void;
+  onItemDragEnd?: (e: React.DragEvent, item: TreeItem) => void;
+}> = ({ item, depth, expandedIds, onToggle, selectedId, onSelect, onDoubleClick, onContextMenu, renderEnd, indent, itemClassName, renamingId, renameValue, onRenameValueChange, onRenameSubmit, onRenameCancel, onGroupRename, renamingProfileId, renamingProfileValue, onRenamingProfileChange, onRenamingProfileSubmit, onRenamingProfileCancel, itemDraggable, onItemDragStart, onItemDragEnd }) => {
   const isExpanded = expandedIds.has(item.id);
   const isSelected = selectedId === item.id;
   const hasChildren = item.children && item.children.length > 0;
@@ -81,6 +87,9 @@ const TreeNode: FC<{
           onDoubleClick?.(item);
         }}
         onContextMenu={(e) => onContextMenu?.(e, item)}
+        draggable={itemDraggable && !!item.data && !isGroup}
+        onDragStart={itemDraggable && onItemDragStart ? (e) => onItemDragStart(e, item) : undefined}
+        onDragEnd={itemDraggable && onItemDragEnd ? (e) => onItemDragEnd(e, item) : undefined}
       >
         {isGroup && (
           <span
@@ -153,6 +162,9 @@ const TreeNode: FC<{
               onRenamingProfileChange={onRenamingProfileChange}
               onRenamingProfileSubmit={onRenamingProfileSubmit}
               onRenamingProfileCancel={onRenamingProfileCancel}
+              itemDraggable={itemDraggable}
+              onItemDragStart={onItemDragStart}
+              onItemDragEnd={onItemDragEnd}
             />
           ))}
         </div>
@@ -184,6 +196,9 @@ export const TreeView: FC<TreeViewProps> = ({
   onRenamingProfileChange,
   onRenamingProfileSubmit,
   onRenamingProfileCancel,
+  itemDraggable,
+  onItemDragStart,
+  onItemDragEnd,
 }) => {
   return (
     <div className={className} tabIndex={0} onKeyDown={(e) => {
@@ -220,6 +235,9 @@ export const TreeView: FC<TreeViewProps> = ({
           onRenamingProfileChange={onRenamingProfileChange}
           onRenamingProfileSubmit={onRenamingProfileSubmit}
           onRenamingProfileCancel={onRenamingProfileCancel}
+          itemDraggable={itemDraggable}
+          onItemDragStart={onItemDragStart}
+          onItemDragEnd={onItemDragEnd}
         />
       ))}
     </div>

@@ -28,6 +28,9 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
   const renameSession = useAppStore(s => s.renameSession);
   const workingSessions = useAppStore(s => s.workingSessions);
   const settingsVersion = useAppStore(s => s.settingsVersion);
+  const dragProfileId = useAppStore(s => s.dragProfileId);
+  const setDragProfileId = useAppStore(s => s.setDragProfileId);
+  const [dropActive, setDropActive] = useState(false);
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const highlightedIndexRef = useRef(-1);
@@ -586,7 +589,27 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
           </div>
         )}
       </div>
-      <div className="tab-nav-content" onContextMenu={handleContentContextMenu}>
+      <div
+        className={`tab-nav-content${dropActive ? ' drop-target' : ''}`}
+        onContextMenu={handleContentContextMenu}
+        onDragOver={(e) => {
+          if (!dragProfileId) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          if (!dropActive) setDropActive(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropActive(false);
+        }}
+        onDrop={(e) => {
+          if (!dragProfileId) return;
+          e.preventDefault();
+          setDropActive(false);
+          const profile = profiles.find(p => p.id === dragProfileId);
+          if (profile) onStartTerminal(profile);
+          setDragProfileId(null);
+        }}
+      >
         {sessionTree.map((group) => renderGroupRecursive(group, 0))}
       </div>
       <div

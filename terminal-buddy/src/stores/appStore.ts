@@ -293,6 +293,10 @@ interface AppState {
   dragPaths: string[] | null;
   setDragPaths: (paths: string[] | null) => void;
 
+  // 拖拽中的 profile id（ConfigNav → TabNav 启动终端）
+  dragProfileId: string | null;
+  setDragProfileId: (id: string | null) => void;
+
   // Extra param presets
   extraParamPresets: ExtraParamPreset[];
   addExtraParamPreset: (name: string, params: string) => void;
@@ -826,6 +830,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   dragPaths: null,
   setDragPaths: (paths) => set({ dragPaths: paths }),
+
+  dragProfileId: null,
+  setDragProfileId: (id) => set({ dragProfileId: id }),
 
   // Extra param presets
   extraParamPresets: [],
