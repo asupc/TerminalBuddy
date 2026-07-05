@@ -154,7 +154,7 @@ body {
   color: var(--text-primary);
 }
 
-/* Shared panel titlebar (FileTree, ConfigNav, TabSidebar) */
+/* Shared panel titlebar (FileTree, ConfigNav, TabNav) */
 .panel-titlebar {
   display: flex;
   align-items: center;
@@ -228,7 +228,7 @@ body {
 .panels-hidden .config-nav,
 .panels-hidden .file-tree,
 .panels-hidden .remote-file-tree,
-.panels-hidden .tab-sidebar {
+.panels-hidden .tab-nav {
   display: none !important;
 }
 

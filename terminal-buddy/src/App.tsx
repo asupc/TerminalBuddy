@@ -5,7 +5,7 @@ import { TitleBar } from './components/TitleBar';
 import { ConfigNav } from './components/ConfigNav';
 import { TerminalPanel } from './components/TerminalPanel';
 import { FileTree } from './components/FileTree';
-import { TabSidebar } from './components/TabSidebar';
+import { TabNav } from './components/TabNav';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { Toast } from './components/Toast';
@@ -544,7 +544,7 @@ function App() {
         />
         <FileTree />
         {enableTabNav && (
-          <TabSidebar
+          <TabNav
             profiles={profiles}
             onStartTerminal={handleStartTerminal}
             onStartBlankTerminal={handleStartBlankTerminal}

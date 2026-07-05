@@ -8,7 +8,7 @@ import { getWorkingDotColor } from '../utils/tabColor';
 import { TreeView, type TreeItem } from './TreeView';
 import { buildGroupTree, type GroupNode } from '../utils/groupTree';
 import type { Profile } from '../types';
-import './TabSidebar.css';
+import './TabNav.css';
 
 interface TabSidebarProps {
   profiles: Profile[];
@@ -17,7 +17,7 @@ interface TabSidebarProps {
   onStartTextEditor: () => void;
 }
 
-export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
+export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
@@ -135,13 +135,13 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
               id: session.id,
               label: session.profileName,
               icon: isEditor ? (
-                <span className="tab-sidebar-file-icon">
-                  {session.isDirty && <span className="tab-sidebar-dirty-dot" />}
+                <span className="tab-nav-file-icon">
+                  {session.isDirty && <span className="tab-nav-dirty-dot" />}
                   📄
                 </span>
               ) : (
                 <span
-                  className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
+                  className={`tab-nav-dot${workingSessions[session.id] ? ' working' : ''}`}
                   style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
                 />
               ),
@@ -163,8 +163,8 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
           id: session.id,
           label: session.profileName,
           icon: (
-            <span className="tab-sidebar-file-icon">
-              {session.isDirty && <span className="tab-sidebar-dirty-dot" />}
+            <span className="tab-nav-file-icon">
+              {session.isDirty && <span className="tab-nav-dirty-dot" />}
               📄
             </span>
           ),
@@ -337,7 +337,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   };
 
   const handleContentContextMenu = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.tab-sidebar-item')) return;
+    if ((e.target as HTMLElement).closest('.tab-nav-item')) return;
     e.preventDefault();
     setShowContextMenu(true);
     setContextMenuPos({ x: e.clientX, y: e.clientY });
@@ -471,7 +471,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 <div className="tree-item" style={{ paddingLeft: `${indent + 12}px` }}>
                   {child.icon || (
                     <span
-                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                      className={`tab-nav-dot${workingSessions[child.id] ? ' working' : ''}`}
                       style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
                     />
                   )}
@@ -499,7 +499,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 </div>
               ) : (
                 <div
-                  className={`tree-item tab-sidebar-item ${activeSessionId === child.id ? 'active' : ''}`}
+                  className={`tree-item tab-nav-item ${activeSessionId === child.id ? 'active' : ''}`}
                   style={{ paddingLeft: `${indent + 12}px` }}
                   onClick={() => {
                     const store = useAppStore.getState();
@@ -521,12 +521,12 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 >
                   {child.icon || (
                     <span
-                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                      className={`tab-nav-dot${workingSessions[child.id] ? ' working' : ''}`}
                       style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
                     />
                   )}
                   <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>{child.label}</span>
-                  {(child.data as any)?.owner === 'web' && <span className="tab-sidebar-owner-badge">Web</span>}
+                  {(child.data as any)?.owner === 'web' && <span className="tab-nav-owner-badge">Web</span>}
                   <span className="tree-item-end">
                     <button
                       className="tree-item-close"
@@ -546,14 +546,14 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   };
 
   return (
-    <div className="tab-sidebar" style={{ width }} ref={containerRef}>
+    <div className="tab-nav" style={{ width }} ref={containerRef}>
       <div className="panel-titlebar">
-        <span className="panel-title">标签导航</span>
+        <span className="panel-title">选项卡</span>
         <span className="panel-title-count">{sessions.length}</span>
       </div>
-      <div className="tab-sidebar-header">
+      <div className="tab-nav-header">
         <input
-          className="tab-sidebar-search"
+          className="tab-nav-search"
           type="text"
           placeholder="搜索标签..."
           value={search}
@@ -561,20 +561,20 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
         />
         {settingsTabOpen && (
           <div
-            className={`tab-sidebar-settings-btn active`}
+            className={`tab-nav-settings-btn active`}
             onClick={openSettingsTab}
             title="设置"
           >
-            <span className="tab-sidebar-dot" style={{ background: 'var(--accent)' }} />
-            <span className="tab-sidebar-name">设置</span>
+            <span className="tab-nav-dot" style={{ background: 'var(--accent)' }} />
+            <span className="tab-nav-name">设置</span>
           </div>
         )}
       </div>
-      <div className="tab-sidebar-content" onContextMenu={handleContentContextMenu}>
+      <div className="tab-nav-content" onContextMenu={handleContentContextMenu}>
         {sessionTree.map((group) => renderGroupRecursive(group, 0))}
       </div>
       <div
-        className={`tab-sidebar-resize ${isResizing ? 'active' : ''}`}
+        className={`tab-nav-resize ${isResizing ? 'active' : ''}`}
         onMouseDown={resizeHandleProps.onMouseDown}
       />
       {tabContextMenu && (
