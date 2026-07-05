@@ -11,7 +11,7 @@ const TYPE_ICONS: Record<string, string> = {
   powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
 };
 
-/** 虚拟置顶分组 id：置顶的连接聚合到此分组，永远显示在列表最顶部 */
+/** 虚拟置顶分组 id：置顶的配置聚合到此分组，永远显示在列表最顶部 */
 const PINNED_GROUP_ID = '__pinned__';
 
 interface ConfigPanelProps {
@@ -292,7 +292,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     return () => panel.removeEventListener('mousedown', handler);
   }, []);
 
-  // F2 快速重命名分组/连接
+  // F2 快速重命名分组/配置
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'F2') return;
@@ -466,7 +466,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
         <div className="confirm-dialog-overlay" onClick={() => setConfirmDelete(null)}>
           <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-dialog-title">确认删除</div>
-            <div className="confirm-dialog-message">确定要删除此连接吗？</div>
+            <div className="confirm-dialog-message">确定要删除此配置吗？</div>
             <div className="confirm-dialog-buttons">
               <button className="btn-secondary" onClick={() => setConfirmDelete(null)}>取消</button>
               <button className="btn-danger" onClick={confirmDeleteProfile}>删除</button>
