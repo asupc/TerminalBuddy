@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent } from '../services/tauri';
+import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent, openInExplorer } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 import { formatDuration } from '../utils/formatDuration';
@@ -616,6 +616,39 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
                   onStartTerminal(profile);
                   setTabContextMenu(null);
                 }}>以此配置新建终端</div>
+              );
+            })()}
+            {(() => {
+              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
+              if (!session || session.sessionType === 'editor') return null;
+              // 复制配置名：所有终端会话都显示
+              return (
+                <div className="context-menu-item" onClick={() => {
+                  navigator.clipboard.writeText(session.profileName).catch(() => {});
+                  setTabContextMenu(null);
+                }}>复制配置名</div>
+              );
+            })()}
+            {(() => {
+              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
+              if (!session || session.sessionType === 'editor') return null;
+              const profile = profiles.find(p => p.id === session.profileId);
+              if (!profile) return null;
+              const isLocal = profile.terminalType === 'powershell' || profile.terminalType === 'cmd';
+              const hasPath = !!profile.startupPath && profile.startupPath.trim() !== '';
+              if (!isLocal || !hasPath) return null;
+              return (
+                <>
+                  <div className="context-menu-item" onClick={async () => {
+                    setTabContextMenu(null);
+                    try { await openInExplorer(profile.startupPath!); }
+                    catch (err) { console.error(err); }
+                  }}>打开目录</div>
+                  <div className="context-menu-item" onClick={() => {
+                    navigator.clipboard.writeText(profile.startupPath!).catch(() => {});
+                    setTabContextMenu(null);
+                  }}>复制启动路径</div>
+                </>
               );
             })()}
             <div className="context-menu-item danger" onClick={() => {
