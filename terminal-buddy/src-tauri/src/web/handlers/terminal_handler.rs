@@ -8,18 +8,14 @@ use crate::web::error::ApiError;
 use crate::web::server::AppState;
 use tauri::{Manager, Emitter};
 
-/// 手机端独立会话池：只列出 Web 端（手机）创建的终端，PC 端的终端不可见。
+/// 列出全部存活终端：Web（手机自己的）+ PC 端的。前端按 owner 区分
+/// 「继续」（Web，直接接入）和「接管」（PC，接入时 PTY 切到手机尺寸）。
 pub async fn list(
     State(state): State<AppState>,
     _claims: ClaimsFromRequest,
 ) -> Result<Json<Vec<TerminalInfo>>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
-    let own: Vec<TerminalInfo> = ts
-        .list_terminals_info()
-        .into_iter()
-        .filter(|t| t.owner == TerminalOwner::Web)
-        .collect();
-    Ok(Json(own))
+    Ok(Json(ts.list_terminals_info()))
 }
 
 /// 新建终端：归属 Web（手机）池，与 PC 端互不共享，避免不同尺寸视图抢一个 PTY。

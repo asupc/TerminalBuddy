@@ -50,8 +50,10 @@ export default function Nav() {
     (groups[g] = groups[g] || []).push(p);
   }
 
-  const openExisting = (id: string, name: string) =>
-    setView({ screen: 'terminal', terminalId: id, profileName: name });
+  const [takeover, setTakeover] = useState<{ id: string; name: string } | null>(null);
+
+  const openExisting = (id: string, name: string, owner: 'pc' | 'web') =>
+    setView({ screen: 'terminal', terminalId: id, profileName: name, owner });
 
   const createNew = async (p: Profile) => {
     setBusyId(p.id);
@@ -62,6 +64,7 @@ export default function Nav() {
         screen: 'terminal',
         terminalId: info.id,
         profileName: info.profileName || p.name,
+        owner: 'web',
       });
     } catch (e) {
       setErr(e instanceof Error ? e.message : '创建失败');
@@ -114,16 +117,27 @@ export default function Nav() {
                   </div>
                   {insts.length > 0 && (
                     <div className="instances">
-                      {insts.map((s) => (
-                        <div
-                          key={s.id}
-                          className="instance-row"
-                          onClick={() => openExisting(s.id, s.profileName || p.name)}
-                        >
-                          <span className="dot online" />
-                          <span className="iname">{s.profileName || p.name}</span>
-                        </div>
-                      ))}
+                      {insts.map((s) => {
+                        const name = s.profileName || p.name;
+                        const isPc = s.owner === 'pc';
+                        return (
+                          <div
+                            key={s.id}
+                            className="instance-row"
+                            onClick={() =>
+                              isPc
+                                ? setTakeover({ id: s.id, name })
+                                : openExisting(s.id, name, 'web')
+                            }
+                          >
+                            <span className={`dot ${isPc ? 'takeover' : 'online'}`} />
+                            <span className="iname">{name}</span>
+                            <span className={`type-tag ${isPc ? 'tk' : ''}`}>
+                              {isPc ? '接管' : '继续'}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -132,6 +146,32 @@ export default function Nav() {
           </div>
         ))}
       </div>
+
+      {takeover && (
+        <div className="modal-mask" onClick={() => setTakeover(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">接管 PC 端终端？</div>
+            <div className="modal-desc">
+              「{takeover.name}」正在电脑端运行。接管后终端会切到手机尺寸，电脑端视图会随之重排跟随。
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setTakeover(null)}>
+                取消
+              </button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  const t = takeover;
+                  setTakeover(null);
+                  openExisting(t.id, t.name, 'pc');
+                }}
+              >
+                接管
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

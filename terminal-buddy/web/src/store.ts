@@ -4,7 +4,7 @@ import type { Profile, TerminalInfo } from './types';
 
 export type View =
   | { screen: 'nav' }
-  | { screen: 'terminal'; terminalId: string; profileName: string };
+  | { screen: 'terminal'; terminalId: string; profileName: string; owner: 'pc' | 'web' };
 
 interface AppState {
   // 鉴权（持久化）

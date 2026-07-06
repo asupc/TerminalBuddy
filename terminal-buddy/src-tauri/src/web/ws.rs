@@ -5,8 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::commands::TerminalService;
-use crate::models::TerminalOwner;
-use crate::models::web_api::{MetaServerMessage, TerminalInfo, WsClientMessage, WsServerMessage};
+use crate::models::web_api::{MetaServerMessage, WsClientMessage, WsServerMessage};
 use crate::services::WebServiceState;
 use crate::web::auth::verify_token;
 use crate::web::server::AppState;
@@ -28,13 +27,13 @@ pub async fn terminal_ws_handler(
     let token = params.get("token").ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
     let _claims = verify_token(token, &state.jwt_secret)?;
 
-    // 独立池：手机端只能连自己（Web）的终端，PC 端终端一律拒绝，避免抢同一个 PTY。
+    // 终端存在即可接入：Web（手机自己的）直接继续；PC 端的接入即"接管"，
+    // PTY 会切到手机尺寸（allow_shrink=true），电脑端视图随之重排。
     {
         let ts = state.app_handle.state::<TerminalService>();
         let instances = ts.instances.lock().unwrap_or_else(|e| e.into_inner());
-        match instances.get(&terminal_id) {
-            Some(inst) if inst.owner == TerminalOwner::Web => {}
-            _ => return Err(axum::http::StatusCode::FORBIDDEN),
+        if !instances.contains_key(&terminal_id) {
+            return Err(axum::http::StatusCode::NOT_FOUND);
         }
     }
 
@@ -191,21 +190,13 @@ pub async fn meta_ws_handler(
     Ok(ws.on_upgrade(move |socket| handle_meta_socket(socket, state)))
 }
 
-/// 手机端独立池：meta 推送只含 Web（手机）终端，PC 端终端不推送。
-fn web_terminals(ts: &TerminalService) -> Vec<TerminalInfo> {
-    ts.list_terminals_info()
-        .into_iter()
-        .filter(|t| t.owner == TerminalOwner::Web)
-        .collect()
-}
-
 async fn handle_meta_socket(socket: WebSocket, state: AppState) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let ts = state.app_handle.state::<TerminalService>();
     let mut change_rx = ts.session_change_tx.subscribe();
 
-    // 连上立即推一次当前会话列表。
-    let initial = MetaServerMessage::Sessions { terminals: web_terminals(&ts) };
+    // 连上立即推一次当前会话列表（含 Web 自己的 + PC 端可接管的）。
+    let initial = MetaServerMessage::Sessions { terminals: ts.list_terminals_info() };
     let initial_msg = serde_json::to_string(&initial).unwrap_or_default();
     if ws_sender.send(Message::Text(initial_msg.into())).await.is_err() {
         return;
@@ -218,7 +209,7 @@ async fn handle_meta_socket(socket: WebSocket, state: AppState) {
                 match res {
                     Ok(()) => {
                         let msg = serde_json::to_string(
-                            &MetaServerMessage::Sessions { terminals: web_terminals(&ts) }
+                            &MetaServerMessage::Sessions { terminals: ts.list_terminals_info() }
                         ).unwrap_or_default();
                         if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                             break;

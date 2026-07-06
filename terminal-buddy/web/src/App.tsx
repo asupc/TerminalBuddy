@@ -9,7 +9,13 @@ export default function App() {
 
   if (!token) return <Login />;
   if (view.screen === 'terminal') {
-    return <Terminal terminalId={view.terminalId} profileName={view.profileName} />;
+    return (
+      <Terminal
+        terminalId={view.terminalId}
+        profileName={view.profileName}
+        owner={view.owner}
+      />
+    );
   }
   return <Nav />;
 }

@@ -6,9 +6,10 @@ import Xterm from '../components/Xterm';
 interface Props {
   terminalId: string;
   profileName: string;
+  owner: 'pc' | 'web';
 }
 
-export default function Terminal({ terminalId, profileName }: Props) {
+export default function Terminal({ terminalId, profileName, owner }: Props) {
   const setView = useStore((s) => s.setView);
   const [connected, setConnected] = useState(false);
   const [everConnected, setEverConnected] = useState(false);
@@ -19,11 +20,15 @@ export default function Terminal({ terminalId, profileName }: Props) {
 
   const closeTerminal = async () => {
     setMenuOpen(false);
-    try {
-      await api.deleteTerminal(terminalId);
-    } catch {
-      /* 终端可能已退出，忽略 */
+    if (owner === 'web') {
+      // 自己的终端：真正关闭（杀掉 PTY）
+      try {
+        await api.deleteTerminal(terminalId);
+      } catch {
+        /* 终端可能已退出，忽略 */
+      }
     }
+    // 接管 PC 端的终端：只断开（电脑端继续运行），不关闭
     goBack();
   };
 
@@ -76,7 +81,7 @@ export default function Terminal({ terminalId, profileName }: Props) {
                 color: 'var(--danger)',
               }}
             >
-              关闭连接
+              {owner === 'web' ? '关闭连接' : '断开接管'}
             </button>
           </div>
         </>
