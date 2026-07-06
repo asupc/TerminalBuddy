@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem } from '../types';
-import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath } from '../services/tauri';
+import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath, saveEnableTabNavigation } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 
 let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
@@ -269,11 +269,16 @@ interface AppState {
 
   // Split Screen mode
   splitMode: 'off' | '2x1' | '2x2';
-  splitSlots: (string | null)[];
+  splitSlots: { sessionId: string | null; enteredAt: number }[];
   cycleSplitMode: () => void;
   closeSplitPane: (slotIndex: number) => void;
   swapSplitSlots: (i: number, j: number) => void;
   placeSessionInSplitSlot: (sessionId: string) => void;
+
+  // Window mode (F11 cycle)
+  windowMode: 'normal' | 'panels-hidden';
+  previousPanelState: { configPanelVisible: boolean; fileTreeVisible: boolean; enableTabNavigation: boolean } | null;
+  cycleWindowMode: () => void;
 
   // Toast (transient notifications, e.g. "split grid full")
   toast: { id: number; message: string; type: 'info' | 'success' | 'error' } | null;
@@ -287,6 +292,10 @@ interface AppState {
   // Internal drag paths (from FileTree to terminal)
   dragPaths: string[] | null;
   setDragPaths: (paths: string[] | null) => void;
+
+  // 拖拽中的 profile id（ConfigNav → TabNav 启动终端）
+  dragProfileId: string | null;
+  setDragProfileId: (id: string | null) => void;
 
   // Extra param presets
   extraParamPresets: ExtraParamPreset[];
@@ -488,7 +497,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   _skipSaveTabs: false,
   addSession: (session, keepActive) =>
     set((state) => {
-      const s = { ...session, groupId: session.groupId || 'default' };
+      const s = {
+        ...session,
+        groupId: session.groupId || 'default',
+        createdAt: session.createdAt ?? Date.now(),
+      };
       const sessions = [...state.sessions, s];
       if (!state._skipSaveTabs) {
         debouncedSaveTabs(sessions, s.id);
@@ -511,19 +524,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       // If the closed pane was focused, refocus the first remaining filled slot
       // (split mode is preserved even if all slots become blank).
       let splitSlots = state.splitSlots;
-      if (state.splitMode !== 'off' && splitSlots.includes(id)) {
-        splitSlots = splitSlots.map((s) => (s === id ? null : s));
+      if (state.splitMode !== 'off' && splitSlots.some(s => s.sessionId === id)) {
+        splitSlots = splitSlots.map(s => s.sessionId === id ? { sessionId: null, enteredAt: 0 } : s);
         if (state.activeSessionId === id) {
-          activeSessionId = splitSlots.find((s) => s !== null) ?? null;
+          activeSessionId = splitSlots.find(s => s.sessionId !== null)?.sessionId ?? null;
         }
       }
       debouncedSaveTabs(sessions, activeSessionId);
       return { sessions, activeSessionId, remoteFileCache: restCache, splitSlots };
     }),
   setSessions: (sessions) => {
-    const activeSessionId = sessions[0]?.id ?? null;
-    saveTabsToStorage(sessions, activeSessionId);
-    set({ sessions, activeSessionId });
+    const normalized = sessions.map(s => ({ ...s, createdAt: s.createdAt ?? Date.now() }));
+    const activeSessionId = normalized[0]?.id ?? null;
+    saveTabsToStorage(normalized, activeSessionId);
+    set({ sessions: normalized, activeSessionId });
   },
   setActiveSession: (id) => set((state) => {
     // 文件导航跟随当前连接：优先使用会话内已记录的目录（用户浏览或 cd 过的）；
@@ -711,30 +725,31 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Entry: populate from terminal-session count (editors & web sessions excluded).
       const N = 2;
       const terms = state.sessions.filter(s => s.sessionType !== 'editor' && s.owner !== 'web');
-      let slots: (string | null)[];
+      const now = Date.now();
+      let slots: { sessionId: string | null; enteredAt: number }[];
       if (terms.length <= N) {
-        slots = terms.slice(0, N).map(s => s.id);
-        while (slots.length < N) slots.push(null);
+        slots = terms.slice(0, N).map(s => ({ sessionId: s.id, enteredAt: now }));
+        while (slots.length < N) slots.push({ sessionId: null, enteredAt: 0 });
       } else {
-        slots = new Array(N).fill(null);
+        slots = new Array(N).fill(null).map(() => ({ sessionId: null, enteredAt: 0 }));
       }
       // Focus: keep current active if it ended up in a slot; else first filled slot; else unchanged.
       let activeSessionId = state.activeSessionId;
-      if (activeSessionId && !slots.includes(activeSessionId)) {
-        activeSessionId = slots.find(s => s !== null) ?? activeSessionId;
+      if (activeSessionId && !slots.some(s => s.sessionId === activeSessionId)) {
+        activeSessionId = slots.find(s => s.sessionId !== null)?.sessionId ?? activeSessionId;
       }
       return { splitMode: '2x1' as const, splitSlots: slots, activeSessionId };
     }
     if (cur === '2x1') {
       // Grow: preserve existing slot contents in place, append blank slots.
-      return { splitMode: '2x2' as const, splitSlots: [...state.splitSlots, null, null] };
+      return { splitMode: '2x2' as const, splitSlots: [...state.splitSlots, { sessionId: null, enteredAt: 0 }, { sessionId: null, enteredAt: 0 }] };
     }
     // 2x2 -> off: exit. Sessions become normal tabs; activeSessionId (focused pane) stays, shown full-screen.
     return { splitMode: 'off' as const, splitSlots: [] };
   }),
   closeSplitPane: (slotIndex) => {
-    const sid = get().splitSlots[slotIndex];
-    if (sid) get().removeSession(sid);
+    const slot = get().splitSlots[slotIndex];
+    if (slot?.sessionId) get().removeSession(slot.sessionId);
   },
   swapSplitSlots: (i, j) => set((state) => {
     const slots = [...state.splitSlots];
@@ -744,11 +759,63 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
   placeSessionInSplitSlot: (sessionId) => set((state) => {
     if (state.splitMode === 'off') return state;
-    const idx = state.splitSlots.indexOf(null);
-    if (idx === -1) return state;
-    const splitSlots = [...state.splitSlots];
-    splitSlots[idx] = sessionId;
+    const slots = state.splitSlots;
+
+    // 1. 找空位
+    const emptyIdx = slots.findIndex(s => s.sessionId === null);
+    if (emptyIdx !== -1) {
+      const splitSlots = [...slots];
+      splitSlots[emptyIdx] = { sessionId, enteredAt: Date.now() };
+      return { splitSlots, activeSessionId: sessionId };
+    }
+
+    // 2. 无空位，替换最旧的
+    let oldestIdx = 0;
+    let oldestTime = slots[0].enteredAt;
+    for (let i = 1; i < slots.length; i++) {
+      if (slots[i].enteredAt < oldestTime) {
+        oldestTime = slots[i].enteredAt;
+        oldestIdx = i;
+      }
+    }
+    const splitSlots = [...slots];
+    splitSlots[oldestIdx] = { sessionId, enteredAt: Date.now() };
     return { splitSlots, activeSessionId: sessionId };
+  }),
+
+  // --- Window Mode (F11 cycle) ---
+  windowMode: 'normal',
+  previousPanelState: null,
+  cycleWindowMode: () => set((state) => {
+    const cur = state.windowMode;
+
+    if (cur === 'normal') {
+      // normal → panels-hidden: 保存当前面板状态
+      const settings = getAppSettings();
+      return {
+        windowMode: 'panels-hidden' as const,
+        previousPanelState: {
+          configPanelVisible: state.configPanelVisible,
+          fileTreeVisible: state.fileTreeVisible,
+          enableTabNavigation: settings.enableTabNavigation,
+        },
+      };
+    }
+
+    // panels-hidden → normal: 恢复之前的面板状态
+    const prev = state.previousPanelState;
+    if (prev) {
+      const settings = getAppSettings();
+      saveAppSettings({ ...settings, enableTabNavigation: prev.enableTabNavigation });
+      saveEnableTabNavigation(prev.enableTabNavigation).catch(() => {});
+      window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
+    }
+    return {
+      windowMode: 'normal' as const,
+      previousPanelState: null,
+      configPanelVisible: prev?.configPanelVisible ?? state.configPanelVisible,
+      fileTreeVisible: prev?.fileTreeVisible ?? state.fileTreeVisible,
+    };
   }),
 
   // --- Toast ---
@@ -763,6 +830,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   dragPaths: null,
   setDragPaths: (paths) => set({ dragPaths: paths }),
+
+  dragProfileId: null,
+  setDragProfileId: (id) => set({ dragProfileId: id }),
 
   // Extra param presets
   extraParamPresets: [],

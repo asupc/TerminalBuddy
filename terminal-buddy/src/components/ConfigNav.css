@@ -1,4 +1,4 @@
-.config-panel {
+.config-nav {
   min-width: 120px;
   max-width: 500px;
   flex-shrink: 1;
@@ -10,18 +10,18 @@
   transition: width 0.2s ease, min-width 0.2s ease;
 }
 
-.config-panel.collapsed {
+.config-nav.collapsed {
   width: 0 !important;
   min-width: 0 !important;
   overflow: hidden;
   border-right: none;
 }
 
-.config-panel.collapsed .config-resize-handle {
+.config-nav.collapsed .config-nav-resize-handle {
   display: none;
 }
 
-.config-resize-handle {
+.config-nav-resize-handle {
   position: absolute;
   top: 0;
   right: -3px;
@@ -33,22 +33,22 @@
   z-index: 10;
 }
 
-.config-resize-handle:hover,
-.config-resize-handle.active {
+.config-nav-resize-handle:hover,
+.config-nav-resize-handle.active {
   background: var(--accent);
 }
 
-.config-list {
+.config-nav-list {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
 }
 
-.config-group-rename-row {
+.config-nav-group-rename-row {
   padding: 4px 8px;
 }
 
-.config-icon-type {
+.config-nav-icon-type {
   font-size: 10px;
   font-weight: bold;
   padding: 1px 3px;
@@ -91,7 +91,7 @@
 }
 
 /* Config search & sort */
-.config-search-bar {
+.config-nav-search-bar {
   display: flex;
   gap: 6px;
   padding: 8px;
@@ -100,7 +100,7 @@
   box-sizing: border-box;
 }
 
-.config-search-input {
+.config-nav-search-input {
   flex: 1;
   min-width: 0;
   padding: 6px 10px;
@@ -113,18 +113,18 @@
   outline: none;
 }
 
-.config-search-input:focus {
+.config-nav-search-input:focus {
   border-color: var(--accent);
 }
 
-.config-sort-wrapper {
+.config-nav-sort-wrapper {
   position: relative;
   margin-left: -30px;
   flex-shrink: 0;
   z-index: 5;
 }
 
-.config-sort-btn {
+.config-nav-sort-btn {
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -135,12 +135,12 @@
   transition: border-color 0.15s;
 }
 
-.config-sort-btn:hover {
+.config-nav-sort-btn:hover {
   border-color: var(--accent);
   color: var(--text-primary);
 }
 
-.config-sort-dropdown {
+.config-nav-sort-dropdown {
   position: absolute;
   top: 100%;
   right: 0;
@@ -153,17 +153,17 @@
   margin-top: 4px;
 }
 
-.config-sort-option {
+.config-nav-sort-option {
   padding: 6px 12px;
   cursor: pointer;
   font-size: 13px;
   border-radius: 2px;
 }
 
-.config-sort-option:hover {
+.config-nav-sort-option:hover {
   background: var(--bg-tertiary);
 }
 
-.config-sort-option.active {
+.config-nav-sort-option.active {
   color: var(--accent);
 }

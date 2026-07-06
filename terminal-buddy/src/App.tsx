@@ -2,10 +2,10 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from './components/TitleBar';
-import { ConfigPanel } from './components/ConfigPanel';
+import { ConfigNav } from './components/ConfigNav';
 import { TerminalPanel } from './components/TerminalPanel';
-import { FileTree } from './components/FileTree';
-import { TabSidebar } from './components/TabSidebar';
+import { FileNav } from './components/FileNav';
+import { TabNav } from './components/TabNav';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { Toast } from './components/Toast';
@@ -41,7 +41,8 @@ function App() {
   const toggleFileTree = useAppStore(s => s.toggleFileTree);
   const openSettingsTab = useAppStore(s => s.openSettingsTab);
   const profiles = useAppStore(s => s.profiles);
-  const splitMode = useAppStore(s => s.splitMode);
+  const windowMode = useAppStore(s => s.windowMode);
+  const cycleWindowMode = useAppStore(s => s.cycleWindowMode);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [defaultGroupForNewProfile, setDefaultGroupForNewProfile] = useState<string | undefined>();
@@ -54,6 +55,65 @@ function App() {
   // 预加载终端组件 chunk（xterm.js + addons），让 restoreTabs 时不需等待网络/IO
   useEffect(() => {
     void import('./components/TerminalInstance');
+  }, []);
+
+  // F11 键监听：切换窗口模式
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'F11') return;
+      // 同一个 keydown 事件冒泡时会依次经过 document 和 window，两者上的监听器
+      // 都会收到。若不去重，一次 F11 会触发两次 cycleWindowMode，导致切换失效。
+      if ((e as any)._tbF11Handled) return;
+      (e as any)._tbF11Handled = true;
+      e.preventDefault();
+      cycleWindowMode();
+    };
+    // 监听 window 和 document，确保全屏模式下也能响应
+    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [cycleWindowMode]);
+
+  // 监听窗口 resize 事件，确保终端在全屏切换后能正确重绘
+  useEffect(() => {
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    let raf1 = 0;
+    let raf2 = 0;
+
+    const unlisten = listen('tauri://resize', () => {
+      // 清除之前的定时器，避免重复触发
+      if (resizeTimer) clearTimeout(resizeTimer);
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+
+      // 使用双层 requestAnimationFrame + setTimeout 确保 CSS 网格布局已完成计算
+      // 分屏模式下网格布局更复杂，需要更多时间稳定
+      raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => {
+          resizeTimer = setTimeout(() => {
+            resizeTimer = null;
+            const { sessions, splitMode } = useAppStore.getState();
+            const terminalIds = splitMode === 'off'
+              ? sessions.filter(s => s.sessionType !== 'editor' && s.owner !== 'web').map(s => s.id)
+              : sessions.map(s => s.id);
+            if (terminalIds.length > 0) {
+              window.dispatchEvent(new CustomEvent('tb-split-resize', {
+                detail: { terminalIds }
+              }));
+            }
+          }, 50); // 额外 50ms 延迟确保布局完全稳定
+        });
+      });
+    });
+    return () => {
+      unlisten.then(fn => fn());
+      if (resizeTimer) clearTimeout(resizeTimer);
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
   }, []);
 
   // 应用列表选中样式（连接/文件导航 .tree-item.selected 配色）：启动一次 + 设置变更时刷新
@@ -342,12 +402,7 @@ function App() {
         await updateProfileLastUsed(profile.id);
         return;
       }
-      // Split mode: block new connections when the grid is full (no blank slot).
-      const store = useAppStore.getState();
-      if (store.splitMode !== 'off' && !store.splitSlots.includes(null)) {
-        store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
-        return;
-      }
+      // Split mode: when the grid is full, placeSessionInSplitSlot will auto-replace the oldest slot.
       const { rows, cols } = estimateTerminalSize();
       const terminalId = await startTerminal(profile.id, extraParams, rows, cols);
       await updateProfileLastUsed(profile.id);
@@ -426,7 +481,7 @@ function App() {
   const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'cmd') => {
     try {
       const store = useAppStore.getState();
-      if (store.splitMode !== 'off' && !store.splitSlots.includes(null)) {
+      if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
         store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
         return;
       }
@@ -471,7 +526,7 @@ function App() {
   }, []);
 
   return (
-    <div className="app-container">
+    <div className={`app-container${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`} tabIndex={0}>
       <TitleBar
         onSettings={handleSettings}
         configPanelVisible={configPanelVisible}
@@ -480,16 +535,16 @@ function App() {
         onToggleFileTree={toggleFileTree}
       />
       <div className="main-content">
-        <ConfigPanel
+        <ConfigNav
           onStartTerminal={handleStartTerminal}
           onEditProfile={handleEditProfile}
           onCopyProfile={handleCopyProfile}
           onAddProfile={handleAddProfile}
           onManageExtraParams={() => setShowExtraParamsDialog(true)}
         />
-        <FileTree />
-        {enableTabNav && splitMode === 'off' && (
-          <TabSidebar
+        <FileNav />
+        {enableTabNav && (
+          <TabNav
             profiles={profiles}
             onStartTerminal={handleStartTerminal}
             onStartBlankTerminal={handleStartBlankTerminal}

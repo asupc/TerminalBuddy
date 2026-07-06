@@ -20,10 +20,12 @@ import './TerminalInstance.css';
 
 // 终端基础字号。分屏模式下按比例缩小:2x1 → 0.9、2x2 → 0.8、单屏 → 1.0。
 const BASE_FONT_SIZE = 14;
-const SPLIT_FONT_SCALE: Record<'off' | '2x1' | '2x2', number> = {
-  off: 1,
-  '2x1': 0.9,
-  '2x2': 0.8,
+// 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
+// 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
+const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
+  off: BASE_FONT_SIZE,
+  '2x1': 12,
+  '2x2': 11,
 };
 
 interface TerminalInstanceProps {
@@ -462,6 +464,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [dragOver, setDragOver] = useState(false);
   const [internalDragOver, setInternalDragOver] = useState(false);
   const isSsh = useAppStore(s => s.sessions.find(sess => sess.id === terminalId)?.terminalType === 'ssh');
+  const windowMode = useAppStore(s => s.windowMode);
   const [scrollInfo, setScrollInfo] = useState({ top: 0, height: 0, visible: false });
   const scrollThumbRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLElement | null>(null);
@@ -646,7 +649,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
       const terminal = new Terminal({
         cursorBlink: true,
-        fontSize: Math.round(BASE_FONT_SIZE * SPLIT_FONT_SCALE[splitModeRef.current]),
+        fontSize: SPLIT_FONT_SIZE[splitModeRef.current],
         fontFamily: "'Cascadia Mono', Consolas, 'Courier New', monospace",
         fontWeight: 'normal',
         fontWeightBold: 'bold',
@@ -684,20 +687,46 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       terminal.unicode.activeVersion = '11';
       void bootLog(`initTerminal[${terminalId}]: loadAddons (fit/weblinks/clipboard/search/unicode11) took ${(performance.now() - tAddons).toFixed(0)}ms`);
 
+      // F11 默认会被 xterm 当作 VT 功能键消费（转成转义序列发给 PTY），终端持有
+      // 焦点时 App.tsx 的 window/document keydown 监听收不到，表现为「非分屏模式下
+      // 按 F11 没反应」。这里显式放行 F11，让它冒泡到 cycleWindowMode。返回 false
+      // 表示 xterm 不要处理该键。
+      terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+        if (e.type === 'keydown' && (e.key === 'F11')) return false;
+        return true;
+      });
+
       const tOpen = performance.now();
       terminal.open(terminalRef.current!);
       void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
       const tWebgl = performance.now();
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
-      });
-      try {
-        terminal.loadAddon(webglAddon);
-      } catch {
-        // WebGL not supported, fall back to canvas renderer
-      }
+      // dispose 后 xterm 会永久回退到 CPU canvas 渲染器（字形抗锯齿变化、滚动卡顿，
+      // 看起来像「字体变了 / GPU 加速没了」）。这里在 context-loss 后重建 WebGL
+      // 渲染器恢复 GPU 加速；webglRetries 上限防 GPU 持续 lost 下的重建风暴，
+      // disposed 时不再重建以免组件卸载后还在创建 GL 上下文。
+      let webglRetries = 0;
+      const attachWebgl = () => {
+        const webglAddon = new WebglAddon();
+        webglAddon.onContextLoss(() => {
+          webglAddon.dispose();
+          try {
+            if (terminal.cols === 0 || terminal.rows === 0) {
+              terminal.resize(80, 24);
+            }
+            terminal.refresh(0, terminal.rows - 1);
+          } catch { /* refresh may throw during teardown */ }
+          if (disposed || webglRetries >= 5) return;
+          webglRetries += 1;
+          attachWebgl();
+        });
+        try {
+          terminal.loadAddon(webglAddon);
+        } catch {
+          // WebGL not supported, fall back to canvas renderer
+        }
+      };
+      attachWebgl();
       void bootLog(`initTerminal[${terminalId}]: WebGL addon took ${(performance.now() - tWebgl).toFixed(0)}ms`);
 
       const tFit = performance.now();
@@ -741,6 +770,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // exiting the alt buffer via checkAltBuffer().
         // `force` bypasses this guard for deliberate split-screen layout changes.
         if (inAltBufferRef.current && !force) return;
+
+        // 防止 fit() 在容器尺寸为 0 时把 xterm 设为 0×0（布局过渡期间可能发生）。
+        // F11 切换 panels-hidden + 分屏场景：.terminal-content 宽度突变时，
+        // ResizeObserver 可能在过渡帧里先于 CSS 落定拿到 0 尺寸；若直接 fit，
+        // xterm 会进入 0×0 不可见状态（容器已变宽但 canvas 还是 0），表现为黑屏。
+        // 阈值放宽到 < 1（只在真正为 0 时跳过），下一帧 ResizeObserver 通常会
+        // 拿到稳定尺寸，fit 会自动跟上。
+        const container = terminalRef.current;
+        if (container) {
+          const rect = container.getBoundingClientRect();
+          if (rect.width < 1 || rect.height < 1) return;
+        }
 
         const prevCols = terminal.cols;
         const prevRows = terminal.rows;
@@ -1351,17 +1392,44 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     };
   }, [terminalId]);
 
-  // 分屏模式下按比例缩小终端字号(2x1→0.9、2x2→0.8),退出分屏恢复原值。
+  // 分屏模式下缩小终端字号(2x1→12px)，退出分屏恢复原值。
   // 只改字号,不影响其他终端配置;改完强制重排以正确重算行列。
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
-    const newSize = Math.round(BASE_FONT_SIZE * SPLIT_FONT_SCALE[splitMode]);
+    const newSize = SPLIT_FONT_SIZE[splitMode];
     if (term.options.fontSize === newSize) return;
     term.options.fontSize = newSize;
     const forceFit = (term as any)._tbForceFit;
     if (typeof forceFit === 'function') forceFit(true);
   }, [splitMode]);
+
+  // F11 切换 windowMode（panels-hidden）时，.terminal-content 宽度突变，grid 重排
+  // 需要时间落定。这里直接订阅 windowMode 再补一次 forceFit，与 TerminalPanel 派发
+  // 的 tb-split-resize 互为备份——任意一条路径被 ResizeObserver 卡住时另一条仍能
+  // 触发 fit。
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term) return;
+    const forceFit = (term as any)._tbForceFit;
+    if (typeof forceFit !== 'function') return;
+    let raf1 = 0;
+    let raf2 = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        timer = setTimeout(() => {
+          timer = null;
+          try { forceFit(true); } catch { /* terminal may be disposing */ }
+        }, 50);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      if (timer) clearTimeout(timer);
+    };
+  }, [windowMode]);
 
   const handleSearch = useCallback((direction: 'next' | 'prev' = 'next') => {
     const searchAddon = searchAddonRef.current;

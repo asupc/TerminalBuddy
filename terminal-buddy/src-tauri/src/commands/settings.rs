@@ -155,6 +155,20 @@ pub fn save_tab_sidebar_width(width: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn save_config_nav_width(width: u32) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.config_nav_width = width.clamp(150, 500);
+    SettingsService::save_settings(&settings)
+}
+
+#[tauri::command]
+pub fn save_file_nav_width(width: u32) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.file_nav_width = width.clamp(150, 500);
+    SettingsService::save_settings(&settings)
+}
+
+#[tauri::command]
 pub fn save_single_instance(enabled: bool) -> Result<(), String> {
     SettingsService::mutate_settings(|s| s.single_instance = enabled)
 }

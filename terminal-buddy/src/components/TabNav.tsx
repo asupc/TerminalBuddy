@@ -1,14 +1,15 @@
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent } from '../services/tauri';
+import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent, openInExplorer } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
+import { formatDuration } from '../utils/formatDuration';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getWorkingDotColor } from '../utils/tabColor';
 import { TreeView, type TreeItem } from './TreeView';
 import { buildGroupTree, type GroupNode } from '../utils/groupTree';
-import type { Profile } from '../types';
-import './TabSidebar.css';
+import type { Profile, TerminalSession } from '../types';
+import './TabNav.css';
 
 interface TabSidebarProps {
   profiles: Profile[];
@@ -17,16 +18,19 @@ interface TabSidebarProps {
   onStartTextEditor: () => void;
 }
 
-export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
+export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
   const openSettingsTab = useAppStore(s => s.openSettingsTab);
   const removeSession = useAppStore(s => s.removeSession);
-  const setActiveSession = useAppStore(s => s.setActiveSession);
+
   const renameSession = useAppStore(s => s.renameSession);
   const workingSessions = useAppStore(s => s.workingSessions);
   const settingsVersion = useAppStore(s => s.settingsVersion);
+  const dragProfileId = useAppStore(s => s.dragProfileId);
+  const setDragProfileId = useAppStore(s => s.setDragProfileId);
+  const [dropActive, setDropActive] = useState(false);
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const highlightedIndexRef = useRef(-1);
@@ -45,6 +49,12 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [submenuExpandedGroups, setSubmenuExpandedGroups] = useState<Set<string>>(new Set());
   const [, setSettingsTick] = useState(0);
+  // 终端运行时长后缀每 60s 刷新一次
+  const [, setUptimeTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setUptimeTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   // F2 快速重命名标签
   useEffect(() => {
@@ -135,13 +145,13 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
               id: session.id,
               label: session.profileName,
               icon: isEditor ? (
-                <span className="tab-sidebar-file-icon">
-                  {session.isDirty && <span className="tab-sidebar-dirty-dot" />}
+                <span className="tab-nav-file-icon">
+                  {session.isDirty && <span className="tab-nav-dirty-dot" />}
                   📄
                 </span>
               ) : (
                 <span
-                  className={`tab-sidebar-dot${workingSessions[session.id] ? ' working' : ''}`}
+                  className={`tab-nav-dot${workingSessions[session.id] ? ' working' : ''}`}
                   style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
                 />
               ),
@@ -163,8 +173,8 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
           id: session.id,
           label: session.profileName,
           icon: (
-            <span className="tab-sidebar-file-icon">
-              {session.isDirty && <span className="tab-sidebar-dirty-dot" />}
+            <span className="tab-nav-file-icon">
+              {session.isDirty && <span className="tab-nav-dirty-dot" />}
               📄
             </span>
           ),
@@ -315,10 +325,10 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
     if (sessions.length === 0) return;
     const hasDirty = sessions.some(s => s.sessionType === 'editor' && s.isDirty);
     setConfirmDialog({
-      title: '确认关闭所有标签',
+      title: '确认关闭所有选项卡',
       message: hasDirty
-        ? `有未保存的文件更改，确定关闭所有 ${sessions.length} 个标签吗？`
-        : `确定关闭所有 ${sessions.length} 个标签吗？`,
+        ? `有未保存的文件更改，确定关闭所有 ${sessions.length} 个选项卡吗？`
+        : `确定关闭所有 ${sessions.length} 个选项卡吗？`,
       onConfirm: async () => {
         setConfirmDialog(null);
         const store = useAppStore.getState();
@@ -337,7 +347,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   };
 
   const handleContentContextMenu = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.tab-sidebar-item')) return;
+    if ((e.target as HTMLElement).closest('.tab-nav-item')) return;
     e.preventDefault();
     setShowContextMenu(true);
     setContextMenuPos({ x: e.clientX, y: e.clientY });
@@ -471,7 +481,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 <div className="tree-item" style={{ paddingLeft: `${indent + 12}px` }}>
                   {child.icon || (
                     <span
-                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                      className={`tab-nav-dot${workingSessions[child.id] ? ' working' : ''}`}
                       style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
                     />
                   )}
@@ -499,9 +509,20 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 </div>
               ) : (
                 <div
-                  className={`tree-item tab-sidebar-item ${activeSessionId === child.id ? 'active' : ''}`}
+                  className={`tree-item tab-nav-item ${activeSessionId === child.id ? 'active' : ''}`}
                   style={{ paddingLeft: `${indent + 12}px` }}
-                  onClick={() => setActiveSession(child.id)}
+                  onClick={() => {
+                    const store = useAppStore.getState();
+                    if (store.splitMode !== 'off') {
+                      if (!store.splitSlots.some(slot => slot.sessionId === child.id)) {
+                        store.placeSessionInSplitSlot(child.id);
+                      } else {
+                        store.setActiveSession(child.id);
+                      }
+                    } else {
+                      store.setActiveSession(child.id);
+                    }
+                  }}
                   onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTerminal(child.id); } }}
                   onContextMenu={(e) => {
                     e.preventDefault();
@@ -510,12 +531,21 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
                 >
                   {child.icon || (
                     <span
-                      className={`tab-sidebar-dot${workingSessions[child.id] ? ' working' : ''}`}
+                      className={`tab-nav-dot${workingSessions[child.id] ? ' working' : ''}`}
                       style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
                     />
                   )}
-                  <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>{child.label}</span>
-                  {(child.data as any)?.owner === 'web' && <span className="tab-sidebar-owner-badge">Web</span>}
+                  <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
+                    {child.label}
+                    {(() => {
+                      const childSession = child.data as TerminalSession | undefined;
+                      if (childSession && childSession.sessionType !== 'editor' && childSession.createdAt) {
+                        return <span className="tab-nav-uptime"> · {formatDuration(Date.now() - childSession.createdAt)}</span>;
+                      }
+                      return null;
+                    })()}
+                  </span>
+                  {(child.data as any)?.owner === 'web' && <span className="tab-nav-owner-badge">Web</span>}
                   <span className="tree-item-end">
                     <button
                       className="tree-item-close"
@@ -535,35 +565,55 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
   };
 
   return (
-    <div className="tab-sidebar" style={{ width }} ref={containerRef}>
+    <div className="tab-nav" style={{ width }} ref={containerRef}>
       <div className="panel-titlebar">
-        <span className="panel-title">标签导航</span>
+        <span className="panel-title">选项卡</span>
         <span className="panel-title-count">{sessions.length}</span>
       </div>
-      <div className="tab-sidebar-header">
+      <div className="tab-nav-header">
         <input
-          className="tab-sidebar-search"
+          className="tab-nav-search"
           type="text"
-          placeholder="搜索标签..."
+          placeholder="搜索选项卡..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         {settingsTabOpen && (
           <div
-            className={`tab-sidebar-settings-btn active`}
+            className={`tab-nav-settings-btn active`}
             onClick={openSettingsTab}
             title="设置"
           >
-            <span className="tab-sidebar-dot" style={{ background: 'var(--accent)' }} />
-            <span className="tab-sidebar-name">设置</span>
+            <span className="tab-nav-dot" style={{ background: 'var(--accent)' }} />
+            <span className="tab-nav-name">设置</span>
           </div>
         )}
       </div>
-      <div className="tab-sidebar-content" onContextMenu={handleContentContextMenu}>
+      <div
+        className={`tab-nav-content${dropActive ? ' drop-target' : ''}`}
+        onContextMenu={handleContentContextMenu}
+        onDragOver={(e) => {
+          if (!dragProfileId) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          if (!dropActive) setDropActive(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropActive(false);
+        }}
+        onDrop={(e) => {
+          if (!dragProfileId) return;
+          e.preventDefault();
+          setDropActive(false);
+          const profile = profiles.find(p => p.id === dragProfileId);
+          if (profile) onStartTerminal(profile);
+          setDragProfileId(null);
+        }}
+      >
         {sessionTree.map((group) => renderGroupRecursive(group, 0))}
       </div>
       <div
-        className={`tab-sidebar-resize ${isResizing ? 'active' : ''}`}
+        className={`tab-nav-resize ${isResizing ? 'active' : ''}`}
         onMouseDown={resizeHandleProps.onMouseDown}
       />
       {tabContextMenu && (
@@ -579,6 +629,51 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
               }
               setTabContextMenu(null);
             }}>重命名</div>
+            {(() => {
+              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
+              if (!session || session.sessionType === 'editor') return null;
+              const profile = profiles.find(p => p.id === session.profileId);
+              if (!profile) return null;
+              return (
+                <div className="context-menu-item" onClick={() => {
+                  onStartTerminal(profile);
+                  setTabContextMenu(null);
+                }}>以此配置新建终端</div>
+              );
+            })()}
+            {(() => {
+              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
+              if (!session || session.sessionType === 'editor') return null;
+              // 复制配置名：所有终端会话都显示
+              return (
+                <div className="context-menu-item" onClick={() => {
+                  navigator.clipboard.writeText(session.profileName).catch(() => {});
+                  setTabContextMenu(null);
+                }}>复制配置名</div>
+              );
+            })()}
+            {(() => {
+              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
+              if (!session || session.sessionType === 'editor') return null;
+              const profile = profiles.find(p => p.id === session.profileId);
+              if (!profile) return null;
+              const isLocal = profile.terminalType === 'powershell' || profile.terminalType === 'cmd';
+              const hasPath = !!profile.startupPath && profile.startupPath.trim() !== '';
+              if (!isLocal || !hasPath) return null;
+              return (
+                <>
+                  <div className="context-menu-item" onClick={async () => {
+                    setTabContextMenu(null);
+                    try { await openInExplorer(profile.startupPath!); }
+                    catch (err) { console.error(err); }
+                  }}>打开目录</div>
+                  <div className="context-menu-item" onClick={() => {
+                    navigator.clipboard.writeText(profile.startupPath!).catch(() => {});
+                    setTabContextMenu(null);
+                  }}>复制启动路径</div>
+                </>
+              );
+            })()}
             <div className="context-menu-item danger" onClick={() => {
               handleCloseTerminal(tabContextMenu.sessionId);
               setTabContextMenu(null);
@@ -645,7 +740,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
             </div>
             <div className="context-menu-separator" />
             <div className="context-menu-item danger" onClick={handleCloseAllTabs}>
-              关闭所有标签
+              关闭所有选项卡
             </div>
             <div className="context-menu-separator" />
             <div className="context-menu-item" onClick={() => {
@@ -654,7 +749,7 @@ export const TabSidebar: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onS
               saveAppSettings({ ...s, enableTabNavigation: false });
               saveEnableTabNavigation(false).catch(console.error);
               window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
-            }}>禁用标签导航</div>
+            }}>切换为横向选项卡</div>
           </div>
         </>
       )}

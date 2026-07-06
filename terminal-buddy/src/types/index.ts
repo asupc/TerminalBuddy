@@ -116,6 +116,7 @@ export interface TerminalSession {
   owner?: 'pc' | 'web';
   extraParams?: string;
   claudeSessionId?: string;
+  createdAt?: number;   // 启动时间戳；addSession 时默认 Date.now()
 }
 
 export interface Workspace {

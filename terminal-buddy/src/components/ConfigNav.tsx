@@ -1,17 +1,17 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
-import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile } from '../services/tauri';
+import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../services/tauri';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
 import type { Profile } from '../types';
 import { TreeView, type TreeItem } from './TreeView';
 import { buildGroupTree, renameGroupInPath } from '../utils/groupTree';
-import './ConfigPanel.css';
+import './ConfigNav.css';
 
 const TYPE_ICONS: Record<string, string> = {
   powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
 };
 
-/** 虚拟置顶分组 id：置顶的连接聚合到此分组，永远显示在列表最顶部 */
+/** 虚拟置顶分组 id：置顶的配置聚合到此分组，永远显示在列表最顶部 */
 const PINNED_GROUP_ID = '__pinned__';
 
 interface ConfigPanelProps {
@@ -22,7 +22,7 @@ interface ConfigPanelProps {
   onManageExtraParams: () => void;
 }
 
-export const ConfigPanel: FC<ConfigPanelProps> = ({
+export const ConfigNav: FC<ConfigPanelProps> = ({
   onStartTerminal,
   onEditProfile,
   onCopyProfile,
@@ -40,10 +40,21 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   const setConfigSearchQuery = useAppStore(s => s.setConfigSearchQuery);
   const setConfigSortBy = useAppStore(s => s.setConfigSortBy);
   const extraParamPresets = useAppStore(s => s.extraParamPresets);
+  const setDragProfileId = useAppStore(s => s.setDragProfileId);
   const [width, setWidth] = useState(250);
+  const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
+
+  // 启动时从后端恢复宽度
+  useEffect(() => {
+    getBackendAppSettings().then(s => {
+      const w = s.configNavWidth || 250;
+      setWidth(w);
+      widthRef.current = w;
+    }).catch(() => {});
+  }, []);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set([PINNED_GROUP_ID]));
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; profileId: string;
@@ -91,7 +102,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
     const toLeaf = (p: Profile): TreeItem => ({
       id: p.id,
       label: p.name,
-      icon: <span className="config-icon-type">{TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
+      icon: <span className="config-nav-icon-type">{TYPE_ICONS[p.terminalType] || p.terminalType.toUpperCase()}</span>,
       color: p.tabColor || undefined,
       data: p,
     });
@@ -164,6 +175,9 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
     setBlankContextMenu(null);
     setSortDropdownOpen(false);
   };
+
+  const isLocalProfile = (p: Profile) => p.terminalType === 'powershell' || p.terminalType === 'cmd';
+  const hasStartupPath = (p: Profile) => !!p.startupPath && p.startupPath.trim() !== '';
 
   useEffect(() => {
     if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
@@ -259,7 +273,10 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         const newWidth = e.clientX - rect.left;
-        if (newWidth >= 150 && newWidth <= 500) setWidth(newWidth);
+        if (newWidth >= 150 && newWidth <= 500) {
+          setWidth(newWidth);
+          widthRef.current = newWidth;
+        }
       }
     });
   }, [isResizing]);
@@ -267,6 +284,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   const handleResizeMouseUp = useCallback(() => {
     setIsResizing(false);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    saveConfigNavWidth(widthRef.current).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -292,7 +310,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
     return () => panel.removeEventListener('mousedown', handler);
   }, []);
 
-  // F2 快速重命名分组/连接
+  // F2 快速重命名分组/配置
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'F2') return;
@@ -313,29 +331,29 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
   }, [selectedProfileId, treeItems]);
 
   return (
-    <div ref={containerRef} className={`config-panel ${!configPanelVisible ? 'collapsed' : ''}`} style={{ width }} onClick={closeContextMenu}>
+    <div ref={containerRef} className={`config-nav ${!configPanelVisible ? 'collapsed' : ''}`} style={{ width }} onClick={closeContextMenu}>
       <div className="panel-titlebar">
-        <span className="panel-title">连接导航</span>
+        <span className="panel-title">配置</span>
         <span className="panel-title-count">{profiles.length}</span>
       </div>
-      <div className="config-search-bar">
+      <div className="config-nav-search-bar">
         <input
           type="text"
-          className="config-search-input"
-          placeholder="搜索连接..."
+          className="config-nav-search-input"
+          placeholder="搜索配置..."
           value={configSearchQuery}
           onChange={(e) => setConfigSearchQuery(e.target.value)}
         />
-        <div className="config-sort-wrapper">
+        <div className="config-nav-sort-wrapper">
           <button
-            className="config-sort-btn"
+            className="config-nav-sort-btn"
             onClick={() => setSortDropdownOpen(!sortDropdownOpen)}
             title="排序"
           >
             ⇅
           </button>
           {sortDropdownOpen && (
-            <div className="config-sort-dropdown">
+            <div className="config-nav-sort-dropdown">
               {([
                 ['name-asc', '名称 A-Z'], ['name-desc', '名称 Z-A'],
                 ['recent', '最近使用'], ['oldest', '最久未用'],
@@ -343,7 +361,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
               ] as const).map(([key, label]) => (
                 <div
                   key={key}
-                  className={`config-sort-option ${configSortBy === key ? 'active' : ''}`}
+                  className={`config-nav-sort-option ${configSortBy === key ? 'active' : ''}`}
                   onClick={() => { setConfigSortBy(key); setSortDropdownOpen(false); }}
                 >
                   {label}
@@ -353,7 +371,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
           )}
         </div>
       </div>
-      <div className="config-list" onContextMenu={(e) => {
+      <div className="config-nav-list" onContextMenu={(e) => {
         if ((e.target as HTMLElement).closest('.tree-item')) return;
         e.preventDefault();
         setBlankContextMenu({ x: e.clientX, y: e.clientY });
@@ -377,9 +395,18 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
           onRenamingProfileChange={setRenamingProfileName}
           onRenamingProfileSubmit={handleFinishRenameProfile}
           onRenamingProfileCancel={() => setRenamingProfileId(null)}
+          itemDraggable
+          onItemDragStart={(e, item) => {
+            const profile = item.data as Profile | undefined;
+            if (!profile) return;
+            setDragProfileId(profile.id);
+            e.dataTransfer.effectAllowed = 'copy';
+            e.dataTransfer.setData('text/plain', profile.id);
+          }}
+          onItemDragEnd={() => setDragProfileId(null)}
         />
         {profiles.length === 0 && (
-          <div className="empty-state">暂无连接，点击新建</div>
+          <div className="empty-state">暂无配置，点击新建</div>
         )}
       </div>
 
@@ -407,6 +434,32 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
               catch (err) { console.error(err); }
             }
           }}>命令行</div>
+          <div className="context-menu-item" onClick={() => {
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            closeContextMenu();
+            if (target) onAddProfile(target.group || '默认');
+          }}>添加配置</div>
+          {(() => {
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            if (!target || !isLocalProfile(target) || !hasStartupPath(target)) return null;
+            return (
+              <>
+                <div className="context-menu-item" onClick={async () => {
+                  const t = profiles.find((p) => p.id === contextMenu.profileId);
+                  closeContextMenu();
+                  if (t) {
+                    try { await openInExplorer(t.startupPath!); }
+                    catch (err) { console.error(err); }
+                  }
+                }}>打开目录</div>
+                <div className="context-menu-item" onClick={() => {
+                  const t = profiles.find((p) => p.id === contextMenu.profileId);
+                  if (t) navigator.clipboard.writeText(t.startupPath!).catch(() => {});
+                  closeContextMenu();
+                }}>复制启动路径</div>
+              </>
+            );
+          })()}
           <div className="context-menu-item" onClick={() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             if (target) onEditProfile(target);
@@ -440,7 +493,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       {groupContextMenu && (
         <div className="context-menu" style={{ left: groupContextMenu.x, top: groupContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
-            添加连接
+            添加配置
           </div>
           <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group + '/新分组'); closeContextMenu(); }}>
             添加子分组
@@ -454,7 +507,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
       {blankContextMenu && (
         <div className="context-menu" style={{ left: blankContextMenu.x, top: blankContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <div className="context-menu-item" onClick={() => { onAddProfile('默认'); closeContextMenu(); }}>
-            添加连接
+            添加配置
           </div>
           <div className="context-menu-item" onClick={() => { onManageExtraParams(); closeContextMenu(); }}>
             添加额外参数
@@ -466,7 +519,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
         <div className="confirm-dialog-overlay" onClick={() => setConfirmDelete(null)}>
           <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-dialog-title">确认删除</div>
-            <div className="confirm-dialog-message">确定要删除此连接吗？</div>
+            <div className="confirm-dialog-message">确定要删除此配置吗？</div>
             <div className="confirm-dialog-buttons">
               <button className="btn-secondary" onClick={() => setConfirmDelete(null)}>取消</button>
               <button className="btn-danger" onClick={confirmDeleteProfile}>删除</button>
@@ -475,7 +528,7 @@ export const ConfigPanel: FC<ConfigPanelProps> = ({
         </div>
       )}
       <div
-        className={`config-resize-handle ${isResizing ? 'active' : ''}`}
+        className={`config-nav-resize-handle ${isResizing ? 'active' : ''}`}
         onMouseDown={handleResizeMouseDown}
       />
     </div>

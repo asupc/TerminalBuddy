@@ -12,7 +12,7 @@ import { getAppSettings } from '../utils/settings';
 import { ChmodDialog } from './ChmodDialog';
 import { TransferPanel } from './TransferPanel';
 import type { RemoteFileEntry } from '../types';
-import './FileTree.css';
+import './FileNav.css';
 
 interface ContextMenuState {
   x: number;
@@ -615,10 +615,10 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
   );
 
   return (
-    <div ref={containerRef} className="file-tree" style={{ width }}>
+    <div ref={containerRef} className="file-nav" style={{ width }}>
       <div className="panel-titlebar">
         <span className="panel-title">{showTransferPanel ? '传输列表' : '远程文件'}</span>
-        <div className="file-tree-actions">
+        <div className="file-nav-actions">
           {showTransferPanel ? (
             <button onClick={() => setShowTransferPanel(false)} title="文件列表">文件列表</button>
           ) : (
@@ -642,7 +642,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       ) : (
         <>
       {/* Breadcrumb navigation */}
-      <div className="file-tree-path" style={{ display: 'flex', alignItems: 'center' }}>
+      <div className="file-nav-path" style={{ display: 'flex', alignItems: 'center' }}>
         {breadcrumbs.map((seg, i) => (
           <span key={i} style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
             {i > 0 && <span className="breadcrumb-sep">/</span>}
@@ -668,7 +668,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
         </div>
       )}
 
-      <div className="file-tree-content" onContextMenu={(e) => handleContextMenu(e)}>
+      <div className="file-nav-content" onContextMenu={(e) => handleContextMenu(e)}>
         {!connected && (
           <div style={{ padding: '16px 12px', textAlign: 'center' }}>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>

@@ -1,11 +1,11 @@
 import { FC, useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, type FileNode } from '../services/tauri';
+import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
 import { getAppSettings } from '../utils/settings';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
 import { RemoteFileTree } from './RemoteFileTree';
-import './FileTree.css';
+import './FileNav.css';
 
 interface TreeNodeProps {
   node: FileNode;
@@ -244,7 +244,7 @@ function compareNodes(a: FileNode, b: FileNode, sortBy: 'name' | 'size' | 'modif
   return a.name.localeCompare(b.name) * dir;
 }
 
-export const FileTree: FC = () => {
+export const FileNav: FC = () => {
   const currentDirectory = useAppStore(s => s.currentDirectory);
   const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
   const navigateWithHistory = useAppStore(s => s.navigateWithHistory);
@@ -265,6 +265,7 @@ export const FileTree: FC = () => {
   const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
   const [rootNodes, setRootNodes] = useState<FileNode[]>([]);
   const [width, setWidth] = useState(250);
+  const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -284,6 +285,15 @@ export const FileTree: FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number | null>(null);
+
+  // 启动时从后端恢复宽度
+  useEffect(() => {
+    getBackendAppSettings().then(s => {
+      const w = s.fileNavWidth || 250;
+      setWidth(w);
+      widthRef.current = w;
+    }).catch(() => {});
+  }, []);
 
   // Load root directory on mount
   useEffect(() => {
@@ -405,6 +415,7 @@ export const FileTree: FC = () => {
         const newWidth = e.clientX - rect.left;
         if (newWidth >= 150 && newWidth <= 500) {
           setWidth(newWidth);
+          widthRef.current = newWidth;
         }
       }
     });
@@ -415,6 +426,7 @@ export const FileTree: FC = () => {
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
     }
+    saveFileNavWidth(widthRef.current).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -574,10 +586,10 @@ export const FileTree: FC = () => {
   }
 
   return (
-    <div ref={containerRef} className={`file-tree ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
+    <div ref={containerRef} className={`file-nav ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
       <div className="panel-titlebar">
-        <span className="panel-title">文件导航</span>
-        <div className="file-tree-actions">
+        <span className="panel-title">文件</span>
+        <div className="file-nav-actions">
           <button onClick={handleNavBack} disabled={navBackStack.length === 0} title="后退 (Alt+←)">←</button>
           <button onClick={handleNavForward} disabled={navForwardStack.length === 0} title="前进 (Alt+→)">→</button>
           <button onClick={handleRefresh} title="刷新">↻</button>
@@ -589,7 +601,7 @@ export const FileTree: FC = () => {
           </button>
         </div>
       </div>
-      <div className="file-tree-filter">
+      <div className="file-nav-filter">
         <input
           className="filter-input"
           placeholder="过滤当前目录…"
@@ -597,7 +609,7 @@ export const FileTree: FC = () => {
           onChange={(e) => setFilterQuery(e.target.value)}
         />
       </div>
-      <div className={`file-tree-path ${pathError ? 'error' : ''}`}>
+      <div className={`file-nav-path ${pathError ? 'error' : ''}`}>
         {isEditing ? (
           <input
             ref={inputRef}
@@ -616,7 +628,7 @@ export const FileTree: FC = () => {
         {pathError && <span className="path-error">路径不存在</span>}
       </div>
       <div
-        className="file-tree-content"
+        className="file-nav-content"
         onContextMenu={(e) => {
           const target = e.target as HTMLElement;
           if (target.closest('.tree-item')) return;

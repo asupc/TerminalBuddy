@@ -26,6 +26,7 @@ export const TerminalPanel: FC = () => {
   const splitSlots = useAppStore(s => s.splitSlots);
   const workingSessions = useAppStore(s => s.workingSessions);
   const setActiveSession = useAppStore(s => s.setActiveSession);
+  const windowMode = useAppStore(s => s.windowMode);
   const closeSplitPane = useAppStore(s => s.closeSplitPane);
   const swapSplitSlots = useAppStore(s => s.swapSplitSlots);
   const [settings, setSettings] = useState(() => getAppSettings());
@@ -48,10 +49,31 @@ export const TerminalPanel: FC = () => {
       ? sessions
           .filter(s => s.sessionType !== 'editor' && s.owner !== 'web')
           .map(s => s.id)
-      : splitSlots.filter((s): s is string => s !== null);
+      : splitSlots.map(s => s.sessionId).filter((s): s is string => s !== null);
     if (ids.length === 0) return;
-    window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
-  }, [splitMode, splitSlots, sessions, activeSessionId]);
+
+    // 双层 rAF + 30ms 延迟确保 F11 切 panels-hidden 时 .terminal-content.split-grid
+    // 的 grid 重排已完全落定后再派发事件，让 fit 拿到稳定尺寸（避免拿到过渡帧的 0
+    // 尺寸把 xterm 推到 0×0 不可见状态——黑屏）。
+    let raf1 = 0;
+    let raf2 = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        timer = setTimeout(() => {
+          timer = null;
+          window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
+        }, 30);
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      if (timer) clearTimeout(timer);
+    };
+  }, [splitMode, splitSlots, sessions, activeSessionId, windowMode]);
 
   useEffect(() => {
     const onSettings = () => setSettings(getAppSettings());
@@ -159,7 +181,7 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
-      {!settings.enableTabNavigation && sessions.length > 0 && splitMode === 'off' && (
+      {!settings.enableTabNavigation && sessions.length > 0 && (
         <TerminalTabBar />
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
@@ -179,19 +201,19 @@ export const TerminalPanel: FC = () => {
         ) : (
           <>
             {/* Split slots, in order — filled cells keyed by session.id, blanks by index */}
-            {splitSlots.map((sid, i) => {
-              const session = sid ? sessions.find(s => s.id === sid) : undefined;
-              if (!sid || !session) {
+            {splitSlots.map((slot, i) => {
+              const session = slot.sessionId ? sessions.find(s => s.id === slot.sessionId) : undefined;
+              if (!slot.sessionId || !session) {
                 return (
                   <div key={`blank-${i}`} className="split-cell split-blank" style={gridStyleFor(splitMode, i)}>
                     点击左侧连接打开终端
                   </div>
                 );
               }
-              return renderPane(session, { slot: i, active: activeSessionId === sid, hidden: false });
+              return renderPane(session, { slot: i, active: activeSessionId === slot.sessionId, hidden: false });
             })}
             {/* Non-slot sessions: keep mounted but hidden (display:none) so PTY/xterm state survives */}
-            {sessions.filter(s => !splitSlots.includes(s.id)).map(session =>
+            {sessions.filter(s => !splitSlots.some(slot => slot.sessionId === s.id)).map(session =>
               renderPane(session, { active: false, hidden: true })
             )}
           </>

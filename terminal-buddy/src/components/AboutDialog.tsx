@@ -31,7 +31,7 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
             <ul>
               <li>多终端类型支持 - PowerShell, CMD, SSH, Docker, K8s, MSTSC</li>
               <li>智能配置文件管理与层级分组</li>
-              <li>灵活的标签页与分屏布局</li>
+              <li>灵活的选项卡与分屏布局</li>
               <li>SSH 远程文件管理器</li>
               <li>实时服务器监控</li>
               <li>Web 远程访问支持</li>
