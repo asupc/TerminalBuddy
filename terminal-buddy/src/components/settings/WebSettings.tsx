@@ -1,5 +1,4 @@
 import { FC } from 'react';
-import { saveWebApiShareSessions } from '../../services/tauri';
 import type { AppSettings } from '../../utils/settings';
 
 interface WebSettingsProps {
@@ -16,7 +15,7 @@ interface WebSettingsProps {
 }
 
 export const WebSettings: FC<WebSettingsProps> = ({
-  settings, setSettings, updateSetting,
+  settings, setSettings,
   webPassword, setWebPassword,
   serverRunning, serverAddress, serverError, serverLoading,
   handleToggleServer,
@@ -78,22 +77,6 @@ export const WebSettings: FC<WebSettingsProps> = ({
                 style={{ flex: 1 }}
               />
             </div>
-          </div>
-
-          <div className="settings-section">
-            <label className="settings-toggle">
-              <input
-                type="checkbox"
-                checked={settings.webApiShareSessions ?? false}
-                onChange={(e) => {
-                  const value = e.target.checked;
-                  updateSetting('webApiShareSessions', value);
-                  saveWebApiShareSessions(value).catch(console.error);
-                }}
-              />
-              <span>共享会话窗口</span>
-            </label>
-            <p className="settings-desc">开启后 Web 端和 PC 端可以看到并操作所有终端；关闭后 Web 端只能看到自己创建的终端，PC 端可以看到 Web 端创建的终端但不能操作</p>
           </div>
 
           <div className="settings-section">
