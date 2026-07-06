@@ -47,6 +47,13 @@ impl WebServiceState {
         }
     }
 
+    /// 丢弃某终端的全部订阅者（drop 所有 sender）→ 各 receiver 的 recv() 返回 None，
+    /// 使 WS handler 得知 PTY 已退出并向手机端发送 Exited。PTY EOF / 显式关闭时调用。
+    pub fn close_all(&self, terminal_id: &str) {
+        let mut subs = self.output_subscribers.lock().unwrap_or_else(|e| e.into_inner());
+        subs.remove(terminal_id);
+    }
+
     pub fn broadcast(&self, terminal_id: &str, data: &Arc<str>) {
         let subs = self.output_subscribers.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(senders) = subs.get(terminal_id) {

@@ -43,5 +43,15 @@ pub fn get_web_server_address() -> Result<String, String> {
     if !settings.web_api_enabled {
         return Ok("Web API 未启用".into());
     }
-    Ok(format!("http://localhost:{}", settings.web_api_port))
+    // 手机端通过局域网访问，优先返回出站主网卡 IPv4；取不到则回退 localhost。
+    let host = lan_ipv4().unwrap_or_else(|| "localhost".to_string());
+    Ok(format!("http://{}:{}", host, settings.web_api_port))
+}
+
+/// 用 UDP「连接」技巧取本机出站主 IPv4：connect 只设置目的地址、不真正发包，
+/// local_addr() 返回操作系统为该路由选用的源 IP。无网络时返回 None。
+fn lan_ipv4() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    socket.local_addr().ok().map(|addr| addr.ip().to_string())
 }
