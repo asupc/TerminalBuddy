@@ -1,5 +1,6 @@
 use tauri::{command, AppHandle, State, Emitter, Manager};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::collections::HashSet;
@@ -10,10 +11,13 @@ use std::thread;
 use std::fs;
 use std::path::PathBuf;
 use serde::Deserialize;
+use tokio::sync::broadcast;
 use crate::models::TerminalOwner;
+use crate::models::web_api::TerminalInfo;
 use crate::services::ProfileService;
 use crate::services::PathService;
 use crate::services::SettingsService;
+use crate::services::WebServiceState;
 use crate::services::ssh_session_service::SshSessionService;
 
 /// 转义 shell 特殊字符，防止命令注入
@@ -35,10 +39,14 @@ pub struct TerminalInstance {
     pub output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
     current_rows: u16,
     current_cols: u16,
+    /// PTY 读取线程检测到 EOF 后置位；用于从 sessions 列表中剔除已退出的终端。
+    pub exited: AtomicBool,
 }
 
 pub struct TerminalService {
     pub instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
+    /// 会话变更广播：create/close/PTY 退出时发送 ()，meta WS 据此推送最新列表。
+    pub session_change_tx: broadcast::Sender<()>,
 }
 
 use std::sync::OnceLock;
@@ -90,9 +98,21 @@ fn spawn_output_forwarder(
                 Err(_) => break,
             }
         }
-        // Notify frontend that the PTY has exited (e.g. SSH disconnect, `exit` command).
-        // removeSession is idempotent, so the extra event is safe even on intentional close.
+        // PTY exited (SSH disconnect, `exit` command, child crash, etc.).
+        // 1. Notify desktop frontend (removeSession is idempotent → safe on intentional close).
         let _ = app.emit("terminal-closed", &terminal_id);
+        // 2. Mark the instance exited so it drops out of the mobile sessions list.
+        {
+            let ts = app.state::<TerminalService>();
+            if let Some(inst) = ts.instances.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&terminal_id) {
+                inst.exited.store(true, Ordering::SeqCst);
+            }
+            // 3. Drop all output subscribers for this terminal → their recv() returns None →
+            //    the WS handler sends Exited to the mobile client.
+            app.state::<WebServiceState>().close_all(&terminal_id);
+            // 4. Push a sessions update so the mobile nav screen removes the dead entry.
+            ts.notify_sessions_changed();
+        }
     });
 }
 
@@ -104,9 +124,39 @@ impl Default for TerminalService {
 
 impl TerminalService {
     pub fn new() -> Self {
+        let (session_change_tx, _) = broadcast::channel::<()>(16);
         Self {
             instances: Arc::new(Mutex::new(HashMap::new())),
+            session_change_tx,
         }
+    }
+
+    /// 通知 meta WS 订阅者：会话列表已变化，需重新推送。无订阅者时静默 no-op。
+    pub fn notify_sessions_changed(&self) {
+        let _ = self.session_change_tx.send(());
+    }
+
+    /// 构建当前存活终端的列表（供 REST `GET /api/terminals`、Tauri 命令、meta WS 共用）。
+    /// 过滤掉 PTY 已退出的实例，并用 ProfileService 补全 profile 元数据。
+    pub fn list_terminals_info(&self) -> Vec<TerminalInfo> {
+        let entries: Vec<(String, String, TerminalOwner)> = {
+            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            instances.values()
+                .filter(|inst| !inst.exited.load(Ordering::SeqCst))
+                .map(|inst| (inst.id.clone(), inst.profile_id.clone(), inst.owner.clone()))
+                .collect()
+        };
+        entries.into_iter().map(|(id, profile_id, owner)| {
+            let profile = ProfileService::get_profile(&profile_id).ok();
+            TerminalInfo {
+                id,
+                group: profile.as_ref().map(|p| p.group.clone()).unwrap_or_default(),
+                profile_name: profile.as_ref().map(|p| p.name.clone()).unwrap_or_default(),
+                terminal_type: profile.as_ref().map(|p| p.terminal_type.clone()).unwrap_or_default(),
+                profile_id,
+                owner,
+            }
+        }).collect()
     }
 
     pub fn create_terminal(&self, profile_id: &str, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
@@ -203,6 +253,7 @@ impl TerminalService {
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
             current_cols: init_cols,
+            exited: AtomicBool::new(false),
         };
 
         {
@@ -290,6 +341,7 @@ impl TerminalService {
 
         log_debug(&format!("[create] DONE, id={}", terminal_id));
         crate::boot_log("[create_terminal] DONE");
+        self.notify_sessions_changed();
         Ok(terminal_id)
     }
 
@@ -401,6 +453,7 @@ impl TerminalService {
         instance.writer = None;
         instance.child.kill().ok();
         let _ = instance.child.wait();
+        self.notify_sessions_changed();
         Ok(())
     }
 
@@ -424,6 +477,7 @@ impl TerminalService {
         instance.writer = None;
         instance.child.kill().ok();
         let _ = instance.child.wait();
+        self.notify_sessions_changed();
         Ok(())
     }
 
@@ -493,6 +547,7 @@ impl TerminalService {
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
             current_cols: init_cols,
+            exited: AtomicBool::new(false),
         };
 
         {
@@ -531,6 +586,7 @@ impl TerminalService {
 
         log_debug(&format!("[create-blank] DONE, id={}", terminal_id));
         crate::boot_log("[create_blank_terminal] DONE");
+        self.notify_sessions_changed();
         Ok(terminal_id)
     }
 }
@@ -594,6 +650,14 @@ pub fn peek_terminal_output(
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
     terminal_service.peek_terminal_output(&id)
+}
+
+/// 列出当前所有存活终端（含 profile 元数据）。供桌面端将来同步展示，亦被 web 层复用。
+#[command]
+pub fn list_terminals(
+    terminal_service: State<TerminalService>,
+) -> Result<Vec<TerminalInfo>, String> {
+    Ok(terminal_service.list_terminals_info())
 }
 
 #[command]

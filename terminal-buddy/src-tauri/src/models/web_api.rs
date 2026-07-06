@@ -35,8 +35,18 @@ pub struct TerminalInfo {
     pub id: String,
     pub profile_id: String,
     pub profile_name: String,
+    pub group: String,
     pub terminal_type: String,
     pub owner: TerminalOwner,
+}
+
+/// meta WebSocket 推送的消息（会话列表实时同步）。
+/// 与终端 I/O 的 WsServerMessage 分开，因为 meta 通道只承载列表快照。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum MetaServerMessage {
+    #[serde(rename = "sessions")]
+    Sessions { terminals: Vec<TerminalInfo> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

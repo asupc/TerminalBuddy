@@ -1,15 +1,15 @@
-import { useWebAppStore } from './stores/appStore';
-import LoginPage from './components/LoginPage';
-import MainLayout from './components/MainLayout';
+import { useStore } from './store';
+import Login from './screens/Login';
+import Nav from './screens/Nav';
+import Terminal from './screens/Terminal';
 
-function App() {
-  const token = useWebAppStore((s) => s.token);
+export default function App() {
+  const token = useStore((s) => s.token);
+  const view = useStore((s) => s.view);
 
-  if (!token) {
-    return <LoginPage />;
+  if (!token) return <Login />;
+  if (view.screen === 'terminal') {
+    return <Terminal terminalId={view.terminalId} profileName={view.profileName} />;
   }
-
-  return <MainLayout />;
+  return <Nav />;
 }
-
-export default App;

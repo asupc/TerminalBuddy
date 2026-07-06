@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::commands::TerminalService;
 use crate::models::TerminalOwner;
-use crate::models::web_api::{WsClientMessage, WsServerMessage};
-use crate::services::{SettingsService, WebServiceState};
+use crate::models::web_api::{MetaServerMessage, TerminalInfo, WsClientMessage, WsServerMessage};
+use crate::services::WebServiceState;
 use crate::web::auth::verify_token;
 use crate::web::server::AppState;
 use tauri::Manager;
@@ -17,7 +17,9 @@ const MAX_GLOBAL_WS_CONNECTIONS: usize = 50;
 const MAX_PER_TERMINAL_WS_CONNECTIONS: usize = 5;
 const MAX_WS_MESSAGE_SIZE: usize = 64 * 1024; // 64KB
 
-pub async fn ws_handler(
+// ───────────────────────── 终端 I/O WebSocket ─────────────────────────
+
+pub async fn terminal_ws_handler(
     ws: WebSocketUpgrade,
     Path(terminal_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
@@ -26,22 +28,20 @@ pub async fn ws_handler(
     let token = params.get("token").ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
     let _claims = verify_token(token, &state.jwt_secret)?;
 
-    // 权限检查：不共享模式下，Web 端不能连接 PC 端的终端
-    let settings = SettingsService::get_settings();
-    if !settings.web_api_share_sessions {
+    // 独立池：手机端只能连自己（Web）的终端，PC 端终端一律拒绝，避免抢同一个 PTY。
+    {
         let ts = state.app_handle.state::<TerminalService>();
         let instances = ts.instances.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(terminal) = instances.get(&terminal_id) {
-            if terminal.owner == TerminalOwner::Pc {
-                return Err(axum::http::StatusCode::FORBIDDEN);
-            }
+        match instances.get(&terminal_id) {
+            Some(inst) if inst.owner == TerminalOwner::Web => {}
+            _ => return Err(axum::http::StatusCode::FORBIDDEN),
         }
     }
 
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, terminal_id, state, true)))
+    Ok(ws.on_upgrade(move |socket| handle_terminal_socket(socket, terminal_id, state)))
 }
 
-async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, is_web_client: bool) {
+async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: AppState) {
     // Global connection limit check
     let current_count = WS_CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
     if current_count >= MAX_GLOBAL_WS_CONNECTIONS {
@@ -64,24 +64,21 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
 
     let (sub_id, mut output_rx) = web_state.subscribe(&terminal_id);
 
-    // Peek historical output — will be sent AFTER the frontend sends its first
-    // resize, so the output is formatted for the correct terminal dimensions.
+    // Peek historical output — sent AFTER the frontend's first resize so escape
+    // sequences (cursor positioning, etc.) are formatted for the correct size.
     let history: String = {
         let ts = state.app_handle.state::<TerminalService>();
         ts.peek_terminal_output(&terminal_id).unwrap_or_default()
     };
 
-    // Channel for error messages and historical output from recv_task to send_task
+    // recv_task → send_task: error messages channel.
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    // Signal from recv_task → send_task: frontend has sent its first resize,
-    // safe to replay historical output now.
+    // recv_task → send_task: frontend sent its first resize, safe to replay history.
     let (ready_tx, mut ready_rx) = tokio::sync::oneshot::channel::<()>();
     let mut ready_tx = Some(ready_tx);
 
-    // Forward PTY output to WebSocket
+    // Forward PTY output → WebSocket
     let send_task = tokio::spawn(async move {
-        // Wait for frontend's first resize before sending historical output,
-        // so escape sequences (cursor positioning, etc.) are correct.
         let mut history_sent = false;
         loop {
             tokio::select! {
@@ -97,14 +94,14 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                 data = output_rx.recv() => {
                     match data {
                         Some(data) => {
-                            // Manual JSON to avoid serde overhead on hot path
+                            // Manual JSON to avoid serde overhead on the hot path.
                             let msg = format!("{{\"type\":\"output\",\"data\":{}}}", serde_json::Value::String(data.to_string()));
                             if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                                 break;
                             }
                         }
                         None => {
-                            // 广播通道关闭 = PTY 进程已退出，通知 web 端
+                            // 订阅通道关闭 = PTY 已退出（见 spawn_output_forwarder 的 close_all）。
                             let exited = serde_json::to_string(&WsServerMessage::Exited { code: 0 }).unwrap_or_default();
                             let _ = ws_sender.send(Message::Text(exited.into())).await;
                             break;
@@ -112,13 +109,10 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                     }
                 }
                 error_msg = error_rx.recv() => {
-                    match error_msg {
-                        Some(msg) => {
-                            if ws_sender.send(Message::Text(msg.into())).await.is_err() {
-                                break;
-                            }
+                    if let Some(msg) = error_msg {
+                        if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+                            break;
                         }
-                        None => {}
                     }
                 }
             }
@@ -126,7 +120,7 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
         let _ = ws_sender.close().await;
     });
 
-    // Forward WebSocket input to PTY
+    // Forward WebSocket input → PTY
     let app = state.app_handle.clone();
     let tid = terminal_id.clone();
     let recv_task = tokio::spawn(async move {
@@ -134,7 +128,6 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
         while let Some(Ok(msg)) = ws_receiver.next().await {
             match msg {
                 Message::Text(text) => {
-                    // Message size limit
                     if text.len() > MAX_WS_MESSAGE_SIZE {
                         eprintln!("[WS] Message too large: {} bytes, max: {}", text.len(), MAX_WS_MESSAGE_SIZE);
                         let err_msg = serde_json::to_string(&WsServerMessage::Error {
@@ -147,56 +140,19 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
                     if let Ok(cmd) = serde_json::from_str::<WsClientMessage>(&text) {
                         match cmd {
                             WsClientMessage::Input { data } => {
-                                // 权限检查：不共享模式下，PC 端不能输入 Web 端的终端
-                                let settings = SettingsService::get_settings();
-                                if !settings.web_api_share_sessions && !is_web_client {
-                                    let ts = app.state::<TerminalService>();
-                                    let instances = ts.instances.lock().unwrap_or_else(|e| e.into_inner());
-                                    if let Some(terminal) = instances.get(&tid) {
-                                        if terminal.owner == TerminalOwner::Web {
-                                            let error_msg = serde_json::to_string(
-                                                &WsServerMessage::Error {
-                                                    message: "终端由 Web 端管理，PC 端只读".to_string()
-                                                }
-                                            ).unwrap_or_default();
-                                            let _ = error_tx.send(error_msg);
-                                            continue;
-                                        }
-                                    }
-                                }
-
                                 let ts = app.state::<TerminalService>();
                                 let _ = ts.write_to_terminal(&tid, &data);
                             }
                             WsClientMessage::Resize { cols, rows } => {
                                 let cols = cols.clamp(1, 500);
                                 let rows = rows.clamp(1, 500);
-                                // 权限检查：不共享模式下，PC 端不能 resize Web 端的终端
-                                let settings = SettingsService::get_settings();
-                                if !settings.web_api_share_sessions && !is_web_client {
-                                    let ts = app.state::<TerminalService>();
-                                    let instances = ts.instances.lock().unwrap_or_else(|e| e.into_inner());
-                                    if let Some(terminal) = instances.get(&tid) {
-                                        if terminal.owner == TerminalOwner::Web {
-                                            let error_msg = serde_json::to_string(
-                                                &WsServerMessage::Error {
-                                                    message: "终端由 Web 端管理，PC 端只读".to_string()
-                                                }
-                                            ).unwrap_or_default();
-                                            let _ = error_tx.send(error_msg);
-                                            continue;
-                                        }
-                                    }
-                                }
-
-                                // Allow shrink for Web-owned terminals in non-shared mode;
-                                // TUI programs require exact PTY size match for correct rendering.
-                                let allow_shrink = !settings.web_api_share_sessions && is_web_client;
+                                // 手机端允许缩小 PTY：让 PTY 列数跟随手机 xterm，
+                                // 否则 TUI（如 Claude Code）按更宽的列数绘制会在窄屏溢出。
+                                // 多端同看一终端时桌面视图会随之变化，属可接受折中。
                                 let ts = app.state::<TerminalService>();
-                                let _ = ts.resize_terminal(&tid, rows, cols, allow_shrink);
+                                let _ = ts.resize_terminal(&tid, rows, cols, true);
 
-                                // Signal send_task that the frontend has sent its first
-                                // resize — historical output can now be safely replayed.
+                                // 首个 resize 到达 → 通知 send_task 可以回放历史输出了。
                                 if !ready_sent {
                                     ready_sent = true;
                                     if let Some(tx) = ready_tx.take() {
@@ -220,4 +176,66 @@ async fn handle_socket(socket: WebSocket, terminal_id: String, state: AppState, 
 
     web_state.unsubscribe(&terminal_id, &sub_id);
     WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
+}
+
+// ───────────────────────── meta WebSocket（会话列表实时同步） ─────────────────────────
+
+pub async fn meta_ws_handler(
+    ws: WebSocketUpgrade,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, axum::http::StatusCode> {
+    let token = params.get("token").ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
+    let _claims = verify_token(token, &state.jwt_secret)?;
+
+    Ok(ws.on_upgrade(move |socket| handle_meta_socket(socket, state)))
+}
+
+/// 手机端独立池：meta 推送只含 Web（手机）终端，PC 端终端不推送。
+fn web_terminals(ts: &TerminalService) -> Vec<TerminalInfo> {
+    ts.list_terminals_info()
+        .into_iter()
+        .filter(|t| t.owner == TerminalOwner::Web)
+        .collect()
+}
+
+async fn handle_meta_socket(socket: WebSocket, state: AppState) {
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let ts = state.app_handle.state::<TerminalService>();
+    let mut change_rx = ts.session_change_tx.subscribe();
+
+    // 连上立即推一次当前会话列表。
+    let initial = MetaServerMessage::Sessions { terminals: web_terminals(&ts) };
+    let initial_msg = serde_json::to_string(&initial).unwrap_or_default();
+    if ws_sender.send(Message::Text(initial_msg.into())).await.is_err() {
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            biased;
+            res = change_rx.recv() => {
+                match res {
+                    Ok(()) => {
+                        let msg = serde_json::to_string(
+                            &MetaServerMessage::Sessions { terminals: web_terminals(&ts) }
+                        ).unwrap_or_default();
+                        if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    // 短暂滞后（多次变更合并）→ 跳过本轮，下条广播会再带最新列表。
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            incoming = ws_receiver.next() => {
+                match incoming {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+    let _ = ws_sender.close().await;
 }
