@@ -312,6 +312,10 @@ export async function getWebServerAddress(): Promise<string> {
   return invoke('get_web_server_address');
 }
 
+export async function getWebQuickAccessUrl(): Promise<string> {
+  return invoke('get_web_quick_access_url');
+}
+
 // Client Data Commands
 export async function readClientData(key: string): Promise<string | null> {
   return invoke<string | null>('read_client_data', { key });
