@@ -1,11 +1,12 @@
 import { FC, useState, useRef, useEffect, useCallback } from 'react';
-import { windowMinimize, windowToggleMaximize, windowClose, getWebApiStatus, saveWebApiSettings, restartWebServer, getWebServerAddress } from '../services/tauri';
+import { windowMinimize, windowToggleMaximize, windowClose, getWebServerAddress } from '../services/tauri';
 import { AiUsagePanel } from './AiUsagePanel';
 import { AboutDialog } from './AboutDialog';
+import { WebManageDialog } from './WebManageDialog';
 import { APP_VERSION } from '../version';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
-import { getEffectiveThemeMode, applyTheme, getAppSettings, saveTheme } from '../utils/settings';
+import { getEffectiveThemeMode, applyTheme, saveTheme } from '../utils/settings';
 import { useAppStore } from '../stores/appStore';
 
 interface TitleBarProps {
@@ -35,7 +36,7 @@ export const TitleBar: FC<TitleBarProps> = ({
     };
   }, []);
   const [webRunning, setWebRunning] = useState(false);
-  const [webToggling, setWebToggling] = useState(false);
+  const [showWebDialog, setShowWebDialog] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(getEffectiveThemeMode);
   const splitMode = useAppStore(s => s.splitMode);
 
@@ -72,26 +73,6 @@ export const TitleBar: FC<TitleBarProps> = ({
     return () => clearInterval(interval);
   }, [checkWebStatus]);
 
-  const handleToggleWeb = useCallback(async () => {
-    setWebToggling(true);
-    try {
-      const status = await getWebApiStatus();
-      if (webRunning) {
-        await saveWebApiSettings(false, status.port, status.username, '', getAppSettings().webApiShareSessions);
-        await restartWebServer();
-        setWebRunning(false);
-      } else {
-        await saveWebApiSettings(true, status.port, status.username, '', getAppSettings().webApiShareSessions);
-        await restartWebServer();
-        const addr = await getWebServerAddress();
-        setWebRunning(addr.startsWith('http'));
-      }
-    } catch (e) {
-      console.error('Web服务切换失败:', e);
-    }
-    setWebToggling(false);
-  }, [webRunning]);
-
   const handleMouseEnter = () => {
     clearTimeout(hoverTimer.current);
     setAiUsageHover(true);
@@ -124,9 +105,8 @@ export const TitleBar: FC<TitleBarProps> = ({
           </button>
           <button
             className="titlebar-nav-btn"
-            onClick={handleToggleWeb}
-            disabled={webToggling}
-            title={webRunning ? 'Web管理已启动 - 点击停止' : 'Web管理已停止 - 点击启动'}
+            onClick={() => setShowWebDialog(true)}
+            title={webRunning ? 'Web管理已启动 - 点击打开' : 'Web管理已停止 - 点击打开'}
             style={{ position: 'relative' }}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -215,6 +195,15 @@ export const TitleBar: FC<TitleBarProps> = ({
 
       {showAboutDialog && (
         <AboutDialog onClose={() => setShowAboutDialog(false)} />
+      )}
+
+      {showWebDialog && (
+        <WebManageDialog
+          onClose={() => {
+            setShowWebDialog(false);
+            checkWebStatus();
+          }}
+        />
       )}
     </div>
   );

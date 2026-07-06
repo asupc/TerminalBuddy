@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useRef, useMemo } from 'react';
-import { getBackendAppSettings, syncLaunchAtLogin, getDataPath, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, saveWebApiSettings, getWebApiStatus, restartWebServer, getWebServerAddress, getDownloadsDirectory } from '../services/tauri';
+import { getBackendAppSettings, syncLaunchAtLogin, getDataPath, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, getDownloadsDirectory } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { type Profile } from '../types';
 import { type AppSettings, getAppSettings, saveAppSettings } from '../utils/settings';
@@ -11,7 +11,6 @@ import { BehaviorSettings } from './settings/BehaviorSettings';
 import { DataSettings } from './settings/DataSettings';
 import { ExclusionSettings } from './settings/ExclusionSettings';
 import { ThemesSettings } from './settings/ThemesSettings';
-import { WebSettings } from './settings/WebSettings';
 import './SettingsPage.css';
 
 interface SettingsPageProps {
@@ -26,7 +25,6 @@ const SECTIONS = [
   { id: 'themes', label: '主题管理' },
   { id: 'exclusions', label: '文件排除' },
   { id: 'ai-usage', label: 'AI用量' },
-  { id: 'web', label: 'Web管理' },
   { id: 'ssh', label: 'SSH 设置' },
 ] as const;
 
@@ -49,12 +47,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [profileContextMenu, setProfileContextMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
-  const [webPassword, setWebPassword] = useState('');
-  const [hasPassword, setHasPassword] = useState(false);
-  const [serverAddress, setServerAddress] = useState('');
-  const [serverRunning, setServerRunning] = useState(false);
-  const [serverError, setServerError] = useState('');
-  const [serverLoading, setServerLoading] = useState(false);
 
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
@@ -151,27 +143,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     return () => observer.disconnect();
   }, []);
 
-  // Load web status on mount so state is correct when user navigates to Web section
-  useEffect(() => { loadWebStatus(); }, []);
-
-  useEffect(() => {
-    if (activeSection === 'web') {
-      loadWebStatus();
-    }
-  }, [activeSection]);
-
-  const loadWebStatus = async () => {
-    try {
-      const status = await getWebApiStatus();
-      setSettings(prev => ({ ...prev, webApiEnabled: status.enabled, webApiPort: status.port, webApiUsername: status.username }));
-      setHasPassword(status.hasPassword);
-      const addr = await getWebServerAddress();
-      setServerAddress(addr);
-      setServerRunning(addr.startsWith('http'));
-      setServerError('');
-    } catch {}
-  };
-
   const scrollToSection = (id: string) => {
     sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -217,57 +188,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     }
   };
 
-  const handleSave = async () => {
-    try {
-      await saveWebApiSettings(
-        settings.webApiEnabled,
-        settings.webApiPort,
-        settings.webApiUsername,
-        webPassword,
-        settings.webApiShareSessions
-      );
-      if (webPassword) setWebPassword('');
-    } catch (e) {
-      console.error('[WebAPI] 保存失败:', e);
-    }
+  const handleSave = () => {
     onClose();
-  };
-
-  const handleToggleServer = async () => {
-    setServerLoading(true);
-    setServerError('');
-    try {
-      if (serverRunning) {
-        // 停止：先关闭开关，保存，再重启（restart_web_server 会检测 enabled=false 并停止）
-        setSettings(prev => ({ ...prev, webApiEnabled: false }));
-        await saveWebApiSettings(false, settings.webApiPort, settings.webApiUsername, '', settings.webApiShareSessions);
-        await restartWebServer();
-        setServerRunning(false);
-        setServerAddress('已停止');
-      } else {
-        if (!webPassword && !hasPassword) {
-          setServerError('请先设置密码');
-          setServerLoading(false);
-          return;
-        }
-        // 确保开关打开
-        if (!settings.webApiEnabled) {
-          setSettings(prev => ({ ...prev, webApiEnabled: true }));
-        }
-        await saveWebApiSettings(true, settings.webApiPort, settings.webApiUsername, webPassword, settings.webApiShareSessions);
-        const result = await restartWebServer();
-        const addr = await getWebServerAddress();
-        setServerAddress(addr);
-        setServerRunning(addr.startsWith('http'));
-        if (!addr.startsWith('http')) {
-          setServerError(result || '服务启动失败');
-        }
-      }
-    } catch (e: any) {
-      setServerError(e?.toString() || '操作失败');
-      console.error('[WebAPI] 操作失败:', e);
-    }
-    setServerLoading(false);
   };
 
   const handleCancel = () => {
@@ -643,27 +565,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
           >
             <h3 className="settings-section-title">AI用量</h3>
             <AiUsageSettings settings={settings} updateSetting={updateSetting} />
-          </section>
-
-          {/* Web Management Section */}
-          <section
-            id="web"
-            ref={(el) => { sectionRefs.current['web'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">Web 远程管理</h3>
-            <WebSettings
-              settings={settings}
-              setSettings={setSettings}
-              updateSetting={updateSetting}
-              webPassword={webPassword}
-              setWebPassword={setWebPassword}
-              serverRunning={serverRunning}
-              serverAddress={serverAddress}
-              serverError={serverError}
-              serverLoading={serverLoading}
-              handleToggleServer={handleToggleServer}
-            />
           </section>
 
           {/* SSH Settings Section */}

@@ -48,6 +48,28 @@ pub fn get_web_server_address() -> Result<String, String> {
     Ok(format!("http://{}:{}", host, settings.web_api_port))
 }
 
+/// 生成免密快速访问 URL：用当前服务 jwt_secret 签发一个与正常登录等价的 JWT，
+/// 拼成 `http://<局域网IP>:<端口>/?token=<jwt>`。手机扫码 / PC 点击均可跳过登录直接进入。
+/// 复用本文件已有的 JWT_SECRET 与 lan_ipv4()。
+#[tauri::command]
+pub fn get_web_quick_access_url() -> Result<String, String> {
+    let settings = SettingsService::get_settings();
+    if !settings.web_api_enabled {
+        return Err("Web API 未启用".into());
+    }
+    let jwt_secret = JWT_SECRET
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "Web 服务未启动".to_string())?;
+    let token = crate::web::auth::generate_jwt(&settings.web_api_username, &jwt_secret)?;
+    let host = lan_ipv4().unwrap_or_else(|| "localhost".to_string());
+    Ok(format!(
+        "http://{}:{}/?token={}",
+        host, settings.web_api_port, token
+    ))
+}
+
 /// 用 UDP「连接」技巧取本机出站主 IPv4：connect 只设置目的地址、不真正发包，
 /// local_addr() 返回操作系统为该路由选用的源 IP。无网络时返回 None。
 fn lan_ipv4() -> Option<String> {
