@@ -8,3 +8,4 @@ target
 /terminal-buddy/web/dist
 /terminal-buddy/dist
 .claude
+/.idea
