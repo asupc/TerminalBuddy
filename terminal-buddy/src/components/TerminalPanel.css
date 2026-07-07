@@ -163,12 +163,12 @@
   background: var(--border);
 }
 .terminal-content.split-2x1 {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
 }
 .terminal-content.split-2x2 {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
 }
 
 /* A split cell is always visible regardless of .active (which only marks focus).
@@ -263,8 +263,10 @@
 /* xterm measures .pane-body; min-height:0 lets it shrink inside the flex column. */
 .pane-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   position: relative;
+  overflow: hidden;
 }
 
 .split-blank {

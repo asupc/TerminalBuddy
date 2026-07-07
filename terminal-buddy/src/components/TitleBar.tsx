@@ -8,6 +8,7 @@ import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
 import { getEffectiveThemeMode, applyTheme, saveTheme } from '../utils/settings';
 import { useAppStore } from '../stores/appStore';
+import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from '../utils/terminalResizeEvent';
 
 interface TitleBarProps {
   onSettings: () => void;
@@ -26,12 +27,17 @@ export const TitleBar: FC<TitleBarProps> = ({
 }) => {
   const [aiUsageHover, setAiUsageHover] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
+  const [splitBusy, setSplitBusy] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const splitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (hoverTimer.current) {
         clearTimeout(hoverTimer.current);
+      }
+      if (splitTimer.current) {
+        clearTimeout(splitTimer.current);
       }
     };
   }, []);
@@ -80,6 +86,17 @@ export const TitleBar: FC<TitleBarProps> = ({
 
   const handleMouseLeave = () => {
     hoverTimer.current = setTimeout(() => setAiUsageHover(false), 200);
+  };
+
+  const handleSplitClick = () => {
+    if (splitBusy) return;
+    setSplitBusy(true);
+    useAppStore.getState().cycleSplitMode();
+    if (splitTimer.current) clearTimeout(splitTimer.current);
+    splitTimer.current = setTimeout(() => {
+      splitTimer.current = null;
+      setSplitBusy(false);
+    }, TERMINAL_SPLIT_TRANSITION_GUARD_MS);
   };
 
   return (
@@ -134,8 +151,9 @@ export const TitleBar: FC<TitleBarProps> = ({
       <div className="titlebar-right">
         <button
           className={`titlebar-btn titlebar-action-btn titlebar-split-btn ${splitMode !== 'off' ? 'split-active' : ''}`}
-          onClick={() => useAppStore.getState().cycleSplitMode()}
-          title={splitMode === 'off' ? '分屏：2×1' : splitMode === '2x1' ? '分屏：2×2' : '退出分屏'}
+          onClick={handleSplitClick}
+          disabled={splitBusy}
+          title={splitBusy ? '分屏切换中...' : splitMode === 'off' ? '分屏：2×1' : splitMode === '2x1' ? '分屏：2×2' : '退出分屏'}
         >
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
             {splitMode === '2x2' ? (

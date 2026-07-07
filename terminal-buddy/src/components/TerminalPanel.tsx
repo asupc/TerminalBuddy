@@ -6,6 +6,11 @@ import { useAppStore } from '../stores/appStore';
 import { writeToTerminal } from '../services/tauri';
 import { getAppSettings, getEffectiveThemeMode } from '../utils/settings';
 import { resolveTerminalColors } from '../utils/terminalTheme';
+import {
+  TERMINAL_RESIZE_EVENT,
+  TERMINAL_SPLIT_LAYOUT_SETTLE_MS,
+  type TerminalResizeDetail,
+} from '../utils/terminalResizeEvent';
 import './TerminalPanel.css';
 
 // 懒加载重型组件：避免 xterm.js / monaco-editor 等被全量打进首屏 bundle。
@@ -27,6 +32,7 @@ export const TerminalPanel: FC = () => {
   const workingSessions = useAppStore(s => s.workingSessions);
   const setActiveSession = useAppStore(s => s.setActiveSession);
   const windowMode = useAppStore(s => s.windowMode);
+  const terminalLayoutVersion = useAppStore(s => s.terminalLayoutVersion);
   const closeSplitPane = useAppStore(s => s.closeSplitPane);
   const swapSplitSlots = useAppStore(s => s.swapSplitSlots);
   const [settings, setSettings] = useState(() => getAppSettings());
@@ -63,8 +69,15 @@ export const TerminalPanel: FC = () => {
       raf2 = requestAnimationFrame(() => {
         timer = setTimeout(() => {
           timer = null;
-          window.dispatchEvent(new CustomEvent('tb-split-resize', { detail: { terminalIds: ids } }));
-        }, 30);
+          const detail: TerminalResizeDetail = {
+            terminalIds: ids,
+            layoutVersion: terminalLayoutVersion,
+            splitMode,
+            windowMode,
+            reason: 'split-layout',
+          };
+          window.dispatchEvent(new CustomEvent(TERMINAL_RESIZE_EVENT, { detail }));
+        }, TERMINAL_SPLIT_LAYOUT_SETTLE_MS);
       });
     });
 
@@ -73,7 +86,7 @@ export const TerminalPanel: FC = () => {
       cancelAnimationFrame(raf2);
       if (timer) clearTimeout(timer);
     };
-  }, [splitMode, splitSlots, sessions, activeSessionId, windowMode]);
+  }, [splitMode, splitSlots, sessions, activeSessionId, windowMode, terminalLayoutVersion]);
 
   useEffect(() => {
     const onSettings = () => setSettings(getAppSettings());

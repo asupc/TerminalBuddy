@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem } from '../types';
 import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath, saveEnableTabNavigation } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
+import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from '../utils/terminalResizeEvent';
 
 let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
 function debouncedSaveTabs(sessions: any[], activeSessionId: string | null) {
@@ -270,6 +271,8 @@ interface AppState {
   // Split Screen mode
   splitMode: 'off' | '2x1' | '2x2';
   splitSlots: { sessionId: string | null; enteredAt: number }[];
+  terminalLayoutVersion: number;
+  splitTransitionUntil: number;
   cycleSplitMode: () => void;
   closeSplitPane: (slotIndex: number) => void;
   swapSplitSlots: (i: number, j: number) => void;
@@ -531,7 +534,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
       debouncedSaveTabs(sessions, activeSessionId);
-      return { sessions, activeSessionId, remoteFileCache: restCache, splitSlots };
+      return {
+        sessions,
+        activeSessionId,
+        remoteFileCache: restCache,
+        splitSlots,
+        terminalLayoutVersion: splitSlots !== state.splitSlots
+          ? state.terminalLayoutVersion + 1
+          : state.terminalLayoutVersion,
+      };
     }),
   setSessions: (sessions) => {
     const normalized = sessions.map(s => ({ ...s, createdAt: s.createdAt ?? Date.now() }));
@@ -719,7 +730,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   // --- Split Screen ---
   splitMode: 'off',
   splitSlots: [],
+  terminalLayoutVersion: 0,
+  splitTransitionUntil: 0,
   cycleSplitMode: () => set((state) => {
+    const nowMs = Date.now();
+    const splitTransitionUntil = nowMs + TERMINAL_SPLIT_TRANSITION_GUARD_MS;
+    if (state.splitTransitionUntil > nowMs) return state;
+
     const cur = state.splitMode;
     if (cur === 'off') {
       // Entry: populate from terminal-session count (editors & web sessions excluded).
@@ -738,14 +755,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (activeSessionId && !slots.some(s => s.sessionId === activeSessionId)) {
         activeSessionId = slots.find(s => s.sessionId !== null)?.sessionId ?? activeSessionId;
       }
-      return { splitMode: '2x1' as const, splitSlots: slots, activeSessionId };
+      return {
+        splitMode: '2x1' as const,
+        splitSlots: slots,
+        activeSessionId,
+        terminalLayoutVersion: state.terminalLayoutVersion + 1,
+        splitTransitionUntil,
+      };
     }
     if (cur === '2x1') {
       // Grow: preserve existing slot contents in place, append blank slots.
-      return { splitMode: '2x2' as const, splitSlots: [...state.splitSlots, { sessionId: null, enteredAt: 0 }, { sessionId: null, enteredAt: 0 }] };
+      return {
+        splitMode: '2x2' as const,
+        splitSlots: [...state.splitSlots, { sessionId: null, enteredAt: 0 }, { sessionId: null, enteredAt: 0 }],
+        terminalLayoutVersion: state.terminalLayoutVersion + 1,
+        splitTransitionUntil,
+      };
     }
     // 2x2 -> off: exit. Sessions become normal tabs; activeSessionId (focused pane) stays, shown full-screen.
-    return { splitMode: 'off' as const, splitSlots: [] };
+    return {
+      splitMode: 'off' as const,
+      splitSlots: [],
+      terminalLayoutVersion: state.terminalLayoutVersion + 1,
+      splitTransitionUntil,
+    };
   }),
   closeSplitPane: (slotIndex) => {
     const slot = get().splitSlots[slotIndex];
@@ -755,7 +788,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const slots = [...state.splitSlots];
     if (i < 0 || j < 0 || i >= slots.length || j >= slots.length) return state;
     [slots[i], slots[j]] = [slots[j], slots[i]];
-    return { splitSlots: slots };
+    return { splitSlots: slots, terminalLayoutVersion: state.terminalLayoutVersion + 1 };
   }),
   placeSessionInSplitSlot: (sessionId) => set((state) => {
     if (state.splitMode === 'off') return state;
@@ -766,7 +799,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (emptyIdx !== -1) {
       const splitSlots = [...slots];
       splitSlots[emptyIdx] = { sessionId, enteredAt: Date.now() };
-      return { splitSlots, activeSessionId: sessionId };
+      return {
+        splitSlots,
+        activeSessionId: sessionId,
+        terminalLayoutVersion: state.terminalLayoutVersion + 1,
+      };
     }
 
     // 2. 无空位，替换最旧的
@@ -780,7 +817,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const splitSlots = [...slots];
     splitSlots[oldestIdx] = { sessionId, enteredAt: Date.now() };
-    return { splitSlots, activeSessionId: sessionId };
+    return {
+      splitSlots,
+      activeSessionId: sessionId,
+      terminalLayoutVersion: state.terminalLayoutVersion + 1,
+    };
   }),
 
   // --- Window Mode (F11 cycle) ---
@@ -794,6 +835,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const settings = getAppSettings();
       return {
         windowMode: 'panels-hidden' as const,
+        terminalLayoutVersion: state.terminalLayoutVersion + 1,
         previousPanelState: {
           configPanelVisible: state.configPanelVisible,
           fileTreeVisible: state.fileTreeVisible,
@@ -812,6 +854,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     return {
       windowMode: 'normal' as const,
+      terminalLayoutVersion: state.terminalLayoutVersion + 1,
       previousPanelState: null,
       configPanelVisible: prev?.configPanelVisible ?? state.configPanelVisible,
       fileTreeVisible: prev?.fileTreeVisible ?? state.fileTreeVisible,

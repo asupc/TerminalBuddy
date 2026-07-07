@@ -64,6 +64,16 @@
   color: var(--text-primary);
 }
 
+.titlebar-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.titlebar-btn:disabled:hover {
+  background: none;
+  color: var(--text-secondary);
+}
+
 .titlebar-action-btn {
   width: auto;
   padding: 0 10px;
