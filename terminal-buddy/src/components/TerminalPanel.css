@@ -48,6 +48,15 @@
   overflow: hidden;
 }
 
+.settings-tab-content {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-secondary);
+}
+
 .terminal-tab-content {
   position: absolute;
   top: 0;

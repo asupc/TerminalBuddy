@@ -1436,6 +1436,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (typeof forceFit === 'function') {
           forceFit();
         }
+        try {
+          if (term.rows > 0) term.refresh(0, term.rows - 1);
+        } catch { /* renderer may be disposing */ }
         term.focus();
       });
     });

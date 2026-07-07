@@ -192,44 +192,56 @@ export const TerminalPanel: FC = () => {
     );
   };
 
+  const renderTerminalContent = () => {
+    if (splitMode === 'off') {
+      if (sessions.length === 0) {
+        return (
+          <div className="terminal-empty">
+            <div className="empty-icon">⌨</div>
+            <div className="empty-text">点击左侧连接启动终端</div>
+          </div>
+        );
+      }
+      return sessions.map(session =>
+        renderPane(session, { active: !settingsTabOpen && activeSessionId === session.id, hidden: false })
+      );
+    }
+
+    return (
+      <>
+        {/* Split slots, in order — filled cells keyed by session.id, blanks by index */}
+        {splitSlots.map((slot, i) => {
+          const session = slot.sessionId ? sessions.find(s => s.id === slot.sessionId) : undefined;
+          if (!slot.sessionId || !session) {
+            return (
+              <div key={`blank-${i}`} className="split-cell split-blank" style={gridStyleFor(splitMode, i)}>
+                点击左侧连接打开终端
+              </div>
+            );
+          }
+          return renderPane(session, { slot: i, active: !settingsTabOpen && activeSessionId === slot.sessionId, hidden: false });
+        })}
+        {/* Non-slot sessions: keep mounted but hidden (display:none) so PTY/xterm state survives */}
+        {sessions.filter(s => !splitSlots.some(slot => slot.sessionId === s.id)).map(session =>
+          renderPane(session, { active: false, hidden: true })
+        )}
+      </>
+    );
+  };
+
   return (
     <div className="terminal-panel">
       {!settings.enableTabNavigation && sessions.length > 0 && (
         <TerminalTabBar />
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
-        {settingsTabOpen ? (
-          <Suspense fallback={<div className="lazy-panel-loading">加载设置…</div>}>
-            <SettingsPage onClose={closeSettingsTab} />
-          </Suspense>
-        ) : splitMode === 'off' ? (
-          sessions.length === 0 ? (
-            <div className="terminal-empty">
-              <div className="empty-icon">⌨</div>
-              <div className="empty-text">点击左侧连接启动终端</div>
-            </div>
-          ) : (
-            sessions.map(session => renderPane(session, { active: activeSessionId === session.id, hidden: false }))
-          )
-        ) : (
-          <>
-            {/* Split slots, in order — filled cells keyed by session.id, blanks by index */}
-            {splitSlots.map((slot, i) => {
-              const session = slot.sessionId ? sessions.find(s => s.id === slot.sessionId) : undefined;
-              if (!slot.sessionId || !session) {
-                return (
-                  <div key={`blank-${i}`} className="split-cell split-blank" style={gridStyleFor(splitMode, i)}>
-                    点击左侧连接打开终端
-                  </div>
-                );
-              }
-              return renderPane(session, { slot: i, active: activeSessionId === slot.sessionId, hidden: false });
-            })}
-            {/* Non-slot sessions: keep mounted but hidden (display:none) so PTY/xterm state survives */}
-            {sessions.filter(s => !splitSlots.some(slot => slot.sessionId === s.id)).map(session =>
-              renderPane(session, { active: false, hidden: true })
-            )}
-          </>
+        {renderTerminalContent()}
+        {settingsTabOpen && (
+          <div className="settings-tab-content">
+            <Suspense fallback={<div className="lazy-panel-loading">加载设置…</div>}>
+              <SettingsPage onClose={closeSettingsTab} />
+            </Suspense>
+          </div>
         )}
       </div>
     </div>
