@@ -15,6 +15,7 @@ import { bootLog } from '../utils/bootLog';
 import { useAppStore } from '../stores/appStore';
 import { getAllSuggestions, type SuggestionItem } from '../data/commandTemplates';
 import { normalizeAnsiForLightBackground, type TerminalColors } from '../utils/terminalTheme';
+import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
@@ -506,6 +507,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [termBg, setTermBg] = useState(colorTheme?.background || '#1e1e1e');
   const lightOptimizedRef = useRef(!!colorTheme?.lightOptimized);
   const inAltBufferRef = useRef(false);
+  const lastTuiRedrawLayoutVersionRef = useRef<number | null>(null);
 
   // Output tracking refs (learned from VS Code's terminalInstance.ts)
   // These track write/parse state to ensure cursor position stays in sync
@@ -769,7 +771,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // and expect stable terminal dimensions.  Resize is triggered when
         // exiting the alt buffer via checkAltBuffer().
         // `force` bypasses this guard for deliberate split-screen layout changes.
-        if (inAltBufferRef.current && !force) return;
+        if ((inAltBufferRef.current || hasTuiInputChrome(terminal)) && !force) return;
 
         // 防止 fit() 在容器尺寸为 0 时把 xterm 设为 0×0（布局过渡期间可能发生）。
         // F11 切换 panels-hidden + 分屏场景：.terminal-content 宽度突变时，
@@ -1369,39 +1371,79 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   useEffect(() => {
     let raf1 = 0;
     let raf2 = 0;
-    const onSplitResize = (e: Event) => {
-      const ids = (e as CustomEvent<{ terminalIds: string[] }>).detail?.terminalIds;
-      if (!ids || !ids.includes(terminalId)) return;
+    let repairTimers: ReturnType<typeof setTimeout>[] = [];
+    let tuiRedrawTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearPendingRepair = () => {
       cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      raf1 = 0;
+      raf2 = 0;
+      repairTimers.forEach(timer => clearTimeout(timer));
+      repairTimers = [];
+      if (tuiRedrawTimer) {
+        clearTimeout(tuiRedrawTimer);
+        tuiRedrawTimer = null;
+      }
+    };
+    const isCurrentLayout = (detail: TerminalResizeDetail) => {
+      const state = useAppStore.getState();
+      if (detail.layoutVersion !== state.terminalLayoutVersion) return false;
+      if (detail.splitMode !== state.splitMode || detail.windowMode !== state.windowMode) return false;
+      if (state.splitMode !== 'off' && !state.splitSlots.some(slot => slot.sessionId === terminalId)) return false;
+      return true;
+    };
+    const runLayoutRepair = (detail: TerminalResizeDetail) => {
+      if (!isCurrentLayout(detail)) return;
+      const term = xtermRef.current;
+      if (!term) return;
+      const forceFit = (term as any)._tbForceFit;
+      if (typeof forceFit === 'function') forceFit(true);
+      try { term.refresh(0, term.rows - 1); } catch { /* renderer may be disposing */ }
+      if (
+        !readOnly &&
+        detail.reason === 'split-layout' &&
+        lastTuiRedrawLayoutVersionRef.current !== detail.layoutVersion &&
+        (inAltBufferRef.current || hasTuiInputChrome(term))
+      ) {
+        lastTuiRedrawLayoutVersionRef.current = detail.layoutVersion;
+        tuiRedrawTimer = setTimeout(() => {
+          tuiRedrawTimer = null;
+          if (!isCurrentLayout(detail)) return;
+          const currentTerm = xtermRef.current;
+          if (!currentTerm || (!inAltBufferRef.current && !hasTuiInputChrome(currentTerm))) return;
+          onOutputRef.current(terminalId, '\x0c');
+        }, 260);
+      }
+      // Only the focused pane should steal keyboard focus on a layout change.
+      if (useAppStore.getState().activeSessionId === terminalId) term.focus();
+    };
+    const onSplitResize = (e: Event) => {
+      const detail = (e as CustomEvent<TerminalResizeDetail>).detail;
+      if (!detail?.terminalIds?.includes(terminalId) || !isCurrentLayout(detail)) return;
+      clearPendingRepair();
       raf1 = requestAnimationFrame(() => {
         raf2 = requestAnimationFrame(() => {
-          const term = xtermRef.current;
-          if (!term) return;
-          const forceFit = (term as any)._tbForceFit;
-          if (typeof forceFit === 'function') forceFit(true);
-          // Only the focused pane should steal keyboard focus on a layout change.
-          if (useAppStore.getState().activeSessionId === terminalId) term.focus();
+          runLayoutRepair(detail);
+          repairTimers = [80, 220].map(delay => setTimeout(() => runLayoutRepair(detail), delay));
         });
       });
     };
-    window.addEventListener('tb-split-resize', onSplitResize);
+    window.addEventListener(TERMINAL_RESIZE_EVENT, onSplitResize);
     return () => {
-      window.removeEventListener('tb-split-resize', onSplitResize);
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
+      window.removeEventListener(TERMINAL_RESIZE_EVENT, onSplitResize);
+      clearPendingRepair();
     };
-  }, [terminalId]);
+  }, [terminalId, readOnly]);
 
   // 分屏模式下缩小终端字号(2x1→12px)，退出分屏恢复原值。
-  // 只改字号,不影响其他终端配置;改完强制重排以正确重算行列。
+  // 这里只改字号,不立即 fit；TerminalPanel 会在布局稳定后派发带版本号的
+  // TERMINAL_RESIZE_EVENT，避免快速连点时把 2x1/2x2/off 的中间尺寸同步给 PTY。
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
     const newSize = SPLIT_FONT_SIZE[splitMode];
     if (term.options.fontSize === newSize) return;
     term.options.fontSize = newSize;
-    const forceFit = (term as any)._tbForceFit;
-    if (typeof forceFit === 'function') forceFit(true);
   }, [splitMode]);
 
   // F11 切换 windowMode（panels-hidden）时，.terminal-content 宽度突变，grid 重排
@@ -1413,6 +1455,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     if (!term) return;
     const forceFit = (term as any)._tbForceFit;
     if (typeof forceFit !== 'function') return;
+    const scheduledLayoutVersion = useAppStore.getState().terminalLayoutVersion;
     let raf1 = 0;
     let raf2 = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1420,6 +1463,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       raf2 = requestAnimationFrame(() => {
         timer = setTimeout(() => {
           timer = null;
+          if (useAppStore.getState().terminalLayoutVersion !== scheduledLayoutVersion) return;
           try { forceFit(true); } catch { /* terminal may be disposing */ }
         }, 50);
       });

@@ -14,6 +14,7 @@ import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtra
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, getClaudeSessionsForTerminals } from './services/tauri';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
+import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
 
 /** Estimate terminal rows/cols from the .terminal-content container size. */
 function estimateTerminalSize(): { rows: number; cols: number } {
@@ -95,14 +96,19 @@ function App() {
         raf2 = requestAnimationFrame(() => {
           resizeTimer = setTimeout(() => {
             resizeTimer = null;
-            const { sessions, splitMode } = useAppStore.getState();
+            const { sessions, splitMode, splitSlots, windowMode, terminalLayoutVersion } = useAppStore.getState();
             const terminalIds = splitMode === 'off'
               ? sessions.filter(s => s.sessionType !== 'editor' && s.owner !== 'web').map(s => s.id)
-              : sessions.map(s => s.id);
+              : splitSlots.map(s => s.sessionId).filter((s): s is string => s !== null);
             if (terminalIds.length > 0) {
-              window.dispatchEvent(new CustomEvent('tb-split-resize', {
-                detail: { terminalIds }
-              }));
+              const detail: TerminalResizeDetail = {
+                terminalIds,
+                layoutVersion: terminalLayoutVersion,
+                splitMode,
+                windowMode,
+                reason: 'window-resize',
+              };
+              window.dispatchEvent(new CustomEvent(TERMINAL_RESIZE_EVENT, { detail }));
             }
           }, 50); // 额外 50ms 延迟确保布局完全稳定
         });
