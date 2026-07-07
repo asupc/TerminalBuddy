@@ -45,6 +45,9 @@ type XtermCompositionHelper = {
 };
 
 type XtermCore = {
+  coreService?: {
+    isCursorHidden: boolean;
+  };
   _compositionHelper?: XtermCompositionHelper;
   _renderService?: {
     dimensions?: {
@@ -58,6 +61,19 @@ type XtermCore = {
   };
   _syncTextArea?: () => void;
 };
+
+function setXtermCursorHidden(terminal: Terminal, hidden: boolean): boolean {
+  const core = (terminal as any)._core as XtermCore | undefined;
+  const coreService = core?.coreService;
+  if (!coreService) return false;
+
+  if (coreService.isCursorHidden !== hidden) {
+    coreService.isCursorHidden = hidden;
+    const row = Math.max(0, Math.min(terminal.buffer.active.cursorY, terminal.rows - 1));
+    terminal.refresh(row, row);
+  }
+  return true;
+}
 
 type ImeAnchor = {
   left: string;
@@ -80,12 +96,53 @@ type ImeAnchorCell = {
 };
 
 function isHorizontalRuleLine(text: string): boolean {
-  return /^[\s─━═-]{20,}$/u.test(text);
+  const trimmed = text.trim();
+  if (trimmed.length < 20) return false;
+
+  // Claude Code uses plain horizontal separators; Codex CLI/ratatui-style UIs
+  // often use box-drawing borders with corners. Both represent a TUI input
+  // chrome where the native xterm cursor should not blink over app-rendered text.
+  return /^[─━═-]+$/u.test(trimmed) ||
+    /^[╭╰┌└├┬┴┼╮╯┐┘┤│┃║\s─━═-]+$/u.test(trimmed);
+}
+
+function isTuiInputPromptLine(text: string): boolean {
+  return /^\s*(?:[│┃║]\s*)?[>›❯▌]\s?/u.test(text);
+}
+
+function hasCodexTuiMarker(text: string): boolean {
+  return /\bCodex\b|codex-cli|OpenAI Codex/u.test(text) ||
+    /\b(?:approval|sandbox|workdir|tokens?|context|model)\b/u.test(text) &&
+      /\b(?:gpt|GPT|codex|Codex|thread|session)\b/u.test(text);
+}
+
+function stripAnsiForTuiDetection(text: string): string {
+  return text
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/(?:\x1b\[|\x9b)[0-9;?<=>!"#$%&'()*+,\-./]*[\x40-\x7e]/g, '');
+}
+
+function outputLooksLikeAiTui(text: string): boolean {
+  const plain = stripAnsiForTuiDetection(text);
+  const hasTuiControl = /(?:\x1b\[|\x9b)(?:\?1049h|\?25[hl]|[0-9;]*[HfJK])/u.test(text);
+  const hasBoxChrome = /[╭╰┌└├┬┴┼╮╯┐┘┤│┃║─━═]/u.test(plain);
+
+  return /Version:.*Claude Code|MCP:|bypass permissions|for agents|ctx:|Opus|effort/u.test(plain) ||
+    (hasCodexTuiMarker(plain) && (hasTuiControl || hasBoxChrome));
+}
+
+function stripCursorShowSequences(text: string): string {
+  return text.replace(/(\x1b\[|\x9b)\?([0-9;]*)h/g, (_sequence, csi: string, params: string) => {
+    const kept = params.split(';').filter(param => param !== '' && param !== '25');
+    return kept.length === 0 ? '' : `${csi}?${kept.join(';')}h`;
+  });
 }
 
 function hasTuiInputChrome(terminal: Terminal): boolean {
   const buffer = terminal.buffer.active;
   let horizontalRuleCount = 0;
+  let promptLineCount = 0;
+  let codexMarker = false;
 
   for (let y = 0; y < terminal.rows; y++) {
     const line = buffer.getLine(buffer.viewportY + y);
@@ -93,10 +150,13 @@ function hasTuiInputChrome(terminal: Terminal): boolean {
     if (/Version:.*Claude Code|MCP:|bypass permissions|for agents|ctx:|Opus|effort/u.test(text)) {
       return true;
     }
+    if (hasCodexTuiMarker(text)) codexMarker = true;
+    if (isTuiInputPromptLine(text)) promptLineCount++;
     if (isHorizontalRuleLine(text)) horizontalRuleCount++;
   }
 
-  return horizontalRuleCount >= 2;
+  return horizontalRuleCount >= 2 ||
+    (codexMarker && (horizontalRuleCount >= 1 || promptLineCount > 0 || buffer === terminal.buffer.alternate));
 }
 
 function getLastNonBlankCell(line: ReturnType<Terminal['buffer']['active']['getLine']>, cols: number): number {
@@ -471,29 +531,40 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const scrollViewportRef = useRef<HTMLElement | null>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const colorThemeRef = useRef(colorTheme);
-  const hideCursorRef = useRef(false);
+  const visualCursorHiddenRef = useRef(false);
   const updateAutocomplete = useCallback((val: typeof autocomplete) => {
     autocompleteRef.current = val;
     setAutocomplete(val);
   }, []);
   colorThemeRef.current = colorTheme;
 
-  const applyXtermTheme = useCallback((term: Terminal, hideCursor = hideCursorRef.current) => {
+  const applyXtermTheme = useCallback((term: Terminal) => {
     const currentTheme = colorThemeRef.current;
     const bg = currentTheme?.background || '#1e1e1e';
     const fg = currentTheme?.foreground || '#cccccc';
     const lightOptimized = !!currentTheme?.lightOptimized;
     const { lightOptimized: _lightOptimized, ...xtermTheme } = currentTheme || { background: bg, foreground: fg };
-    term.options.theme = hideCursor
-      ? { ...xtermTheme, cursor: 'rgba(0, 0, 0, 0)', cursorAccent: 'rgba(0, 0, 0, 0)' }
-      : xtermTheme;
+    term.options.theme = xtermTheme;
+    term.options.cursorBlink = !visualCursorHiddenRef.current;
     term.options.minimumContrastRatio = lightOptimized ? 4.5 : 1;
   }, []);
 
   const setVisualCursorHidden = useCallback((term: Terminal, hidden: boolean) => {
-    if (hideCursorRef.current === hidden) return;
-    hideCursorRef.current = hidden;
-    applyXtermTheme(term, hidden);
+    const wasHiddenByTerminalBuddy = visualCursorHiddenRef.current;
+    if (!hidden && !wasHiddenByTerminalBuddy) return;
+
+    const changed = wasHiddenByTerminalBuddy !== hidden;
+    visualCursorHiddenRef.current = hidden;
+
+    if (term.options.cursorBlink !== !hidden) {
+      term.options.cursorBlink = !hidden;
+    }
+
+    if (!setXtermCursorHidden(term, hidden)) {
+      term.write(hidden ? '\x1b[?25l' : '\x1b[?25h');
+    } else if (changed) {
+      applyXtermTheme(term);
+    }
   }, [applyXtermTheme]);
 
   const syncVisualCursorVisibility = useCallback((term: Terminal) => {
@@ -598,11 +669,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               csiTail = '';
             }
 
-            const normalized = normalizeAnsiForLightBackground(toWrite, lightOptimizedRef.current);
+            let normalized = normalizeAnsiForLightBackground(toWrite, lightOptimizedRef.current);
+            const term = xtermRef.current;
+            if (term && (visualCursorHiddenRef.current || outputLooksLikeAiTui(toWrite))) {
+              setVisualCursorHidden(term, true);
+              normalized = stripCursorShowSequences(normalized);
+            }
             // Use write callback to track parse state (learned from VS Code's _writeProcessData)
             // This ensures cursor position stays in sync when TUI programs update the screen
             const messageId = ++latestWriteDataRef.current;
-            xtermRef.current?.write(normalized, () => {
+            term?.write(normalized, () => {
               latestParseDataRef.current = messageId;
             });
           });
@@ -755,7 +831,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (outputBuffer.length > 0) {
         const combined = outputBuffer.join('');
         outputBuffer.length = 0;
-        const normalized = normalizeAnsiForLightBackground(combined, lightOptimizedRef.current);
+        let normalized = normalizeAnsiForLightBackground(combined, lightOptimizedRef.current);
+        if (visualCursorHiddenRef.current || outputLooksLikeAiTui(combined)) {
+          setVisualCursorHidden(terminal, true);
+          normalized = stripCursorShowSequences(normalized);
+        }
         terminal.write(normalized);
       }
       fitAddonRef.current = fitAddon;
