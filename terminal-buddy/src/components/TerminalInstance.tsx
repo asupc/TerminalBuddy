@@ -1,4 +1,4 @@
-import { FC, useEffect, useRef, useState, useCallback } from 'react';
+import { FC, useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -21,6 +21,7 @@ import './TerminalInstance.css';
 
 // 终端基础字号。分屏模式下按比例缩小:2x1 → 0.9、2x2 → 0.8、单屏 → 1.0。
 const BASE_FONT_SIZE = 14;
+const FLOATING_MENU_MARGIN = 8;
 // 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
 // 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
 const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
@@ -62,6 +63,24 @@ type XtermCore = {
   _syncTextArea?: () => void;
 };
 
+type TerminalContextMenuState = {
+  x: number;
+  y: number;
+  anchorX: number;
+  anchorY: number;
+  visible: boolean;
+};
+
+type AutocompleteState = {
+  items: SuggestionItem[];
+  index: number;
+  x: number;
+  y: number;
+  anchorX: number;
+  anchorBelowY: number;
+  anchorAboveY: number;
+};
+
 function setXtermCursorHidden(terminal: Terminal, hidden: boolean): boolean {
   const core = (terminal as any)._core as XtermCore | undefined;
   const coreService = core?.coreService;
@@ -73,6 +92,33 @@ function setXtermCursorHidden(terminal: Terminal, hidden: boolean): boolean {
     terminal.refresh(row, row);
   }
   return true;
+}
+
+function fitFloatingElementToViewport(
+  anchorX: number,
+  preferredTopY: number,
+  fallbackBottomY: number,
+  floatingWidth: number,
+  floatingHeight: number
+): { x: number; y: number } {
+  let x = anchorX;
+  let y = preferredTopY;
+
+  if (x + floatingWidth + FLOATING_MENU_MARGIN > window.innerWidth) {
+    x = window.innerWidth - floatingWidth - FLOATING_MENU_MARGIN;
+  }
+
+  if (preferredTopY + floatingHeight + FLOATING_MENU_MARGIN > window.innerHeight) {
+    y = fallbackBottomY - floatingHeight;
+  }
+
+  const maxX = Math.max(FLOATING_MENU_MARGIN, window.innerWidth - floatingWidth - FLOATING_MENU_MARGIN);
+  const maxY = Math.max(FLOATING_MENU_MARGIN, window.innerHeight - floatingHeight - FLOATING_MENU_MARGIN);
+
+  return {
+    x: Math.min(Math.max(FLOATING_MENU_MARGIN, x), maxX),
+    y: Math.min(Math.max(FLOATING_MENU_MARGIN, y), maxY),
+  };
 }
 
 type ImeAnchor = {
@@ -511,17 +557,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   // 让 initTerminal 在首次创建 xterm 时读到最新分屏模式,避免初次即处于分屏时字号漏改。
   const splitModeRef = useRef(splitMode);
   splitModeRef.current = splitMode;
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false });
+  const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
+    x: 0,
+    y: 0,
+    anchorX: 0,
+    anchorY: 0,
+    visible: false,
+  });
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
   const searchAddonRef = useRef<SearchAddon | null>(null);
-  const [autocomplete, setAutocomplete] = useState<{
-    items: SuggestionItem[];
-    index: number;
-    x: number;
-    y: number;
-  } | null>(null);
+  const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [internalDragOver, setInternalDragOver] = useState(false);
   const isSsh = useAppStore(s => s.sessions.find(sess => sess.id === terminalId)?.terminalType === 'ssh');
@@ -529,6 +576,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [scrollInfo, setScrollInfo] = useState({ top: 0, height: 0, visible: false });
   const scrollThumbRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLElement | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const autocompletePopupRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const colorThemeRef = useRef(colorTheme);
   const visualCursorHiddenRef = useRef(false);
@@ -537,6 +586,64 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     setAutocomplete(val);
   }, []);
   colorThemeRef.current = colorTheme;
+
+  const adjustTerminalContextMenuPosition = useCallback(() => {
+    if (!contextMenu.visible) return;
+    const menu = contextMenuRef.current;
+    if (!menu) return;
+
+    const { width: menuWidth, height: menuHeight } = menu.getBoundingClientRect();
+    const next = fitFloatingElementToViewport(
+      contextMenu.anchorX,
+      contextMenu.anchorY,
+      contextMenu.anchorY,
+      menuWidth,
+      menuHeight
+    );
+
+    if (next.x !== contextMenu.x || next.y !== contextMenu.y) {
+      setContextMenu(prev => prev.visible ? { ...prev, ...next } : prev);
+    }
+  }, [contextMenu]);
+
+  const adjustAutocompletePosition = useCallback(() => {
+    if (!autocomplete) return;
+    const popup = autocompletePopupRef.current;
+    if (!popup) return;
+
+    const { width: popupWidth, height: popupHeight } = popup.getBoundingClientRect();
+    const next = fitFloatingElementToViewport(
+      autocomplete.anchorX,
+      autocomplete.anchorBelowY,
+      autocomplete.anchorAboveY,
+      popupWidth,
+      popupHeight
+    );
+
+    if (next.x !== autocomplete.x || next.y !== autocomplete.y) {
+      updateAutocomplete({ ...autocomplete, ...next });
+    }
+  }, [autocomplete, updateAutocomplete]);
+
+  useLayoutEffect(() => {
+    adjustTerminalContextMenuPosition();
+  }, [adjustTerminalContextMenuPosition]);
+
+  useLayoutEffect(() => {
+    adjustAutocompletePosition();
+  }, [adjustAutocompletePosition]);
+
+  useEffect(() => {
+    if (!contextMenu.visible) return;
+    window.addEventListener('resize', adjustTerminalContextMenuPosition);
+    return () => window.removeEventListener('resize', adjustTerminalContextMenuPosition);
+  }, [contextMenu.visible, adjustTerminalContextMenuPosition]);
+
+  useEffect(() => {
+    if (!autocomplete) return;
+    window.addEventListener('resize', adjustAutocompletePosition);
+    return () => window.removeEventListener('resize', adjustAutocompletePosition);
+  }, [autocomplete, adjustAutocompletePosition]);
 
   const applyXtermTheme = useCallback((term: Terminal) => {
     const currentTheme = colorThemeRef.current;
@@ -1140,11 +1247,17 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           const screenRect = screenEl.getBoundingClientRect();
           const cellW = screenRect.width / terminal.cols;
           const cellH = screenRect.height / terminal.rows;
+          const anchorX = screenRect.left + buffer.cursorX * cellW;
+          const anchorBelowY = screenRect.top + (buffer.cursorY + 1) * cellH;
+          const anchorAboveY = screenRect.top + buffer.cursorY * cellH;
           updateAutocomplete({
             items: matches,
             index: -1,
-            x: screenRect.left + buffer.cursorX * cellW,
-            y: screenRect.top + (buffer.cursorY + 1) * cellH,
+            x: anchorX,
+            y: anchorBelowY,
+            anchorX,
+            anchorBelowY,
+            anchorAboveY,
           });
         }, 0);
       });
@@ -1345,7 +1458,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             return;
           }
         }
-        setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
+        setContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          anchorX: e.clientX,
+          anchorY: e.clientY,
+          visible: true,
+        });
       };
       xtermEl.addEventListener('contextmenu', handleContextMenu);
       cleanupFns.push(() => xtermEl.removeEventListener('contextmenu', handleContextMenu));
@@ -1600,13 +1719,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         }).catch(() => {});
       });
     }
-    setContextMenu({ x: 0, y: 0, visible: false });
+    setContextMenu({ x: 0, y: 0, anchorX: 0, anchorY: 0, visible: false });
   }, []);
 
   // Close context menu on click outside, keydown, or scroll
   useEffect(() => {
     if (!contextMenu.visible) return;
-    const close = () => setContextMenu({ x: 0, y: 0, visible: false });
+    const close = () => setContextMenu({ x: 0, y: 0, anchorX: 0, anchorY: 0, visible: false });
     document.addEventListener('click', close, { once: true });
     document.addEventListener('keydown', close);
     document.addEventListener('wheel', close);
@@ -1744,6 +1863,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       )}
       {contextMenu.visible && (
         <div
+          ref={contextMenuRef}
           className="terminal-context-menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
@@ -1757,6 +1877,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       )}
       {autocomplete && autocomplete.items.length > 0 && (
         <div
+          ref={autocompletePopupRef}
           className="autocomplete-popup"
           style={{ left: autocomplete.x, top: autocomplete.y }}
         >

@@ -1,4 +1,4 @@
-import React, { FC, useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
 import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../services/tauri';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
@@ -13,6 +13,7 @@ const TYPE_ICONS: Record<string, string> = {
 
 /** 虚拟置顶分组 id：置顶的配置聚合到此分组，永远显示在列表最顶部 */
 const PINNED_GROUP_ID = '__pinned__';
+const CONTEXT_MENU_MARGIN = 8;
 
 interface ConfigPanelProps {
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string) => void;
@@ -45,6 +46,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
 
   // 启动时从后端恢复宽度
@@ -160,11 +162,16 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
 
   const handleItemContextMenu = useCallback((e: React.MouseEvent, item: TreeItem) => {
     e.preventDefault();
+    setSortDropdownOpen(false);
     if (item.data) {
       const profile = item.data as Profile;
       selectProfile(profile.id);
+      setGroupContextMenu(null);
+      setBlankContextMenu(null);
       setContextMenu({ x: e.clientX, y: e.clientY, profileId: profile.id });
     } else if (item.isGroup && item.id !== PINNED_GROUP_ID) {
+      setContextMenu(null);
+      setBlankContextMenu(null);
       setGroupContextMenu({ x: e.clientX, y: e.clientY, group: item.id });
     }
   }, [selectProfile]);
@@ -179,6 +186,41 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const isLocalProfile = (p: Profile) => p.terminalType === 'powershell' || p.terminalType === 'cmd';
   const hasStartupPath = (p: Profile) => !!p.startupPath && p.startupPath.trim() !== '';
 
+  const adjustContextMenuPosition = useCallback(() => {
+    const menu = contextMenuRef.current;
+    if (!menu) return;
+
+    const { width: menuWidth, height: menuHeight } = menu.getBoundingClientRect();
+
+    if (contextMenu) {
+      const next = fitContextMenuToViewport(contextMenu.x, contextMenu.y, menuWidth, menuHeight);
+      if (next.x !== contextMenu.x || next.y !== contextMenu.y) {
+        setContextMenu(prev => prev ? { ...prev, ...next } : prev);
+      }
+      return;
+    }
+
+    if (groupContextMenu) {
+      const next = fitContextMenuToViewport(groupContextMenu.x, groupContextMenu.y, menuWidth, menuHeight);
+      if (next.x !== groupContextMenu.x || next.y !== groupContextMenu.y) {
+        setGroupContextMenu(prev => prev ? { ...prev, ...next } : prev);
+      }
+      return;
+    }
+
+    if (blankContextMenu) {
+      const next = fitContextMenuToViewport(blankContextMenu.x, blankContextMenu.y, menuWidth, menuHeight);
+      if (next.x !== blankContextMenu.x || next.y !== blankContextMenu.y) {
+        setBlankContextMenu(prev => prev ? { ...prev, ...next } : prev);
+      }
+    }
+  }, [contextMenu, groupContextMenu, blankContextMenu]);
+
+  useLayoutEffect(() => {
+    if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
+    adjustContextMenuPosition();
+  }, [contextMenu, groupContextMenu, blankContextMenu, adjustContextMenuPosition]);
+
   useEffect(() => {
     if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
     const close = () => closeContextMenu();
@@ -191,6 +233,12 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       document.removeEventListener('wheel', close);
     };
   }, [contextMenu, groupContextMenu, blankContextMenu]);
+
+  useEffect(() => {
+    if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
+    window.addEventListener('resize', adjustContextMenuPosition);
+    return () => window.removeEventListener('resize', adjustContextMenuPosition);
+  }, [contextMenu, groupContextMenu, blankContextMenu, adjustContextMenuPosition]);
 
   const handleDeleteProfile = async (profileId: string) => {
     setConfirmDelete(profileId);
@@ -374,6 +422,9 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       <div className="config-nav-list" onContextMenu={(e) => {
         if ((e.target as HTMLElement).closest('.tree-item')) return;
         e.preventDefault();
+        setSortDropdownOpen(false);
+        setContextMenu(null);
+        setGroupContextMenu(null);
         setBlankContextMenu({ x: e.clientX, y: e.clientY });
       }}>
         <TreeView
@@ -411,7 +462,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       </div>
 
       {contextMenu && (
-        <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <div className="context-menu-item" onClick={() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             if (target) onStartTerminal(target);
@@ -491,7 +542,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       )}
 
       {groupContextMenu && (
-        <div className="context-menu" style={{ left: groupContextMenu.x, top: groupContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div ref={contextMenuRef} className="context-menu" style={{ left: groupContextMenu.x, top: groupContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
             添加配置
           </div>
@@ -505,7 +556,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       )}
 
       {blankContextMenu && (
-        <div className="context-menu" style={{ left: blankContextMenu.x, top: blankContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div ref={contextMenuRef} className="context-menu" style={{ left: blankContextMenu.x, top: blankContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <div className="context-menu-item" onClick={() => { onAddProfile('默认'); closeContextMenu(); }}>
             添加配置
           </div>
@@ -544,4 +595,30 @@ function findTreeItemById(items: TreeItem[], id: string): TreeItem | null {
     }
   }
   return null;
+}
+
+function fitContextMenuToViewport(
+  anchorX: number,
+  anchorY: number,
+  menuWidth: number,
+  menuHeight: number
+): { x: number; y: number } {
+  let x = anchorX;
+  let y = anchorY;
+
+  if (x + menuWidth + CONTEXT_MENU_MARGIN > window.innerWidth) {
+    x = window.innerWidth - menuWidth - CONTEXT_MENU_MARGIN;
+  }
+
+  if (y + menuHeight + CONTEXT_MENU_MARGIN > window.innerHeight) {
+    y = anchorY - menuHeight;
+  }
+
+  const maxX = Math.max(CONTEXT_MENU_MARGIN, window.innerWidth - menuWidth - CONTEXT_MENU_MARGIN);
+  const maxY = Math.max(CONTEXT_MENU_MARGIN, window.innerHeight - menuHeight - CONTEXT_MENU_MARGIN);
+
+  return {
+    x: Math.min(Math.max(CONTEXT_MENU_MARGIN, x), maxX),
+    y: Math.min(Math.max(CONTEXT_MENU_MARGIN, y), maxY),
+  };
 }
