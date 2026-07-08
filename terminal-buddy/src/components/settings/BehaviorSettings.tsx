@@ -1,5 +1,5 @@
 import { FC } from 'react';
-import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin } from '../../services/tauri';
+import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode } from '../../services/tauri';
 import { BREATHING_LIGHT_COLORS } from '../../types';
 import type { AppSettings, BreathingLightColorMode } from '../../utils/settings';
 
@@ -11,6 +11,36 @@ interface BehaviorSettingsProps {
 export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSetting }) => {
   return (
     <div className="settings-general">
+      <div className="settings-section">
+        <label className="settings-label">启动窗口模式</label>
+        <div className="breathing-light-mode-options">
+          <label className={`breathing-light-mode ${settings.launchWindowMode === 'windowed' ? 'active' : ''}`}>
+            <input
+              type="radio"
+              name="launchWindowMode"
+              checked={settings.launchWindowMode === 'windowed'}
+              onChange={() => {
+                updateSetting('launchWindowMode', 'windowed');
+                saveLaunchWindowMode('windowed').catch(console.error);
+              }}
+            />
+            <span>窗口模式</span>
+          </label>
+          <label className={`breathing-light-mode ${settings.launchWindowMode === 'maximized' ? 'active' : ''}`}>
+            <input
+              type="radio"
+              name="launchWindowMode"
+              checked={settings.launchWindowMode === 'maximized'}
+              onChange={() => {
+                updateSetting('launchWindowMode', 'maximized');
+                saveLaunchWindowMode('maximized').catch(console.error);
+              }}
+            />
+            <span>最大化启动</span>
+          </label>
+        </div>
+        <p className="settings-desc">下次启动时直接按所选模式显示，不会先最大化再切回窗口</p>
+      </div>
       <div className="settings-section">
         <label className="settings-toggle">
           <input

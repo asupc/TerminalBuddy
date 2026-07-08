@@ -152,6 +152,7 @@ function App() {
         const synced = {
           ...settings,
           closeBehavior: backend.closeBehavior,
+          launchWindowMode: backend.launchWindowMode,
           enableTabNavigation: backend.enableTabNavigation,
           singleInstance: backend.singleInstance,
         };

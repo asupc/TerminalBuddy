@@ -7,8 +7,19 @@ pub enum CloseBehavior {
     Tray,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum LaunchWindowMode {
+    Windowed,
+    Maximized,
+}
+
 fn default_close_behavior() -> CloseBehavior {
     CloseBehavior::Exit
+}
+
+fn default_launch_window_mode() -> LaunchWindowMode {
+    LaunchWindowMode::Windowed
 }
 
 fn default_tab_sidebar_width() -> u32 {
@@ -36,6 +47,8 @@ fn default_single_instance() -> bool {
 pub struct AppSettings {
     #[serde(default = "default_close_behavior")]
     pub close_behavior: CloseBehavior,
+    #[serde(default = "default_launch_window_mode")]
+    pub launch_window_mode: LaunchWindowMode,
     #[serde(default)]
     pub data_path: Option<String>,
     #[serde(default = "default_tab_sidebar_width")]
@@ -70,6 +83,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             close_behavior: CloseBehavior::Exit,
+            launch_window_mode: LaunchWindowMode::Windowed,
             data_path: None,
             tab_sidebar_width: 200,
             config_nav_width: 250,
