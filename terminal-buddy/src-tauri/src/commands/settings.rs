@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use crate::models::{AppSettings, CloseBehavior};
+use crate::models::{AppSettings, CloseBehavior, LaunchWindowMode};
 use crate::services::{SettingsService, PathService, copy_dir_recursive};
 use serde_json::{json, Value};
 
@@ -110,6 +110,16 @@ pub fn save_close_behavior(behavior: String) -> Result<(), String> {
     let mut settings = SettingsService::get_settings();
     settings.close_behavior = behavior;
     SettingsService::save_settings(&settings)
+}
+
+#[tauri::command]
+pub fn save_launch_window_mode(mode: String) -> Result<(), String> {
+    let mode = match mode.as_str() {
+        "windowed" => LaunchWindowMode::Windowed,
+        "maximized" => LaunchWindowMode::Maximized,
+        _ => return Err(format!("无效的启动窗口模式: {}", mode)),
+    };
+    SettingsService::mutate_settings(|s| s.launch_window_mode = mode)
 }
 
 #[tauri::command]

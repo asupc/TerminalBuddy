@@ -173,6 +173,7 @@ export async function deleteWorkspace(id: string): Promise<void> {
 // Settings Commands
 export async function getBackendAppSettings(): Promise<{
   closeBehavior: 'exit' | 'tray';
+  launchWindowMode: 'windowed' | 'maximized';
   dataPath: string | null;
   tabSidebarWidth: number;
   configNavWidth: number;
@@ -185,6 +186,10 @@ export async function getBackendAppSettings(): Promise<{
 
 export async function saveCloseBehavior(behavior: 'exit' | 'tray'): Promise<void> {
   return invoke('save_close_behavior', { behavior });
+}
+
+export async function saveLaunchWindowMode(mode: 'windowed' | 'maximized'): Promise<void> {
+  return invoke('save_launch_window_mode', { mode });
 }
 
 export async function getDataPath(): Promise<string> {

@@ -77,6 +77,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       const synced = {
         ...prev,
         closeBehavior: backend.closeBehavior,
+        launchWindowMode: backend.launchWindowMode,
         enableTabNavigation: backend.enableTabNavigation,
         singleInstance: backend.singleInstance,
       };

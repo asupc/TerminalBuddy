@@ -3,9 +3,9 @@ pub mod models;
 pub mod services;
 pub mod web;
 
-use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, connect_ssh_session, start_terminal, start_mstsc, get_claude_session_for_cwd, get_claude_session_for_terminal, get_claude_sessions_for_terminals, get_terminal_process_id, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, peek_terminal_output, list_terminals, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, read_clipboard_image_as_file, get_app_settings, save_close_behavior, get_data_path, set_data_path, save_tab_sidebar_width, save_config_nav_width, save_file_nav_width, save_enable_tab_navigation, save_single_instance, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace, get_command_templates, save_command_templates, init_command_templates, export_all_data, import_all_data, get_windows_build_number, window_minimize, window_toggle_maximize, window_close, window_exit_app, fetch_qianfan_usage, fetch_deepseek_usage, fetch_minimax_usage, fetch_ark_usage, save_web_api_settings, get_web_api_status, restart_web_server, get_web_server_address, get_web_quick_access_url, read_file_content, write_file_content, get_file_size, get_file_meta, read_client_data, write_client_data, ensure_dir, get_ssh_temp_directory, get_ssh_home_dir, get_downloads_directory, save_ssh_download_dir, save_server_monitor_interval, save_web_api_share_sessions, save_launch_at_login, sync_launch_at_login, remote_chmod, remote_copy, remote_create_dir, remote_create_file, remote_download, remote_download_dir, remote_list_dir, remote_move, remote_remove, remote_rename, remote_upload, get_server_stats};
+use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, connect_ssh_session, start_terminal, start_mstsc, get_claude_session_for_cwd, get_claude_session_for_terminal, get_claude_sessions_for_terminals, get_terminal_process_id, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, peek_terminal_output, list_terminals, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, read_clipboard_image_as_file, get_app_settings, save_close_behavior, save_launch_window_mode, get_data_path, set_data_path, save_tab_sidebar_width, save_config_nav_width, save_file_nav_width, save_enable_tab_navigation, save_single_instance, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace, get_command_templates, save_command_templates, init_command_templates, export_all_data, import_all_data, get_windows_build_number, window_minimize, window_toggle_maximize, window_close, window_exit_app, fetch_qianfan_usage, fetch_deepseek_usage, fetch_minimax_usage, fetch_ark_usage, save_web_api_settings, get_web_api_status, restart_web_server, get_web_server_address, get_web_quick_access_url, read_file_content, write_file_content, get_file_size, get_file_meta, read_client_data, write_client_data, ensure_dir, get_ssh_temp_directory, get_ssh_home_dir, get_downloads_directory, save_ssh_download_dir, save_server_monitor_interval, save_web_api_share_sessions, save_launch_at_login, sync_launch_at_login, remote_chmod, remote_copy, remote_create_dir, remote_create_file, remote_download, remote_download_dir, remote_list_dir, remote_move, remote_remove, remote_rename, remote_upload, get_server_stats};
 use commands::{TerminalService, MonitorCache};
-use models::CloseBehavior;
+use models::{CloseBehavior, LaunchWindowMode};
 use services::{SettingsService, SshSessionService, WebServiceState};
 use tauri::Manager;
 use tauri::Emitter;
@@ -44,13 +44,46 @@ fn log_boot(msg: String, ts: Option<f64>) {
     boot_log(format!("js+{} {}", js_ms, msg));
 }
 
+fn apply_startup_window_mode(app: &tauri::App) {
+    let Some(window) = app.get_webview_window("main") else {
+        boot_log("main window not found while applying startup window mode");
+        return;
+    };
+
+    let settings = SettingsService::get_settings();
+    match settings.launch_window_mode {
+        LaunchWindowMode::Windowed => {
+            if let Err(e) = window.set_fullscreen(false) {
+                boot_log(format!("set fullscreen false failed: {}", e));
+            }
+            if let Err(e) = window.unmaximize() {
+                boot_log(format!("unmaximize failed: {}", e));
+            }
+            boot_log("startup window mode applied: windowed");
+        }
+        LaunchWindowMode::Maximized => {
+            if let Err(e) = window.maximize() {
+                boot_log(format!("maximize failed: {}", e));
+            }
+            boot_log("startup window mode applied: maximized");
+        }
+    }
+
+    if let Err(e) = window.show() {
+        boot_log(format!("show window failed: {}", e));
+    }
+    if let Err(e) = window.set_focus() {
+        boot_log(format!("focus window failed: {}", e));
+    }
+}
+
 pub fn run() {
     let _ = BOOT_START.set(Instant::now());
     boot_log("=== TerminalBuddy process start ===");
     let settings = SettingsService::get_settings();
     boot_log(format!(
-        "settings loaded (single_instance={}, web_api_enabled={})",
-        settings.single_instance, settings.web_api_enabled
+        "settings loaded (single_instance={}, web_api_enabled={}, launch_window_mode={:?})",
+        settings.single_instance, settings.web_api_enabled, settings.launch_window_mode
     ));
 
     let mut builder = tauri::Builder::default()
@@ -119,6 +152,8 @@ pub fn run() {
                 })
                 .build(app)?;
             boot_log("tray built");
+
+            apply_startup_window_mode(app);
 
             // Sync launch_at_login setting with Windows Registry
             let _ = commands::sync_launch_at_login();
@@ -204,6 +239,7 @@ pub fn run() {
             read_clipboard_image_as_file,
             get_app_settings,
             save_close_behavior,
+            save_launch_window_mode,
             get_data_path,
             set_data_path,
             save_tab_sidebar_width,

@@ -3,12 +3,14 @@ import { readClientData, writeClientData } from '../services/tauri';
 export type ThemeMode = 'dark' | 'light' | 'system';
 
 export type BreathingLightColorMode = 'tab' | 'custom';
+export type LaunchWindowMode = 'windowed' | 'maximized';
 
 export interface AppSettings {
   restoreTabsOnStartup: boolean;
   configPanelAutoExpand: boolean;
   fileTreeAutoExpand: boolean;
   closeBehavior: 'exit' | 'tray';
+  launchWindowMode: LaunchWindowMode;
   enableTabNavigation: boolean;
   singleInstance: boolean;
   rightClickPaste: boolean;
@@ -41,6 +43,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   configPanelAutoExpand: true,
   fileTreeAutoExpand: true,
   closeBehavior: 'exit',
+  launchWindowMode: 'windowed',
   enableTabNavigation: true,
   singleInstance: true,
   rightClickPaste: false,
