@@ -59,6 +59,9 @@ fn apply_startup_window_mode(app: &tauri::App) {
             if let Err(e) = window.unmaximize() {
                 boot_log(format!("unmaximize failed: {}", e));
             }
+            if let Err(e) = window.center() {
+                boot_log(format!("center window failed: {}", e));
+            }
             boot_log("startup window mode applied: windowed");
         }
         LaunchWindowMode::Maximized => {

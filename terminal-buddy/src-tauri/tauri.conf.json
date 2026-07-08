@@ -16,6 +16,7 @@
         "title": "TerminalBuddy",
         "width": 1200,
         "height": 800,
+        "center": true,
         "maximized": false,
         "resizable": true,
         "fullscreen": false,
