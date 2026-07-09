@@ -1,9 +1,10 @@
-import { FC, useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { FC, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
 import { getAppSettings } from '../utils/settings';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
+import { fitContextMenuToViewport } from '../utils/contextMenu';
 import { RemoteFileTree } from './RemoteFileTree';
 import './FileNav.css';
 
@@ -285,6 +286,7 @@ export const FileNav: FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number | null>(null);
+  const ctxMenuRef = useRef<HTMLDivElement>(null);
 
   // 启动时从后端恢复宽度
   useEffect(() => {
@@ -576,6 +578,28 @@ export const FileNav: FC = () => {
     };
   }, [ctxMenu]);
 
+  // 菜单定位：贴近边缘时翻转到内侧，避免靠底被遮挡
+  const adjustCtxMenuPosition = useCallback(() => {
+    const menu = ctxMenuRef.current;
+    if (!menu || !ctxMenu) return;
+    const { width: menuWidth, height: menuHeight } = menu.getBoundingClientRect();
+    const next = fitContextMenuToViewport(ctxMenu.x, ctxMenu.y, menuWidth, menuHeight);
+    if (next.x !== ctxMenu.x || next.y !== ctxMenu.y) {
+      setCtxMenu(prev => (prev ? { ...prev, ...next } : prev));
+    }
+  }, [ctxMenu]);
+
+  useLayoutEffect(() => {
+    if (!ctxMenu) return;
+    adjustCtxMenuPosition();
+  }, [ctxMenu, adjustCtxMenuPosition]);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    window.addEventListener('resize', adjustCtxMenuPosition);
+    return () => window.removeEventListener('resize', adjustCtxMenuPosition);
+  }, [ctxMenu, adjustCtxMenuPosition]);
+
   const sessions = useAppStore(s => s.sessions);
   const activeTerminalId = useAppStore(s => s.activeSessionId);
   const activeSession = sessions.find(s => s.id === activeTerminalId);
@@ -735,6 +759,7 @@ export const FileNav: FC = () => {
 
       {ctxMenu && (
         <div
+          ref={ctxMenuRef}
           className="context-menu"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onClick={(e) => e.stopPropagation()}

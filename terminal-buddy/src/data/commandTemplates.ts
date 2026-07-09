@@ -1,5 +1,6 @@
 import * as tauriService from '../services/tauri';
 import { readClientData, writeClientData } from '../services/tauri';
+import { getVSCodeStyleTerminalSuggestions } from './terminalSuggestions';
 
 export interface CommandItem {
   name: string;
@@ -87,7 +88,13 @@ export function getEffectiveTemplates(): CommandTemplate[] {
 export interface SuggestionItem {
   command: string;
   desc: string;
+  kind?: 'command' | 'subcommand' | 'option' | 'argument' | 'template';
+  source?: string;
 }
+
+const BUILTIN_COMMAND_SUGGESTIONS: SuggestionItem[] = [
+  { command: 'claude --dangerously-skip-permissions', desc: 'Claude Code 跳过权限确认启动' },
+];
 
 let suggestionsCache: SuggestionItem[] | null = null;
 let suggestionsDirty = true;
@@ -101,6 +108,10 @@ export function getAllSuggestions(): SuggestionItem[] {
   if (!suggestionsDirty && suggestionsCache) return suggestionsCache;
 
   const tplMap = new Map<string, SuggestionItem>();
+
+  for (const suggestion of BUILTIN_COMMAND_SUGGESTIONS) {
+    tplMap.set(suggestion.command, suggestion);
+  }
 
   for (const cat of getEffectiveTemplates()) {
     for (const c of cat.commands) {
@@ -116,6 +127,47 @@ export function getAllSuggestions(): SuggestionItem[] {
   suggestionsCache = result;
   suggestionsDirty = false;
   return result;
+}
+
+export function getTerminalSuggestions(input: string): SuggestionItem[] {
+  const query = input.trimStart().toLowerCase();
+  if (!query) return [];
+
+  const ranked = new Map<string, { item: SuggestionItem; score: number; order: number }>();
+  let order = 0;
+
+  const add = (item: SuggestionItem, score: number) => {
+    const key = item.command.trim();
+    const existing = ranked.get(key);
+    if (!existing || score < existing.score) {
+      ranked.set(key, { item, score, order: existing?.order ?? order++ });
+    }
+  };
+
+  for (const suggestion of getVSCodeStyleTerminalSuggestions(input)) {
+    add(suggestion, 0);
+  }
+
+  for (const suggestion of getAllSuggestions()) {
+    const command = suggestion.command.toLowerCase();
+    const desc = suggestion.desc.toLowerCase();
+    if (command === query) continue;
+    if (command.startsWith(query)) {
+      add({ ...suggestion, kind: suggestion.kind ?? 'template' }, 10);
+    } else if (desc.includes(query)) {
+      add({ ...suggestion, kind: suggestion.kind ?? 'template' }, 30);
+    }
+  }
+
+  return [...ranked.values()]
+    .sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      if (a.item.command.length !== b.item.command.length) {
+        return a.item.command.length - b.item.command.length;
+      }
+      return a.order - b.order;
+    })
+    .map(({ item }) => item);
 }
 
 export async function initPersistedTemplates(): Promise<void> {
@@ -283,6 +335,12 @@ export const COMMAND_TEMPLATES: CommandTemplate[] = [
       { name: 'git tag', command: 'git tag ', desc: '创建标签' },
       { name: 'git cherry-pick', command: 'git cherry-pick ', desc: '挑选提交应用' },
       { name: 'git revert', command: 'git revert ', desc: '撤销指定提交' },
+    ],
+  },
+  {
+    category: 'AI 助手',
+    commands: [
+      { name: 'claude --dangerously-skip-permissions', command: 'claude --dangerously-skip-permissions', desc: 'Claude Code 跳过权限确认启动' },
     ],
   },
   {

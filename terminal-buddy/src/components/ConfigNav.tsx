@@ -2,6 +2,7 @@ import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayout
 import { useAppStore } from '../stores/appStore';
 import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../services/tauri';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
+import { fitContextMenuToViewport } from '../utils/contextMenu';
 import type { Profile } from '../types';
 import { TreeView, type TreeItem } from './TreeView';
 import { buildGroupTree, renameGroupInPath } from '../utils/groupTree';
@@ -13,7 +14,6 @@ const TYPE_ICONS: Record<string, string> = {
 
 /** 虚拟置顶分组 id：置顶的配置聚合到此分组，永远显示在列表最顶部 */
 const PINNED_GROUP_ID = '__pinned__';
-const CONTEXT_MENU_MARGIN = 8;
 
 interface ConfigPanelProps {
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string) => void;
@@ -595,30 +595,4 @@ function findTreeItemById(items: TreeItem[], id: string): TreeItem | null {
     }
   }
   return null;
-}
-
-function fitContextMenuToViewport(
-  anchorX: number,
-  anchorY: number,
-  menuWidth: number,
-  menuHeight: number
-): { x: number; y: number } {
-  let x = anchorX;
-  let y = anchorY;
-
-  if (x + menuWidth + CONTEXT_MENU_MARGIN > window.innerWidth) {
-    x = window.innerWidth - menuWidth - CONTEXT_MENU_MARGIN;
-  }
-
-  if (y + menuHeight + CONTEXT_MENU_MARGIN > window.innerHeight) {
-    y = anchorY - menuHeight;
-  }
-
-  const maxX = Math.max(CONTEXT_MENU_MARGIN, window.innerWidth - menuWidth - CONTEXT_MENU_MARGIN);
-  const maxY = Math.max(CONTEXT_MENU_MARGIN, window.innerHeight - menuHeight - CONTEXT_MENU_MARGIN);
-
-  return {
-    x: Math.min(Math.max(CONTEXT_MENU_MARGIN, x), maxX),
-    y: Math.min(Math.max(CONTEXT_MENU_MARGIN, y), maxY),
-  };
 }

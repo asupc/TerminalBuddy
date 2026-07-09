@@ -13,7 +13,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getAppSettings } from '../utils/settings';
 import { bootLog } from '../utils/bootLog';
 import { useAppStore } from '../stores/appStore';
-import { getAllSuggestions, type SuggestionItem } from '../data/commandTemplates';
+import { getTerminalSuggestions, type SuggestionItem } from '../data/commandTemplates';
 import { normalizeAnsiForLightBackground, type TerminalColors } from '../utils/terminalTheme';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
 import '@xterm/xterm/css/xterm.css';
@@ -71,6 +71,12 @@ type TerminalContextMenuState = {
 type AutocompleteState = {
   items: SuggestionItem[];
   index: number;
+  selectionExplicit: boolean;
+  input: string;
+  inlineCompletion: string;
+  inlineX: number;
+  inlineY: number;
+  inlineHeight: number;
   x: number;
   y: number;
   anchorX: number;
@@ -180,6 +186,35 @@ function getLastNonBlankCell(line: ReturnType<Terminal['buffer']['active']['getL
 
   return 0;
 }
+
+function getInputAtCursor(terminal: Terminal): string | null {
+  const buffer = terminal.buffer.active;
+  const absY = buffer.baseY + buffer.cursorY;
+  const line = buffer.getLine(absY);
+  if (!line) return null;
+
+  const text = line.translateToString(true, 0, buffer.cursorX);
+  const promptIdx = text.lastIndexOf('>');
+  return (promptIdx >= 0 ? text.substring(promptIdx + 1) : text).trimStart();
+}
+
+function getAutocompleteCompletion(command: string, input: string): string {
+  if (!input || command.length <= input.length) return '';
+  if (!command.toLowerCase().startsWith(input.toLowerCase())) return '';
+  return command.substring(input.length);
+}
+
+function getCommandSuggestions(input: string): SuggestionItem[] {
+  return getTerminalSuggestions(input).slice(0, 8);
+}
+
+const SUGGESTION_KIND_LABEL: Record<NonNullable<SuggestionItem['kind']>, string> = {
+  command: '命令',
+  subcommand: '子命令',
+  option: '参数',
+  argument: '值',
+  template: '模板',
+};
 
 function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null {
   const buffer = terminal.buffer.active;
@@ -1147,22 +1182,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         autocompleteTimer = setTimeout(() => {
           if (disposed) return;
           const buffer = terminal.buffer.active;
-          const absY = buffer.baseY + buffer.cursorY;
-          const line = buffer.getLine(absY);
-          if (!line) return;
-          const text = line.translateToString(true, 0, buffer.cursorX);
-          const promptIdx = text.lastIndexOf('>');
-          const input = promptIdx >= 0 ? text.substring(promptIdx + 1).trimStart() : '';
+          const input = getInputAtCursor(terminal) ?? '';
           if (!input || input.length < 1) {
             updateAutocomplete(null);
             return;
           }
-          const query = input.toLowerCase();
-          const all = getAllSuggestions();
-          const matches = all.filter(s => {
-            if (s.command === input) return false;
-            return s.command.toLowerCase().startsWith(query) || s.desc.toLowerCase().includes(query);
-          }).slice(0, 8);
+          const matches = getCommandSuggestions(input);
           if (matches.length === 0) {
             updateAutocomplete(null);
             return;
@@ -1176,9 +1201,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           const anchorX = screenRect.left + buffer.cursorX * cellW;
           const anchorBelowY = screenRect.top + (buffer.cursorY + 1) * cellH;
           const anchorAboveY = screenRect.top + buffer.cursorY * cellH;
+          const inlineCompletion = getAutocompleteCompletion(matches[0].command, input);
           updateAutocomplete({
             items: matches,
             index: -1,
+            selectionExplicit: false,
+            input,
+            inlineCompletion,
+            inlineX: anchorX,
+            inlineY: screenRect.top + buffer.cursorY * cellH,
+            inlineHeight: cellH,
             x: anchorX,
             y: anchorBelowY,
             anchorX,
@@ -1189,6 +1221,23 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       });
 
       const containerEl = terminalRef.current!;
+
+      const acceptAutocompleteCommand = (command: string): boolean => {
+        const input = getInputAtCursor(terminal);
+        if (!input) return false;
+        const completion = getAutocompleteCompletion(command, input);
+        if (!completion) return false;
+        onOutputRef.current(terminalId, completion);
+        updateAutocomplete(null);
+        return true;
+      };
+
+      const acceptActiveAutocomplete = (): boolean => {
+        const ac = autocompleteRef.current;
+        if (!ac || ac.items.length === 0) return false;
+        const index = ac.index >= 0 ? ac.index : 0;
+        return acceptAutocompleteCommand(ac.items[index].command);
+      };
 
       // Capture-phase keydown — fires before xterm's internal textarea sees the event
       const handleKeyDown = (e: KeyboardEvent) => {
@@ -1214,23 +1263,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         }
         // Tab: accept autocomplete suggestion
         if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
-          const ac = autocompleteRef.current;
-          if (ac && ac.items.length > 0 && ac.index >= 0) {
+          if (acceptActiveAutocomplete()) {
             e.preventDefault();
             e.stopPropagation();
-            const selected = ac.items[ac.index].command;
-            // Read current input to compute what to append
-            const buffer = terminal.buffer.active;
-            const absY = buffer.baseY + buffer.cursorY;
-            const line = buffer.getLine(absY);
-            if (line) {
-              const text = line.translateToString(true, 0, buffer.cursorX);
-              const promptIdx = text.lastIndexOf('>');
-              const input = promptIdx >= 0 ? text.substring(promptIdx + 1).trimStart() : '';
-              const completion = selected.substring(input.length);
-              if (completion) onOutputRef.current(terminalId, completion);
-            }
-            updateAutocomplete(null);
+            return;
+          }
+        }
+        // RightArrow: accept inline ghost suggestion, matching common terminal UX.
+        if (e.key === 'ArrowRight' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+          const ac = autocompleteRef.current;
+          if (ac?.inlineCompletion && acceptActiveAutocomplete()) {
+            e.preventDefault();
+            e.stopPropagation();
             return;
           }
         }
@@ -1255,28 +1299,22 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             } else {
               newIndex = ac.index < 0 ? ac.items.length - 1 : Math.max(ac.index - 1, 0);
             }
-            updateAutocomplete({ ...ac, index: newIndex });
+            updateAutocomplete({
+              ...ac,
+              index: newIndex,
+              selectionExplicit: true,
+              inlineCompletion: getAutocompleteCompletion(ac.items[newIndex].command, ac.input),
+            });
             return;
           }
         }
         // Enter: accept autocomplete suggestion without submitting
         if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey && autocompleteRef.current) {
           const ac = autocompleteRef.current;
-          if (ac.items.length > 0 && ac.index >= 0) {
+          if (ac.items.length > 0 && ac.index >= 0 && ac.selectionExplicit) {
             e.preventDefault();
             e.stopPropagation();
-            const selected = ac.items[ac.index].command;
-            const buffer = terminal.buffer.active;
-            const absY = buffer.baseY + buffer.cursorY;
-            const line = buffer.getLine(absY);
-            if (line) {
-              const text = line.translateToString(true, 0, buffer.cursorX);
-              const promptIdx = text.lastIndexOf('>');
-              const input = promptIdx >= 0 ? text.substring(promptIdx + 1).trimStart() : '';
-              const completion = selected.substring(input.length);
-              if (completion) onOutputRef.current(terminalId, completion);
-            }
-            updateAutocomplete(null);
+            acceptAutocompleteCommand(ac.items[ac.index].command);
             return;
           }
         }
@@ -1801,6 +1839,20 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           </div>
         </div>
       )}
+      {autocomplete?.inlineCompletion && (
+        <div
+          className="autocomplete-inline-ghost"
+          style={{
+            left: autocomplete.inlineX,
+            top: autocomplete.inlineY,
+            height: autocomplete.inlineHeight,
+            lineHeight: `${autocomplete.inlineHeight}px`,
+            fontSize: `${SPLIT_FONT_SIZE[splitMode]}px`,
+          }}
+        >
+          {autocomplete.inlineCompletion}
+        </div>
+      )}
       {autocomplete && autocomplete.items.length > 0 && (
         <div
           ref={autocompletePopupRef}
@@ -1813,20 +1865,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               className={`autocomplete-item ${i === autocomplete.index ? 'selected' : ''}`}
               onClick={() => {
                 const buffer = xtermRef.current?.buffer.active;
-                if (!buffer) return;
-                const absY = buffer.baseY + buffer.cursorY;
-                const line = buffer.getLine(absY);
-                if (line) {
-                  const text = line.translateToString(true, 0, buffer.cursorX);
-                  const promptIdx = text.lastIndexOf('>');
-                  const input = promptIdx >= 0 ? text.substring(promptIdx + 1).trimStart() : '';
-                  const completion = cmd.command.substring(input.length);
+                const term = xtermRef.current;
+                if (!buffer || !term) return;
+                const input = getInputAtCursor(term);
+                if (input) {
+                  const completion = getAutocompleteCompletion(cmd.command, input);
                   if (completion) onOutputRef.current(terminalId, completion);
                 }
                 updateAutocomplete(null);
               }}
             >
               <span className="autocomplete-cmd">{cmd.command}</span>
+              {cmd.kind && <span className="autocomplete-kind">{SUGGESTION_KIND_LABEL[cmd.kind]}</span>}
               <span className="autocomplete-desc">{cmd.desc}</span>
             </div>
           ))}
