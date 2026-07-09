@@ -22,6 +22,8 @@ import './TerminalInstance.css';
 // 终端基础字号。分屏模式下按比例缩小:2x1 → 0.9、2x2 → 0.8、单屏 → 1.0。
 const BASE_FONT_SIZE = 14;
 const FLOATING_MENU_MARGIN = 8;
+const AUTO_PASTE_DEDUPE_MS = 350;
+const recentAutoPastes = new Map<string, { text: string; time: number }>();
 // 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
 // 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
 const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
@@ -582,6 +584,27 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     setAutocomplete(val);
   }, []);
   colorThemeRef.current = colorTheme;
+
+  const sendPastedText = useCallback((text: string, dedupeKey?: string): boolean => {
+    if (!text) return false;
+    if (dedupeKey) {
+      const key = `${terminalId}:${dedupeKey}`;
+      const now = performance.now();
+      const recent = recentAutoPastes.get(key);
+      if (recent && recent.text === text && now - recent.time < AUTO_PASTE_DEDUPE_MS) {
+        return false;
+      }
+      recentAutoPastes.set(key, { text, time: now });
+    }
+
+    if (text.includes('\n') || text.includes('\r')) {
+      const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+    } else {
+      onOutputRef.current(terminalId, text);
+    }
+    return true;
+  }, [terminalId]);
 
   const adjustTerminalContextMenuPosition = useCallback(() => {
     if (!contextMenu.visible) return;
@@ -1360,7 +1383,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                       const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
                       onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
                     } else {
-                      terminal.paste(text);
+                      sendPastedText(text);
                     }
                   }
                 }).catch(() => {});
@@ -1372,12 +1395,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             }).catch(() => {
               navigator.clipboard.readText().then((text) => {
                 if (text) {
-                  if (text.includes('\n') || text.includes('\r')) {
-                    const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                    onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
-                  } else {
-                    terminal.paste(text);
-                  }
+                  sendPastedText(text);
                 }
               }).catch(() => {});
             });
@@ -1403,18 +1421,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (!readOnly) {
           const settings = getAppSettings();
           if (settings.rightClickPaste && !terminal.hasSelection()) {
+            // xterm also handles contextmenu on the terminal element. When auto
+            // paste is enabled, keep this event on a single paste path.
+            e.stopImmediatePropagation();
             readClipboardImageAsFile().then((imagePath) => {
               onOutputRef.current(terminalId, `[图片:${imagePath}]`);
               terminal.focus();
             }).catch(() => {
               navigator.clipboard.readText().then((text) => {
                 if (text) {
-                  if (text.includes('\n') || text.includes('\r')) {
-                    const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                    onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
-                  } else {
-                    terminal.paste(text);
-                  }
+                  sendPastedText(text, 'right-click');
                   terminal.focus();
                 }
               }).catch(() => {});
@@ -1430,8 +1446,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           visible: true,
         });
       };
-      xtermEl.addEventListener('contextmenu', handleContextMenu);
-      cleanupFns.push(() => xtermEl.removeEventListener('contextmenu', handleContextMenu));
+      xtermEl.addEventListener('contextmenu', handleContextMenu, true);
+      cleanupFns.push(() => xtermEl.removeEventListener('contextmenu', handleContextMenu, true));
 
       // Ctrl+hover: show pointer cursor on links
       const handleKeyDownGlobal = (e: KeyboardEvent) => {
@@ -1672,12 +1688,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       }).catch(() => {
         navigator.clipboard.readText().then((text) => {
           if (text) {
-            if (text.includes('\n') || text.includes('\r')) {
-              const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-              onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
-            } else {
-              terminal.paste(text);
-            }
+            sendPastedText(text);
             terminal.focus();
           }
         }).catch(() => {});
