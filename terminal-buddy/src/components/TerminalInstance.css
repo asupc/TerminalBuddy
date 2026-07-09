@@ -194,6 +194,17 @@
 }
 
 /* Autocomplete popup */
+.autocomplete-inline-ghost {
+  position: fixed;
+  z-index: 1090;
+  pointer-events: none;
+  color: rgba(180, 180, 180, 0.58);
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 14px;
+  white-space: pre;
+  user-select: none;
+}
+
 .autocomplete-popup {
   position: fixed;
   background: var(--bg-secondary, #252526);
@@ -243,6 +254,17 @@
   min-width: 80px;
 }
 
+.autocomplete-kind {
+  color: var(--text-secondary, #888);
+  border: 1px solid var(--border, #3c3c3c);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .autocomplete-desc {
   color: var(--text-secondary, #888);
   white-space: nowrap;
@@ -254,4 +276,9 @@
 
 .autocomplete-item.selected .autocomplete-desc {
   color: rgba(255, 255, 255, 0.75);
+}
+
+.autocomplete-item.selected .autocomplete-kind {
+  color: rgba(255, 255, 255, 0.85);
+  border-color: rgba(255, 255, 255, 0.38);
 }
