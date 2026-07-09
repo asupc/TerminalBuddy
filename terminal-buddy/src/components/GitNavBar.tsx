@@ -6,18 +6,28 @@ import {
   gitGetChangedFiles,
   gitGetHistory,
   gitListBranches,
+  gitPreviewPush,
   gitPull,
-  gitPush,
+  gitPushWithOptions,
+  listenGitPushOutput,
   type GitBranch,
   type GitChangedFile,
   type GitCommit,
+  type GitHistoryRef,
+  type GitHistoryResult,
+  type GitPushPreview,
   type GitPullResult,
+  type GitPushOptions,
+  type GitPushResult,
   type GitRepositoryStatus,
 } from '../services/tauri';
+import { HistoryGraphSvg } from './HistoryGraphSvg';
+import { buildHistoryGraph, sortHistoryRefs } from './gitHistoryGraph';
 
 type GitPopover = 'branches' | null;
 type GitAction = 'checkout' | 'commit' | 'pull' | 'push' | null;
 type PullDialogTab = 'log' | 'commits' | 'refs';
+type GitToolbarIconName = 'pull' | 'commit' | 'push' | 'history';
 type PullDialogState = {
   phase: 'running' | 'success' | 'error';
   command: string;
@@ -27,9 +37,65 @@ type PullDialogState = {
   error?: string;
 };
 
+type PushPhase = 'form' | 'running' | 'success' | 'error';
+
+interface PushDialogState {
+  phase: PushPhase;
+  remote: string;
+  localBranch: string;
+  remoteBranch: string;
+  setUpstream: boolean;
+  followTags: boolean;
+  forceWithLease: boolean;
+  command: string;
+  output: string;
+  error: string;
+  result: GitPushResult | null;
+  preview: GitPushPreview | null;
+  previewLoading: boolean;
+  previewError: string;
+  operationId: string | null;
+}
+
 interface GitNavBarProps {
   currentDirectory: string;
   onRepositoryChanged?: () => void | Promise<void>;
+}
+
+function GitToolbarIcon({ name }: { name: GitToolbarIconName }) {
+  if (name === 'pull') {
+    return (
+      <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M14.5 5.5 7.5 12.5" />
+        <path d="M7.5 12.5h5.5" />
+        <path d="M7.5 12.5V7" />
+      </svg>
+    );
+  }
+
+  if (name === 'commit') {
+    return (
+      <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="m4.5 10.5 3.4 3.4 7.6-7.6" />
+      </svg>
+    );
+  }
+
+  if (name === 'push') {
+    return (
+      <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M5.5 14.5 14.5 5.5" />
+        <path d="M9.5 5.5h5v5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r="7" />
+      <path d="M10 5.8V10l3.1 2" />
+    </svg>
+  );
 }
 
 function compactOutput(output: string): string {
@@ -56,14 +122,53 @@ function shortHash(hash?: string | null): string {
   return hash ? hash.slice(0, 8) : '-';
 }
 
-function refBadgeClass(ref: string): string {
-  if (ref.startsWith('tag:')) return 'tag';
-  if (ref.startsWith('origin/') || ref.includes('/')) return 'remote';
+function refBadgeClass(ref: GitHistoryRef): string {
+  if (ref.isCurrent) return 'current';
+  if (ref.isUpstream) return 'upstream';
+  if (ref.kind === 'remote') return 'remote';
+  if (ref.kind === 'tag') return 'tag';
+  if (ref.kind === 'base') return 'base';
   return 'local';
 }
 
-function refLabel(ref: string): string {
-  return ref.replace(/^HEAD -> /, '').replace(/^tag: /, '');
+function refLabel(ref: GitHistoryRef): string {
+  return ref.name;
+}
+
+function refsTitle(refs: GitHistoryRef[]): string {
+  return refs.map((ref) => `${ref.name} (${ref.fullName})`).join('\n');
+}
+
+function historyRowTitle(commit: GitCommit, refs: GitHistoryRef[]): string {
+  const parts = [
+    `${commit.shortHash} ${commit.subject}`,
+    `作者：${commit.author}`,
+    `时间：${commit.date}`,
+  ];
+  if (refs.length > 0) {
+    parts.push(`引用：${refs.map((ref) => ref.name).join(', ')}`);
+  }
+  return parts.join('\n');
+}
+// 解析 origin/master 这种 upstream，注意远端分支名可能含斜杠（如 upstream/feature/a）。
+function parseUpstream(upstream?: string | null): { remote: string; branch: string } | null {
+  if (!upstream) return null;
+  const slash = upstream.indexOf('/');
+  if (slash <= 0) return null;
+  return {
+    remote: upstream.slice(0, slash),
+    branch: upstream.slice(slash + 1),
+  };
+}
+
+function buildPushCommandPreview(dialog: PushDialogState): string {
+  const parts = ['git.exe', 'push', '-v', '--progress'];
+  if (dialog.setUpstream) parts.push('-u');
+  if (dialog.followTags) parts.push('--follow-tags');
+  if (dialog.forceWithLease) parts.push('--force-with-lease');
+  parts.push(dialog.remote);
+  parts.push(`${dialog.localBranch}:${dialog.remoteBranch}`);
+  return parts.join(' ');
 }
 
 export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryChanged }) => {
@@ -73,7 +178,8 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const [action, setAction] = useState<GitAction>(null);
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
-  const [history, setHistory] = useState<GitCommit[]>([]);
+  const [historyResult, setHistoryResult] = useState<GitHistoryResult | null>(null);
+  const [selectedHistoryHash, setSelectedHistoryHash] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -86,14 +192,18 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const [commitError, setCommitError] = useState('');
   const [commitNotice, setCommitNotice] = useState('');
   const [pullDialog, setPullDialog] = useState<PullDialogState | null>(null);
+  const [pushDialog, setPushDialog] = useState<PushDialogState | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const historyGraphRef = useRef<HTMLDivElement>(null);
+  const pushLogRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     setPopover(null);
     setBranches([]);
-    setHistory([]);
+    setHistoryResult(null);
+    setSelectedHistoryHash(null);
     setStatus(null);
     if (!currentDirectory) return;
 
@@ -222,6 +332,216 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     }
   }, [onRepositoryChanged, refreshStatus, status]);
 
+  const openPushDialog = useCallback(() => {
+    if (!status || !status.hasRemote) return;
+
+    setPopover(null);
+    const localBranch = status.branch;
+    const parsed = parseUpstream(status.upstream);
+    const remote = parsed ? parsed.remote : 'origin';
+    const remoteBranch = parsed ? parsed.branch : status.branch;
+    // 没有 upstream 时默认勾选“设置上游分支”，有 upstream 时默认不勾选。
+    const setUpstream = !parsed;
+
+    setPushDialog({
+      phase: 'form',
+      remote,
+      localBranch,
+      remoteBranch,
+      setUpstream,
+      followTags: false,
+      forceWithLease: false,
+      command: '',
+      output: '',
+      error: '',
+      result: null,
+      preview: null,
+      previewLoading: false,
+      previewError: '',
+      operationId: null,
+    });
+  }, [status]);
+
+  useEffect(() => {
+    if (!status || !pushDialog || pushDialog.phase !== 'form') return;
+
+    const remote = pushDialog.remote.trim();
+    const localBranch = pushDialog.localBranch.trim();
+    const remoteBranch = pushDialog.remoteBranch.trim();
+    if (!remote || !localBranch || !remoteBranch) {
+      setPushDialog((current) => current && current.phase === 'form'
+        ? { ...current, preview: null, previewLoading: false, previewError: '' }
+        : current);
+      return;
+    }
+
+    let cancelled = false;
+    const options: GitPushOptions = {
+      path: status.repoRoot,
+      remote,
+      localBranch,
+      remoteBranch,
+      setUpstream: pushDialog.setUpstream,
+      followTags: pushDialog.followTags,
+      forceWithLease: pushDialog.forceWithLease,
+    };
+
+    const matchesCurrentDialog = (current: PushDialogState | null) => {
+      return Boolean(
+        current &&
+        current.phase === 'form' &&
+        current.remote.trim() === remote &&
+        current.localBranch.trim() === localBranch &&
+        current.remoteBranch.trim() === remoteBranch &&
+        current.setUpstream === options.setUpstream &&
+        current.followTags === options.followTags &&
+        current.forceWithLease === options.forceWithLease,
+      );
+    };
+
+    setPushDialog((current) => matchesCurrentDialog(current)
+      ? { ...current!, previewLoading: true, previewError: '' }
+      : current);
+
+    const timer = window.setTimeout(() => {
+      gitPreviewPush(options)
+        .then((preview) => {
+          if (cancelled) return;
+          setPushDialog((current) => matchesCurrentDialog(current)
+            ? { ...current!, preview, previewLoading: false, previewError: '' }
+            : current);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setPushDialog((current) => matchesCurrentDialog(current)
+            ? { ...current!, preview: null, previewLoading: false, previewError: String(err) }
+            : current);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    pushDialog?.followTags,
+    pushDialog?.forceWithLease,
+    pushDialog?.localBranch,
+    pushDialog?.phase,
+    pushDialog?.remote,
+    pushDialog?.remoteBranch,
+    pushDialog?.setUpstream,
+    status,
+  ]);
+
+  useEffect(() => {
+    if (!pushDialog || pushDialog.phase === 'form') return;
+    const element = pushLogRef.current;
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [pushDialog?.output, pushDialog?.phase]);
+
+  const submitPushDialog = useCallback(async () => {
+    if (!status || !pushDialog) return;
+
+    const remote = pushDialog.remote.trim();
+    const localBranch = pushDialog.localBranch.trim();
+    const remoteBranch = pushDialog.remoteBranch.trim();
+
+    if (!remote) {
+      setPushDialog({ ...pushDialog, error: '未配置远端仓库' });
+      return;
+    }
+    if (!localBranch || !remoteBranch) {
+      setPushDialog({ ...pushDialog, error: '分支名称不能为空' });
+      return;
+    }
+
+    const options: GitPushOptions = {
+      path: status.repoRoot,
+      remote,
+      localBranch,
+      remoteBranch,
+      setUpstream: pushDialog.setUpstream,
+      followTags: pushDialog.followTags,
+      forceWithLease: pushDialog.forceWithLease,
+      operationId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    };
+    const operationId = options.operationId ?? null;
+    const commandPreview = buildPushCommandPreview(pushDialog);
+    let unlistenPushOutput: (() => void) | null = null;
+
+    if (operationId) {
+      unlistenPushOutput = await listenGitPushOutput(operationId, (chunk) => {
+        setPushDialog((current) => current?.operationId === operationId
+          ? { ...current, output: `${current.output}${chunk}` }
+          : current);
+      });
+    }
+
+    setAction('push');
+    setPushDialog({
+      ...pushDialog,
+      phase: 'running',
+      error: '',
+      output: `${commandPreview}\n\n正在推送...\n`,
+      command: commandPreview,
+      result: null,
+      operationId,
+    });
+
+    try {
+      const result = await gitPushWithOptions(options);
+      await refreshStatus();
+      await onRepositoryChanged?.();
+      setPopover(null);
+      setPushDialog((current) => current?.operationId === operationId
+        ? {
+            ...current,
+            phase: 'success',
+            command: result.command,
+            output: result.output || current.output || '推送完成。',
+            result,
+            error: '',
+            operationId: null,
+          }
+        : {
+            ...pushDialog,
+            phase: 'success',
+            command: result.command,
+            output: result.output || '推送完成。',
+            result,
+            error: '',
+            operationId: null,
+          });
+    } catch (err) {
+      const message = String(err);
+      setPushDialog((current) => current?.operationId === operationId
+        ? {
+            ...current,
+            phase: 'error',
+            command: current.command || commandPreview,
+            output: current.output ? `${current.output}\n${message}` : message,
+            error: message,
+            result: null,
+            operationId: null,
+          }
+        : {
+            ...pushDialog,
+            phase: 'error',
+            command: commandPreview,
+            output: message,
+            error: message,
+            result: null,
+            operationId: null,
+          });
+    } finally {
+      unlistenPushOutput?.();
+      setAction(null);
+    }
+  }, [onRepositoryChanged, pushDialog, refreshStatus, status]);
+
   const loadBranches = useCallback(async () => {
     if (!status) return;
     setPopover((current) => current === 'branches' ? null : 'branches');
@@ -243,10 +563,13 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     setHistoryLoading(true);
     setHistoryError('');
     try {
-      setHistory(await gitGetHistory(status.repoRoot, 120));
+      const result = await gitGetHistory(status.repoRoot, 200);
+      setHistoryResult(result);
+      setSelectedHistoryHash(result.currentRef?.revision ?? result.commits[0]?.hash ?? null);
     } catch (err) {
       setHistoryError(`读取历史记录失败：${String(err)}`);
-      setHistory([]);
+      setHistoryResult(null);
+      setSelectedHistoryHash(null);
     } finally {
       setHistoryLoading(false);
     }
@@ -257,10 +580,16 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
 
     setChangesLoading(true);
     setCommitError('');
+    setCommitNotice('');
+    setChangedFiles([]);
+    setSelectedChangePaths(new Set());
     try {
       const files = await gitGetChangedFiles(status.repoRoot);
       setChangedFiles(files);
       setSelectedChangePaths(new Set(files.map((file) => file.path)));
+      if (files.length === 0) {
+        setCommitNotice('没有检测到可提交的变更。');
+      }
     } catch (err) {
       setCommitError(`读取变更列表失败：${String(err)}`);
       setChangedFiles([]);
@@ -353,7 +682,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     setCommitError('');
     setCommitNotice('');
     try {
-      const output = await gitCommitPaths(status.repoRoot, message, selectedPaths);
+      const output = await gitCommitPaths(currentDirectory || status.repoRoot, message, selectedPaths);
       await refreshStatus();
       await onRepositoryChanged?.();
       await loadChangedFiles();
@@ -366,6 +695,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     }
   }, [
     commitMessage,
+    currentDirectory,
     loadChangedFiles,
     onRepositoryChanged,
     refreshStatus,
@@ -378,6 +708,83 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     if (!status || (status.ahead === 0 && status.behind === 0)) return '';
     return [`↓${status.behind}`, `↑${status.ahead}`].join(' ');
   }, [status]);
+
+  const historyGraph = useMemo(() => buildHistoryGraph(historyResult), [historyResult]);
+
+  const locateCurrentHistory = useCallback(() => {
+    const targetHash = historyResult?.currentRef?.revision ?? historyResult?.commits[0]?.hash;
+    if (!targetHash) return;
+    setSelectedHistoryHash(targetHash);
+    window.requestAnimationFrame(() => {
+      historyGraphRef.current
+        ?.querySelector<HTMLElement>(`[data-commit-hash="${targetHash}"]`)
+        ?.scrollIntoView({ block: 'center' });
+    });
+  }, [historyResult]);
+
+  // 命令预览：和后端 git_push_with_options 的拼接规则保持一致。
+  const pushCommandPreview = useMemo(() => {
+    if (!pushDialog) return '';
+    return buildPushCommandPreview(pushDialog);
+  }, [pushDialog]);
+
+  const pushStatusText = (() => {
+    if (!pushDialog) return '';
+    if (pushDialog.phase === 'running') return '推送中...';
+    if (pushDialog.phase === 'error') return '推送失败';
+    if (pushDialog.phase === 'success') {
+      const count = pushDialog.result?.outgoingCommits.length ?? pushDialog.preview?.commits.length ?? 0;
+      return `推送完成：${pushDialog.localBranch} -> ${pushDialog.remote}/${pushDialog.remoteBranch}，${count} 个提交`;
+    }
+    return '';
+  })();
+
+  const renderPushCommitPreview = (compact = false) => {
+    if (!pushDialog) return null;
+
+    const commits = pushDialog.result?.outgoingCommits ?? pushDialog.preview?.commits ?? [];
+    const loading = pushDialog.phase === 'form' && pushDialog.previewLoading;
+    const error = pushDialog.phase === 'form' ? pushDialog.previewError : '';
+    const warning = pushDialog.preview?.warning;
+
+    return (
+      <div className={`git-push-preview ${compact ? 'compact' : ''}`}>
+        <div className="git-push-preview-title">
+          <span>待推送提交</span>
+          <strong>{loading ? '计算中...' : `${commits.length} 个`}</strong>
+        </div>
+        {error && <div className="git-push-preview-message error">{error}</div>}
+        {!error && warning && <div className="git-push-preview-message">{warning}</div>}
+        {!loading && !error && commits.length === 0 && (
+          <div className="git-push-preview-empty">没有待推送提交。</div>
+        )}
+        {!error && commits.length > 0 && (
+          <div className="git-push-preview-table-wrap">
+            <table className="git-push-preview-table">
+              <thead>
+                <tr>
+                  <th>提交</th>
+                  <th>作者</th>
+                  <th>日期</th>
+                  <th>消息</th>
+                </tr>
+              </thead>
+              <tbody>
+                {commits.map((commit) => (
+                  <tr key={commit.hash} title={commit.hash}>
+                    <td>{commit.shortHash}</td>
+                    <td>{commit.author}</td>
+                    <td>{commit.date}</td>
+                    <td>{commit.subject}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   if (!status) {
     return null;
@@ -408,36 +815,35 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       {syncLabel && <span className="git-sync-meta" title={buildStatusTitle(status)}>{syncLabel}</span>}
       <div className="git-actions">
         <button
-          className="git-icon-btn"
+          className="git-icon-btn pull"
           onClick={startPull}
           disabled={busy || !status.hasRemote}
           title="拉取最新代码"
         >
-          {action === 'pull' ? '...' : '↓'}
+          <GitToolbarIcon name="pull" />
         </button>
         <button
-          className="git-icon-btn"
+          className="git-icon-btn commit"
           onClick={openCommitDialog}
-          disabled={busy || !hasChanges}
-          title="提交"
+          title="提交（打开后重新检测变更）"
         >
-          ✓
+          <GitToolbarIcon name="commit" />
         </button>
         <button
-          className="git-icon-btn"
-          onClick={() => runAction('push', '推送', (repoRoot) => gitPush(repoRoot))}
+          className="git-icon-btn push"
+          onClick={openPushDialog}
           disabled={busy || !status.hasRemote}
-          title="推送"
+          title={status.hasRemote ? '推送' : '未配置远端仓库'}
         >
-          {action === 'push' ? '...' : '↑'}
+          <GitToolbarIcon name="push" />
         </button>
         <button
-          className="git-icon-btn"
+          className="git-icon-btn history"
           onClick={loadHistory}
           disabled={busy}
           title="历史记录"
         >
-          ≡
+          <GitToolbarIcon name="history" />
         </button>
       </div>
 
@@ -488,47 +894,75 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
               </div>
               <div className="git-history-toolbar-actions">
                 <span className="git-history-auto">Auto</span>
+                <button
+                  onClick={locateCurrentHistory}
+                  disabled={historyLoading || historyGraph.viewModels.length === 0}
+                  title="定位当前 HEAD"
+                >
+                  ◎
+                </button>
                 <button onClick={loadHistory} disabled={historyLoading} title="刷新">↻</button>
                 <button onClick={startPull} disabled={busy || !status.hasRemote} title="拉取">↓</button>
                 <button
-                  onClick={() => runAction('push', '推送', (repoRoot) => gitPush(repoRoot))}
+                  onClick={openPushDialog}
                   disabled={busy || !status.hasRemote}
-                  title="推送"
+                  title={status.hasRemote ? '推送' : '未配置远端仓库'}
                 >
                   ↑
                 </button>
               </div>
             </div>
 
-            <div className="git-history-graph">
+            <div className="git-history-graph" ref={historyGraphRef}>
               {historyLoading && <div className="git-history-empty">加载中...</div>}
               {!historyLoading && historyError && <div className="git-history-empty error">{historyError}</div>}
-              {!historyLoading && !historyError && history.length === 0 && (
+              {!historyLoading && !historyError && historyGraph.viewModels.length === 0 && (
                 <div className="git-history-empty">暂无历史记录</div>
               )}
-              {!historyLoading && !historyError && history.map((commit, index) => {
-                const isHead = index === 0;
-                const isMerge = commit.parents.length > 1;
-                const lane = isMerge ? 'merge' : index % 5 === 0 ? 'accent' : 'main';
+              {!historyLoading && !historyError && historyGraph.viewModels.map((viewModel) => {
+                const { commit } = viewModel;
+                const refs = sortHistoryRefs(commit.refs);
+                const visibleRefs = refs.slice(0, 3);
+                const hiddenRefs = refs.slice(3);
+                const isSelected = selectedHistoryHash === commit.hash;
+                const rowClassName = [
+                  'git-history-graph-row',
+                  viewModel.kind,
+                  isSelected ? 'selected' : '',
+                  commit.parents.length > 1 ? 'merge' : '',
+                ].filter(Boolean).join(' ');
 
                 return (
-                  <div key={commit.hash} className={`git-history-graph-row ${isHead ? 'head' : ''}`}>
-                    <div className={`git-history-lane ${lane}`}>
-                      <span className="git-history-line" />
-                      {isMerge && <span className="git-history-merge-line" />}
-                      <span className={`git-history-node ${isMerge ? 'merge' : ''} ${isHead ? 'head' : ''}`} />
+                  <div
+                    key={commit.hash}
+                    className={rowClassName}
+                    data-commit-hash={commit.hash}
+                    onClick={() => setSelectedHistoryHash(commit.hash)}
+                    title={historyRowTitle(commit, refs)}
+                  >
+                    <div className={`git-history-graph-cell ${viewModel.kind}`}>
+                      <HistoryGraphSvg viewModel={viewModel} />
                     </div>
-                    <div className="git-history-row-main" title={`${commit.shortHash} ${commit.subject}`}>
+                    <div className="git-history-row-main">
                       <span className="git-history-row-subject">{commit.subject}</span>
                       <span className="git-history-row-author">{commit.author}</span>
                       <span className="git-history-row-date">{commit.date}</span>
                     </div>
-                    <div className="git-history-row-refs">
-                      {commit.refs.slice(0, 3).map((ref) => (
-                        <span key={ref} className={`git-history-ref ${refBadgeClass(ref)}`}>
+                    <div className="git-history-row-refs" title={refsTitle(refs)}>
+                      {visibleRefs.map((ref) => (
+                        <span
+                          key={`${ref.fullName}:${ref.revision}`}
+                          className={`git-history-ref ${refBadgeClass(ref)}`}
+                          title={`${ref.fullName}\n${ref.revision}`}
+                        >
                           {refLabel(ref)}
                         </span>
                       ))}
+                      {hiddenRefs.length > 0 && (
+                        <span className="git-history-ref more" title={refsTitle(hiddenRefs)}>
+                          +{hiddenRefs.length}
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -536,13 +970,16 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
             </div>
 
             <div className="git-history-footer">
-              <span>{history.length} 个提交</span>
-              <span>{status.branch}</span>
+              <span>{historyResult?.commits.length ?? 0} 个提交</span>
+              <span>
+                {historyResult
+                  ? `${status.branch}${historyResult.ahead > 0 ? ` ↑${historyResult.ahead}` : ''}${historyResult.behind > 0 ? ` ↓${historyResult.behind}` : ''}`
+                  : status.branch}
+              </span>
             </div>
           </div>
         </div>
       )}
-
       {commitDialogOpen && (
         <div className="git-commit-dialog-backdrop" onMouseDown={(e) => {
           if (action !== 'commit' && e.target === e.currentTarget) {
@@ -866,6 +1303,169 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 >
                   关闭
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pushDialog && (
+        <div className="git-push-dialog-backdrop" onMouseDown={(e) => {
+          if (pushDialog.phase !== 'running' && e.target === e.currentTarget) {
+            setPushDialog(null);
+          }
+        }}>
+          <div className="git-push-dialog" role="dialog" aria-modal="true" aria-label="Git 推送">
+            <div className="git-push-titlebar">
+              <div className="git-push-title">
+                <span className={`git-push-state-dot ${pushDialog.phase}`} />
+                <span>{status.repoRoot} - Git推送</span>
+              </div>
+              <button
+                className="git-push-window-close"
+                onClick={() => setPushDialog(null)}
+                disabled={pushDialog.phase === 'running'}
+                title="关闭"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="git-push-body">
+              {pushDialog.phase === 'form' ? (
+                <div className="git-push-form">
+                  <div className="git-push-row">
+                    <label className="git-push-label" htmlFor="git-push-local-branch">
+                      本地分支(L):
+                    </label>
+                    <input
+                      id="git-push-local-branch"
+                      className="git-push-input"
+                      value={pushDialog.localBranch}
+                      readOnly
+                      title="推送总是使用当前检出分支"
+                    />
+                  </div>
+                  <div className="git-push-row">
+                    <label className="git-push-label" htmlFor="git-push-remote-branch">
+                      远端分支(R):
+                    </label>
+                    <input
+                      id="git-push-remote-branch"
+                      className="git-push-input"
+                      value={pushDialog.remoteBranch}
+                      onChange={(e) => setPushDialog({ ...pushDialog, remoteBranch: e.target.value, error: '' })}
+                    />
+                  </div>
+                  <div className="git-push-row">
+                    <label className="git-push-label" htmlFor="git-push-remote">
+                      远端(U):
+                    </label>
+                    <input
+                      id="git-push-remote"
+                      className="git-push-input"
+                      value={pushDialog.remote}
+                      onChange={(e) => setPushDialog({ ...pushDialog, remote: e.target.value, error: '' })}
+                    />
+                  </div>
+
+                  <div className="git-push-options">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={pushDialog.setUpstream}
+                        onChange={(e) => setPushDialog({ ...pushDialog, setUpstream: e.target.checked })}
+                      />
+                      设置上游分支(S)
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={pushDialog.followTags}
+                        onChange={(e) => setPushDialog({ ...pushDialog, followTags: e.target.checked })}
+                      />
+                      推送标签(T)
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={pushDialog.forceWithLease}
+                        onChange={(e) => setPushDialog({ ...pushDialog, forceWithLease: e.target.checked })}
+                      />
+                      强制推送(F)
+                    </label>
+                  </div>
+
+                  {pushDialog.error && <div className="git-push-form-error">{pushDialog.error}</div>}
+
+                  <div className="git-push-command" title={pushCommandPreview}>{pushCommandPreview}</div>
+                  {renderPushCommitPreview()}
+                </div>
+              ) : (
+                <div className="git-push-result">
+                  <div className="git-push-top">
+                    <div className="git-push-progress-track">
+                      <div className={`git-push-progress ${pushDialog.phase}`} />
+                    </div>
+                  </div>
+                  <div className="git-push-command" title={pushDialog.command || pushCommandPreview}>
+                    {pushDialog.command || pushCommandPreview}
+                  </div>
+                  {renderPushCommitPreview(true)}
+                  <pre
+                    ref={pushLogRef}
+                    className={`git-push-log ${pushDialog.phase === 'error' ? 'error' : ''}`}
+                  >
+                    {pushDialog.output}
+                  </pre>
+                </div>
+              )}
+            </div>
+
+            <div className="git-push-footer">
+              <span className="git-push-status-text">
+                {pushDialog.phase === 'form'
+                  ? pushDialog.previewLoading
+                    ? '正在计算待推送提交'
+                    : `准备推送 · ${pushDialog.preview?.commits.length ?? 0} 个提交`
+                  : pushStatusText}
+              </span>
+              <div className="git-push-footer-actions">
+                {pushDialog.phase === 'form' && (
+                  <>
+                    <button
+                      onClick={submitPushDialog}
+                      disabled={
+                        !pushDialog.remote.trim() ||
+                        !pushDialog.localBranch.trim() ||
+                        !pushDialog.remoteBranch.trim()
+                      }
+                    >
+                      推送(P)
+                    </button>
+                    <button onClick={() => setPushDialog(null)}>取消</button>
+                  </>
+                )}
+                {pushDialog.phase === 'running' && (
+                  <>
+                    <button disabled>推送中...</button>
+                    <button disabled>关闭</button>
+                  </>
+                )}
+                {pushDialog.phase === 'success' && (
+                  <>
+                    <button onClick={submitPushDialog}>再次推送(R)</button>
+                    <button onClick={() => setPushDialog(null)}>关闭</button>
+                  </>
+                )}
+                {pushDialog.phase === 'error' && (
+                  <>
+                    <button onClick={() => setPushDialog({ ...pushDialog, phase: 'form', error: '' })}>
+                      返回修改参数
+                    </button>
+                    <button onClick={() => setPushDialog(null)}>关闭</button>
+                  </>
+                )}
               </div>
             </div>
           </div>
