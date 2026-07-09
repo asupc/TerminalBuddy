@@ -7,11 +7,13 @@ import {
   gitGetHistory,
   gitListBranches,
   gitPull,
-  gitPush,
+  gitPushWithOptions,
   type GitBranch,
   type GitChangedFile,
   type GitCommit,
   type GitPullResult,
+  type GitPushOptions,
+  type GitPushResult,
   type GitRepositoryStatus,
 } from '../services/tauri';
 
@@ -26,6 +28,22 @@ type PullDialogState = {
   result?: GitPullResult;
   error?: string;
 };
+
+type PushPhase = 'form' | 'running' | 'success' | 'error';
+
+interface PushDialogState {
+  phase: PushPhase;
+  remote: string;
+  localBranch: string;
+  remoteBranch: string;
+  setUpstream: boolean;
+  followTags: boolean;
+  forceWithLease: boolean;
+  command: string;
+  output: string;
+  error: string;
+  result: GitPushResult | null;
+}
 
 interface GitNavBarProps {
   currentDirectory: string;
@@ -66,6 +84,17 @@ function refLabel(ref: string): string {
   return ref.replace(/^HEAD -> /, '').replace(/^tag: /, '');
 }
 
+// 解析 origin/master 这种 upstream，注意远端分支名可能含斜杠（如 upstream/feature/a）。
+function parseUpstream(upstream?: string | null): { remote: string; branch: string } | null {
+  if (!upstream) return null;
+  const slash = upstream.indexOf('/');
+  if (slash <= 0) return null;
+  return {
+    remote: upstream.slice(0, slash),
+    branch: upstream.slice(slash + 1),
+  };
+}
+
 export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryChanged }) => {
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -86,6 +115,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const [commitError, setCommitError] = useState('');
   const [commitNotice, setCommitNotice] = useState('');
   const [pullDialog, setPullDialog] = useState<PullDialogState | null>(null);
+  const [pushDialog, setPushDialog] = useState<PushDialogState | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -221,6 +251,96 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       setAction(null);
     }
   }, [onRepositoryChanged, refreshStatus, status]);
+
+  const openPushDialog = useCallback(() => {
+    if (!status || !status.hasRemote) return;
+
+    setPopover(null);
+    const localBranch = status.branch;
+    const parsed = parseUpstream(status.upstream);
+    const remote = parsed ? parsed.remote : 'origin';
+    const remoteBranch = parsed ? parsed.branch : status.branch;
+    // 没有 upstream 时默认勾选“设置上游分支”，有 upstream 时默认不勾选。
+    const setUpstream = !parsed;
+
+    setPushDialog({
+      phase: 'form',
+      remote,
+      localBranch,
+      remoteBranch,
+      setUpstream,
+      followTags: false,
+      forceWithLease: false,
+      command: '',
+      output: '',
+      error: '',
+      result: null,
+    });
+  }, [status]);
+
+  const submitPushDialog = useCallback(async () => {
+    if (!status || !pushDialog) return;
+
+    const remote = pushDialog.remote.trim();
+    const localBranch = pushDialog.localBranch.trim();
+    const remoteBranch = pushDialog.remoteBranch.trim();
+
+    if (!remote) {
+      setPushDialog({ ...pushDialog, error: '未配置远端仓库' });
+      return;
+    }
+    if (!localBranch || !remoteBranch) {
+      setPushDialog({ ...pushDialog, error: '分支名称不能为空' });
+      return;
+    }
+
+    const options: GitPushOptions = {
+      path: status.repoRoot,
+      remote,
+      localBranch,
+      remoteBranch,
+      setUpstream: pushDialog.setUpstream,
+      followTags: pushDialog.followTags,
+      forceWithLease: pushDialog.forceWithLease,
+    };
+
+    setAction('push');
+    setPushDialog({
+      ...pushDialog,
+      phase: 'running',
+      error: '',
+      output: '',
+      command: '',
+      result: null,
+    });
+
+    try {
+      const result = await gitPushWithOptions(options);
+      await refreshStatus();
+      await onRepositoryChanged?.();
+      setPopover(null);
+      setPushDialog({
+        ...pushDialog,
+        phase: 'success',
+        command: result.command,
+        output: result.output || '推送完成。',
+        result,
+        error: '',
+      });
+    } catch (err) {
+      const message = String(err);
+      setPushDialog({
+        ...pushDialog,
+        phase: 'error',
+        command: '',
+        output: message,
+        error: message,
+        result: null,
+      });
+    } finally {
+      setAction(null);
+    }
+  }, [onRepositoryChanged, pushDialog, refreshStatus, status]);
 
   const loadBranches = useCallback(async () => {
     if (!status) return;
@@ -379,6 +499,28 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     return [`↓${status.behind}`, `↑${status.ahead}`].join(' ');
   }, [status]);
 
+  // 命令预览：和后端 git_push_with_options 的拼接规则保持一致。
+  const pushCommandPreview = useMemo(() => {
+    if (!pushDialog) return '';
+    const parts = ['git.exe', 'push', '-v', '--progress'];
+    if (pushDialog.setUpstream) parts.push('-u');
+    if (pushDialog.followTags) parts.push('--follow-tags');
+    if (pushDialog.forceWithLease) parts.push('--force-with-lease');
+    parts.push(pushDialog.remote);
+    parts.push(`${pushDialog.localBranch}:${pushDialog.remoteBranch}`);
+    return parts.join(' ');
+  }, [pushDialog]);
+
+  const pushStatusText = (() => {
+    if (!pushDialog) return '';
+    if (pushDialog.phase === 'running') return '推送中...';
+    if (pushDialog.phase === 'error') return '推送失败';
+    if (pushDialog.phase === 'success') {
+      return `推送完成：${pushDialog.localBranch} -> ${pushDialog.remote}/${pushDialog.remoteBranch}`;
+    }
+    return '';
+  })();
+
   if (!status) {
     return null;
   }
@@ -425,9 +567,9 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
         </button>
         <button
           className="git-icon-btn"
-          onClick={() => runAction('push', '推送', (repoRoot) => gitPush(repoRoot))}
+          onClick={openPushDialog}
           disabled={busy || !status.hasRemote}
-          title="推送"
+          title={status.hasRemote ? '推送' : '未配置远端仓库'}
         >
           {action === 'push' ? '...' : '↑'}
         </button>
@@ -491,9 +633,9 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 <button onClick={loadHistory} disabled={historyLoading} title="刷新">↻</button>
                 <button onClick={startPull} disabled={busy || !status.hasRemote} title="拉取">↓</button>
                 <button
-                  onClick={() => runAction('push', '推送', (repoRoot) => gitPush(repoRoot))}
+                  onClick={openPushDialog}
                   disabled={busy || !status.hasRemote}
-                  title="推送"
+                  title={status.hasRemote ? '推送' : '未配置远端仓库'}
                 >
                   ↑
                 </button>
@@ -866,6 +1008,160 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 >
                   关闭
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pushDialog && (
+        <div className="git-push-dialog-backdrop" onMouseDown={(e) => {
+          if (pushDialog.phase !== 'running' && e.target === e.currentTarget) {
+            setPushDialog(null);
+          }
+        }}>
+          <div className="git-push-dialog" role="dialog" aria-modal="true" aria-label="Git 推送">
+            <div className="git-push-titlebar">
+              <div className="git-push-title">
+                <span className={`git-push-state-dot ${pushDialog.phase}`} />
+                <span>{status.repoRoot} - Git推送</span>
+              </div>
+              <button
+                className="git-push-window-close"
+                onClick={() => setPushDialog(null)}
+                disabled={pushDialog.phase === 'running'}
+                title="关闭"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="git-push-body">
+              {pushDialog.phase === 'form' ? (
+                <div className="git-push-form">
+                  <div className="git-push-row">
+                    <label className="git-push-label" htmlFor="git-push-local-branch">
+                      本地分支(L):
+                    </label>
+                    <input
+                      id="git-push-local-branch"
+                      className="git-push-input"
+                      value={pushDialog.localBranch}
+                      readOnly
+                      title="推送总是使用当前检出分支"
+                    />
+                  </div>
+                  <div className="git-push-row">
+                    <label className="git-push-label" htmlFor="git-push-remote-branch">
+                      远端分支(R):
+                    </label>
+                    <input
+                      id="git-push-remote-branch"
+                      className="git-push-input"
+                      value={pushDialog.remoteBranch}
+                      onChange={(e) => setPushDialog({ ...pushDialog, remoteBranch: e.target.value, error: '' })}
+                    />
+                  </div>
+                  <div className="git-push-row">
+                    <label className="git-push-label" htmlFor="git-push-remote">
+                      远端(U):
+                    </label>
+                    <input
+                      id="git-push-remote"
+                      className="git-push-input"
+                      value={pushDialog.remote}
+                      onChange={(e) => setPushDialog({ ...pushDialog, remote: e.target.value, error: '' })}
+                    />
+                  </div>
+
+                  <div className="git-push-options">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={pushDialog.setUpstream}
+                        onChange={(e) => setPushDialog({ ...pushDialog, setUpstream: e.target.checked })}
+                      />
+                      设置上游分支(S)
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={pushDialog.followTags}
+                        onChange={(e) => setPushDialog({ ...pushDialog, followTags: e.target.checked })}
+                      />
+                      推送标签(T)
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={pushDialog.forceWithLease}
+                        onChange={(e) => setPushDialog({ ...pushDialog, forceWithLease: e.target.checked })}
+                      />
+                      强制推送(F)
+                    </label>
+                  </div>
+
+                  {pushDialog.error && <div className="git-push-form-error">{pushDialog.error}</div>}
+
+                  <div className="git-push-command" title={pushCommandPreview}>{pushCommandPreview}</div>
+                </div>
+              ) : (
+                <div className="git-push-result">
+                  <div className="git-push-top">
+                    <div className="git-push-progress-track">
+                      <div className={`git-push-progress ${pushDialog.phase}`} />
+                    </div>
+                  </div>
+                  <div className="git-push-command" title={pushDialog.command || pushCommandPreview}>
+                    {pushDialog.command || pushCommandPreview}
+                  </div>
+                  <pre className={`git-push-log ${pushDialog.phase === 'error' ? 'error' : ''}`}>
+                    {pushDialog.output}
+                  </pre>
+                </div>
+              )}
+            </div>
+
+            <div className="git-push-footer">
+              <span className="git-push-status-text">
+                {pushDialog.phase === 'form' ? '准备推送' : pushStatusText}
+              </span>
+              <div className="git-push-footer-actions">
+                {pushDialog.phase === 'form' && (
+                  <>
+                    <button
+                      onClick={submitPushDialog}
+                      disabled={
+                        !pushDialog.remote.trim() ||
+                        !pushDialog.localBranch.trim() ||
+                        !pushDialog.remoteBranch.trim()
+                      }
+                    >
+                      推送(P)
+                    </button>
+                    <button onClick={() => setPushDialog(null)}>取消</button>
+                  </>
+                )}
+                {pushDialog.phase === 'running' && (
+                  <>
+                    <button disabled>推送中...</button>
+                    <button disabled>关闭</button>
+                  </>
+                )}
+                {pushDialog.phase === 'success' && (
+                  <>
+                    <button onClick={submitPushDialog}>再次推送(R)</button>
+                    <button onClick={() => setPushDialog(null)}>关闭</button>
+                  </>
+                )}
+                {pushDialog.phase === 'error' && (
+                  <>
+                    <button onClick={() => setPushDialog({ ...pushDialog, phase: 'form', error: '' })}>
+                      返回修改参数
+                    </button>
+                    <button onClick={() => setPushDialog(null)}>关闭</button>
+                  </>
+                )}
               </div>
             </div>
           </div>

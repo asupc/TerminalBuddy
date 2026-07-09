@@ -171,6 +171,24 @@ export interface GitPullResult {
   updatedCommits: GitCommit[];
 }
 
+export interface GitPushOptions {
+  path: string;
+  remote: string;
+  localBranch: string;
+  remoteBranch: string;
+  setUpstream: boolean;
+  followTags: boolean;
+  forceWithLease: boolean;
+}
+
+export interface GitPushResult {
+  command: string;
+  output: string;
+  remote: string;
+  localBranch: string;
+  remoteBranch: string;
+}
+
 export interface GitChangedFile {
   path: string;
   extension: string;
@@ -189,6 +207,8 @@ export const gitCheckoutBranch = (path: string, branch: string) =>
   invoke<string>('git_checkout_branch', { path, branch });
 export const gitPull = (path: string) => invoke<GitPullResult>('git_pull', { path });
 export const gitPush = (path: string) => invoke<string>('git_push', { path });
+export const gitPushWithOptions = (options: GitPushOptions) =>
+  invoke<GitPushResult>('git_push_with_options', { options });
 export const gitCommitAll = (path: string, message: string) =>
   invoke<string>('git_commit_all', { path, message });
 export const gitGetChangedFiles = (path: string) =>

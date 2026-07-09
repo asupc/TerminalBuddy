@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,6 +55,28 @@ pub struct GitPullResult {
     old_head: Option<String>,
     new_head: Option<String>,
     updated_commits: Vec<GitCommit>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitPushResult {
+    command: String,
+    output: String,
+    remote: String,
+    local_branch: String,
+    remote_branch: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitPushOptions {
+    path: String,
+    remote: String,
+    local_branch: String,
+    remote_branch: String,
+    set_upstream: bool,
+    follow_tags: bool,
+    force_with_lease: bool,
 }
 
 #[derive(Serialize)]
@@ -517,6 +539,57 @@ pub async fn git_push(path: String) -> Result<String, String> {
 fn git_push_impl(path: String) -> Result<String, String> {
     let root = require_repo_root(&path)?;
     run_git(&root, &["push"])
+}
+
+#[command]
+pub async fn git_push_with_options(options: GitPushOptions) -> Result<GitPushResult, String> {
+    git_task(move || git_push_with_options_impl(options)).await
+}
+
+fn git_push_with_options_impl(options: GitPushOptions) -> Result<GitPushResult, String> {
+    let root = require_repo_root(&options.path)?;
+
+    let remote = options.remote.trim();
+    if remote.is_empty() {
+        return Err("未配置远端仓库".to_string());
+    }
+
+    let local_branch = options.local_branch.trim();
+    let remote_branch = options.remote_branch.trim();
+    if local_branch.is_empty() || remote_branch.is_empty() {
+        return Err("分支名称不能为空".to_string());
+    }
+
+    // 始终用 Vec 参数调用 git，绝不拼 shell 字符串执行。
+    let mut args: Vec<String> = vec![
+        "push".to_string(),
+        "-v".to_string(),
+        "--progress".to_string(),
+    ];
+    if options.set_upstream {
+        args.push("-u".to_string());
+    }
+    if options.follow_tags {
+        args.push("--follow-tags".to_string());
+    }
+    if options.force_with_lease {
+        // 强制推送只用 --force-with-lease，禁止 --force。
+        args.push("--force-with-lease".to_string());
+    }
+    args.push(remote.to_string());
+    args.push(format!("{}:{}", local_branch, remote_branch));
+
+    let command = format!("git.exe {}", args.join(" "));
+    let arg_refs: Vec<&str> = args.iter().map(|value| value.as_str()).collect();
+    let output = run_git_capture(&root, &arg_refs)?;
+
+    Ok(GitPushResult {
+        command,
+        output: combine_git_output(&output),
+        remote: remote.to_string(),
+        local_branch: local_branch.to_string(),
+        remote_branch: remote_branch.to_string(),
+    })
 }
 
 #[command]
