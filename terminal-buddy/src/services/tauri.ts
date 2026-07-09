@@ -202,6 +202,7 @@ export interface GitPushOptions {
   setUpstream: boolean;
   followTags: boolean;
   forceWithLease: boolean;
+  operationId?: string | null;
 }
 
 export interface GitPushResult {
@@ -210,6 +211,23 @@ export interface GitPushResult {
   remote: string;
   localBranch: string;
   remoteBranch: string;
+  outgoingCommits: GitCommit[];
+}
+
+export interface GitPushPreview {
+  command: string;
+  remote: string;
+  localBranch: string;
+  remoteBranch: string;
+  targetRef: string;
+  targetExists: boolean;
+  commits: GitCommit[];
+  warning: string | null;
+}
+
+export interface GitPushOutputEvent {
+  operationId: string;
+  chunk: string;
 }
 
 export interface GitChangedFile {
@@ -230,8 +248,18 @@ export const gitCheckoutBranch = (path: string, branch: string) =>
   invoke<string>('git_checkout_branch', { path, branch });
 export const gitPull = (path: string) => invoke<GitPullResult>('git_pull', { path });
 export const gitPush = (path: string) => invoke<string>('git_push', { path });
+export const gitPreviewPush = (options: GitPushOptions) =>
+  invoke<GitPushPreview>('git_preview_push', { options });
 export const gitPushWithOptions = (options: GitPushOptions) =>
   invoke<GitPushResult>('git_push_with_options', { options });
+export const listenGitPushOutput = (
+  operationId: string,
+  callback: (chunk: string) => void,
+) => listen<GitPushOutputEvent>('git_push_output', (event) => {
+  if (event.payload.operationId === operationId) {
+    callback(event.payload.chunk);
+  }
+});
 export const gitCommitAll = (path: string, message: string) =>
   invoke<string>('git_commit_all', { path, message });
 export const gitGetChangedFiles = (path: string) =>

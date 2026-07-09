@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use tauri::command;
+use std::sync::mpsc;
+use std::time::Duration;
+use tauri::{command, Emitter};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -82,7 +85,7 @@ pub struct GitPullResult {
     updated_commits: Vec<GitCommit>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitPushResult {
     command: String,
@@ -90,6 +93,20 @@ pub struct GitPushResult {
     remote: String,
     local_branch: String,
     remote_branch: String,
+    outgoing_commits: Vec<GitCommit>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitPushPreview {
+    command: String,
+    remote: String,
+    local_branch: String,
+    remote_branch: String,
+    target_ref: String,
+    target_exists: bool,
+    commits: Vec<GitCommit>,
+    warning: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +119,14 @@ pub struct GitPushOptions {
     set_upstream: bool,
     follow_tags: bool,
     force_with_lease: bool,
+    operation_id: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitPushOutputEvent {
+    operation_id: String,
+    chunk: String,
 }
 
 #[derive(Serialize)]
@@ -184,14 +209,10 @@ fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<GitCommandOutput, String
 }
 
 fn combine_git_output(output: &GitCommandOutput) -> String {
-    let mut parts = Vec::new();
-    if !output.stdout.trim().is_empty() {
-        parts.push(output.stdout.as_str());
-    }
-    if !output.stderr.trim().is_empty() {
-        parts.push(output.stderr.as_str());
-    }
+    normalize_git_output(&[output.stdout.as_str(), output.stderr.as_str()])
+}
 
+fn normalize_git_output(parts: &[&str]) -> String {
     parts
         .join("\n")
         .replace('\r', "\n")
@@ -201,6 +222,128 @@ fn combine_git_output(output: &GitCommandOutput) -> String {
         .join("\n")
         .trim()
         .to_string()
+}
+
+fn emit_git_push_chunk(app: &tauri::AppHandle, operation_id: Option<&str>, chunk: &str) {
+    let Some(operation_id) = operation_id else {
+        return;
+    };
+    if chunk.is_empty() {
+        return;
+    }
+
+    let _ = app.emit(
+        "git_push_output",
+        GitPushOutputEvent {
+            operation_id: operation_id.to_string(),
+            chunk: chunk.to_string(),
+        },
+    );
+}
+
+fn spawn_git_output_reader<R>(
+    mut reader: R,
+    tx: mpsc::Sender<String>,
+) -> std::thread::JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut buffer = [0_u8; 4096];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(size) => {
+                    let chunk = String::from_utf8_lossy(&buffer[..size])
+                        .replace('\r', "\n");
+                    let _ = tx.send(chunk);
+                }
+                Err(_) => break,
+            }
+        }
+    })
+}
+
+fn run_git_streaming(
+    cwd: &Path,
+    args: &[&str],
+    app: &tauri::AppHandle,
+    operation_id: Option<&str>,
+) -> Result<String, String> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(cwd)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "Never")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("无法运行 git：{}", e))?;
+
+    let (tx, rx) = mpsc::channel::<String>();
+    let mut readers = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        readers.push(spawn_git_output_reader(stdout, tx.clone()));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        readers.push(spawn_git_output_reader(stderr, tx.clone()));
+    }
+    drop(tx);
+
+    let mut output = String::new();
+    let status = loop {
+        while let Ok(chunk) = rx.try_recv() {
+            output.push_str(&chunk);
+            emit_git_push_chunk(app, operation_id, &chunk);
+        }
+
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("读取 git 状态失败：{}", e))?
+        {
+            break status;
+        }
+
+        match rx.recv_timeout(Duration::from_millis(80)) {
+            Ok(chunk) => {
+                output.push_str(&chunk);
+                emit_git_push_chunk(app, operation_id, &chunk);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                std::thread::sleep(Duration::from_millis(80));
+            }
+        }
+    };
+
+    for reader in readers {
+        let _ = reader.join();
+    }
+
+    while let Ok(chunk) = rx.try_recv() {
+        output.push_str(&chunk);
+        emit_git_push_chunk(app, operation_id, &chunk);
+    }
+
+    let normalized = normalize_git_output(&[output.as_str()]);
+    if status.success() {
+        Ok(normalized)
+    } else if !normalized.is_empty() {
+        Err(normalized)
+    } else {
+        Err(format!(
+            "git {:?} 退出码 {}",
+            args,
+            status.code().unwrap_or(-1)
+        ))
+    }
 }
 
 fn repo_root_for_path(path: &str) -> Result<Option<PathBuf>, String> {
@@ -1002,24 +1145,7 @@ fn git_pull_impl(path: String) -> Result<GitPullResult, String> {
     })
 }
 
-#[command]
-pub async fn git_push(path: String) -> Result<String, String> {
-    git_task(move || git_push_impl(path)).await
-}
-
-fn git_push_impl(path: String) -> Result<String, String> {
-    let root = require_repo_root(&path)?;
-    run_git(&root, &["push"])
-}
-
-#[command]
-pub async fn git_push_with_options(options: GitPushOptions) -> Result<GitPushResult, String> {
-    git_task(move || git_push_with_options_impl(options)).await
-}
-
-fn git_push_with_options_impl(options: GitPushOptions) -> Result<GitPushResult, String> {
-    let root = require_repo_root(&options.path)?;
-
+fn normalize_push_options(options: &GitPushOptions) -> Result<(String, String, String), String> {
     let remote = options.remote.trim();
     if remote.is_empty() {
         return Err("未配置远端仓库".to_string());
@@ -1031,7 +1157,19 @@ fn git_push_with_options_impl(options: GitPushOptions) -> Result<GitPushResult, 
         return Err("分支名称不能为空".to_string());
     }
 
-    // 始终用 Vec 参数调用 git，绝不拼 shell 字符串执行。
+    Ok((
+        remote.to_string(),
+        local_branch.to_string(),
+        remote_branch.to_string(),
+    ))
+}
+
+fn build_push_args(
+    options: &GitPushOptions,
+    remote: &str,
+    local_branch: &str,
+    remote_branch: &str,
+) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "push".to_string(),
         "-v".to_string(),
@@ -1044,22 +1182,168 @@ fn git_push_with_options_impl(options: GitPushOptions) -> Result<GitPushResult, 
         args.push("--follow-tags".to_string());
     }
     if options.force_with_lease {
-        // 强制推送只用 --force-with-lease，禁止 --force。
         args.push("--force-with-lease".to_string());
     }
     args.push(remote.to_string());
     args.push(format!("{}:{}", local_branch, remote_branch));
+    args
+}
 
-    let command = format!("git.exe {}", args.join(" "));
+fn push_command_preview(args: &[String]) -> String {
+    format!("git.exe {}", args.join(" "))
+}
+
+fn remote_tracking_ref(remote: &str, remote_branch: &str) -> String {
+    let branch = remote_branch
+        .strip_prefix("refs/heads/")
+        .unwrap_or(remote_branch)
+        .trim_matches('/');
+    format!("refs/remotes/{}/{}", remote, branch)
+}
+
+fn push_log_args(local_branch: &str, target_ref: &str, target_exists: bool) -> Vec<String> {
+    let mut args = vec![
+        "log".to_string(),
+        "-n100".to_string(),
+        "--date=short".to_string(),
+        "--pretty=format:%H%x1f%h%x1f%P%x1f%D%x1f%an%x1f%ad%x1f%s%x1e".to_string(),
+    ];
+    if target_exists {
+        args.push(format!("{}..{}", target_ref, local_branch));
+    } else {
+        args.push(local_branch.to_string());
+    }
+    args
+}
+
+fn git_log_commits_owned(root: &Path, args: &[String]) -> Result<Vec<GitCommit>, String> {
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    git_log_commits(root, &arg_refs)
+}
+
+fn preview_push_impl(options: GitPushOptions) -> Result<GitPushPreview, String> {
+    let root = require_repo_root(&options.path)?;
+    let (remote, local_branch, remote_branch) = normalize_push_options(&options)?;
+
+    run_git(
+        &root,
+        &["rev-parse", "--verify", "--quiet", local_branch.as_str()],
+    )
+    .map_err(|_| format!("本地分支不存在：{}", local_branch))?;
+
+    let args = build_push_args(&options, &remote, &local_branch, &remote_branch);
+    let target_ref = remote_tracking_ref(&remote, &remote_branch);
+    let target_exists = run_git(
+        &root,
+        &["rev-parse", "--verify", "--quiet", target_ref.as_str()],
+    )
+    .is_ok();
+
+    let mut warning = None;
+    let commits = if target_exists {
+        git_log_commits_owned(&root, &push_log_args(&local_branch, &target_ref, true))?
+    } else {
+        warning = Some("远端分支尚未在本地缓存中找到，将按新分支推送预览。".to_string());
+        let remote_refs_prefix = format!("refs/remotes/{}", remote);
+        let remote_refs = run_git(
+            &root,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                remote_refs_prefix.as_str(),
+            ],
+        )
+        .unwrap_or_default();
+        let refs = remote_refs
+            .lines()
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && !value.ends_with("/HEAD"))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        let mut log_args = push_log_args(&local_branch, &target_ref, false);
+        if refs.is_empty() {
+            warning =
+                Some("本地没有该远端的引用缓存，预览显示本地分支最近 100 条提交。".to_string());
+        } else {
+            log_args.push("--not".to_string());
+            log_args.extend(refs);
+        }
+        git_log_commits_owned(&root, &log_args)?
+    };
+
+    Ok(GitPushPreview {
+        command: push_command_preview(&args),
+        remote,
+        local_branch,
+        remote_branch,
+        target_ref,
+        target_exists,
+        commits,
+        warning,
+    })
+}
+
+#[command]
+pub async fn git_preview_push(options: GitPushOptions) -> Result<GitPushPreview, String> {
+    git_task(move || preview_push_impl(options)).await
+}
+
+#[command]
+pub async fn git_push(path: String) -> Result<String, String> {
+    git_task(move || git_push_impl(path)).await
+}
+
+fn git_push_impl(path: String) -> Result<String, String> {
+    let root = require_repo_root(&path)?;
+    run_git(&root, &["push"])
+}
+
+#[command]
+pub async fn git_push_with_options(
+    app: tauri::AppHandle,
+    options: GitPushOptions,
+) -> Result<GitPushResult, String> {
+    git_task(move || git_push_with_options_impl(app, options)).await
+}
+
+fn git_push_with_options_impl(
+    app: tauri::AppHandle,
+    options: GitPushOptions,
+) -> Result<GitPushResult, String> {
+    let root = require_repo_root(&options.path)?;
+    let preview = preview_push_impl(GitPushOptions {
+        path: options.path.clone(),
+        remote: options.remote.clone(),
+        local_branch: options.local_branch.clone(),
+        remote_branch: options.remote_branch.clone(),
+        set_upstream: options.set_upstream,
+        follow_tags: options.follow_tags,
+        force_with_lease: options.force_with_lease,
+        operation_id: None,
+    })?;
+    let args = build_push_args(
+        &options,
+        &preview.remote,
+        &preview.local_branch,
+        &preview.remote_branch,
+    );
+    let command = push_command_preview(&args);
     let arg_refs: Vec<&str> = args.iter().map(|value| value.as_str()).collect();
-    let output = run_git_capture(&root, &arg_refs)?;
+    let output = run_git_streaming(
+        &root,
+        &arg_refs,
+        &app,
+        options.operation_id.as_deref(),
+    )?;
 
     Ok(GitPushResult {
         command,
-        output: combine_git_output(&output),
-        remote: remote.to_string(),
-        local_branch: local_branch.to_string(),
-        remote_branch: remote_branch.to_string(),
+        output,
+        remote: preview.remote,
+        local_branch: preview.local_branch,
+        remote_branch: preview.remote_branch,
+        outgoing_commits: preview.commits,
     })
 }
 

@@ -6,13 +6,16 @@ import {
   gitGetChangedFiles,
   gitGetHistory,
   gitListBranches,
+  gitPreviewPush,
   gitPull,
   gitPushWithOptions,
+  listenGitPushOutput,
   type GitBranch,
   type GitChangedFile,
   type GitCommit,
   type GitHistoryRef,
   type GitHistoryResult,
+  type GitPushPreview,
   type GitPullResult,
   type GitPushOptions,
   type GitPushResult,
@@ -24,6 +27,7 @@ import { buildHistoryGraph, sortHistoryRefs } from './gitHistoryGraph';
 type GitPopover = 'branches' | null;
 type GitAction = 'checkout' | 'commit' | 'pull' | 'push' | null;
 type PullDialogTab = 'log' | 'commits' | 'refs';
+type GitToolbarIconName = 'pull' | 'commit' | 'push' | 'history';
 type PullDialogState = {
   phase: 'running' | 'success' | 'error';
   command: string;
@@ -47,11 +51,51 @@ interface PushDialogState {
   output: string;
   error: string;
   result: GitPushResult | null;
+  preview: GitPushPreview | null;
+  previewLoading: boolean;
+  previewError: string;
+  operationId: string | null;
 }
 
 interface GitNavBarProps {
   currentDirectory: string;
   onRepositoryChanged?: () => void | Promise<void>;
+}
+
+function GitToolbarIcon({ name }: { name: GitToolbarIconName }) {
+  if (name === 'pull') {
+    return (
+      <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M14.5 5.5 7.5 12.5" />
+        <path d="M7.5 12.5h5.5" />
+        <path d="M7.5 12.5V7" />
+      </svg>
+    );
+  }
+
+  if (name === 'commit') {
+    return (
+      <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="m4.5 10.5 3.4 3.4 7.6-7.6" />
+      </svg>
+    );
+  }
+
+  if (name === 'push') {
+    return (
+      <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M5.5 14.5 14.5 5.5" />
+        <path d="M9.5 5.5h5v5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="git-toolbar-icon" viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r="7" />
+      <path d="M10 5.8V10l3.1 2" />
+    </svg>
+  );
 }
 
 function compactOutput(output: string): string {
@@ -117,6 +161,16 @@ function parseUpstream(upstream?: string | null): { remote: string; branch: stri
   };
 }
 
+function buildPushCommandPreview(dialog: PushDialogState): string {
+  const parts = ['git.exe', 'push', '-v', '--progress'];
+  if (dialog.setUpstream) parts.push('-u');
+  if (dialog.followTags) parts.push('--follow-tags');
+  if (dialog.forceWithLease) parts.push('--force-with-lease');
+  parts.push(dialog.remote);
+  parts.push(`${dialog.localBranch}:${dialog.remoteBranch}`);
+  return parts.join(' ');
+}
+
 export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryChanged }) => {
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -141,6 +195,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const [pushDialog, setPushDialog] = useState<PushDialogState | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const historyGraphRef = useRef<HTMLDivElement>(null);
+  const pushLogRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -300,8 +355,92 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       output: '',
       error: '',
       result: null,
+      preview: null,
+      previewLoading: false,
+      previewError: '',
+      operationId: null,
     });
   }, [status]);
+
+  useEffect(() => {
+    if (!status || !pushDialog || pushDialog.phase !== 'form') return;
+
+    const remote = pushDialog.remote.trim();
+    const localBranch = pushDialog.localBranch.trim();
+    const remoteBranch = pushDialog.remoteBranch.trim();
+    if (!remote || !localBranch || !remoteBranch) {
+      setPushDialog((current) => current && current.phase === 'form'
+        ? { ...current, preview: null, previewLoading: false, previewError: '' }
+        : current);
+      return;
+    }
+
+    let cancelled = false;
+    const options: GitPushOptions = {
+      path: status.repoRoot,
+      remote,
+      localBranch,
+      remoteBranch,
+      setUpstream: pushDialog.setUpstream,
+      followTags: pushDialog.followTags,
+      forceWithLease: pushDialog.forceWithLease,
+    };
+
+    const matchesCurrentDialog = (current: PushDialogState | null) => {
+      return Boolean(
+        current &&
+        current.phase === 'form' &&
+        current.remote.trim() === remote &&
+        current.localBranch.trim() === localBranch &&
+        current.remoteBranch.trim() === remoteBranch &&
+        current.setUpstream === options.setUpstream &&
+        current.followTags === options.followTags &&
+        current.forceWithLease === options.forceWithLease,
+      );
+    };
+
+    setPushDialog((current) => matchesCurrentDialog(current)
+      ? { ...current!, previewLoading: true, previewError: '' }
+      : current);
+
+    const timer = window.setTimeout(() => {
+      gitPreviewPush(options)
+        .then((preview) => {
+          if (cancelled) return;
+          setPushDialog((current) => matchesCurrentDialog(current)
+            ? { ...current!, preview, previewLoading: false, previewError: '' }
+            : current);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setPushDialog((current) => matchesCurrentDialog(current)
+            ? { ...current!, preview: null, previewLoading: false, previewError: String(err) }
+            : current);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    pushDialog?.followTags,
+    pushDialog?.forceWithLease,
+    pushDialog?.localBranch,
+    pushDialog?.phase,
+    pushDialog?.remote,
+    pushDialog?.remoteBranch,
+    pushDialog?.setUpstream,
+    status,
+  ]);
+
+  useEffect(() => {
+    if (!pushDialog || pushDialog.phase === 'form') return;
+    const element = pushLogRef.current;
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [pushDialog?.output, pushDialog?.phase]);
 
   const submitPushDialog = useCallback(async () => {
     if (!status || !pushDialog) return;
@@ -327,16 +466,29 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       setUpstream: pushDialog.setUpstream,
       followTags: pushDialog.followTags,
       forceWithLease: pushDialog.forceWithLease,
+      operationId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     };
+    const operationId = options.operationId ?? null;
+    const commandPreview = buildPushCommandPreview(pushDialog);
+    let unlistenPushOutput: (() => void) | null = null;
+
+    if (operationId) {
+      unlistenPushOutput = await listenGitPushOutput(operationId, (chunk) => {
+        setPushDialog((current) => current?.operationId === operationId
+          ? { ...current, output: `${current.output}${chunk}` }
+          : current);
+      });
+    }
 
     setAction('push');
     setPushDialog({
       ...pushDialog,
       phase: 'running',
       error: '',
-      output: '',
-      command: '',
+      output: `${commandPreview}\n\n正在推送...\n`,
+      command: commandPreview,
       result: null,
+      operationId,
     });
 
     try {
@@ -344,25 +496,48 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       await refreshStatus();
       await onRepositoryChanged?.();
       setPopover(null);
-      setPushDialog({
-        ...pushDialog,
-        phase: 'success',
-        command: result.command,
-        output: result.output || '推送完成。',
-        result,
-        error: '',
-      });
+      setPushDialog((current) => current?.operationId === operationId
+        ? {
+            ...current,
+            phase: 'success',
+            command: result.command,
+            output: result.output || current.output || '推送完成。',
+            result,
+            error: '',
+            operationId: null,
+          }
+        : {
+            ...pushDialog,
+            phase: 'success',
+            command: result.command,
+            output: result.output || '推送完成。',
+            result,
+            error: '',
+            operationId: null,
+          });
     } catch (err) {
       const message = String(err);
-      setPushDialog({
-        ...pushDialog,
-        phase: 'error',
-        command: '',
-        output: message,
-        error: message,
-        result: null,
-      });
+      setPushDialog((current) => current?.operationId === operationId
+        ? {
+            ...current,
+            phase: 'error',
+            command: current.command || commandPreview,
+            output: current.output ? `${current.output}\n${message}` : message,
+            error: message,
+            result: null,
+            operationId: null,
+          }
+        : {
+            ...pushDialog,
+            phase: 'error',
+            command: commandPreview,
+            output: message,
+            error: message,
+            result: null,
+            operationId: null,
+          });
     } finally {
+      unlistenPushOutput?.();
       setAction(null);
     }
   }, [onRepositoryChanged, pushDialog, refreshStatus, status]);
@@ -405,10 +580,16 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
 
     setChangesLoading(true);
     setCommitError('');
+    setCommitNotice('');
+    setChangedFiles([]);
+    setSelectedChangePaths(new Set());
     try {
       const files = await gitGetChangedFiles(status.repoRoot);
       setChangedFiles(files);
       setSelectedChangePaths(new Set(files.map((file) => file.path)));
+      if (files.length === 0) {
+        setCommitNotice('没有检测到可提交的变更。');
+      }
     } catch (err) {
       setCommitError(`读取变更列表失败：${String(err)}`);
       setChangedFiles([]);
@@ -544,13 +725,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   // 命令预览：和后端 git_push_with_options 的拼接规则保持一致。
   const pushCommandPreview = useMemo(() => {
     if (!pushDialog) return '';
-    const parts = ['git.exe', 'push', '-v', '--progress'];
-    if (pushDialog.setUpstream) parts.push('-u');
-    if (pushDialog.followTags) parts.push('--follow-tags');
-    if (pushDialog.forceWithLease) parts.push('--force-with-lease');
-    parts.push(pushDialog.remote);
-    parts.push(`${pushDialog.localBranch}:${pushDialog.remoteBranch}`);
-    return parts.join(' ');
+    return buildPushCommandPreview(pushDialog);
   }, [pushDialog]);
 
   const pushStatusText = (() => {
@@ -558,10 +733,58 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     if (pushDialog.phase === 'running') return '推送中...';
     if (pushDialog.phase === 'error') return '推送失败';
     if (pushDialog.phase === 'success') {
-      return `推送完成：${pushDialog.localBranch} -> ${pushDialog.remote}/${pushDialog.remoteBranch}`;
+      const count = pushDialog.result?.outgoingCommits.length ?? pushDialog.preview?.commits.length ?? 0;
+      return `推送完成：${pushDialog.localBranch} -> ${pushDialog.remote}/${pushDialog.remoteBranch}，${count} 个提交`;
     }
     return '';
   })();
+
+  const renderPushCommitPreview = (compact = false) => {
+    if (!pushDialog) return null;
+
+    const commits = pushDialog.result?.outgoingCommits ?? pushDialog.preview?.commits ?? [];
+    const loading = pushDialog.phase === 'form' && pushDialog.previewLoading;
+    const error = pushDialog.phase === 'form' ? pushDialog.previewError : '';
+    const warning = pushDialog.preview?.warning;
+
+    return (
+      <div className={`git-push-preview ${compact ? 'compact' : ''}`}>
+        <div className="git-push-preview-title">
+          <span>待推送提交</span>
+          <strong>{loading ? '计算中...' : `${commits.length} 个`}</strong>
+        </div>
+        {error && <div className="git-push-preview-message error">{error}</div>}
+        {!error && warning && <div className="git-push-preview-message">{warning}</div>}
+        {!loading && !error && commits.length === 0 && (
+          <div className="git-push-preview-empty">没有待推送提交。</div>
+        )}
+        {!error && commits.length > 0 && (
+          <div className="git-push-preview-table-wrap">
+            <table className="git-push-preview-table">
+              <thead>
+                <tr>
+                  <th>提交</th>
+                  <th>作者</th>
+                  <th>日期</th>
+                  <th>消息</th>
+                </tr>
+              </thead>
+              <tbody>
+                {commits.map((commit) => (
+                  <tr key={commit.hash} title={commit.hash}>
+                    <td>{commit.shortHash}</td>
+                    <td>{commit.author}</td>
+                    <td>{commit.date}</td>
+                    <td>{commit.subject}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   if (!status) {
     return null;
@@ -592,36 +815,35 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       {syncLabel && <span className="git-sync-meta" title={buildStatusTitle(status)}>{syncLabel}</span>}
       <div className="git-actions">
         <button
-          className="git-icon-btn"
+          className="git-icon-btn pull"
           onClick={startPull}
           disabled={busy || !status.hasRemote}
           title="拉取最新代码"
         >
-          {action === 'pull' ? '...' : '↓'}
+          <GitToolbarIcon name="pull" />
         </button>
         <button
-          className="git-icon-btn"
+          className="git-icon-btn commit"
           onClick={openCommitDialog}
-          disabled={busy || !hasChanges}
-          title="提交"
+          title="提交（打开后重新检测变更）"
         >
-          ✓
+          <GitToolbarIcon name="commit" />
         </button>
         <button
-          className="git-icon-btn"
+          className="git-icon-btn push"
           onClick={openPushDialog}
           disabled={busy || !status.hasRemote}
           title={status.hasRemote ? '推送' : '未配置远端仓库'}
         >
-          {action === 'push' ? '...' : '↑'}
+          <GitToolbarIcon name="push" />
         </button>
         <button
-          className="git-icon-btn"
+          className="git-icon-btn history"
           onClick={loadHistory}
           disabled={busy}
           title="历史记录"
         >
-          ≡
+          <GitToolbarIcon name="history" />
         </button>
       </div>
 
@@ -1177,6 +1399,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                   {pushDialog.error && <div className="git-push-form-error">{pushDialog.error}</div>}
 
                   <div className="git-push-command" title={pushCommandPreview}>{pushCommandPreview}</div>
+                  {renderPushCommitPreview()}
                 </div>
               ) : (
                 <div className="git-push-result">
@@ -1188,7 +1411,11 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                   <div className="git-push-command" title={pushDialog.command || pushCommandPreview}>
                     {pushDialog.command || pushCommandPreview}
                   </div>
-                  <pre className={`git-push-log ${pushDialog.phase === 'error' ? 'error' : ''}`}>
+                  {renderPushCommitPreview(true)}
+                  <pre
+                    ref={pushLogRef}
+                    className={`git-push-log ${pushDialog.phase === 'error' ? 'error' : ''}`}
+                  >
                     {pushDialog.output}
                   </pre>
                 </div>
@@ -1197,7 +1424,11 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
 
             <div className="git-push-footer">
               <span className="git-push-status-text">
-                {pushDialog.phase === 'form' ? '准备推送' : pushStatusText}
+                {pushDialog.phase === 'form'
+                  ? pushDialog.previewLoading
+                    ? '正在计算待推送提交'
+                    : `准备推送 · ${pushDialog.preview?.commits.length ?? 0} 个提交`
+                  : pushStatusText}
               </span>
               <div className="git-push-footer-actions">
                 {pushDialog.phase === 'form' && (
