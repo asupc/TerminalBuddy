@@ -11,11 +11,15 @@ import {
   type GitBranch,
   type GitChangedFile,
   type GitCommit,
+  type GitHistoryRef,
+  type GitHistoryResult,
   type GitPullResult,
   type GitPushOptions,
   type GitPushResult,
   type GitRepositoryStatus,
 } from '../services/tauri';
+import { HistoryGraphSvg } from './HistoryGraphSvg';
+import { buildHistoryGraph, sortHistoryRefs } from './gitHistoryGraph';
 
 type GitPopover = 'branches' | null;
 type GitAction = 'checkout' | 'commit' | 'pull' | 'push' | null;
@@ -74,16 +78,34 @@ function shortHash(hash?: string | null): string {
   return hash ? hash.slice(0, 8) : '-';
 }
 
-function refBadgeClass(ref: string): string {
-  if (ref.startsWith('tag:')) return 'tag';
-  if (ref.startsWith('origin/') || ref.includes('/')) return 'remote';
+function refBadgeClass(ref: GitHistoryRef): string {
+  if (ref.isCurrent) return 'current';
+  if (ref.isUpstream) return 'upstream';
+  if (ref.kind === 'remote') return 'remote';
+  if (ref.kind === 'tag') return 'tag';
+  if (ref.kind === 'base') return 'base';
   return 'local';
 }
 
-function refLabel(ref: string): string {
-  return ref.replace(/^HEAD -> /, '').replace(/^tag: /, '');
+function refLabel(ref: GitHistoryRef): string {
+  return ref.name;
 }
 
+function refsTitle(refs: GitHistoryRef[]): string {
+  return refs.map((ref) => `${ref.name} (${ref.fullName})`).join('\n');
+}
+
+function historyRowTitle(commit: GitCommit, refs: GitHistoryRef[]): string {
+  const parts = [
+    `${commit.shortHash} ${commit.subject}`,
+    `作者：${commit.author}`,
+    `时间：${commit.date}`,
+  ];
+  if (refs.length > 0) {
+    parts.push(`引用：${refs.map((ref) => ref.name).join(', ')}`);
+  }
+  return parts.join('\n');
+}
 // 解析 origin/master 这种 upstream，注意远端分支名可能含斜杠（如 upstream/feature/a）。
 function parseUpstream(upstream?: string | null): { remote: string; branch: string } | null {
   if (!upstream) return null;
@@ -102,7 +124,8 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const [action, setAction] = useState<GitAction>(null);
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
-  const [history, setHistory] = useState<GitCommit[]>([]);
+  const [historyResult, setHistoryResult] = useState<GitHistoryResult | null>(null);
+  const [selectedHistoryHash, setSelectedHistoryHash] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -117,13 +140,15 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const [pullDialog, setPullDialog] = useState<PullDialogState | null>(null);
   const [pushDialog, setPushDialog] = useState<PushDialogState | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const historyGraphRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     setPopover(null);
     setBranches([]);
-    setHistory([]);
+    setHistoryResult(null);
+    setSelectedHistoryHash(null);
     setStatus(null);
     if (!currentDirectory) return;
 
@@ -363,10 +388,13 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     setHistoryLoading(true);
     setHistoryError('');
     try {
-      setHistory(await gitGetHistory(status.repoRoot, 120));
+      const result = await gitGetHistory(status.repoRoot, 200);
+      setHistoryResult(result);
+      setSelectedHistoryHash(result.currentRef?.revision ?? result.commits[0]?.hash ?? null);
     } catch (err) {
       setHistoryError(`读取历史记录失败：${String(err)}`);
-      setHistory([]);
+      setHistoryResult(null);
+      setSelectedHistoryHash(null);
     } finally {
       setHistoryLoading(false);
     }
@@ -473,7 +501,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     setCommitError('');
     setCommitNotice('');
     try {
-      const output = await gitCommitPaths(status.repoRoot, message, selectedPaths);
+      const output = await gitCommitPaths(currentDirectory || status.repoRoot, message, selectedPaths);
       await refreshStatus();
       await onRepositoryChanged?.();
       await loadChangedFiles();
@@ -486,6 +514,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     }
   }, [
     commitMessage,
+    currentDirectory,
     loadChangedFiles,
     onRepositoryChanged,
     refreshStatus,
@@ -498,6 +527,19 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     if (!status || (status.ahead === 0 && status.behind === 0)) return '';
     return [`↓${status.behind}`, `↑${status.ahead}`].join(' ');
   }, [status]);
+
+  const historyGraph = useMemo(() => buildHistoryGraph(historyResult), [historyResult]);
+
+  const locateCurrentHistory = useCallback(() => {
+    const targetHash = historyResult?.currentRef?.revision ?? historyResult?.commits[0]?.hash;
+    if (!targetHash) return;
+    setSelectedHistoryHash(targetHash);
+    window.requestAnimationFrame(() => {
+      historyGraphRef.current
+        ?.querySelector<HTMLElement>(`[data-commit-hash="${targetHash}"]`)
+        ?.scrollIntoView({ block: 'center' });
+    });
+  }, [historyResult]);
 
   // 命令预览：和后端 git_push_with_options 的拼接规则保持一致。
   const pushCommandPreview = useMemo(() => {
@@ -630,6 +672,13 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
               </div>
               <div className="git-history-toolbar-actions">
                 <span className="git-history-auto">Auto</span>
+                <button
+                  onClick={locateCurrentHistory}
+                  disabled={historyLoading || historyGraph.viewModels.length === 0}
+                  title="定位当前 HEAD"
+                >
+                  ◎
+                </button>
                 <button onClick={loadHistory} disabled={historyLoading} title="刷新">↻</button>
                 <button onClick={startPull} disabled={busy || !status.hasRemote} title="拉取">↓</button>
                 <button
@@ -642,35 +691,56 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
               </div>
             </div>
 
-            <div className="git-history-graph">
+            <div className="git-history-graph" ref={historyGraphRef}>
               {historyLoading && <div className="git-history-empty">加载中...</div>}
               {!historyLoading && historyError && <div className="git-history-empty error">{historyError}</div>}
-              {!historyLoading && !historyError && history.length === 0 && (
+              {!historyLoading && !historyError && historyGraph.viewModels.length === 0 && (
                 <div className="git-history-empty">暂无历史记录</div>
               )}
-              {!historyLoading && !historyError && history.map((commit, index) => {
-                const isHead = index === 0;
-                const isMerge = commit.parents.length > 1;
-                const lane = isMerge ? 'merge' : index % 5 === 0 ? 'accent' : 'main';
+              {!historyLoading && !historyError && historyGraph.viewModels.map((viewModel) => {
+                const { commit } = viewModel;
+                const refs = sortHistoryRefs(commit.refs);
+                const visibleRefs = refs.slice(0, 3);
+                const hiddenRefs = refs.slice(3);
+                const isSelected = selectedHistoryHash === commit.hash;
+                const rowClassName = [
+                  'git-history-graph-row',
+                  viewModel.kind,
+                  isSelected ? 'selected' : '',
+                  commit.parents.length > 1 ? 'merge' : '',
+                ].filter(Boolean).join(' ');
 
                 return (
-                  <div key={commit.hash} className={`git-history-graph-row ${isHead ? 'head' : ''}`}>
-                    <div className={`git-history-lane ${lane}`}>
-                      <span className="git-history-line" />
-                      {isMerge && <span className="git-history-merge-line" />}
-                      <span className={`git-history-node ${isMerge ? 'merge' : ''} ${isHead ? 'head' : ''}`} />
+                  <div
+                    key={commit.hash}
+                    className={rowClassName}
+                    data-commit-hash={commit.hash}
+                    onClick={() => setSelectedHistoryHash(commit.hash)}
+                    title={historyRowTitle(commit, refs)}
+                  >
+                    <div className={`git-history-graph-cell ${viewModel.kind}`}>
+                      <HistoryGraphSvg viewModel={viewModel} />
                     </div>
-                    <div className="git-history-row-main" title={`${commit.shortHash} ${commit.subject}`}>
+                    <div className="git-history-row-main">
                       <span className="git-history-row-subject">{commit.subject}</span>
                       <span className="git-history-row-author">{commit.author}</span>
                       <span className="git-history-row-date">{commit.date}</span>
                     </div>
-                    <div className="git-history-row-refs">
-                      {commit.refs.slice(0, 3).map((ref) => (
-                        <span key={ref} className={`git-history-ref ${refBadgeClass(ref)}`}>
+                    <div className="git-history-row-refs" title={refsTitle(refs)}>
+                      {visibleRefs.map((ref) => (
+                        <span
+                          key={`${ref.fullName}:${ref.revision}`}
+                          className={`git-history-ref ${refBadgeClass(ref)}`}
+                          title={`${ref.fullName}\n${ref.revision}`}
+                        >
                           {refLabel(ref)}
                         </span>
                       ))}
+                      {hiddenRefs.length > 0 && (
+                        <span className="git-history-ref more" title={refsTitle(hiddenRefs)}>
+                          +{hiddenRefs.length}
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -678,13 +748,16 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
             </div>
 
             <div className="git-history-footer">
-              <span>{history.length} 个提交</span>
-              <span>{status.branch}</span>
+              <span>{historyResult?.commits.length ?? 0} 个提交</span>
+              <span>
+                {historyResult
+                  ? `${status.branch}${historyResult.ahead > 0 ? ` ↑${historyResult.ahead}` : ''}${historyResult.behind > 0 ? ` ↓${historyResult.behind}` : ''}`
+                  : status.branch}
+              </span>
             </div>
           </div>
         </div>
       )}
-
       {commitDialogOpen && (
         <div className="git-commit-dialog-backdrop" onMouseDown={(e) => {
           if (action !== 'commit' && e.target === e.currentTarget) {

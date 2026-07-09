@@ -153,14 +153,37 @@ export interface GitBranch {
   upstream: string | null;
 }
 
+export type GitHistoryRefKind = 'head' | 'local' | 'remote' | 'tag' | 'base';
+
+export interface GitHistoryRef {
+  name: string;
+  fullName: string;
+  revision: string;
+  kind: GitHistoryRefKind;
+  isCurrent: boolean;
+  isUpstream: boolean;
+  isBase: boolean;
+}
+
 export interface GitCommit {
   hash: string;
   shortHash: string;
   parents: string[];
-  refs: string[];
+  refs: GitHistoryRef[];
   author: string;
   date: string;
   subject: string;
+}
+
+export interface GitHistoryResult {
+  commits: GitCommit[];
+  refs: GitHistoryRef[];
+  currentRef: GitHistoryRef | null;
+  upstreamRef: GitHistoryRef | null;
+  baseRef: GitHistoryRef | null;
+  mergeBase: string | null;
+  ahead: number;
+  behind: number;
 }
 
 export interface GitPullResult {
@@ -216,7 +239,7 @@ export const gitGetChangedFiles = (path: string) =>
 export const gitCommitPaths = (path: string, message: string, paths: string[]) =>
   invoke<string>('git_commit_paths', { path, message, paths });
 export const gitGetHistory = (path: string, limit?: number) =>
-  invoke<GitCommit[]>('git_get_history', { path, limit: limit ?? null });
+  invoke<GitHistoryResult>('git_get_history', { path, limit: limit ?? null });
 
 // Theme Commands
 export async function getAllThemes(): Promise<CustomTheme[]> {
