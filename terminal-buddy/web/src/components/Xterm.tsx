@@ -96,7 +96,10 @@ export default function Xterm({ terminalId, onStateChange, onExited }: Props) {
     }
 
     const term = new Terminal({
-      cursorBlink: true,
+      cursorBlink: false,
+      cursorStyle: 'block',
+      cursorInactiveStyle: 'outline',
+      cursorWidth: 1,
       fontSize: 12,
       fontFamily: "Cascadia Code, Consolas, 'Courier New', monospace",
       scrollback: 1000,
