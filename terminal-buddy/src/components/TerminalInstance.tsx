@@ -46,9 +46,6 @@ type XtermCompositionHelper = {
 };
 
 type XtermCore = {
-  coreService?: {
-    isCursorHidden: boolean;
-  };
   _compositionHelper?: XtermCompositionHelper;
   _renderService?: {
     dimensions?: {
@@ -80,19 +77,6 @@ type AutocompleteState = {
   anchorBelowY: number;
   anchorAboveY: number;
 };
-
-function setXtermCursorHidden(terminal: Terminal, hidden: boolean): boolean {
-  const core = (terminal as any)._core as XtermCore | undefined;
-  const coreService = core?.coreService;
-  if (!coreService) return false;
-
-  if (coreService.isCursorHidden !== hidden) {
-    coreService.isCursorHidden = hidden;
-    const row = Math.max(0, Math.min(terminal.buffer.active.cursorY, terminal.rows - 1));
-    terminal.refresh(row, row);
-  }
-  return true;
-}
 
 function fitFloatingElementToViewport(
   anchorX: number,
@@ -160,28 +144,6 @@ function hasCodexTuiMarker(text: string): boolean {
   return /\bCodex\b|codex-cli|OpenAI Codex/u.test(text) ||
     /\b(?:approval|sandbox|workdir|tokens?|context|model)\b/u.test(text) &&
       /\b(?:gpt|GPT|codex|Codex|thread|session)\b/u.test(text);
-}
-
-function stripAnsiForTuiDetection(text: string): string {
-  return text
-    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
-    .replace(/(?:\x1b\[|\x9b)[0-9;?<=>!"#$%&'()*+,\-./]*[\x40-\x7e]/g, '');
-}
-
-function outputLooksLikeAiTui(text: string): boolean {
-  const plain = stripAnsiForTuiDetection(text);
-  const hasTuiControl = /(?:\x1b\[|\x9b)(?:\?1049h|\?25[hl]|[0-9;]*[HfJK])/u.test(text);
-  const hasBoxChrome = /[╭╰┌└├┬┴┼╮╯┐┘┤│┃║─━═]/u.test(plain);
-
-  return /Version:.*Claude Code|MCP:|bypass permissions|for agents|ctx:|Opus|effort/u.test(plain) ||
-    (hasCodexTuiMarker(plain) && (hasTuiControl || hasBoxChrome));
-}
-
-function stripCursorShowSequences(text: string): string {
-  return text.replace(/(\x1b\[|\x9b)\?([0-9;]*)h/g, (_sequence, csi: string, params: string) => {
-    const kept = params.split(';').filter(param => param !== '' && param !== '25');
-    return kept.length === 0 ? '' : `${csi}?${kept.join(';')}h`;
-  });
 }
 
 function hasTuiInputChrome(terminal: Terminal): boolean {
@@ -580,7 +542,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const autocompletePopupRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const colorThemeRef = useRef(colorTheme);
-  const visualCursorHiddenRef = useRef(false);
   const updateAutocomplete = useCallback((val: typeof autocomplete) => {
     autocompleteRef.current = val;
     setAutocomplete(val);
@@ -652,31 +613,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const lightOptimized = !!currentTheme?.lightOptimized;
     const { lightOptimized: _lightOptimized, ...xtermTheme } = currentTheme || { background: bg, foreground: fg };
     term.options.theme = xtermTheme;
-    term.options.cursorBlink = !visualCursorHiddenRef.current;
     term.options.minimumContrastRatio = lightOptimized ? 4.5 : 1;
   }, []);
-
-  const setVisualCursorHidden = useCallback((term: Terminal, hidden: boolean) => {
-    const wasHiddenByTerminalBuddy = visualCursorHiddenRef.current;
-    if (!hidden && !wasHiddenByTerminalBuddy) return;
-
-    const changed = wasHiddenByTerminalBuddy !== hidden;
-    visualCursorHiddenRef.current = hidden;
-
-    if (term.options.cursorBlink !== !hidden) {
-      term.options.cursorBlink = !hidden;
-    }
-
-    if (!setXtermCursorHidden(term, hidden)) {
-      term.write(hidden ? '\x1b[?25l' : '\x1b[?25h');
-    } else if (changed) {
-      applyXtermTheme(term);
-    }
-  }, [applyXtermTheme]);
-
-  const syncVisualCursorVisibility = useCallback((term: Terminal) => {
-    setVisualCursorHidden(term, hasTuiInputChrome(term));
-  }, [setVisualCursorHidden]);
 
   // Resize-related refs (learned from VS Code's terminal implementation)
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -776,12 +714,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               csiTail = '';
             }
 
-            let normalized = normalizeAnsiForLightBackground(toWrite, lightOptimizedRef.current);
+            const normalized = normalizeAnsiForLightBackground(toWrite, lightOptimizedRef.current);
             const term = xtermRef.current;
-            if (term && (visualCursorHiddenRef.current || outputLooksLikeAiTui(toWrite))) {
-              setVisualCursorHidden(term, true);
-              normalized = stripCursorShowSequences(normalized);
-            }
             // Use write callback to track parse state (learned from VS Code's _writeProcessData)
             // This ensures cursor position stays in sync when TUI programs update the screen
             const messageId = ++latestWriteDataRef.current;
@@ -833,7 +767,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         foreground: '#cccccc',
       };
       const terminal = new Terminal({
-        cursorBlink: true,
+        cursorBlink: false,
+        cursorStyle: 'block',
+        cursorInactiveStyle: 'outline',
+        cursorWidth: 1,
         fontSize: SPLIT_FONT_SIZE[splitModeRef.current],
         fontFamily: "'Cascadia Mono', Consolas, 'Courier New', monospace",
         fontWeight: 'normal',
@@ -938,11 +875,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (outputBuffer.length > 0) {
         const combined = outputBuffer.join('');
         outputBuffer.length = 0;
-        let normalized = normalizeAnsiForLightBackground(combined, lightOptimizedRef.current);
-        if (visualCursorHiddenRef.current || outputLooksLikeAiTui(combined)) {
-          setVisualCursorHidden(terminal, true);
-          normalized = stripCursorShowSequences(normalized);
-        }
+        const normalized = normalizeAnsiForLightBackground(combined, lightOptimizedRef.current);
         terminal.write(normalized);
       }
       fitAddonRef.current = fitAddon;
@@ -1097,7 +1030,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Track alternate buffer to detect TUI programs (vim, claude, htop, etc.)
       const checkAltBuffer = () => {
         const inAlt = terminal.buffer.active === terminal.buffer.alternate;
-        syncVisualCursorVisibility(terminal);
         if (inAltBufferRef.current && !inAlt) {
           // TUI program just exited: force viewport refresh to clear stale content.
           // This mirrors VS Code's forceRefresh() which calls viewport._innerRefresh().
@@ -1113,12 +1045,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         inAltBufferRef.current = inAlt;
       };
       terminal.buffer.onBufferChange(checkAltBuffer);
-      const visualCursorWriteDisposable = terminal.onWriteParsed(() => syncVisualCursorVisibility(terminal));
-      const visualCursorRenderDisposable = terminal.onRender(() => syncVisualCursorVisibility(terminal));
-      cleanupFns.push(() => {
-        visualCursorWriteDisposable.dispose();
-        visualCursorRenderDisposable.dispose();
-      });
       checkAltBuffer();
 
 
@@ -1536,7 +1462,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [terminalId, syncVisualCursorVisibility]);
+  }, [terminalId]);
 
   // When tab becomes visible (isActive changes to true), force a fit to ensure
   // correct dimensions. This mirrors VS Code's setVisible() which flushes pending
