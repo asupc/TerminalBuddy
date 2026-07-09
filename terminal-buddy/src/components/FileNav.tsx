@@ -5,6 +5,7 @@ import { isTextFile } from '../utils/fileExtensions';
 import { getAppSettings } from '../utils/settings';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../utils/contextMenu';
+import { GitNavBar } from './GitNavBar';
 import { RemoteFileTree } from './RemoteFileTree';
 import './FileNav.css';
 
@@ -625,6 +626,7 @@ export const FileNav: FC = () => {
           </button>
         </div>
       </div>
+      <GitNavBar currentDirectory={currentDirectory} onRepositoryChanged={handleRefresh} />
       <div className="file-nav-filter">
         <input
           className="filter-input"

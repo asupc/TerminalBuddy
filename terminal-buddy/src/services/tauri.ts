@@ -132,6 +132,72 @@ export const writeFileContent = (path: string, content: string) => invoke<boolea
 export const getFileSize = (path: string) => invoke<number>('get_file_size', { path });
 export const getFileMeta = (path: string) => invoke<{ lastModified: number; size: number }>('get_file_meta', { path });
 
+// Git Commands
+export interface GitRepositoryStatus {
+  repoRoot: string;
+  branch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  changedCount: number;
+  stagedCount: number;
+  unstagedCount: number;
+  untrackedCount: number;
+  hasRemote: boolean;
+}
+
+export interface GitBranch {
+  name: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  upstream: string | null;
+}
+
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  refs: string[];
+  author: string;
+  date: string;
+  subject: string;
+}
+
+export interface GitPullResult {
+  command: string;
+  output: string;
+  oldHead: string | null;
+  newHead: string | null;
+  updatedCommits: GitCommit[];
+}
+
+export interface GitChangedFile {
+  path: string;
+  extension: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  staged: boolean;
+  untracked: boolean;
+}
+
+export const getGitRepositoryStatus = (path: string) =>
+  invoke<GitRepositoryStatus | null>('get_git_repository_status', { path });
+export const gitListBranches = (path: string) =>
+  invoke<GitBranch[]>('git_list_branches', { path });
+export const gitCheckoutBranch = (path: string, branch: string) =>
+  invoke<string>('git_checkout_branch', { path, branch });
+export const gitPull = (path: string) => invoke<GitPullResult>('git_pull', { path });
+export const gitPush = (path: string) => invoke<string>('git_push', { path });
+export const gitCommitAll = (path: string, message: string) =>
+  invoke<string>('git_commit_all', { path, message });
+export const gitGetChangedFiles = (path: string) =>
+  invoke<GitChangedFile[]>('git_get_changed_files', { path });
+export const gitCommitPaths = (path: string, message: string, paths: string[]) =>
+  invoke<string>('git_commit_paths', { path, message, paths });
+export const gitGetHistory = (path: string, limit?: number) =>
+  invoke<GitCommit[]>('git_get_history', { path, limit: limit ?? null });
+
 // Theme Commands
 export async function getAllThemes(): Promise<CustomTheme[]> {
   return invoke('get_all_themes');
