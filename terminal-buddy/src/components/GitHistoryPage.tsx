@@ -179,6 +179,8 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch, onCl
   const [selectedHistoryHash, setSelectedHistoryHash] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState('');
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(true);
   const [expandedHistoryKeys, setExpandedHistoryKeys] = useState<Set<string>>(new Set());
   const [historyFilesByKey, setHistoryFilesByKey] = useState<Record<string, HistoryFilesState>>({});
   const [selectedHistoryFile, setSelectedHistoryFile] = useState<SelectedHistoryFile | null>(null);
@@ -205,11 +207,14 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch, onCl
     setHistoryDiff(null);
     setHistoryDiffError('');
     setHistoryDiffLoading(false);
+    setHistoryLoadingMore(false);
+    setHistoryHasMore(true);
 
     try {
       const result = await gitGetHistory(repoRoot, 200);
       if (historyLoadRequestRef.current !== requestId) return;
       setHistoryResult(result);
+      setHistoryHasMore(result.commits.length >= 200);
       setSelectedHistoryHash(
         result.ahead > 0 && result.currentRef?.revision && result.currentRef.revision !== result.mergeBase
           ? OUTGOING_HISTORY_ITEM_ID
@@ -225,9 +230,48 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch, onCl
     }
   }, [repoRoot]);
 
+  const loadMoreHistory = useCallback(async () => {
+    if (!historyResult || historyLoading || historyLoadingMore || !historyHasMore) return;
+
+    const skip = historyResult.commits.length;
+    setHistoryLoadingMore(true);
+    try {
+      const result = await gitGetHistory(repoRoot, 200, skip);
+      if (result.commits.length === 0) {
+        setHistoryHasMore(false);
+        return;
+      }
+      setHistoryResult((current) => {
+        if (!current) return current;
+        const existing = new Set(current.commits.map((commit) => commit.hash));
+        const appended = result.commits.filter((commit) => !existing.has(commit.hash));
+        if (appended.length === 0) return current;
+        return { ...current, commits: [...current.commits, ...appended] };
+      });
+      setHistoryHasMore(result.commits.length >= 200);
+    } catch (err) {
+      setHistoryError(`加载更多历史记录失败：${String(err)}`);
+    } finally {
+      setHistoryLoadingMore(false);
+    }
+  }, [historyResult, historyLoading, historyLoadingMore, historyHasMore, repoRoot]);
+
   useEffect(() => {
     void loadHistory();
   }, [loadHistory]);
+
+  useEffect(() => {
+    const element = historyGraphRef.current;
+    if (!element) return;
+
+    const handleScroll = () => {
+      if (element.scrollTop + element.clientHeight >= element.scrollHeight - 80) {
+        void loadMoreHistory();
+      }
+    };
+    element.addEventListener('scroll', handleScroll, { passive: true });
+    return () => element.removeEventListener('scroll', handleScroll);
+  }, [loadMoreHistory]);
 
   const historyGraph = useMemo(() => buildHistoryGraph(historyResult), [historyResult]);
 
@@ -526,6 +570,11 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch, onCl
               </div>
             );
           })}
+          {!historyLoading && !historyError && historyGraph.viewModels.length > 0 && (
+            <div className="git-history-load-more">
+              {historyLoadingMore ? '加载中...' : historyHasMore ? '向下滚动加载更多' : '已加载全部历史'}
+            </div>
+          )}
         </div>
 
         {historyPreviewOpen && (

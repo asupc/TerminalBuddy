@@ -1876,11 +1876,19 @@ fn git_commit_paths_impl(
 }
 
 #[command]
-pub async fn git_get_history(path: String, limit: Option<u32>) -> Result<GitHistoryResult, String> {
-    git_task(move || git_get_history_impl(path, limit)).await
+pub async fn git_get_history(
+    path: String,
+    limit: Option<u32>,
+    skip: Option<u32>,
+) -> Result<GitHistoryResult, String> {
+    git_task(move || git_get_history_impl(path, limit, skip)).await
 }
 
-fn git_get_history_impl(path: String, limit: Option<u32>) -> Result<GitHistoryResult, String> {
+fn git_get_history_impl(
+    path: String,
+    limit: Option<u32>,
+    skip: Option<u32>,
+) -> Result<GitHistoryResult, String> {
     let root = require_repo_root(&path)?;
     let Some(head) = head_hash(&root) else {
         return Ok(empty_git_history_result());
@@ -1994,6 +2002,9 @@ fn git_get_history_impl(path: String, limit: Option<u32>) -> Result<GitHistoryRe
         "--date=relative".to_string(),
         "--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%ar%x1f%s%x1e".to_string(),
     ];
+    if let Some(skip) = skip.filter(|value| *value > 0) {
+        log_args.push(format!("--skip={}", skip));
+    }
     log_args.extend(history_log_revisions(
         &head,
         upstream_ref.as_ref(),

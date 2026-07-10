@@ -925,6 +925,13 @@
   color: #fca5a5;
 }
 
+.git-history-load-more {
+  padding: 14px 12px;
+  color: #969696;
+  text-align: center;
+  font-size: 12px;
+}
+
 .git-history-graph-row {
   --git-history-row-bg: #1b1b1b;
   height: 22px;
