@@ -240,6 +240,29 @@ export interface GitChangedFile {
   untracked: boolean;
 }
 
+export interface GitHistoryFile {
+  path: string;
+  oldPath: string | null;
+  extension: string;
+  status: string;
+  statusCode: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface GitHistoryFileDiff {
+  path: string;
+  oldPath: string | null;
+  status: string;
+  statusCode: string;
+  oldRevision: string;
+  newRevision: string;
+  oldContent: string;
+  newContent: string;
+  binary: boolean;
+}
+
 export const getGitRepositoryStatus = (path: string) =>
   invoke<GitRepositoryStatus | null>('get_git_repository_status', { path });
 export const gitListBranches = (path: string) =>
@@ -268,6 +291,26 @@ export const gitCommitPaths = (path: string, message: string, paths: string[]) =
   invoke<string>('git_commit_paths', { path, message, paths });
 export const gitGetHistory = (path: string, limit?: number) =>
   invoke<GitHistoryResult>('git_get_history', { path, limit: limit ?? null });
+export const gitGetHistoryFiles = (path: string, fromRevision: string | null, toRevision: string) =>
+  invoke<GitHistoryFile[]>('git_get_history_files', { path, fromRevision, toRevision });
+export const gitGetHistoryFileDiff = (
+  path: string,
+  fromRevision: string | null,
+  toRevision: string,
+  filePath: string,
+  oldPath: string | null,
+  statusCode: string,
+  binary: boolean,
+) =>
+  invoke<GitHistoryFileDiff>('git_get_history_file_diff', {
+    path,
+    fromRevision,
+    toRevision,
+    filePath,
+    oldPath,
+    statusCode,
+    binary,
+  });
 
 // Theme Commands
 export async function getAllThemes(): Promise<CustomTheme[]> {
