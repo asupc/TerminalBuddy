@@ -105,7 +105,7 @@ export async function initBookmarkHeight() {
     const raw = await readClientData('bookmark_height');
     if (raw) {
       const height = JSON.parse(raw);
-      if (typeof height === 'number' && height >= 32 && height <= 300) {
+      if (typeof height === 'number' && height >= 64 && height <= 300) {
         useAppStore.setState({ bookmarkHeight: height });
       }
     }
@@ -421,7 +421,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
 
   // Bookmark section height
-  bookmarkHeight: 60,
+  bookmarkHeight: 64,
   setBookmarkHeight: (height) => {
     writeClientData('bookmark_height', JSON.stringify(height)).catch(() => {});
     set({ bookmarkHeight: height });

@@ -689,7 +689,7 @@ export const FileNav: FC = () => {
               const startY = e.clientY;
               const startH = bookmarkHeight;
               const onMove = (ev: MouseEvent) => {
-                const newH = Math.max(32, Math.min(300, startH - (ev.clientY - startY)));
+                const newH = Math.max(64, Math.min(300, startH - (ev.clientY - startY)));
                 setBookmarkHeightStore(newH);
               };
               const onUp = () => {
