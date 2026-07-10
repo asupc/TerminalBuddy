@@ -22,12 +22,13 @@ import {
   type GitRepositoryStatus,
 } from '../services/tauri';
 import { HistoryGraphSvg } from './HistoryGraphSvg';
-import { buildHistoryGraph, sortHistoryRefs } from './gitHistoryGraph';
+import { OUTGOING_HISTORY_ITEM_ID, buildHistoryGraph, sortHistoryRefs } from './gitHistoryGraph';
 
 type GitPopover = 'branches' | null;
 type GitAction = 'checkout' | 'commit' | 'pull' | 'push' | null;
 type PullDialogTab = 'log' | 'commits' | 'refs';
 type GitToolbarIconName = 'pull' | 'commit' | 'push' | 'history';
+type GitHistoryToolbarIconName = 'branch' | 'target' | 'refresh' | 'pull' | 'push';
 type PullDialogState = {
   phase: 'running' | 'success' | 'error';
   command: string;
@@ -98,6 +99,53 @@ function GitToolbarIcon({ name }: { name: GitToolbarIconName }) {
   );
 }
 
+function GitHistoryToolbarIcon({ name }: { name: GitHistoryToolbarIconName }) {
+  if (name === 'branch') {
+    return (
+      <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="4" cy="3.5" r="1.4" />
+        <circle cx="4" cy="12.5" r="1.4" />
+        <circle cx="12" cy="6.5" r="1.4" />
+        <path d="M4 4.9v6.2M5.2 11.8C9.1 11.8 12 9.9 12 7.9" />
+      </svg>
+    );
+  }
+
+  if (name === 'target') {
+    return (
+      <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="5.5" />
+        <circle cx="8" cy="8" r="2" />
+      </svg>
+    );
+  }
+
+  if (name === 'refresh') {
+    return (
+      <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M13 4.5A5.3 5.3 0 1 0 14 8" />
+        <path d="M13 2.2v2.9h-2.9" />
+      </svg>
+    );
+  }
+
+  if (name === 'pull') {
+    return (
+      <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M8 2.5v9" />
+        <path d="m4.8 8.8 3.2 3.2 3.2-3.2" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M8 13.5v-9" />
+      <path d="M4.8 7.2 8 4l3.2 3.2" />
+    </svg>
+  );
+}
+
 function compactOutput(output: string): string {
   const trimmed = output.trim();
   if (!trimmed) return '';
@@ -135,16 +183,53 @@ function refLabel(ref: GitHistoryRef): string {
   return ref.name;
 }
 
+function GitHistoryRefIcon({ historyRef }: { historyRef: GitHistoryRef }) {
+  if (historyRef.isUpstream || historyRef.kind === 'remote') {
+    return (
+      <svg className="git-history-ref-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M5.2 11.2H12a2.2 2.2 0 0 0 .2-4.4 3.6 3.6 0 0 0-6.8-1.4A2.9 2.9 0 0 0 5.2 11.2Z" />
+      </svg>
+    );
+  }
+
+  if (historyRef.isBase || historyRef.kind === 'base') {
+    return (
+      <svg className="git-history-ref-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="5.2" />
+        <circle cx="8" cy="8" r="1.7" />
+      </svg>
+    );
+  }
+
+  if (historyRef.kind === 'tag') {
+    return (
+      <svg className="git-history-ref-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M2.8 3.2h4.6l5.8 5.8-4.2 4.2-5.8-5.8V3.2Z" />
+        <circle cx="5.4" cy="5.8" r="0.9" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="git-history-ref-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="4" cy="3.5" r="1.5" />
+      <circle cx="4" cy="12.5" r="1.5" />
+      <circle cx="12" cy="6.5" r="1.5" />
+      <path d="M4 5v6M5.2 11.5c3.9 0 6.8-1.8 6.8-4" />
+    </svg>
+  );
+}
+
 function refsTitle(refs: GitHistoryRef[]): string {
   return refs.map((ref) => `${ref.name} (${ref.fullName})`).join('\n');
 }
 
 function historyRowTitle(commit: GitCommit, refs: GitHistoryRef[]): string {
   const parts = [
-    `${commit.shortHash} ${commit.subject}`,
-    `作者：${commit.author}`,
-    `时间：${commit.date}`,
-  ];
+    `${commit.shortHash ? `${commit.shortHash} ` : ''}${commit.subject}`,
+  ].filter(Boolean);
+  if (commit.author) parts.push(`作者：${commit.author}`);
+  if (commit.date) parts.push(`时间：${commit.date}`);
   if (refs.length > 0) {
     parts.push(`引用：${refs.map((ref) => ref.name).join(', ')}`);
   }
@@ -565,7 +650,11 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     try {
       const result = await gitGetHistory(status.repoRoot, 200);
       setHistoryResult(result);
-      setSelectedHistoryHash(result.currentRef?.revision ?? result.commits[0]?.hash ?? null);
+      setSelectedHistoryHash(
+        result.ahead > 0 && result.currentRef?.revision && result.currentRef.revision !== result.mergeBase
+          ? OUTGOING_HISTORY_ITEM_ID
+          : result.currentRef?.revision ?? result.commits[0]?.hash ?? null,
+      );
     } catch (err) {
       setHistoryError(`读取历史记录失败：${String(err)}`);
       setHistoryResult(null);
@@ -893,22 +982,29 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 <span>GRAPH</span>
               </div>
               <div className="git-history-toolbar-actions">
-                <span className="git-history-auto">Auto</span>
+                <span className="git-history-auto">
+                  <GitHistoryToolbarIcon name="branch" />
+                  <span>Auto</span>
+                </span>
                 <button
                   onClick={locateCurrentHistory}
                   disabled={historyLoading || historyGraph.viewModels.length === 0}
                   title="定位当前 HEAD"
                 >
-                  ◎
+                  <GitHistoryToolbarIcon name="target" />
                 </button>
-                <button onClick={loadHistory} disabled={historyLoading} title="刷新">↻</button>
-                <button onClick={startPull} disabled={busy || !status.hasRemote} title="拉取">↓</button>
+                <button onClick={loadHistory} disabled={historyLoading} title="刷新">
+                  <GitHistoryToolbarIcon name="refresh" />
+                </button>
+                <button onClick={startPull} disabled={busy || !status.hasRemote} title="拉取">
+                  <GitHistoryToolbarIcon name="pull" />
+                </button>
                 <button
                   onClick={openPushDialog}
                   disabled={busy || !status.hasRemote}
                   title={status.hasRemote ? '推送' : '未配置远端仓库'}
                 >
-                  ↑
+                  <GitHistoryToolbarIcon name="push" />
                 </button>
               </div>
             </div>
@@ -945,17 +1041,17 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                     </div>
                     <div className="git-history-row-main">
                       <span className="git-history-row-subject">{commit.subject}</span>
-                      <span className="git-history-row-author">{commit.author}</span>
-                      <span className="git-history-row-date">{commit.date}</span>
+                      {commit.author && <span className="git-history-row-author">{commit.author}</span>}
                     </div>
                     <div className="git-history-row-refs" title={refsTitle(refs)}>
-                      {visibleRefs.map((ref) => (
+                      {visibleRefs.map((ref, index) => (
                         <span
                           key={`${ref.fullName}:${ref.revision}`}
-                          className={`git-history-ref ${refBadgeClass(ref)}`}
+                          className={`git-history-ref ${refBadgeClass(ref)} ${index === 0 ? 'primary' : 'icon-only'}`}
                           title={`${ref.fullName}\n${ref.revision}`}
                         >
-                          {refLabel(ref)}
+                          <GitHistoryRefIcon historyRef={ref} />
+                          {index === 0 && <span className="git-history-ref-label">{refLabel(ref)}</span>}
                         </span>
                       ))}
                       {hiddenRefs.length > 0 && (

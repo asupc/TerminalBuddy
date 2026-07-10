@@ -6,6 +6,9 @@ export const SWIMLANE_CURVE_RADIUS = 5;
 export const CIRCLE_RADIUS = 4;
 export const CIRCLE_STROKE_WIDTH = 2;
 
+export const INCOMING_HISTORY_ITEM_ID = '__terminal_buddy_incoming_changes__';
+export const OUTGOING_HISTORY_ITEM_ID = '__terminal_buddy_outgoing_changes__';
+
 export const HISTORY_COLORS = {
   local: '#3794ff',
   remote: '#b180d7',
@@ -26,9 +29,6 @@ export interface HistoryGraphViewModel {
   kind: HistoryGraphKind;
   inputSwimlanes: HistoryGraphNode[];
   outputSwimlanes: HistoryGraphNode[];
-  currentSwimlaneIndex: number;
-  currentLaneStarted: boolean;
-  currentNode: HistoryGraphNode;
 }
 
 export interface HistoryGraphResult {
@@ -69,17 +69,173 @@ function addRef(refsByRevision: Map<string, GitHistoryRef[]>, ref: GitHistoryRef
   }
 }
 
-function compactLanes(lanes: HistoryGraphNode[]): HistoryGraphNode[] {
-  const seen = new Set<string>();
-  return lanes.filter((lane) => {
-    if (seen.has(lane.id)) return false;
-    seen.add(lane.id);
-    return true;
-  });
-}
-
 function cloneLanes(lanes: HistoryGraphNode[]): HistoryGraphNode[] {
   return lanes.map((lane) => ({ ...lane }));
+}
+
+function findLastIndex(nodes: HistoryGraphNode[], id: string): number {
+  for (let i = nodes.length - 1; i >= 0; i -= 1) {
+    if (nodes[i].id === id) return i;
+  }
+  return -1;
+}
+
+function findLastViewModelIndex(viewModels: HistoryGraphViewModel[], predicate: (viewModel: HistoryGraphViewModel) => boolean): number {
+  for (let i = viewModels.length - 1; i >= 0; i -= 1) {
+    if (predicate(viewModels[i])) return i;
+  }
+  return -1;
+}
+
+function createRefsByRevision(result: GitHistoryResult): Map<string, GitHistoryRef[]> {
+  const refsByRevision = new Map<string, GitHistoryRef[]>();
+  for (const ref of result.refs) addRef(refsByRevision, ref);
+  for (const commit of result.commits) {
+    for (const ref of commit.refs) addRef(refsByRevision, ref);
+  }
+  return refsByRevision;
+}
+
+function sortedRefsForHash(refsByRevision: Map<string, GitHistoryRef[]>, hash: string): GitHistoryRef[] {
+  return sortHistoryRefs(refsByRevision.get(hash) ?? []);
+}
+
+function labelColorForHash(refsByRevision: Map<string, GitHistoryRef[]>, hash: string): string | undefined {
+  const preferred = sortedRefsForHash(refsByRevision, hash)[0];
+  return preferred ? historyRefColor(preferred) : undefined;
+}
+
+function labelColorForCommit(refsByRevision: Map<string, GitHistoryRef[]>, commit: GitCommit): string | undefined {
+  if (commit.hash === INCOMING_HISTORY_ITEM_ID) return HISTORY_COLORS.remote;
+  if (commit.hash === OUTGOING_HISTORY_ITEM_ID) return HISTORY_COLORS.local;
+  return labelColorForHash(refsByRevision, commit.hash);
+}
+
+function createFallbackColorResolver() {
+  let colorIndex = -1;
+  const fallbackColors = new Map<string, string>();
+
+  return (id: string): string => {
+    const cached = fallbackColors.get(id);
+    if (cached) return cached;
+
+    colorIndex = (colorIndex + 1) % HISTORY_COLORS.foregrounds.length;
+    const next = HISTORY_COLORS.foregrounds[colorIndex];
+    fallbackColors.set(id, next);
+    return next;
+  };
+}
+
+function decorateCommitRefs(commit: GitCommit, refsByRevision: Map<string, GitHistoryRef[]>): GitCommit {
+  return {
+    ...commit,
+    refs: sortedRefsForHash(refsByRevision, commit.hash),
+  };
+}
+
+function createVirtualCommit(hash: string, subject: string, author: string | undefined, parent: string): GitCommit {
+  return {
+    hash,
+    shortHash: '',
+    parents: [parent],
+    refs: [],
+    author: author ?? '',
+    date: '',
+    subject,
+  };
+}
+
+function addIncomingOutgoingChangesHistoryItems(
+  viewModels: HistoryGraphViewModel[],
+  result: GitHistoryResult,
+): void {
+  const currentRef = result.currentRef;
+  const upstreamRef = result.upstreamRef;
+  const mergeBase = result.mergeBase;
+
+  if (!currentRef || !upstreamRef || !mergeBase || currentRef.revision === upstreamRef.revision) {
+    return;
+  }
+
+  if (result.behind > 0 && upstreamRef.revision !== mergeBase) {
+    const beforeHistoryItemIndex = findLastViewModelIndex(
+      viewModels,
+      (viewModel) => viewModel.outputSwimlanes.some((node) => node.id === mergeBase && node.color === HISTORY_COLORS.remote),
+    );
+    const afterHistoryItemIndex = viewModels.findIndex((viewModel) => viewModel.commit.hash === mergeBase);
+
+    if (beforeHistoryItemIndex !== -1 && afterHistoryItemIndex !== -1) {
+      const incomingChangeMerged = viewModels[beforeHistoryItemIndex].commit.parents.length === 2
+        && viewModels[beforeHistoryItemIndex].commit.parents.includes(mergeBase);
+
+      if (!incomingChangeMerged) {
+        viewModels[beforeHistoryItemIndex] = {
+          ...viewModels[beforeHistoryItemIndex],
+          inputSwimlanes: viewModels[beforeHistoryItemIndex].inputSwimlanes.map((node) => (
+            node.id === mergeBase && node.color === HISTORY_COLORS.remote
+              ? { ...node, id: INCOMING_HISTORY_ITEM_ID }
+              : node
+          )),
+          outputSwimlanes: viewModels[beforeHistoryItemIndex].outputSwimlanes.map((node) => (
+            node.id === mergeBase && node.color === HISTORY_COLORS.remote
+              ? { ...node, id: INCOMING_HISTORY_ITEM_ID }
+              : node
+          )),
+        };
+
+        const incomingChangesCommit = createVirtualCommit(
+          INCOMING_HISTORY_ITEM_ID,
+          'Incoming Changes',
+          upstreamRef.name,
+          mergeBase,
+        );
+
+        viewModels.splice(afterHistoryItemIndex, 0, {
+          commit: incomingChangesCommit,
+          kind: 'incoming-changes',
+          inputSwimlanes: cloneLanes(viewModels[beforeHistoryItemIndex].outputSwimlanes),
+          outputSwimlanes: cloneLanes(viewModels[afterHistoryItemIndex].inputSwimlanes),
+        });
+      }
+    }
+  }
+
+  if (result.ahead > 0 && currentRef.revision !== mergeBase) {
+    const currentHistoryItemRefIndex = viewModels.findIndex(
+      (viewModel) => viewModel.kind === 'head' && viewModel.commit.hash === currentRef.revision,
+    );
+
+    if (currentHistoryItemRefIndex !== -1) {
+      const outgoingChangesCommit = createVirtualCommit(
+        OUTGOING_HISTORY_ITEM_ID,
+        'Outgoing Changes',
+        currentRef.name,
+        currentRef.revision,
+      );
+      const inputSwimlanes = cloneLanes(viewModels[currentHistoryItemRefIndex].inputSwimlanes);
+      const outputSwimlanes = cloneLanes(inputSwimlanes).concat({
+        id: currentRef.revision,
+        color: HISTORY_COLORS.local,
+      });
+
+      viewModels.splice(currentHistoryItemRefIndex, 0, {
+        commit: outgoingChangesCommit,
+        kind: 'outgoing-changes',
+        inputSwimlanes,
+        outputSwimlanes,
+      });
+
+      viewModels[currentHistoryItemRefIndex + 1].inputSwimlanes.push({
+        id: currentRef.revision,
+        color: HISTORY_COLORS.local,
+      });
+    }
+  }
+}
+
+export function getHistoryItemIndex(viewModel: HistoryGraphViewModel): number {
+  const inputIndex = viewModel.inputSwimlanes.findIndex((node) => node.id === viewModel.commit.hash);
+  return inputIndex !== -1 ? inputIndex : viewModel.inputSwimlanes.length;
 }
 
 export function buildHistoryGraph(result: GitHistoryResult | null): HistoryGraphResult {
@@ -87,97 +243,77 @@ export function buildHistoryGraph(result: GitHistoryResult | null): HistoryGraph
     return { viewModels: [], laneCount: 0 };
   }
 
-  const refsByRevision = new Map<string, GitHistoryRef[]>();
-  const commitsByHash = new Map<string, GitCommit>();
-  for (const ref of result.refs) addRef(refsByRevision, ref);
-  for (const commit of result.commits) {
-    commitsByHash.set(commit.hash, commit);
-    for (const ref of commit.refs) addRef(refsByRevision, ref);
-  }
-
-  const fallbackColors = new Map<string, string>();
-  let colorCursor = 0;
-  const refColorForHash = (hash: string): string | null => {
-    const refs = refsByRevision.get(hash) ?? commitsByHash.get(hash)?.refs ?? [];
-    const preferred = sortHistoryRefs(refs)[0];
-    return preferred ? historyRefColor(preferred) : null;
-  };
-  const colorForHash = (hash: string, fallback?: string): string => {
-    const refColor = refColorForHash(hash);
-    if (refColor) return refColor;
-    if (fallback) return fallback;
-    const cached = fallbackColors.get(hash);
-    if (cached) return cached;
-    const next = HISTORY_COLORS.foregrounds[colorCursor % HISTORY_COLORS.foregrounds.length];
-    colorCursor += 1;
-    fallbackColors.set(hash, next);
-    return next;
-  };
-
-  let activeLanes: HistoryGraphNode[] = [];
+  const refsByRevision = createRefsByRevision(result);
+  const commitsByHash = new Map(result.commits.map((commit) => [commit.hash, commit]));
+  const fallbackColorForId = createFallbackColorResolver();
+  const viewModels: HistoryGraphViewModel[] = [];
   let laneCount = 1;
 
-  const viewModels = result.commits.map((commit) => {
-    const commitWithSortedRefs = { ...commit, refs: sortHistoryRefs(commit.refs) };
-    const inputSwimlanes = cloneLanes(activeLanes);
-    const existingIndex = inputSwimlanes.findIndex((lane) => lane.id === commit.hash);
-    const currentLaneStarted = existingIndex === -1;
-    const currentSwimlaneIndex = currentLaneStarted ? inputSwimlanes.length : existingIndex;
-    const currentNode = {
-      id: commit.hash,
-      color: colorForHash(commit.hash, inputSwimlanes[currentSwimlaneIndex]?.color),
-    };
+  for (const commit of result.commits) {
+    const decoratedCommit = decorateCommitRefs(commit, refsByRevision);
+    const previousViewModel = viewModels.length > 0 ? viewModels[viewModels.length - 1] : undefined;
+    const inputSwimlanes = cloneLanes(previousViewModel?.outputSwimlanes ?? []);
+    const outputSwimlanes: HistoryGraphNode[] = [];
+    const parents = decoratedCommit.parents.filter(Boolean);
+    let firstParentAdded = false;
 
-    if (currentLaneStarted) {
-      inputSwimlanes.push(currentNode);
-    } else {
-      inputSwimlanes[currentSwimlaneIndex] = currentNode;
-    }
-
-    let outputSwimlanes = cloneLanes(inputSwimlanes);
-    const parents = commit.parents.filter(Boolean);
-    const seenParents = new Set<string>();
     if (parents.length > 0) {
-      const firstParent = parents[0];
-      outputSwimlanes[currentSwimlaneIndex] = {
-        id: firstParent,
-        color: colorForHash(firstParent, currentNode.color),
-      };
-      seenParents.add(firstParent);
-    } else {
-      outputSwimlanes.splice(currentSwimlaneIndex, 1);
-    }
+      for (const node of inputSwimlanes) {
+        if (node.id === decoratedCommit.hash) {
+          if (!firstParentAdded) {
+            outputSwimlanes.push({
+              id: parents[0],
+              color: labelColorForCommit(refsByRevision, decoratedCommit) ?? node.color,
+            });
+            firstParentAdded = true;
+          }
+          continue;
+        }
 
-    for (const parent of parents.slice(1)) {
-      if (seenParents.has(parent)) continue;
-      const existingParentIndex = outputSwimlanes.findIndex((lane) => lane.id === parent);
-      if (existingParentIndex >= 0) {
-        outputSwimlanes[existingParentIndex] = {
-          id: parent,
-          color: colorForHash(parent, outputSwimlanes[existingParentIndex].color),
-        };
-      } else {
-        outputSwimlanes.push({ id: parent, color: colorForHash(parent) });
+        outputSwimlanes.push({ ...node });
       }
-      seenParents.add(parent);
     }
 
-    outputSwimlanes = compactLanes(outputSwimlanes);
-    laneCount = Math.max(laneCount, inputSwimlanes.length, outputSwimlanes.length);
-    activeLanes = cloneLanes(outputSwimlanes);
+    for (let i = firstParentAdded ? 1 : 0; i < parents.length; i += 1) {
+      let color: string | undefined;
 
-    const kind: HistoryGraphKind = result.currentRef?.revision === commit.hash ? 'head' : 'node';
+      if (i === 0) {
+        color = labelColorForCommit(refsByRevision, decoratedCommit);
+      } else {
+        const parentCommit = commitsByHash.get(parents[i]);
+        color = parentCommit ? labelColorForCommit(refsByRevision, parentCommit) : labelColorForHash(refsByRevision, parents[i]);
+      }
 
-    return {
-      commit: commitWithSortedRefs,
+      outputSwimlanes.push({
+        id: parents[i],
+        color: color ?? fallbackColorForId(parents[i]),
+      });
+    }
+
+    const kind: HistoryGraphKind = result.currentRef?.revision === decoratedCommit.hash ? 'head' : 'node';
+    viewModels.push({
+      commit: decoratedCommit,
       kind,
       inputSwimlanes,
       outputSwimlanes,
-      currentSwimlaneIndex,
-      currentLaneStarted,
-      currentNode,
-    };
-  });
+    });
+    laneCount = Math.max(
+      laneCount,
+      inputSwimlanes.length,
+      outputSwimlanes.length,
+      getHistoryItemIndex(viewModels[viewModels.length - 1]) + 1,
+    );
+  }
+
+  addIncomingOutgoingChangesHistoryItems(viewModels, result);
+  laneCount = viewModels.reduce(
+    (max, viewModel) => Math.max(max, viewModel.inputSwimlanes.length, viewModel.outputSwimlanes.length, getHistoryItemIndex(viewModel) + 1),
+    laneCount,
+  );
 
   return { viewModels, laneCount };
+}
+
+export function getLastOutputSwimlaneIndex(viewModel: HistoryGraphViewModel, id: string): number {
+  return findLastIndex(viewModel.outputSwimlanes, id);
 }

@@ -853,6 +853,9 @@
 }
 
 .git-history-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   color: #969696;
   font-size: 12px;
   margin-right: 6px;
@@ -872,6 +875,16 @@
   cursor: pointer;
   font-size: 13px;
   line-height: 1;
+}
+
+.git-history-toolbar-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.35;
 }
 
 .git-history-toolbar-actions button:hover:not(:disabled) {
@@ -905,28 +918,23 @@
 
 .git-history-graph-row {
   --git-history-row-bg: #1b1b1b;
-  height: 24px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  height: 22px;
+  display: flex;
   align-items: center;
   position: relative;
+  line-height: 22px;
   font-size: 12px;
   cursor: default;
 }
 
 .git-history-graph-row:hover {
   --git-history-row-bg: #252526;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.git-history-graph-row.head:not(.selected) {
-  --git-history-row-bg: #202a34;
-  background: rgba(55, 148, 255, 0.1);
+  background: #252526;
 }
 
 .git-history-graph-row.selected {
-  --git-history-row-bg: #25364a;
-  background: rgba(55, 148, 255, 0.18);
+  --git-history-row-bg: #2a2d2e;
+  background: #2a2d2e;
 }
 
 .git-history-graph-cell {
@@ -934,8 +942,7 @@
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  padding-left: 8px;
-  padding-right: 4px;
+  padding-left: 10px;
   overflow: visible;
 }
 
@@ -946,23 +953,22 @@
 
 .git-history-row-main {
   min-width: 0;
+  flex: 1;
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 6px;
   overflow: hidden;
 }
 
 .git-history-row-subject {
   min-width: 0;
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #d4d4d4;
 }
 
-.git-history-row-author,
-.git-history-row-date {
+.git-history-row-author {
   max-width: 120px;
   flex-shrink: 0;
   overflow: hidden;
@@ -972,35 +978,60 @@
   font-size: 11px;
 }
 
-.git-history-row-date {
-  max-width: 92px;
-}
-
 .git-history-row-refs {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
   min-width: 0;
-  max-width: 320px;
-  padding: 0 8px;
+  max-width: 360px;
+  margin-left: 4px;
+  padding-right: 8px;
   overflow: hidden;
 }
 
 .git-history-ref {
-  max-width: 136px;
   height: 18px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  gap: 2px;
   flex-shrink: 1;
-  padding: 0 7px;
+  padding: 0 5px;
   border-radius: 10px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: #ffffff;
   font-size: 11px;
   line-height: 1;
+}
+
+.git-history-ref.primary {
+  max-width: 136px;
+  justify-content: flex-start;
+}
+
+.git-history-ref.icon-only {
+  width: 18px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.git-history-ref-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
+.git-history-ref-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-history-ref.current {
