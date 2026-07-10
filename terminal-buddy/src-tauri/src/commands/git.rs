@@ -658,6 +658,59 @@ fn push_ref_if_missing(refs: &mut Vec<GitHistoryRef>, candidate: &GitHistoryRef)
     }
 }
 
+/// Mirrors VS Code's Graph "Auto" filter. Only the current revision, its
+/// upstream and a configured branch base participate in the history walk.
+/// Using `git log --all` here would pull unrelated refs into the topological
+/// order and produce a different graph from VS Code for the same checkout.
+fn history_log_revisions(
+    head: &str,
+    upstream_ref: Option<&GitHistoryRef>,
+    base_ref: Option<&GitHistoryRef>,
+) -> Vec<String> {
+    let mut revisions = vec![head.to_string()];
+
+    for git_ref in [upstream_ref, base_ref].into_iter().flatten() {
+        if !git_ref.revision.is_empty() && !revisions.iter().any(|revision| revision == &git_ref.revision) {
+            revisions.push(git_ref.revision.clone());
+        }
+    }
+
+    revisions
+}
+
+/// VS Code persists the selected branch base in this Git config key. It is
+/// only a graph base when it differs from the current branch's upstream.
+fn mark_configured_history_base_ref(
+    root: &Path,
+    current_branch: Option<&str>,
+    upstream_ref: Option<&GitHistoryRef>,
+    refs: &mut [GitHistoryRef],
+) -> Option<GitHistoryRef> {
+    let branch = current_branch?;
+    let config_key = format!("branch.{}.vscode-merge-base", branch);
+    let configured_ref = run_git(root, &["config", "--get", &config_key])
+        .ok()
+        .filter(|value| !value.is_empty())?;
+    let full_name = run_git(root, &["rev-parse", "--symbolic-full-name", &configured_ref])
+        .ok()
+        .filter(|value| value.starts_with("refs/remotes/"))?;
+
+    if upstream_ref.is_some_and(|upstream| upstream.full_name == full_name) {
+        return None;
+    }
+
+    let revision = run_git(root, &["rev-parse", "--verify", &configured_ref])
+        .ok()
+        .filter(|value| !value.is_empty())?;
+    let base_ref = refs.iter_mut().find(|git_ref| {
+        git_ref.full_name == full_name && git_ref.revision == revision
+    })?;
+
+    base_ref.kind = "base".to_string();
+    base_ref.is_base = true;
+    Some(base_ref.clone())
+}
+
 fn parse_commits(output: &str) -> Vec<GitCommit> {
     output
         .split('\x1e')
@@ -1054,7 +1107,7 @@ fn normalize_commit_pathspec(root: &Path, base: &Path, raw_path: &str) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_commit_pathspec;
+    use super::{history_log_revisions, normalize_commit_pathspec, GitHistoryRef};
     use std::path::{Path, PathBuf};
     use std::{env, fs, process};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1091,6 +1144,34 @@ mod tests {
         let path = root.join(relative_path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, "").unwrap();
+    }
+
+    fn history_ref(revision: &str) -> GitHistoryRef {
+        GitHistoryRef {
+            name: revision.to_string(),
+            full_name: format!("refs/remotes/origin/{}", revision),
+            revision: revision.to_string(),
+            kind: "remote".to_string(),
+            is_current: false,
+            is_upstream: false,
+            is_base: false,
+        }
+    }
+
+    #[test]
+    fn history_log_revisions_only_include_auto_filter_refs_once() {
+        let upstream = history_ref("upstream");
+        let duplicate_base = history_ref("upstream");
+        let base = history_ref("base");
+
+        assert_eq!(
+            history_log_revisions("head", Some(&upstream), Some(&duplicate_base)),
+            vec!["head", "upstream"]
+        );
+        assert_eq!(
+            history_log_revisions("head", Some(&upstream), Some(&base)),
+            vec!["head", "upstream", "base"]
+        );
     }
 
     #[test]
@@ -1896,33 +1977,30 @@ fn git_get_history_impl(path: String, limit: Option<u32>) -> Result<GitHistoryRe
         push_ref_if_missing(&mut refs, git_ref);
     }
 
-    let base_ref = merge_base.as_ref().map(|revision| GitHistoryRef {
-        name: "base".to_string(),
-        full_name: "MERGE_BASE".to_string(),
-        revision: revision.clone(),
-        kind: "base".to_string(),
-        is_current: false,
-        is_upstream: false,
-        is_base: true,
-    });
-    if let Some(git_ref) = base_ref.as_ref() {
-        push_ref_if_missing(&mut refs, git_ref);
-    }
+    let base_ref = mark_configured_history_base_ref(
+        &root,
+        current_branch_name.as_deref(),
+        upstream_ref.as_ref(),
+        &mut refs,
+    );
 
     let refs_by_revision = refs_by_revision(&refs);
 
     let limit_arg = format!("-n{}", limit.unwrap_or(200).clamp(1, 500));
-    let output = run_git(
-        &root,
-        &[
-            "log",
-            "--all",
-            "--topo-order",
-            &limit_arg,
-            "--date=relative",
-            "--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%ar%x1f%s%x1e",
-        ],
-    )?;
+    let mut log_args = vec![
+        "log".to_string(),
+        "--topo-order".to_string(),
+        limit_arg,
+        "--date=relative".to_string(),
+        "--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%ar%x1f%s%x1e".to_string(),
+    ];
+    log_args.extend(history_log_revisions(
+        &head,
+        upstream_ref.as_ref(),
+        base_ref.as_ref(),
+    ));
+    let log_arg_refs = log_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = run_git(&root, &log_arg_refs)?;
 
     Ok(GitHistoryResult {
         commits: parse_history_commits(&output, &refs_by_revision),
