@@ -1,12 +1,9 @@
-import { FC, FormEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FC, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getGitRepositoryStatus,
   gitCheckoutBranch,
   gitCommitPaths,
   gitGetChangedFiles,
-  gitGetHistory,
-  gitGetHistoryFileDiff,
-  gitGetHistoryFiles,
   gitListBranches,
   gitPreviewPush,
   gitPull,
@@ -14,34 +11,18 @@ import {
   listenGitPushOutput,
   type GitBranch,
   type GitChangedFile,
-  type GitCommit,
-  type GitHistoryFile,
-  type GitHistoryFileDiff,
-  type GitHistoryRef,
-  type GitHistoryResult,
   type GitPushPreview,
   type GitPullResult,
   type GitPushOptions,
   type GitPushResult,
   type GitRepositoryStatus,
 } from '../services/tauri';
-import { HistoryGraphSvg } from './HistoryGraphSvg';
-import { INCOMING_HISTORY_ITEM_ID, OUTGOING_HISTORY_ITEM_ID, buildHistoryGraph, sortHistoryRefs } from './gitHistoryGraph';
-
-const GitHistoryDiffPreview = lazy(() =>
-  import('./GitHistoryDiffPreview').then((module) => ({ default: module.GitHistoryDiffPreview })),
-);
+import { useAppStore } from '../stores/appStore';
 
 type GitPopover = 'branches' | null;
 type GitAction = 'checkout' | 'commit' | 'pull' | 'push' | null;
 type PullDialogTab = 'log' | 'commits' | 'refs';
 type GitToolbarIconName = 'pull' | 'commit' | 'push' | 'history';
-type GitHistoryToolbarIconName = 'branch' | 'target' | 'refresh' | 'pull' | 'push';
-type HistoryFilesState = {
-  loading: boolean;
-  error: string;
-  files: GitHistoryFile[];
-};
 type PullDialogState = {
   phase: 'running' | 'success' | 'error';
   command: string;
@@ -74,18 +55,6 @@ interface PushDialogState {
 interface GitNavBarProps {
   currentDirectory: string;
   onRepositoryChanged?: () => void | Promise<void>;
-}
-
-interface HistoryRange {
-  key: string;
-  fromRevision: string | null;
-  toRevision: string;
-}
-
-interface SelectedHistoryFile {
-  range: HistoryRange;
-  file: GitHistoryFile;
-  commit: GitCommit;
 }
 
 function GitToolbarIcon({ name }: { name: GitToolbarIconName }) {
@@ -124,53 +93,6 @@ function GitToolbarIcon({ name }: { name: GitToolbarIconName }) {
   );
 }
 
-function GitHistoryToolbarIcon({ name }: { name: GitHistoryToolbarIconName }) {
-  if (name === 'branch') {
-    return (
-      <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="4" cy="3.5" r="1.4" />
-        <circle cx="4" cy="12.5" r="1.4" />
-        <circle cx="12" cy="6.5" r="1.4" />
-        <path d="M4 4.9v6.2M5.2 11.8C9.1 11.8 12 9.9 12 7.9" />
-      </svg>
-    );
-  }
-
-  if (name === 'target') {
-    return (
-      <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="8" cy="8" r="5.5" />
-        <circle cx="8" cy="8" r="2" />
-      </svg>
-    );
-  }
-
-  if (name === 'refresh') {
-    return (
-      <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M13 4.5A5.3 5.3 0 1 0 14 8" />
-        <path d="M13 2.2v2.9h-2.9" />
-      </svg>
-    );
-  }
-
-  if (name === 'pull') {
-    return (
-      <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M8 2.5v9" />
-        <path d="m4.8 8.8 3.2 3.2 3.2-3.2" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg className="git-history-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M8 13.5v-9" />
-      <path d="M4.8 7.2 8 4l3.2 3.2" />
-    </svg>
-  );
-}
-
 function compactOutput(output: string): string {
   const trimmed = output.trim();
   if (!trimmed) return '';
@@ -195,112 +117,6 @@ function shortHash(hash?: string | null): string {
   return hash ? hash.slice(0, 8) : '-';
 }
 
-function refBadgeClass(ref: GitHistoryRef): string {
-  if (ref.isCurrent) return 'current';
-  if (ref.isUpstream) return 'upstream';
-  if (ref.kind === 'remote') return 'remote';
-  if (ref.kind === 'tag') return 'tag';
-  if (ref.kind === 'base') return 'base';
-  return 'local';
-}
-
-function refLabel(ref: GitHistoryRef): string {
-  return ref.name;
-}
-
-function GitHistoryRefIcon({ historyRef }: { historyRef: GitHistoryRef }) {
-  if (historyRef.isUpstream || historyRef.kind === 'remote') {
-    return (
-      <svg className="git-history-ref-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M5.2 11.2H12a2.2 2.2 0 0 0 .2-4.4 3.6 3.6 0 0 0-6.8-1.4A2.9 2.9 0 0 0 5.2 11.2Z" />
-      </svg>
-    );
-  }
-
-  if (historyRef.isBase || historyRef.kind === 'base') {
-    return (
-      <svg className="git-history-ref-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="8" cy="8" r="5.2" />
-        <circle cx="8" cy="8" r="1.7" />
-      </svg>
-    );
-  }
-
-  if (historyRef.kind === 'tag') {
-    return (
-      <svg className="git-history-ref-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M2.8 3.2h4.6l5.8 5.8-4.2 4.2-5.8-5.8V3.2Z" />
-        <circle cx="5.4" cy="5.8" r="0.9" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg className="git-history-ref-icon" viewBox="0 0 16 16" aria-hidden="true">
-      <circle cx="4" cy="3.5" r="1.5" />
-      <circle cx="4" cy="12.5" r="1.5" />
-      <circle cx="12" cy="6.5" r="1.5" />
-      <path d="M4 5v6M5.2 11.5c3.9 0 6.8-1.8 6.8-4" />
-    </svg>
-  );
-}
-
-function refsTitle(refs: GitHistoryRef[]): string {
-  return refs.map((ref) => `${ref.name} (${ref.fullName})`).join('\n');
-}
-
-function historyRowTitle(commit: GitCommit, refs: GitHistoryRef[]): string {
-  const parts = [
-    `${commit.shortHash ? `${commit.shortHash} ` : ''}${commit.subject}`,
-  ].filter(Boolean);
-  if (commit.author) parts.push(`作者：${commit.author}`);
-  if (commit.date) parts.push(`时间：${commit.date}`);
-  if (refs.length > 0) {
-    parts.push(`引用：${refs.map((ref) => ref.name).join(', ')}`);
-  }
-  return parts.join('\n');
-}
-
-function historyRangeForCommit(commit: GitCommit, result: GitHistoryResult | null): HistoryRange | null {
-  if (commit.hash === OUTGOING_HISTORY_ITEM_ID) {
-    if (!result?.mergeBase || !result.currentRef?.revision) return null;
-    return {
-      key: OUTGOING_HISTORY_ITEM_ID,
-      fromRevision: result.mergeBase,
-      toRevision: result.currentRef.revision,
-    };
-  }
-
-  if (commit.hash === INCOMING_HISTORY_ITEM_ID) {
-    if (!result?.mergeBase || !result.upstreamRef?.revision) return null;
-    return {
-      key: INCOMING_HISTORY_ITEM_ID,
-      fromRevision: result.mergeBase,
-      toRevision: result.upstreamRef.revision,
-    };
-  }
-
-  return {
-    key: `${commit.parents[0] ?? 'root'}..${commit.hash}`,
-    fromRevision: commit.parents[0] ?? null,
-    toRevision: commit.hash,
-  };
-}
-
-function historyFileStats(file: GitHistoryFile): string {
-  if (file.binary) return '二进制';
-  if (file.additions === 0 && file.deletions === 0) return '';
-  return `+${file.additions} -${file.deletions}`;
-}
-
-function historyFileTitle(file: GitHistoryFile): string {
-  const path = file.oldPath && file.oldPath !== file.path
-    ? `${file.oldPath} -> ${file.path}`
-    : file.path;
-  const stats = historyFileStats(file);
-  return [path, file.status, stats].filter(Boolean).join('\n');
-}
-
 // 解析 origin/master 这种 upstream，注意远端分支名可能含斜杠（如 upstream/feature/a）。
 function parseUpstream(upstream?: string | null): { remote: string; branch: string } | null {
   if (!upstream) return null;
@@ -323,23 +139,13 @@ function buildPushCommandPreview(dialog: PushDialogState): string {
 }
 
 export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryChanged }) => {
+  const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [popover, setPopover] = useState<GitPopover>(null);
   const [action, setAction] = useState<GitAction>(null);
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
-  const [historyResult, setHistoryResult] = useState<GitHistoryResult | null>(null);
-  const [selectedHistoryHash, setSelectedHistoryHash] = useState<string | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
-  const [historyError, setHistoryError] = useState('');
-  const [expandedHistoryKeys, setExpandedHistoryKeys] = useState<Set<string>>(new Set());
-  const [historyFilesByKey, setHistoryFilesByKey] = useState<Record<string, HistoryFilesState>>({});
-  const [selectedHistoryFile, setSelectedHistoryFile] = useState<SelectedHistoryFile | null>(null);
-  const [historyDiff, setHistoryDiff] = useState<GitHistoryFileDiff | null>(null);
-  const [historyDiffLoading, setHistoryDiffLoading] = useState(false);
-  const [historyDiffError, setHistoryDiffError] = useState('');
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState('');
   const [changedFiles, setChangedFiles] = useState<GitChangedFile[]>([]);
@@ -351,23 +157,13 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const [pullDialog, setPullDialog] = useState<PullDialogState | null>(null);
   const [pushDialog, setPushDialog] = useState<PushDialogState | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const historyGraphRef = useRef<HTMLDivElement>(null);
   const pushLogRef = useRef<HTMLPreElement>(null);
-  const historyDiffRequestRef = useRef('');
 
   useEffect(() => {
     let cancelled = false;
 
     setPopover(null);
     setBranches([]);
-    setHistoryResult(null);
-    setSelectedHistoryHash(null);
-    setExpandedHistoryKeys(new Set());
-    setHistoryFilesByKey({});
-    setSelectedHistoryFile(null);
-    setHistoryDiff(null);
-    setHistoryDiffError('');
-    setHistoryDiffLoading(false);
     setStatus(null);
     if (!currentDirectory) return;
 
@@ -723,31 +519,8 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const loadHistory = useCallback(async () => {
     if (!status) return;
     setPopover(null);
-    setHistoryDialogOpen(true);
-    setHistoryLoading(true);
-    setHistoryError('');
-    setExpandedHistoryKeys(new Set());
-    setHistoryFilesByKey({});
-    setSelectedHistoryFile(null);
-    setHistoryDiff(null);
-    setHistoryDiffError('');
-    setHistoryDiffLoading(false);
-    try {
-      const result = await gitGetHistory(status.repoRoot, 200);
-      setHistoryResult(result);
-      setSelectedHistoryHash(
-        result.ahead > 0 && result.currentRef?.revision && result.currentRef.revision !== result.mergeBase
-          ? OUTGOING_HISTORY_ITEM_ID
-          : result.currentRef?.revision ?? result.commits[0]?.hash ?? null,
-      );
-    } catch (err) {
-      setHistoryError(`读取历史记录失败：${String(err)}`);
-      setHistoryResult(null);
-      setSelectedHistoryHash(null);
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, [status]);
+    openGitHistoryTab({ repoRoot: status.repoRoot, branch: status.branch });
+  }, [openGitHistoryTab, status]);
 
   const loadChangedFiles = useCallback(async () => {
     if (!status) return;
@@ -882,123 +655,6 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     if (!status || (status.ahead === 0 && status.behind === 0)) return '';
     return [`↓${status.behind}`, `↑${status.ahead}`].join(' ');
   }, [status]);
-
-  const historyGraph = useMemo(() => buildHistoryGraph(historyResult), [historyResult]);
-  const historyFileIndent = useMemo(() => Math.max(54, historyGraph.laneCount * 11 + 26), [historyGraph.laneCount]);
-
-  const ensureHistoryFiles = useCallback(async (range: HistoryRange) => {
-    if (!status) return;
-    const existing = historyFilesByKey[range.key];
-    if (existing?.loading || (existing && !existing.error)) {
-      return;
-    }
-
-    setHistoryFilesByKey((current) => ({
-      ...current,
-      [range.key]: { loading: true, error: '', files: current[range.key]?.files ?? [] },
-    }));
-
-    try {
-      const files = await gitGetHistoryFiles(status.repoRoot, range.fromRevision, range.toRevision);
-      setHistoryFilesByKey((current) => ({
-        ...current,
-        [range.key]: { loading: false, error: '', files },
-      }));
-    } catch (err) {
-      setHistoryFilesByKey((current) => ({
-        ...current,
-        [range.key]: { loading: false, error: String(err), files: [] },
-      }));
-    }
-  }, [historyFilesByKey, status]);
-
-  const toggleHistoryFiles = useCallback((commit: GitCommit) => {
-    const range = historyRangeForCommit(commit, historyResult);
-    if (!range) return;
-
-    setSelectedHistoryHash(commit.hash);
-    let shouldLoad = false;
-    setExpandedHistoryKeys((current) => {
-      const next = new Set(current);
-      if (next.has(range.key)) {
-        next.delete(range.key);
-      } else {
-        next.add(range.key);
-        shouldLoad = true;
-      }
-      return next;
-    });
-
-    if (shouldLoad) {
-      void ensureHistoryFiles(range);
-    }
-  }, [ensureHistoryFiles, historyResult]);
-
-  const openHistoryFile = useCallback(async (commit: GitCommit, file: GitHistoryFile) => {
-    if (!status) return;
-    const range = historyRangeForCommit(commit, historyResult);
-    if (!range) return;
-
-    const requestKey = `${range.key}:${file.oldPath ?? ''}:${file.path}`;
-    historyDiffRequestRef.current = requestKey;
-    setSelectedHistoryHash(commit.hash);
-    setSelectedHistoryFile({ range, file, commit });
-    setHistoryDiff(null);
-    setHistoryDiffError('');
-
-    if (file.binary) {
-      setHistoryDiff({
-        path: file.path,
-        oldPath: file.oldPath,
-        status: file.status,
-        statusCode: file.statusCode,
-        oldRevision: range.fromRevision ?? '',
-        newRevision: range.toRevision,
-        oldContent: '',
-        newContent: '',
-        binary: true,
-      });
-      setHistoryDiffLoading(false);
-      return;
-    }
-
-    setHistoryDiffLoading(true);
-    try {
-      const diff = await gitGetHistoryFileDiff(
-        status.repoRoot,
-        range.fromRevision,
-        range.toRevision,
-        file.path,
-        file.oldPath,
-        file.statusCode,
-        file.binary,
-      );
-      if (historyDiffRequestRef.current === requestKey) {
-        setHistoryDiff(diff);
-        setHistoryDiffError('');
-      }
-    } catch (err) {
-      if (historyDiffRequestRef.current === requestKey) {
-        setHistoryDiff(null);
-        setHistoryDiffError(String(err));
-      }
-    } finally {
-      if (historyDiffRequestRef.current === requestKey) {
-        setHistoryDiffLoading(false);
-      }
-    }
-  }, [historyResult, status]);
-
-  const locateCurrentHistory = useCallback(() => {
-    const targetHash = historyResult?.currentRef?.revision ?? historyResult?.commits[0]?.hash;
-    if (!targetHash) return;
-    setSelectedHistoryHash(targetHash);
-    window.requestAnimationFrame(() => {
-      historyGraphRef.current
-        ?.querySelector<HTMLElement>(`[data-commit-hash="${targetHash}"]`)
-        ?.scrollIntoView({ block: 'center' });
-    });
-  }, [historyResult]);
 
   // 命令预览：和后端 git_push_with_options 的拼接规则保持一致。
   const pushCommandPreview = useMemo(() => {
@@ -1146,195 +802,6 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
         </div>
       )}
 
-      {historyDialogOpen && (
-        <div className="git-history-dialog-backdrop" onMouseDown={(e) => {
-          if (!historyLoading && e.target === e.currentTarget) {
-            setHistoryDialogOpen(false);
-          }
-        }}>
-          <div className="git-history-dialog" role="dialog" aria-modal="true" aria-label="Git 历史记录">
-            <div className="git-history-titlebar">
-              <div className="git-history-title">{status.repoRoot} - 历史记录</div>
-              <button
-                className="git-history-window-close"
-                onClick={() => setHistoryDialogOpen(false)}
-                disabled={historyLoading}
-                title="关闭"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="git-history-toolbar">
-              <div className="git-history-heading">
-                <span className="git-history-chevron">⌄</span>
-                <span>GRAPH</span>
-              </div>
-              <div className="git-history-toolbar-actions">
-                <span className="git-history-auto">
-                  <GitHistoryToolbarIcon name="branch" />
-                  <span>Auto</span>
-                </span>
-                <button
-                  onClick={locateCurrentHistory}
-                  disabled={historyLoading || historyGraph.viewModels.length === 0}
-                  title="定位当前 HEAD"
-                >
-                  <GitHistoryToolbarIcon name="target" />
-                </button>
-                <button onClick={loadHistory} disabled={historyLoading} title="刷新">
-                  <GitHistoryToolbarIcon name="refresh" />
-                </button>
-                <button onClick={startPull} disabled={busy || !status.hasRemote} title="拉取">
-                  <GitHistoryToolbarIcon name="pull" />
-                </button>
-                <button
-                  onClick={openPushDialog}
-                  disabled={busy || !status.hasRemote}
-                  title={status.hasRemote ? '推送' : '未配置远端仓库'}
-                >
-                  <GitHistoryToolbarIcon name="push" />
-                </button>
-              </div>
-            </div>
-
-            <div className="git-history-body">
-              <div className="git-history-graph" ref={historyGraphRef}>
-                {historyLoading && <div className="git-history-empty">加载中...</div>}
-                {!historyLoading && historyError && <div className="git-history-empty error">{historyError}</div>}
-                {!historyLoading && !historyError && historyGraph.viewModels.length === 0 && (
-                  <div className="git-history-empty">暂无历史记录</div>
-                )}
-                {!historyLoading && !historyError && historyGraph.viewModels.map((viewModel) => {
-                  const { commit } = viewModel;
-                  const refs = sortHistoryRefs(commit.refs);
-                  const visibleRefs = refs.slice(0, 3);
-                  const hiddenRefs = refs.slice(3);
-                  const range = historyRangeForCommit(commit, historyResult);
-                  const fileState = range ? historyFilesByKey[range.key] : undefined;
-                  const isExpanded = Boolean(range && expandedHistoryKeys.has(range.key));
-                  const isSelected = selectedHistoryHash === commit.hash;
-                  const rowClassName = [
-                    'git-history-graph-row',
-                    viewModel.kind,
-                    isSelected ? 'selected' : '',
-                    commit.parents.length > 1 ? 'merge' : '',
-                  ].filter(Boolean).join(' ');
-
-                  return (
-                    <div key={commit.hash} className="git-history-entry">
-                      <div
-                        className={rowClassName}
-                        data-commit-hash={commit.hash}
-                        onClick={() => setSelectedHistoryHash(commit.hash)}
-                        onDoubleClick={() => toggleHistoryFiles(commit)}
-                        title={historyRowTitle(commit, refs)}
-                      >
-                        <div className={`git-history-graph-cell ${viewModel.kind}`}>
-                          <HistoryGraphSvg viewModel={viewModel} />
-                        </div>
-                        <button
-                          type="button"
-                          className={`git-history-expand ${isExpanded ? 'expanded' : ''}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleHistoryFiles(commit);
-                          }}
-                          title={isExpanded ? '收起文件' : '展开文件'}
-                        >
-                          ›
-                        </button>
-                        <div className="git-history-row-main">
-                          <span className="git-history-row-subject">{commit.subject}</span>
-                          {commit.author && <span className="git-history-row-author">{commit.author}</span>}
-                        </div>
-                        <div className="git-history-row-refs" title={refsTitle(refs)}>
-                          {visibleRefs.map((ref, index) => (
-                            <span
-                              key={`${ref.fullName}:${ref.revision}`}
-                              className={`git-history-ref ${refBadgeClass(ref)} ${index === 0 ? 'primary' : 'icon-only'}`}
-                              title={`${ref.fullName}\n${ref.revision}`}
-                            >
-                              <GitHistoryRefIcon historyRef={ref} />
-                              {index === 0 && <span className="git-history-ref-label">{refLabel(ref)}</span>}
-                            </span>
-                          ))}
-                          {hiddenRefs.length > 0 && (
-                            <span className="git-history-ref more" title={refsTitle(hiddenRefs)}>
-                              +{hiddenRefs.length}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {isExpanded && (
-                        <div className="git-history-files">
-                          {fileState?.loading && (
-                            <div className="git-history-file-message" style={{ paddingLeft: historyFileIndent }}>
-                              加载文件中...
-                            </div>
-                          )}
-                          {fileState?.error && (
-                            <div className="git-history-file-message error" style={{ paddingLeft: historyFileIndent }}>
-                              {fileState.error}
-                            </div>
-                          )}
-                          {fileState && !fileState.loading && !fileState.error && fileState.files.length === 0 && (
-                            <div className="git-history-file-message" style={{ paddingLeft: historyFileIndent }}>
-                              没有文件变更
-                            </div>
-                          )}
-                          {range && fileState?.files.map((file) => {
-                            const isFileSelected = selectedHistoryFile?.range.key === range.key
-                              && selectedHistoryFile.file.path === file.path
-                              && selectedHistoryFile.file.oldPath === file.oldPath;
-                            return (
-                              <button
-                                key={`${file.oldPath ?? ''}:${file.path}:${file.statusCode}`}
-                                type="button"
-                                className={`git-history-file-row ${isFileSelected ? 'selected' : ''}`}
-                                style={{ paddingLeft: historyFileIndent }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void openHistoryFile(commit, file);
-                                }}
-                                title={historyFileTitle(file)}
-                              >
-                                <span className={`git-history-file-status ${file.statusCode}`}>{file.statusCode}</span>
-                                <span className="git-history-file-path">{file.path}</span>
-                                <span className="git-history-file-stat">{historyFileStats(file)}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="git-history-preview">
-                <Suspense fallback={<div className="git-history-diff-empty">加载中...</div>}>
-                  <GitHistoryDiffPreview
-                    selectedFile={selectedHistoryFile?.file ?? null}
-                    diff={historyDiff}
-                    loading={historyDiffLoading}
-                    error={historyDiffError}
-                  />
-                </Suspense>
-              </div>
-            </div>
-
-            <div className="git-history-footer">
-              <span>{historyResult?.commits.length ?? 0} 个提交</span>
-              <span>
-                {historyResult
-                  ? `${status.branch}${historyResult.ahead > 0 ? ` ↑${historyResult.ahead}` : ''}${historyResult.behind > 0 ? ` ↓${historyResult.behind}` : ''}`
-                  : status.branch}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
       {commitDialogOpen && (
         <div className="git-commit-dialog-backdrop" onMouseDown={(e) => {
           if (action !== 'commit' && e.target === e.currentTarget) {

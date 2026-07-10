@@ -102,6 +102,15 @@
   flex-shrink: 0;
 }
 
+.terminal-tab-history-icon {
+  width: 12px;
+  flex: 0 0 12px;
+  color: var(--accent);
+  font-size: 13px;
+  line-height: 1;
+  text-align: center;
+}
+
 .terminal-tab-dot.working {
   animation: working-pulse 1.2s ease-in-out infinite;
 }

@@ -48,7 +48,8 @@
   overflow: hidden;
 }
 
-.settings-tab-content {
+.settings-tab-content,
+.git-history-tab-content {
   position: absolute;
   inset: 0;
   z-index: 10;

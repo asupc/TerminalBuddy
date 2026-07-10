@@ -16,6 +16,10 @@ export const TerminalTabBar: FC = () => {
   const openSettingsTab = useAppStore(s => s.openSettingsTab);
   const closeSettingsTab = useAppStore(s => s.closeSettingsTab);
   const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
+  const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
+  const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
+  const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
+  const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -84,7 +88,7 @@ export const TerminalTabBar: FC = () => {
       {sessions.map((session) => (
         <div
           key={session.id}
-          className={`terminal-tab ${activeSessionId === session.id ? 'active' : ''}`}
+          className={`terminal-tab ${activeSpecialTab === null && activeSessionId === session.id ? 'active' : ''}`}
           onClick={() => {
             const store = useAppStore.getState();
             if (store.splitMode !== 'off') {
@@ -162,7 +166,7 @@ export const TerminalTabBar: FC = () => {
       {/* Settings tab */}
       {settingsTabOpen && (
         <div
-          className="terminal-tab active"
+          className={`terminal-tab ${activeSpecialTab === 'settings' ? 'active' : ''}`}
           onClick={() => openSettingsTab()}
           title="设置"
         >
@@ -173,6 +177,24 @@ export const TerminalTabBar: FC = () => {
             onClick={(e) => {
               e.stopPropagation();
               closeSettingsTab();
+            }}
+            title="关闭"
+          >×</button>
+        </div>
+      )}
+      {gitHistoryTab && (
+        <div
+          className={`terminal-tab ${activeSpecialTab === 'git-history' ? 'active' : ''}`}
+          onClick={() => openGitHistoryTab(gitHistoryTab)}
+          title={`${gitHistoryTab.repoRoot} - Git 历史记录`}
+        >
+          <span className="terminal-tab-history-icon" aria-hidden="true">⑂</span>
+          <span className="terminal-tab-name">Git 历史记录</span>
+          <button
+            className="terminal-tab-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              closeGitHistoryTab();
             }}
             title="关闭"
           >×</button>

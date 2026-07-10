@@ -19,12 +19,16 @@ import './TerminalPanel.css';
 const TerminalInstance = lazy(() => import('./TerminalInstance').then(m => ({ default: m.TerminalInstance })));
 const TextEditor = lazy(() => import('./TextEditor').then(m => ({ default: m.TextEditor })));
 const SettingsPage = lazy(() => import('./SettingsPage').then(m => ({ default: m.SettingsPage })));
+const GitHistoryPage = lazy(() => import('./GitHistoryPage').then(m => ({ default: m.GitHistoryPage })));
 
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
   const closeSettingsTab = useAppStore(s => s.closeSettingsTab);
+  const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
+  const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
+  const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const updateSession = useAppStore(s => s.updateSession);
   const profiles = useAppStore(s => s.profiles);
   const splitMode = useAppStore(s => s.splitMode);
@@ -203,7 +207,7 @@ export const TerminalPanel: FC = () => {
         );
       }
       return sessions.map(session =>
-        renderPane(session, { active: !settingsTabOpen && activeSessionId === session.id, hidden: false })
+        renderPane(session, { active: activeSpecialTab === null && activeSessionId === session.id, hidden: false })
       );
     }
 
@@ -219,7 +223,7 @@ export const TerminalPanel: FC = () => {
               </div>
             );
           }
-          return renderPane(session, { slot: i, active: !settingsTabOpen && activeSessionId === slot.sessionId, hidden: false });
+          return renderPane(session, { slot: i, active: activeSpecialTab === null && activeSessionId === slot.sessionId, hidden: false });
         })}
         {/* Non-slot sessions: keep mounted but hidden (display:none) so PTY/xterm state survives */}
         {sessions.filter(s => !splitSlots.some(slot => slot.sessionId === s.id)).map(session =>
@@ -231,15 +235,26 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
-      {!settings.enableTabNavigation && sessions.length > 0 && (
+      {!settings.enableTabNavigation && (sessions.length > 0 || settingsTabOpen || gitHistoryTab) && (
         <TerminalTabBar />
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
         {renderTerminalContent()}
-        {settingsTabOpen && (
+        {settingsTabOpen && activeSpecialTab === 'settings' && (
           <div className="settings-tab-content">
             <Suspense fallback={<div className="lazy-panel-loading">加载设置…</div>}>
               <SettingsPage onClose={closeSettingsTab} />
+            </Suspense>
+          </div>
+        )}
+        {gitHistoryTab && activeSpecialTab === 'git-history' && (
+          <div className="git-history-tab-content">
+            <Suspense fallback={<div className="lazy-panel-loading">加载 Git 历史记录…</div>}>
+              <GitHistoryPage
+                repoRoot={gitHistoryTab.repoRoot}
+                branch={gitHistoryTab.branch}
+                onClose={closeGitHistoryTab}
+              />
             </Suspense>
           </div>
         )}
