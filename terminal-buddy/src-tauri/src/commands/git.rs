@@ -14,6 +14,8 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const EMPTY_TREE_REVISION: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitRepositoryStatus {
@@ -141,6 +143,41 @@ pub struct GitChangedFile {
     untracked: bool,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHistoryFile {
+    path: String,
+    old_path: Option<String>,
+    extension: String,
+    status: String,
+    status_code: String,
+    additions: u32,
+    deletions: u32,
+    binary: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHistoryFileDiff {
+    path: String,
+    old_path: Option<String>,
+    status: String,
+    status_code: String,
+    old_revision: String,
+    new_revision: String,
+    old_content: String,
+    new_content: String,
+    binary: bool,
+}
+
+#[derive(Clone)]
+struct GitHistoryNumstat {
+    path: String,
+    additions: u32,
+    deletions: u32,
+    binary: bool,
+}
+
 struct GitCommandOutput {
     stdout: String,
     stderr: String,
@@ -205,6 +242,41 @@ fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<GitCommandOutput, String
             args,
             output.status.code().unwrap_or(-1)
         ))
+    }
+}
+
+fn run_git_stdout_raw(cwd: &Path, args: &[&str]) -> Result<String, String> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(cwd)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "Never")
+        .stdin(Stdio::null());
+
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("无法运行 git：{}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if !stderr.is_empty() {
+            Err(stderr)
+        } else if !stdout.is_empty() {
+            Err(stdout)
+        } else {
+            Err(format!(
+                "git {:?} 退出码 {}",
+                args,
+                output.status.code().unwrap_or(-1)
+            ))
+        }
     }
 }
 
@@ -672,6 +744,151 @@ fn lookup_numstat(stats: &HashSet<(String, u32, u32)>, path: &str) -> (u32, u32)
         .find(|(stat_path, _, _)| stat_path == path)
         .map(|(_, additions, deletions)| (*additions, *deletions))
         .unwrap_or((0, 0))
+}
+
+fn normalize_history_revision(revision: Option<String>) -> String {
+    revision
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| EMPTY_TREE_REVISION.to_string())
+}
+
+fn history_status_code(raw_status: &str) -> String {
+    raw_status
+        .chars()
+        .next()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "M".to_string())
+}
+
+fn history_status_label(status_code: &str) -> String {
+    status_label(status_code.chars().next().unwrap_or('M'), ' ', false)
+}
+
+fn parse_history_numstats(output: &str) -> Vec<GitHistoryNumstat> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let additions_raw = parts.next()?.trim();
+            let deletions_raw = parts.next()?.trim();
+            let path = parts.collect::<Vec<_>>().join("\t").trim().to_string();
+            if path.is_empty() {
+                return None;
+            }
+
+            let binary = additions_raw == "-" || deletions_raw == "-";
+            Some(GitHistoryNumstat {
+                path,
+                additions: additions_raw.parse().ok().unwrap_or(0),
+                deletions: deletions_raw.parse().ok().unwrap_or(0),
+                binary,
+            })
+        })
+        .collect()
+}
+
+fn history_numstat_matches(stat_path: &str, path: &str, old_path: Option<&str>) -> bool {
+    stat_path == path
+        || old_path.is_some_and(|value| stat_path == value)
+        || stat_path.ends_with(path)
+        || old_path.is_some_and(|value| stat_path.ends_with(value))
+        || stat_path.contains(path)
+        || old_path.is_some_and(|value| stat_path.contains(value))
+}
+
+fn lookup_history_numstat(
+    stats: &[GitHistoryNumstat],
+    path: &str,
+    old_path: Option<&str>,
+) -> (u32, u32, bool) {
+    stats
+        .iter()
+        .find(|stat| history_numstat_matches(&stat.path, path, old_path))
+        .map(|stat| (stat.additions, stat.deletions, stat.binary))
+        .unwrap_or((0, 0, false))
+}
+
+fn make_history_file(
+    path: String,
+    old_path: Option<String>,
+    status_code: String,
+    stats: &[GitHistoryNumstat],
+) -> GitHistoryFile {
+    let (additions, deletions, binary) =
+        lookup_history_numstat(stats, &path, old_path.as_deref());
+
+    GitHistoryFile {
+        extension: file_extension(&path),
+        status: history_status_label(&status_code),
+        path,
+        old_path,
+        status_code,
+        additions,
+        deletions,
+        binary,
+    }
+}
+
+fn parse_history_files(name_status_output: &str, stats: &[GitHistoryNumstat]) -> Vec<GitHistoryFile> {
+    let tokens = name_status_output
+        .split('\0')
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let mut files = Vec::new();
+    let mut index = 0;
+
+    while index < tokens.len() {
+        let raw_status = tokens[index].trim();
+        index += 1;
+        if raw_status.is_empty() {
+            continue;
+        }
+
+        let status_code = history_status_code(raw_status);
+        if status_code == "R" || status_code == "C" {
+            if index + 1 >= tokens.len() {
+                break;
+            }
+
+            let old_path = tokens[index].to_string();
+            let path = tokens[index + 1].to_string();
+            index += 2;
+            files.push(make_history_file(path, Some(old_path), status_code, stats));
+        } else {
+            if index >= tokens.len() {
+                break;
+            }
+
+            let path = tokens[index].to_string();
+            index += 1;
+            files.push(make_history_file(path, None, status_code, stats));
+        }
+    }
+
+    files.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+    files
+}
+
+fn git_show_revision_file(root: &Path, revision: &str, path: &str) -> Result<Option<String>, String> {
+    if revision == EMPTY_TREE_REVISION {
+        return Ok(None);
+    }
+
+    let spec = format!("{}:{}", revision, path);
+    match run_git_stdout_raw(root, &["show", spec.as_str()]) {
+        Ok(output) => Ok(Some(output)),
+        Err(err)
+            if err.contains("does not exist")
+                || err.contains("exists on disk")
+                || err.contains("Invalid object name")
+                || err.contains("Path")
+                || err.contains("not found") =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn path_to_git_pathspec(path: &Path) -> String {
@@ -1407,6 +1624,137 @@ fn git_get_changed_files_impl(path: String) -> Result<Vec<GitChangedFile>, Strin
 
     files.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
     Ok(files)
+}
+
+#[command]
+pub async fn git_get_history_files(
+    path: String,
+    from_revision: Option<String>,
+    to_revision: String,
+) -> Result<Vec<GitHistoryFile>, String> {
+    git_task(move || git_get_history_files_impl(path, from_revision, to_revision)).await
+}
+
+fn git_get_history_files_impl(
+    path: String,
+    from_revision: Option<String>,
+    to_revision: String,
+) -> Result<Vec<GitHistoryFile>, String> {
+    let root = require_repo_root(&path)?;
+    let from_revision = normalize_history_revision(from_revision);
+    let to_revision = to_revision.trim().to_string();
+    if to_revision.is_empty() {
+        return Err("目标版本不能为空".to_string());
+    }
+
+    let name_status = run_git(
+        &root,
+        &[
+            "diff",
+            "--name-status",
+            "-z",
+            "-M",
+            "-C",
+            from_revision.as_str(),
+            to_revision.as_str(),
+            "--",
+        ],
+    )?;
+    let numstat = run_git(
+        &root,
+        &[
+            "diff",
+            "--numstat",
+            "-M",
+            "-C",
+            from_revision.as_str(),
+            to_revision.as_str(),
+            "--",
+        ],
+    )
+    .unwrap_or_default();
+    let stats = parse_history_numstats(&numstat);
+
+    Ok(parse_history_files(&name_status, &stats))
+}
+
+#[command]
+pub async fn git_get_history_file_diff(
+    path: String,
+    from_revision: Option<String>,
+    to_revision: String,
+    file_path: String,
+    old_path: Option<String>,
+    status_code: String,
+    binary: bool,
+) -> Result<GitHistoryFileDiff, String> {
+    git_task(move || {
+        git_get_history_file_diff_impl(
+            path,
+            from_revision,
+            to_revision,
+            file_path,
+            old_path,
+            status_code,
+            binary,
+        )
+    })
+    .await
+}
+
+fn git_get_history_file_diff_impl(
+    path: String,
+    from_revision: Option<String>,
+    to_revision: String,
+    file_path: String,
+    old_path: Option<String>,
+    status_code: String,
+    binary: bool,
+) -> Result<GitHistoryFileDiff, String> {
+    let root = require_repo_root(&path)?;
+    let from_revision = normalize_history_revision(from_revision);
+    let to_revision = to_revision.trim().to_string();
+    let file_path = file_path.trim().to_string();
+    let old_path = old_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let status_code = history_status_code(&status_code);
+
+    if to_revision.is_empty() {
+        return Err("目标版本不能为空".to_string());
+    }
+    if file_path.is_empty() {
+        return Err("文件路径不能为空".to_string());
+    }
+
+    let old_content = if status_code == "A" {
+        String::new()
+    } else {
+        git_show_revision_file(
+            &root,
+            from_revision.as_str(),
+            old_path.as_deref().unwrap_or(file_path.as_str()),
+        )?
+        .unwrap_or_default()
+    };
+    let new_content = if status_code == "D" {
+        String::new()
+    } else {
+        git_show_revision_file(&root, to_revision.as_str(), file_path.as_str())?
+            .unwrap_or_default()
+    };
+
+    Ok(GitHistoryFileDiff {
+        path: file_path,
+        old_path,
+        status: history_status_label(&status_code),
+        status_code,
+        old_revision: from_revision,
+        new_revision: to_revision,
+        old_content,
+        new_content,
+        binary,
+    })
 }
 
 #[command]

@@ -23,6 +23,10 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
   const openSettingsTab = useAppStore(s => s.openSettingsTab);
+  const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
+  const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
+  const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
+  const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const removeSession = useAppStore(s => s.removeSession);
 
   const renameSession = useAppStore(s => s.renameSession);
@@ -416,7 +420,7 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlightedIndex]);
 
-  if (sessions.length === 0) return null;
+  if (sessions.length === 0 && !settingsTabOpen && !gitHistoryTab) return null;
 
   const renderGroupEnd = (item: TreeItem) => {
     if (!item.isGroup || !item.children) return null;
@@ -509,7 +513,7 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
                 </div>
               ) : (
                 <div
-                  className={`tree-item tab-nav-item ${activeSessionId === child.id ? 'active' : ''}`}
+                  className={`tree-item tab-nav-item ${activeSpecialTab === null && activeSessionId === child.id ? 'active' : ''}`}
                   style={{ paddingLeft: `${indent + 12}px` }}
                   onClick={() => {
                     const store = useAppStore.getState();
@@ -580,12 +584,33 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
         />
         {settingsTabOpen && (
           <div
-            className={`tab-nav-settings-btn active`}
+            className={`tab-nav-settings-btn ${activeSpecialTab === 'settings' ? 'active' : ''}`}
             onClick={openSettingsTab}
             title="设置"
           >
             <span className="tab-nav-dot" style={{ background: 'var(--accent)' }} />
             <span className="tab-nav-name">设置</span>
+          </div>
+        )}
+        {gitHistoryTab && (
+          <div
+            className={`tab-nav-settings-btn ${activeSpecialTab === 'git-history' ? 'active' : ''}`}
+            onClick={() => openGitHistoryTab(gitHistoryTab)}
+            title={`${gitHistoryTab.repoRoot} - Git 历史记录`}
+          >
+            <span className="tab-nav-dot" style={{ background: '#e6a23c' }} />
+            <span className="tab-nav-name">Git 历史记录</span>
+            <button
+              className="tree-item-close"
+              onClick={(event) => {
+                event.stopPropagation();
+                closeGitHistoryTab();
+              }}
+              title="关闭"
+              aria-label="关闭 Git 历史记录"
+            >
+              &times;
+            </button>
           </div>
         )}
       </div>

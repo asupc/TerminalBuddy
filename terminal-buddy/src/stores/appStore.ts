@@ -27,6 +27,13 @@ interface SavedTab {
   claudeSessionId?: string;
 }
 
+export interface GitHistoryTab {
+  repoRoot: string;
+  branch: string;
+}
+
+export type WorkspaceSpecialTab = 'settings' | 'git-history' | null;
+
 export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: string | null) {
   try {
     const dirs = useAppStore.getState().sessionDirectories;
@@ -186,10 +193,15 @@ interface AppState {
   setConfigSearchQuery: (query: string) => void;
   setConfigSortBy: (sortBy: AppState['configSortBy']) => void;
 
-  // Settings tab
+  // Workspace special tabs
   settingsTabOpen: boolean;
   openSettingsTab: () => void;
   closeSettingsTab: () => void;
+  gitHistoryTab: GitHistoryTab | null;
+  openGitHistoryTab: (tab: GitHistoryTab) => void;
+  closeGitHistoryTab: () => void;
+  activeSpecialTab: WorkspaceSpecialTab;
+  setActiveSpecialTab: (tab: WorkspaceSpecialTab) => void;
 
   // File exclusion patterns
   exclusionPatterns: string[];
@@ -373,8 +385,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   setConfigSortBy: (sortBy) => set({ configSortBy: sortBy }),
 
   settingsTabOpen: false,
-  openSettingsTab: () => set({ settingsTabOpen: true }),
-  closeSettingsTab: () => set({ settingsTabOpen: false }),
+  gitHistoryTab: null,
+  activeSpecialTab: null,
+  openSettingsTab: () => set({ settingsTabOpen: true, activeSpecialTab: 'settings' }),
+  closeSettingsTab: () => set((state) => ({
+    settingsTabOpen: false,
+    activeSpecialTab: state.activeSpecialTab === 'settings' ? null : state.activeSpecialTab,
+  })),
+  openGitHistoryTab: (tab) => set({ gitHistoryTab: tab, activeSpecialTab: 'git-history' }),
+  closeGitHistoryTab: () => set((state) => ({
+    gitHistoryTab: null,
+    activeSpecialTab: state.activeSpecialTab === 'git-history' ? null : state.activeSpecialTab,
+  })),
+  setActiveSpecialTab: (tab) => set({ activeSpecialTab: tab }),
 
   exclusionPatterns: ['node_modules', '.git'],
   setExclusionPatterns: (patterns) => set({ exclusionPatterns: patterns }),
@@ -513,6 +536,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         sessions,
         activeSessionId: keepActive ? state.activeSessionId : s.id,
         settingsTabOpen: false,
+        activeSpecialTab: null,
       };
     }),
   removeSession: (id) =>
@@ -568,7 +592,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
     debouncedSaveTabs(state.sessions, id);
-    return { activeSessionId: id, currentDirectory, settingsTabOpen: false };
+    return { activeSessionId: id, currentDirectory, settingsTabOpen: false, activeSpecialTab: null };
   }),
   renameSession: (id, name) =>
     set((state) => {
@@ -599,7 +623,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const existing = state.sessions.find(s => s.sessionType === 'editor' && s.profileId === filePath);
     if (existing) {
       saveTabsToStorage(state.sessions, existing.id);
-      return { activeSessionId: existing.id, settingsTabOpen: false };
+      return { activeSessionId: existing.id, settingsTabOpen: false, activeSpecialTab: null };
     }
     const fileName = filePath.split(/[\\/]/).pop() || filePath;
     const id = crypto.randomUUID();
@@ -621,7 +645,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       : [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }];
     const sessions = [...state.sessions, session];
     saveTabsToStorage(sessions, id);
-    return { sessions, activeSessionId: id, settingsTabOpen: false, groups };
+    return { sessions, activeSessionId: id, settingsTabOpen: false, activeSpecialTab: null, groups };
     });
   },
   closeEditorSession: (id) =>
@@ -665,7 +689,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       : [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }];
     const sessions = [...state.sessions, session];
     saveTabsToStorage(sessions, id);
-    set({ sessions, activeSessionId: id, settingsTabOpen: false, groups });
+    set({ sessions, activeSessionId: id, settingsTabOpen: false, activeSpecialTab: null, groups });
   },
   removeDraftFile: async (draftPath: string) => {
     try { await deletePath(draftPath); } catch {}

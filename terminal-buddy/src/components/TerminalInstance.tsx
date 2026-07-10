@@ -22,8 +22,8 @@ import './TerminalInstance.css';
 // 终端基础字号。分屏模式下按比例缩小:2x1 → 0.9、2x2 → 0.8、单屏 → 1.0。
 const BASE_FONT_SIZE = 14;
 const FLOATING_MENU_MARGIN = 8;
-const AUTO_PASTE_DEDUPE_MS = 350;
-const recentAutoPastes = new Map<string, { text: string; time: number }>();
+const RIGHT_CLICK_PASTE_DEDUPE_MS = 750;
+const RIGHT_CLICK_NATIVE_PASTE_SUPPRESS_MS = 1200;
 // 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
 // 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
 const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
@@ -84,6 +84,13 @@ type AutocompleteState = {
   anchorX: number;
   anchorBelowY: number;
   anchorAboveY: number;
+};
+
+type RightClickPasteState = {
+  inFlight: boolean;
+  suppressNativePasteUntil: number;
+  lastText: string;
+  lastTextAt: number;
 };
 
 function fitFloatingElementToViewport(
@@ -579,24 +586,20 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const autocompletePopupRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const colorThemeRef = useRef(colorTheme);
+  const rightClickPasteRef = useRef<RightClickPasteState>({
+    inFlight: false,
+    suppressNativePasteUntil: 0,
+    lastText: '',
+    lastTextAt: 0,
+  });
   const updateAutocomplete = useCallback((val: typeof autocomplete) => {
     autocompleteRef.current = val;
     setAutocomplete(val);
   }, []);
   colorThemeRef.current = colorTheme;
 
-  const sendPastedText = useCallback((text: string, dedupeKey?: string): boolean => {
+  const sendPastedText = useCallback((text: string): boolean => {
     if (!text) return false;
-    if (dedupeKey) {
-      const key = `${terminalId}:${dedupeKey}`;
-      const now = performance.now();
-      const recent = recentAutoPastes.get(key);
-      if (recent && recent.text === text && now - recent.time < AUTO_PASTE_DEDUPE_MS) {
-        return false;
-      }
-      recentAutoPastes.set(key, { text, time: now });
-    }
-
     if (text.includes('\n') || text.includes('\r')) {
       const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
@@ -1415,29 +1418,95 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Right-click context menu
       const xtermEl = terminal.element!;
 
+      const shouldAutoPasteOnRightClick = (): boolean => {
+        if (readOnly) return false;
+        const settings = getAppSettings();
+        return settings.rightClickPaste && !terminal.hasSelection();
+      };
+
+      const suppressRightClickEvent = (e: Event) => {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      };
+
+      const isSuppressingNativePaste = () => {
+        return performance.now() < rightClickPasteRef.current.suppressNativePasteUntil;
+      };
+
+      const requestRightClickPaste = () => {
+        const pasteState = rightClickPasteRef.current;
+        const now = performance.now();
+        pasteState.suppressNativePasteUntil = now + RIGHT_CLICK_NATIVE_PASTE_SUPPRESS_MS;
+
+        if (pasteState.inFlight) return;
+        pasteState.inFlight = true;
+
+        readClipboardImageAsFile().then((imagePath) => {
+          onOutputRef.current(terminalId, `[图片:${imagePath}]`);
+          terminal.focus();
+        }).catch(() => {
+          navigator.clipboard.readText().then((text) => {
+            if (!text) return;
+
+            const textNow = performance.now();
+            if (
+              pasteState.lastText === text &&
+              textNow - pasteState.lastTextAt < RIGHT_CLICK_PASTE_DEDUPE_MS
+            ) {
+              return;
+            }
+
+            pasteState.lastText = text;
+            pasteState.lastTextAt = textNow;
+            sendPastedText(text);
+            terminal.focus();
+          }).catch(() => {});
+        }).finally(() => {
+          pasteState.inFlight = false;
+        });
+      };
+
+      const handleRightMouseDown = (e: MouseEvent) => {
+        if (e.button !== 2 || !shouldAutoPasteOnRightClick()) return;
+
+        // Handle auto paste before xterm moves/focuses its hidden textarea for
+        // the native context menu; otherwise a later paste path can join in.
+        suppressRightClickEvent(e);
+        requestRightClickPaste();
+      };
+
+      const handleRightMouseUp = (e: MouseEvent) => {
+        if (e.button === 2 && isSuppressingNativePaste()) {
+          suppressRightClickEvent(e);
+        }
+      };
+
+      const handleRightAuxClick = (e: MouseEvent) => {
+        if (e.button === 2 && isSuppressingNativePaste()) {
+          suppressRightClickEvent(e);
+        }
+      };
+
+      const handleNativePaste = (e: ClipboardEvent) => {
+        if (isSuppressingNativePaste()) {
+          suppressRightClickEvent(e);
+        }
+      };
+
       const handleContextMenu = (e: MouseEvent) => {
         e.preventDefault();
         // In readOnly mode, block paste but still allow copy from context menu
-        if (!readOnly) {
-          const settings = getAppSettings();
-          if (settings.rightClickPaste && !terminal.hasSelection()) {
-            // xterm also handles contextmenu on the terminal element. When auto
-            // paste is enabled, keep this event on a single paste path.
-            e.stopImmediatePropagation();
-            readClipboardImageAsFile().then((imagePath) => {
-              onOutputRef.current(terminalId, `[图片:${imagePath}]`);
-              terminal.focus();
-            }).catch(() => {
-              navigator.clipboard.readText().then((text) => {
-                if (text) {
-                  sendPastedText(text, 'right-click');
-                  terminal.focus();
-                }
-              }).catch(() => {});
-            });
-            return;
-          }
+        if (shouldAutoPasteOnRightClick()) {
+          suppressRightClickEvent(e);
+          requestRightClickPaste();
+          return;
         }
+
+        if (isSuppressingNativePaste()) {
+          suppressRightClickEvent(e);
+          return;
+        }
+
         setContextMenu({
           x: e.clientX,
           y: e.clientY,
@@ -1446,8 +1515,20 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           visible: true,
         });
       };
+      xtermEl.addEventListener('mousedown', handleRightMouseDown, true);
+      xtermEl.addEventListener('mouseup', handleRightMouseUp, true);
+      xtermEl.addEventListener('auxclick', handleRightAuxClick, true);
+      xtermEl.addEventListener('paste', handleNativePaste, true);
       xtermEl.addEventListener('contextmenu', handleContextMenu, true);
-      cleanupFns.push(() => xtermEl.removeEventListener('contextmenu', handleContextMenu, true));
+      cleanupFns.push(() => {
+        rightClickPasteRef.current.inFlight = false;
+        rightClickPasteRef.current.suppressNativePasteUntil = 0;
+        xtermEl.removeEventListener('mousedown', handleRightMouseDown, true);
+        xtermEl.removeEventListener('mouseup', handleRightMouseUp, true);
+        xtermEl.removeEventListener('auxclick', handleRightAuxClick, true);
+        xtermEl.removeEventListener('paste', handleNativePaste, true);
+        xtermEl.removeEventListener('contextmenu', handleContextMenu, true);
+      });
 
       // Ctrl+hover: show pointer cursor on links
       const handleKeyDownGlobal = (e: KeyboardEvent) => {
