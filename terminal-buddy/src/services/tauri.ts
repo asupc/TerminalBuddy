@@ -289,8 +289,8 @@ export const gitGetChangedFiles = (path: string) =>
   invoke<GitChangedFile[]>('git_get_changed_files', { path });
 export const gitCommitPaths = (path: string, message: string, paths: string[]) =>
   invoke<string>('git_commit_paths', { path, message, paths });
-export const gitGetHistory = (path: string, limit?: number) =>
-  invoke<GitHistoryResult>('git_get_history', { path, limit: limit ?? null });
+export const gitGetHistory = (path: string, limit?: number, skip?: number) =>
+  invoke<GitHistoryResult>('git_get_history', { path, limit: limit ?? null, skip: skip ?? null });
 export const gitGetHistoryFiles = (path: string, fromRevision: string | null, toRevision: string) =>
   invoke<GitHistoryFile[]>('git_get_history_files', { path, fromRevision, toRevision });
 export const gitGetHistoryFileDiff = (

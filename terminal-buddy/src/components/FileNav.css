@@ -224,7 +224,7 @@
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  min-height: 32px;
+  min-height: 64px;
   position: relative;
 }
 
@@ -242,11 +242,12 @@
 
 .bookmark-bar {
   display: flex;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 4px 0;
+  padding: 6px 8px 8px;
   align-items: flex-start;
   flex-wrap: wrap;
   align-content: flex-start;
+  justify-content: space-evenly;
 }
 
 .bookmark-tag {
@@ -277,7 +278,10 @@
 }
 
 .bookmark-close {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 12px;
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -286,6 +290,10 @@
   line-height: 1;
   padding: 0 0 0 2px;
   margin: 0;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
 }
 
 .bookmark-close:hover {
@@ -293,7 +301,9 @@
 }
 
 .bookmark-tag:hover .bookmark-close {
-  display: inline;
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .bookmark-rename-input {
@@ -923,6 +933,13 @@
 
 .git-history-empty.error {
   color: #fca5a5;
+}
+
+.git-history-load-more {
+  padding: 14px 12px;
+  color: #969696;
+  text-align: center;
+  font-size: 12px;
 }
 
 .git-history-graph-row {
