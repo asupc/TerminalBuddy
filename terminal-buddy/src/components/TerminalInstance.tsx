@@ -16,6 +16,7 @@ import { useAppStore } from '../stores/appStore';
 import { getTerminalSuggestions, type SuggestionItem } from '../data/commandTemplates';
 import { normalizeAnsiForLightBackground, type TerminalColors } from '../utils/terminalTheme';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
+import { disposeClaudeTerminalNotification, handleClaudeTaskCompleted, handleClaudeTerminalOutput, hasRunningClaudeTask, markClaudeTerminalInteraction } from '../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
@@ -739,8 +740,47 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       return false;
     };
 
+    const checkBufferForClaudeInput = () => {
+      if (disposed || !xtermRef.current) return false;
+      const terminal = xtermRef.current;
+      const buf = terminal.buffer.active;
+      const lines: string[] = [];
+      const firstRow = Math.max(0, buf.viewportY);
+      const lastRow = Math.min(buf.length - 1, firstRow + terminal.rows - 1);
+      for (let row = firstRow; row <= lastRow; row++) {
+        const line = buf.getLine(row);
+        if (line) lines.push(line.translateToString(true));
+      }
+      return lines.some(line => /^\s*[❯›]\s*(?:$|Try\s+["“])/i.test(line)) &&
+        !lines.some(line => /esc to interrupt|Permission required|Enter to select/i.test(line));
+    };
+
+    const checkWorkingState = () => {
+      if (disposed) return;
+      if (checkBufferForClaudeInput()) {
+        if (!hasRunningClaudeTask(terminalId)) {
+          useAppStore.getState().setSessionWorking(terminalId, false);
+          if (workingFallback) clearTimeout(workingFallback);
+          return;
+        }
+        if (handleClaudeTaskCompleted(terminalId)) {
+          useAppStore.getState().setSessionWorking(terminalId, false);
+          if (workingFallback) clearTimeout(workingFallback);
+        } else {
+          // 快速任务可能在 300ms 检查时仍显示提交前的旧输入框，稍后复核一次。
+          workingDebounce = setTimeout(checkWorkingState, 800);
+        }
+        return;
+      }
+      if (checkBufferForPrompt()) {
+        useAppStore.getState().setSessionWorking(terminalId, false);
+        if (workingFallback) clearTimeout(workingFallback);
+      }
+    };
+
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
+      handleClaudeTerminalOutput(terminalId, output);
       if (xtermRef.current) {
         // 先存原始 chunk，等 RAF 里 join 成完整串后再做 ANSI 改写。
         // normalizeAnsiForLightBackground 用正则匹配「完整的」CSI 序列（\x1b[...m），
@@ -793,12 +833,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (workingDebounce) clearTimeout(workingDebounce);
       if (workingFallback) clearTimeout(workingFallback);
       // Quick check after 300ms — xterm buffer has clean text (no ANSI codes)
-      workingDebounce = setTimeout(() => {
-        if (!disposed && checkBufferForPrompt()) {
-          useAppStore.getState().setSessionWorking(terminalId, false);
-          if (workingFallback) clearTimeout(workingFallback);
-        }
-      }, 300);
+      workingDebounce = setTimeout(checkWorkingState, 300);
       // Fallback: after 1.5s of silence, force idle regardless
       workingFallback = setTimeout(() => {
         if (!disposed) {
@@ -1165,6 +1200,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       terminal.onData((data) => {
+        markClaudeTerminalInteraction(terminalId, data === '\r' || data === '\n');
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
           useAppStore.getState().setSessionWorking(terminalId, true);
@@ -1575,6 +1611,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     return () => {
       disposed = true;
+      disposeClaudeTerminalNotification(terminalId);
       if (autocompleteTimer) {
         clearTimeout(autocompleteTimer);
         autocompleteTimer = null;

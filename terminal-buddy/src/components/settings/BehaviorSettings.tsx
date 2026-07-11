@@ -78,6 +78,17 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         <label className="settings-toggle">
           <input
             type="checkbox"
+            checked={settings.claudeCodeNotifications}
+            onChange={(e) => updateSetting('claudeCodeNotifications', e.target.checked)}
+          />
+          <span>Claude Code 通知</span>
+        </label>
+        <p className="settings-desc">Claude Code 等待确认、提出问题或任务完成时发送桌面通知，点击通知可返回该终端</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
             checked={settings.configPanelAutoExpand}
             onChange={(e) => updateSetting('configPanelAutoExpand', e.target.checked)}
           />

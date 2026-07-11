@@ -31,6 +31,7 @@ export interface AppSettings {
   launchAtLogin: boolean;
   terminalFollowAppTheme: boolean;
   autoResumeClaudeSession: boolean;
+  claudeCodeNotifications: boolean;
   listSelectionStyle: 'default' | 'idea' | 'custom';
   listSelectionBg: string;
   listSelectionFg: string;
@@ -64,6 +65,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   terminalFollowAppTheme: true,
   autoResumeClaudeSession: true,
+  claudeCodeNotifications: true,
   listSelectionStyle: 'idea',
   listSelectionBg: '#4d7db9',
   listSelectionFg: '#ffffff',

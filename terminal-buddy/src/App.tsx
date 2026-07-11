@@ -15,6 +15,7 @@ import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUse
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
+import { initializeClaudeNotificationActions } from './services/claudeNotification';
 
 /** Estimate terminal rows/cols from the .terminal-content container size. */
 function estimateTerminalSize(): { rows: number; cols: number } {
@@ -56,6 +57,14 @@ function App() {
   // 预加载终端组件 chunk（xterm.js + addons），让 restoreTabs 时不需等待网络/IO
   useEffect(() => {
     void import('./components/TerminalInstance');
+  }, []);
+
+  useEffect(() => {
+    let dispose: (() => void) | undefined;
+    void initializeClaudeNotificationActions()
+      .then(cleanup => { dispose = cleanup; })
+      .catch(error => console.error('初始化桌面通知失败:', error));
+    return () => dispose?.();
   }, []);
 
   // F11 键监听：切换窗口模式

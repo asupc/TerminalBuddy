@@ -64,6 +64,18 @@ export async function getTerminalProcessId(terminalId: string): Promise<number |
   return invoke('get_terminal_process_id', { terminalId });
 }
 
+export async function showClaudeCodeNotification(
+  terminalId: string,
+  terminalName: string,
+  notificationKind: 'confirmation' | 'question' | 'completed'
+): Promise<void> {
+  return invoke('show_claude_code_notification', { terminalId, terminalName, notificationKind });
+}
+
+export async function onClaudeNotificationActivated(callback: (terminalId: string) => void): Promise<UnlistenFn> {
+  return listen<string>('claude-notification-activated', event => callback(event.payload));
+}
+
 export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string): Promise<string> {
   return invoke('start_blank_terminal', { terminalType, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null });
 }
