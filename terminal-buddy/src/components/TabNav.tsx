@@ -90,6 +90,14 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
     return () => sidebar.removeEventListener('mousedown', handler);
   }, []);
 
+  // F2 重命名时自动聚焦输入框
+  useEffect(() => {
+    if (renamingSessionId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingSessionId]);
+
   useEffect(() => {
     const handler = () => setSettingsTick(t => t + 1);
     window.addEventListener('app-settings-changed', handler);

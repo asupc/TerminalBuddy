@@ -875,7 +875,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // 按 F11 没反应」。这里显式放行 F11，让它冒泡到 cycleWindowMode。返回 false
       // 表示 xterm 不要处理该键。
       terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-        if (e.type === 'keydown' && (e.key === 'F11')) return false;
+        // F11: 全屏切换；F2: 重命名（TabNav / ConfigNav / TerminalTabBar）
+        // 返回 false 让这些键冒泡到 document，不被 xterm 消费
+        if (e.type === 'keydown' && (e.key === 'F11' || e.key === 'F2')) return false;
         return true;
       });
 

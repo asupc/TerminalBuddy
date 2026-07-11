@@ -25,6 +25,7 @@ export const TerminalTabBar: FC = () => {
   const [renameValue, setRenameValue] = useState('');
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const tabBarRef = useRef<HTMLDivElement>(null);
 
   const handleCloseTerminal = useCallback(async (sessionId: string) => {
     const session = sessions.find(s => s.id === sessionId);
@@ -81,10 +82,47 @@ export const TerminalTabBar: FC = () => {
     return () => document.removeEventListener('click', handler);
   }, [contextMenu]);
 
+  // F2 快速重命名标签
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'F2') return;
+      const region = useAppStore.getState().lastClickRegion;
+      if (region && region !== 'tab') return;
+      if (!activeSessionId) return;
+      const session = sessions.find(s => s.id === activeSessionId);
+      if (session) {
+        setRenameValue(session.profileName);
+        setRenamingSessionId(activeSessionId);
+        setTimeout(() => renameInputRef.current?.select(), 0);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [activeSessionId, sessions]);
+
+  // 跟踪上次点击区域
+  useEffect(() => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    const handler = () => {
+      useAppStore.getState().setLastClickRegion('tab');
+    };
+    el.addEventListener('mousedown', handler);
+    return () => el.removeEventListener('mousedown', handler);
+  }, []);
+
+  // F2 重命名时自动聚焦输入框
+  useEffect(() => {
+    if (renamingSessionId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingSessionId]);
+
   const sessionIdx = (id: string) => sessions.findIndex(s => s.id === id);
 
   return (
-    <div className="terminal-tab-bar" key={settingsVersion}>
+    <div className="terminal-tab-bar" key={settingsVersion} ref={tabBarRef}>
       {sessions.map((session) => (
         <div
           key={session.id}
