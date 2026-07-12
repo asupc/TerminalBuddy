@@ -755,6 +755,21 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         !lines.some(line => /esc to interrupt|Permission required|Enter to select/i.test(line));
     };
 
+    const hasBusyClaudeSubagent = () => {
+      if (disposed || !xtermRef.current) return false;
+      const terminal = xtermRef.current;
+      const buf = terminal.buffer.active;
+      const firstRow = Math.max(0, buf.viewportY);
+      const lastRow = Math.min(buf.length - 1, firstRow + terminal.rows - 1);
+      for (let row = firstRow; row <= lastRow; row++) {
+        const line = buf.getLine(row)?.translateToString(true) ?? '';
+        if (!/\b(?:sub-?agents?|agents?)\b/i.test(line)) continue;
+        // “idle” 是 Claude Code 子代理完成后的状态；其余明确的运行状态都视为仍在执行。
+        if (/\b(?:working|running|thinking|processing|queued|pending|active|in[ -]?progress)\b/i.test(line)) return true;
+      }
+      return false;
+    };
+
     const checkWorkingState = () => {
       if (disposed) return;
       if (checkBufferForClaudeInput()) {
@@ -763,11 +778,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           if (workingFallback) clearTimeout(workingFallback);
           return;
         }
-        if (handleClaudeTaskCompleted(terminalId)) {
+        if (handleClaudeTaskCompleted(terminalId, hasBusyClaudeSubagent())) {
           useAppStore.getState().setSessionWorking(terminalId, false);
           if (workingFallback) clearTimeout(workingFallback);
         } else {
-          // 快速任务可能在 300ms 检查时仍显示提交前的旧输入框，稍后复核一次。
+          // spinner 或子代理仍在活动时保持工作状态，并持续复核直到它们停止。
+          useAppStore.getState().setSessionWorking(terminalId, true);
+          if (workingFallback) clearTimeout(workingFallback);
           workingDebounce = setTimeout(checkWorkingState, 800);
         }
         return;

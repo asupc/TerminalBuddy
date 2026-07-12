@@ -6,6 +6,7 @@ import { onClaudeNotificationActivated, showClaudeCodeNotification as showNative
 const DETECTION_DELAY_MS = 300;
 const DETECTION_BUFFER_SIZE = 12_000;
 const NOTIFICATION_COOLDOWN_MS = 5_000;
+const SPINNER_ACTIVITY_GRACE_MS = 1_200;
 
 type DetectorState = {
   text: string;
@@ -14,6 +15,7 @@ type DetectorState = {
   taskRunning: boolean;
   taskStartedAt: number;
   taskHadBusyMarker: boolean;
+  lastSpinnerAt: number;
   lastNotifiedAt: number;
   timer: ReturnType<typeof setTimeout> | null;
 };
@@ -31,6 +33,7 @@ function createDetectorState(): DetectorState {
     taskRunning: false,
     taskStartedAt: 0,
     taskHadBusyMarker: false,
+    lastSpinnerAt: 0,
     lastNotifiedAt: 0,
     timer: null,
   };
@@ -60,6 +63,9 @@ const QUESTION_MARKERS = [
   /Enter to select[\s\S]{0,160}(?:navigate|Esc to cancel)/i,
   /Type something[\s\S]{0,160}(?:Enter to select|Esc to cancel)/i,
 ];
+
+// Claude Code 的 spinner 使用 Braille 动画帧；只要帧仍在变化，就不能把输入提示符当作任务完成。
+const SPINNER_FRAME_MARKER = /[⠁⠂⠄⠈⠉⠋⠐⠘⠙⠠⠤⠦⠨⠰⠴⠸⠹⠼⡀⡄⡆⡇⡉⡋⡌⡏⡐⡠⡤⡦⡧⡨⡩⡬⡰⡴⡸⡹⡼⢀⢄⢆⢇⢈⢉⢌⢏⢐⢠⢤⢦⢧⢨⢩⢬⢰⢴⢸⢹⢼⣀⣄⣆⣇⣈⣉⣌⣏⣐⣠⣤⣦⣧⣨⣩⣬⣰⣴⣸⣹⣼⣾⣿✢]/u;
 
 function stripTerminalControls(value: string): string {
   return value
@@ -139,6 +145,13 @@ function scheduleClaudeNotification(terminalId: string, kind: NotificationKind):
   pendingNotifications.set(key, timer);
 }
 
+function cancelClaudeNotification(terminalId: string, kind: NotificationKind): void {
+  const key = notificationKey(terminalId, kind);
+  const pending = pendingNotifications.get(key);
+  if (pending) clearTimeout(pending);
+  pendingNotifications.delete(key);
+}
+
 function evaluatePrompt(terminalId: string, state: DetectorState): void {
   state.timer = null;
   if (!getAppSettings().claudeDecisionNotifications || !isKnownClaudeTerminal(terminalId, state)) return;
@@ -162,6 +175,14 @@ export function handleClaudeTerminalOutput(terminalId: string, output: string): 
   const cleanOutput = stripTerminalControls(output);
   state.text = (state.text + cleanOutput).slice(-DETECTION_BUFFER_SIZE);
   state.claudeSeen ||= CLAUDE_MARKERS.some(marker => marker.test(state.text));
+  if (SPINNER_FRAME_MARKER.test(output)) {
+    state.lastSpinnerAt = Date.now();
+    // 延迟通知期间 spinner 又开始刷新，说明之前的“完成”判断不成立。
+    if (!state.taskRunning && isKnownClaudeTerminal(terminalId, state)) {
+      state.taskRunning = true;
+      cancelClaudeNotification(terminalId, 'completed');
+    }
+  }
   state.taskHadBusyMarker ||= /esc to interrupt/i.test(state.text);
   if (state.timer) clearTimeout(state.timer);
   state.timer = setTimeout(() => evaluatePrompt(terminalId, state), DETECTION_DELAY_MS);
@@ -170,11 +191,7 @@ export function handleClaudeTerminalOutput(terminalId: string, output: string): 
 
 export function markClaudeTerminalInteraction(terminalId: string, taskSubmitted: boolean): void {
   if (!taskSubmitted) return;
-  const pendingDecision = pendingNotifications.get(notificationKey(terminalId, 'question'));
-  if (pendingDecision) {
-    clearTimeout(pendingDecision);
-    pendingNotifications.delete(notificationKey(terminalId, 'question'));
-  }
+  cancelClaudeNotification(terminalId, 'question');
   const state = detectorStates.get(terminalId) ?? createDetectorState();
   // 手动输入 claude 启动 CLI 时尚未进入 Claude 会话，不能把启动过程当成一项任务。
   if (!isKnownClaudeTerminal(terminalId, state)) {
@@ -186,6 +203,7 @@ export function markClaudeTerminalInteraction(terminalId: string, taskSubmitted:
   state.taskRunning = true;
   state.taskStartedAt = Date.now();
   state.taskHadBusyMarker = false;
+  state.lastSpinnerAt = 0;
   if (state.timer) {
     clearTimeout(state.timer);
     state.timer = null;
@@ -193,7 +211,7 @@ export function markClaudeTerminalInteraction(terminalId: string, taskSubmitted:
   detectorStates.set(terminalId, state);
 }
 
-export function handleClaudeTaskCompleted(terminalId: string): boolean {
+export function handleClaudeTaskCompleted(terminalId: string, hasBusySubagent: boolean): boolean {
   const state = detectorStates.get(terminalId);
   if (!state || !state.taskRunning || state.promptActive || !isKnownClaudeTerminal(terminalId, state)) {
     return false;
@@ -201,6 +219,7 @@ export function handleClaudeTaskCompleted(terminalId: string): boolean {
 
   // 极短时间内可能仍是提交按键前的旧输入框，等待忙碌标记或首次重绘后再确认。
   if (!state.taskHadBusyMarker && Date.now() - state.taskStartedAt < 1_000) return false;
+  if (hasBusySubagent || Date.now() - state.lastSpinnerAt < SPINNER_ACTIVITY_GRACE_MS) return false;
 
   state.taskRunning = false;
   state.taskHadBusyMarker = false;
@@ -218,10 +237,7 @@ export function disposeClaudeTerminalNotification(terminalId: string): void {
   if (state?.timer) clearTimeout(state.timer);
   detectorStates.delete(terminalId);
   for (const kind of ['question', 'completed'] as const) {
-    const key = notificationKey(terminalId, kind);
-    const pending = pendingNotifications.get(key);
-    if (pending) clearTimeout(pending);
-    pendingNotifications.delete(key);
+    cancelClaudeNotification(terminalId, kind);
   }
 }
 
