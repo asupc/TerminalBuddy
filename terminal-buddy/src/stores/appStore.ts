@@ -32,7 +32,7 @@ export interface GitHistoryTab {
   branch: string;
 }
 
-export type WorkspaceSpecialTab = 'settings' | 'git-history' | null;
+export type WorkspaceSpecialTab = 'git-history' | null;
 
 export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: string | null) {
   try {
@@ -193,10 +193,10 @@ interface AppState {
   setConfigSearchQuery: (query: string) => void;
   setConfigSortBy: (sortBy: AppState['configSortBy']) => void;
 
-  // Workspace special tabs
-  settingsTabOpen: boolean;
-  openSettingsTab: () => void;
-  closeSettingsTab: () => void;
+  // Settings dialog and workspace special tabs
+  settingsDialogOpen: boolean;
+  openSettingsDialog: () => void;
+  closeSettingsDialog: () => void;
   gitHistoryTab: GitHistoryTab | null;
   openGitHistoryTab: (tab: GitHistoryTab) => void;
   closeGitHistoryTab: () => void;
@@ -384,14 +384,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   setConfigSearchQuery: (query) => set({ configSearchQuery: query }),
   setConfigSortBy: (sortBy) => set({ configSortBy: sortBy }),
 
-  settingsTabOpen: false,
+  settingsDialogOpen: false,
   gitHistoryTab: null,
   activeSpecialTab: null,
-  openSettingsTab: () => set({ settingsTabOpen: true, activeSpecialTab: 'settings' }),
-  closeSettingsTab: () => set((state) => ({
-    settingsTabOpen: false,
-    activeSpecialTab: state.activeSpecialTab === 'settings' ? null : state.activeSpecialTab,
-  })),
+  openSettingsDialog: () => set({ settingsDialogOpen: true }),
+  closeSettingsDialog: () => set({ settingsDialogOpen: false }),
   openGitHistoryTab: (tab) => set({ gitHistoryTab: tab, activeSpecialTab: 'git-history' }),
   closeGitHistoryTab: () => set((state) => ({
     gitHistoryTab: null,
@@ -535,7 +532,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       return {
         sessions,
         activeSessionId: keepActive ? state.activeSessionId : s.id,
-        settingsTabOpen: false,
         activeSpecialTab: null,
       };
     }),
@@ -592,7 +588,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
     debouncedSaveTabs(state.sessions, id);
-    return { activeSessionId: id, currentDirectory, settingsTabOpen: false, activeSpecialTab: null };
+    return { activeSessionId: id, currentDirectory, activeSpecialTab: null };
   }),
   renameSession: (id, name) =>
     set((state) => {
@@ -623,7 +619,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const existing = state.sessions.find(s => s.sessionType === 'editor' && s.profileId === filePath);
     if (existing) {
       saveTabsToStorage(state.sessions, existing.id);
-      return { activeSessionId: existing.id, settingsTabOpen: false, activeSpecialTab: null };
+      return { activeSessionId: existing.id, activeSpecialTab: null };
     }
     const fileName = filePath.split(/[\\/]/).pop() || filePath;
     const id = crypto.randomUUID();
@@ -645,7 +641,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       : [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }];
     const sessions = [...state.sessions, session];
     saveTabsToStorage(sessions, id);
-    return { sessions, activeSessionId: id, settingsTabOpen: false, activeSpecialTab: null, groups };
+    return { sessions, activeSessionId: id, activeSpecialTab: null, groups };
     });
   },
   closeEditorSession: (id) =>
@@ -689,7 +685,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       : [...state.groups, { id: 'editor-group', name: '文本编辑', collapsed: false }];
     const sessions = [...state.sessions, session];
     saveTabsToStorage(sessions, id);
-    set({ sessions, activeSessionId: id, settingsTabOpen: false, activeSpecialTab: null, groups });
+    set({ sessions, activeSessionId: id, activeSpecialTab: null, groups });
   },
   removeDraftFile: async (draftPath: string) => {
     try { await deletePath(draftPath); } catch {}

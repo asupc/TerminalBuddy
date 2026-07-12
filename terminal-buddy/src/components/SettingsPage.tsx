@@ -1,70 +1,136 @@
-import { FC, useState, useEffect, useRef, useMemo } from 'react';
-import { getBackendAppSettings, syncLaunchAtLogin, getDataPath, deleteProfile as deleteProfileCmd, getAllProfiles, createProfile, updateProfile, getDownloadsDirectory } from '../services/tauri';
-import { useAppStore } from '../stores/appStore';
-import { type Profile } from '../types';
+import { FC, lazy, Suspense, useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import {
+  BrainCircuit,
+  Database,
+  FileX2,
+  Palette,
+  Plug,
+  Server,
+  Settings,
+  SlidersHorizontal,
+  SquareTerminal,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
+import {
+  getBackendAppSettings,
+  getDataPath,
+  getDownloadsDirectory,
+  syncLaunchAtLogin,
+} from '../services/tauri';
 import { type AppSettings, getAppSettings, saveAppSettings } from '../utils/settings';
-import { ConfigEditDialog } from './ConfigEditDialog';
-import { getCmdOverrides, saveCmdOverrides, getCustomCommands, saveCustomCommands, getEffectiveTemplates, type CmdOverride, type CommandItem } from '../data/commandTemplates';
-import { SshSettings } from './settings/SshSettings';
-import { AiUsageSettings } from './settings/AiUsageSettings';
-import { BehaviorSettings } from './settings/BehaviorSettings';
-import { DataSettings } from './settings/DataSettings';
-import { ExclusionSettings } from './settings/ExclusionSettings';
-import { ThemesSettings } from './settings/ThemesSettings';
 import './SettingsPage.css';
+
+const BehaviorSettings = lazy(() => import('./settings/BehaviorSettings').then(module => ({ default: module.BehaviorSettings })));
+const DataSettings = lazy(() => import('./settings/DataSettings').then(module => ({ default: module.DataSettings })));
+const ProfilesSettings = lazy(() => import('./settings/ProfilesSettings').then(module => ({ default: module.ProfilesSettings })));
+const CommandsSettings = lazy(() => import('./settings/CommandsSettings').then(module => ({ default: module.CommandsSettings })));
+const ThemesSettings = lazy(() => import('./settings/ThemesSettings').then(module => ({ default: module.ThemesSettings })));
+const ExclusionSettings = lazy(() => import('./settings/ExclusionSettings').then(module => ({ default: module.ExclusionSettings })));
+const AiUsageSettings = lazy(() => import('./settings/AiUsageSettings').then(module => ({ default: module.AiUsageSettings })));
+const SshSettings = lazy(() => import('./settings/SshSettings').then(module => ({ default: module.SshSettings })));
 
 interface SettingsPageProps {
   onClose: () => void;
 }
 
-const SECTIONS = [
-  { id: 'behavior', label: '行为设置' },
-  { id: 'data', label: '数据管理' },
-  { id: 'profiles', label: '连接管理' },
-  { id: 'commands', label: '命令模板' },
-  { id: 'themes', label: '主题管理' },
-  { id: 'exclusions', label: '文件排除' },
-  { id: 'ai-usage', label: 'AI用量' },
-  { id: 'ssh', label: 'SSH 设置' },
-] as const;
+type SettingsSectionId =
+  | 'behavior'
+  | 'data'
+  | 'profiles'
+  | 'commands'
+  | 'themes'
+  | 'exclusions'
+  | 'ai-usage'
+  | 'ssh';
+
+interface SettingsSection {
+  id: SettingsSectionId;
+  label: string;
+  icon: LucideIcon;
+}
+
+const SECTIONS: ReadonlyArray<SettingsSection> = [
+  { id: 'behavior', label: '行为设置', icon: SlidersHorizontal },
+  { id: 'data', label: '数据管理', icon: Database },
+  { id: 'profiles', label: '连接管理', icon: Plug },
+  { id: 'commands', label: '命令模板', icon: SquareTerminal },
+  { id: 'themes', label: '主题管理', icon: Palette },
+  { id: 'exclusions', label: '文件排除', icon: FileX2 },
+  { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit },
+  { id: 'ssh', label: 'SSH 设置', icon: Server },
+];
 
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [settings, setSettings] = useState<AppSettings>(getAppSettings);
-  const [cmdSearch, setCmdSearch] = useState('');
-  const [activeCmdTab, setActiveCmdTab] = useState<string | null>(null);
-  const [cmdContextMenu, setCmdContextMenu] = useState<{ x: number; y: number; cmd: CommandItem; category: string } | null>(null);
-  const [cmdOverrides, setCmdOverrides] = useState<Record<string, CmdOverride>>(getCmdOverrides);
-  const [customCmds, setCustomCmds] = useState<CommandItem[]>(getCustomCommands);
-  const [editingCmd, setEditingCmd] = useState<string | null>(null);
-  const [editDesc, setEditDesc] = useState('');
-  const [addingCustom, setAddingCustom] = useState(false);
-  const [newCmd, setNewCmd] = useState({ name: '', command: '', desc: '' });
   const [dataPath, setDataPath] = useState('');
-  const [activeSection, setActiveSection] = useState('behavior');
-  const [profileSearch, setProfileSearch] = useState('');
-  const [profileGroupTab, setProfileGroupTab] = useState('');
-  const [showProfileDialog, setShowProfileDialog] = useState(false);
-  const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
-  const [profileContextMenu, setProfileContextMenu] = useState<{ x: number; y: number; profile: Profile } | null>(null);
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>('behavior');
+  const [visitedSections, setVisitedSections] = useState<Set<SettingsSectionId>>(
+    () => new Set<SettingsSectionId>(['behavior'])
+  );
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const navButtonRefs = useRef<Partial<Record<SettingsSectionId, HTMLButtonElement | null>>>({});
+  const dataPathLoadedRef = useRef(false);
+  const sshDefaultRequestedRef = useRef(false);
 
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
   };
 
-  const profiles = useAppStore(s => s.profiles);
-  const setProfiles = useAppStore(s => s.setProfiles);
-
-  const contentRef = useRef<HTMLDivElement>(null);
-  const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
-
-  const effectiveTemplates = useMemo(() => getEffectiveTemplates(), [cmdOverrides, customCmds]);
+  const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    setSettings(previous => {
+      const next = { ...previous, [key]: value };
+      saveAppSettings(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
-    if (!activeCmdTab && effectiveTemplates.length > 0) {
-      setActiveCmdTab(effectiveTemplates[0].category);
-    }
-  }, [effectiveTemplates, activeCmdTab]);
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    closeButtonRef.current?.focus();
+    return () => previouslyFocused?.focus();
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+
+      const nestedDialog = dialog.querySelector<HTMLElement>('.dialog-overlay .dialog');
+      if (event.key === 'Escape' && !nestedDialog && !confirmDialog) {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key !== 'Tab') return;
+      const focusScope = confirmDialog
+        ? dialog.querySelector<HTMLElement>('.confirm-dialog')
+        : nestedDialog ?? dialog;
+      if (!focusScope) return;
+      const focusable = Array.from(focusScope.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+      )).filter(element => element.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !focusScope.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !focusScope.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [confirmDialog, onClose]);
 
   useEffect(() => {
     const timer = setTimeout(() => saveAppSettings(settings), 300);
@@ -73,9 +139,9 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
   useEffect(() => {
     getBackendAppSettings().then(backend => {
-      const prev = getAppSettings();
+      const previous = getAppSettings();
       const synced = {
-        ...prev,
+        ...previous,
         closeBehavior: backend.closeBehavior,
         launchWindowMode: backend.launchWindowMode,
         enableTabNavigation: backend.enableTabNavigation,
@@ -83,519 +149,168 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       };
       setSettings(synced);
       saveAppSettings(synced);
-      if (synced.enableTabNavigation !== prev.enableTabNavigation) {
+      if (synced.enableTabNavigation !== previous.enableTabNavigation) {
         window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
       }
     }).catch(() => {});
+
     syncLaunchAtLogin().then(enabled => {
-      const prev = getAppSettings();
-      if (prev.launchAtLogin !== enabled) {
-        const synced = { ...prev, launchAtLogin: enabled };
+      const previous = getAppSettings();
+      if (previous.launchAtLogin !== enabled) {
+        const synced = { ...previous, launchAtLogin: enabled };
         setSettings(synced);
         saveAppSettings(synced);
       }
     }).catch(() => {});
-    getDataPath().then(setDataPath).catch(() => {});
-    // Load default downloads directory for SSH settings
-    if (!getAppSettings().sshDownloadDir) {
-      getDownloadsDirectory().then(dir => {
-        updateSetting('sshDownloadDir', dir);
-      }).catch(() => {});
-    }
   }, []);
 
-  const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-    setSettings(prev => {
-      const next = { ...prev, [key]: value };
-      saveAppSettings(next);
+  useEffect(() => {
+    if (activeSection === 'data' && !dataPathLoadedRef.current) {
+      dataPathLoadedRef.current = true;
+      getDataPath().then(setDataPath).catch(() => {});
+    }
+    if (activeSection === 'ssh' && !settings.sshDownloadDir && !sshDefaultRequestedRef.current) {
+      sshDefaultRequestedRef.current = true;
+      getDownloadsDirectory().then(directory => updateSetting('sshDownloadDir', directory)).catch(() => {});
+    }
+  }, [activeSection, settings.sshDownloadDir]);
+
+  const selectSection = (sectionId: SettingsSectionId) => {
+    setVisitedSections(previous => {
+      if (previous.has(sectionId)) return previous;
+      const next = new Set(previous);
+      next.add(sectionId);
       return next;
     });
+    setActiveSection(sectionId);
   };
 
-  // Close profile context menu on outside click
-  useEffect(() => {
-    if (!profileContextMenu) return;
-    const handleClick = () => setProfileContextMenu(null);
-    document.addEventListener('click', handleClick);
-    return () => document.removeEventListener('click', handleClick);
-  }, [profileContextMenu]);
+  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    let targetIndex: number | null = null;
+    if (event.key === 'ArrowDown') targetIndex = (index + 1) % SECTIONS.length;
+    else if (event.key === 'ArrowUp') targetIndex = (index - 1 + SECTIONS.length) % SECTIONS.length;
+    else if (event.key === 'Home') targetIndex = 0;
+    else if (event.key === 'End') targetIndex = SECTIONS.length - 1;
+    if (targetIndex === null) return;
 
-  // IntersectionObserver for section highlighting
-  useEffect(() => {
-    const content = contentRef.current;
-    if (!content) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setActiveSection(entry.target.id);
-          }
-        }
-      },
-      { root: content, rootMargin: '-10% 0px -80% 0px' }
-    );
-
-    for (const section of SECTIONS) {
-      const el = sectionRefs.current[section.id];
-      if (el) observer.observe(el);
-    }
-
-    return () => observer.disconnect();
-  }, []);
-
-  const scrollToSection = (id: string) => {
-    sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    event.preventDefault();
+    const target = SECTIONS[targetIndex];
+    selectSection(target.id);
+    navButtonRefs.current[target.id]?.focus();
   };
 
-  const profileGroupsWithCount = useMemo(() => {
-    const countMap = new Map<string, number>();
-    for (const p of profiles) {
-      const g = p.group || '默认';
-      countMap.set(g, (countMap.get(g) || 0) + 1);
+  const renderPanel = (sectionId: SettingsSectionId) => {
+    switch (sectionId) {
+      case 'behavior':
+        return <BehaviorSettings settings={settings} updateSetting={updateSetting} />;
+      case 'data':
+        return <DataSettings dataPath={dataPath} askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />;
+      case 'profiles':
+        return <ProfilesSettings askConfirm={askConfirm} dismissConfirm={() => setConfirmDialog(null)} />;
+      case 'commands':
+        return <CommandsSettings askConfirm={askConfirm} dismissConfirm={() => setConfirmDialog(null)} />;
+      case 'themes':
+        return <ThemesSettings />;
+      case 'exclusions':
+        return <ExclusionSettings askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />;
+      case 'ai-usage':
+        return <AiUsageSettings settings={settings} updateSetting={updateSetting} />;
+      case 'ssh':
+        return <SshSettings settings={settings} updateSetting={updateSetting} />;
     }
-    return Array.from(countMap.entries()).map(([name, count]) => ({ name, count }));
-  }, [profiles]);
-
-  const filteredProfiles = useMemo(() => {
-    let result = profiles;
-    if (profileGroupTab && !profileSearch) {
-      result = result.filter(p => (p.group || '默认') === profileGroupTab);
-    }
-    if (profileSearch) {
-      const q = profileSearch.toLowerCase();
-      result = result.filter(p =>
-        p.name.toLowerCase().includes(q) ||
-        (p.group || '默认').toLowerCase().includes(q) ||
-        (p.terminalType || '').toLowerCase().includes(q)
-      );
-    }
-    return result;
-  }, [profiles, profileGroupTab, profileSearch]);
-
-  // Set default group tab when profiles load
-  useEffect(() => {
-    if (profileGroupsWithCount.length > 0 && !profileGroupTab) {
-      setProfileGroupTab(profileGroupsWithCount[0].name);
-    }
-  }, [profileGroupsWithCount, profileGroupTab]);
-
-  const loadProfiles = async () => {
-    try {
-      const data = await getAllProfiles();
-      setProfiles(data);
-    } catch (err) {
-      console.error('Failed to load profiles:', err);
-    }
-  };
-
-  const handleSave = () => {
-    onClose();
-  };
-
-  const handleCancel = () => {
-    onClose();
   };
 
   return (
-    <div className="settings-page">
-      <div className="settings-nav">
-        {SECTIONS.map((s) => (
+    <div className="settings-dialog-overlay" onMouseDown={onClose}>
+      <div
+        ref={dialogRef}
+        className="settings-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-dialog-title"
+        onMouseDown={event => event.stopPropagation()}
+      >
+        <header className="settings-dialog-header">
+          <div className="settings-dialog-heading">
+            <Settings size={18} aria-hidden="true" />
+            <h2 id="settings-dialog-title">设置</h2>
+          </div>
           <button
-            key={s.id}
-            className={`settings-nav-item ${activeSection === s.id ? 'active' : ''}`}
-            onClick={() => scrollToSection(s.id)}
+            ref={closeButtonRef}
+            className="settings-close-btn"
+            type="button"
+            onClick={onClose}
+            title="关闭设置"
+            aria-label="关闭设置"
           >
-            {s.label}
+            <X size={18} aria-hidden="true" />
           </button>
-        ))}
-      </div>
-      <div className="settings-body">
-        <button className="settings-close-btn" onClick={onClose} title="关闭设置">×</button>
-        <div className="settings-content" ref={contentRef}>
-          {/* Behavior Section */}
-          <section
-            id="behavior"
-            ref={(el) => { sectionRefs.current['behavior'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">行为设置</h3>
-            <BehaviorSettings settings={settings} updateSetting={updateSetting} />
-          </section>
+        </header>
 
-          {/* Data Section */}
-          <section
-            id="data"
-            ref={(el) => { sectionRefs.current['data'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">数据管理</h3>
-            <DataSettings dataPath={dataPath} askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />
-          </section>
-
-          {/* Profiles Section */}
-          <section
-            id="profiles"
-            ref={(el) => { sectionRefs.current['profiles'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">连接管理</h3>
-            <div className="commands-panel">
-              <div className="commands-toolbar">
-                <input
-                  className="commands-search"
-                  type="text"
-                  placeholder="搜索连接..."
-                  value={profileSearch}
-                  onChange={(e) => setProfileSearch(e.target.value)}
-                />
-                <button className="cmd-add-btn" onClick={() => { setEditingProfile(null); setShowProfileDialog(true); }}>
-                  + 新建连接
-                </button>
-              </div>
-              {!profileSearch && profileGroupsWithCount.length > 0 && (
-                <div className="cmd-tabs">
-                  {profileGroupsWithCount.map(({ name, count }) => (
-                    <button
-                      key={name}
-                      className={`cmd-tab ${profileGroupTab === name ? 'active' : ''}`}
-                      onClick={() => setProfileGroupTab(name)}
-                    >
-                      {name}
-                      <span className="cmd-tab-count">{count}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="commands-list" style={{ maxHeight: 400 }}>
-                {filteredProfiles.map(profile => (
-                  <div key={profile.id} className={`cmd-cat-item ${profileContextMenu?.profile.id === profile.id ? 'selected' : ''}`} onContextMenu={(e) => {
-                    e.preventDefault();
-                    setProfileContextMenu({ x: e.clientX, y: e.clientY, profile });
-                  }}>
-                    <span style={{ fontSize: 10, fontWeight: 'bold', padding: '2px 4px', background: 'var(--bg-primary)', borderRadius: 2, marginRight: 6, color: 'var(--text-secondary)' }}>
-                      {{ powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', editor: 'ED', mstsc: 'RDP' }[profile.terminalType]}
-                    </span>
-                    <code className="cmd-cat-cmd" style={{ color: profile.tabColor || undefined, minWidth: 'auto', flexShrink: 0 }}>{profile.name}</code>
-                    <span className="cmd-cat-desc" style={{ fontSize: 12, color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {profile.terminalType === 'ssh' ? (profile.sshHost || '未配置主机') :
-                       profile.terminalType === 'docker' ? (profile.dockerContainerName || '未配置容器') :
-                       profile.terminalType === 'k8s' ? (profile.k8sNamespace || '未配置命名空间') :
-                       (profile.startupPath || 'C:\\')}
-                    </span>
-                    <div className="cmd-cat-actions" style={{ opacity: 1 }}>
-                      <button className="cmd-action-btn" title="编辑" onClick={() => { setEditingProfile(profile); setShowProfileDialog(true); }}>✎</button>
-                      <button className="cmd-action-btn danger" title="删除" onClick={() => {
-                        askConfirm(`确定删除连接「${profile.name}」？`, async () => {
-                          setConfirmDialog(null);
-                          try {
-                            await deleteProfileCmd(profile.id);
-                            loadProfiles();
-                          } catch (err) {
-                            alert('删除失败: ' + String(err));
-                          }
-                        });
-                      }}>×</button>
-                    </div>
-                  </div>
-                ))}
-                {filteredProfiles.length === 0 && (
-                  <div style={{ padding: '12px 8px', color: 'var(--text-secondary)', fontSize: 13 }}>
-                    {profileSearch ? '没有找到匹配的连接' : '暂无连接'}
-                  </div>
-                )}
-              </div>
-              {profileContextMenu && (
-                <div className="context-menu-overlay" onClick={() => setProfileContextMenu(null)} />
-              )}
-              {profileContextMenu && (
-                <div className="context-menu" style={{ left: profileContextMenu.x, top: profileContextMenu.y }}>
-                  <div className="context-menu-item" onClick={async () => {
-                    const p = profileContextMenu.profile;
-                    setProfileContextMenu(null);
-                    setEditingProfile(p);
-                    setShowProfileDialog(true);
-                  }}>编辑</div>
-                  <div className="context-menu-item" onClick={async () => {
-                    const p = profileContextMenu.profile;
-                    setProfileContextMenu(null);
-                    try {
-                      const copied = await createProfile(`${p.name} (副本)`, p.group || '默认', p.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s');
-                      await updateProfile({ ...p, id: copied.id, name: `${p.name} (副本)`, pinned: false });
-                      loadProfiles();
-                    } catch (err) {
-                      alert('复制失败: ' + String(err));
-                    }
-                  }}>复制</div>
-                  <div className="context-menu-separator" />
-                  <div className="context-menu-item danger" onClick={() => {
-                    const p = profileContextMenu.profile;
-                    setProfileContextMenu(null);
-                    askConfirm(`确定删除连接「${p.name}」？`, async () => {
-                      setConfirmDialog(null);
-                      try {
-                        await deleteProfileCmd(p.id);
-                        loadProfiles();
-                      } catch (err) {
-                        alert('删除失败: ' + String(err));
-                      }
-                    });
-                  }}>删除</div>
-                </div>
-              )}
-            </div>
-            {showProfileDialog && (
-              <ConfigEditDialog
-                profile={editingProfile}
-                onClose={() => setShowProfileDialog(false)}
-                onSave={() => { setShowProfileDialog(false); loadProfiles(); }}
-                profiles={profiles}
-              />
-            )}
-          </section>
-
-          {/* Commands Section */}
-          <section
-            id="commands"
-            ref={(el) => { sectionRefs.current['commands'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">命令模板</h3>
-            <div className="commands-panel">
-              <div className="commands-toolbar">
-                <input
-                  className="commands-search"
-                  type="text"
-                  placeholder="搜索命令..."
-                  value={cmdSearch}
-                  onChange={(e) => setCmdSearch(e.target.value)}
-                />
+        <div className="settings-page">
+          <nav className="settings-nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
+            {SECTIONS.map((section, index) => {
+              const Icon = section.icon;
+              const isActive = activeSection === section.id;
+              return (
                 <button
-                  className="cmd-add-btn"
-                  onClick={() => setAddingCustom(true)}
-                >+ 自定义</button>
-              </div>
-              {addingCustom && (
-                <div className="cmd-add-form">
-                  <input placeholder="命令" value={newCmd.command} onChange={(e) => setNewCmd({ ...newCmd, command: e.target.value })} />
-                  <input placeholder="说明" value={newCmd.desc} onChange={(e) => setNewCmd({ ...newCmd, desc: e.target.value })} />
-                  <button className="btn-primary" onClick={() => {
-                    if (!newCmd.command.trim()) return;
-                    const updated = [...customCmds, { name: newCmd.command.trim(), command: newCmd.command.trim(), desc: newCmd.desc.trim() || '自定义命令' }];
-                    setCustomCmds(updated);
-                    saveCustomCommands(updated);
-                    setNewCmd({ name: '', command: '', desc: '' });
-                    setAddingCustom(false);
-                  }}>添加</button>
-                  <button className="btn-secondary" onClick={() => setAddingCustom(false)}>取消</button>
-                </div>
-              )}
-              {!cmdSearch && (
-                <div className="cmd-tabs">
-                  {effectiveTemplates.map((cat) => (
-                    <button
-                      key={cat.category}
-                      className={`cmd-tab ${activeCmdTab === cat.category ? 'active' : ''}`}
-                      onClick={() => setActiveCmdTab(cat.category)}
-                    >
-                      {cat.category}
-                      <span className="cmd-tab-count">{cat.commands.filter(c => !cmdOverrides[c.command]?.hidden).length}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="commands-list">
-                {(() => {
-                  const cats = cmdSearch
-                    ? effectiveTemplates.map(cat => ({
-                        ...cat,
-                        commands: cat.commands.filter(c =>
-                          c.command.toLowerCase().includes(cmdSearch.toLowerCase()) ||
-                          c.desc.toLowerCase().includes(cmdSearch.toLowerCase())),
-                      })).filter(cat => cat.commands.length > 0)
-                    : effectiveTemplates.filter(cat => cat.category === activeCmdTab);
+                  key={section.id}
+                  ref={element => { navButtonRefs.current[section.id] = element; }}
+                  id={`settings-tab-${section.id}`}
+                  className={`settings-nav-item ${isActive ? 'active' : ''}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls={`settings-panel-${section.id}`}
+                  tabIndex={isActive ? 0 : -1}
+                  onClick={() => selectSection(section.id)}
+                  onKeyDown={event => handleTabKeyDown(event, index)}
+                  title={section.label}
+                >
+                  <Icon size={17} aria-hidden="true" />
+                  <span className="settings-nav-label">{section.label}</span>
+                </button>
+              );
+            })}
+          </nav>
 
-                  return cats.map((cat) => (
-                    <div key={cat.category} className="cmd-cat-items">
-                      {cat.commands.map((cmd) => {
-                        const ov = cmdOverrides[cmd.command];
-                        if (!cmdSearch && ov?.hidden) return null;
-                        const effectiveDesc = ov?.desc !== undefined ? ov.desc : cmd.desc;
-                        const isCustom = cat.category === '自定义';
-                        const isEditing = editingCmd === cmd.command;
-                        return (
-                          <div key={cmd.command} className={`cmd-cat-item ${cmdContextMenu?.cmd.command === cmd.command ? 'selected' : ''}`} onContextMenu={(e) => {
-                            e.preventDefault();
-                            setCmdContextMenu({ x: e.clientX, y: e.clientY, cmd, category: cat.category });
-                          }}>
-                            <code className="cmd-cat-cmd">{cmd.command}</code>
-                            {isEditing ? (
-                              <input
-                                className="cmd-edit-input"
-                                value={editDesc}
-                                onChange={(e) => setEditDesc(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    const next = { ...cmdOverrides, [cmd.command]: { ...ov, desc: editDesc } };
-                                    setCmdOverrides(next);
-                                    saveCmdOverrides(next);
-                                    setEditingCmd(null);
-                                  } else if (e.key === 'Escape') {
-                                    setEditingCmd(null);
-                                  }
-                                }}
-                                onBlur={() => {
-                                  const next = { ...cmdOverrides, [cmd.command]: { ...ov, desc: editDesc } };
-                                  setCmdOverrides(next);
-                                  saveCmdOverrides(next);
-                                  setEditingCmd(null);
-                                }}
-                                autoFocus
-                              />
-                            ) : (
-                              <span className="cmd-cat-desc">{effectiveDesc}</span>
-                            )}
-                            <div className="cmd-cat-actions">
-                              <button
-                                className="cmd-action-btn"
-                                title="编辑说明"
-                                onClick={() => { setEditingCmd(cmd.command); setEditDesc(effectiveDesc); }}
-                              >✎</button>
-                              {isCustom ? (
-                                <button className="cmd-action-btn danger" title="删除" onClick={() => {
-                                  askConfirm(`确定删除自定义命令「${cmd.command}」？`, () => {
-                                    setConfirmDialog(null);
-                                    const updated = customCmds.filter(c => c.command !== cmd.command);
-                                    setCustomCmds(updated);
-                                    saveCustomCommands(updated);
-                                  });
-                                }}>×</button>
-                              ) : (
-                                <button
-                                  className={`cmd-action-btn ${ov?.hidden ? 'restore' : ''}`}
-                                  title={ov?.hidden ? '恢复显示' : '隐藏'}
-                                  onClick={() => {
-                                    const next = { ...cmdOverrides };
-                                    if (ov?.hidden) {
-                                      delete next[cmd.command];
-                                    } else {
-                                      next[cmd.command] = { ...ov, hidden: true };
-                                    }
-                                    setCmdOverrides(next);
-                                    saveCmdOverrides(next);
-                                  }}
-                                >{ov?.hidden ? '👁' : '⊘'}</button>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ));
-                })()}
-              </div>
-              {cmdContextMenu && (
-                <div className="context-menu-overlay" onClick={() => setCmdContextMenu(null)} />
-              )}
-              {cmdContextMenu && (
-                <div className="context-menu" style={{ left: cmdContextMenu.x, top: cmdContextMenu.y }}>
-                  <div className="context-menu-item" onClick={() => {
-                    const { cmd } = cmdContextMenu;
-                    setCmdContextMenu(null);
-                    setEditingCmd(cmd.command);
-                    const ov = cmdOverrides[cmd.command];
-                    setEditDesc(ov?.desc !== undefined ? ov.desc : cmd.desc);
-                  }}>编辑</div>
-                  {cmdContextMenu.category === '自定义' && (
-                    <div className="context-menu-item danger" onClick={() => {
-                      const cmd = cmdContextMenu.cmd;
-                      setCmdContextMenu(null);
-                      askConfirm(`确定删除自定义命令「${cmd.command}」？`, () => {
-                        setConfirmDialog(null);
-                        const updated = customCmds.filter(c => c.command !== cmd.command);
-                        setCustomCmds(updated);
-                        saveCustomCommands(updated);
-                      });
-                    }}>删除</div>
-                  )}
-                  {cmdContextMenu.category !== '自定义' && (
-                    <div className="context-menu-item" onClick={() => {
-                      const { cmd } = cmdContextMenu;
-                      setCmdContextMenu(null);
-                      const ov = cmdOverrides[cmd.command];
-                      const next = { ...cmdOverrides };
-                      if (ov?.hidden) {
-                        delete next[cmd.command];
-                      } else {
-                        next[cmd.command] = { ...ov, hidden: true };
-                      }
-                      setCmdOverrides(next);
-                      saveCmdOverrides(next);
-                    }}>{cmdOverrides[cmdContextMenu.cmd.command]?.hidden ? '恢复显示' : '隐藏'}</div>
-                  )}
-                </div>
-              )}
+          <div className="settings-body">
+            <div className="settings-content">
+              {SECTIONS.filter(section => visitedSections.has(section.id)).map(section => (
+                <section
+                  key={section.id}
+                  id={`settings-panel-${section.id}`}
+                  className="settings-panel"
+                  role="tabpanel"
+                  aria-labelledby={`settings-tab-${section.id}`}
+                  hidden={activeSection !== section.id}
+                >
+                  <Suspense fallback={<div className="settings-panel-loading" aria-live="polite">加载设置…</div>}>
+                    {renderPanel(section.id)}
+                  </Suspense>
+                </section>
+              ))}
             </div>
-          </section>
 
-          {/* Themes Section */}
-          <section
-            id="themes"
-            ref={(el) => { sectionRefs.current['themes'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">主题管理</h3>
-            <ThemesSettings />
-          </section>
-
-          {/* Exclusions Section */}
-          <section
-            id="exclusions"
-            ref={(el) => { sectionRefs.current['exclusions'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">文件排除</h3>
-            <ExclusionSettings askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />
-          </section>
-
-          {/* AI Usage Section */}
-          <section
-            id="ai-usage"
-            ref={(el) => { sectionRefs.current['ai-usage'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">AI用量</h3>
-            <AiUsageSettings settings={settings} updateSetting={updateSetting} />
-          </section>
-
-          {/* SSH Settings Section */}
-          <section
-            id="ssh"
-            ref={(el) => { sectionRefs.current['ssh'] = el; }}
-            className="settings-section-block"
-          >
-            <h3 className="settings-section-title">SSH 设置</h3>
-            <SshSettings settings={settings} updateSetting={updateSetting} />
-          </section>
-        </div>
-
-        <div className="settings-footer">
-          <button className="btn-secondary" onClick={handleCancel}>取消</button>
-          <button className="btn-primary" onClick={handleSave}>保存</button>
-        </div>
-      </div>
-      {confirmDialog && (
-        <div className="confirm-dialog-overlay" onClick={() => setConfirmDialog(null)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">确认操作</div>
-            <div className="confirm-dialog-message">{confirmDialog.message}</div>
-            <div className="confirm-dialog-buttons">
-              <button className="btn-secondary" onClick={() => setConfirmDialog(null)}>取消</button>
-              <button className="btn-danger" onClick={confirmDialog.onConfirm}>确定</button>
+            <div className="settings-footer">
+              <button className="btn-primary" type="button" onClick={onClose}>完成</button>
             </div>
           </div>
         </div>
-      )}
+
+        {confirmDialog && (
+          <div className="confirm-dialog-overlay" onClick={() => setConfirmDialog(null)}>
+            <div className="confirm-dialog" role="alertdialog" aria-modal="true" onClick={event => event.stopPropagation()}>
+              <div className="confirm-dialog-title">确认操作</div>
+              <div className="confirm-dialog-message">{confirmDialog.message}</div>
+              <div className="confirm-dialog-buttons">
+                <button className="btn-secondary" onClick={() => setConfirmDialog(null)}>取消</button>
+                <button className="btn-danger" onClick={confirmDialog.onConfirm}>确定</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
