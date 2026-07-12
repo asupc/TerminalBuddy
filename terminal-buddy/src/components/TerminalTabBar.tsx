@@ -13,9 +13,6 @@ export const TerminalTabBar: FC = () => {
   const renameSession = useAppStore(s => s.renameSession);
   const workingSessions = useAppStore(s => s.workingSessions);
   const settingsVersion = useAppStore(s => s.settingsVersion);
-  const openSettingsTab = useAppStore(s => s.openSettingsTab);
-  const closeSettingsTab = useAppStore(s => s.closeSettingsTab);
-  const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
@@ -201,25 +198,6 @@ export const TerminalTabBar: FC = () => {
           >×</button>
         </div>
       ))}
-      {/* Settings tab */}
-      {settingsTabOpen && (
-        <div
-          className={`terminal-tab ${activeSpecialTab === 'settings' ? 'active' : ''}`}
-          onClick={() => openSettingsTab()}
-          title="设置"
-        >
-          <span style={{ fontSize: '12px' }}>⚙️</span>
-          <span className="terminal-tab-name">设置</span>
-          <button
-            className="terminal-tab-close"
-            onClick={(e) => {
-              e.stopPropagation();
-              closeSettingsTab();
-            }}
-            title="关闭"
-          >×</button>
-        </div>
-      )}
       {gitHistoryTab && (
         <div
           className={`terminal-tab ${activeSpecialTab === 'git-history' ? 'active' : ''}`}

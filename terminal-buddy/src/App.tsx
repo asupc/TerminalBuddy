@@ -41,7 +41,7 @@ function App() {
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
   const toggleConfigPanel = useAppStore(s => s.toggleConfigPanel);
   const toggleFileTree = useAppStore(s => s.toggleFileTree);
-  const openSettingsTab = useAppStore(s => s.openSettingsTab);
+  const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const profiles = useAppStore(s => s.profiles);
   const windowMode = useAppStore(s => s.windowMode);
   const cycleWindowMode = useAppStore(s => s.cycleWindowMode);
@@ -491,8 +491,8 @@ function App() {
   }, [loadProfiles]);
 
   const handleSettings = useCallback(() => {
-    openSettingsTab();
-  }, [openSettingsTab]);
+    openSettingsDialog();
+  }, [openSettingsDialog]);
 
   const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'cmd') => {
     try {

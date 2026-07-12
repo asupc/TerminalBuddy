@@ -48,7 +48,6 @@
   overflow: hidden;
 }
 
-.settings-tab-content,
 .git-history-tab-content {
   position: absolute;
   inset: 0;
@@ -56,6 +55,18 @@
   min-width: 0;
   min-height: 0;
   background: var(--bg-secondary);
+}
+
+.settings-dialog-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.56);
+  color: var(--text-primary);
+  font-size: 14px;
 }
 
 .terminal-tab-content {

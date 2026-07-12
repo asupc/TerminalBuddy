@@ -24,8 +24,8 @@ const GitHistoryPage = lazy(() => import('./GitHistoryPage').then(m => ({ defaul
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
-  const settingsTabOpen = useAppStore(s => s.settingsTabOpen);
-  const closeSettingsTab = useAppStore(s => s.closeSettingsTab);
+  const settingsDialogOpen = useAppStore(s => s.settingsDialogOpen);
+  const closeSettingsDialog = useAppStore(s => s.closeSettingsDialog);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
@@ -235,18 +235,11 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
-      {!settings.enableTabNavigation && (sessions.length > 0 || settingsTabOpen || gitHistoryTab) && (
+      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab) && (
         <TerminalTabBar />
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
         {renderTerminalContent()}
-        {settingsTabOpen && activeSpecialTab === 'settings' && (
-          <div className="settings-tab-content">
-            <Suspense fallback={<div className="lazy-panel-loading">加载设置…</div>}>
-              <SettingsPage onClose={closeSettingsTab} />
-            </Suspense>
-          </div>
-        )}
         {gitHistoryTab && activeSpecialTab === 'git-history' && (
           <div className="git-history-tab-content">
             <Suspense fallback={<div className="lazy-panel-loading">加载 Git 历史记录…</div>}>
@@ -259,6 +252,11 @@ export const TerminalPanel: FC = () => {
           </div>
         )}
       </div>
+      {settingsDialogOpen && (
+        <Suspense fallback={<div className="settings-dialog-loading">加载设置…</div>}>
+          <SettingsPage onClose={closeSettingsDialog} />
+        </Suspense>
+      )}
     </div>
   );
 };
