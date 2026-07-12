@@ -32,6 +32,10 @@ export interface AppSettings {
   terminalFollowAppTheme: boolean;
   autoResumeClaudeSession: boolean;
   claudeCodeNotifications: boolean;
+  claudeDecisionNotifications: boolean;
+  claudeDecisionNotificationDelaySeconds: number;
+  claudeCompletionNotifications: boolean;
+  claudeCompletionNotificationDelaySeconds: number;
   listSelectionStyle: 'default' | 'idea' | 'custom';
   listSelectionBg: string;
   listSelectionFg: string;
@@ -66,6 +70,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   terminalFollowAppTheme: true,
   autoResumeClaudeSession: true,
   claudeCodeNotifications: true,
+  claudeDecisionNotifications: true,
+  claudeDecisionNotificationDelaySeconds: 0,
+  claudeCompletionNotifications: true,
+  claudeCompletionNotificationDelaySeconds: 0,
   listSelectionStyle: 'idea',
   listSelectionBg: '#4d7db9',
   listSelectionFg: '#ffffff',
@@ -83,7 +91,15 @@ export const getAppSettings = (): AppSettings => {
 export const initAppSettings = async (): Promise<void> => {
   try {
     const raw = await readClientData('settings');
-    if (raw) _cachedSettings = JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<AppSettings>;
+      // 兼容旧版总开关：升级后保留用户此前关闭通知的选择。
+      if (parsed.claudeCodeNotifications === false && parsed.claudeDecisionNotifications === undefined) {
+        parsed.claudeDecisionNotifications = false;
+        parsed.claudeCompletionNotifications = false;
+      }
+      _cachedSettings = parsed as AppSettings;
+    }
   } catch {}
 };
 

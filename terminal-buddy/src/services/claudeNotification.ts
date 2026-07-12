@@ -19,6 +19,9 @@ type DetectorState = {
 };
 
 const detectorStates = new Map<string, DetectorState>();
+const pendingNotifications = new Map<string, ReturnType<typeof setTimeout>>();
+
+type NotificationKind = 'confirmation' | 'question' | 'completed';
 
 function createDetectorState(): DetectorState {
   return {
@@ -99,21 +102,46 @@ async function focusTerminal(terminalId: string): Promise<void> {
   await appWindow.setFocus().catch(() => {});
 }
 
-async function showClaudeNotification(terminalId: string, kind: 'confirmation' | 'question' | 'completed'): Promise<void> {
+function notificationKey(terminalId: string, kind: NotificationKind): string {
+  return `${terminalId}:${kind === 'completed' ? 'completed' : 'decision'}`;
+}
+
+async function showClaudeNotification(terminalId: string, kind: NotificationKind): Promise<void> {
   const settings = getAppSettings();
-  if (!settings.claudeCodeNotifications) return;
+  const isCompletion = kind === 'completed';
+  if (isCompletion ? !settings.claudeCompletionNotifications : !settings.claudeDecisionNotifications) return;
 
   const store = useAppStore.getState();
   const session = store.sessions.find(item => item.id === terminalId);
   if (!session) return;
 
+  // 仅当应用处于前台时，激活终端才算正在被用户查看；分屏同样以 activeSessionId 判断激活窗格。
+  const appWindow = getCurrentWindow();
+  const windowFocused = await appWindow.isFocused().catch(() => false);
+  if (windowFocused && store.activeSessionId === terminalId) return;
+
   await showNativeNotification(terminalId, session.profileName, kind)
     .catch(error => console.error('发送 Claude Code 通知失败:', error));
 }
 
+function scheduleClaudeNotification(terminalId: string, kind: NotificationKind): void {
+  const settings = getAppSettings();
+  const delaySeconds = kind === 'completed'
+    ? settings.claudeCompletionNotificationDelaySeconds
+    : settings.claudeDecisionNotificationDelaySeconds;
+  const key = notificationKey(terminalId, kind);
+  const existing = pendingNotifications.get(key);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    pendingNotifications.delete(key);
+    void showClaudeNotification(terminalId, kind);
+  }, Math.max(0, delaySeconds) * 1_000);
+  pendingNotifications.set(key, timer);
+}
+
 function evaluatePrompt(terminalId: string, state: DetectorState): void {
   state.timer = null;
-  if (!getAppSettings().claudeCodeNotifications || !isKnownClaudeTerminal(terminalId, state)) return;
+  if (!getAppSettings().claudeDecisionNotifications || !isKnownClaudeTerminal(terminalId, state)) return;
 
   const hasQuestion = QUESTION_MARKERS.some(marker => marker.test(state.text));
   const hasConfirmation = CONFIRMATION_MARKERS.some(marker => marker.test(state.text));
@@ -123,11 +151,12 @@ function evaluatePrompt(terminalId: string, state: DetectorState): void {
   state.promptActive = true;
   if (now - state.lastNotifiedAt < NOTIFICATION_COOLDOWN_MS) return;
   state.lastNotifiedAt = now;
-  void showClaudeNotification(terminalId, hasQuestion ? 'question' : 'confirmation');
+  scheduleClaudeNotification(terminalId, hasQuestion ? 'question' : 'confirmation');
 }
 
 export function handleClaudeTerminalOutput(terminalId: string, output: string): void {
-  if (!output || !getAppSettings().claudeCodeNotifications) return;
+  const settings = getAppSettings();
+  if (!output || (!settings.claudeDecisionNotifications && !settings.claudeCompletionNotifications)) return;
 
   const state = detectorStates.get(terminalId) ?? createDetectorState();
   const cleanOutput = stripTerminalControls(output);
@@ -141,6 +170,11 @@ export function handleClaudeTerminalOutput(terminalId: string, output: string): 
 
 export function markClaudeTerminalInteraction(terminalId: string, taskSubmitted: boolean): void {
   if (!taskSubmitted) return;
+  const pendingDecision = pendingNotifications.get(notificationKey(terminalId, 'question'));
+  if (pendingDecision) {
+    clearTimeout(pendingDecision);
+    pendingNotifications.delete(notificationKey(terminalId, 'question'));
+  }
   const state = detectorStates.get(terminalId) ?? createDetectorState();
   // 手动输入 claude 启动 CLI 时尚未进入 Claude 会话，不能把启动过程当成一项任务。
   if (!isKnownClaudeTerminal(terminalId, state)) {
@@ -171,7 +205,7 @@ export function handleClaudeTaskCompleted(terminalId: string): boolean {
   state.taskRunning = false;
   state.taskHadBusyMarker = false;
   state.text = '';
-  void showClaudeNotification(terminalId, 'completed');
+  scheduleClaudeNotification(terminalId, 'completed');
   return true;
 }
 
@@ -183,6 +217,12 @@ export function disposeClaudeTerminalNotification(terminalId: string): void {
   const state = detectorStates.get(terminalId);
   if (state?.timer) clearTimeout(state.timer);
   detectorStates.delete(terminalId);
+  for (const kind of ['question', 'completed'] as const) {
+    const key = notificationKey(terminalId, kind);
+    const pending = pendingNotifications.get(key);
+    if (pending) clearTimeout(pending);
+    pendingNotifications.delete(key);
+  }
 }
 
 export async function initializeClaudeNotificationActions(): Promise<() => void> {

@@ -78,12 +78,47 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         <label className="settings-toggle">
           <input
             type="checkbox"
-            checked={settings.claudeCodeNotifications}
-            onChange={(e) => updateSetting('claudeCodeNotifications', e.target.checked)}
+            checked={settings.claudeDecisionNotifications}
+            onChange={(e) => updateSetting('claudeDecisionNotifications', e.target.checked)}
           />
-          <span>Claude Code 通知</span>
+          <span>Claude Code 决策通知</span>
         </label>
-        <p className="settings-desc">Claude Code 等待确认、提出问题或任务完成时发送桌面通知，点击通知可返回该终端</p>
+        <label className="settings-label">
+          等待
+          <input
+            type="number"
+            min="0"
+            max="3600"
+            value={settings.claudeDecisionNotificationDelaySeconds}
+            onChange={(e) => updateSetting('claudeDecisionNotificationDelaySeconds', Math.min(3600, Math.max(0, Number(e.target.value) || 0)))}
+            style={{ width: 72, margin: '0 8px' }}
+          />
+          秒后通知
+        </label>
+        <p className="settings-desc">Claude Code 等待确认或提出问题达到指定时间后通知</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.claudeCompletionNotifications}
+            onChange={(e) => updateSetting('claudeCompletionNotifications', e.target.checked)}
+          />
+          <span>Claude Code 完成通知</span>
+        </label>
+        <label className="settings-label">
+          等待
+          <input
+            type="number"
+            min="0"
+            max="3600"
+            value={settings.claudeCompletionNotificationDelaySeconds}
+            onChange={(e) => updateSetting('claudeCompletionNotificationDelaySeconds', Math.min(3600, Math.max(0, Number(e.target.value) || 0)))}
+            style={{ width: 72, margin: '0 8px' }}
+          />
+          秒后通知
+        </label>
+        <p className="settings-desc">任务完成达到指定时间后通知；当前激活的终端（含分屏窗格）不会通知</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
