@@ -141,6 +141,8 @@
 .file-nav-root-icon {
   flex-shrink: 0;
   color: var(--accent);
+  transform: scale(0.8);
+  transform-origin: center;
 }
 
 .file-nav-root-label {
@@ -238,6 +240,12 @@
 
 .tree-icon {
   font-size: 12px;
+}
+
+.file-nav .tree-icon,
+.file-nav .bookmark-icon {
+  transform: scale(0.8);
+  transform-origin: center;
 }
 
 .tree-name {

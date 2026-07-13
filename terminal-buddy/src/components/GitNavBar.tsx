@@ -1,6 +1,5 @@
-import { FC, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FC, FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  getGitRepositoryStatus,
   gitCheckoutBranch,
   gitCommitPaths,
   gitGetChangedFiles,
@@ -17,6 +16,10 @@ import {
   type GitPushResult,
   type GitRepositoryStatus,
 } from '../services/tauri';
+import {
+  getCachedGitRepositoryStatus,
+  loadGitRepositoryStatus,
+} from '../services/gitStatusCache';
 import { useAppStore } from '../stores/appStore';
 
 type GitPopover = 'branches' | null;
@@ -140,7 +143,9 @@ function buildPushCommandPreview(dialog: PushDialogState): string {
 
 export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryChanged }) => {
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
-  const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
+  const [status, setStatus] = useState<GitRepositoryStatus | null>(
+    () => getCachedGitRepositoryStatus(currentDirectory)?.status ?? null,
+  );
   const [loading, setLoading] = useState(false);
   const [popover, setPopover] = useState<GitPopover>(null);
   const [action, setAction] = useState<GitAction>(null);
@@ -158,24 +163,30 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const [pushDialog, setPushDialog] = useState<PushDialogState | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const pushLogRef = useRef<HTMLPreElement>(null);
+  const currentDirectoryRef = useRef(currentDirectory);
+  currentDirectoryRef.current = currentDirectory;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let cancelled = false;
+    const cached = getCachedGitRepositoryStatus(currentDirectory);
 
     setPopover(null);
     setBranches([]);
-    setStatus(null);
-    if (!currentDirectory) return;
+    setStatus(cached?.status ?? null);
+    if (!currentDirectory) {
+      setLoading(false);
+      return;
+    }
 
-    setLoading(true);
-    getGitRepositoryStatus(currentDirectory)
+    setLoading(!cached);
+    loadGitRepositoryStatus(currentDirectory)
       .then((next) => {
         if (!cancelled) setStatus(next);
       })
       .catch((err) => {
         if (!cancelled) {
           console.error('Failed to load git status:', err);
-          setStatus(null);
+          if (!cached) setStatus(null);
         }
       })
       .finally(() => {
@@ -213,17 +224,23 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       return null;
     }
 
-    setLoading(true);
+    const requestedDirectory = currentDirectory;
+    if (currentDirectoryRef.current === requestedDirectory) {
+      setLoading(true);
+    }
     try {
-      const next = await getGitRepositoryStatus(currentDirectory);
-      setStatus(next);
+      const next = await loadGitRepositoryStatus(requestedDirectory, { force: true });
+      if (currentDirectoryRef.current === requestedDirectory) {
+        setStatus(next);
+      }
       return next;
     } catch (err) {
       console.error('Failed to refresh git status:', err);
-      setStatus(null);
       return null;
     } finally {
-      setLoading(false);
+      if (currentDirectoryRef.current === requestedDirectory) {
+        setLoading(false);
+      }
     }
   }, [currentDirectory]);
 

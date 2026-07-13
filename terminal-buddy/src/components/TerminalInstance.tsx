@@ -14,7 +14,7 @@ import { getAppSettings } from '../utils/settings';
 import { bootLog } from '../utils/bootLog';
 import { useAppStore } from '../stores/appStore';
 import { getTerminalSuggestions, type SuggestionItem } from '../data/commandTemplates';
-import { normalizeAnsiForLightBackground, type TerminalColors } from '../utils/terminalTheme';
+import type { TerminalColors } from '../utils/terminalTheme';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
 import { disposeClaudeTerminalNotification, handleClaudeTaskCompleted, handleClaudeTerminalOutput, hasRunningClaudeTask, markClaudeTaskPromptHidden, markClaudeTerminalInteraction } from '../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
@@ -25,6 +25,7 @@ const BASE_FONT_SIZE = 14;
 const FLOATING_MENU_MARGIN = 8;
 const RIGHT_CLICK_PASTE_DEDUPE_MS = 750;
 const RIGHT_CLICK_NATIVE_PASTE_SUPPRESS_MS = 1200;
+const TERMINAL_OUTPUT_BUFFER_MS = 20;
 // 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
 // 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
 const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
@@ -145,28 +146,13 @@ function isHorizontalRuleLine(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < 20) return false;
 
-  // Claude Code uses plain horizontal separators; Codex CLI/ratatui-style UIs
-  // often use box-drawing borders with corners. Both represent a TUI input
-  // chrome where the native xterm cursor should not blink over app-rendered text.
   return /^[─━═-]+$/u.test(trimmed) ||
     /^[╭╰┌└├┬┴┼╮╯┐┘┤│┃║\s─━═-]+$/u.test(trimmed);
-}
-
-function isTuiInputPromptLine(text: string): boolean {
-  return /^\s*(?:[│┃║]\s*)?[>›❯▌]\s?/u.test(text);
-}
-
-function hasCodexTuiMarker(text: string): boolean {
-  return /\bCodex\b|codex-cli|OpenAI Codex/u.test(text) ||
-    /\b(?:approval|sandbox|workdir|tokens?|context|model)\b/u.test(text) &&
-      /\b(?:gpt|GPT|codex|Codex|thread|session)\b/u.test(text);
 }
 
 function hasTuiInputChrome(terminal: Terminal): boolean {
   const buffer = terminal.buffer.active;
   let horizontalRuleCount = 0;
-  let promptLineCount = 0;
-  let codexMarker = false;
 
   for (let y = 0; y < terminal.rows; y++) {
     const line = buffer.getLine(buffer.viewportY + y);
@@ -174,13 +160,10 @@ function hasTuiInputChrome(terminal: Terminal): boolean {
     if (/Version:.*Claude Code|MCP:|bypass permissions|for agents|ctx:|Opus|effort/u.test(text)) {
       return true;
     }
-    if (hasCodexTuiMarker(text)) codexMarker = true;
-    if (isTuiInputPromptLine(text)) promptLineCount++;
     if (isHorizontalRuleLine(text)) horizontalRuleCount++;
   }
 
-  return horizontalRuleCount >= 2 ||
-    (codexMarker && (horizontalRuleCount >= 1 || promptLineCount > 0 || buffer === terminal.buffer.alternate));
+  return horizontalRuleCount >= 2;
 }
 
 function getLastNonBlankCell(line: ReturnType<Terminal['buffer']['active']['getLine']>, cols: number): number {
@@ -683,7 +666,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const lastDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
   const lastPtyDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
   const [termBg, setTermBg] = useState(colorTheme?.background || '#1e1e1e');
-  const lightOptimizedRef = useRef(!!colorTheme?.lightOptimized);
   const inAltBufferRef = useRef(false);
   const lastTuiRedrawLayoutVersionRef = useRef<number | null>(null);
 
@@ -698,8 +680,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   // 注意 resolveTerminalColors 返回的引用稳定（cache），不会因无关渲染误触发。
   useEffect(() => {
     const bg = colorTheme?.background || '#1e1e1e';
-    const lightOptimized = !!colorTheme?.lightOptimized;
-    lightOptimizedRef.current = lightOptimized;
     setTermBg(bg);
     const term = xtermRef.current;
     if (term) {
@@ -712,14 +692,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let disposed = false;
 
     const cleanupFns: (() => void)[] = [];
-    const outputBuffer: string[] = [];
-    const pendingChunks: string[] = [];
-    let pendingRaf: number | null = null;
-    // 上一帧末尾未闭合的 CSI 序列（ESC[ 后缺终结符）。PTY 输出边界任意，一个 SGR
-    // 序列可能被切到两个 RAF 帧：切断后两侧都不匹配 normalize 的 CSI 正则，深色
-    // 背景 SGR 会原样写进 xterm，白板模式下就闪一块深色（xterm 自己能跨 write 解析，
-    // 所以"一会儿自愈"）。这里把帧尾半截 CSI 暂存，下一帧拼到开头再整体 normalize。
-    let csiTail = '';
+    const preOpenOutputBuffer: string[] = [];
+    const pendingOutputChunks: string[] = [];
+    let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -801,56 +776,41 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       }
     };
 
+    const writeTerminalOutput = (output: string) => {
+      if (disposed || !output) return;
+      const term = xtermRef.current;
+      if (!term) {
+        preOpenOutputBuffer.push(output);
+        return;
+      }
+
+      const messageId = ++latestWriteDataRef.current;
+      term.write(output, () => {
+        latestParseDataRef.current = messageId;
+      });
+    };
+
+    const flushTerminalOutput = () => {
+      outputFlushTimer = null;
+      if (disposed || pendingOutputChunks.length === 0) return;
+      const output = pendingOutputChunks.join('');
+      pendingOutputChunks.length = 0;
+      writeTerminalOutput(output);
+    };
+
+    const queueTerminalOutput = (output: string) => {
+      pendingOutputChunks.push(output);
+      if (outputFlushTimer !== null) return;
+
+      // ConPTY can emit a screen diff and its final cursor correction in adjacent reads.
+      // Buffer one WebView frame so xterm parses both before scheduling a render.
+      outputFlushTimer = setTimeout(flushTerminalOutput, TERMINAL_OUTPUT_BUFFER_MS);
+    };
+
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
       handleClaudeTerminalOutput(terminalId, output);
-      if (xtermRef.current) {
-        // 先存原始 chunk，等 RAF 里 join 成完整串后再做 ANSI 改写。
-        // normalizeAnsiForLightBackground 用正则匹配「完整的」CSI 序列（\x1b[...m），
-        // 而 PTY 每次读取的输出边界是任意的，可能把一个序列切成两半。若逐 chunk 改写，
-        // 被切断的序列两边都不匹配正则、原样保留，白板模式下就会偶发出现 claude code
-        // 原始的深色背景块（有概率闪、闪一会儿自愈、非纯黑）。RAF join 解决了同一帧
-        // 内的切断；跨帧切断（序列一半在上一帧尾、一半在本帧头）由 csiTail 兜住——
-        // 帧尾未闭合的 CSI 暂存到下一帧拼接，保证整串先拼完整再改写。
-        pendingChunks.push(output);
-        if (!pendingRaf) {
-          pendingRaf = requestAnimationFrame(() => {
-            pendingRaf = null;
-            if (disposed) return;
-            // 先拼上上一帧遗留的半截 CSI，再 join 本帧所有 chunk
-            const combined = csiTail + pendingChunks.join('');
-            pendingChunks.length = 0;
-
-            // 切出帧尾未闭合的 CSI（ESC[ 后缺终结符 @-~）暂存到 csiTail，下帧再拼。
-            // 完整 CSI 形如 ESC[ 参数串 终结符；不匹配即说明被切断，需保留半个。
-            let toWrite = combined;
-            const esc = combined.lastIndexOf('\x1b');
-            if (esc !== -1) {
-              const tail = combined.slice(esc);
-              const isCompleteCsi = /^\x1b\[[0-9;?<=>!"#$%&'()*+,\-./]*[\x40-\x7e]/.test(tail);
-              if (tail === '\x1b' || (tail.startsWith('\x1b[') && !isCompleteCsi)) {
-                csiTail = tail;
-                toWrite = combined.slice(0, esc);
-              } else {
-                csiTail = '';
-              }
-            } else {
-              csiTail = '';
-            }
-
-            const normalized = normalizeAnsiForLightBackground(toWrite, lightOptimizedRef.current);
-            const term = xtermRef.current;
-            // Use write callback to track parse state (learned from VS Code's _writeProcessData)
-            // This ensures cursor position stays in sync when TUI programs update the screen
-            const messageId = ++latestWriteDataRef.current;
-            term?.write(normalized, () => {
-              latestParseDataRef.current = messageId;
-            });
-          });
-        }
-      } else {
-        outputBuffer.push(output);
-      }
+      queueTerminalOutput(output);
 
       // Working state: reset debounce on each output, check xterm buffer for prompt
       if (workingDebounce) clearTimeout(workingDebounce);
@@ -993,11 +953,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Flush buffered output that arrived before xterm was ready.
       // 同样在 join 后做 ANSI 改写，保持与 RAF 写入路径一致（见 handleOutput 注释）。
-      if (outputBuffer.length > 0) {
-        const combined = outputBuffer.join('');
-        outputBuffer.length = 0;
-        const normalized = normalizeAnsiForLightBackground(combined, lightOptimizedRef.current);
-        terminal.write(normalized);
+      if (preOpenOutputBuffer.length > 0) {
+        const combined = preOpenOutputBuffer.join('');
+        preOpenOutputBuffer.length = 0;
+        queueTerminalOutput(combined);
       }
       fitAddonRef.current = fitAddon;
 
@@ -1647,10 +1606,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         clearTimeout(workingFallback);
         workingFallback = null;
       }
-      if (pendingRaf) {
-        cancelAnimationFrame(pendingRaf);
-        pendingRaf = null;
+      if (outputFlushTimer !== null) {
+        clearTimeout(outputFlushTimer);
+        outputFlushTimer = null;
       }
+      pendingOutputChunks.length = 0;
       // Reset output tracking refs
       latestWriteDataRef.current = 0;
       latestParseDataRef.current = 0;
