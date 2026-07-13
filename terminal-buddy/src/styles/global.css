@@ -39,7 +39,7 @@ body {
   --border: #d0d0d0;
   --list-hover-bg: #e8e8e8;
   --list-active-bg: rgba(0, 120, 212, 0.15);
-  --list-active-fg: var(--accent);
+  --list-active-fg: #005a9e;
   --list-active-border-color: transparent;
   --list-active-border-width: 0px;
   --scrollbar-bg: #e8e8e8;
@@ -99,6 +99,18 @@ body {
   position: relative;
   width: 100%;
   min-width: 0;
+}
+
+.nav-panel-slot {
+  display: contents;
+}
+
+.ui-style-sidebar .nav-panel-slot:not(.active) {
+  display: none;
+}
+
+.ui-style-sidebar.panels-hidden .activity-bar {
+  display: none;
 }
 
 /* Confirm dialog */

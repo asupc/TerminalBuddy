@@ -122,6 +122,70 @@
   overscroll-behavior: contain;
 }
 
+.file-nav-root {
+  min-width: 0;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  font-size: 12px;
+}
+
+.file-nav-root:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.file-nav-root.error {
+  color: #f44747;
+}
+
+.file-nav-root-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.file-nav-root-label {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.file-nav-root-name {
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.file-nav-root-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.file-nav-root.selected .file-nav-root-path {
+  color: inherit;
+}
+
+.file-nav-root.selected .file-nav-root-icon {
+  color: inherit;
+}
+
+.file-nav-root-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.file-nav-root .path-error {
+  flex-shrink: 0;
+  margin-left: 2px;
+  font-weight: 700;
+}
+
 .tree-node {
   user-select: none;
 }

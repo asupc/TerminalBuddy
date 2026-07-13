@@ -12,6 +12,32 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
   return (
     <div className="settings-general">
       <div className="settings-section">
+        <label className="settings-label">UI 样式</label>
+        <div className="breathing-light-mode-options ui-style-options" role="radiogroup" aria-label="UI 样式">
+          <label className={`breathing-light-mode ${settings.uiStyle === 'default' ? 'active' : ''}`}>
+            <input
+              type="radio"
+              name="uiStyle"
+              value="default"
+              checked={settings.uiStyle === 'default'}
+              onChange={() => updateSetting('uiStyle', 'default')}
+            />
+            <span>默认</span>
+          </label>
+          <label className={`breathing-light-mode ${settings.uiStyle === 'sidebar' ? 'active' : ''}`}>
+            <input
+              type="radio"
+              name="uiStyle"
+              value="sidebar"
+              checked={settings.uiStyle === 'sidebar'}
+              onChange={() => updateSetting('uiStyle', 'sidebar')}
+            />
+            <span>侧边栏</span>
+          </label>
+        </div>
+        <p className="settings-desc">侧边栏样式参考 VS Code，将配置、文件、选项卡和设置入口集中到左侧</p>
+      </div>
+      <div className="settings-section">
         <label className="settings-label">启动窗口模式</label>
         <div className="breathing-light-mode-options">
           <label className={`breathing-light-mode ${settings.launchWindowMode === 'windowed' ? 'active' : ''}`}>
