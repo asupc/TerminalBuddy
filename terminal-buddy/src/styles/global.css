@@ -101,6 +101,18 @@ body {
   min-width: 0;
 }
 
+.nav-panel-slot {
+  display: contents;
+}
+
+.ui-style-sidebar .nav-panel-slot:not(.active) {
+  display: none;
+}
+
+.ui-style-sidebar.panels-hidden .activity-bar {
+  display: none;
+}
+
 /* Confirm dialog */
 .confirm-dialog-overlay {
   position: fixed;

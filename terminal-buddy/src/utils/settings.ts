@@ -4,8 +4,10 @@ export type ThemeMode = 'dark' | 'light' | 'system';
 
 export type BreathingLightColorMode = 'tab' | 'custom';
 export type LaunchWindowMode = 'windowed' | 'maximized';
+export type UiStyle = 'default' | 'sidebar';
 
 export interface AppSettings {
+  uiStyle: UiStyle;
   restoreTabsOnStartup: boolean;
   configPanelAutoExpand: boolean;
   fileTreeAutoExpand: boolean;
@@ -44,6 +46,7 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
+  uiStyle: 'default',
   restoreTabsOnStartup: true,
   configPanelAutoExpand: true,
   fileTreeAutoExpand: true,

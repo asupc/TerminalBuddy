@@ -6,6 +6,7 @@ import { ConfigNav } from './components/ConfigNav';
 import { TerminalPanel } from './components/TerminalPanel';
 import { FileNav } from './components/FileNav';
 import { TabNav } from './components/TabNav';
+import { ActivityBar, type SidebarPanel } from './components/ActivityBar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { Toast } from './components/Toast';
@@ -51,6 +52,8 @@ function App() {
   const [showExtraParamsDialog, setShowExtraParamsDialog] = useState(false);
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
   const [enableTabNav, setEnableTabNav] = useState(true);
+  const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
+  const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
   const closeConfirmedRef = useRef(false);
   const restoredRef = useRef(false);
 
@@ -244,6 +247,12 @@ function App() {
     const handler = () => setEnableTabNav(getAppSettings().enableTabNavigation);
     window.addEventListener('tab-navigation-changed', handler);
     return () => window.removeEventListener('tab-navigation-changed', handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setUiStyle(getAppSettings().uiStyle);
+    window.addEventListener('app-settings-changed', handler);
+    return () => window.removeEventListener('app-settings-changed', handler);
   }, []);
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
@@ -545,9 +554,25 @@ function App() {
     setShowEditDialog(false);
   }, []);
 
+  const handleSidebarPanel = useCallback((panel: SidebarPanel) => {
+    setSidebarPanel(current => {
+      if (panel === 'config' && !useAppStore.getState().configPanelVisible) {
+        useAppStore.getState().toggleConfigPanel();
+        return panel;
+      }
+      if (panel === 'files' && !useAppStore.getState().fileTreeVisible) {
+        useAppStore.getState().toggleFileTree();
+        return panel;
+      }
+      if (current === panel) return null;
+      return panel;
+    });
+  }, []);
+
   return (
-    <div className={`app-container${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`} tabIndex={0}>
+    <div className={`app-container ui-style-${uiStyle}${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`} tabIndex={0}>
       <TitleBar
+        uiStyle={uiStyle}
         onSettings={handleSettings}
         configPanelVisible={configPanelVisible}
         fileTreeVisible={fileTreeVisible}
@@ -555,21 +580,35 @@ function App() {
         onToggleFileTree={toggleFileTree}
       />
       <div className="main-content">
-        <ConfigNav
-          onStartTerminal={handleStartTerminal}
-          onEditProfile={handleEditProfile}
-          onCopyProfile={handleCopyProfile}
-          onAddProfile={handleAddProfile}
-          onManageExtraParams={() => setShowExtraParamsDialog(true)}
-        />
-        <FileNav />
-        {enableTabNav && (
-          <TabNav
-            profiles={profiles}
-            onStartTerminal={handleStartTerminal}
-            onStartBlankTerminal={handleStartBlankTerminal}
-            onStartTextEditor={handleStartTextEditor}
+        {uiStyle === 'sidebar' && (
+          <ActivityBar
+            activePanel={sidebarPanel}
+            tabNavigationEnabled={enableTabNav}
+            onSelectPanel={handleSidebarPanel}
+            onSettings={handleSettings}
           />
+        )}
+        <div className={`nav-panel-slot nav-panel-config${sidebarPanel === 'config' ? ' active' : ''}`}>
+          <ConfigNav
+            onStartTerminal={handleStartTerminal}
+            onEditProfile={handleEditProfile}
+            onCopyProfile={handleCopyProfile}
+            onAddProfile={handleAddProfile}
+            onManageExtraParams={() => setShowExtraParamsDialog(true)}
+          />
+        </div>
+        <div className={`nav-panel-slot nav-panel-files${sidebarPanel === 'files' ? ' active' : ''}`}>
+          <FileNav />
+        </div>
+        {enableTabNav && (
+          <div className={`nav-panel-slot nav-panel-tabs${sidebarPanel === 'tabs' ? ' active' : ''}`}>
+            <TabNav
+              profiles={profiles}
+              onStartTerminal={handleStartTerminal}
+              onStartBlankTerminal={handleStartBlankTerminal}
+              onStartTextEditor={handleStartTextEditor}
+            />
+          </div>
         )}
         <TerminalPanel />
       </div>
