@@ -1,4 +1,5 @@
 import { FC, useState } from 'react';
+import { Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 
 interface ExclusionSettingsProps {
@@ -35,7 +36,10 @@ export const ExclusionSettings: FC<ExclusionSettingsProps> = ({ askConfirm, setC
                     setExclusionPatterns(exclusionPatterns.filter((_, i) => i !== idx));
                   });
                 }}
-              >×</button>
+                aria-label={`删除排除规则 ${pattern}`}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </button>
             </div>
           </div>
         ))}
@@ -57,7 +61,10 @@ export const ExclusionSettings: FC<ExclusionSettingsProps> = ({ askConfirm, setC
             setExclusionPatterns([...exclusionPatterns, newPattern.trim()]);
             setNewPattern('');
           }
-        }}>添加</button>
+        }}>
+          <Plus size={15} aria-hidden="true" />
+          添加
+        </button>
       </div>
       <button
         className="btn-secondary"
@@ -68,7 +75,10 @@ export const ExclusionSettings: FC<ExclusionSettingsProps> = ({ askConfirm, setC
             setExclusionPatterns(['node_modules', '.git']);
           });
         }}
-      >重置为默认</button>
+      >
+        <RotateCcw size={15} aria-hidden="true" />
+        重置为默认
+      </button>
       {exclusionContextMenu && (
         <div className="context-menu-overlay" onClick={() => setExclusionContextMenu(null)} />
       )}

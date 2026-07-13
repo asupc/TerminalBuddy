@@ -1,4 +1,5 @@
 import { FC, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import type { AppSettings } from '../../utils/settings';
 
 interface AiUsageSettingsProps {
@@ -29,7 +30,10 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
           <button
             className="btn-secondary"
             onClick={() => setZhipuApiKeyVisible(!zhipuApiKeyVisible)}
-          >{zhipuApiKeyVisible ? '隐藏' : '显示'}</button>
+          >
+            {zhipuApiKeyVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+            {zhipuApiKeyVisible ? '隐藏' : '显示'}
+          </button>
         </div>
         <p className="settings-desc">填入智谱 GLM 的 API Key 用于查询 AI 用量信息。可在 <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>open.bigmodel.cn</a> 获取</p>
       </div>
@@ -48,7 +52,10 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
           <button
             className="btn-secondary"
             onClick={() => setQianfanCookieVisible(!qianfanCookieVisible)}
-          >{qianfanCookieVisible ? '隐藏' : '显示'}</button>
+          >
+            {qianfanCookieVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+            {qianfanCookieVisible ? '隐藏' : '显示'}
+          </button>
         </div>
         <p className="settings-desc">填入百度千帆控制台的 Cookie 用于查询 AI 用量。登录 <a href="https://console.bce.baidu.com/qianfan/resource/subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>百度千帆控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值</p>
       </div>
@@ -67,7 +74,10 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
           <button
             className="btn-secondary"
             onClick={() => setDeepseekApiKeyVisible(!deepseekApiKeyVisible)}
-          >{deepseekApiKeyVisible ? '隐藏' : '显示'}</button>
+          >
+            {deepseekApiKeyVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+            {deepseekApiKeyVisible ? '隐藏' : '显示'}
+          </button>
         </div>
         <p className="settings-desc">填入 DeepSeek 的 认证Token 用于查询 AI 用量。可在 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com/usage</a> 登录后打开浏览器开发者工具，查看网络请求获取 Authorization Bearer 值</p>
       </div>
@@ -85,7 +95,10 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
           <button
             className="btn-secondary"
             onClick={() => setMinimaxApiKeyVisible(!minimaxApiKeyVisible)}
-          >{minimaxApiKeyVisible ? '隐藏' : '显示'}</button>
+          >
+            {minimaxApiKeyVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+            {minimaxApiKeyVisible ? '隐藏' : '显示'}
+          </button>
         </div>
         <p className="settings-desc">填入 MiniMax 的 API Key 用于查询 AI 用量。可在 <a href="https://platform.minimax.chat/api_keys" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.minimax.chat</a> 获取</p>
       </div>
@@ -104,7 +117,10 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
           <button
             className="btn-secondary"
             onClick={() => setArkCookieVisible(!arkCookieVisible)}
-          >{arkCookieVisible ? '隐藏' : '显示'}</button>
+          >
+            {arkCookieVisible ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+            {arkCookieVisible ? '隐藏' : '显示'}
+          </button>
         </div>
         <p className="settings-desc">填入火山方舟控制台的 Cookie 用于查询 Coding 套餐用量。登录 <a href="https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>火山方舟控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值（须包含 csrfToken）</p>
       </div>
