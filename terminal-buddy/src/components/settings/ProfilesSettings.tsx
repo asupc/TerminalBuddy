@@ -1,5 +1,5 @@
 import { FC, useEffect, useMemo, useState } from 'react';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import {
   createProfile,
   deleteProfile as deleteProfileCmd,
@@ -98,7 +98,8 @@ export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismis
           onChange={event => setSearch(event.target.value)}
         />
         <button className="settings-add-btn" type="button" onClick={() => openEditor(null)}>
-          + 新建连接
+          <Plus size={15} aria-hidden="true" />
+          新建连接
         </button>
       </div>
 

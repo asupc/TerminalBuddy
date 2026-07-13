@@ -1,4 +1,5 @@
 import { FC, useState, useEffect } from 'react';
+import { Check, Plus, Trash2, X } from 'lucide-react';
 import { getAllThemes, createTheme, updateTheme, deleteTheme } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { PRESET_THEMES, type CustomTheme } from '../../types';
@@ -82,19 +83,23 @@ export const ThemesSettings: FC = () => {
               {isCustom && editingTheme?.id !== t.id && (
                 <button
                   className="theme-card-delete"
+                  type="button"
+                  title={`删除主题 ${t.name}`}
+                  aria-label={`删除主题 ${t.name}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDeleteTheme(t.id);
                   }}
                 >
-                  ×
+                  <Trash2 size={14} aria-hidden="true" />
                 </button>
               )}
             </div>
           );
         })}
         <button className="theme-create-btn" onClick={handleCreateTheme}>
-          + 新建主题
+          <Plus size={15} aria-hidden="true" />
+          新建主题
         </button>
       </div>
 
@@ -107,8 +112,14 @@ export const ThemesSettings: FC = () => {
               onChange={(e) => handleColorChange('name', e.target.value)}
             />
             <div className="theme-editor-actions">
-              <button className="btn-primary" onClick={handleSaveTheme}>保存</button>
-              <button className="btn-secondary" onClick={() => setEditingTheme(null)}>取消</button>
+              <button className="btn-primary" onClick={handleSaveTheme}>
+                <Check size={15} aria-hidden="true" />
+                保存
+              </button>
+              <button className="btn-secondary" onClick={() => setEditingTheme(null)}>
+                <X size={15} aria-hidden="true" />
+                取消
+              </button>
             </div>
           </div>
           <div className="color-slots">
