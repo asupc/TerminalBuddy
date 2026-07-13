@@ -16,7 +16,7 @@ import { useAppStore } from '../stores/appStore';
 import { getTerminalSuggestions, type SuggestionItem } from '../data/commandTemplates';
 import { normalizeAnsiForLightBackground, type TerminalColors } from '../utils/terminalTheme';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
-import { disposeClaudeTerminalNotification, handleClaudeTaskCompleted, handleClaudeTerminalOutput, hasRunningClaudeTask, markClaudeTerminalInteraction } from '../services/claudeNotification';
+import { disposeClaudeTerminalNotification, handleClaudeTaskCompleted, handleClaudeTerminalOutput, hasRunningClaudeTask, markClaudeTaskPromptHidden, markClaudeTerminalInteraction } from '../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
@@ -745,7 +745,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const terminal = xtermRef.current;
       const buf = terminal.buffer.active;
       const lines: string[] = [];
-      const firstRow = Math.max(0, buf.viewportY);
+      // 始终检查实时屏幕底部，不跟随用户向上滚动后的 viewport。
+      const firstRow = Math.max(0, buf.baseY);
       const lastRow = Math.min(buf.length - 1, firstRow + terminal.rows - 1);
       for (let row = firstRow; row <= lastRow; row++) {
         const line = buf.getLine(row);
@@ -759,13 +760,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (disposed || !xtermRef.current) return false;
       const terminal = xtermRef.current;
       const buf = terminal.buffer.active;
-      const firstRow = Math.max(0, buf.viewportY);
+      const firstRow = Math.max(0, buf.baseY);
       const lastRow = Math.min(buf.length - 1, firstRow + terminal.rows - 1);
       for (let row = firstRow; row <= lastRow; row++) {
         const line = buf.getLine(row)?.translateToString(true) ?? '';
-        if (!/\b(?:sub-?agents?|agents?)\b/i.test(line)) continue;
         // “idle” 是 Claude Code 子代理完成后的状态；其余明确的运行状态都视为仍在执行。
-        if (/\b(?:working|running|thinking|processing|queued|pending|active|in[ -]?progress)\b/i.test(line)) return true;
+        // 限制 agent 与状态词的距离，避免普通回答中两个无关单词碰巧出现在同一行。
+        if (/(?:\b(?:sub-?agents?|agents?)\b.{0,48}\b(?:working|running|thinking|processing|queued|pending|active|in[ -]?progress)\b|\b(?:working|running|thinking|processing|queued|pending|active|in[ -]?progress)\b.{0,48}\b(?:sub-?agents?|agents?)\b)/i.test(line)) return true;
       }
       return false;
     };
@@ -789,6 +790,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         }
         return;
       }
+      markClaudeTaskPromptHidden(terminalId);
       if (checkBufferForPrompt()) {
         useAppStore.getState().setSessionWorking(terminalId, false);
         if (workingFallback) clearTimeout(workingFallback);
@@ -851,10 +853,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (workingFallback) clearTimeout(workingFallback);
       // Quick check after 300ms — xterm buffer has clean text (no ANSI codes)
       workingDebounce = setTimeout(checkWorkingState, 300);
-      // Fallback: after 1.5s of silence, force idle regardless
+      // 普通命令静默 1.5 秒后恢复空闲；Claude 任务由其完成状态机负责，不能提前熄灭工作状态。
       workingFallback = setTimeout(() => {
         if (!disposed) {
-          useAppStore.getState().setSessionWorking(terminalId, false);
+          useAppStore.getState().setSessionWorking(terminalId, hasRunningClaudeTask(terminalId));
         }
       }, 1500);
     };

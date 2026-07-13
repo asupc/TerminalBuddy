@@ -15,6 +15,7 @@ type DetectorState = {
   taskRunning: boolean;
   taskStartedAt: number;
   taskHadBusyMarker: boolean;
+  taskPromptWasHidden: boolean;
   lastSpinnerAt: number;
   lastNotifiedAt: number;
   timer: ReturnType<typeof setTimeout> | null;
@@ -33,6 +34,7 @@ function createDetectorState(): DetectorState {
     taskRunning: false,
     taskStartedAt: 0,
     taskHadBusyMarker: false,
+    taskPromptWasHidden: false,
     lastSpinnerAt: 0,
     lastNotifiedAt: 0,
     timer: null,
@@ -192,6 +194,8 @@ export function handleClaudeTerminalOutput(terminalId: string, output: string): 
 export function markClaudeTerminalInteraction(terminalId: string, taskSubmitted: boolean): void {
   if (!taskSubmitted) return;
   cancelClaudeNotification(terminalId, 'question');
+  // 用户已经开始下一次交互，上一任务尚在延迟队列中的完成通知不应再弹出。
+  cancelClaudeNotification(terminalId, 'completed');
   const state = detectorStates.get(terminalId) ?? createDetectorState();
   // 手动输入 claude 启动 CLI 时尚未进入 Claude 会话，不能把启动过程当成一项任务。
   if (!isKnownClaudeTerminal(terminalId, state)) {
@@ -203,12 +207,18 @@ export function markClaudeTerminalInteraction(terminalId: string, taskSubmitted:
   state.taskRunning = true;
   state.taskStartedAt = Date.now();
   state.taskHadBusyMarker = false;
+  state.taskPromptWasHidden = false;
   state.lastSpinnerAt = 0;
   if (state.timer) {
     clearTimeout(state.timer);
     state.timer = null;
   }
   detectorStates.set(terminalId, state);
+}
+
+export function markClaudeTaskPromptHidden(terminalId: string): void {
+  const state = detectorStates.get(terminalId);
+  if (state?.taskRunning) state.taskPromptWasHidden = true;
 }
 
 export function handleClaudeTaskCompleted(terminalId: string, hasBusySubagent: boolean): boolean {
@@ -219,10 +229,16 @@ export function handleClaudeTaskCompleted(terminalId: string, hasBusySubagent: b
 
   // 极短时间内可能仍是提交按键前的旧输入框，等待忙碌标记或首次重绘后再确认。
   if (!state.taskHadBusyMarker && Date.now() - state.taskStartedAt < 1_000) return false;
+  const hasBusyEvidence = state.taskHadBusyMarker ||
+    state.taskPromptWasHidden ||
+    state.lastSpinnerAt >= state.taskStartedAt;
+  // 仅按下空 Enter 或菜单重绘时提示符可能始终存在，不能据此报告任务完成。
+  if (!hasBusyEvidence) return false;
   if (hasBusySubagent || Date.now() - state.lastSpinnerAt < SPINNER_ACTIVITY_GRACE_MS) return false;
 
   state.taskRunning = false;
   state.taskHadBusyMarker = false;
+  state.taskPromptWasHidden = false;
   state.text = '';
   scheduleClaudeNotification(terminalId, 'completed');
   return true;
