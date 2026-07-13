@@ -16,6 +16,7 @@ const TYPE_ICONS: Record<string, string> = {
 const PINNED_GROUP_ID = '__pinned__';
 
 interface ConfigPanelProps {
+  isActive: boolean;
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string) => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
@@ -24,6 +25,7 @@ interface ConfigPanelProps {
 }
 
 export const ConfigNav: FC<ConfigPanelProps> = ({
+  isActive,
   onStartTerminal,
   onEditProfile,
   onCopyProfile,
@@ -362,6 +364,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'F2') return;
+      if (!isActive) return;
       const region = useAppStore.getState().lastClickRegion;
       if (region && region !== 'config') return;
       if (!selectedProfileId) return;
@@ -376,7 +379,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [selectedProfileId, treeItems]);
+  }, [isActive, selectedProfileId, treeItems]);
 
   return (
     <div ref={containerRef} className={`config-nav ${!configPanelVisible ? 'collapsed' : ''}`} style={{ width }} onClick={closeContextMenu}>

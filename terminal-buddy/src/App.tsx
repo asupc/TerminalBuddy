@@ -555,6 +555,12 @@ function App() {
   }, []);
 
   const handleSidebarPanel = useCallback((panel: SidebarPanel) => {
+    if (panel === 'config' || panel === 'tabs') {
+      useAppStore.getState().setLastClickRegion(panel === 'config' ? 'config' : 'tab');
+    } else {
+      useAppStore.getState().setLastClickRegion(null);
+    }
+
     setSidebarPanel(current => {
       if (panel === 'config' && !useAppStore.getState().configPanelVisible) {
         useAppStore.getState().toggleConfigPanel();
@@ -590,6 +596,7 @@ function App() {
         )}
         <div className={`nav-panel-slot nav-panel-config${sidebarPanel === 'config' ? ' active' : ''}`}>
           <ConfigNav
+            isActive={windowMode !== 'panels-hidden' && (uiStyle !== 'sidebar' || sidebarPanel === 'config')}
             onStartTerminal={handleStartTerminal}
             onEditProfile={handleEditProfile}
             onCopyProfile={handleCopyProfile}
@@ -603,6 +610,7 @@ function App() {
         {enableTabNav && (
           <div className={`nav-panel-slot nav-panel-tabs${sidebarPanel === 'tabs' ? ' active' : ''}`}>
             <TabNav
+              isActive={windowMode !== 'panels-hidden' && (uiStyle !== 'sidebar' || sidebarPanel === 'tabs')}
               profiles={profiles}
               onStartTerminal={handleStartTerminal}
               onStartBlankTerminal={handleStartBlankTerminal}

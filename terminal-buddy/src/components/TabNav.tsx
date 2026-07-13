@@ -12,13 +12,14 @@ import type { Profile, TerminalSession } from '../types';
 import './TabNav.css';
 
 interface TabSidebarProps {
+  isActive: boolean;
   profiles: Profile[];
   onStartTerminal: (profile: Profile) => void;
   onStartBlankTerminal: (terminalType: 'powershell' | 'cmd') => void;
   onStartTextEditor: () => void;
 }
 
-export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
+export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
@@ -62,6 +63,7 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'F2') return;
+      if (!isActive) return;
       const region = useAppStore.getState().lastClickRegion;
       if (region && region !== 'tab') return;
       if (!activeSessionId) return;
@@ -74,7 +76,7 @@ export const TabNav: FC<TabSidebarProps> = ({ profiles, onStartTerminal, onStart
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [activeSessionId, sessions]);
+  }, [isActive, activeSessionId, sessions]);
 
   // 跟踪上次点击区域
   useEffect(() => {
