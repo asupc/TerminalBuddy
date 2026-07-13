@@ -1,4 +1,15 @@
 import { FC, useState, useRef, useEffect, useCallback } from 'react';
+import {
+  Columns2,
+  Grid2X2,
+  Info,
+  Minus,
+  Moon,
+  Settings,
+  Square,
+  Sun,
+  X,
+} from 'lucide-react';
 import { windowMinimize, windowToggleMaximize, windowClose, getWebServerAddress } from '../services/tauri';
 import { AiUsagePanel } from './AiUsagePanel';
 import { AboutDialog } from './AboutDialog';
@@ -156,68 +167,76 @@ export const TitleBar: FC<TitleBarProps> = ({
         </div>
       </div>
       <div className="titlebar-right">
-        <button
-          className={`titlebar-btn titlebar-action-btn titlebar-split-btn ${splitMode !== 'off' ? 'split-active' : ''}`}
-          onClick={handleSplitClick}
-          disabled={splitBusy}
-          title={splitBusy ? '分屏切换中...' : splitMode === 'off' ? '分屏：2×1' : splitMode === '2x1' ? '分屏：2×2' : '退出分屏'}
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            {splitMode === '2x2' ? (
-              <>
-                <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" fill="currentColor" />
-                <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" fill="currentColor" />
-                <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" fill="currentColor" />
-                <rect x="9" y="9" width="5.5" height="5.5" rx="1" fill="currentColor" />
-              </>
-            ) : (
-              <>
-                <rect x="1.5" y="1.5" width="5.5" height="13" rx="1" fill="currentColor" />
-                <rect x="9" y="1.5" width="5.5" height="13" rx="1" fill="currentColor" />
-              </>
-            )}
-          </svg>
-        </button>
-        <button
-          className="titlebar-btn titlebar-action-btn"
-          onClick={toggleTheme}
-          title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-        >
-          {theme === 'dark' ? '☀️' : '🌙'}
-        </button>
-        <button
-          className="titlebar-btn titlebar-action-btn"
-          onClick={() => setShowAboutDialog(true)}
-          title="关于 TerminalBuddy"
-        >
-          ℹ
-        </button>
-        {uiStyle === 'default' && (
-          <button className="titlebar-btn titlebar-action-btn" onClick={onSettings} title="设置">
-            ⚙
+        <div className="titlebar-action-group">
+          <button
+            type="button"
+            className={`titlebar-btn titlebar-action-btn titlebar-split-btn ${splitMode !== 'off' ? 'split-active' : ''}`}
+            onClick={handleSplitClick}
+            disabled={splitBusy}
+            title={splitBusy ? '分屏切换中...' : splitMode === 'off' ? '分屏：2×1' : splitMode === '2x1' ? '分屏：2×2' : '退出分屏'}
+            aria-label={splitBusy ? '分屏切换中' : splitMode === 'off' ? '切换到两栏分屏' : splitMode === '2x1' ? '切换到四格分屏' : '退出分屏'}
+          >
+            {splitMode === '2x2' ? <Grid2X2 /> : <Columns2 />}
           </button>
-        )}
-        <button
-          className="titlebar-btn"
-          onClick={() => windowMinimize()}
-          title="最小化"
-        >
-          ─
-        </button>
-        <button
-          className="titlebar-btn"
-          onClick={() => windowToggleMaximize()}
-          title="最大化"
-        >
-          □
-        </button>
-        <button
-          className="titlebar-btn titlebar-close-btn"
-          onClick={() => windowClose()}
-          title="关闭"
-        >
-          ✕
-        </button>
+          <button
+            type="button"
+            className="titlebar-btn titlebar-action-btn"
+            onClick={toggleTheme}
+            title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+            aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+          >
+            {theme === 'dark' ? <Sun /> : <Moon />}
+          </button>
+          <button
+            type="button"
+            className="titlebar-btn titlebar-action-btn"
+            onClick={() => setShowAboutDialog(true)}
+            title="关于 TerminalBuddy"
+            aria-label="关于 TerminalBuddy"
+          >
+            <Info />
+          </button>
+          {uiStyle === 'default' && (
+            <button
+              type="button"
+              className="titlebar-btn titlebar-action-btn"
+              onClick={onSettings}
+              title="设置"
+              aria-label="设置"
+            >
+              <Settings />
+            </button>
+          )}
+        </div>
+        <div className="titlebar-window-controls">
+          <button
+            type="button"
+            className="titlebar-btn titlebar-window-btn"
+            onClick={() => windowMinimize()}
+            title="最小化"
+            aria-label="最小化窗口"
+          >
+            <Minus />
+          </button>
+          <button
+            type="button"
+            className="titlebar-btn titlebar-window-btn"
+            onClick={() => windowToggleMaximize()}
+            title="最大化"
+            aria-label="最大化窗口"
+          >
+            <Square />
+          </button>
+          <button
+            type="button"
+            className="titlebar-btn titlebar-window-btn titlebar-close-btn"
+            onClick={() => windowClose()}
+            title="关闭"
+            aria-label="关闭窗口"
+          >
+            <X />
+          </button>
+        </div>
       </div>
 
       {showAboutDialog && (

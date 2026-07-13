@@ -46,11 +46,19 @@
 }
 
 .activity-bar-button.active {
-  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-primary));
+  color: var(--accent);
 }
 
 .activity-bar-button.active::before {
+  inset: 0 auto 0 0;
+  width: 4px;
   background: var(--accent);
+}
+
+.activity-bar-button.active:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-primary));
+  color: var(--accent);
 }
 
 .activity-bar-button:focus-visible {
