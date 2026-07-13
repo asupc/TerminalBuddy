@@ -343,6 +343,23 @@
   display: none;
 }
 
+.ui-style-options .breathing-light-mode {
+  position: relative;
+}
+
+.ui-style-options .breathing-light-mode input {
+  position: absolute;
+  display: block;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.ui-style-options .breathing-light-mode:focus-within {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .tab-color-swatch {
   display: inline-block;
   width: 12px;

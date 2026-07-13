@@ -1,4 +1,5 @@
 import { FC, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
+import { ChevronRight, Folder, FolderOpen } from 'lucide-react';
 import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
@@ -246,6 +247,12 @@ function compareNodes(a: FileNode, b: FileNode, sortBy: 'name' | 'size' | 'modif
   return a.name.localeCompare(b.name) * dir;
 }
 
+function directoryName(path: string): string {
+  const normalized = path.replace(/[\\/]+$/, '');
+  if (!normalized) return path;
+  return normalized.split(/[\\/]/).filter(Boolean).pop() || normalized;
+}
+
 export const FileNav: FC = () => {
   const currentDirectory = useAppStore(s => s.currentDirectory);
   const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
@@ -273,6 +280,7 @@ export const FileNav: FC = () => {
   const [editValue, setEditValue] = useState('');
   const [pathError, setPathError] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
+  const [rootExpanded, setRootExpanded] = useState(true);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean; dir?: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -351,6 +359,8 @@ export const FileNav: FC = () => {
   useEffect(() => {
     if (!currentDirectory) return;
 
+    setRootExpanded(true);
+
     const loadDirectory = async () => {
       try {
         const entries = await listDirectory(currentDirectory, exclusionPatterns);
@@ -375,6 +385,11 @@ export const FileNav: FC = () => {
       : rootNodes;
     return [...filtered].sort((a, b) => compareNodes(a, b, fileSortBy, fileSortDir));
   }, [rootNodes, filterQuery, fileSortBy, fileSortDir]);
+
+  const currentDirectoryName = useMemo(
+    () => currentDirectory ? directoryName(currentDirectory) : '无路径',
+    [currentDirectory],
+  );
 
   // Alt+Left / Alt+Right back/forward — skip when terminal/editor has focus.
   useEffect(() => {
@@ -635,24 +650,6 @@ export const FileNav: FC = () => {
           onChange={(e) => setFilterQuery(e.target.value)}
         />
       </div>
-      <div className={`file-nav-path ${pathError ? 'error' : ''}`}>
-        {isEditing ? (
-          <input
-            ref={inputRef}
-            className="path-edit-input"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={handlePathSubmit}
-            onKeyDown={handlePathKeyDown}
-            autoFocus
-          />
-        ) : (
-          <span onDoubleClick={handlePathDoubleClick} title="双击编辑路径">
-            {currentDirectory || '无路径'}
-          </span>
-        )}
-        {pathError && <span className="path-error">路径不存在</span>}
-      </div>
       <div
         className="file-nav-content"
         onContextMenu={(e) => {
@@ -662,23 +659,91 @@ export const FileNav: FC = () => {
           setCtxMenu({ x: e.clientX, y: e.clientY, dir: currentDirectory });
         }}
       >
-        {filteredSortedNodes.length === 0 && filterQuery.trim() && (
-          <div className="empty-hint">无匹配项</div>
+        <div
+          className={`tree-item file-nav-root ${selectedPath === currentDirectory ? 'selected' : ''} ${pathError ? 'error' : ''}`}
+          role="button"
+          aria-expanded={rootExpanded}
+          aria-label={`${currentDirectoryName}，${rootExpanded ? '已展开' : '已折叠'}`}
+          tabIndex={0}
+          title={currentDirectory ? `${currentDirectoryName} - ${currentDirectory}` : '无路径'}
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('input')) return;
+            setSelectedPath(currentDirectory || null);
+            setRootExpanded(expanded => !expanded);
+            e.currentTarget.focus();
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();
+            setSelectedPath(currentDirectory || null);
+            setRootExpanded(expanded => !expanded);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setSelectedPath(currentDirectory || null);
+            setCtxMenu({ x: e.clientX, y: e.clientY, dir: currentDirectory });
+          }}
+        >
+          <span
+            className={`tree-arrow ${rootExpanded ? 'expanded' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setRootExpanded(expanded => !expanded);
+            }}
+          >
+            <ChevronRight size={13} strokeWidth={2} />
+          </span>
+          {rootExpanded
+            ? <FolderOpen className="file-nav-root-icon" size={16} strokeWidth={1.8} />
+            : <Folder className="file-nav-root-icon" size={16} strokeWidth={1.8} />}
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              className="path-edit-input file-nav-root-input"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={handlePathSubmit}
+              onKeyDown={handlePathKeyDown}
+              onClick={(e) => e.stopPropagation()}
+              autoFocus
+            />
+          ) : (
+            <span
+              className="file-nav-root-label"
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                handlePathDoubleClick();
+              }}
+              title="双击编辑路径"
+            >
+              <strong className="file-nav-root-name">{currentDirectoryName}</strong>
+              {currentDirectory && <span className="file-nav-root-path"> - {currentDirectory}</span>}
+            </span>
+          )}
+          {pathError && <span className="path-error" role="alert" aria-label="路径不存在" title="路径不存在">!</span>}
+        </div>
+        {rootExpanded && (
+          <div className="file-nav-root-children">
+            {filteredSortedNodes.length === 0 && filterQuery.trim() && (
+              <div className="empty-hint">无匹配项</div>
+            )}
+            {filteredSortedNodes.map((node) => (
+              <TreeNode
+                key={node.path}
+                node={node}
+                depth={1}
+                selectedPath={selectedPath}
+                onSelect={handleSelect}
+                onNavigate={handleNavigate}
+                onContextMenu={handleContextMenu}
+                onRename={handleRenameInline}
+                renamingPath={renamingPath}
+                setRenamingPath={setRenamingPath}
+              />
+            ))}
+          </div>
         )}
-        {filteredSortedNodes.map((node) => (
-          <TreeNode
-            key={node.path}
-            node={node}
-            depth={0}
-            selectedPath={selectedPath}
-            onSelect={handleSelect}
-            onNavigate={handleNavigate}
-            onContextMenu={handleContextMenu}
-            onRename={handleRenameInline}
-            renamingPath={renamingPath}
-            setRenamingPath={setRenamingPath}
-          />
-        ))}
       </div>
       {bookmarks.length > 0 && (
         <div className="bookmark-section" style={{ height: bookmarkHeight }}>

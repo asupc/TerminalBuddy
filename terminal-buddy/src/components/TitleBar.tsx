@@ -7,10 +7,12 @@ import { APP_VERSION } from '../version';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
 import { getEffectiveThemeMode, applyTheme, saveTheme } from '../utils/settings';
+import type { UiStyle } from '../utils/settings';
 import { useAppStore } from '../stores/appStore';
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from '../utils/terminalResizeEvent';
 
 interface TitleBarProps {
+  uiStyle: UiStyle;
   onSettings: () => void;
   configPanelVisible: boolean;
   fileTreeVisible: boolean;
@@ -19,6 +21,7 @@ interface TitleBarProps {
 }
 
 export const TitleBar: FC<TitleBarProps> = ({
+  uiStyle,
   onSettings,
   configPanelVisible,
   fileTreeVisible,
@@ -106,20 +109,24 @@ export const TitleBar: FC<TitleBarProps> = ({
         <span className="titlebar-title">TerminalBuddy</span>
         <span className="titlebar-version">v{APP_VERSION}</span>
         <div className="titlebar-nav-btns">
-          <button
-            className={`titlebar-nav-btn ${configPanelVisible ? 'active' : ''}`}
-            onClick={onToggleConfigPanel}
-            title={configPanelVisible ? '隐藏连接导航' : '显示连接导航'}
-          >
-            ☰
-          </button>
-          <button
-            className={`titlebar-nav-btn ${fileTreeVisible ? 'active' : ''}`}
-            onClick={onToggleFileTree}
-            title={fileTreeVisible ? '隐藏文件导航' : '显示文件导航'}
-          >
-            📁
-          </button>
+          {uiStyle === 'default' && (
+            <>
+              <button
+                className={`titlebar-nav-btn ${configPanelVisible ? 'active' : ''}`}
+                onClick={onToggleConfigPanel}
+                title={configPanelVisible ? '隐藏连接导航' : '显示连接导航'}
+              >
+                ☰
+              </button>
+              <button
+                className={`titlebar-nav-btn ${fileTreeVisible ? 'active' : ''}`}
+                onClick={onToggleFileTree}
+                title={fileTreeVisible ? '隐藏文件导航' : '显示文件导航'}
+              >
+                📁
+              </button>
+            </>
+          )}
           <button
             className="titlebar-nav-btn"
             onClick={() => setShowWebDialog(true)}
@@ -185,9 +192,11 @@ export const TitleBar: FC<TitleBarProps> = ({
         >
           ℹ
         </button>
-        <button className="titlebar-btn titlebar-action-btn" onClick={onSettings} title="设置">
-          ⚙
-        </button>
+        {uiStyle === 'default' && (
+          <button className="titlebar-btn titlebar-action-btn" onClick={onSettings} title="设置">
+            ⚙
+          </button>
+        )}
         <button
           className="titlebar-btn"
           onClick={() => windowMinimize()}

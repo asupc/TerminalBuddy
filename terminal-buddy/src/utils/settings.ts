@@ -4,8 +4,10 @@ export type ThemeMode = 'dark' | 'light' | 'system';
 
 export type BreathingLightColorMode = 'tab' | 'custom';
 export type LaunchWindowMode = 'windowed' | 'maximized';
+export type UiStyle = 'default' | 'sidebar';
 
 export interface AppSettings {
+  uiStyle: UiStyle;
   restoreTabsOnStartup: boolean;
   configPanelAutoExpand: boolean;
   fileTreeAutoExpand: boolean;
@@ -44,6 +46,7 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
+  uiStyle: 'default',
   restoreTabsOnStartup: true,
   configPanelAutoExpand: true,
   fileTreeAutoExpand: true,
@@ -150,19 +153,19 @@ export const applyTheme = (theme: ThemeMode) => {
 
 /**
  * 根据设置应用列表选中样式（连接导航 / 文件导航的 .tree-item.selected 背景与文字色）。
- * 行内 style 优先级最高，覆盖 global.css 里 :root 与 [data-theme="light"] 的默认值，
- * 因此三种样式在深 / 浅主题下都生效（全局固定配色）。
+ * 内置样式随当前主题切换；自定义样式始终使用用户指定的配色。
  */
 export const applyListSelectionStyle = (s: AppSettings) => {
   const root = document.documentElement;
-  let bg = '#4d7db9';
-  let fg = '#ffffff';
+  const isLight = getEffectiveThemeMode() === 'light';
+  let bg = isLight ? 'rgba(0, 120, 212, 0.15)' : '#4d7db9';
+  let fg = isLight ? '#005a9e' : '#ffffff';
   // 默认 / IDEA 样式：边框透明 + 0 宽度（即无边框）；自定义：读用户设置
   let borderColor = 'transparent';
   let borderWidth = '0px';
   if (s.listSelectionStyle === 'default') {
-    bg = '#37373d';
-    fg = '#ffffff';
+    bg = isLight ? '#e8e8e8' : '#37373d';
+    fg = isLight ? '#333333' : '#ffffff';
   } else if (s.listSelectionStyle === 'custom') {
     bg = s.listSelectionBg || '#4d7db9';
     fg = s.listSelectionFg || '#ffffff';
