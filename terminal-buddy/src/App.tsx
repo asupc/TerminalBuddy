@@ -131,12 +131,16 @@ function App() {
     };
   }, []);
 
-  // 应用列表选中样式（连接/文件导航 .tree-item.selected 配色）：启动一次 + 设置变更时刷新
+  // 应用列表选中样式：设置或主题变化时都重新计算内置配色。
   useEffect(() => {
     const apply = () => applyListSelectionStyle(getAppSettings());
     apply();
     window.addEventListener('app-settings-changed', apply);
-    return () => window.removeEventListener('app-settings-changed', apply);
+    window.addEventListener('app-theme-changed', apply);
+    return () => {
+      window.removeEventListener('app-settings-changed', apply);
+      window.removeEventListener('app-theme-changed', apply);
+    };
   }, []);
 
   useEffect(() => {
