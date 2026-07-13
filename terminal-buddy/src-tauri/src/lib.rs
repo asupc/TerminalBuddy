@@ -4,6 +4,7 @@ pub mod services;
 pub mod web;
 
 use commands::{get_all_profiles, get_profile, create_profile, update_profile, delete_profile, update_profile_last_used, export_all_profiles, import_all_profiles, connect_ssh_session, start_terminal, start_mstsc, get_claude_session_for_cwd, get_claude_session_for_terminal, get_claude_sessions_for_terminals, get_terminal_process_id, write_to_terminal, resize_terminal, close_terminal, start_blank_terminal, drain_terminal_output, peek_terminal_output, list_terminals, list_directory, open_path, open_in_explorer, delete_path, rename_path, get_git_repository_status, git_list_branches, git_checkout_branch, git_pull, git_push, git_preview_push, git_push_with_options, git_commit_all, git_get_changed_files, git_get_history_files, git_get_history_file_diff, git_commit_paths, git_get_history, get_all_themes, create_theme, update_theme, delete_theme, read_clipboard_file_paths, read_clipboard_image_as_file, get_app_settings, save_close_behavior, save_launch_window_mode, get_data_path, set_data_path, save_tab_sidebar_width, save_config_nav_width, save_file_nav_width, save_enable_tab_navigation, save_single_instance, get_all_workspaces, get_workspace, create_workspace, update_workspace, delete_workspace, get_command_templates, save_command_templates, init_command_templates, export_all_data, import_all_data, get_windows_build_number, window_minimize, window_toggle_maximize, window_close, window_exit_app, fetch_qianfan_usage, fetch_deepseek_usage, fetch_minimax_usage, fetch_ark_usage, save_web_api_settings, get_web_api_status, restart_web_server, get_web_server_address, get_web_quick_access_url, read_file_content, write_file_content, get_file_size, get_file_meta, read_client_data, write_client_data, ensure_dir, get_ssh_temp_directory, get_ssh_home_dir, get_downloads_directory, save_ssh_download_dir, save_server_monitor_interval, save_web_api_share_sessions, save_launch_at_login, sync_launch_at_login, remote_chmod, remote_copy, remote_create_dir, remote_create_file, remote_download, remote_download_dir, remote_list_dir, remote_move, remote_remove, remote_rename, remote_upload, get_server_stats, show_claude_code_notification};
+use commands::{cancel_bot_decision, get_bot_callback_base_url, get_bot_settings, save_bot_settings, send_bot_notification, test_bot_channel};
 use commands::{TerminalService, MonitorCache};
 use models::{CloseBehavior, LaunchWindowMode};
 use services::{SettingsService, SshSessionService, WebServiceState};
@@ -162,23 +163,14 @@ pub fn run() {
             let _ = commands::sync_launch_at_login();
             boot_log("after sync_launch_at_login");
 
-            // Conditionally start Web API server
+            // Web API 或机器人回调任一需要时启动统一 HTTP 服务。
             let app_handle = app.handle().clone();
             let settings_clone = SettingsService::get_settings();
-            if settings_clone.web_api_enabled && !settings_clone.web_api_password_hash.is_empty() {
-                boot_log(format!("starting Web API server on port {}", settings_clone.web_api_port));
-                let jwt_secret = crate::web::auth::generate_jwt_secret();
-                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-                *crate::commands::web::SHUTDOWN_TX.lock().unwrap() = Some(shutdown_tx);
-                *crate::commands::web::JWT_SECRET.lock().unwrap() = Some(jwt_secret.clone());
-
-                tauri::async_runtime::spawn(crate::web::server::run_server(
-                    settings_clone.web_api_port,
-                    jwt_secret,
-                    app_handle,
-                    shutdown_rx,
-                ));
-                boot_log("Web API server task spawned");
+            if settings_clone.web_api_enabled || crate::services::BotSettingsService::requires_callback_server() {
+                boot_log(format!("starting HTTP server on port {}", settings_clone.web_api_port));
+                crate::commands::web::sync_http_server_for_bot(app_handle)
+                    .map_err(std::io::Error::other)?;
+                boot_log("HTTP server task spawned");
             }
 
             boot_log("setup done — WebView about to load URL");
@@ -211,6 +203,12 @@ pub fn run() {
             get_claude_session_for_terminal,
             get_claude_sessions_for_terminals,
             show_claude_code_notification,
+            get_bot_settings,
+            get_bot_callback_base_url,
+            save_bot_settings,
+            send_bot_notification,
+            test_bot_channel,
+            cancel_bot_decision,
             get_terminal_process_id,
             write_to_terminal,
             resize_terminal,

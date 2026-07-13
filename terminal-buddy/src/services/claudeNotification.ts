@@ -1,7 +1,15 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAppStore } from '../stores/appStore';
 import { getAppSettings } from '../utils/settings';
-import { onClaudeNotificationActivated, showClaudeCodeNotification as showNativeNotification } from './tauri';
+import {
+  cancelBotDecision,
+  getBotSettings,
+  onClaudeBotReplyForwarded,
+  onClaudeNotificationActivated,
+  sendBotNotification,
+  showClaudeCodeNotification as showNativeNotification,
+} from './tauri';
+import { captureTerminalSnapshot } from './terminalSnapshot';
 
 const DETECTION_DELAY_MS = 300;
 const DETECTION_BUFFER_SIZE = 12_000;
@@ -20,11 +28,17 @@ type DetectorState = {
   completionPromptSeenAt: number;
   lastSpinnerAt: number;
   lastNotifiedAt: number;
+  activeDecisionId: string | null;
   timer: ReturnType<typeof setTimeout> | null;
 };
 
 const detectorStates = new Map<string, DetectorState>();
 const pendingNotifications = new Map<string, ReturnType<typeof setTimeout>>();
+let botPreferences = {
+  enabled: false,
+  sendDecisionNotifications: false,
+  sendCompletionNotifications: false,
+};
 
 type NotificationKind = 'confirmation' | 'question' | 'completed';
 
@@ -40,6 +54,7 @@ function createDetectorState(): DetectorState {
     completionPromptSeenAt: 0,
     lastSpinnerAt: 0,
     lastNotifiedAt: 0,
+    activeDecisionId: null,
     timer: null,
   };
 }
@@ -123,10 +138,31 @@ function notificationKey(terminalId: string, kind: NotificationKind): string {
   return `${terminalId}:${kind === 'completed' ? 'completed' : 'decision'}`;
 }
 
-async function showClaudeNotification(terminalId: string, kind: NotificationKind): Promise<void> {
+function buildNotificationCopy(kind: NotificationKind): { title: string; summary: string } {
+  if (kind === 'confirmation') {
+    return { title: 'Claude Code 等待确认', summary: 'Claude Code 需要你的确认。' };
+  }
+  if (kind === 'question') {
+    return { title: 'Claude Code 等待回答', summary: 'Claude Code 有一个问题需要你回答。' };
+  }
+  return { title: 'Claude Code 任务已完成', summary: 'Claude Code 已完成当前任务。' };
+}
+
+async function showClaudeNotification(
+  terminalId: string,
+  kind: NotificationKind,
+  decisionId?: string,
+  promptExcerpt?: string,
+): Promise<void> {
   const settings = getAppSettings();
   const isCompletion = kind === 'completed';
-  if (isCompletion ? !settings.claudeCompletionNotifications : !settings.claudeDecisionNotifications) return;
+  const nativeEnabled = isCompletion
+    ? settings.claudeCompletionNotifications
+    : settings.claudeDecisionNotifications;
+  const botEnabled = botPreferences.enabled && (isCompletion
+    ? botPreferences.sendCompletionNotifications
+    : botPreferences.sendDecisionNotifications);
+  if (!nativeEnabled && !botEnabled) return;
 
   const store = useAppStore.getState();
   const session = store.sessions.find(item => item.id === terminalId);
@@ -137,11 +173,38 @@ async function showClaudeNotification(terminalId: string, kind: NotificationKind
   const windowFocused = await appWindow.isFocused().catch(() => false);
   if (windowFocused && store.activeSessionId === terminalId) return;
 
-  await showNativeNotification(terminalId, session.profileName, kind)
-    .catch(error => console.error('发送 Claude Code 通知失败:', error));
+  const screenshotBase64 = botEnabled
+    ? await captureTerminalSnapshot(terminalId).catch(() => null)
+    : null;
+  const copy = buildNotificationCopy(kind);
+  const nativePromise = nativeEnabled
+    ? showNativeNotification(terminalId, session.profileName, kind)
+        .catch(error => console.error('发送 Claude Code 桌面通知失败:', error))
+    : Promise.resolve();
+  const botPromise = botEnabled ? sendBotNotification({
+    eventId: crypto.randomUUID(),
+    decisionId,
+    terminalId,
+    terminalName: session.profileName,
+    kind,
+    title: copy.title,
+    summary: copy.summary,
+    promptExcerpt,
+    screenshotBase64: screenshotBase64 || undefined,
+  }).then(reports => {
+    reports.filter(report => !report.success).forEach(report => {
+      console.error(`机器人通道「${report.channelName}」通知失败:`, report.error);
+    });
+  }).catch(error => console.error('发送 Claude Code 机器人通知失败:', error)) : Promise.resolve();
+  await Promise.all([nativePromise, botPromise]);
 }
 
-function scheduleClaudeNotification(terminalId: string, kind: NotificationKind): void {
+function scheduleClaudeNotification(
+  terminalId: string,
+  kind: NotificationKind,
+  decisionId?: string,
+  promptExcerpt?: string,
+): void {
   const settings = getAppSettings();
   const delaySeconds = kind === 'completed'
     ? settings.claudeCompletionNotificationDelaySeconds
@@ -151,7 +214,7 @@ function scheduleClaudeNotification(terminalId: string, kind: NotificationKind):
   if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {
     pendingNotifications.delete(key);
-    void showClaudeNotification(terminalId, kind);
+    void showClaudeNotification(terminalId, kind, decisionId, promptExcerpt);
   }, Math.max(0, delaySeconds) * 1_000);
   pendingNotifications.set(key, timer);
 }
@@ -165,7 +228,9 @@ function cancelClaudeNotification(terminalId: string, kind: NotificationKind): v
 
 function evaluatePrompt(terminalId: string, state: DetectorState): void {
   state.timer = null;
-  if (!getAppSettings().claudeDecisionNotifications || !isKnownClaudeTerminal(terminalId, state)) return;
+  const decisionDetectionEnabled = getAppSettings().claudeDecisionNotifications
+    || (botPreferences.enabled && botPreferences.sendDecisionNotifications);
+  if (!decisionDetectionEnabled || !isKnownClaudeTerminal(terminalId, state)) return;
 
   const hasQuestion = QUESTION_MARKERS.some(marker => marker.test(state.text));
   const hasConfirmation = CONFIRMATION_MARKERS.some(marker => marker.test(state.text));
@@ -175,12 +240,27 @@ function evaluatePrompt(terminalId: string, state: DetectorState): void {
   state.promptActive = true;
   if (now - state.lastNotifiedAt < NOTIFICATION_COOLDOWN_MS) return;
   state.lastNotifiedAt = now;
-  scheduleClaudeNotification(terminalId, hasQuestion ? 'question' : 'confirmation');
+  state.activeDecisionId = crypto.randomUUID();
+  const excerpt = state.text
+    .split('\n')
+    .map(line => line.trimEnd())
+    .filter(line => line.trim())
+    .slice(-24)
+    .join('\n')
+    .slice(-2_000);
+  scheduleClaudeNotification(
+    terminalId,
+    hasQuestion ? 'question' : 'confirmation',
+    state.activeDecisionId,
+    excerpt,
+  );
 }
 
 export function handleClaudeTerminalOutput(terminalId: string, output: string): void {
   const settings = getAppSettings();
-  if (!output || (!settings.claudeDecisionNotifications && !settings.claudeCompletionNotifications)) return;
+  const botDetectionEnabled = botPreferences.enabled
+    && (botPreferences.sendDecisionNotifications || botPreferences.sendCompletionNotifications);
+  if (!output || (!settings.claudeDecisionNotifications && !settings.claudeCompletionNotifications && !botDetectionEnabled)) return;
 
   const state = detectorStates.get(terminalId) ?? createDetectorState();
   const cleanOutput = stripTerminalControls(output);
@@ -206,6 +286,10 @@ export function markClaudeTerminalInteraction(terminalId: string, taskSubmitted:
   // 用户已经开始下一次交互，上一任务尚在延迟队列中的完成通知不应再弹出。
   cancelClaudeNotification(terminalId, 'completed');
   const state = detectorStates.get(terminalId) ?? createDetectorState();
+  if (state.activeDecisionId) {
+    void cancelBotDecision(state.activeDecisionId).catch(() => {});
+    state.activeDecisionId = null;
+  }
   // 手动输入 claude 启动 CLI 时尚未进入 Claude 会话，不能把启动过程当成一项任务。
   if (!isKnownClaudeTerminal(terminalId, state)) {
     detectorStates.set(terminalId, state);
@@ -275,6 +359,9 @@ export function hasRunningClaudeTask(terminalId: string): boolean {
 export function disposeClaudeTerminalNotification(terminalId: string): void {
   const state = detectorStates.get(terminalId);
   if (state?.timer) clearTimeout(state.timer);
+  if (state?.activeDecisionId) {
+    void cancelBotDecision(state.activeDecisionId).catch(() => {});
+  }
   detectorStates.delete(terminalId);
   for (const kind of ['question', 'completed'] as const) {
     cancelClaudeNotification(terminalId, kind);
@@ -282,5 +369,25 @@ export function disposeClaudeTerminalNotification(terminalId: string): void {
 }
 
 export async function initializeClaudeNotificationActions(): Promise<() => void> {
-  return onClaudeNotificationActivated(terminalId => void focusTerminal(terminalId));
+  const refreshBotPreferences = async () => {
+    const settings = await getBotSettings().catch(() => null);
+    if (!settings) return;
+    botPreferences = {
+      enabled: settings.enabled,
+      sendDecisionNotifications: settings.sendDecisionNotifications,
+      sendCompletionNotifications: settings.sendCompletionNotifications,
+    };
+  };
+  await refreshBotPreferences();
+  const handleBotSettingsChanged = () => { void refreshBotPreferences(); };
+  window.addEventListener('bot-settings-changed', handleBotSettingsChanged);
+  const [unlistenActivated, unlistenBotReply] = await Promise.all([
+    onClaudeNotificationActivated(terminalId => void focusTerminal(terminalId)),
+    onClaudeBotReplyForwarded(({ terminalId }) => markClaudeTerminalInteraction(terminalId, true)),
+  ]);
+  return () => {
+    window.removeEventListener('bot-settings-changed', handleBotSettingsChanged);
+    unlistenActivated();
+    unlistenBotReply();
+  };
 }

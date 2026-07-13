@@ -2,6 +2,7 @@ import { FC, lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   BrainCircuit,
+  MessageSquareMore,
   Database,
   FileX2,
   Palette,
@@ -30,6 +31,7 @@ const ThemesSettings = lazy(() => import('./settings/ThemesSettings').then(modul
 const ExclusionSettings = lazy(() => import('./settings/ExclusionSettings').then(module => ({ default: module.ExclusionSettings })));
 const AiUsageSettings = lazy(() => import('./settings/AiUsageSettings').then(module => ({ default: module.AiUsageSettings })));
 const SshSettings = lazy(() => import('./settings/SshSettings').then(module => ({ default: module.SshSettings })));
+const BotNotificationSettings = lazy(() => import('./settings/BotNotificationSettings').then(module => ({ default: module.BotNotificationSettings })));
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -43,7 +45,8 @@ type SettingsSectionId =
   | 'themes'
   | 'exclusions'
   | 'ai-usage'
-  | 'ssh';
+  | 'ssh'
+  | 'bot-notifications';
 
 interface SettingsSection {
   id: SettingsSectionId;
@@ -60,6 +63,7 @@ const SECTIONS: ReadonlyArray<SettingsSection> = [
   { id: 'exclusions', label: '文件排除', icon: FileX2 },
   { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit },
   { id: 'ssh', label: 'SSH 设置', icon: Server },
+  { id: 'bot-notifications', label: '机器人通知', icon: MessageSquareMore },
 ];
 
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
@@ -217,6 +221,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         return <AiUsageSettings settings={settings} updateSetting={updateSetting} />;
       case 'ssh':
         return <SshSettings settings={settings} updateSetting={updateSetting} />;
+      case 'bot-notifications':
+        return <BotNotificationSettings />;
     }
   };
 

@@ -33,6 +33,9 @@ pub fn build_router(state: AppState) -> Router {
         // 认证
         .route("/api/auth/login", post(handlers::auth_handler::login))
         .route("/api/auth/status", get(handlers::auth_handler::status))
+        // 机器人平台回调使用各自签名/Token，不走 Web API JWT。
+        .route("/api/bot/feishu/events", post(handlers::bot_handler::feishu_events))
+        .route("/api/bot/inbound/{channel_id}", post(handlers::bot_handler::bridge_inbound))
         // 连接（profile）只读列表 —— 手机端不管理 profile，照搬电脑端已配置的导航
         .route("/api/profiles", get(handlers::profile_handler::list))
         // 终端会话：列表 / 新建 / 关闭

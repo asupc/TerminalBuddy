@@ -1,3 +1,5 @@
+pub mod bot_settings_service;
+pub mod bot_binding_service;
 pub mod client_data_service;
 pub mod crypto_service;
 pub mod path_service;
@@ -8,6 +10,8 @@ pub mod template_service;
 pub mod theme_service;
 pub mod web_service;
 pub mod workspace_service;
+pub use bot_settings_service::*;
+pub use bot_binding_service::*;
 pub use client_data_service::*;
 pub use crypto_service::*;
 pub use path_service::*;

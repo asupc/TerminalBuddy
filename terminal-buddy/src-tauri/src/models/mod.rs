@@ -1,3 +1,4 @@
+pub mod bot;
 pub mod profile;
 pub mod settings;
 pub mod ssh_types;
@@ -5,6 +6,7 @@ pub mod terminal_owner;
 pub mod theme;
 pub mod web_api;
 pub mod workspace;
+pub use bot::*;
 pub use profile::*;
 pub use settings::*;
 pub use ssh_types::*;

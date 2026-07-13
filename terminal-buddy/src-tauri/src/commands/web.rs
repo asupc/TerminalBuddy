@@ -1,5 +1,6 @@
 use tauri::AppHandle;
 use crate::services::SettingsService;
+use crate::services::BotSettingsService;
 use crate::web::auth::generate_jwt_secret;
 use tokio::sync::watch;
 use std::sync::Mutex;
@@ -7,6 +8,40 @@ use std::sync::Mutex;
 /// Stores the shutdown signal sender so we can stop/restart the server
 pub(crate) static SHUTDOWN_TX: Mutex<Option<watch::Sender<bool>>> = Mutex::new(None);
 pub(crate) static JWT_SECRET: Mutex<Option<String>> = Mutex::new(None);
+
+fn should_run_http_server() -> bool {
+    let settings = SettingsService::get_settings();
+    (settings.web_api_enabled && !settings.web_api_password_hash.is_empty())
+        || BotSettingsService::requires_callback_server()
+}
+
+fn start_http_server(app: AppHandle) {
+    let settings = SettingsService::get_settings();
+    let jwt_secret = generate_jwt_secret();
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    *SHUTDOWN_TX.lock().unwrap() = Some(shutdown_tx);
+    *JWT_SECRET.lock().unwrap() = Some(jwt_secret.clone());
+    tauri::async_runtime::spawn(crate::web::server::run_server(
+        settings.web_api_port,
+        jwt_secret,
+        app,
+        shutdown_rx,
+    ));
+}
+
+pub fn sync_http_server_for_bot(app: AppHandle) -> Result<(), String> {
+    let running = SHUTDOWN_TX.lock().unwrap().is_some();
+    let should_run = should_run_http_server();
+    if should_run && !running {
+        start_http_server(app);
+    } else if !should_run && running {
+        if let Some(tx) = SHUTDOWN_TX.lock().unwrap().take() {
+            let _ = tx.send(true);
+        }
+        *JWT_SECRET.lock().unwrap() = None;
+    }
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn restart_web_server(app: AppHandle) -> Result<String, String> {
@@ -17,24 +52,11 @@ pub async fn restart_web_server(app: AppHandle) -> Result<String, String> {
         let _ = tx.send(true);
     }
 
-    if !settings.web_api_enabled || settings.web_api_password_hash.is_empty() {
-        return Ok("Web API 已停止".into());
+    if !should_run_http_server() {
+        return Ok("HTTP 服务已停止".into());
     }
-
-    let jwt_secret = generate_jwt_secret();
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    *SHUTDOWN_TX.lock().unwrap() = Some(shutdown_tx);
-    *JWT_SECRET.lock().unwrap() = Some(jwt_secret.clone());
-
-    let port = settings.web_api_port;
-    tauri::async_runtime::spawn(crate::web::server::run_server(
-        port,
-        jwt_secret,
-        app.clone(),
-        shutdown_rx,
-    ));
-
-    Ok(format!("Web API 已启动，端口: {}", port))
+    start_http_server(app);
+    Ok(format!("HTTP 服务已启动，端口: {}", settings.web_api_port))
 }
 
 #[tauri::command]

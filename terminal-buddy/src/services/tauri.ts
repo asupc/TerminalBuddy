@@ -76,6 +76,83 @@ export async function onClaudeNotificationActivated(callback: (terminalId: strin
   return listen<string>('claude-notification-activated', event => callback(event.payload));
 }
 
+export interface BotChannelConfig {
+  id: string;
+  name: string;
+  platform: 'feishu' | 'dingtalk' | 'wecom' | 'qq' | 'bridge';
+  enabled: boolean;
+  targetId: string;
+  receiveIdType: string;
+  webhookUrl: string;
+  appId: string;
+  secret: string;
+  callbackToken: string;
+  allowedUserIds: string[];
+  hasSecret: boolean;
+  hasCallbackToken: boolean;
+}
+
+export interface BotSettings {
+  enabled: boolean;
+  sendDecisionNotifications: boolean;
+  sendCompletionNotifications: boolean;
+  attachScreenshot: boolean;
+  decisionTtlMinutes: number;
+  appendEnter: boolean;
+  channels: BotChannelConfig[];
+}
+
+export interface BotDeliveryReport {
+  channelId: string;
+  channelName: string;
+  success: boolean;
+  messageId?: string;
+  screenshotSent: boolean;
+  error?: string;
+}
+
+export interface BotNotificationRequest {
+  eventId: string;
+  decisionId?: string;
+  terminalId: string;
+  terminalName: string;
+  kind: 'confirmation' | 'question' | 'completed';
+  title: string;
+  summary: string;
+  promptExcerpt?: string;
+  screenshotBase64?: string;
+}
+
+export async function getBotSettings(): Promise<BotSettings> {
+  return invoke('get_bot_settings');
+}
+
+export async function getBotCallbackBaseUrl(): Promise<string> {
+  return invoke('get_bot_callback_base_url');
+}
+
+export async function saveBotSettings(settings: BotSettings): Promise<BotSettings> {
+  const saved = await invoke<BotSettings>('save_bot_settings', { settings });
+  window.dispatchEvent(new CustomEvent('bot-settings-changed', { detail: saved }));
+  return saved;
+}
+
+export async function sendBotNotification(request: BotNotificationRequest): Promise<BotDeliveryReport[]> {
+  return invoke('send_bot_notification', { request });
+}
+
+export async function testBotChannel(channelId: string): Promise<BotDeliveryReport> {
+  return invoke('test_bot_channel', { channelId });
+}
+
+export async function cancelBotDecision(decisionId: string): Promise<void> {
+  return invoke('cancel_bot_decision', { decisionId });
+}
+
+export async function onClaudeBotReplyForwarded(callback: (payload: { terminalId: string; decisionId: string }) => void): Promise<UnlistenFn> {
+  return listen('claude-bot-reply-forwarded', event => callback(event.payload as { terminalId: string; decisionId: string }));
+}
+
 export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string): Promise<string> {
   return invoke('start_blank_terminal', { terminalType, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null });
 }

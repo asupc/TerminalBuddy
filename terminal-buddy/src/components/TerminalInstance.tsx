@@ -17,6 +17,7 @@ import { getTerminalSuggestions, type SuggestionItem } from '../data/commandTemp
 import type { TerminalColors } from '../utils/terminalTheme';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
 import { disposeClaudeTerminalNotification, handleClaudeTaskCompleted, handleClaudeTerminalOutput, hasRunningClaudeTask, markClaudeTaskPromptHidden, markClaudeTerminalInteraction } from '../services/claudeNotification';
+import { registerTerminalSnapshotProvider, renderTerminalSnapshot } from '../services/terminalSnapshot';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
@@ -901,6 +902,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       const tOpen = performance.now();
       terminal.open(terminalRef.current!);
+      const unregisterSnapshot = registerTerminalSnapshotProvider(terminalId, async () => {
+        const session = useAppStore.getState().sessions.find(item => item.id === terminalId);
+        return renderTerminalSnapshot(
+          terminal,
+          session?.profileName || '终端',
+          colorThemeRef.current,
+        );
+      });
+      cleanupFns.push(unregisterSnapshot);
       void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
       const tWebgl = performance.now();
