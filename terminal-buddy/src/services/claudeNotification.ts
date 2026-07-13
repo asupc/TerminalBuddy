@@ -7,6 +7,7 @@ const DETECTION_DELAY_MS = 300;
 const DETECTION_BUFFER_SIZE = 12_000;
 const NOTIFICATION_COOLDOWN_MS = 5_000;
 const SPINNER_ACTIVITY_GRACE_MS = 1_200;
+const COMPLETION_PROMPT_STABLE_MS = 650;
 
 type DetectorState = {
   text: string;
@@ -16,6 +17,7 @@ type DetectorState = {
   taskStartedAt: number;
   taskHadBusyMarker: boolean;
   taskPromptWasHidden: boolean;
+  completionPromptSeenAt: number;
   lastSpinnerAt: number;
   lastNotifiedAt: number;
   timer: ReturnType<typeof setTimeout> | null;
@@ -35,6 +37,7 @@ function createDetectorState(): DetectorState {
     taskStartedAt: 0,
     taskHadBusyMarker: false,
     taskPromptWasHidden: false,
+    completionPromptSeenAt: 0,
     lastSpinnerAt: 0,
     lastNotifiedAt: 0,
     timer: null,
@@ -64,6 +67,12 @@ const CONFIRMATION_MARKERS = [
 const QUESTION_MARKERS = [
   /Enter to select[\s\S]{0,160}(?:navigate|Esc to cancel)/i,
   /Type something[\s\S]{0,160}(?:Enter to select|Esc to cancel)/i,
+];
+
+const ACTIVE_DECISION_MARKERS = [
+  ...CONFIRMATION_MARKERS,
+  ...QUESTION_MARKERS,
+  /(?:^|\s)[❯>]\s*(?:1\.\s*)?Yes[\s\S]{0,120}(?:No|Allow|Deny)/im,
 ];
 
 // Claude Code 的 spinner 使用 Braille 动画帧；只要帧仍在变化，就不能把输入提示符当作任务完成。
@@ -208,6 +217,7 @@ export function markClaudeTerminalInteraction(terminalId: string, taskSubmitted:
   state.taskStartedAt = Date.now();
   state.taskHadBusyMarker = false;
   state.taskPromptWasHidden = false;
+  state.completionPromptSeenAt = 0;
   state.lastSpinnerAt = 0;
   if (state.timer) {
     clearTimeout(state.timer);
@@ -218,7 +228,10 @@ export function markClaudeTerminalInteraction(terminalId: string, taskSubmitted:
 
 export function markClaudeTaskPromptHidden(terminalId: string): void {
   const state = detectorStates.get(terminalId);
-  if (state?.taskRunning) state.taskPromptWasHidden = true;
+  if (state?.taskRunning) {
+    state.taskPromptWasHidden = true;
+    state.completionPromptSeenAt = 0;
+  }
 }
 
 export function handleClaudeTaskCompleted(terminalId: string, hasBusySubagent: boolean): boolean {
@@ -234,11 +247,22 @@ export function handleClaudeTaskCompleted(terminalId: string, hasBusySubagent: b
     state.lastSpinnerAt >= state.taskStartedAt;
   // 仅按下空 Enter 或菜单重绘时提示符可能始终存在，不能据此报告任务完成。
   if (!hasBusyEvidence) return false;
+  if (ACTIVE_DECISION_MARKERS.some(marker => marker.test(state.text))) {
+    state.completionPromptSeenAt = 0;
+    return false;
+  }
   if (hasBusySubagent || Date.now() - state.lastSpinnerAt < SPINNER_ACTIVITY_GRACE_MS) return false;
+  const now = Date.now();
+  if (!state.completionPromptSeenAt) {
+    state.completionPromptSeenAt = now;
+    return false;
+  }
+  if (now - state.completionPromptSeenAt < COMPLETION_PROMPT_STABLE_MS) return false;
 
   state.taskRunning = false;
   state.taskHadBusyMarker = false;
   state.taskPromptWasHidden = false;
+  state.completionPromptSeenAt = 0;
   state.text = '';
   scheduleClaudeNotification(terminalId, 'completed');
   return true;

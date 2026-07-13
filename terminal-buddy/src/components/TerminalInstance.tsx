@@ -752,8 +752,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         const line = buf.getLine(row);
         if (line) lines.push(line.translateToString(true));
       }
-      return lines.some(line => /^\s*[❯›]\s*(?:$|Try\s+["“])/i.test(line)) &&
-        !lines.some(line => /esc to interrupt|Permission required|Enter to select/i.test(line));
+      const tailLines = lines.slice(-Math.min(8, lines.length));
+      const hasInputPrompt = tailLines.some(line => /^\s*[❯›]\s*(?:$|Try\s+["“])/i.test(line));
+      const hasBlockingPrompt = lines.some(line =>
+        /(?:esc|ctrl\+?c) to interrupt|Permission required|Enter to select|Esc to cancel|Do you want to|Would you like to|Claude needs your permission|Yes,?\s+and|No,?\s+and/i.test(line)
+      );
+      return hasInputPrompt && !hasBlockingPrompt;
     };
 
     const hasBusyClaudeSubagent = () => {
