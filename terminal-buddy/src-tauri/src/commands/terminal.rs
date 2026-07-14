@@ -901,6 +901,32 @@ fn bring_window_to_front(pid: u32) -> bool {
     false
 }
 
+/// 直接写入 Windows 凭据管理器，避免每次连接都启动并等待 cmdkey.exe。
+fn store_mstsc_credential(host: &str, user: &str, password: &str) -> windows::core::Result<()> {
+    use windows::core::PWSTR;
+    use windows::Win32::Security::Credentials::{
+        CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+    };
+
+    let mut target: Vec<u16> = format!("TERMSRV/{}", host)
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut username: Vec<u16> = user.encode_utf16().chain(Some(0)).collect();
+    let mut password: Vec<u16> = password.encode_utf16().collect();
+    let credential = CREDENTIALW {
+        Type: CRED_TYPE_GENERIC,
+        TargetName: PWSTR::from_raw(target.as_mut_ptr()),
+        CredentialBlobSize: (password.len() * size_of::<u16>()) as u32,
+        CredentialBlob: password.as_mut_ptr().cast::<u8>(),
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+        UserName: PWSTR::from_raw(username.as_mut_ptr()),
+        ..Default::default()
+    };
+
+    unsafe { CredWriteW(&credential, 0) }
+}
+
 #[command]
 pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
     let profile = ProfileService::get_profile(&profile_id)
@@ -930,18 +956,8 @@ pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
 
     // 存储凭据到 Windows 凭据管理器
     if !user.is_empty() {
-        let cred_target = format!("TERMSRV/{}", host);
-        match std::process::Command::new("cmdkey.exe")
-            .args(["/generic:".to_string() + &cred_target, "/user:".to_string() + user, "/pass:".to_string() + password])
-            .output()
-        {
-            Ok(output) if !output.status.success() => {
-                eprintln!("[mstsc] cmdkey.exe 存储凭据失败: {}", String::from_utf8_lossy(&output.stderr));
-            }
-            Err(e) => {
-                eprintln!("[mstsc] cmdkey.exe 执行失败: {}", e);
-            }
-            _ => {}
+        if let Err(error) = store_mstsc_credential(host, user, password) {
+            eprintln!("[mstsc] 写入 Windows 凭据管理器失败: {}", error);
         }
     }
 
