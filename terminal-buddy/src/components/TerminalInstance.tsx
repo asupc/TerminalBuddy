@@ -26,7 +26,6 @@ const BASE_FONT_SIZE = 14;
 const FLOATING_MENU_MARGIN = 8;
 const RIGHT_CLICK_PASTE_DEDUPE_MS = 750;
 const RIGHT_CLICK_NATIVE_PASTE_SUPPRESS_MS = 1200;
-const TERMINAL_OUTPUT_BUFFER_MS = 20;
 // 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
 // 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
 const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
@@ -694,8 +693,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const cleanupFns: (() => void)[] = [];
     const preOpenOutputBuffer: string[] = [];
-    const pendingOutputChunks: string[] = [];
-    let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -791,27 +788,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       });
     };
 
-    const flushTerminalOutput = () => {
-      outputFlushTimer = null;
-      if (disposed || pendingOutputChunks.length === 0) return;
-      const output = pendingOutputChunks.join('');
-      pendingOutputChunks.length = 0;
-      writeTerminalOutput(output);
-    };
-
-    const queueTerminalOutput = (output: string) => {
-      pendingOutputChunks.push(output);
-      if (outputFlushTimer !== null) return;
-
-      // ConPTY can emit a screen diff and its final cursor correction in adjacent reads.
-      // Buffer one WebView frame so xterm parses both before scheduling a render.
-      outputFlushTimer = setTimeout(flushTerminalOutput, TERMINAL_OUTPUT_BUFFER_MS);
-    };
-
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
       handleClaudeTerminalOutput(terminalId, output);
-      queueTerminalOutput(output);
+      writeTerminalOutput(output);
 
       // Working state: reset debounce on each output, check xterm buffer for prompt
       if (workingDebounce) clearTimeout(workingDebounce);
@@ -961,12 +941,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
       lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
 
-      // Flush buffered output that arrived before xterm was ready.
-      // 同样在 join 后做 ANSI 改写，保持与 RAF 写入路径一致（见 handleOutput 注释）。
+      // Flush buffered output that arrived before xterm was ready in one write.
       if (preOpenOutputBuffer.length > 0) {
         const combined = preOpenOutputBuffer.join('');
         preOpenOutputBuffer.length = 0;
-        queueTerminalOutput(combined);
+        writeTerminalOutput(combined);
       }
       fitAddonRef.current = fitAddon;
 
@@ -1616,11 +1595,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         clearTimeout(workingFallback);
         workingFallback = null;
       }
-      if (outputFlushTimer !== null) {
-        clearTimeout(outputFlushTimer);
-        outputFlushTimer = null;
-      }
-      pendingOutputChunks.length = 0;
       // Reset output tracking refs
       latestWriteDataRef.current = 0;
       latestParseDataRef.current = 0;
