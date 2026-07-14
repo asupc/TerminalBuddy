@@ -1,19 +1,26 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use include_dir::{include_dir, Dir, DirEntry};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{mpsc, OnceLock};
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 const FRAME_INPUT: u8 = 1;
 const FRAME_RESIZE: u8 = 2;
 const FRAME_KILL: u8 = 3;
 const FRAME_ACK: u8 = 4;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+static EMBEDDED_VSCODE_TERMINAL: Dir<'_> =
+    include_dir!("$CARGO_MANIFEST_DIR/resources/vscode-terminal");
+static EXTRACTED_VSCODE_TERMINAL: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -243,7 +250,7 @@ fn terminate_and_collect_plugin_error(
     }
 }
 
-fn resolve_plugin_host(app: &AppHandle) -> Result<PathBuf, String> {
+fn resolve_plugin_host(_app: &AppHandle) -> Result<PathBuf, String> {
     if cfg!(debug_assertions) {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -256,20 +263,105 @@ fn resolve_plugin_host(app: &AppHandle) -> Result<PathBuf, String> {
         return Ok(normalize_path_for_child_process(&host));
     }
 
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|error| format!("无法定位应用资源目录: {}", error))?;
-    for plugin_dir in [
-        resource_dir.join("vscode-terminal"),
-        resource_dir.join("resources").join("vscode-terminal"),
-    ] {
-        let host = plugin_dir.join("host.cjs");
-        if host.is_file() {
-            return Ok(normalize_path_for_child_process(&host));
+    let plugin_dir = extracted_vscode_terminal_dir()?;
+    let host = plugin_dir.join("host.cjs");
+    if !host.is_file() {
+        return Err("内嵌的 VS Code 终端插件缺少 host.cjs".to_string());
+    }
+    Ok(normalize_path_for_child_process(&host))
+}
+
+fn extracted_vscode_terminal_dir() -> Result<PathBuf, String> {
+    EXTRACTED_VSCODE_TERMINAL
+        .get_or_init(extract_embedded_vscode_terminal)
+        .clone()
+}
+
+fn extract_embedded_vscode_terminal() -> Result<PathBuf, String> {
+    if EMBEDDED_VSCODE_TERMINAL.get_file("host.cjs").is_none() {
+        return Err(
+            "应用未内嵌 VS Code 终端插件，请使用 build-fast.bat 或 build.bat 重新构建"
+                .to_string(),
+        );
+    }
+
+    let content_hash = embedded_plugin_hash();
+    let version = format!("{:016x}", content_hash);
+    let runtime_root = dirs::data_local_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("TerminalBuddy")
+        .join("runtime")
+        .join("vscode-terminal");
+    std::fs::create_dir_all(&runtime_root)
+        .map_err(|error| format!("创建 VS Code 终端运行目录失败: {}", error))?;
+
+    let target_dir = runtime_root.join(&version);
+    if extracted_plugin_is_complete(&target_dir, &version) {
+        return Ok(target_dir);
+    }
+    if target_dir.exists() {
+        std::fs::remove_dir_all(&target_dir)
+            .map_err(|error| format!("清理不完整的 VS Code 终端插件失败: {}", error))?;
+    }
+
+    let temp_dir = runtime_root.join(format!(
+        ".extract-{}-{}",
+        version,
+        std::process::id()
+    ));
+    if temp_dir.exists() {
+        std::fs::remove_dir_all(&temp_dir)
+            .map_err(|error| format!("清理 VS Code 终端临时目录失败: {}", error))?;
+    }
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|error| format!("创建 VS Code 终端临时目录失败: {}", error))?;
+    EMBEDDED_VSCODE_TERMINAL
+        .extract(&temp_dir)
+        .map_err(|error| format!("解压内嵌 VS Code 终端插件失败: {}", error))?;
+    std::fs::write(temp_dir.join(".complete"), &version)
+        .map_err(|error| format!("写入 VS Code 终端完整标记失败: {}", error))?;
+
+    match std::fs::rename(&temp_dir, &target_dir) {
+        Ok(()) => Ok(target_dir),
+        Err(_) if extracted_plugin_is_complete(&target_dir, &version) => {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            Ok(target_dir)
+        }
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            Err(format!("安装内嵌 VS Code 终端插件失败: {}", error))
         }
     }
-    Err("VS Code 终端插件资源不完整，请重新安装应用".to_string())
+}
+
+fn embedded_plugin_hash() -> u64 {
+    fn hash_dir(directory: &Dir<'_>, hasher: &mut DefaultHasher) {
+        for entry in directory.entries() {
+            entry.path().to_string_lossy().hash(hasher);
+            match entry {
+                DirEntry::File(file) => file.contents().hash(hasher),
+                DirEntry::Dir(child) => hash_dir(child, hasher),
+            }
+        }
+    }
+
+    let mut hasher = DefaultHasher::new();
+    hash_dir(&EMBEDDED_VSCODE_TERMINAL, &mut hasher);
+    hasher.finish()
+}
+
+fn extracted_plugin_is_complete(directory: &Path, version: &str) -> bool {
+    directory.join("host.cjs").is_file()
+        && directory
+            .join("node_modules")
+            .join("node-pty")
+            .join("prebuilds")
+            .join(format!("win32-{}", expected_node_arch()))
+            .join("conpty.node")
+            .is_file()
+        && std::fs::read_to_string(directory.join(".complete"))
+            .map(|value| value == version)
+            .unwrap_or(false)
 }
 
 fn resolve_compatible_node(host_path: &Path) -> Result<(PathBuf, NodeProbeResult), String> {
@@ -367,12 +459,7 @@ fn probe_node(node_path: &Path, host_path: &Path) -> Result<NodeProbeResult, Str
             probe.node_version
         ));
     }
-    let expected_arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        "x86" => "ia32",
-        value => value,
-    };
+    let expected_arch = expected_node_arch();
     if probe.arch != expected_arch {
         return Err(format!(
             "Node.js 架构为 {}，应用需要 {}",
@@ -386,6 +473,15 @@ fn probe_node(node_path: &Path, host_path: &Path) -> Result<NodeProbeResult, Str
         ));
     }
     Ok(probe)
+}
+
+fn expected_node_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        "x86" => "ia32",
+        value => value,
+    }
 }
 
 fn normalize_path_for_child_process(path: &Path) -> PathBuf {
