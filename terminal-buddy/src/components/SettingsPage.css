@@ -510,6 +510,14 @@
   background: var(--settings-control-hover);
 }
 
+.breathing-light-mode.disabled,
+.breathing-light-mode.disabled:hover {
+  color: var(--settings-text-secondary);
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .breathing-light-mode.active {
   color: var(--settings-text-primary);
   background: var(--bg-secondary);
@@ -529,6 +537,14 @@
 .breathing-light-mode:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+.terminal-loading-support.available {
+  color: #3fb950;
+}
+
+.terminal-loading-support.unavailable {
+  color: var(--danger, #f14c4c);
 }
 
 .tab-color-swatch {
@@ -1614,6 +1630,11 @@ input.data-path-input {
 .bot-settings-status.error {
   background: color-mix(in srgb, #f44747 14%, transparent);
   color: #f06a6a;
+}
+
+.bot-settings-status.saving {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
 }
 
 @media (max-width: 760px) {

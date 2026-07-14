@@ -14,15 +14,18 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use tokio::sync::broadcast;
 use crate::models::TerminalOwner;
+use crate::models::TerminalLoadingMode;
 use crate::models::web_api::TerminalInfo;
 use crate::services::ProfileService;
 use crate::services::PathService;
 use crate::services::SettingsService;
 use crate::services::WebServiceState;
+use crate::services::VsCodeTerminalProcess;
 use crate::services::ssh_session_service::SshSessionService;
 
 const TERMINAL_DATA_IDLE_BUFFER_INTERVAL: Duration = Duration::from_millis(25);
 const TERMINAL_DATA_MAX_BUFFER_INTERVAL: Duration = Duration::from_millis(50);
+const VSCODE_TERMINAL_DATA_BUFFER_INTERVAL: Duration = Duration::from_millis(5);
 const TERMINAL_DATA_CHANNEL_CAPACITY: usize = 32;
 
 /// 转义 shell 特殊字符，防止命令注入
@@ -38,14 +41,93 @@ pub struct TerminalInstance {
     pub id: String,
     pub profile_id: String,
     pub owner: TerminalOwner,
-    child: Box<dyn Child + Send + Sync>,
-    master: Box<dyn MasterPty + Send>,
-    pub writer: Option<Box<dyn Write + Send>>,
+    backend: TerminalBackend,
     pub output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
     current_rows: u16,
     current_cols: u16,
     /// PTY 读取线程检测到 EOF 后置位；用于从 sessions 列表中剔除已退出的终端。
     pub exited: AtomicBool,
+}
+
+enum TerminalBackend {
+    Default {
+        child: Box<dyn Child + Send + Sync>,
+        master: Box<dyn MasterPty + Send>,
+        writer: Option<Box<dyn Write + Send>>,
+    },
+    VsCode(VsCodeTerminalProcess),
+}
+
+impl TerminalBackend {
+    fn write_input(&mut self, data: &[u8]) -> Result<(), String> {
+        match self {
+            Self::Default { writer, .. } => {
+                let writer = writer
+                    .as_mut()
+                    .ok_or_else(|| "Terminal writer not available".to_string())?;
+                writer
+                    .write_all(data)
+                    .and_then(|_| writer.flush())
+                    .map_err(|error| format!("Write failed: {}", error))
+            }
+            Self::VsCode(process) => process.write_input(data),
+        }
+    }
+
+    fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
+        match self {
+            Self::Default { master, .. } => master
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|error| format!("Resize failed: {}", error)),
+            Self::VsCode(process) => process.resize(rows, cols),
+        }
+    }
+
+    fn close(&mut self) {
+        match self {
+            Self::Default { child, writer, .. } => {
+                *writer = None;
+                child.kill().ok();
+                let _ = child.wait();
+            }
+            Self::VsCode(process) => {
+                process.kill().ok();
+                let _ = process.wait();
+            }
+        }
+    }
+
+    fn process_id(&self) -> Option<u32> {
+        match self {
+            Self::Default { child, .. } => child.process_id(),
+            Self::VsCode(process) => process.process_id(),
+        }
+    }
+
+    fn acknowledge_output(&mut self, char_count: u32) -> Result<(), String> {
+        match self {
+            Self::Default { .. } => Ok(()),
+            Self::VsCode(process) => process.acknowledge_output(char_count),
+        }
+    }
+
+    fn loading_mode(&self) -> &'static str {
+        match self {
+            Self::Default { .. } => "default",
+            Self::VsCode(_) => "vsCode",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TerminalOutputBufferMode {
+    Default,
+    VsCode,
 }
 
 pub struct TerminalService {
@@ -68,12 +150,85 @@ fn log_debug(msg: &str) {
         .and_then(|mut f| f.write_all(line.as_bytes()));
 }
 
+fn spawn_terminal_backend(
+    app: &AppHandle,
+    mode: &TerminalLoadingMode,
+    rows: u16,
+    cols: u16,
+    startup_path: Option<&str>,
+    env_vars: &[(String, String)],
+) -> Result<
+    (
+        TerminalBackend,
+        Box<dyn Read + Send>,
+        TerminalOutputBufferMode,
+    ),
+    String,
+> {
+    if *mode == TerminalLoadingMode::VsCode {
+        let (process, reader) = VsCodeTerminalProcess::spawn(
+            app,
+            rows,
+            cols,
+            startup_path,
+            env_vars,
+        )?;
+        return Ok((
+            TerminalBackend::VsCode(process),
+            reader,
+            TerminalOutputBufferMode::VsCode,
+        ));
+    }
+
+    let pty_system = native_pty_system();
+    let pty_pair = pty_system
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|error| format!("openpty FAILED: {}", error))?;
+    let mut command = CommandBuilder::new("cmd.exe");
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    if let Some(path) = startup_path {
+        command.cwd(path);
+    }
+    for (key, value) in env_vars {
+        command.env(key, value);
+    }
+    let child = pty_pair
+        .slave
+        .spawn_command(command)
+        .map_err(|error| format!("spawn_command FAILED: {}", error))?;
+    let writer = pty_pair
+        .master
+        .take_writer()
+        .map_err(|error| format!("take_writer FAILED: {}", error))?;
+    let reader = pty_pair
+        .master
+        .try_clone_reader()
+        .map_err(|error| format!("try_clone_reader FAILED: {}", error))?;
+
+    Ok((
+        TerminalBackend::Default {
+            child,
+            master: pty_pair.master,
+            writer: Some(writer),
+        },
+        reader,
+        TerminalOutputBufferMode::Default,
+    ))
+}
+
 /// Shared output forwarding logic for both create_terminal and create_blank_terminal
 fn spawn_output_forwarder(
     reader: Box<dyn Read + Send>,
     terminal_id: String,
     app: AppHandle,
     output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
+    buffer_mode: TerminalOutputBufferMode,
 ) {
     thread::spawn(move || {
         let (data_tx, data_rx) = mpsc::sync_channel::<Vec<u8>>(TERMINAL_DATA_CHANNEL_CAPACITY);
@@ -93,11 +248,23 @@ fn spawn_output_forwarder(
             }
         });
 
+        let mut utf8_pending = Vec::new();
         while let Ok(first_chunk) = data_rx.recv() {
             let batch_started = Instant::now();
-            let max_deadline = batch_started + TERMINAL_DATA_MAX_BUFFER_INTERVAL;
-            let mut idle_deadline = batch_started + TERMINAL_DATA_IDLE_BUFFER_INTERVAL;
-            let mut batch = first_chunk;
+            let (mut idle_deadline, max_deadline, reset_idle) = match buffer_mode {
+                TerminalOutputBufferMode::Default => (
+                    batch_started + TERMINAL_DATA_IDLE_BUFFER_INTERVAL,
+                    batch_started + TERMINAL_DATA_MAX_BUFFER_INTERVAL,
+                    true,
+                ),
+                TerminalOutputBufferMode::VsCode => (
+                    batch_started + VSCODE_TERMINAL_DATA_BUFFER_INTERVAL,
+                    batch_started + VSCODE_TERMINAL_DATA_BUFFER_INTERVAL,
+                    false,
+                ),
+            };
+            let mut batch = std::mem::take(&mut utf8_pending);
+            batch.extend_from_slice(&first_chunk);
             let mut disconnected = false;
 
             loop {
@@ -108,7 +275,9 @@ fn spawn_output_forwarder(
                 match data_rx.recv_timeout(remaining) {
                     Ok(chunk) => {
                         batch.extend_from_slice(&chunk);
-                        idle_deadline = Instant::now() + TERMINAL_DATA_IDLE_BUFFER_INTERVAL;
+                        if reset_idle {
+                            idle_deadline = Instant::now() + TERMINAL_DATA_IDLE_BUFFER_INTERVAL;
+                        }
                     }
                     Err(mpsc::RecvTimeoutError::Timeout) => break,
                     Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -120,6 +289,14 @@ fn spawn_output_forwarder(
 
             let output: Arc<str> = match std::str::from_utf8(&batch) {
                 Ok(s) => Arc::from(s),
+                Err(error) if error.error_len().is_none() => {
+                    let valid_up_to = error.valid_up_to();
+                    utf8_pending.extend_from_slice(&batch[valid_up_to..]);
+                    Arc::from(
+                        std::str::from_utf8(&batch[..valid_up_to])
+                            .expect("valid_up_to must end on a UTF-8 boundary"),
+                    )
+                }
                 Err(_) => Arc::from(String::from_utf8_lossy(&batch).to_string()),
             };
             if !output.is_empty() {
@@ -232,55 +409,22 @@ impl TerminalService {
             terminal_type, startup_path, startup_commands.len(), env_vars.len()));
         crate::boot_log(format!("[create_terminal] start type={} profile={}", terminal_type, profile_id));
 
-        let pty_system = native_pty_system();
-
         let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
         let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
-
-        let pty_pair = pty_system.openpty(PtySize {
-            rows: init_rows,
-            cols: init_cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        }).map_err(|e| {
-            let msg = format!("openpty FAILED: {}", e);
-            log_debug(&msg);
-            msg
+        let loading_mode = SettingsService::get_settings().terminal_loading_mode;
+        let (backend, backend_reader, output_buffer_mode) = spawn_terminal_backend(
+            &app,
+            &loading_mode,
+            init_rows,
+            init_cols,
+            startup_path.as_deref(),
+            &env_vars,
+        )
+        .map_err(|error| {
+            log_debug(&format!("[create] backend FAILED: {}", error));
+            error
         })?;
-
-        // Use cmd.exe to avoid 0xc0000142 with direct powershell.exe in ConPTY
-        let mut cmd = CommandBuilder::new("cmd.exe");
-
-        // TERM tells child processes they're connected to a real terminal emulator
-        // (xterm.js). Without this, ConPTY cursor tracking and the frontend can get
-        // out of sync, causing the visual cursor to appear in the wrong position.
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
-        if let Some(ref path) = startup_path {
-            cmd.cwd(path);
-        }
-        for (k, v) in &env_vars {
-            cmd.env(k, v);
-        }
-
-        let child = pty_pair.slave.spawn_command(cmd).map_err(|e| {
-            let msg = format!("spawn_command FAILED: {}", e);
-            log_debug(&msg);
-            msg
-        })?;
-        crate::boot_log("[terminal] after spawn_command (cmd.exe spawned)");
-
-        let writer = pty_pair.master.take_writer().map_err(|e| {
-            let msg = format!("take_writer FAILED: {}", e);
-            log_debug(&msg);
-            msg
-        })?;
-
-        let master_reader = pty_pair.master.try_clone_reader().map_err(|e| {
-            let msg = format!("try_clone_reader FAILED: {}", e);
-            log_debug(&msg);
-            msg
-        })?;
+        crate::boot_log(format!("[terminal] backend ready mode={:?}", loading_mode));
 
         let output_buffer: Arc<Mutex<VecDeque<Arc<str>>>> = Arc::new(Mutex::new(VecDeque::new()));
 
@@ -288,9 +432,7 @@ impl TerminalService {
             id: terminal_id.clone(),
             profile_id: profile_id.to_string(),
             owner,
-            child,
-            master: pty_pair.master,
-            writer: Some(writer),
+            backend,
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
             current_cols: init_cols,
@@ -365,20 +507,26 @@ impl TerminalService {
 
                 let mut instances_lock = instances.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(instance) = instances_lock.get_mut(&tid) {
-                    if let Some(ref mut writer) = instance.writer {
-                        for cmd_str in &commands {
-                            let _ = writer.write_all(cmd_str.as_bytes());
-                            let _ = writer.write_all(b"\r");
-                            let _ = writer.flush();
-                            log_debug(&format!("[init-cmds] sent: {}", cmd_str));
+                    for cmd_str in &commands {
+                        let command = format!("{}\r", cmd_str);
+                        if let Err(error) = instance.backend.write_input(command.as_bytes()) {
+                            log_debug(&format!("[init-cmds] failed: {}", error));
+                            break;
                         }
+                        log_debug(&format!("[init-cmds] sent: {}", cmd_str));
                     }
                 }
             });
         }
 
         // Output forwarding thread
-        spawn_output_forwarder(master_reader, terminal_id.clone(), app, output_buffer);
+        spawn_output_forwarder(
+            backend_reader,
+            terminal_id.clone(),
+            app,
+            output_buffer,
+            output_buffer_mode,
+        );
 
         log_debug(&format!("[create] DONE, id={}", terminal_id));
         crate::boot_log("[create_terminal] DONE");
@@ -387,30 +535,9 @@ impl TerminalService {
     }
 
     pub fn write_to_terminal(&self, id: &str, data: &str) -> Result<(), String> {
-        let bytes = data.as_bytes();
         let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(instance) = instances.get_mut(id) {
-            if let Some(ref mut writer) = instance.writer {
-                if bytes.len() <= 256 {
-                    writer.write_all(bytes)
-                        .map_err(|e| format!("Write failed: {}", e))?;
-                    writer.flush()
-                        .map_err(|e| format!("Flush failed: {}", e))?;
-                } else {
-                    for (i, chunk) in bytes.chunks(256).enumerate() {
-                        if i > 0 {
-                            std::thread::sleep(std::time::Duration::from_millis(2));
-                        }
-                        writer.write_all(chunk)
-                            .map_err(|e| format!("Write failed: {}", e))?;
-                        writer.flush()
-                            .map_err(|e| format!("Flush failed: {}", e))?;
-                    }
-                }
-                Ok(())
-            } else {
-                Err("Terminal writer not available".to_string())
-            }
+            instance.backend.write_input(data.as_bytes())
         } else {
             Err("Terminal not found".to_string())
         }
@@ -434,12 +561,7 @@ impl TerminalService {
                 )
             };
             if new_rows != instance.current_rows || new_cols != instance.current_cols {
-                instance.master.resize(PtySize {
-                    rows: new_rows,
-                    cols: new_cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                }).map_err(|e| format!("Resize failed: {}", e))?;
+                instance.backend.resize(new_rows, new_cols)?;
                 instance.current_rows = new_rows;
                 instance.current_cols = new_cols;
                 log_debug(&format!("[resize] id={} rows={} cols={} allow_shrink={}", id, new_rows, new_cols, allow_shrink));
@@ -448,6 +570,18 @@ impl TerminalService {
         } else {
             Err("Terminal not found".to_string())
         }
+    }
+
+    pub fn acknowledge_terminal_output(&self, id: &str, char_count: u32) -> Result<(), String> {
+        let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+        let instance = instances.get_mut(id).ok_or("Terminal not found".to_string())?;
+        instance.backend.acknowledge_output(char_count)
+    }
+
+    pub fn terminal_loading_mode(&self, id: &str) -> Result<&'static str, String> {
+        let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+        let instance = instances.get(id).ok_or("Terminal not found".to_string())?;
+        Ok(instance.backend.loading_mode())
     }
 
     pub fn drain_terminal_output(&self, id: &str) -> Result<String, String> {
@@ -495,9 +629,7 @@ impl TerminalService {
             let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.remove(id).ok_or("Terminal not found".to_string())?
         };
-        instance.writer = None;
-        instance.child.kill().ok();
-        let _ = instance.child.wait();
+        instance.backend.close();
         self.notify_sessions_changed();
         Ok(())
     }
@@ -519,9 +651,7 @@ impl TerminalService {
             let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.remove(id).ok_or("Terminal not found".to_string())?
         };
-        instance.writer = None;
-        instance.child.kill().ok();
-        let _ = instance.child.wait();
+        instance.backend.close();
         self.notify_sessions_changed();
         Ok(())
     }
@@ -538,47 +668,22 @@ impl TerminalService {
             "powershell" => "powershell",
             _ => "powershell", // fallback for ssh/docker/k8s without profile
         };
-        let pty_system = native_pty_system();
-
         let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
         let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
-
-        let pty_pair = pty_system.openpty(PtySize {
-            rows: init_rows,
-            cols: init_cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        }).map_err(|e| {
-            let msg = format!("openpty FAILED: {}", e);
-            log_debug(&msg);
-            msg
+        let loading_mode = SettingsService::get_settings().terminal_loading_mode;
+        let (backend, backend_reader, output_buffer_mode) = spawn_terminal_backend(
+            &app,
+            &loading_mode,
+            init_rows,
+            init_cols,
+            startup_path,
+            &[],
+        )
+        .map_err(|error| {
+            log_debug(&format!("[create-blank] backend FAILED: {}", error));
+            error
         })?;
-
-        let mut cmd = CommandBuilder::new("cmd.exe");
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
-        if let Some(path) = startup_path {
-            cmd.cwd(path);
-        }
-
-        let child = pty_pair.slave.spawn_command(cmd).map_err(|e| {
-            let msg = format!("spawn_command FAILED: {}", e);
-            log_debug(&msg);
-            msg
-        })?;
-        crate::boot_log("[terminal] after spawn_command (cmd.exe spawned)");
-
-        let writer = pty_pair.master.take_writer().map_err(|e| {
-            let msg = format!("take_writer FAILED: {}", e);
-            log_debug(&msg);
-            msg
-        })?;
-
-        let master_reader = pty_pair.master.try_clone_reader().map_err(|e| {
-            let msg = format!("try_clone_reader FAILED: {}", e);
-            log_debug(&msg);
-            msg
-        })?;
+        crate::boot_log(format!("[terminal] backend ready mode={:?}", loading_mode));
 
         let output_buffer: Arc<Mutex<VecDeque<Arc<str>>>> = Arc::new(Mutex::new(VecDeque::new()));
 
@@ -586,9 +691,7 @@ impl TerminalService {
             id: terminal_id.clone(),
             profile_id: String::new(),
             owner,
-            child,
-            master: pty_pair.master,
-            writer: Some(writer),
+            backend,
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
             current_cols: init_cols,
@@ -616,18 +719,23 @@ impl TerminalService {
 
             let mut instances_lock = instances.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(instance) = instances_lock.get_mut(&tid) {
-                if let Some(ref mut writer) = instance.writer {
-                    if !shell_cmd.is_empty() {
-                        let _ = writer.write_all(shell_cmd.as_bytes());
-                        let _ = writer.write_all(b"\r");
-                        let _ = writer.flush();
+                if !shell_cmd.is_empty() {
+                    let command = format!("{}\r", shell_cmd);
+                    if let Err(error) = instance.backend.write_input(command.as_bytes()) {
+                        log_debug(&format!("[init-blank] failed: {}", error));
                     }
                 }
             }
         });
 
         // Output forwarding thread
-        spawn_output_forwarder(master_reader, terminal_id.clone(), app, output_buffer);
+        spawn_output_forwarder(
+            backend_reader,
+            terminal_id.clone(),
+            app,
+            output_buffer,
+            output_buffer_mode,
+        );
 
         log_debug(&format!("[create-blank] DONE, id={}", terminal_id));
         crate::boot_log("[create_blank_terminal] DONE");
@@ -668,6 +776,23 @@ pub fn resize_terminal(
     terminal_service.check_pc_permission(&id)?;
     // Desktop (Tauri invoke) always allows shrink — it's the primary viewer
     terminal_service.resize_terminal(&id, rows, cols, true)
+}
+
+#[command]
+pub fn acknowledge_terminal_output(
+    id: String,
+    char_count: u32,
+    terminal_service: State<TerminalService>,
+) -> Result<(), String> {
+    terminal_service.acknowledge_terminal_output(&id, char_count)
+}
+
+#[command]
+pub fn get_terminal_loading_mode(
+    id: String,
+    terminal_service: State<TerminalService>,
+) -> Result<String, String> {
+    terminal_service.terminal_loading_mode(&id).map(str::to_string)
 }
 
 #[command]
@@ -869,7 +994,7 @@ struct ClaudeSessionFile {
 pub fn get_terminal_process_id(terminal_id: String, service: State<'_, TerminalService>) -> Result<Option<u32>, String> {
     let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(instance) = instances.get(&terminal_id) {
-        Ok(instance.child.process_id())
+        Ok(instance.backend.process_id())
     } else {
         Ok(None)
     }
@@ -943,7 +1068,7 @@ pub fn get_claude_session_for_terminal(terminal_id: String, service: State<'_, T
     let terminal_pid = {
         let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
         instances.get(&terminal_id)
-            .and_then(|instance| instance.child.process_id())
+            .and_then(|instance| instance.backend.process_id())
     };
 
     let Some(pid) = terminal_pid else {
@@ -992,7 +1117,7 @@ pub fn get_claude_sessions_for_terminals(
         terminal_ids.iter()
             .filter_map(|id| {
                 instances.get(id)
-                    .and_then(|instance| instance.child.process_id())
+                    .and_then(|instance| instance.backend.process_id())
                     .map(|pid| (id.clone(), pid))
             })
             .collect()

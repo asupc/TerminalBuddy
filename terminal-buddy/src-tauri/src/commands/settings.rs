@@ -3,9 +3,13 @@ use std::ffi::OsStr;
 use std::fs;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use crate::models::{AppSettings, CloseBehavior, LaunchWindowMode};
-use crate::services::{SettingsService, PathService, copy_dir_recursive};
+use crate::models::{AppSettings, CloseBehavior, LaunchWindowMode, TerminalLoadingMode};
+use crate::services::{
+    copy_dir_recursive, PathService, SettingsService, VsCodeTerminalProcess,
+    VsCodeTerminalSupport,
+};
 use serde_json::{json, Value};
+use tauri::AppHandle;
 
 fn to_wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
@@ -120,6 +124,27 @@ pub fn save_launch_window_mode(mode: String) -> Result<(), String> {
         _ => return Err(format!("无效的启动窗口模式: {}", mode)),
     };
     SettingsService::mutate_settings(|s| s.launch_window_mode = mode)
+}
+
+#[tauri::command]
+pub fn get_vscode_terminal_support(app: AppHandle) -> VsCodeTerminalSupport {
+    VsCodeTerminalProcess::probe_support(&app)
+}
+
+#[tauri::command]
+pub fn save_terminal_loading_mode(mode: String, app: AppHandle) -> Result<(), String> {
+    let mode = match mode.as_str() {
+        "default" => TerminalLoadingMode::Default,
+        "vsCode" => {
+            let support = VsCodeTerminalProcess::probe_support(&app);
+            if !support.available {
+                return Err(support.reason);
+            }
+            TerminalLoadingMode::VsCode
+        }
+        _ => return Err(format!("无效的终端加载方案: {}", mode)),
+    };
+    SettingsService::mutate_settings(|settings| settings.terminal_loading_mode = mode)
 }
 
 #[tauri::command]

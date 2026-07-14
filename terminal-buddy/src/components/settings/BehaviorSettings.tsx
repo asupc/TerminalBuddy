@@ -1,14 +1,16 @@
 import { FC } from 'react';
-import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode } from '../../services/tauri';
+import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, type VsCodeTerminalSupport } from '../../services/tauri';
 import { BREATHING_LIGHT_COLORS } from '../../types';
 import type { AppSettings, BreathingLightColorMode } from '../../utils/settings';
 
 interface BehaviorSettingsProps {
   settings: AppSettings;
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
+  vsCodeSupport: VsCodeTerminalSupport | null;
 }
 
-export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSetting }) => {
+export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSetting, vsCodeSupport }) => {
+  const vsCodeAvailable = vsCodeSupport?.available === true;
   return (
     <div className="settings-general">
       <div className="settings-section">
@@ -36,6 +38,46 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           </label>
         </div>
         <p className="settings-desc">侧边栏样式参考 VS Code，将配置、文件、选项卡和设置入口集中到左侧</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-label">终端加载方案</label>
+        <div className="breathing-light-mode-options" role="radiogroup" aria-label="终端加载方案">
+          <label className={`breathing-light-mode ${settings.terminalLoadingMode === 'default' ? 'active' : ''}`}>
+            <input
+              type="radio"
+              name="terminalLoadingMode"
+              checked={settings.terminalLoadingMode === 'default'}
+              onChange={() => {
+                updateSetting('terminalLoadingMode', 'default');
+                saveTerminalLoadingMode('default').catch(console.error);
+              }}
+            />
+            <span>默认</span>
+          </label>
+          <label
+            className={`breathing-light-mode ${settings.terminalLoadingMode === 'vsCode' ? 'active' : ''} ${vsCodeAvailable ? '' : 'disabled'}`}
+            title={vsCodeSupport?.reason || '正在检测系统 Node.js'}
+          >
+            <input
+              type="radio"
+              name="terminalLoadingMode"
+              checked={settings.terminalLoadingMode === 'vsCode'}
+              disabled={!vsCodeAvailable}
+              onChange={() => {
+                updateSetting('terminalLoadingMode', 'vsCode');
+                saveTerminalLoadingMode('vsCode').catch(console.error);
+              }}
+            />
+            <span>VS Code</span>
+          </label>
+        </div>
+        <p className={`settings-desc terminal-loading-support ${vsCodeSupport?.available ? 'available' : 'unavailable'}`}>
+          {vsCodeSupport === null
+            ? '正在检测系统 Node.js 和 VS Code 终端插件...'
+            : vsCodeSupport.available
+              ? `${vsCodeSupport.reason}，可以启用 VS Code 模式。`
+              : `VS Code 模式不可用：${vsCodeSupport.reason}`}
+        </p>
       </div>
       <div className="settings-section">
         <label className="settings-label">启动窗口模式</label>

@@ -4,6 +4,7 @@ export type ThemeMode = 'dark' | 'light' | 'system';
 
 export type BreathingLightColorMode = 'tab' | 'custom';
 export type LaunchWindowMode = 'windowed' | 'maximized';
+export type TerminalLoadingMode = 'default' | 'vsCode';
 export type UiStyle = 'default' | 'sidebar';
 
 export interface AppSettings {
@@ -13,6 +14,7 @@ export interface AppSettings {
   fileTreeAutoExpand: boolean;
   closeBehavior: 'exit' | 'tray';
   launchWindowMode: LaunchWindowMode;
+  terminalLoadingMode: TerminalLoadingMode;
   enableTabNavigation: boolean;
   singleInstance: boolean;
   rightClickPaste: boolean;
@@ -52,6 +54,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   fileTreeAutoExpand: true,
   closeBehavior: 'exit',
   launchWindowMode: 'windowed',
+  terminalLoadingMode: 'default',
   enableTabNavigation: true,
   singleInstance: true,
   rightClickPaste: false,

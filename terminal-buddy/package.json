@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "prepare:vscode-terminal": "node scripts/prepare-vscode-terminal-plugin.mjs",
+    "test:vscode-terminal": "node scripts/test-vscode-terminal-plugin.mjs",
+    "test:vscode-terminal:bundled": "npm run prepare:vscode-terminal && node scripts/test-vscode-terminal-plugin.mjs --bundled",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -21,6 +24,7 @@
     "@xterm/addon-webgl": "^0.20.0-beta.284",
     "@xterm/xterm": "^6.1.0-beta.285",
     "lucide-react": "^1.24.0",
+    "node-pty": "1.2.0-beta.13",
     "qrcode": "^1.5.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

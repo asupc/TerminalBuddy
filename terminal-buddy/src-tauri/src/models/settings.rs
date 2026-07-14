@@ -14,12 +14,23 @@ pub enum LaunchWindowMode {
     Maximized,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum TerminalLoadingMode {
+    Default,
+    VsCode,
+}
+
 fn default_close_behavior() -> CloseBehavior {
     CloseBehavior::Exit
 }
 
 fn default_launch_window_mode() -> LaunchWindowMode {
     LaunchWindowMode::Windowed
+}
+
+fn default_terminal_loading_mode() -> TerminalLoadingMode {
+    TerminalLoadingMode::Default
 }
 
 fn default_tab_sidebar_width() -> u32 {
@@ -49,6 +60,8 @@ pub struct AppSettings {
     pub close_behavior: CloseBehavior,
     #[serde(default = "default_launch_window_mode")]
     pub launch_window_mode: LaunchWindowMode,
+    #[serde(default = "default_terminal_loading_mode")]
+    pub terminal_loading_mode: TerminalLoadingMode,
     #[serde(default)]
     pub data_path: Option<String>,
     #[serde(default = "default_tab_sidebar_width")]
@@ -84,6 +97,7 @@ impl Default for AppSettings {
         Self {
             close_behavior: CloseBehavior::Exit,
             launch_window_mode: LaunchWindowMode::Windowed,
+            terminal_loading_mode: TerminalLoadingMode::Default,
             data_path: None,
             tab_sidebar_width: 200,
             config_nav_width: 250,
