@@ -5,7 +5,10 @@ use axum::Json;
 use serde_json::{json, Value};
 use tauri::Manager;
 
-use crate::commands::{process_bot_reply, send_feishu_reply, TerminalService};
+use crate::commands::{
+    process_bot_card_selection, process_bot_multi_selection, process_bot_reply,
+    send_feishu_reply, TerminalService,
+};
 use crate::models::BridgeInboundMessage;
 use crate::services::BotSettingsService;
 use crate::web::server::AppState;
@@ -16,6 +19,16 @@ fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
         Json(json!({ "success": false, "error": message.into() })),
     )
         .into_response()
+}
+
+fn feishu_card_result(success: bool, message: impl Into<String>) -> Response {
+    Json(json!({
+        "toast": {
+            "type": if success { "success" } else { "error" },
+            "content": message.into(),
+        }
+    }))
+    .into_response()
 }
 
 pub async fn bridge_inbound(
@@ -78,6 +91,127 @@ pub async fn feishu_events(State(state): State<AppState>, Json(payload): Json<Va
         .pointer("/header/event_type")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let is_card_action = event_type == "card.action.trigger"
+        || (event_type.is_empty() && payload.get("action").is_some());
+    if is_card_action {
+        let action = payload
+            .pointer("/event/action/value/action")
+            .or_else(|| payload.pointer("/action/value/action"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if action != "select_option"
+            && action != "use_recommended"
+            && action != "submit_multi_select"
+        {
+            return feishu_card_result(false, "不支持的卡片操作");
+        }
+        let conversation_id = payload
+            .pointer("/event/context/open_chat_id")
+            .or_else(|| payload.get("open_chat_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let sender_id = payload
+            .pointer("/event/operator/operator_id/open_id")
+            .or_else(|| payload.pointer("/event/operator/operator_id/user_id"))
+            .or_else(|| payload.get("open_id"))
+            .or_else(|| payload.get("user_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let message_id = payload
+            .pointer("/event/context/open_message_id")
+            .or_else(|| payload.get("open_message_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if message_id.is_empty() {
+            return feishu_card_result(false, "卡片回调缺少消息标识");
+        }
+        let Some(channel) = settings.channels.iter().find(|channel| {
+            channel.enabled
+                && channel.platform == "feishu"
+                && !channel.callback_token.is_empty()
+                && channel.callback_token == token
+                && (channel.receive_id_type != "chat_id"
+                    || channel.target_id == conversation_id)
+        }) else {
+            return feishu_card_result(false, "卡片不属于已配置通道");
+        };
+        let callback_message_id = payload
+            .pointer("/header/event_id")
+            .and_then(Value::as_str)
+            .unwrap_or(message_id);
+        let terminal_service = state.app_handle.state::<TerminalService>();
+        let result = if action == "submit_multi_select" {
+            let selected_move_counts = payload
+                .pointer("/event/action/form_value/selectedOptions")
+                .or_else(|| payload.pointer("/action/form_value/selectedOptions"))
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str()?.parse::<i16>().ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let initial_selected_move_counts = payload
+                .pointer("/event/action/value/initialSelectedMoveCounts")
+                .or_else(|| payload.pointer("/action/value/initialSelectedMoveCounts"))
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_i64)
+                        .filter_map(|value| i16::try_from(value).ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let submit_move_count = payload
+                .pointer("/event/action/value/submitMoveCount")
+                .or_else(|| payload.pointer("/action/value/submitMoveCount"))
+                .and_then(Value::as_i64)
+                .and_then(|value| i16::try_from(value).ok())
+                .unwrap_or(i16::MAX);
+            process_bot_multi_selection(
+                &state.app_handle,
+                &terminal_service,
+                channel,
+                sender_id,
+                conversation_id,
+                callback_message_id,
+                message_id,
+                &selected_move_counts,
+                &initial_selected_move_counts,
+                submit_move_count,
+            )
+        } else {
+            let move_count = if action == "use_recommended" {
+                0
+            } else {
+                payload
+                    .pointer("/event/action/value/moveCount")
+                    .or_else(|| payload.pointer("/action/value/moveCount"))
+                    .and_then(Value::as_i64)
+                    .and_then(|value| i16::try_from(value).ok())
+                    .unwrap_or(i16::MAX)
+            };
+            process_bot_card_selection(
+                &state.app_handle,
+                &terminal_service,
+                channel,
+                sender_id,
+                conversation_id,
+                callback_message_id,
+                message_id,
+                move_count,
+            )
+        };
+        return match result {
+            Ok(message) => feishu_card_result(true, message),
+            Err(error) => {
+                eprintln!("[Bot/Feishu] 卡片操作失败: {}", error);
+                feishu_card_result(false, error)
+            }
+        };
+    }
     if event_type != "im.message.receive_v1" {
         return Json(json!({ "code": 0 })).into_response();
     }

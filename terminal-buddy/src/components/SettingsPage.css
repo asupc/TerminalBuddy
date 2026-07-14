@@ -1562,6 +1562,11 @@ input.data-path-input {
   color: #55bd87;
 }
 
+.bot-capability.error {
+  background: color-mix(in srgb, #d9534f 16%, transparent);
+  color: #ef7773;
+}
+
 .bot-channel-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

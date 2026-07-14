@@ -30,7 +30,6 @@ struct StoredBotSettings {
     enabled: bool,
     send_decision_notifications: bool,
     send_completion_notifications: bool,
-    attach_screenshot: bool,
     decision_ttl_minutes: u32,
     append_enter: bool,
     #[serde(default)]
@@ -44,7 +43,6 @@ impl Default for StoredBotSettings {
             enabled: settings.enabled,
             send_decision_notifications: settings.send_decision_notifications,
             send_completion_notifications: settings.send_completion_notifications,
-            attach_screenshot: settings.attach_screenshot,
             decision_ttl_minutes: settings.decision_ttl_minutes,
             append_enter: settings.append_enter,
             channels: Vec::new(),
@@ -80,7 +78,6 @@ impl BotSettingsService {
             enabled: stored.enabled,
             send_decision_notifications: stored.send_decision_notifications,
             send_completion_notifications: stored.send_completion_notifications,
-            attach_screenshot: stored.attach_screenshot,
             decision_ttl_minutes: stored.decision_ttl_minutes,
             append_enter: stored.append_enter,
             channels: stored
@@ -138,7 +135,6 @@ impl BotSettingsService {
             enabled: stored.enabled,
             send_decision_notifications: stored.send_decision_notifications,
             send_completion_notifications: stored.send_completion_notifications,
-            attach_screenshot: stored.attach_screenshot,
             decision_ttl_minutes: stored.decision_ttl_minutes,
             append_enter: stored.append_enter,
             channels,
@@ -199,7 +195,6 @@ impl BotSettingsService {
             enabled: settings.enabled,
             send_decision_notifications: settings.send_decision_notifications,
             send_completion_notifications: settings.send_completion_notifications,
-            attach_screenshot: settings.attach_screenshot,
             decision_ttl_minutes: settings.decision_ttl_minutes.clamp(1, 1440),
             append_enter: settings.append_enter,
             channels,
@@ -217,7 +212,7 @@ impl BotSettingsService {
     pub fn requires_callback_server() -> bool {
         Self::get_public().enabled
             && Self::get_public().channels.iter().any(|channel| {
-                channel.enabled && matches!(channel.platform.as_str(), "feishu" | "qq" | "bridge")
+                channel.enabled && matches!(channel.platform.as_str(), "qq" | "bridge")
             })
     }
 }

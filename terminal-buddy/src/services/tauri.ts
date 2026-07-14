@@ -96,7 +96,6 @@ export interface BotSettings {
   enabled: boolean;
   sendDecisionNotifications: boolean;
   sendCompletionNotifications: boolean;
-  attachScreenshot: boolean;
   decisionTtlMinutes: number;
   appendEnter: boolean;
   channels: BotChannelConfig[];
@@ -107,7 +106,6 @@ export interface BotDeliveryReport {
   channelName: string;
   success: boolean;
   messageId?: string;
-  screenshotSent: boolean;
   error?: string;
 }
 
@@ -119,8 +117,26 @@ export interface BotNotificationRequest {
   kind: 'confirmation' | 'question' | 'completed';
   title: string;
   summary: string;
-  promptExcerpt?: string;
-  screenshotBase64?: string;
+  decisionTitle?: string;
+  decisionQuestion?: string;
+  decisionOptions?: BotDecisionOption[];
+  decisionMultiSelect?: boolean;
+  decisionSubmitMoveCount?: number;
+  customOptionDownCount?: number;
+}
+
+export interface BotLongConnectionStatus {
+  channelId: string;
+  state: 'connecting' | 'connected' | 'disconnected' | 'error';
+  error?: string;
+}
+
+export interface BotDecisionOption {
+  label: string;
+  description?: string;
+  moveCount: number;
+  recommended: boolean;
+  selected?: boolean;
 }
 
 export interface ScanBeginResult {
@@ -147,6 +163,10 @@ export async function getBotSettings(): Promise<BotSettings> {
   return invoke('get_bot_settings');
 }
 
+export async function getBotLongConnectionStatus(): Promise<BotLongConnectionStatus[]> {
+  return invoke('get_bot_long_connection_status');
+}
+
 export async function getBotCallbackBaseUrl(): Promise<string> {
   return invoke('get_bot_callback_base_url');
 }
@@ -163,6 +183,10 @@ export async function sendBotNotification(request: BotNotificationRequest): Prom
 
 export async function testBotChannel(channelId: string): Promise<BotDeliveryReport> {
   return invoke('test_bot_channel', { channelId });
+}
+
+export async function testBotDecisionChannel(channelId: string): Promise<BotDeliveryReport> {
+  return invoke('test_bot_decision_channel', { channelId });
 }
 
 export async function botScanBegin(platform: 'feishu' | 'dingtalk'): Promise<ScanBeginResult> {

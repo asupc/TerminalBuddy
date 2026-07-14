@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Plus, QrCode, Send, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ListChecks, Plus, QrCode, Send, Trash2 } from 'lucide-react';
 import {
   getBotSettings,
+  getBotLongConnectionStatus,
   getBotCallbackBaseUrl,
   saveBotSettings,
   testBotChannel,
+  testBotDecisionChannel,
   type BotChannelConfig,
   type BotSettings,
+  type BotLongConnectionStatus,
   type ScanCredentials,
 } from '../../services/tauri';
 import { BotScanDialog } from './BotScanDialog';
@@ -22,7 +25,6 @@ const EMPTY_SETTINGS: BotSettings = {
   enabled: false,
   sendDecisionNotifications: true,
   sendCompletionNotifications: true,
-  attachScreenshot: true,
   decisionTtlMinutes: 30,
   appendEnter: true,
   channels: [],
@@ -67,8 +69,10 @@ export function BotNotificationSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [testingDecisionId, setTestingDecisionId] = useState<string | null>(null);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [callbackBaseUrl, setCallbackBaseUrl] = useState('http://<电脑IP>:9600');
+  const [longConnectionStatuses, setLongConnectionStatuses] = useState<Record<string, BotLongConnectionStatus>>({});
   const [scanChannelId, setScanChannelId] = useState<string | null>(null);
 
   const settingsRef = useRef(settings);
@@ -136,6 +140,17 @@ export function BotNotificationSettings() {
   }, []);
 
   useEffect(() => {
+    const refresh = () => {
+      void getBotLongConnectionStatus()
+        .then(items => setLongConnectionStatuses(Object.fromEntries(items.map(item => [item.channelId, item]))))
+        .catch(() => {});
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     if (!autosaveReadyRef.current) return;
     const signature = JSON.stringify(settings);
     if (signature === lastSavedStateSignatureRef.current) return;
@@ -191,16 +206,41 @@ export function BotNotificationSettings() {
 
   const handleTest = async (channelId: string) => {
     setTestingId(channelId);
+    setStatus(null);
     try {
-      await persist(settings);
+      try {
+        await persist(settings);
+      } catch {
+        return;
+      }
       const result = await testBotChannel(channelId);
       setStatus(result.success
         ? { type: 'success', text: `测试消息已发送到「${result.channelName}」` }
         : { type: 'error', text: result.error || '测试消息发送失败' });
-    } catch {
-      // persist 已显示错误。
+    } catch (error) {
+      setStatus({ type: 'error', text: `测试消息发送失败：${String(error)}` });
     } finally {
       setTestingId(null);
+    }
+  };
+
+  const handleTestDecision = async (channelId: string) => {
+    setTestingDecisionId(channelId);
+    setStatus(null);
+    try {
+      try {
+        await persist(settings);
+      } catch {
+        return;
+      }
+      const result = await testBotDecisionChannel(channelId);
+      setStatus(result.success
+        ? { type: 'success', text: `测试决策已发送到「${result.channelName}」，请在飞书中点击选项` }
+        : { type: 'error', text: result.error || '测试决策发送失败' });
+    } catch (error) {
+      setStatus({ type: 'error', text: `测试决策发送失败：${String(error)}` });
+    } finally {
+      setTestingDecisionId(null);
     }
   };
 
@@ -257,10 +297,6 @@ export function BotNotificationSettings() {
           <span>发送完成通知</span>
         </label>
         <label className="settings-toggle">
-          <input type="checkbox" checked={settings.attachScreenshot} onChange={event => updateGlobal('attachScreenshot', event.target.checked)} />
-          <span>附带终端截图</span>
-        </label>
-        <label className="settings-toggle">
           <input type="checkbox" checked={settings.appendEnter} onChange={event => updateGlobal('appendEnter', event.target.checked)} />
           <span>将回复写入终端后发送回车</span>
         </label>
@@ -275,7 +311,6 @@ export function BotNotificationSettings() {
           />
           <span>分钟</span>
         </label>
-        <p className="settings-desc bot-privacy-note">终端截图可能包含 Token、密钥或业务数据，请只向可信会话发送。</p>
       </div>
 
       <div className="bot-channel-heading">
@@ -300,6 +335,17 @@ export function BotNotificationSettings() {
           const usesAppCredentials = channel.platform === 'feishu' || channel.platform === 'dingtalk';
           const usesWebhook = channel.platform !== 'feishu' && channel.platform !== 'dingtalk';
           const supportsInbound = platform.bidirectional;
+          const longConnectionStatus = channel.platform === 'feishu'
+            ? longConnectionStatuses[channel.id]
+            : undefined;
+          const capabilityLabel = channel.platform === 'feishu'
+            ? ({
+                connecting: '连接中',
+                connected: '长连接',
+                disconnected: '未连接',
+                error: '连接异常',
+              }[longConnectionStatus?.state || 'disconnected'])
+            : (supportsInbound ? '双向' : '单向');
           return (
             <div className="bot-channel-item" key={channel.id}>
               <div className="bot-channel-summary">
@@ -318,10 +364,26 @@ export function BotNotificationSettings() {
                   <span>{channel.name || platform.label}</span>
                   <small>{platform.label}</small>
                 </div>
-                <span className={`bot-capability ${supportsInbound ? 'two-way' : ''}`}>{supportsInbound ? '双向' : '单向'}</span>
-                <button className="bot-action-btn" onClick={() => void handleTest(channel.id)} disabled={testingId === channel.id} title="发送测试消息" aria-label="发送测试消息">
+                <span
+                  className={`bot-capability ${supportsInbound ? 'two-way' : ''}${longConnectionStatus?.state === 'error' ? ' error' : ''}`}
+                  title={longConnectionStatus?.error}
+                >
+                  {capabilityLabel}
+                </span>
+                <button className="bot-action-btn" onClick={() => void handleTest(channel.id)} disabled={testingId === channel.id || testingDecisionId === channel.id} title="发送测试消息" aria-label="发送测试消息">
                   <Send size={15} />
                 </button>
+                {channel.platform === 'feishu' && (
+                  <button
+                    className="bot-action-btn"
+                    onClick={() => void handleTestDecision(channel.id)}
+                    disabled={testingId === channel.id || testingDecisionId === channel.id}
+                    title="发送测试决策卡片"
+                    aria-label="发送测试决策卡片"
+                  >
+                    <ListChecks size={15} />
+                  </button>
+                )}
                 <button
                   className="bot-action-btn danger"
                   onClick={() => setSettings(previous => ({ ...previous, channels: previous.channels.filter(item => item.id !== channel.id) }))}
@@ -385,10 +447,12 @@ export function BotNotificationSettings() {
                   </label>
                   {supportsInbound && (
                     <>
-                      <label>
-                        <span>回调验证 Token</span>
-                        <input type="password" value={channel.callbackToken} onChange={event => updateChannel(channel.id, 'callbackToken', event.target.value)} placeholder={channel.hasCallbackToken ? '已配置，留空保持不变' : '必填'} />
-                      </label>
+                      {channel.platform !== 'feishu' && (
+                        <label>
+                          <span>回调验证 Token</span>
+                          <input type="password" value={channel.callbackToken} onChange={event => updateChannel(channel.id, 'callbackToken', event.target.value)} placeholder={channel.hasCallbackToken ? '已配置，留空保持不变' : '必填'} />
+                        </label>
+                      )}
                       <label className="bot-form-wide">
                         <span>允许回复的用户 ID</span>
                         <textarea
@@ -398,9 +462,15 @@ export function BotNotificationSettings() {
                           placeholder="多个 ID 使用逗号分隔"
                         />
                       </label>
-                      <div className="bot-callback-path bot-form-wide">
-                        回调地址：{callbackBaseUrl}{channel.platform === 'feishu' ? '/api/bot/feishu/events' : `/api/bot/inbound/${channel.id}`}
-                      </div>
+                      {channel.platform === 'feishu' ? (
+                        <div className="bot-callback-path bot-form-wide" title={longConnectionStatus?.error}>
+                          事件接收：{capabilityLabel}（无需公网回调）
+                        </div>
+                      ) : (
+                        <div className="bot-callback-path bot-form-wide">
+                          本机回调地址：{callbackBaseUrl}/api/bot/inbound/{channel.id}
+                        </div>
+                      )}
                     </>
                   )}
                 </div>

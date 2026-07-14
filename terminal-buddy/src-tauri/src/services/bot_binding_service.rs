@@ -87,6 +87,7 @@ impl BotBindingService {
                 channel_id: String::new(),
                 target_id: String::new(),
                 external_message_id: String::new(),
+                custom_option_down_count: None,
                 status: "cancelled".to_string(),
                 expires_at: Utc::now().timestamp_millis() + 24 * 60 * 60 * 1_000,
             });

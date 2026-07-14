@@ -49,8 +49,6 @@ pub struct BotSettings {
     pub send_decision_notifications: bool,
     #[serde(default = "default_true")]
     pub send_completion_notifications: bool,
-    #[serde(default = "default_true")]
-    pub attach_screenshot: bool,
     #[serde(default = "default_decision_ttl_minutes")]
     pub decision_ttl_minutes: u32,
     #[serde(default = "default_true")]
@@ -65,7 +63,6 @@ impl Default for BotSettings {
             enabled: false,
             send_decision_notifications: true,
             send_completion_notifications: true,
-            attach_screenshot: true,
             decision_ttl_minutes: 30,
             append_enter: true,
             channels: Vec::new(),
@@ -80,8 +77,26 @@ pub struct BotDeliveryReport {
     pub channel_name: String,
     pub success: bool,
     pub message_id: Option<String>,
-    pub screenshot_sent: bool,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BotLongConnectionStatus {
+    pub channel_id: String,
+    pub state: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BotDecisionOption {
+    pub label: String,
+    pub description: Option<String>,
+    pub move_count: i16,
+    pub recommended: bool,
+    #[serde(default)]
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -94,8 +109,13 @@ pub struct BotNotificationRequest {
     pub kind: String,
     pub title: String,
     pub summary: String,
-    pub prompt_excerpt: Option<String>,
-    pub screenshot_base64: Option<String>,
+    pub decision_title: Option<String>,
+    pub decision_question: Option<String>,
+    pub decision_options: Option<Vec<BotDecisionOption>>,
+    #[serde(default)]
+    pub decision_multi_select: bool,
+    pub decision_submit_move_count: Option<i16>,
+    pub custom_option_down_count: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +127,8 @@ pub struct DecisionBinding {
     pub channel_id: String,
     pub target_id: String,
     pub external_message_id: String,
+    #[serde(default)]
+    pub custom_option_down_count: Option<u16>,
     pub status: String,
     pub expires_at: i64,
 }
