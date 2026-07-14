@@ -125,11 +125,11 @@ export function BotNotificationSettings() {
     }
   };
 
-  // 扫码成功后回填凭证；飞书自动用扫码人 open_id 作为接收目标。
-  const handleScanSuccess = (channelId: string) => (credentials: ScanCredentials) => {
-    setSettings(previous => ({
-      ...previous,
-      channels: previous.channels.map(channel => {
+  // 扫码成功后回填凭证并自动保存；飞书自动用扫码人 open_id 作为接收目标。
+  const handleScanSuccess = (channelId: string) => async (credentials: ScanCredentials) => {
+    const next = normalizeSettings({
+      ...settings,
+      channels: settings.channels.map(channel => {
         if (channel.id !== channelId) return channel;
         const receiveIdType = channel.platform === 'feishu' && credentials.targetId ? 'open_id' : channel.receiveIdType;
         return {
@@ -141,9 +141,20 @@ export function BotNotificationSettings() {
           receiveIdType,
         };
       }),
-    }));
+    });
     setScanChannelId(null);
-    setStatus({ type: 'success', text: '扫码授权成功，凭证已填入，请点击保存。' });
+    setSaving(true);
+    setStatus(null);
+    try {
+      const saved = await saveBotSettings(next);
+      setSettings(saved);
+      setStatus({ type: 'success', text: '扫码授权成功，凭证已自动保存。' });
+    } catch (error) {
+      setSettings(next);
+      setStatus({ type: 'error', text: `凭证已填入但保存失败：${String(error)}` });
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) return <div className="settings-panel-loading">正在读取机器人设置...</div>;
