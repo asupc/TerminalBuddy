@@ -131,6 +131,7 @@ enum TerminalOutputBufferMode {
     VsCode,
 }
 
+#[derive(Clone)]
 pub struct TerminalService {
     pub instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
     /// 会话变更广播：create/close/PTY 退出时发送 ()，meta WS 据此推送最新列表。
@@ -759,15 +760,27 @@ impl TerminalService {
 }
 
 #[command]
-pub fn start_terminal(
+pub async fn start_terminal(
     profile_id: String,
     extra_startup_params: Option<String>,
     initial_rows: u16,
     initial_cols: u16,
     app: AppHandle,
-    terminal_service: State<TerminalService>,
+    terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.create_terminal(&profile_id, extra_startup_params.as_deref(), initial_rows, initial_cols, app, TerminalOwner::Pc)
+    let terminal_service = terminal_service.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal_service.create_terminal(
+            &profile_id,
+            extra_startup_params.as_deref(),
+            initial_rows,
+            initial_cols,
+            app,
+            TerminalOwner::Pc,
+        )
+    })
+    .await
+    .map_err(|error| format!("终端后台启动失败：{}", error))?
 }
 
 #[command]
@@ -845,15 +858,27 @@ pub fn list_terminals(
 }
 
 #[command]
-pub fn start_blank_terminal(
+pub async fn start_blank_terminal(
     terminal_type: String,
     initial_rows: u16,
     initial_cols: u16,
     startup_path: Option<String>,
     app: AppHandle,
-    terminal_service: State<TerminalService>,
+    terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.create_blank_terminal(&terminal_type, initial_rows, initial_cols, startup_path.as_deref(), app, TerminalOwner::Pc)
+    let terminal_service = terminal_service.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal_service.create_blank_terminal(
+            &terminal_type,
+            initial_rows,
+            initial_cols,
+            startup_path.as_deref(),
+            app,
+            TerminalOwner::Pc,
+        )
+    })
+    .await
+    .map_err(|error| format!("终端后台启动失败：{}", error))?
 }
 
 // 跟踪已启动的 mstsc 进程 PID，key = profile_id

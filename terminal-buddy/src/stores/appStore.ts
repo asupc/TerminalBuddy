@@ -587,7 +587,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
     }
-    debouncedSaveTabs(state.sessions, id);
+    if (!state._skipSaveTabs) {
+      debouncedSaveTabs(state.sessions, id);
+    }
     return { activeSessionId: id, currentDirectory, activeSpecialTab: null };
   }),
   renameSession: (id, name) =>

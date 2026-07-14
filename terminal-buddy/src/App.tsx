@@ -31,6 +31,12 @@ function estimateTerminalSize(): { rows: number; cols: number } {
   const rows = Math.max(1, Math.floor(availH / 17));
   return { rows, cols };
 }
+
+const RESTORE_TERMINAL_CONCURRENCY = 2;
+
+function waitForNextFrame(): Promise<void> {
+  return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
 import type { Profile, TerminalSession } from './types';
 import { PRESET_THEMES } from './types';
 
@@ -333,7 +339,7 @@ function App() {
     // 暂停逐次写入，恢复完后统一写一次
     useAppStore.setState({ _skipSaveTabs: true });
     try {
-      for (let i = 0; i < tabs.length; i++) {
+      const restoreTab = async (i: number) => {
         const tab = tabs[i];
         try {
           if (tab.sessionType === 'editor') {
@@ -354,6 +360,9 @@ function App() {
               };
               store.addSession(session, true);
               restoredSessionIds[i] = session.id;
+              if (i === activeIndex || useAppStore.getState().activeSessionId === null) {
+                store.setActiveSession(session.id);
+              }
             } catch {
               // File no longer exists, skip this tab
             }
@@ -397,16 +406,43 @@ function App() {
               store.setSessionDirectory(terminalId, tab.directory);
               writeToTerminal(terminalId, `cd "${tab.directory}"\r`).catch(() => {});
             }
+            if (i === activeIndex || useAppStore.getState().activeSessionId === null) {
+              store.setActiveSession(terminalId);
+            }
           }
         } catch (err) {
           console.error('Failed to restore tab:', tab.profileName, err);
         }
-        // 让出主线程，等待浏览器完成一帧绘制后再恢复下一个 tab
-        if (i < tabs.length - 1) {
-          await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      };
+
+      // 优先恢复并展示上次活动标签，避免等待全部终端启动后才出现可操作界面。
+      await restoreTab(activeIndex);
+
+      const pendingIndexes = tabs
+        .map((_, index) => index)
+        .filter(index => index !== activeIndex);
+      let nextPendingIndex = 0;
+      const worker = async () => {
+        while (nextPendingIndex < pendingIndexes.length) {
+          const index = pendingIndexes[nextPendingIndex++];
+          // 启动下一项前先让出一帧，并用 worker 上限控制重型组件的初始化峰值。
+          await waitForNextFrame();
+          await restoreTab(index);
         }
-      }
+      };
+      const workerCount = Math.min(RESTORE_TERMINAL_CONCURRENCY, pendingIndexes.length);
+      await Promise.all(Array.from({ length: workerCount }, () => worker()));
     } finally {
+      // 并发完成顺序不稳定，恢复为保存时的标签顺序，同时保留恢复期间外部新建的会话。
+      const restoredIdSet = new Set(restoredSessionIds.filter((id): id is string => id !== undefined));
+      useAppStore.setState(state => {
+        const sessionsById = new Map(state.sessions.map(session => [session.id, session]));
+        const restoredSessions = restoredSessionIds
+          .map(id => id ? sessionsById.get(id) : undefined)
+          .filter((session): session is TerminalSession => session !== undefined);
+        const otherSessions = state.sessions.filter(session => !restoredIdSet.has(session.id));
+        return { sessions: [...restoredSessions, ...otherSessions] };
+      });
       const restoredActiveId = restoredSessionIds[activeIndex]
         ?? restoredSessionIds.find((id): id is string => id !== undefined)
         ?? null;
