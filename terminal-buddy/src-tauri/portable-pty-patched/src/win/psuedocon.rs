@@ -30,8 +30,6 @@ pub const PSUEDOCONSOLE_INHERIT_CURSOR: DWORD = 0x1;
 pub const PSEUDOCONSOLE_RESIZE_QUIRK: DWORD = 0x2;
 #[allow(dead_code)]
 pub const PSEUDOCONSOLE_WIN32_INPUT_MODE: DWORD = 0x4;
-#[allow(dead_code)]
-pub const PSEUDOCONSOLE_PASSTHROUGH_MODE: DWORD = 0x8;
 
 shared_library!(ConPtyFuncs,
     pub fn CreatePseudoConsole(
@@ -66,21 +64,6 @@ lazy_static! {
     static ref CONPTY: ConPtyFuncs = load_conpty();
 }
 
-/// Returns the Windows build number via RtlGetVersion (reliable, no compatibility shim).
-fn windows_build_number() -> u32 {
-    use winapi::um::winnt::OSVERSIONINFOW;
-    #[link(name = "ntdll")]
-    extern "system" {
-        fn RtlGetVersion(lpVersionInformation: *mut OSVERSIONINFOW) -> i32;
-    }
-    let mut vi: OSVERSIONINFOW = unsafe { mem::zeroed() };
-    vi.dwOSVersionInfoSize = mem::size_of::<OSVERSIONINFOW>() as u32;
-    unsafe {
-        RtlGetVersion(&mut vi);
-    }
-    vi.dwBuildNumber
-}
-
 pub struct PsuedoCon {
     con: HPCON,
 }
@@ -97,25 +80,14 @@ impl Drop for PsuedoCon {
 impl PsuedoCon {
     pub fn new(size: COORD, input: FileDescriptor, output: FileDescriptor) -> Result<Self, Error> {
         let mut con: HPCON = INVALID_HANDLE_VALUE;
-        // Use PSEUDOCONSOLE_PASSTHROUGH_MODE when available (Windows 11 22621+).
-        // This tells ConPTY to pass VT sequences through without "cooking" them,
-        // which is essential for TUI programs (Claude Code, vim, etc.) that use
-        // alternate screen buffers, cursor positioning, and dialog/popup rendering.
-        // PSEUDOCONSOLE_INHERIT_CURSOR is intentionally NOT used — it causes
-        // ConPTY to inject DSR (\e[6n) queries that desync from xterm.js
-        // cursor state during rapid TUI output (e.g., Claude Code spinners).
-        let build = windows_build_number();
-        let flags = if build >= 22621 {
-            PSEUDOCONSOLE_PASSTHROUGH_MODE
-        } else {
-            0
-        };
+        // Match VS Code/node-pty's standard ConPTY mode. Inherit-cursor is left
+        // disabled so ConPTY does not inject cursor-position queries on startup.
         let result = unsafe {
             (CONPTY.CreatePseudoConsole)(
                 size,
                 input.as_raw_handle() as _,
                 output.as_raw_handle() as _,
-                flags,
+                0,
                 &mut con,
             )
         };
@@ -124,11 +96,7 @@ impl PsuedoCon {
             "failed to create psuedo console: HRESULT {}",
             result
         );
-        if flags != 0 {
-            log::info!("ConPTY created with PASSTHROUGH mode (build {})", build);
-        } else {
-            log::info!("ConPTY created with dwFlags=0 (standard mode, build {})", build);
-        }
+        log::info!("ConPTY created with dwFlags=0 (standard mode, matching VS Code)");
         Ok(Self { con })
     }
 

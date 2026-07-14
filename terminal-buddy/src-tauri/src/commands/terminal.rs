@@ -1,5 +1,5 @@
 use tauri::{command, AppHandle, State, Emitter, Manager};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -8,6 +8,7 @@ use std::io::{Read, Write};
 use uuid::Uuid;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize, Child, MasterPty};
 use std::thread;
+use std::time::{Duration, Instant};
 use std::fs;
 use std::path::PathBuf;
 use serde::Deserialize;
@@ -19,6 +20,10 @@ use crate::services::PathService;
 use crate::services::SettingsService;
 use crate::services::WebServiceState;
 use crate::services::ssh_session_service::SshSessionService;
+
+const TERMINAL_DATA_IDLE_BUFFER_INTERVAL: Duration = Duration::from_millis(25);
+const TERMINAL_DATA_MAX_BUFFER_INTERVAL: Duration = Duration::from_millis(50);
+const TERMINAL_DATA_CHANNEL_CAPACITY: usize = 32;
 
 /// 转义 shell 特殊字符，防止命令注入
 fn shell_escape(s: &str) -> String {
@@ -71,31 +76,67 @@ fn spawn_output_forwarder(
     output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
 ) {
     thread::spawn(move || {
-        let mut reader = reader;
-        let mut buf = [0u8; 65536];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    // Try fast path: valid UTF-8, avoid Cow allocation
-                    let output: Arc<str> = match std::str::from_utf8(&buf[..n]) {
-                        Ok(s) => Arc::from(s),
-                        Err(_) => Arc::from(String::from_utf8_lossy(&buf[..n]).to_string()),
-                    };
-                    if !output.is_empty() {
-                        {
-                            let mut buffer = output_buffer.lock().unwrap_or_else(|e| e.into_inner());
-                            buffer.push_back(output.clone());
-                            if buffer.len() > 1000 {
-                                buffer.drain(0..500);
-                            }
+        let (data_tx, data_rx) = mpsc::sync_channel::<Vec<u8>>(TERMINAL_DATA_CHANNEL_CAPACITY);
+        thread::spawn(move || {
+            let mut reader = reader;
+            let mut buf = [0u8; 65536];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if data_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
                         }
-                        let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
-                        let web_state = app.state::<crate::services::WebServiceState>();
-                        web_state.broadcast(&terminal_id, &output);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        while let Ok(first_chunk) = data_rx.recv() {
+            let batch_started = Instant::now();
+            let max_deadline = batch_started + TERMINAL_DATA_MAX_BUFFER_INTERVAL;
+            let mut idle_deadline = batch_started + TERMINAL_DATA_IDLE_BUFFER_INTERVAL;
+            let mut batch = first_chunk;
+            let mut disconnected = false;
+
+            loop {
+                let deadline = idle_deadline.min(max_deadline);
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    break;
+                };
+                match data_rx.recv_timeout(remaining) {
+                    Ok(chunk) => {
+                        batch.extend_from_slice(&chunk);
+                        idle_deadline = Instant::now() + TERMINAL_DATA_IDLE_BUFFER_INTERVAL;
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        disconnected = true;
+                        break;
                     }
                 }
-                Err(_) => break,
+            }
+
+            let output: Arc<str> = match std::str::from_utf8(&batch) {
+                Ok(s) => Arc::from(s),
+                Err(_) => Arc::from(String::from_utf8_lossy(&batch).to_string()),
+            };
+            if !output.is_empty() {
+                {
+                    let mut buffer = output_buffer.lock().unwrap_or_else(|e| e.into_inner());
+                    buffer.push_back(output.clone());
+                    if buffer.len() > 1000 {
+                        buffer.drain(0..500);
+                    }
+                }
+                let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
+                let web_state = app.state::<crate::services::WebServiceState>();
+                web_state.broadcast(&terminal_id, &output);
+            }
+
+            if disconnected {
+                break;
             }
         }
         // PTY exited (SSH disconnect, `exit` command, child crash, etc.).
