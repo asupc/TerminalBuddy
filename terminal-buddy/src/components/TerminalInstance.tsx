@@ -6,7 +6,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { resizeTerminal, openPath, readClipboardFilePaths, readClipboardImageAsFile, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../services/tauri';
+import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openPath, readClipboardFilePaths, readClipboardImageAsFile, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../services/tauri';
 import { ServerMonitor } from './ServerMonitor';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -690,6 +690,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   useEffect(() => {
     if (!terminalRef.current) return;
     let disposed = false;
+    let usesVsCodeTerminal = false;
+    let unsentAckCharCount = 0;
 
     const cleanupFns: (() => void)[] = [];
     const preOpenOutputBuffer: string[] = [];
@@ -785,6 +787,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const messageId = ++latestWriteDataRef.current;
       term.write(output, () => {
         latestParseDataRef.current = messageId;
+        if (usesVsCodeTerminal) {
+          unsentAckCharCount += output.length;
+          while (unsentAckCharCount > 5000) {
+            unsentAckCharCount -= 5000;
+            acknowledgeTerminalOutput(terminalId, 5000).catch(() => {});
+          }
+        }
       });
     };
 
@@ -818,8 +827,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (disposed || !terminalRef.current) return;
 
       const tBuildNum = performance.now();
-      const buildNumber = await getWindowsBuildNumber();
-      void bootLog(`initTerminal[${terminalId}]: getWindowsBuildNumber took ${(performance.now() - tBuildNum).toFixed(0)}ms, val=${buildNumber}`);
+      const [buildNumber, terminalLoadingMode] = await Promise.all([
+        getWindowsBuildNumber(),
+        getTerminalLoadingMode(terminalId),
+      ]);
+      usesVsCodeTerminal = terminalLoadingMode === 'vsCode';
+      void bootLog(`initTerminal[${terminalId}]: terminal traits took ${(performance.now() - tBuildNum).toFixed(0)}ms, build=${buildNumber}, mode=${terminalLoadingMode}`);
 
       const tNewTerm = performance.now();
       const { lightOptimized: initialLightOptimized, ...initialTheme } = colorTheme || {
@@ -844,6 +857,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         allowProposedApi: true,
         disableStdin: !!readOnly,
         ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),
+        reflowCursorLine: usesVsCodeTerminal,
         screenReaderMode: false,
       });
       void bootLog(`initTerminal[${terminalId}]: new Terminal() took ${(performance.now() - tNewTerm).toFixed(0)}ms`);
@@ -867,6 +881,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       terminal.loadAddon(unicode11Addon);
       terminal.unicode.activeVersion = '11';
+      if (usesVsCodeTerminal) {
+        const da1Handler = terminal.parser.registerCsiHandler({ final: 'c' }, params => {
+          if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
+            onOutputRef.current(terminalId, '\x1b[?61;4c');
+            return true;
+          }
+          return false;
+        });
+        cleanupFns.push(() => da1Handler.dispose());
+      }
       void bootLog(`initTerminal[${terminalId}]: loadAddons (fit/weblinks/clipboard/search/unicode11) took ${(performance.now() - tAddons).toFixed(0)}ms`);
 
       // F11 默认会被 xterm 当作 VT 功能键消费（转成转义序列发给 PTY），终端持有

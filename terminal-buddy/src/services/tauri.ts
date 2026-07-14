@@ -468,9 +468,17 @@ export async function deleteWorkspace(id: string): Promise<void> {
 }
 
 // Settings Commands
+export interface VsCodeTerminalSupport {
+  available: boolean;
+  reason: string;
+  nodePath: string | null;
+  nodeVersion: string | null;
+}
+
 export async function getBackendAppSettings(): Promise<{
   closeBehavior: 'exit' | 'tray';
   launchWindowMode: 'windowed' | 'maximized';
+  terminalLoadingMode: 'default' | 'vsCode';
   dataPath: string | null;
   tabSidebarWidth: number;
   configNavWidth: number;
@@ -487,6 +495,22 @@ export async function saveCloseBehavior(behavior: 'exit' | 'tray'): Promise<void
 
 export async function saveLaunchWindowMode(mode: 'windowed' | 'maximized'): Promise<void> {
   return invoke('save_launch_window_mode', { mode });
+}
+
+export async function saveTerminalLoadingMode(mode: 'default' | 'vsCode'): Promise<void> {
+  return invoke('save_terminal_loading_mode', { mode });
+}
+
+export async function getVsCodeTerminalSupport(): Promise<VsCodeTerminalSupport> {
+  return invoke('get_vscode_terminal_support');
+}
+
+export async function acknowledgeTerminalOutput(id: string, charCount: number): Promise<void> {
+  return invoke('acknowledge_terminal_output', { id, charCount });
+}
+
+export async function getTerminalLoadingMode(id: string): Promise<'default' | 'vsCode'> {
+  return invoke('get_terminal_loading_mode', { id });
 }
 
 export async function getDataPath(): Promise<string> {

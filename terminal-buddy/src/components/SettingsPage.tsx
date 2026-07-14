@@ -18,7 +18,9 @@ import {
   getBackendAppSettings,
   getDataPath,
   getDownloadsDirectory,
+  getVsCodeTerminalSupport,
   syncLaunchAtLogin,
+  type VsCodeTerminalSupport,
 } from '../services/tauri';
 import { type AppSettings, getAppSettings, saveAppSettings } from '../utils/settings';
 import './SettingsPage.css';
@@ -70,6 +72,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [settings, setSettings] = useState<AppSettings>(getAppSettings);
   const [dataPath, setDataPath] = useState('');
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('behavior');
+  const [vsCodeSupport, setVsCodeSupport] = useState<VsCodeTerminalSupport | null>(null);
   const [visitedSections, setVisitedSections] = useState<Set<SettingsSectionId>>(
     () => new Set<SettingsSectionId>(['behavior'])
   );
@@ -148,6 +151,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         ...previous,
         closeBehavior: backend.closeBehavior,
         launchWindowMode: backend.launchWindowMode,
+        terminalLoadingMode: backend.terminalLoadingMode,
         enableTabNavigation: backend.enableTabNavigation,
         singleInstance: backend.singleInstance,
       };
@@ -157,6 +161,17 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
       }
     }).catch(() => {});
+
+    getVsCodeTerminalSupport()
+      .then(setVsCodeSupport)
+      .catch(error => {
+        setVsCodeSupport({
+          available: false,
+          reason: `检测失败：${String(error)}`,
+          nodePath: null,
+          nodeVersion: null,
+        });
+      });
 
     syncLaunchAtLogin().then(enabled => {
       const previous = getAppSettings();
@@ -206,7 +221,13 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const renderPanel = (sectionId: SettingsSectionId) => {
     switch (sectionId) {
       case 'behavior':
-        return <BehaviorSettings settings={settings} updateSetting={updateSetting} />;
+        return (
+          <BehaviorSettings
+            settings={settings}
+            updateSetting={updateSetting}
+            vsCodeSupport={vsCodeSupport}
+          />
+        );
       case 'data':
         return <DataSettings dataPath={dataPath} askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />;
       case 'profiles':

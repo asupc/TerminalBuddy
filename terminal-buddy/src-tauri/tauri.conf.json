@@ -5,7 +5,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build && cd web && npm run build",
+    "beforeBuildCommand": "npm run prepare:vscode-terminal && npm run build && cd web && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -31,6 +31,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": ["resources/vscode-terminal"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
