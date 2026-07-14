@@ -14,7 +14,7 @@ import './TabNav.css';
 interface TabSidebarProps {
   isActive: boolean;
   profiles: Profile[];
-  onStartTerminal: (profile: Profile) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string) => void;
   onStartBlankTerminal: (terminalType: 'powershell' | 'cmd') => void;
   onStartTextEditor: () => void;
 }
@@ -659,7 +659,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
               if (!profile) return null;
               return (
                 <div className="context-menu-item" onClick={() => {
-                  onStartTerminal(profile);
+                  onStartTerminal(profile, undefined, undefined, session.profileName);
                   setTabContextMenu(null);
                 }}>以此配置新建终端</div>
               );

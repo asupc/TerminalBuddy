@@ -462,7 +462,7 @@ function App() {
     }
   }, [setProfiles]);
 
-  const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, presetName?: string) => {
+  const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, presetName?: string, tabName?: string) => {
     try {
       if (profile.terminalType === 'mstsc') {
         await startMstsc(profile.id);
@@ -474,11 +474,11 @@ function App() {
       const terminalId = await startTerminal(profile.id, extraParams, rows, cols);
       await updateProfileLastUsed(profile.id);
       const theme = PRESET_THEMES.find(t => t.id === profile.colorTheme) || PRESET_THEMES[0];
-      const tabName = presetName ? `${profile.name}[${presetName}]` : profile.name;
+      const resolvedTabName = tabName ?? (presetName ? `${profile.name}[${presetName}]` : profile.name);
       addSession({
         id: terminalId,
         profileId: profile.id,
-        profileName: tabName,
+        profileName: resolvedTabName,
         terminalType: profile.terminalType,
         colorTheme: { background: theme.background, foreground: theme.foreground },
         tabColor: profile.tabColor || null,
