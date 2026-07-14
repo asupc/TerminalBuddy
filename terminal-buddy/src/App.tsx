@@ -9,6 +9,7 @@ import { TabNav } from './components/TabNav';
 import { ActivityBar, type SidebarPanel } from './components/ActivityBar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
+import { ClaudeDecisionDialog } from './components/ClaudeDecisionDialog';
 import { Toast } from './components/Toast';
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight, initFileTreeNav } from './stores/appStore';
@@ -645,6 +646,7 @@ function App() {
           </div>
         </div>
       )}
+      <ClaudeDecisionDialog />
       <Toast />
     </div>
   );

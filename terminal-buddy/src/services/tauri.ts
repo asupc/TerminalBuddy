@@ -139,6 +139,55 @@ export interface BotDecisionOption {
   selected?: boolean;
 }
 
+export interface ClaudeHookOption {
+  label: string;
+  description?: string;
+}
+
+export interface ClaudeHookQuestion {
+  question: string;
+  header: string;
+  options: ClaudeHookOption[];
+  multiSelect: boolean;
+}
+
+export interface ClaudeHookDecisionEvent {
+  decisionId: string;
+  terminalId: string;
+  questions: ClaudeHookQuestion[];
+  expiresAt: number;
+}
+
+export async function answerClaudeHookDecision(decisionId: string, answers: Record<string, string>): Promise<void> {
+  return invoke('answer_claude_hook_decision', { decisionId, answers });
+}
+
+export async function sendClaudeHookDecisionNotification(decisionId: string): Promise<void> {
+  return invoke('send_claude_hook_decision_notification', { decisionId });
+}
+
+export async function onClaudeHookDecision(callback: (payload: ClaudeHookDecisionEvent) => void): Promise<UnlistenFn> {
+  return listen('claude-hook-decision', event => callback(event.payload as ClaudeHookDecisionEvent));
+}
+
+export async function onClaudeHookDecisionExpired(callback: (decisionId: string) => void): Promise<UnlistenFn> {
+  return listen('claude-hook-decision-expired', event => {
+    const payload = event.payload as { decisionId: string };
+    callback(payload.decisionId);
+  });
+}
+
+export async function onClaudeHookDecisionResolved(callback: (decisionId: string) => void): Promise<UnlistenFn> {
+  return listen('claude-hook-decision-resolved', event => {
+    const payload = event.payload as { decisionId: string };
+    callback(payload.decisionId);
+  });
+}
+
+export async function onClaudeHookCompleted(callback: (payload: { terminalId: string; sessionId: string }) => void): Promise<UnlistenFn> {
+  return listen('claude-hook-completed', event => callback(event.payload as { terminalId: string; sessionId: string }));
+}
+
 export interface ScanBeginResult {
   platform: 'feishu' | 'dingtalk';
   qrUrl: string;

@@ -21,6 +21,7 @@ use crate::services::PathService;
 use crate::services::SettingsService;
 use crate::services::WebServiceState;
 use crate::services::VsCodeTerminalProcess;
+use crate::services::ClaudeHookService;
 use crate::services::ssh_session_service::SshSessionService;
 
 const TERMINAL_DATA_IDLE_BUFFER_INTERVAL: Duration = Duration::from_millis(25);
@@ -331,6 +332,7 @@ fn spawn_output_forwarder(
             // 4. Push a sessions update so the mobile nav screen removes the dead entry.
             ts.notify_sessions_changed();
         }
+        ClaudeHookService::unregister_terminal(&terminal_id);
     });
 }
 
@@ -401,9 +403,12 @@ impl TerminalService {
         } else {
             startup_commands
         };
-        let env_vars: Vec<(String, String)> = profile.as_ref()
+        let mut env_vars: Vec<(String, String)> = profile.as_ref()
             .map(|p| p.environment_variables.iter().map(|(k,v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
+        let hook_token = ClaudeHookService::register_terminal(&terminal_id);
+        env_vars.push(("TERMINAL_BUDDY_TERMINAL_ID".to_string(), terminal_id.clone()));
+        env_vars.push(("TERMINAL_BUDDY_HOOK_TOKEN".to_string(), hook_token));
 
         log_debug(&format!("[create] type={}, path={:?}, commands={}, envs={}",
             terminal_type, startup_path, startup_commands.len(), env_vars.len()));
@@ -421,6 +426,7 @@ impl TerminalService {
             &env_vars,
         )
         .map_err(|error| {
+            ClaudeHookService::unregister_terminal(&terminal_id);
             log_debug(&format!("[create] backend FAILED: {}", error));
             error
         })?;
@@ -630,6 +636,7 @@ impl TerminalService {
             instances.remove(id).ok_or("Terminal not found".to_string())?
         };
         instance.backend.close();
+        ClaudeHookService::unregister_terminal(id);
         self.notify_sessions_changed();
         Ok(())
     }
@@ -652,6 +659,7 @@ impl TerminalService {
             instances.remove(id).ok_or("Terminal not found".to_string())?
         };
         instance.backend.close();
+        ClaudeHookService::unregister_terminal(id);
         self.notify_sessions_changed();
         Ok(())
     }
@@ -671,15 +679,21 @@ impl TerminalService {
         let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
         let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
         let loading_mode = SettingsService::get_settings().terminal_loading_mode;
+        let hook_token = ClaudeHookService::register_terminal(&terminal_id);
+        let env_vars = vec![
+            ("TERMINAL_BUDDY_TERMINAL_ID".to_string(), terminal_id.clone()),
+            ("TERMINAL_BUDDY_HOOK_TOKEN".to_string(), hook_token),
+        ];
         let (backend, backend_reader, output_buffer_mode) = spawn_terminal_backend(
             &app,
             &loading_mode,
             init_rows,
             init_cols,
             startup_path,
-            &[],
+            &env_vars,
         )
         .map_err(|error| {
+            ClaudeHookService::unregister_terminal(&terminal_id);
             log_debug(&format!("[create-blank] backend FAILED: {}", error));
             error
         })?;

@@ -16,8 +16,7 @@ import { useAppStore } from '../stores/appStore';
 import { getTerminalSuggestions, type SuggestionItem } from '../data/commandTemplates';
 import type { TerminalColors } from '../utils/terminalTheme';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
-import { disposeClaudeTerminalNotification, handleClaudeTaskCompleted, handleClaudeTerminalOutput, hasRunningClaudeTask, markClaudeTaskPromptHidden, markClaudeTerminalInteraction } from '../services/claudeNotification';
-import { registerTerminalSnapshotProvider, renderTerminalSnapshot } from '../services/terminalSnapshot';
+import { cancelPendingClaudeCompletion } from '../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
@@ -715,61 +714,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       return false;
     };
 
-    const checkBufferForClaudeInput = () => {
-      if (disposed || !xtermRef.current) return false;
-      const terminal = xtermRef.current;
-      const buf = terminal.buffer.active;
-      const lines: string[] = [];
-      // 始终检查实时屏幕底部，不跟随用户向上滚动后的 viewport。
-      const firstRow = Math.max(0, buf.baseY);
-      const lastRow = Math.min(buf.length - 1, firstRow + terminal.rows - 1);
-      for (let row = firstRow; row <= lastRow; row++) {
-        const line = buf.getLine(row);
-        if (line) lines.push(line.translateToString(true));
-      }
-      const tailLines = lines.slice(-Math.min(8, lines.length));
-      const hasInputPrompt = tailLines.some(line => /^\s*[❯›]\s*(?:$|Try\s+["“])/i.test(line));
-      const hasBlockingPrompt = lines.some(line =>
-        /(?:esc|ctrl\+?c) to interrupt|Permission required|Enter to select|Esc to cancel|Do you want to|Would you like to|Claude needs your permission|Yes,?\s+and|No,?\s+and/i.test(line)
-      );
-      return hasInputPrompt && !hasBlockingPrompt;
-    };
-
-    const hasBusyClaudeSubagent = () => {
-      if (disposed || !xtermRef.current) return false;
-      const terminal = xtermRef.current;
-      const buf = terminal.buffer.active;
-      const firstRow = Math.max(0, buf.baseY);
-      const lastRow = Math.min(buf.length - 1, firstRow + terminal.rows - 1);
-      for (let row = firstRow; row <= lastRow; row++) {
-        const line = buf.getLine(row)?.translateToString(true) ?? '';
-        // “idle” 是 Claude Code 子代理完成后的状态；其余明确的运行状态都视为仍在执行。
-        // 限制 agent 与状态词的距离，避免普通回答中两个无关单词碰巧出现在同一行。
-        if (/(?:\b(?:sub-?agents?|agents?)\b.{0,48}\b(?:working|running|thinking|processing|queued|pending|active|in[ -]?progress)\b|\b(?:working|running|thinking|processing|queued|pending|active|in[ -]?progress)\b.{0,48}\b(?:sub-?agents?|agents?)\b)/i.test(line)) return true;
-      }
-      return false;
-    };
-
     const checkWorkingState = () => {
       if (disposed) return;
-      if (checkBufferForClaudeInput()) {
-        if (!hasRunningClaudeTask(terminalId)) {
-          useAppStore.getState().setSessionWorking(terminalId, false);
-          if (workingFallback) clearTimeout(workingFallback);
-          return;
-        }
-        if (handleClaudeTaskCompleted(terminalId, hasBusyClaudeSubagent())) {
-          useAppStore.getState().setSessionWorking(terminalId, false);
-          if (workingFallback) clearTimeout(workingFallback);
-        } else {
-          // spinner 或子代理仍在活动时保持工作状态，并持续复核直到它们停止。
-          useAppStore.getState().setSessionWorking(terminalId, true);
-          if (workingFallback) clearTimeout(workingFallback);
-          workingDebounce = setTimeout(checkWorkingState, 800);
-        }
-        return;
-      }
-      markClaudeTaskPromptHidden(terminalId);
       if (checkBufferForPrompt()) {
         useAppStore.getState().setSessionWorking(terminalId, false);
         if (workingFallback) clearTimeout(workingFallback);
@@ -799,7 +745,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
-      handleClaudeTerminalOutput(terminalId, output);
       writeTerminalOutput(output);
 
       // Working state: reset debounce on each output, check xterm buffer for prompt
@@ -807,10 +752,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (workingFallback) clearTimeout(workingFallback);
       // Quick check after 300ms — xterm buffer has clean text (no ANSI codes)
       workingDebounce = setTimeout(checkWorkingState, 300);
-      // 普通命令静默 1.5 秒后恢复空闲；Claude 任务由其完成状态机负责，不能提前熄灭工作状态。
+      // 静默一段时间后恢复空闲；Claude 的精确完成状态由 Stop Hook 更新。
       workingFallback = setTimeout(() => {
         if (!disposed) {
-          useAppStore.getState().setSessionWorking(terminalId, hasRunningClaudeTask(terminalId));
+          useAppStore.getState().setSessionWorking(terminalId, false);
         }
       }, 1500);
     };
@@ -906,15 +851,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       const tOpen = performance.now();
       terminal.open(terminalRef.current!);
-      const unregisterSnapshot = registerTerminalSnapshotProvider(terminalId, async () => {
-        const session = useAppStore.getState().sessions.find(item => item.id === terminalId);
-        return renderTerminalSnapshot(
-          terminal,
-          session?.profileName || '终端',
-          colorThemeRef.current,
-        );
-      });
-      cleanupFns.push(unregisterSnapshot);
       void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
       const tWebgl = performance.now();
@@ -1195,9 +1131,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       terminal.onData((data) => {
-        markClaudeTerminalInteraction(terminalId, data === '\r' || data === '\n');
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
+          cancelPendingClaudeCompletion(terminalId);
           useAppStore.getState().setSessionWorking(terminalId, true);
           updateAutocomplete(null);
           // Enter 后稍等缓冲区刷新，检测 cd 命令并记录目录
@@ -1606,7 +1542,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     return () => {
       disposed = true;
-      disposeClaudeTerminalNotification(terminalId);
+      cancelPendingClaudeCompletion(terminalId);
       if (autocompleteTimer) {
         clearTimeout(autocompleteTimer);
         autocompleteTimer = null;

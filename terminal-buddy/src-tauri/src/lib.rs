@@ -16,6 +16,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 use std::fs::OpenOptions;
 use std::io::Write;
+use crate::web::handlers::claude_hook_handler::{answer_claude_hook_decision, send_claude_hook_decision_notification};
 
 /// 进程启动时间锚点；全链路启动日志统一以此为 0 点。
 static BOOT_START: OnceLock<Instant> = OnceLock::new();
@@ -176,6 +177,14 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             boot_log("Feishu long-connection tasks synchronized");
 
+            if let Err(error) = crate::services::install_claude_http_hooks() {
+                boot_log(format!("Claude HTTP hooks installation failed: {}", error));
+            } else {
+                boot_log("Claude HTTP hooks installed");
+            }
+            tauri::async_runtime::spawn(crate::web::claude_hook_server::run(app.handle().clone()));
+            boot_log("Claude hook HTTP server task spawned");
+
             boot_log("setup done — WebView about to load URL");
             Ok(())
         })
@@ -216,6 +225,8 @@ pub fn run() {
             bot_scan_begin,
             bot_scan_poll,
             cancel_bot_decision,
+            answer_claude_hook_decision,
+            send_claude_hook_decision_notification,
             get_terminal_process_id,
             get_terminal_loading_mode,
             write_to_terminal,
