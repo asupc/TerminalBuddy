@@ -71,7 +71,6 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
             <span>VS Code</span>
           </label>
         </div>
-        <p className="settings-desc">首次启动使用默认方案；选择后会记住。切换仅影响新建终端，已有终端保持创建时使用的后端。</p>
         <p className={`settings-desc terminal-loading-support ${vsCodeSupport?.available ? 'available' : 'unavailable'}`}>
           {vsCodeSupport === null
             ? '正在检测系统 Node.js 和 VS Code 终端插件...'

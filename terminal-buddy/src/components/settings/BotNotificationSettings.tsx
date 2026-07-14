@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Plus, QrCode, Save, Send, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, Plus, QrCode, Send, Trash2 } from 'lucide-react';
 import {
   getBotSettings,
   getBotCallbackBaseUrl,
@@ -27,6 +27,8 @@ const EMPTY_SETTINGS: BotSettings = {
   appendEnter: true,
   channels: [],
 };
+
+const AUTOSAVE_DELAY_MS = 500;
 
 function normalizeSettings(settings: BotSettings): BotSettings {
   return {
@@ -69,12 +71,104 @@ export function BotNotificationSettings() {
   const [callbackBaseUrl, setCallbackBaseUrl] = useState('http://<电脑IP>:9600');
   const [scanChannelId, setScanChannelId] = useState<string | null>(null);
 
+  const settingsRef = useRef(settings);
+  const latestSavedSettingsRef = useRef(settings);
+  const lastSavedStateSignatureRef = useRef('');
+  const lastSubmittedSignatureRef = useRef('');
+  const autosaveReadyRef = useRef(false);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+  const saveQueueRef = useRef<Promise<BotSettings>>(Promise.resolve(settings));
+
+  settingsRef.current = settings;
+
+  const persist = (snapshot: BotSettings, successText = '机器人通知设置已自动保存'): Promise<BotSettings> => {
+    const snapshotSignature = JSON.stringify(snapshot);
+    const request = saveQueueRef.current
+      .catch(() => latestSavedSettingsRef.current)
+      .then(async () => {
+        if (snapshotSignature === lastSubmittedSignatureRef.current) {
+          return latestSavedSettingsRef.current;
+        }
+
+        if (mountedRef.current) setSaving(true);
+        try {
+          const saved = normalizeSettings(await saveBotSettings(snapshot));
+          latestSavedSettingsRef.current = saved;
+          lastSubmittedSignatureRef.current = snapshotSignature;
+          lastSavedStateSignatureRef.current = JSON.stringify(saved);
+
+          if (mountedRef.current && JSON.stringify(settingsRef.current) === snapshotSignature) {
+            settingsRef.current = saved;
+            setSettings(saved);
+            setStatus({ type: 'success', text: successText });
+          }
+          return saved;
+        } catch (error) {
+          if (mountedRef.current && JSON.stringify(settingsRef.current) === snapshotSignature) {
+            setStatus({ type: 'error', text: `自动保存失败：${String(error)}` });
+          }
+          throw error;
+        } finally {
+          if (mountedRef.current) setSaving(false);
+        }
+      });
+
+    saveQueueRef.current = request.catch(() => latestSavedSettingsRef.current);
+    return request;
+  };
+
   useEffect(() => {
     void getBotCallbackBaseUrl().then(setCallbackBaseUrl).catch(() => {});
     getBotSettings()
-      .then(value => setSettings(normalizeSettings(value)))
+      .then(value => {
+        const loaded = normalizeSettings(value);
+        const signature = JSON.stringify(loaded);
+        settingsRef.current = loaded;
+        latestSavedSettingsRef.current = loaded;
+        lastSavedStateSignatureRef.current = signature;
+        lastSubmittedSignatureRef.current = signature;
+        autosaveReadyRef.current = true;
+        setSettings(loaded);
+      })
       .catch(error => setStatus({ type: 'error', text: `读取设置失败：${String(error)}` }))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!autosaveReadyRef.current) return;
+    const signature = JSON.stringify(settings);
+    if (signature === lastSavedStateSignatureRef.current) return;
+
+    autosaveTimerRef.current = setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void persist(settings).catch(() => {});
+    }, AUTOSAVE_DELAY_MS);
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [settings]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      const pending = settingsRef.current;
+      const signature = JSON.stringify(pending);
+      if (autosaveReadyRef.current
+        && signature !== lastSavedStateSignatureRef.current
+        && signature !== lastSubmittedSignatureRef.current) {
+        void persist(pending).catch(() => {});
+      }
+    };
   }, []);
 
   const enabledCount = useMemo(
@@ -95,25 +189,10 @@ export function BotNotificationSettings() {
     setStatus(null);
   };
 
-  const persist = async (): Promise<BotSettings> => {
-    setSaving(true);
-    try {
-      const saved = normalizeSettings(await saveBotSettings(settings));
-      setSettings(saved);
-      setStatus({ type: 'success', text: '机器人通知设置已保存' });
-      return saved;
-    } catch (error) {
-      setStatus({ type: 'error', text: `保存失败：${String(error)}` });
-      throw error;
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleTest = async (channelId: string) => {
     setTestingId(channelId);
     try {
-      await persist();
+      await persist(settings);
       const result = await testBotChannel(channelId);
       setStatus(result.success
         ? { type: 'success', text: `测试消息已发送到「${result.channelName}」` }
@@ -143,17 +222,13 @@ export function BotNotificationSettings() {
       }),
     });
     setScanChannelId(null);
-    setSaving(true);
+    settingsRef.current = next;
+    setSettings(next);
     setStatus(null);
     try {
-      const saved = await saveBotSettings(next);
-      setSettings(saved);
-      setStatus({ type: 'success', text: '扫码授权成功，凭证已自动保存。' });
+      await persist(next, '扫码授权成功，凭证已自动保存。');
     } catch (error) {
-      setSettings(next);
       setStatus({ type: 'error', text: `凭证已填入但保存失败：${String(error)}` });
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -166,10 +241,6 @@ export function BotNotificationSettings() {
           <div className="bot-settings-title">机器人通知</div>
           <div className="bot-settings-subtitle">已启用 {enabledCount} 个通道</div>
         </div>
-        <button className="btn-primary bot-icon-text-btn" onClick={() => void persist()} disabled={saving}>
-          <Save size={15} aria-hidden="true" />
-          {saving ? '保存中' : '保存'}
-        </button>
       </div>
 
       <div className="settings-section bot-global-options">
@@ -339,7 +410,15 @@ export function BotNotificationSettings() {
         })}
       </div>
 
-      {status && <div className={`bot-settings-status ${status.type}`}>{status.text}</div>}
+      {(saving || status) && (
+        <div
+          className={`bot-settings-status ${saving ? 'saving' : status?.type ?? ''}`}
+          role={status?.type === 'error' ? 'alert' : 'status'}
+          aria-live={status?.type === 'error' ? 'assertive' : 'polite'}
+        >
+          {saving ? '正在自动保存…' : status?.text}
+        </div>
+      )}
 
       {scanChannelId && (
         <BotScanDialog

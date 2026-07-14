@@ -1632,6 +1632,11 @@ input.data-path-input {
   color: #f06a6a;
 }
 
+.bot-settings-status.saving {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
 @media (max-width: 760px) {
   .bot-global-options,
   .bot-channel-form {
