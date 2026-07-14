@@ -325,10 +325,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                 );
               })}
             </div>
-
-            <div className="settings-footer">
-              <button className="btn-primary" type="button" onClick={onClose}>完成</button>
-            </div>
           </div>
         </div>
 

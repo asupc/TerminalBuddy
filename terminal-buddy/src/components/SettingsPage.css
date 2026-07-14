@@ -257,16 +257,6 @@
   font-size: 13px;
 }
 
-.settings-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 10px 32px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-primary);
-  flex-shrink: 0;
-}
-
 @keyframes settings-overlay-enter {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -312,10 +302,6 @@
 
   .settings-panel {
     padding: 18px;
-  }
-
-  .settings-footer {
-    padding-inline: 18px;
   }
 
 }
