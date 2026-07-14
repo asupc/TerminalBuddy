@@ -1790,8 +1790,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (!isActiveRef.current || readOnly) return;
         const paths = event.payload.paths;
         if (paths && paths.length > 0) {
-          const text = paths.map(p => `"${p}"`).join(' ');
+          const text = paths.join(' ');
           onOutputRef.current(terminalId, text);
+          xtermRef.current?.focus();
         }
       } else {
         // 'leave' / cancel
@@ -1817,9 +1818,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const paths = useAppStore.getState().dragPaths;
       if (!paths || !isActiveRef.current || readOnly) return;
       setInternalDragOver(false);
-      const text = paths.map(p => `"${p}"`).join(' ');
+      const text = paths.join(' ');
       onOutputRef.current(terminalId, text);
       useAppStore.getState().setDragPaths(null);
+      xtermRef.current?.focus();
     };
 
     const handleMouseMove = (e: MouseEvent) => {
