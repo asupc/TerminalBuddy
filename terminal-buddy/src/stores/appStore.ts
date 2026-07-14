@@ -737,6 +737,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessionDirectories: {},
   setSessionDirectory: (sessionId, path) => set((state) => ({
     sessionDirectories: { ...state.sessionDirectories, [sessionId]: path },
+    ...(state.activeSessionId === sessionId ? { currentDirectory: path } : {}),
   })),
   claudeSessionIds: {},
   setClaudeSessionId: (sessionId, claudeSessionId) => set((state) => ({
