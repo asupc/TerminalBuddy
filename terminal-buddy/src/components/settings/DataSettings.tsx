@@ -1,5 +1,6 @@
 import { FC, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { Download, FolderOpen, Upload } from 'lucide-react';
 import { setDataPath as setDataPathCmd, exportAllData, importAllData } from '../../services/tauri';
 
 interface DataSettingsProps {
@@ -32,7 +33,10 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
                 if (selected) setPendingDataPath(selected as string);
               } catch {}
             }}
-          >浏览</button>
+          >
+            <FolderOpen size={15} aria-hidden="true" />
+            浏览
+          </button>
           {pendingDataPath && pendingDataPath !== dataPath && (
             <button
               className="btn-primary"
@@ -71,7 +75,10 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
             } catch (err) {
               alert('导出失败: ' + String(err));
             }
-          }}>导出全部数据</button>
+          }}>
+            <Download size={15} aria-hidden="true" />
+            导出全部数据
+          </button>
           <button className="btn-secondary" onClick={async () => {
             try {
               const selected = await open({
@@ -93,7 +100,10 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
             } catch (err) {
               alert('导入失败: ' + String(err));
             }
-          }}>导入全部数据</button>
+          }}>
+            <Upload size={15} aria-hidden="true" />
+            导入全部数据
+          </button>
         </div>
         <p className="settings-desc">将所有数据（连接、主题、命令模板等）导出为单个 JSON 文件，导入时同理</p>
       </div>

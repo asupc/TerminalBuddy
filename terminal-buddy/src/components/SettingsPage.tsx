@@ -282,20 +282,27 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
           <div className="settings-body">
             <div className="settings-content">
-              {SECTIONS.filter(section => visitedSections.has(section.id)).map(section => (
-                <section
-                  key={section.id}
-                  id={`settings-panel-${section.id}`}
-                  className="settings-panel"
-                  role="tabpanel"
-                  aria-labelledby={`settings-tab-${section.id}`}
-                  hidden={activeSection !== section.id}
-                >
-                  <Suspense fallback={<div className="settings-panel-loading" aria-live="polite">加载设置…</div>}>
-                    {renderPanel(section.id)}
-                  </Suspense>
-                </section>
-              ))}
+              {SECTIONS.filter(section => visitedSections.has(section.id)).map(section => {
+                const SectionIcon = section.icon;
+                return (
+                  <section
+                    key={section.id}
+                    id={`settings-panel-${section.id}`}
+                    className="settings-panel"
+                    role="tabpanel"
+                    aria-labelledby={`settings-tab-${section.id}`}
+                    hidden={activeSection !== section.id}
+                  >
+                    <div className="settings-panel-header" aria-hidden="true">
+                      <SectionIcon size={18} />
+                      <h3>{section.label}</h3>
+                    </div>
+                    <Suspense fallback={<div className="settings-panel-loading" aria-live="polite">加载设置…</div>}>
+                      {renderPanel(section.id)}
+                    </Suspense>
+                  </section>
+                );
+              })}
             </div>
 
             <div className="settings-footer">

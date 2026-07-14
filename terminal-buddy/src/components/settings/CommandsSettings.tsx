@@ -1,5 +1,5 @@
 import { FC, useEffect, useMemo, useState } from 'react';
-import { Eye, EyeOff, Pencil, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Pencil, Plus, Trash2 } from 'lucide-react';
 import {
   getCmdOverrides,
   getCustomCommands,
@@ -87,7 +87,10 @@ export const CommandsSettings: FC<CommandsSettingsProps> = ({ askConfirm, dismis
           value={search}
           onChange={event => setSearch(event.target.value)}
         />
-        <button className="settings-add-btn" type="button" onClick={() => setAddingCustom(true)}>+ 自定义</button>
+        <button className="settings-add-btn" type="button" onClick={() => setAddingCustom(true)}>
+          <Plus size={15} aria-hidden="true" />
+          自定义
+        </button>
       </div>
 
       {addingCustom && (
