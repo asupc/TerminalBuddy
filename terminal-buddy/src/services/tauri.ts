@@ -79,7 +79,7 @@ export async function onClaudeNotificationActivated(callback: (terminalId: strin
 export interface BotChannelConfig {
   id: string;
   name: string;
-  platform: 'feishu' | 'dingtalk' | 'wecom' | 'qq' | 'bridge';
+  platform: 'feishu' | 'dingtalk' | 'qq' | 'bridge';
   enabled: boolean;
   targetId: string;
   receiveIdType: string;
@@ -123,6 +123,26 @@ export interface BotNotificationRequest {
   screenshotBase64?: string;
 }
 
+export interface ScanBeginResult {
+  platform: 'feishu' | 'dingtalk';
+  qrUrl: string;
+  handle: string;
+  interval: number;
+  expireIn: number;
+}
+
+export interface ScanCredentials {
+  appId: string;
+  appSecret: string;
+  targetId?: string;
+}
+
+export interface ScanPollResult {
+  status: 'waiting' | 'success' | 'expired' | 'failed';
+  credentials?: ScanCredentials;
+  error?: string;
+}
+
 export async function getBotSettings(): Promise<BotSettings> {
   return invoke('get_bot_settings');
 }
@@ -143,6 +163,14 @@ export async function sendBotNotification(request: BotNotificationRequest): Prom
 
 export async function testBotChannel(channelId: string): Promise<BotDeliveryReport> {
   return invoke('test_bot_channel', { channelId });
+}
+
+export async function botScanBegin(platform: 'feishu' | 'dingtalk'): Promise<ScanBeginResult> {
+  return invoke('bot_scan_begin', { platform });
+}
+
+export async function botScanPoll(begin: ScanBeginResult): Promise<ScanPollResult> {
+  return invoke('bot_scan_poll', { begin });
 }
 
 export async function cancelBotDecision(decisionId: string): Promise<void> {

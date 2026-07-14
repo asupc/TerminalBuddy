@@ -38,10 +38,7 @@ include_dir = "0.7"
 hex = "0.4"
 rand = "0.8"
 base64 = "0.22"
-hmac = "0.12"
-sha2 = "0.10"
 urlencoding = "2"
-md5 = "0.7"
 ssh2 = "0.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_Registry", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_ToolHelp"] }

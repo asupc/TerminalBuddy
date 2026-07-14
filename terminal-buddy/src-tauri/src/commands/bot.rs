@@ -3,14 +3,14 @@ use crate::models::{
     BotChannelConfig, BotDeliveryReport, BotNotificationRequest, BotSettings, BridgeInboundMessage,
     DecisionBinding,
 };
-use crate::services::{BotBindingService, BotSettingsService};
+use crate::services::{
+    begin_scan, poll_scan, BotBindingService, BotSettingsService, ScanBeginResult, ScanPollResult,
+};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use chrono::{Duration, Utc};
-use hmac::{Hmac, Mac};
 use reqwest::Client;
 use serde_json::{json, Value};
-use sha2::Sha256;
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug)]
@@ -204,28 +204,27 @@ async fn send_feishu(
     })
 }
 
-fn signed_dingtalk_url(channel: &BotChannelConfig) -> Result<String, String> {
-    if channel.secret.is_empty() {
-        return Ok(channel.webhook_url.clone());
-    }
-    let timestamp = Utc::now().timestamp_millis();
-    let payload = format!("{}\n{}", timestamp, channel.secret);
-    let mut mac = Hmac::<Sha256>::new_from_slice(channel.secret.as_bytes())
-        .map_err(|error| format!("初始化 DingTalk 签名失败: {}", error))?;
-    mac.update(payload.as_bytes());
-    let sign = BASE64_STANDARD.encode(mac.finalize().into_bytes());
-    let separator = if channel.webhook_url.contains('?') {
-        '&'
-    } else {
-        '?'
-    };
-    Ok(format!(
-        "{}{}timestamp={}&sign={}",
-        channel.webhook_url,
-        separator,
-        timestamp,
-        urlencoding::encode(&sign)
-    ))
+async fn dingtalk_access_token(
+    client: &Client,
+    channel: &BotChannelConfig,
+) -> Result<String, String> {
+    let response = client
+        .post("https://api.dingtalk.com/v1.0/oauth2/accessToken")
+        .json(&json!({
+            "appKey": channel.app_id,
+            "appSecret": channel.secret,
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("请求钉钉 access_token 失败: {}", error))?;
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("解析钉钉 access_token 响应失败: {}", error))?;
+    body.get("accessToken")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("获取钉钉 access_token 失败: {}", body))
 }
 
 async fn send_dingtalk(
@@ -233,77 +232,46 @@ async fn send_dingtalk(
     channel: &BotChannelConfig,
     body: &str,
 ) -> Result<AdapterResult, String> {
-    if channel.webhook_url.is_empty() {
-        return Err("DingTalk 通道需要 Webhook URL".to_string());
+    if channel.app_id.is_empty() || channel.secret.is_empty() {
+        return Err("钉钉通道需要 AppKey 与 AppSecret，请扫码配置".to_string());
     }
+    if channel.target_id.is_empty() {
+        return Err("钉钉通道需要收件人 userId".to_string());
+    }
+    let token = dingtalk_access_token(client, channel).await?;
+    // sampleText 的 msgParam 为 stringified JSON {"content": "..."}。
+    let msg_param = serde_json::to_string(&json!({ "content": body }))
+        .map_err(|error| format!("构造钉钉消息参数失败: {}", error))?;
     let response = client
-        .post(signed_dingtalk_url(channel)?)
-        .json(&json!({ "msgtype": "text", "text": { "content": body } }))
+        .post("https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend")
+        .header("x-acs-dingtalk-access-token", &token)
+        .json(&json!({
+            "robotCode": channel.app_id,
+            "userIds": [channel.target_id],
+            "msgKey": "sampleText",
+            "msgParam": msg_param,
+        }))
         .send()
         .await
-        .map_err(|error| format!("发送 DingTalk 消息失败: {}", error))?;
+        .map_err(|error| format!("发送钉钉消息失败: {}", error))?;
+    let status = response.status();
     let result: Value = response
         .json()
         .await
-        .map_err(|error| format!("解析 DingTalk 响应失败: {}", error))?;
-    if result.get("errcode").and_then(Value::as_i64).unwrap_or(-1) != 0 {
-        return Err(format!("发送 DingTalk 消息失败: {}", result));
+        .map_err(|error| format!("解析钉钉消息响应失败: {}", error))?;
+    if !status.is_success() {
+        return Err(format!("发送钉钉消息失败: {}", result));
     }
+    // oToMessages/batchSend 返回 {messageId: {userId: msgId}}，取第一条。
+    let message_id = result
+        .pointer("/messageId")
+        .and_then(Value::as_object)
+        .and_then(|map| map.values().next())
+        .and_then(Value::as_str)
+        .map(str::to_string);
     Ok(AdapterResult {
-        message_id: None,
+        message_id,
         screenshot_sent: false,
-    })
-}
-
-async fn send_wecom(
-    client: &Client,
-    channel: &BotChannelConfig,
-    body: &str,
-    screenshot: Option<&[u8]>,
-) -> Result<AdapterResult, String> {
-    if channel.webhook_url.is_empty() {
-        return Err("企业微信通道需要 Webhook URL".to_string());
-    }
-    let response = client
-        .post(&channel.webhook_url)
-        .json(&json!({ "msgtype": "text", "text": { "content": body } }))
-        .send()
-        .await
-        .map_err(|error| format!("发送企业微信消息失败: {}", error))?;
-    let result: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("解析企业微信响应失败: {}", error))?;
-    if result.get("errcode").and_then(Value::as_i64).unwrap_or(-1) != 0 {
-        return Err(format!("发送企业微信消息失败: {}", result));
-    }
-    let mut screenshot_sent = false;
-    if let Some(bytes) = screenshot {
-        let image_response = client
-            .post(&channel.webhook_url)
-            .json(&json!({
-                "msgtype": "image",
-                "image": {
-                    "base64": BASE64_STANDARD.encode(bytes),
-                    "md5": format!("{:x}", md5::compute(bytes)),
-                }
-            }))
-            .send()
-            .await
-            .map_err(|error| format!("发送企业微信终端截图失败: {}", error))?;
-        let image_result: Value = image_response
-            .json()
-            .await
-            .map_err(|error| format!("解析企业微信图片响应失败: {}", error))?;
-        screenshot_sent = image_result
-            .get("errcode")
-            .and_then(Value::as_i64)
-            .unwrap_or(-1)
-            == 0;
-    }
-    Ok(AdapterResult {
-        message_id: None,
-        screenshot_sent,
     })
 }
 
@@ -367,7 +335,6 @@ async fn dispatch_channel(
     match channel.platform.as_str() {
         "feishu" => send_feishu(client, channel, body, screenshot).await,
         "dingtalk" => send_dingtalk(client, channel, body).await,
-        "wecom" => send_wecom(client, channel, body, screenshot).await,
         "qq" | "bridge" => send_bridge(client, channel, request, body).await,
         other => Err(format!("不支持的机器人平台: {}", other)),
     }
@@ -587,4 +554,14 @@ pub fn process_bot_reply(
         }),
     );
     Ok(format!("已发送到终端：{}", binding.terminal_name))
+}
+
+#[tauri::command]
+pub async fn bot_scan_begin(platform: String) -> Result<ScanBeginResult, String> {
+    begin_scan(&platform).await
+}
+
+#[tauri::command]
+pub async fn bot_scan_poll(begin: ScanBeginResult) -> Result<ScanPollResult, String> {
+    poll_scan(&begin).await
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Plus, Save, Send, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, QrCode, Save, Send, Trash2 } from 'lucide-react';
 import {
   getBotSettings,
   getBotCallbackBaseUrl,
@@ -7,12 +7,13 @@ import {
   testBotChannel,
   type BotChannelConfig,
   type BotSettings,
+  type ScanCredentials,
 } from '../../services/tauri';
+import { BotScanDialog } from './BotScanDialog';
 
 const PLATFORM_OPTIONS: ReadonlyArray<{ value: BotChannelConfig['platform']; label: string; bidirectional: boolean }> = [
   { value: 'feishu', label: '飞书应用机器人', bidirectional: true },
-  { value: 'dingtalk', label: 'DingTalk 群机器人', bidirectional: false },
-  { value: 'wecom', label: '企业微信群机器人', bidirectional: false },
+  { value: 'dingtalk', label: '钉钉应用机器人', bidirectional: false },
   { value: 'qq', label: 'QQ 机器人桥接', bidirectional: true },
   { value: 'bridge', label: '通用机器人桥接', bidirectional: true },
 ];
@@ -66,6 +67,7 @@ export function BotNotificationSettings() {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [callbackBaseUrl, setCallbackBaseUrl] = useState('http://<电脑IP>:9600');
+  const [scanChannelId, setScanChannelId] = useState<string | null>(null);
 
   useEffect(() => {
     void getBotCallbackBaseUrl().then(setCallbackBaseUrl).catch(() => {});
@@ -121,6 +123,27 @@ export function BotNotificationSettings() {
     } finally {
       setTestingId(null);
     }
+  };
+
+  // 扫码成功后回填凭证；飞书自动用扫码人 open_id 作为接收目标。
+  const handleScanSuccess = (channelId: string) => (credentials: ScanCredentials) => {
+    setSettings(previous => ({
+      ...previous,
+      channels: previous.channels.map(channel => {
+        if (channel.id !== channelId) return channel;
+        const receiveIdType = channel.platform === 'feishu' && credentials.targetId ? 'open_id' : channel.receiveIdType;
+        return {
+          ...channel,
+          appId: credentials.appId,
+          secret: credentials.appSecret,
+          hasSecret: true,
+          targetId: credentials.targetId || channel.targetId,
+          receiveIdType,
+        };
+      }),
+    }));
+    setScanChannelId(null);
+    setStatus({ type: 'success', text: '扫码授权成功，凭证已填入，请点击保存。' });
   };
 
   if (loading) return <div className="settings-panel-loading">正在读取机器人设置...</div>;
@@ -192,8 +215,8 @@ export function BotNotificationSettings() {
         {settings.channels.map(channel => {
           const platform = PLATFORM_OPTIONS.find(option => option.value === channel.platform) || PLATFORM_OPTIONS[0];
           const expanded = expandedId === channel.id;
-          const usesAppCredentials = channel.platform === 'feishu';
-          const usesWebhook = channel.platform !== 'feishu';
+          const usesAppCredentials = channel.platform === 'feishu' || channel.platform === 'dingtalk';
+          const usesWebhook = channel.platform !== 'feishu' && channel.platform !== 'dingtalk';
           const supportsInbound = platform.bidirectional;
           return (
             <div className="bot-channel-item" key={channel.id}>
@@ -238,20 +261,28 @@ export function BotNotificationSettings() {
                   </label>
                   {usesAppCredentials && (
                     <>
+                      <div className="bot-scan-trigger bot-form-wide">
+                        <button type="button" className="settings-add-btn bot-icon-text-btn" onClick={() => setScanChannelId(channel.id)}>
+                          <QrCode size={15} aria-hidden="true" />扫码配置
+                        </button>
+                        <span className="bot-form-hint">用 {platform.label} App 扫码自动获取凭证</span>
+                      </div>
                       <label><span>App ID</span><input value={channel.appId} onChange={event => updateChannel(channel.id, 'appId', event.target.value)} /></label>
                       <label>
                         <span>App Secret</span>
                         <input type="password" value={channel.secret} onChange={event => updateChannel(channel.id, 'secret', event.target.value)} placeholder={channel.hasSecret ? '已配置，留空保持不变' : '请输入 App Secret'} />
                       </label>
-                      <label>
-                        <span>接收 ID 类型</span>
-                        <select value={channel.receiveIdType} onChange={event => updateChannel(channel.id, 'receiveIdType', event.target.value)}>
-                          <option value="chat_id">chat_id</option>
-                          <option value="open_id">open_id</option>
-                          <option value="user_id">user_id</option>
-                          <option value="email">email</option>
-                        </select>
-                      </label>
+                      {channel.platform === 'feishu' && (
+                        <label>
+                          <span>接收 ID 类型</span>
+                          <select value={channel.receiveIdType} onChange={event => updateChannel(channel.id, 'receiveIdType', event.target.value)}>
+                            <option value="chat_id">chat_id</option>
+                            <option value="open_id">open_id</option>
+                            <option value="user_id">user_id</option>
+                            <option value="email">email</option>
+                          </select>
+                        </label>
+                      )}
                     </>
                   )}
                   {usesWebhook && (
@@ -260,13 +291,16 @@ export function BotNotificationSettings() {
                       <input value={channel.webhookUrl} onChange={event => updateChannel(channel.id, 'webhookUrl', event.target.value)} placeholder="https://" />
                     </label>
                   )}
-                  {(channel.platform === 'dingtalk' || supportsInbound) && !usesAppCredentials && (
+                  {usesWebhook && supportsInbound && (
                     <label>
-                      <span>{supportsInbound ? '发送鉴权 Token' : '签名 Secret'}</span>
+                      <span>发送鉴权 Token</span>
                       <input type="password" value={channel.secret} onChange={event => updateChannel(channel.id, 'secret', event.target.value)} placeholder={channel.hasSecret ? '已配置，留空保持不变' : '可选'} />
                     </label>
                   )}
-                  <label><span>目标会话 ID</span><input value={channel.targetId} onChange={event => updateChannel(channel.id, 'targetId', event.target.value)} /></label>
+                  <label>
+                    <span>{channel.platform === 'dingtalk' ? '收件人 userId' : '目标会话 ID'}</span>
+                    <input value={channel.targetId} onChange={event => updateChannel(channel.id, 'targetId', event.target.value)} placeholder={channel.platform === 'dingtalk' ? '在钉钉管理后台获取用户 userId' : ''} />
+                  </label>
                   {supportsInbound && (
                     <>
                       <label>
@@ -295,6 +329,14 @@ export function BotNotificationSettings() {
       </div>
 
       {status && <div className={`bot-settings-status ${status.type}`}>{status.text}</div>}
+
+      {scanChannelId && (
+        <BotScanDialog
+          platform={(settings.channels.find(channel => channel.id === scanChannelId)?.platform ?? 'feishu') as 'feishu' | 'dingtalk'}
+          onClose={() => setScanChannelId(null)}
+          onSuccess={handleScanSuccess(scanChannelId)}
+        />
+      )}
     </div>
   );
 }

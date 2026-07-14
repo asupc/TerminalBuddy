@@ -15,7 +15,7 @@ const DETECTION_DELAY_MS = 300;
 const DETECTION_BUFFER_SIZE = 12_000;
 const NOTIFICATION_COOLDOWN_MS = 5_000;
 const SPINNER_ACTIVITY_GRACE_MS = 1_200;
-const COMPLETION_PROMPT_STABLE_MS = 650;
+const COMPLETION_PROMPT_STABLE_MS = 10_000;
 
 type DetectorState = {
   text: string;
@@ -266,6 +266,11 @@ export function handleClaudeTerminalOutput(terminalId: string, output: string): 
   const cleanOutput = stripTerminalControls(output);
   state.text = (state.text + cleanOutput).slice(-DETECTION_BUFFER_SIZE);
   state.claudeSeen ||= CLAUDE_MARKERS.some(marker => marker.test(state.text));
+  // 任意新输出都意味着终端仍在刷新，完成判定的稳定期必须是无输出的静默期；
+  // 只要还有文本在刷新，就不能把出现的输入提示符当作任务完成。
+  if (state.taskRunning && state.completionPromptSeenAt) {
+    state.completionPromptSeenAt = 0;
+  }
   if (SPINNER_FRAME_MARKER.test(output)) {
     state.lastSpinnerAt = Date.now();
     // 延迟通知期间 spinner 又开始刷新，说明之前的“完成”判断不成立。
