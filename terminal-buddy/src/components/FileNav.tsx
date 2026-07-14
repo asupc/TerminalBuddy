@@ -308,19 +308,23 @@ export const FileNav: FC = () => {
 
   // Load root directory on mount
   useEffect(() => {
+    let cancelled = false;
+
     const loadRoot = async () => {
+      if (useAppStore.getState().currentDirectory) return;
       try {
         const defaultPath = 'C:\\';
         const entries = await listDirectory(defaultPath, exclusionPatterns);
-        setRootNodes(entries);
-        if (!currentDirectory) {
+        if (!cancelled && !useAppStore.getState().currentDirectory) {
+          setRootNodes(entries);
           setCurrentDirectory(defaultPath);
         }
       } catch (err) {
-        console.error('Failed to load root directory:', err);
+        if (!cancelled) console.error('Failed to load root directory:', err);
       }
     };
     loadRoot();
+    return () => { cancelled = true; };
   }, [exclusionPatterns]);
 
   const navigateTo = useCallback((path: string) => {
@@ -359,19 +363,23 @@ export const FileNav: FC = () => {
   useEffect(() => {
     if (!currentDirectory) return;
 
+    let cancelled = false;
     setRootExpanded(true);
 
     const loadDirectory = async () => {
       try {
         const entries = await listDirectory(currentDirectory, exclusionPatterns);
+        if (cancelled) return;
         setRootNodes(entries);
         setPathError(false);
       } catch (err) {
+        if (cancelled) return;
         console.error('Failed to load directory:', err);
         setPathError(true);
       }
     };
     loadDirectory();
+    return () => { cancelled = true; };
   }, [currentDirectory, exclusionPatterns]);
 
   const handleSelect = useCallback((path: string) => {

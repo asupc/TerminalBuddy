@@ -187,12 +187,12 @@ function App() {
       }
 
       initPersistedTemplates();
-      loadProfiles();
+      await loadProfiles();
 
       if (!import.meta.env.DEV && settings.restoreTabsOnStartup && !restoredRef.current) {
         restoredRef.current = true;
-        restoreTabs();
-        useAppStore.getState().restoreDraftTabs();
+        await restoreTabs();
+        await useAppStore.getState().restoreDraftTabs();
       }
     })();
   }, []);
@@ -328,6 +328,7 @@ function App() {
     const { tabs, activeIndex } = await loadSavedTabs();
     if (tabs.length === 0) return;
     const store = useAppStore.getState();
+    const restoredSessionIds: Array<string | undefined> = new Array(tabs.length);
     // 暂停逐次写入，恢复完后统一写一次
     useAppStore.setState({ _skipSaveTabs: true });
     try {
@@ -351,9 +352,7 @@ function App() {
                 isDirty: false,
               };
               store.addSession(session, true);
-              if (i === activeIndex) {
-                store.setActiveSession(session.id);
-              }
+              restoredSessionIds[i] = session.id;
             } catch {
               // File no longer exists, skip this tab
             }
@@ -386,7 +385,8 @@ function App() {
               groupId: tab.groupId || 'default',
               owner: 'pc',
               extraParams: baseParams,
-            });
+            }, true);
+            restoredSessionIds[i] = terminalId;
             // 保存 claudeSessionId 到 store
             if (tab.claudeSessionId) {
               store.setClaudeSessionId(terminalId, tab.claudeSessionId);
@@ -395,9 +395,6 @@ function App() {
             if (tab.directory) {
               store.setSessionDirectory(terminalId, tab.directory);
               writeToTerminal(terminalId, `cd "${tab.directory}"\r`).catch(() => {});
-            }
-            if (i === activeIndex) {
-              store.setActiveSession(terminalId);
             }
           }
         } catch (err) {
@@ -409,6 +406,10 @@ function App() {
         }
       }
     } finally {
+      const restoredActiveId = restoredSessionIds[activeIndex]
+        ?? restoredSessionIds.find((id): id is string => id !== undefined)
+        ?? null;
+      store.setActiveSession(restoredActiveId);
       useAppStore.setState({ _skipSaveTabs: false });
       const { sessions, activeSessionId } = useAppStore.getState();
       saveTabsToStorage(sessions, activeSessionId);
