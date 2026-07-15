@@ -830,7 +830,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (usesVsCodeTerminal) {
         const da1Handler = terminal.parser.registerCsiHandler({ final: 'c' }, params => {
           if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
-            onOutputRef.current(terminalId, '\x1b[?61;4c');
+            // The VS Code terminal host answers DA1 synchronously. Consume the
+            // forwarded query here so xterm does not send a delayed duplicate.
             return true;
           }
           return false;

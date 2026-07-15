@@ -34,6 +34,7 @@ const FRAME_ACK = 4;
 const MAX_FRAME_LENGTH = 16 * 1024 * 1024;
 const HIGH_WATERMARK_CHARS = 100000;
 const LOW_WATERMARK_CHARS = 5000;
+const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE = '\x1b[?61;4c';
 
 function fail(error) {
   const message = error instanceof Error ? error.stack || error.message : String(error);
@@ -74,6 +75,23 @@ try {
   let pendingOutput = [];
   let handshakePoll = null;
   let handshakeTimeout = null;
+  let deviceAttributesScanTail = '';
+
+  const respondToPrimaryDeviceAttributes = data => {
+    const scanData = deviceAttributesScanTail + data;
+    const queries = scanData.match(/\x1b\[(?:0)?c/g)?.length ?? 0;
+    for (let i = 0; i < queries; i += 1) {
+      terminal.write(PRIMARY_DEVICE_ATTRIBUTES_RESPONSE);
+    }
+
+    deviceAttributesScanTail = '';
+    for (const prefix of ['\x1b[0', '\x1b[', '\x1b']) {
+      if (scanData.endsWith(prefix)) {
+        deviceAttributesScanTail = prefix;
+        break;
+      }
+    }
+  };
 
   const updatePtyPause = () => {
     const shouldPause = pausedForBackpressure || pausedForFlowControl;
@@ -119,6 +137,11 @@ try {
   };
 
   terminal.onData(data => {
+    // ConPTY asks for DA1 during startup and expects the answer immediately.
+    // Routing this through Tauri/xterm can arrive after cmd.exe starts reading
+    // commands, where it becomes visible input and prefixes the shell command.
+    respondToPrimaryDeviceAttributes(data);
+
     // node-pty >= 1.2.0-beta.11 connects ConPTY asynchronously. Keep output in
     // order until the real pid is visible instead of treating a zero pid as a
     // process failure.
