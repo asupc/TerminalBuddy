@@ -1,4 +1,5 @@
 import { FC, useEffect, useRef, useState, useCallback } from 'react';
+import { FileWarning } from 'lucide-react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { editor as MonacoEditor, KeyMod, KeyCode } from 'monaco-editor';
 import { readFileContent, writeFileContent, remoteUpload, getFileMeta, onTransferProgress, onTransferError } from '../services/tauri';
@@ -358,7 +359,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   if (error) {
     return (
       <div className="text-editor-error">
-        <div className="text-editor-error-icon">📄</div>
+        <FileWarning className="text-editor-error-icon" aria-hidden="true" />
         <div className="text-editor-error-text">无法打开文件</div>
         <div className="text-editor-error-detail">{error}</div>
       </div>

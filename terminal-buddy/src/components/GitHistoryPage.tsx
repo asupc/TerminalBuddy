@@ -1,4 +1,5 @@
 import { FC, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import {
   gitGetHistory,
   gitGetHistoryFileDiff,
@@ -439,7 +440,7 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch, onCl
       <div className="git-history-titlebar">
         <div className="git-history-title">{repoRoot} - 历史记录</div>
         <button className="git-history-window-close" onClick={onClose} title="关闭历史记录" aria-label="关闭历史记录">
-          &times;
+          <X aria-hidden="true" />
         </button>
       </div>
 
@@ -595,7 +596,7 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch, onCl
               title="关闭差异预览"
               aria-label="关闭差异预览"
             >
-              &times;
+              <X aria-hidden="true" />
             </button>
             <Suspense fallback={<div className="git-history-diff-empty">加载中...</div>}>
               <GitHistoryDiffPreview

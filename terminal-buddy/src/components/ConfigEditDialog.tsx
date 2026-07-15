@@ -1,4 +1,5 @@
 import { FC, useState, useRef, useEffect } from 'react';
+import { X } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { open } from '@tauri-apps/plugin-dialog';
 import { createProfile, updateProfile, deleteProfile } from '../services/tauri';
@@ -260,7 +261,9 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
       >
         <div className="dialog-header dialog-drag-handle">
           <h3>{profile ? '编辑连接' : '新建连接'}</h3>
-          <button className="dialog-close" onClick={onClose}>×</button>
+          <button type="button" className="dialog-close" onClick={onClose} title="关闭" aria-label="关闭">
+            <X aria-hidden="true" />
+          </button>
         </div>
         {saveError && (
           <div className="dialog-error">{saveError}</div>
@@ -338,7 +341,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                       className="cmd-remove-btn"
                       onClick={() => removeCommand(index)}
                     >
-                      ×
+                      <X aria-hidden="true" />
                     </button>
                   )}
                 </div>
@@ -388,7 +391,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                       className="env-remove-btn"
                       onClick={() => setEnvVars(envVars.filter((_, i) => i !== index))}
                     >
-                      ×
+                      <X aria-hidden="true" />
                     </button>
                   </div>
                 ))}

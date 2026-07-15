@@ -1,4 +1,5 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
+import { ArrowUpDown } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../services/tauri';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
@@ -397,11 +398,14 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
         />
         <div className="config-nav-sort-wrapper">
           <button
+            type="button"
             className="config-nav-sort-btn"
             onClick={() => setSortDropdownOpen(!sortDropdownOpen)}
             title="排序"
+            aria-label="配置排序"
+            aria-expanded={sortDropdownOpen}
           >
-            ⇅
+            <ArrowUpDown aria-hidden="true" />
           </button>
           {sortDropdownOpen && (
             <div className="config-nav-sort-dropdown">

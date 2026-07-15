@@ -42,11 +42,11 @@ async function terminalIsBeingViewed(terminalId: string): Promise<boolean> {
 }
 
 async function showDecisionNotifications(terminalId: string, decisionId: string): Promise<void> {
-  if (await terminalIsBeingViewed(terminalId)) return;
+  const isBeingViewed = await terminalIsBeingViewed(terminalId);
   const nativeEnabled = getAppSettings().claudeDecisionNotifications;
   const session = useAppStore.getState().sessions.find(item => item.id === terminalId);
   if (!session) return;
-  const nativePromise = nativeEnabled
+  const nativePromise = nativeEnabled && !isBeingViewed
     ? showNativeNotification(terminalId, session.profileName, 'question')
         .catch(error => console.error('发送 Claude Code 决策通知失败:', error))
     : Promise.resolve();

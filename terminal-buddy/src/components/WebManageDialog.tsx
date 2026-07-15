@@ -1,4 +1,5 @@
 import { FC, useState, useEffect, useCallback } from 'react';
+import { X } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
   getWebApiStatus,
@@ -121,7 +122,9 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
       <div className="web-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="web-dialog-header">
           <h2 className="web-dialog-title">Web 远程管理</h2>
-          <button className="web-dialog-close" onClick={onClose} title="关闭">×</button>
+          <button className="web-dialog-close" onClick={onClose} title="关闭" aria-label="关闭">
+            <X aria-hidden="true" />
+          </button>
         </div>
 
         <div className="web-dialog-body">

@@ -1,4 +1,5 @@
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
+import { FileText, GitBranch, X } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
@@ -148,7 +149,7 @@ export const TerminalTabBar: FC = () => {
           }}
         >
           {session.sessionType === 'editor' ? (
-            <span className="tab-file-icon">📄</span>
+            <FileText className="tab-file-icon" aria-hidden="true" />
           ) : (
             <span
               className={`terminal-tab-dot${workingSessions[session.id] ? ' working' : ''}`}
@@ -195,7 +196,8 @@ export const TerminalTabBar: FC = () => {
               handleCloseTerminal(session.id);
             }}
             title="关闭"
-          >×</button>
+            aria-label={`关闭 ${session.profileName}`}
+          ><X aria-hidden="true" /></button>
         </div>
       ))}
       {gitHistoryTab && (
@@ -204,7 +206,7 @@ export const TerminalTabBar: FC = () => {
           onClick={() => openGitHistoryTab(gitHistoryTab)}
           title={`${gitHistoryTab.repoRoot} - Git 历史记录`}
         >
-          <span className="terminal-tab-history-icon" aria-hidden="true">⑂</span>
+          <GitBranch className="terminal-tab-history-icon" aria-hidden="true" />
           <span className="terminal-tab-name">Git 历史记录</span>
           <button
             className="terminal-tab-close"
@@ -213,7 +215,8 @@ export const TerminalTabBar: FC = () => {
               closeGitHistoryTab();
             }}
             title="关闭"
-          >×</button>
+            aria-label="关闭 Git 历史记录"
+          ><X aria-hidden="true" /></button>
         </div>
       )}
       {contextMenu && (

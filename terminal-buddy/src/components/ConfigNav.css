@@ -3,11 +3,10 @@
   max-width: 500px;
   flex-shrink: 1;
   background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   position: relative;
-  transition: width 0.2s ease, min-width 0.2s ease;
 }
 
 .config-nav.collapsed {
@@ -29,19 +28,19 @@
   height: 100%;
   cursor: col-resize;
   background: transparent;
-  transition: background 0.15s;
+  transition: background-color var(--motion-instant) var(--ease-standard);
   z-index: 10;
 }
 
 .config-nav-resize-handle:hover,
 .config-nav-resize-handle.active {
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
 }
 
 .config-nav-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
 }
 
 .config-nav-group-rename-row {
@@ -51,9 +50,12 @@
 .config-nav-icon-type {
   font-size: 10px;
   font-weight: bold;
-  padding: 1px 3px;
-  background: var(--bg-primary);
-  border-radius: 2px;
+  min-width: 24px;
+  padding: 1px 4px;
+  background: color-mix(in srgb, var(--text-secondary) 11%, transparent);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  text-align: center;
   display: inline-block;
   line-height: 1.4;
 }
@@ -69,10 +71,11 @@
   position: fixed;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   padding: 4px;
   min-width: 120px;
   z-index: 1000;
+  box-shadow: var(--shadow-menu);
 }
 
 .config-nav .context-menu {
@@ -82,9 +85,12 @@
 }
 
 .context-menu-item {
-  padding: 6px 12px;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
 }
 
@@ -93,15 +99,15 @@
 }
 
 .context-menu-item.danger {
-  color: #f44747;
+  color: var(--danger);
 }
 
 /* Config search & sort */
 .config-nav-search-bar {
   display: flex;
   gap: 6px;
-  padding: 8px;
-  border-bottom: 1px solid var(--border);
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border-subtle);
   width: 100%;
   box-sizing: border-box;
 }
@@ -109,11 +115,12 @@
 .config-nav-search-input {
   flex: 1;
   min-width: 0;
-  padding: 6px 10px;
+  height: var(--control-height-sm);
+  padding: 0 32px 0 9px;
   padding-right: 32px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 13px;
   outline: none;
@@ -121,6 +128,7 @@
 
 .config-nav-search-input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 .config-nav-sort-wrapper {
@@ -131,18 +139,28 @@
 }
 
 .config-nav-sort-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 14px;
-  padding: 4px 8px;
-  transition: border-color 0.15s;
+  padding: 0;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+}
+
+.config-nav-sort-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
 .config-nav-sort-btn:hover {
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-tertiary));
   color: var(--text-primary);
 }
 
@@ -152,18 +170,22 @@
   right: 0;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   padding: 4px;
   min-width: 160px;
   z-index: 10;
   margin-top: 4px;
+  box-shadow: var(--shadow-menu);
 }
 
 .config-nav-sort-option {
-  padding: 6px 12px;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
   cursor: pointer;
   font-size: 13px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .config-nav-sort-option:hover {

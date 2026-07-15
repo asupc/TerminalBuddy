@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
-import { ChevronRight, Folder, FolderOpen } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronRight, File, Folder, FolderOpen, RefreshCw, X } from 'lucide-react';
 import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
@@ -181,7 +181,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
         )}
         {!node.is_directory && <span className="tree-arrow-placeholder" />}
         <span className="tree-icon">
-          {node.is_directory ? '📁' : '📄'}
+          {node.is_directory ? <Folder aria-hidden="true" /> : <File aria-hidden="true" />}
         </span>
         {isRenaming ? (
           <input
@@ -638,13 +638,19 @@ export const FileNav: FC = () => {
       <div className="panel-titlebar">
         <span className="panel-title">文件</span>
         <div className="file-nav-actions">
-          <button onClick={handleNavBack} disabled={navBackStack.length === 0} title="后退 (Alt+←)">←</button>
-          <button onClick={handleNavForward} disabled={navForwardStack.length === 0} title="前进 (Alt+→)">→</button>
-          <button onClick={handleRefresh} title="刷新">↻</button>
-          <button onClick={toggleSortDir} title={`方向：${fileSortDir === 'asc' ? '升序' : '降序'}（点击翻转）`}>
-            {fileSortDir === 'asc' ? '↑' : '↓'}
+          <button type="button" onClick={handleNavBack} disabled={navBackStack.length === 0} title="后退 (Alt+←)" aria-label="后退">
+            <ArrowLeft aria-hidden="true" />
           </button>
-          <button onClick={cycleSortField} title={`排序：${sortLabel(fileSortBy)}（点击切换）`}>
+          <button type="button" onClick={handleNavForward} disabled={navForwardStack.length === 0} title="前进 (Alt+→)" aria-label="前进">
+            <ArrowRight aria-hidden="true" />
+          </button>
+          <button type="button" onClick={handleRefresh} title="刷新" aria-label="刷新文件列表">
+            <RefreshCw aria-hidden="true" />
+          </button>
+          <button type="button" onClick={toggleSortDir} title={`方向：${fileSortDir === 'asc' ? '升序' : '降序'}（点击翻转）`} aria-label={`切换为${fileSortDir === 'asc' ? '降序' : '升序'}`}>
+            {fileSortDir === 'asc' ? <ArrowUp aria-hidden="true" /> : <ArrowDown aria-hidden="true" />}
+          </button>
+          <button type="button" className="file-nav-sort-field" onClick={cycleSortField} title={`排序：${sortLabel(fileSortBy)}（点击切换）`}>
             {sortLabel(fileSortBy)}
           </button>
         </div>
@@ -785,7 +791,7 @@ export const FileNav: FC = () => {
               }}
               title={bm.path}
             >
-              <span className="bookmark-icon">📁</span>
+              <Folder className="bookmark-icon" aria-hidden="true" />
               {renamingBookmark === bm.path ? (
                 <input
                   ref={renameBookmarkInputRef}
@@ -820,7 +826,7 @@ export const FileNav: FC = () => {
                 }}
                 title="删除书签"
               >
-                ×
+                <X aria-hidden="true" />
               </button>
             </div>
           ))}

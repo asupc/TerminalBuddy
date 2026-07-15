@@ -1,10 +1,14 @@
 import { FC, useState, useRef, useEffect, useCallback } from 'react';
 import {
+  BarChart3,
   Columns2,
+  Folder,
+  Globe2,
   Grid2X2,
   Info,
   Minus,
   Moon,
+  PanelLeft,
   Settings,
   Square,
   Sun,
@@ -126,15 +130,19 @@ export const TitleBar: FC<TitleBarProps> = ({
                 className={`titlebar-nav-btn ${configPanelVisible ? 'active' : ''}`}
                 onClick={onToggleConfigPanel}
                 title={configPanelVisible ? '隐藏连接导航' : '显示连接导航'}
+                aria-label={configPanelVisible ? '隐藏连接导航' : '显示连接导航'}
+                aria-pressed={configPanelVisible}
               >
-                ☰
+                <PanelLeft aria-hidden="true" />
               </button>
               <button
                 className={`titlebar-nav-btn ${fileTreeVisible ? 'active' : ''}`}
                 onClick={onToggleFileTree}
                 title={fileTreeVisible ? '隐藏文件导航' : '显示文件导航'}
+                aria-label={fileTreeVisible ? '隐藏文件导航' : '显示文件导航'}
+                aria-pressed={fileTreeVisible}
               >
-                📁
+                <Folder aria-hidden="true" />
               </button>
             </>
           )}
@@ -142,25 +150,18 @@ export const TitleBar: FC<TitleBarProps> = ({
             className="titlebar-nav-btn"
             onClick={() => setShowWebDialog(true)}
             title={webRunning ? 'Web管理已启动 - 点击打开' : 'Web管理已停止 - 点击打开'}
-            style={{ position: 'relative' }}
+            aria-label={webRunning ? '打开 Web 管理，服务运行中' : '打开 Web 管理，服务已停止'}
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.2" fill="none"/>
-              <circle cx="8" cy="8" r="3" fill={webRunning ? '#4caf50' : '#666'}/>
-            </svg>
+            <Globe2 aria-hidden="true" />
+            <span className={`titlebar-status-dot${webRunning ? ' online' : ''}`} aria-hidden="true" />
           </button>
           <div
             className="ai-usage-trigger"
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
           >
-            <button className="titlebar-nav-btn">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="1.5" y="1.5" width="13" height="13" rx="3" stroke="currentColor" strokeWidth="1.2"/>
-                <rect x="4" y="9" width="2" height="3.5" rx="0.5" fill="currentColor"/>
-                <rect x="7" y="6" width="2" height="6.5" rx="0.5" fill="currentColor"/>
-                <rect x="10" y="3.5" width="2" height="9" rx="0.5" fill="currentColor"/>
-              </svg>
+            <button className="titlebar-nav-btn" title="查看 AI 用量" aria-label="查看 AI 用量">
+              <BarChart3 aria-hidden="true" />
             </button>
             {aiUsageHover && <AiUsagePanel />}
           </div>
@@ -189,7 +190,7 @@ export const TitleBar: FC<TitleBarProps> = ({
           </button>
           <button
             type="button"
-            className="titlebar-btn titlebar-action-btn"
+            className="titlebar-btn titlebar-action-btn titlebar-about-btn"
             onClick={() => setShowAboutDialog(true)}
             title="关于 TerminalBuddy"
             aria-label="关于 TerminalBuddy"

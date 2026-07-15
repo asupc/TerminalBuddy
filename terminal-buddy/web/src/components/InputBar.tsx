@@ -52,8 +52,7 @@ export default function InputBar({ onSend }: Props) {
           spellCheck={false}
         />
         <button
-          className="btn"
-          style={autoEnter ? { color: 'var(--ok)', borderColor: 'var(--ok)' } : undefined}
+          className={`btn auto-enter${autoEnter ? ' active' : ''}`}
           onClick={() => setAutoEnter((v) => !v)}
           title="发送后自动补回车（再次点击关闭，用于 vim 等）"
         >

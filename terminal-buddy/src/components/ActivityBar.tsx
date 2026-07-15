@@ -40,7 +40,7 @@ export const ActivityBar: FC<ActivityBarProps> = ({
             aria-label={item.label}
             aria-pressed={isActive}
           >
-            <Icon size={23} strokeWidth={1.65} aria-hidden="true" />
+            <Icon size={20} strokeWidth={1.7} aria-hidden="true" />
           </button>
         );
       })}
@@ -53,7 +53,7 @@ export const ActivityBar: FC<ActivityBarProps> = ({
       title="设置"
       aria-label="设置"
     >
-      <Settings size={23} strokeWidth={1.65} aria-hidden="true" />
+      <Settings size={20} strokeWidth={1.7} aria-hidden="true" />
     </button>
   </aside>
 );

@@ -1,4 +1,5 @@
 import { FC, useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { File, Folder } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
@@ -713,7 +714,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
             onContextMenu={(e) => handleContextMenu(e, file)}
           >
             <span className="tree-icon" style={{ fontSize: 12, flexShrink: 0 }}>
-              {file.isDir ? '📁' : '📄'}
+              {file.isDir ? <Folder aria-hidden="true" /> : <File aria-hidden="true" />}
             </span>
             {renaming?.path === file.path ? (
               <input
@@ -744,7 +745,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
         {creating && (
           <div className="tree-item" style={{ paddingLeft: 8 }}>
             <span className="tree-icon" style={{ fontSize: 12, flexShrink: 0 }}>
-              {creating === 'dir' ? '📁' : '📄'}
+              {creating === 'dir' ? <Folder aria-hidden="true" /> : <File aria-hidden="true" />}
             </span>
             <input
               ref={createInputRef}

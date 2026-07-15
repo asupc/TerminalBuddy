@@ -1,4 +1,5 @@
 import { FC, useState, useRef, useEffect } from 'react';
+import { X } from 'lucide-react';
 import { TAB_COLORS } from '../types';
 import './TerminalTab.css';
 
@@ -141,7 +142,7 @@ export const TerminalTab: FC<TerminalTabProps> = ({
           <span className="tab-name" style={tabTextColor ? { color: tabTextColor } : undefined}>{name}</span>
         )}
         <span className="tab-close" onClick={(e) => { e.stopPropagation(); onClose(); }}>
-          ×
+          <X aria-hidden="true" />
         </span>
       </div>
 

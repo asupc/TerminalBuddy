@@ -4,12 +4,13 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  padding: 24px;
+  background: var(--bg-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 10000;
-  animation: webFadeIn 0.2s ease;
+  animation: webFadeIn var(--motion-fast) var(--ease-standard);
 }
 
 @keyframes webFadeIn {
@@ -19,18 +20,20 @@
 
 .web-dialog {
   width: 400px;
+  max-width: 100%;
   max-height: 90vh;
-  background: var(--bg-primary);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dialog);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: webSlideUp 0.3s ease;
+  animation: webSlideUp var(--motion-normal) var(--ease-enter);
 }
 
 @keyframes webSlideUp {
-  from { opacity: 0; transform: translateY(20px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
@@ -38,14 +41,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 20px;
+  min-height: 48px;
+  padding: 0 12px 0 18px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
 }
 
 .web-dialog-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -54,11 +58,13 @@
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  font-size: 22px;
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
   line-height: 1;
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 0;
+  border-radius: var(--radius-sm);
 }
 
 .web-dialog-close:hover {
@@ -66,8 +72,14 @@
   color: var(--text-primary);
 }
 
+.web-dialog-close svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+}
+
 .web-dialog-body {
-  padding: 20px;
+  padding: 18px;
   overflow-y: auto;
 }
 
@@ -97,10 +109,11 @@
 .web-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 8px 10px;
+  height: var(--control-height-md);
+  padding: 0 10px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 13px;
   outline: none;
@@ -108,6 +121,7 @@
 
 .web-input:focus {
   border-color: var(--accent-color);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 .web-status-row {
@@ -118,19 +132,18 @@
 }
 
 .web-status-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
 .web-status-dot.on {
-  background: #4caf50;
-  box-shadow: 0 0 6px rgba(76, 175, 80, 0.6);
+  background: var(--success);
 }
 
 .web-status-dot.off {
-  background: #666;
+  background: var(--text-tertiary);
 }
 
 .web-status-text {
@@ -140,7 +153,7 @@
 }
 
 .web-error {
-  color: #ff6b6b;
+  color: var(--danger);
   font-size: 12px;
   margin-bottom: 10px;
   word-break: break-all;
@@ -148,14 +161,15 @@
 
 .web-btn {
   width: 100%;
-  padding: 9px 16px;
+  min-height: var(--control-height-md);
+  padding: 0 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 500;
   color: #fff;
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition: background-color var(--motion-fast) var(--ease-standard), opacity var(--motion-fast) var(--ease-standard);
 }
 
 .web-btn:disabled {
@@ -164,19 +178,19 @@
 }
 
 .web-btn.primary {
-  background: #4a4aaa;
+  background: var(--accent);
 }
 
 .web-btn.primary:hover:not(:disabled) {
-  background: #5454bb;
+  background: var(--accent-hover);
 }
 
 .web-btn.danger {
-  background: #d32f2f;
+  background: var(--danger);
 }
 
 .web-btn.danger:hover:not(:disabled) {
-  background: #e53935;
+  background: color-mix(in srgb, var(--danger) 88%, white);
 }
 
 .web-access {
@@ -184,7 +198,7 @@
   padding: 16px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   text-align: center;
 }
 
@@ -206,7 +220,7 @@
   height: 200px;
   background: #fff;
   padding: 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .web-link-row {
@@ -235,7 +249,7 @@
   padding: 4px 10px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 12px;
   cursor: pointer;

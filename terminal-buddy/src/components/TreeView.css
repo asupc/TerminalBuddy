@@ -5,12 +5,14 @@
 .tree-item {
   display: flex;
   align-items: center;
-  padding: 4px 8px;
+  min-height: 28px;
+  padding: 3px 8px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text-primary);
   gap: 4px;
-  transition: background 0.1s;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-instant) var(--ease-standard), color var(--motion-instant) var(--ease-standard);
 }
 
 .tree-item:hover {
@@ -26,7 +28,7 @@
 .tree-arrow {
   font-size: 8px;
   color: var(--text-secondary);
-  transition: transform 0.15s;
+  transition: transform var(--motion-fast) var(--ease-standard);
   width: 14px;
   height: 18px;
   display: inline-flex;
@@ -117,6 +119,6 @@
 }
 
 .tree-item-close:hover {
-  color: #f44747;
-  background: rgba(244, 71, 71, 0.1);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
 }

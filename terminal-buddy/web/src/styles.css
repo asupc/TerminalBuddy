@@ -1,14 +1,25 @@
 :root {
-  --bg: #0c0c1e;
-  --bg-elev: #161630;
-  --bg-elev2: #1f1f44;
-  --fg: #e6e6f0;
-  --fg-dim: #9a9ab5;
-  --accent: #4a9eff;
-  --accent-dim: #2c5ea8;
-  --danger: #ff5c5c;
-  --ok: #3ecf8e;
-  --border: #2a2a55;
+  color-scheme: dark;
+  --bg: #181a1d;
+  --bg-elev: #202226;
+  --bg-elev2: #2a2d31;
+  --fg: #e3e5e8;
+  --fg-dim: #9aa0a8;
+  --fg-muted: #6f767f;
+  --accent: #4b95e9;
+  --accent-dim: #347fcf;
+  --danger: #ef6b73;
+  --ok: #55b988;
+  --border: #34383d;
+  --border-subtle: #2b2f33;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.28);
+  --motion-fast: 140ms;
+  --motion-normal: 180ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --vh: 100vh; /* 由 index.html 的 setVH() 覆盖 */
 }
 
@@ -30,7 +41,7 @@ body {
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Microsoft YaHei', sans-serif;
-  font-size: 15px;
+  font-size: 14px;
   /* 禁止整页滚动/橡皮筋，所有滚动交给内部容器 */
   overflow: hidden;
   overscroll-behavior: none;
@@ -43,12 +54,12 @@ body {
    竖屏 / 长屏（手机竖向）保持全宽手机布局，不受影响。 */
 @media (orientation: landscape) {
   body {
-    background: #06060f;
+    background: #111316;
   }
   #root {
     max-width: 480px;
     margin: 0 auto;
-    box-shadow: 0 0 0 1px var(--border), 0 0 40px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 0 1px var(--border), 0 16px 48px rgba(0, 0, 0, 0.32);
   }
 }
 
@@ -64,6 +75,17 @@ button {
   cursor: pointer;
   background: none;
   border: none;
+}
+
+button,
+input {
+  letter-spacing: 0;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* ── 通用布局 ── */
@@ -82,8 +104,9 @@ button {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  min-height: 48px;
+  gap: 9px;
+  padding: 6px 10px;
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
   padding-left: max(12px, env(safe-area-inset-left));
@@ -92,6 +115,7 @@ button {
 
 .topbar .title {
   font-weight: 600;
+  font-size: 14px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -114,11 +138,13 @@ button {
 }
 
 .btn {
-  padding: 8px 14px;
-  border-radius: 8px;
+  min-height: 38px;
+  padding: 0 13px;
+  border-radius: var(--radius-md);
   background: var(--bg-elev2);
   color: var(--fg);
   border: 1px solid var(--border);
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), opacity var(--motion-fast) var(--ease-standard);
 }
 .btn:active {
   background: var(--accent-dim);
@@ -137,8 +163,9 @@ button {
   color: #fff;
 }
 .btn.icon {
-  padding: 6px 10px;
-  font-size: 18px;
+  width: 38px;
+  padding: 0;
+  font-size: 20px;
 }
 
 /* ── 登录页 ── */
@@ -148,19 +175,39 @@ button {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 24px;
-  gap: 16px;
+  width: min(100%, 420px);
+  margin: 0 auto;
+  padding: 28px;
+  gap: 14px;
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+.login-mark {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  font: 600 13px/1 ui-monospace, 'Cascadia Code', monospace;
 }
 .login-wrap h1 {
-  margin: 0 0 8px;
-  font-size: 22px;
-  text-align: center;
+  margin: 0;
+  font-size: 20px;
+  text-align: left;
 }
 .login-wrap .sub {
   text-align: center;
   color: var(--fg-dim);
   font-size: 13px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .field {
   display: flex;
@@ -172,14 +219,16 @@ button {
   color: var(--fg-dim);
 }
 .field input {
-  padding: 12px;
-  border-radius: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
   background: var(--bg-elev);
   border: 1px solid var(--border);
   outline: none;
 }
 .field input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 .err {
   color: var(--danger);
@@ -194,7 +243,7 @@ button {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 10px 12px 24px;
+  padding: 8px 10px 24px;
 }
 .group-head {
   display: flex;
@@ -202,7 +251,8 @@ button {
   gap: 6px;
   color: var(--fg-dim);
   font-size: 13px;
-  margin: 14px 4px 6px;
+  margin: 16px 4px 6px;
+  font-weight: 600;
   text-transform: none;
 }
 .group-head:first-child {
@@ -210,17 +260,34 @@ button {
 }
 
 .profile-card {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  margin-bottom: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom-color: var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-bottom: 2px;
   overflow: hidden;
 }
 .profile-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px;
+  min-height: 50px;
+  padding: 7px 8px;
+}
+.profile-row:active {
+  background: var(--bg-elev);
+}
+.profile-type-icon {
+  width: 30px;
+  min-width: 30px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  font: 600 10px/1 ui-monospace, 'Cascadia Code', monospace;
 }
 .profile-row .pname {
   flex: 1;
@@ -233,18 +300,18 @@ button {
   font-size: 11px;
   color: var(--fg-dim);
   background: var(--bg-elev2);
-  padding: 2px 8px;
-  border-radius: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
   flex: 0 0 auto;
 }
 .add-btn {
   flex: 0 0 auto;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 20px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 19px;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -255,13 +322,16 @@ button {
 }
 
 .instances {
-  border-top: 1px solid var(--border);
+  margin: 0 8px 6px 38px;
+  border-top: 1px solid var(--border-subtle);
 }
 .instance-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px 10px 28px;
+  min-height: 40px;
+  padding: 6px 4px;
+  border-radius: var(--radius-sm);
 }
 .instance-row:active {
   background: var(--bg-elev2);
@@ -289,7 +359,7 @@ button {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: #0c0c1e;
+  background: var(--bg);
   position: relative;
 }
 .xterm-container {
@@ -303,14 +373,14 @@ button {
   left: 0;
   right: 0;
   padding: 6px 12px;
-  background: rgba(255, 92, 92, 0.9);
+  background: color-mix(in srgb, var(--danger) 90%, transparent);
   color: #fff;
   font-size: 13px;
   text-align: center;
   z-index: 5;
 }
 .banner.info {
-  background: rgba(74, 158, 255, 0.9);
+  background: color-mix(in srgb, var(--accent) 90%, transparent);
 }
 .overlay {
   position: absolute;
@@ -318,7 +388,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(12, 12, 30, 0.85);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
   color: var(--fg);
   flex-direction: column;
   gap: 12px;
@@ -330,8 +400,8 @@ button {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: 7px;
+  padding: 7px 8px;
   padding-bottom: max(6px, env(safe-area-inset-bottom));
   background: var(--bg-elev);
   border-top: 1px solid var(--border);
@@ -344,8 +414,9 @@ button {
 .input-bar input.line {
   flex: 1;
   min-width: 0;
-  padding: 10px;
-  border-radius: 8px;
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   border: 1px solid var(--border);
   outline: none;
@@ -355,15 +426,16 @@ button {
 }
 .special-keys {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   padding-bottom: 2px;
 }
 .special-keys .key {
   flex: 0 0 auto;
-  padding: 7px 11px;
-  border-radius: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
   background: var(--bg-elev2);
   border: 1px solid var(--border);
   font-size: 13px;
@@ -396,12 +468,51 @@ button {
   color: #fff;
   background: var(--accent);
 }
+.auto-enter.active {
+  border-color: var(--ok);
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 9%, transparent);
+}
+
+.terminal-menu-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+}
+
+.terminal-menu {
+  position: absolute;
+  top: 48px;
+  right: 8px;
+  z-index: 20;
+  min-width: 140px;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev2);
+  box-shadow: var(--shadow-menu);
+  animation: menu-enter var(--motion-fast) var(--ease-enter);
+}
+
+.terminal-menu-danger {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  text-align: left;
+}
+
+.terminal-menu-danger:active {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
 
 /* 确认弹窗 */
 .modal-mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(10, 12, 14, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -413,11 +524,13 @@ button {
   max-width: 360px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.38);
+  animation: modal-enter var(--motion-normal) var(--ease-enter);
 }
 .modal-title {
   font-size: 16px;
@@ -432,4 +545,25 @@ button {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+}
+
+@keyframes menu-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes modal-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

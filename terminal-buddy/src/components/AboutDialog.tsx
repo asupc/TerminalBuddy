@@ -1,4 +1,5 @@
 import { FC } from 'react';
+import { BookOpen, Download, Globe2, MessageSquareWarning } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
 import { APP_VERSION } from '../version';
 import './AboutDialog.css';
@@ -22,28 +23,12 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
         </div>
 
         <div className="about-content">
-          <p className="about-description">
-            一个基于 Tauri 2 + React 18 + Rust 构建的现代化 Windows 桌面终端模拟器。
-          </p>
-
-          <div className="about-features">
-            <h3>✨ 核心功能</h3>
-            <ul>
-              <li>多终端类型支持 - PowerShell, CMD, SSH, Docker, K8s, MSTSC</li>
-              <li>智能配置文件管理与层级分组</li>
-              <li>灵活的选项卡与分屏布局</li>
-              <li>SSH 远程文件管理器</li>
-              <li>实时服务器监控</li>
-              <li>Web 远程访问支持</li>
-              <li>智能命令补全与模板库</li>
-              <li>自定义主题系统</li>
-            </ul>
-          </div>
+          <p className="about-description">面向 Windows 的桌面终端与远程连接工具。</p>
 
           <div className="about-tech">
-            <h3>🛠️ 技术栈</h3>
+            <h3>技术栈</h3>
             <div className="tech-stack">
-              <span className="tech-badge">React 18</span>
+              <span className="tech-badge">React 19</span>
               <span className="tech-badge">TypeScript</span>
               <span className="tech-badge">Rust</span>
               <span className="tech-badge">Tauri 2</span>
@@ -53,7 +38,7 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
           </div>
 
           <div className="about-links">
-            <h3>🔗 相关链接</h3>
+            <h3>相关链接</h3>
             <div className="links-grid">
               <a
                 href="https://gitee.com/updateme/terminal-buddy"
@@ -61,7 +46,8 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
                 rel="noopener noreferrer"
                 className="about-link"
               >
-                📦 项目主页
+                <Globe2 aria-hidden="true" />
+                <span>项目主页</span>
               </a>
               <a
                 href="https://gitee.com/updateme/terminal-buddy/issues"
@@ -69,7 +55,8 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
                 rel="noopener noreferrer"
                 className="about-link"
               >
-                🐛 问题反馈
+                <MessageSquareWarning aria-hidden="true" />
+                <span>问题反馈</span>
               </a>
               <a
                 href="https://gitee.com/updateme/terminal-buddy/blob/master/README.md"
@@ -77,7 +64,8 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
                 rel="noopener noreferrer"
                 className="about-link"
               >
-                📄 文档
+                <BookOpen aria-hidden="true" />
+                <span>文档</span>
               </a>
               <a
                 href="https://gitee.com/updateme/terminal-buddy/releases"
@@ -85,7 +73,8 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
                 rel="noopener noreferrer"
                 className="about-link"
               >
-                📥 下载
+                <Download aria-hidden="true" />
+                <span>下载</span>
               </a>
             </div>
           </div>

@@ -4,17 +4,19 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  padding: 24px;
+  background: var(--bg-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  animation: fadeIn 0.15s ease-out;
+  animation: fadeIn var(--motion-fast) var(--ease-standard);
 }
 
 .dialog {
-  background: var(--bg-secondary);
-  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   width: 600px;
   max-width: 95%;
   max-height: 90vh;
@@ -22,6 +24,8 @@
   display: flex;
   flex-direction: column;
   will-change: transform;
+  box-shadow: var(--shadow-dialog);
+  animation: tb-dialog-enter var(--motion-normal) var(--ease-enter);
 }
 
 .dialog-large {
@@ -32,8 +36,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
+  min-height: 50px;
+  padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
@@ -44,16 +49,16 @@
 
 .dialog-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .dialog-error {
   margin: 0 20px;
   padding: 8px 12px;
-  background: rgba(244, 71, 71, 0.1);
-  border: 1px solid rgba(244, 71, 71, 0.3);
-  border-radius: 4px;
-  color: #f44747;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
   font-size: 13px;
 }
 
@@ -63,21 +68,19 @@
   font-size: 20px;
   cursor: pointer;
   color: var(--text-secondary);
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 
 .dialog-close:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   color: var(--text-primary);
 }
 
 /* 浅色模式：白色叠加在浅底上不可见，改为黑色低透明度，保持 hover 背景反馈 */
-[data-theme="light"] .dialog-close:hover {
-  background: rgba(0, 0, 0, 0.06);
-}
-
 .dialog-content {
   padding: 20px;
   overflow-y: auto;
@@ -110,21 +113,22 @@
   padding: 8px 12px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  min-height: var(--control-height-md);
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 14px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
 }
 
 .form-group input:focus,
 .form-group select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 .form-group .error {
-  color: #f44747;
+  color: var(--danger);
   font-size: 12px;
   margin-top: 4px;
 }
@@ -146,7 +150,7 @@
   align-items: center;
   gap: 8px;
   padding: 16px 20px 20px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
@@ -155,26 +159,24 @@
 }
 
 .btn-primary {
-  padding: 8px 16px;
+  min-height: var(--control-height-md);
+  padding: 0 14px;
   background: var(--accent);
   border: none;
   border-radius: 4px;
   color: white;
   cursor: pointer;
   font-size: 13px;
-  transition: background-color 0.15s ease, transform 0.1s ease;
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
 }
 
 .btn-primary:hover {
-  background: #1a86d9;
-}
-
-.btn-primary:active {
-  transform: scale(0.98);
+  background: var(--accent-hover);
 }
 
 .btn-secondary {
-  padding: 8px 16px;
+  min-height: var(--control-height-md);
+  padding: 0 14px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -190,18 +192,19 @@
 }
 
 .btn-danger {
-  padding: 8px 16px;
+  min-height: var(--control-height-md);
+  padding: 0 14px;
   background: transparent;
-  border: 1px solid #f44747;
+  border: 1px solid var(--danger);
   border-radius: 4px;
-  color: #f44747;
+  color: var(--danger);
   cursor: pointer;
   font-size: 13px;
   transition: background-color 0.15s ease;
 }
 
 .btn-danger:hover {
-  background: rgba(244, 71, 71, 0.1);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
 }
 
 .input-with-button {
@@ -257,12 +260,13 @@
   right: 0;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   margin-top: 4px;
   max-height: 180px;
   overflow-y: auto;
   z-index: 10;
   animation: fadeIn 0.1s ease-out;
+  box-shadow: var(--shadow-menu);
 }
 
 .suggestion-item {
@@ -418,8 +422,8 @@
 }
 
 .env-remove-btn:hover {
-  color: #f44747;
-  background: rgba(244, 71, 71, 0.1);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
 }
 
 .env-add-btn {
@@ -511,8 +515,8 @@
 }
 
 .cmd-remove-btn:hover {
-  color: #f44747;
-  background: rgba(244, 71, 71, 0.1);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
 }
 
 .cmd-add-btn {
@@ -529,4 +533,11 @@
 
 .cmd-add-btn:hover {
   border-color: var(--accent);
+}
+
+.dialog-close svg,
+.web-dialog-close svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
 }

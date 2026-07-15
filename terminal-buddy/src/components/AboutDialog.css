@@ -4,12 +4,13 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  padding: 24px;
+  background: var(--bg-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 10000;
-  animation: fadeIn 0.2s ease;
+  animation: fadeIn var(--motion-fast) var(--ease-standard);
 }
 
 @keyframes fadeIn {
@@ -19,20 +20,22 @@
 
 .about-dialog {
   width: 480px;
+  max-width: 100%;
   max-height: 90vh;
-  background: var(--bg-primary);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dialog);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: slideUp 0.3s ease;
+  animation: slideUp var(--motion-normal) var(--ease-enter);
 }
 
 @keyframes slideUp {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -43,17 +46,16 @@
 .about-header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 24px;
+  gap: 14px;
+  padding: 20px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
 }
 
 .about-logo {
-  width: 72px;
-  height: 72px;
-  border-radius: 16px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
 }
 
 .about-title-section {
@@ -62,27 +64,27 @@
 
 .about-title {
   margin: 0;
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 650;
   color: var(--text-primary);
 }
 
 .about-version {
   margin: 4px 0 0;
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text-secondary);
   font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
 }
 
 .about-content {
   flex: 1;
-  padding: 24px;
+  padding: 20px;
   overflow-y: auto;
 }
 
 .about-description {
   margin: 0 0 20px;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-primary);
 }
@@ -128,7 +130,7 @@
   padding: 4px 10px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
@@ -147,24 +149,31 @@
   padding: 10px 12px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--text-primary);
   text-decoration: none;
   font-size: 13px;
-  transition: all 0.2s ease;
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+}
+
+.about-link svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  color: var(--text-secondary);
+  stroke-width: 1.8;
 }
 
 .about-link:hover {
   background: var(--bg-tertiary);
   border-color: var(--accent-color);
-  transform: translateY(-1px);
 }
 
 .about-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
+  padding: 14px 20px;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border-color);
 }
@@ -176,24 +185,20 @@
 }
 
 .about-close-btn {
-  padding: 8px 20px;
+  min-height: var(--control-height-md);
+  padding: 0 16px;
   background: var(--accent-color);
   color: white;
   border: none;
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color var(--motion-fast) var(--ease-standard);
 }
 
 .about-close-btn:hover {
   background: var(--accent-hover);
-  transform: translateY(-1px);
-}
-
-.about-close-btn:active {
-  transform: translateY(0);
 }
 
 /* 滚动条样式 */

@@ -5,8 +5,8 @@
   display: grid;
   place-items: center;
   padding: 32px;
-  background: rgba(0, 0, 0, 0.56);
-  animation: settings-overlay-enter 160ms ease-out;
+  background: var(--bg-overlay);
+  animation: settings-overlay-enter var(--motion-fast) var(--ease-standard);
 }
 
 .settings-dialog {
@@ -17,11 +17,11 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-secondary);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.4);
-  animation: settings-dialog-enter 180ms ease-out;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dialog);
+  animation: settings-dialog-enter var(--motion-normal) var(--ease-enter);
 }
 
 .settings-dialog-header {
@@ -50,17 +50,16 @@
 }
 
 .settings-page {
-  --accent: #66b3ff;
-  --settings-text-primary: #f2f2f2;
-  --settings-text-secondary: #b8b8b8;
-  --settings-text-muted: #969696;
-  --settings-control-bg: #2b2b2b;
-  --settings-control-hover: #333333;
+  --settings-text-primary: var(--text-primary);
+  --settings-text-secondary: var(--text-secondary);
+  --settings-text-muted: var(--text-tertiary);
+  --settings-control-bg: var(--bg-tertiary);
+  --settings-control-hover: var(--list-hover-bg);
   --settings-selected-bg: color-mix(in srgb, var(--accent) 18%, transparent);
   --settings-selected-border: color-mix(in srgb, var(--accent) 58%, var(--border));
-  --settings-action-bg: #0e70bd;
-  --settings-action-hover: #0a62a8;
-  --settings-danger: #ff7b72;
+  --settings-action-bg: var(--accent);
+  --settings-action-hover: var(--accent-hover);
+  --settings-danger: var(--danger);
   --text-primary: var(--settings-text-primary);
   --text-secondary: var(--settings-text-secondary);
   color: var(--settings-text-primary);
@@ -73,17 +72,16 @@
 }
 
 [data-theme="light"] .settings-page {
-  --accent: #005fb8;
-  --settings-text-primary: #202020;
-  --settings-text-secondary: #505050;
-  --settings-text-muted: #6b6b6b;
-  --settings-control-bg: #f4f4f4;
-  --settings-control-hover: #e9e9e9;
+  --settings-text-primary: var(--text-primary);
+  --settings-text-secondary: var(--text-secondary);
+  --settings-text-muted: var(--text-tertiary);
+  --settings-control-bg: var(--bg-tertiary);
+  --settings-control-hover: var(--list-hover-bg);
   --settings-selected-bg: color-mix(in srgb, var(--accent) 10%, #ffffff);
   --settings-selected-border: color-mix(in srgb, var(--accent) 56%, var(--border));
-  --settings-action-bg: #0067b8;
-  --settings-action-hover: #005a9e;
-  --settings-danger: #b42318;
+  --settings-action-bg: var(--accent);
+  --settings-action-hover: var(--accent-hover);
+  --settings-danger: var(--danger);
 }
 
 .settings-nav {
@@ -118,14 +116,14 @@
   padding: 0 11px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--settings-text-secondary);
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
   text-align: left;
   white-space: nowrap;
-  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
 }
 
 .settings-nav-item svg {
@@ -184,10 +182,10 @@
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 
 .settings-close-btn:hover {
@@ -263,8 +261,8 @@
 }
 
 @keyframes settings-dialog-enter {
-  from { opacity: 0; transform: translateY(8px) scale(0.99); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 700px) {
@@ -1502,7 +1500,7 @@ input.data-path-input {
 }
 
 .bot-action-btn.danger:hover {
-  color: #f44747;
+  color: var(--danger);
 }
 
 .bot-action-btn:disabled {
@@ -1544,13 +1542,13 @@ input.data-path-input {
 }
 
 .bot-capability.two-way {
-  background: color-mix(in srgb, #35a36f 16%, transparent);
-  color: #55bd87;
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
 }
 
 .bot-capability.error {
-  background: color-mix(in srgb, #d9534f 16%, transparent);
-  color: #ef7773;
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
 }
 
 .bot-channel-form {
@@ -1613,14 +1611,14 @@ input.data-path-input {
 .bot-settings-status {
   padding: 9px 11px;
   border-radius: 4px;
-  background: color-mix(in srgb, #35a36f 14%, transparent);
-  color: #55bd87;
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
   font-size: 12px;
 }
 
 .bot-settings-status.error {
-  background: color-mix(in srgb, #f44747 14%, transparent);
-  color: #f06a6a;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
 }
 
 .bot-settings-status.saving {
@@ -1660,8 +1658,8 @@ input.data-path-input {
   max-width: calc(100vw - 32px);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dialog);
   overflow: hidden;
 }
 
@@ -1714,11 +1712,11 @@ input.data-path-input {
 }
 
 .bot-scan-status.success {
-  color: #55bd87;
+  color: var(--success);
 }
 
 .bot-scan-status.error {
-  color: #f06a6a;
+  color: var(--danger);
 }
 
 .bot-scan-trigger {

@@ -9,9 +9,9 @@
 }
 
 .terminal-instance.drag-over {
-  outline: 2px dashed var(--accent, #0078d4);
+  outline: 2px dashed var(--accent);
   outline-offset: -4px;
-  background: rgba(0, 120, 212, 0.08);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .terminal-instance .xterm {
@@ -85,15 +85,15 @@
 .terminal-context-menu {
   position: fixed;
   z-index: 1000;
-  background: #2d2d2d;
-  border: 1px solid #555;
-  border-radius: 4px;
-  padding: 4px 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
   min-width: 120px;
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   box-sizing: border-box;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-menu);
 }
 
 .context-menu-item {
@@ -111,12 +111,12 @@
 /* 终端画布右键菜单容器（.terminal-context-menu）为固定深色，其菜单项沿用深色配色，不随应用主题切换。
    用 .terminal-context-menu 作用域限定，避免污染通用 .context-menu（连接面板、标签栏等跟随主题的菜单）。 */
 .terminal-context-menu .context-menu-item {
-  color: #ccc;
+  color: var(--text-primary);
 }
 
 .terminal-context-menu .context-menu-item:hover {
-  background: #3d3d3d;
-  color: #fff;
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
 }
 
 /* URL Ctrl+click cursor */
@@ -137,10 +137,11 @@
 
 .terminal-search-input {
   flex: 1;
-  padding: 4px 8px;
+  height: var(--control-height-sm);
+  padding: 0 8px;
   background: var(--bg-primary, #1e1e1e);
   border: 1px solid var(--border, #555);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary, #ccc);
   font-size: 13px;
   outline: none;
@@ -154,7 +155,8 @@
   padding: 2px 6px;
   background: transparent;
   border: 1px solid var(--border, #555);
-  border-radius: 3px;
+  min-height: 24px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary, #888);
   cursor: pointer;
   font-size: 12px;
@@ -170,7 +172,8 @@
   padding: 2px 6px;
   background: transparent;
   border: 1px solid var(--border, #555);
-  border-radius: 3px;
+  min-height: 24px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary, #888);
   cursor: pointer;
   font-size: 11px;
@@ -187,6 +190,11 @@
   cursor: pointer;
   font-size: 16px;
   padding: 2px 4px;
+}
+
+.terminal-search-close svg {
+  width: 14px;
+  height: 14px;
 }
 
 .terminal-search-close:hover {
@@ -209,8 +217,8 @@
   position: fixed;
   background: var(--bg-secondary, #252526);
   border: 1px solid var(--border, #3c3c3c);
-  border-radius: 4px;
-  padding: 4px 0;
+  border-radius: var(--radius-md);
+  padding: 4px;
   width: max-content;
   min-width: 120px;
   max-width: min(400px, calc(100vw - 16px));
@@ -218,11 +226,13 @@
   overflow-y: auto;
   box-sizing: border-box;
   z-index: 1100;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-menu);
 }
 
 .autocomplete-item {
-  padding: 5px 12px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   color: var(--text-primary, #ccc);
   cursor: pointer;
@@ -236,17 +246,13 @@
 }
 
 .autocomplete-item.selected {
-  background: var(--accent, #0078d4);
-  color: #fff;
+  background: var(--list-active-bg);
+  color: var(--list-active-fg);
 }
 
 /* 白板（浅色）模式适配：--accent(#0078d4) 配白字对比度仅约 4.5（临界），
    13px 选中文字偏淡看不清；改用更深的蓝底（白字对比度约 7:1），让选中条目清晰突出。
    黑板（深色）模式下 #0078d4 已足够明显，保持不变。 */
-[data-theme="light"] .autocomplete-item.selected {
-  background: #005a9e;
-}
-
 .autocomplete-cmd {
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
   white-space: nowrap;
@@ -275,10 +281,10 @@
 }
 
 .autocomplete-item.selected .autocomplete-desc {
-  color: rgba(255, 255, 255, 0.75);
+  color: color-mix(in srgb, var(--list-active-fg) 76%, transparent);
 }
 
 .autocomplete-item.selected .autocomplete-kind {
-  color: rgba(255, 255, 255, 0.85);
-  border-color: rgba(255, 255, 255, 0.38);
+  color: var(--list-active-fg);
+  border-color: color-mix(in srgb, var(--list-active-fg) 38%, transparent);
 }

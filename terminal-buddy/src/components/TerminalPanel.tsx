@@ -1,5 +1,6 @@
 import { FC, useCallback, useState, useEffect, useRef, lazy, Suspense } from 'react';
 import type { CSSProperties } from 'react';
+import { SquareTerminal, X } from 'lucide-react';
 import type { TerminalSession } from '../types';
 import { TerminalTabBar } from './TerminalTabBar';
 import { useAppStore } from '../stores/appStore';
@@ -163,8 +164,9 @@ export const TerminalPanel: FC = () => {
             <button
               className="pane-close"
               title="关闭分屏"
+              aria-label={`关闭分屏 ${session.profileName}`}
               onClick={(e) => { e.stopPropagation(); closeSplitPane(slot!); }}
-            >✕</button>
+            ><X aria-hidden="true" /></button>
           </div>
         )}
         <div key="body" className="pane-body">
@@ -201,8 +203,8 @@ export const TerminalPanel: FC = () => {
       if (sessions.length === 0) {
         return (
           <div className="terminal-empty">
-            <div className="empty-icon">⌨</div>
-            <div className="empty-text">点击左侧连接启动终端</div>
+            <SquareTerminal className="empty-icon" aria-hidden="true" />
+            <div className="empty-text">暂无终端会话</div>
           </div>
         );
       }
@@ -219,7 +221,7 @@ export const TerminalPanel: FC = () => {
           if (!slot.sessionId || !session) {
             return (
               <div key={`blank-${i}`} className="split-cell split-blank" style={gridStyleFor(splitMode, i)}>
-                点击左侧连接打开终端
+                暂无终端会话
               </div>
             );
           }

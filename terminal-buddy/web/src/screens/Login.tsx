@@ -25,8 +25,11 @@ export default function Login() {
 
   return (
     <form className="login-wrap" onSubmit={submit}>
-      <h1>TerminalBuddy</h1>
-      <div className="sub">手机远程控制电脑终端</div>
+      <div className="login-brand">
+        <span className="login-mark" aria-hidden="true">&gt;_</span>
+        <h1>TerminalBuddy</h1>
+      </div>
+      <div className="sub">远程终端</div>
       <div className="field">
         <label>用户名</label>
         <input

@@ -67,6 +67,11 @@
   cursor: pointer;
 }
 
+.tab-close svg {
+  width: 13px;
+  height: 13px;
+}
+
 .tab-close:hover {
   color: var(--text-primary);
 }

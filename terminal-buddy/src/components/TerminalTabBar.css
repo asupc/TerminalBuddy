@@ -1,11 +1,12 @@
 .terminal-tab-bar {
   display: flex;
   background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
   overflow-x: auto;
   overflow-y: hidden;
   flex-shrink: 0;
-  min-height: 34px;
+  min-height: 36px;
+  padding: 3px 4px 0;
   scrollbar-width: thin;
 }
 
@@ -21,78 +22,88 @@
 .terminal-tab {
   display: flex;
   align-items: center;
+  min-height: 32px;
   gap: 6px;
-  padding: 6px 14px;
+  padding: 4px 10px;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
   flex-shrink: 0;
   position: relative;
-  /* 未选中彼此分隔：右侧竖向分隔线，让每个 tab 各自独立可辨 */
-  border-right: 1px solid var(--border);
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   color: var(--text-secondary);
   background: transparent;
-  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 
 /* 未选中 hover：略亮底色提示可点 */
 .terminal-tab:hover:not(.active) {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
   color: var(--text-primary);
 }
 
-/* 选中：深色（黑板）用中性冷灰底 + 白字，避开蓝色；浅色在下方覆盖为淡蓝底 */
 .terminal-tab.active {
-  background: #383f4b;
-  color: #ffffff;
-  border-right-color: #383f4b;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
+  color: var(--text-primary);
+}
+
+.terminal-tab.active::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
 }
 
 .terminal-tab.active .terminal-tab-name {
-  color: #ffffff;
+  color: var(--text-primary);
   font-weight: 600;
 }
 
 /* 选中态关闭按钮：白色常显 */
 .terminal-tab.active .terminal-tab-close {
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text-secondary);
   opacity: 0.9;
 }
 
 .terminal-tab.active .terminal-tab-close:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.2);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
 }
 
 /* Web 来源标记在选中底上改用半透明白底，避免糊在一起 */
 .terminal-tab.active .terminal-owner-badge {
-  background: rgba(255, 255, 255, 0.22);
-  color: #ffffff;
+  background: color-mix(in srgb, var(--accent) 17%, transparent);
+  color: var(--accent-hover);
 }
 
 /* 浅色（白板）：选中调淡——淡蓝底 + 深蓝字，降低蓝色饱和度与明度 */
 [data-theme="light"] .terminal-tab.active {
-  background: color-mix(in srgb, var(--accent) 16%, #ffffff);
-  color: #1d4ed8;
-  border-right-color: color-mix(in srgb, var(--accent) 16%, #ffffff);
+  background: color-mix(in srgb, var(--accent) 9%, #ffffff);
+  color: var(--text-primary);
 }
 
 [data-theme="light"] .terminal-tab.active .terminal-tab-name {
-  color: #1d4ed8;
+  color: var(--text-primary);
 }
 
 [data-theme="light"] .terminal-tab.active .terminal-tab-close {
-  color: #1d4ed8;
+  color: var(--text-secondary);
 }
 
 [data-theme="light"] .terminal-tab.active .terminal-tab-close:hover {
-  color: #1d4ed8;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
 }
 
 [data-theme="light"] .terminal-tab.active .terminal-owner-badge {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: #1d4ed8;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 .terminal-tab-dot {
@@ -103,12 +114,11 @@
 }
 
 .terminal-tab-history-icon {
-  width: 12px;
+  width: 14px;
+  height: 14px;
   flex: 0 0 12px;
   color: var(--accent);
-  font-size: 13px;
-  line-height: 1;
-  text-align: center;
+  stroke-width: 1.8;
 }
 
 .terminal-tab-dot.working {
@@ -133,13 +143,22 @@
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 12px;
-  padding: 0 2px;
-  border-radius: 3px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-sm);
   opacity: 0;
-  transition: opacity 0.1s;
+  transition: opacity var(--motion-instant) var(--ease-standard), background-color var(--motion-instant) var(--ease-standard), color var(--motion-instant) var(--ease-standard);
   flex-shrink: 0;
   line-height: 1;
+}
+
+.terminal-tab-close svg {
+  width: 13px;
+  height: 13px;
 }
 
 .terminal-tab:hover .terminal-tab-close {
@@ -148,8 +167,8 @@
 
 .terminal-tab-close:hover {
   opacity: 1 !important;
-  color: #f44747;
-  background: rgba(244, 71, 71, 0.1);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
 }
 
 .context-menu-item.disabled {
@@ -169,8 +188,9 @@
 }
 
 .tab-file-icon {
-  font-size: 12px;
-  line-height: 1;
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
 }
 
 .tab-dirty-dot {
@@ -191,8 +211,8 @@
   font-size: 9px;
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(59, 130, 246, 0.2);
-  color: #60a5fa;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent-hover);
   font-weight: 500;
   line-height: 1;
   flex-shrink: 0;

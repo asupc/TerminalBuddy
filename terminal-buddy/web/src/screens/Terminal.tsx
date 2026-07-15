@@ -54,32 +54,11 @@ export default function Terminal({ terminalId, profileName, owner }: Props) {
 
       {menuOpen && (
         <>
-          <div
-            onClick={() => setMenuOpen(false)}
-            style={{ position: 'fixed', inset: 0, zIndex: 19 }}
-          />
-          <div
-            style={{
-              position: 'absolute',
-              right: 8,
-              top: 48,
-              background: 'var(--bg-elev2)',
-              border: '1px solid var(--border)',
-              borderRadius: 8,
-              zIndex: 20,
-              overflow: 'hidden',
-              minWidth: 130,
-            }}
-          >
+          <div className="terminal-menu-mask" onClick={() => setMenuOpen(false)} />
+          <div className="terminal-menu">
             <button
+              className="terminal-menu-danger"
               onClick={closeTerminal}
-              style={{
-                display: 'block',
-                width: '100%',
-                padding: '11px 16px',
-                textAlign: 'left',
-                color: 'var(--danger)',
-              }}
             >
               {owner === 'web' ? '关闭连接' : '断开接管'}
             </button>

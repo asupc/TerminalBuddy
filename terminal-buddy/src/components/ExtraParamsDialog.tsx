@@ -1,4 +1,5 @@
 import { FC, useState } from 'react';
+import { X } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { useDraggable } from '../hooks/useDraggable';
 import './ExtraParamsDialog.css';
@@ -37,7 +38,9 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
       >
         <div className="dialog-header dialog-drag-handle">
           <h3>管理额外参数</h3>
-          <button className="dialog-close" onClick={onClose}>&times;</button>
+          <button type="button" className="dialog-close" onClick={onClose} title="关闭" aria-label="关闭">
+            <X aria-hidden="true" />
+          </button>
         </div>
 
         <div className="extra-params-dialog-content">
@@ -89,7 +92,7 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
                   onClick={() => removeExtraParamPreset(preset.id)}
                   title="删除"
                 >
-                  &times;
+                  <X aria-hidden="true" />
                 </button>
               </div>
             ))}

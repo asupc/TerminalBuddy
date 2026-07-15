@@ -25,7 +25,7 @@
   position: relative;
   z-index: 2;
   cursor: col-resize;
-  background: #2a2a2a;
+  background: var(--border-subtle);
 }
 
 .git-history-divider::after {
@@ -68,6 +68,12 @@
 }
 
 .git-history-preview-close:hover {
-  background: rgba(239, 68, 68, 0.18);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.git-history-window-close svg,
+.git-history-preview-close svg {
+  width: 14px;
+  height: 14px;
 }

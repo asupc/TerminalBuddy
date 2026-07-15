@@ -1,56 +1,121 @@
-.claude-decision-overlay {
+.claude-decision-region {
   position: fixed;
-  inset: 0;
+  top: 42px;
+  left: 50%;
   z-index: 12000;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.58);
+  width: min(720px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 
 .claude-decision-dialog {
-  width: min(620px, 100%);
-  max-height: min(760px, calc(100vh - 48px));
+  width: 100%;
+  max-height: min(460px, calc(100vh - 64px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, rgba(255, 255, 255, 0.2));
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: color-mix(in srgb, var(--bg-primary) 94%, #050505);
   color: var(--text-primary);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.42);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.46), 0 3px 12px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+  animation: claude-decision-enter 160ms ease-out;
 }
 
-.claude-decision-header,
-.claude-decision-footer {
+.claude-decision-header {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+}
+
+.claude-decision-agent {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary));
+  color: var(--accent);
+}
+
+.claude-decision-heading {
+  min-width: 0;
+}
+
+.claude-decision-title-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
+  gap: 7px;
 }
 
 .claude-decision-header h2 {
+  min-width: 0;
   margin: 0;
-  font-size: 17px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
   letter-spacing: 0;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.claude-decision-header span {
+.claude-decision-count {
+  min-width: 17px;
+  height: 17px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.claude-decision-terminal {
   display: block;
-  margin-top: 4px;
+  margin-top: 1px;
+  overflow: hidden;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-decision-icon-button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.claude-decision-icon-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
 }
 
 .claude-decision-content {
   overflow: auto;
-  padding: 18px;
+  padding: 10px 12px 8px;
 }
 
 .claude-decision-question {
-  margin: 0 0 20px;
+  min-width: 0;
+  margin: 0 0 11px;
   padding: 0;
   border: 0;
 }
@@ -61,37 +126,46 @@
 
 .claude-decision-question legend {
   padding: 0;
-  font-size: 13px;
-  font-weight: 600;
   color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 .claude-decision-question p {
-  margin: 7px 0 12px;
-  line-height: 1.5;
+  margin: 3px 0 7px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .claude-decision-options {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 
 .claude-decision-option {
-  min-height: 52px;
+  min-width: 0;
+  min-height: 30px;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 5px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-secondary) 84%, transparent);
   cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
 }
 
 .claude-decision-option:hover,
 .claude-decision-option.selected {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg-secondary));
 }
 
 .claude-decision-option input {
@@ -101,8 +175,8 @@
 }
 
 .claude-decision-check {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   display: grid;
   place-items: center;
   border: 1px solid var(--border);
@@ -110,10 +184,18 @@
   color: transparent;
 }
 
+.claude-decision-option:not(:has(input[type='checkbox'])) .claude-decision-check {
+  border-radius: 50%;
+}
+
 .claude-decision-option.selected .claude-decision-check {
   border-color: var(--accent);
   background: var(--accent);
-  color: white;
+  color: #fff;
+}
+
+.claude-decision-option-text {
+  min-width: 0;
 }
 
 .claude-decision-option strong,
@@ -123,17 +205,28 @@
 }
 
 .claude-decision-option strong {
-  font-size: 13px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.claude-decision-option small {
+  max-width: 260px;
+  margin-top: 1px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.25;
 }
 
 .claude-decision-custom {
-  width: 100%;
-  min-height: 38px;
-  padding: 8px 10px;
+  width: min(190px, 100%);
+  min-height: 30px;
+  padding: 5px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 5px;
   background: var(--bg-secondary);
   color: var(--text-primary);
+  font-size: 11px;
   outline: none;
 }
 
@@ -141,36 +234,97 @@
   border-color: var(--accent);
 }
 
-.claude-decision-option small {
-  margin-top: 3px;
-  color: var(--text-secondary);
-  line-height: 1.4;
-}
-
 .claude-decision-error {
-  margin-top: 14px;
+  margin-top: 7px;
   color: var(--error-color, #ef4444);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .claude-decision-footer {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
-  border-top: 1px solid var(--border);
-  border-bottom: 0;
+  gap: 7px;
+  padding: 6px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
 }
 
-.claude-decision-footer .btn-primary {
+.claude-decision-terminal-button,
+.claude-decision-submit {
+  min-height: 29px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.claude-decision-terminal-button {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.claude-decision-terminal-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text-secondary) 72%, var(--border));
+  background: var(--bg-tertiary);
+}
+
+.claude-decision-submit {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.claude-decision-submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.claude-decision-icon-button:disabled,
+.claude-decision-terminal-button:disabled,
+.claude-decision-submit:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+@keyframes claude-decision-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 @media (max-width: 640px) {
-  .claude-decision-overlay {
-    padding: 10px;
+  .claude-decision-region {
+    top: 38px;
+    width: calc(100vw - 16px);
   }
 
   .claude-decision-dialog {
-    max-height: calc(100vh - 20px);
+    max-height: calc(100vh - 50px);
+  }
+
+  .claude-decision-option {
+    flex: 1 1 calc(50% - 5px);
+  }
+
+  .claude-decision-custom {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claude-decision-dialog {
+    animation: none;
   }
 }

@@ -1,4 +1,5 @@
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
+import { ChevronRight, FileText, X } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent, openInExplorer } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
@@ -159,7 +160,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
               icon: isEditor ? (
                 <span className="tab-nav-file-icon">
                   {session.isDirty && <span className="tab-nav-dirty-dot" />}
-                  📄
+                  <FileText aria-hidden="true" />
                 </span>
               ) : (
                 <span
@@ -187,7 +188,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
           icon: (
             <span className="tab-nav-file-icon">
               {session.isDirty && <span className="tab-nav-dirty-dot" />}
-              📄
+              <FileText aria-hidden="true" />
             </span>
           ),
           data: session,
@@ -451,7 +452,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
           onClick={(e) => { e.stopPropagation(); handleCloseGroup(item.id, groupSessions); }}
           title="关闭分组内所有终端"
         >
-          ×
+          <X aria-hidden="true" />
         </button>
       </span>
     );
@@ -477,7 +478,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
           }}
         >
           <span className={`tree-arrow${isCollapsed ? '' : ' expanded'}`}>
-            ▶
+            <ChevronRight aria-hidden="true" />
           </span>
           <span className="tree-name" style={{ fontWeight: 600 }}>{item.label}</span>
           {renderGroupEnd(item)}
@@ -564,7 +565,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
                       onClick={(e) => { e.stopPropagation(); handleCloseTerminal(child.id); }}
                       title="关闭"
                     >
-                      ×
+                      <X aria-hidden="true" />
                     </button>
                   </span>
                 </div>
@@ -607,7 +608,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
               title="关闭"
               aria-label="关闭 Git 历史记录"
             >
-              &times;
+              <X aria-hidden="true" />
             </button>
           </div>
         )}

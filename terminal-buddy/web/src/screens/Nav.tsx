@@ -5,12 +5,12 @@ import { useMetaWs } from '../hooks/useMetaWs';
 import type { Profile, TerminalType } from '../types';
 
 const TYPE_ICON: Record<TerminalType, string> = {
-  powershell: '⚡',
-  cmd: '⚙',
-  ssh: '🐧',
-  docker: '🐳',
-  k8s: '⚓',
-  mstsc: '🪟',
+  powershell: 'PS',
+  cmd: 'CMD',
+  ssh: 'SSH',
+  docker: 'DK',
+  k8s: 'K8S',
+  mstsc: 'RDP',
 };
 
 export default function Nav() {
@@ -101,7 +101,7 @@ export default function Nav() {
               return (
                 <div className="profile-card" key={p.id}>
                   <div className="profile-row">
-                    <span style={{ fontSize: 16 }}>{TYPE_ICON[p.terminalType]}</span>
+                    <span className="profile-type-icon">{TYPE_ICON[p.terminalType]}</span>
                     <span className="pname">{p.name}</span>
                     <span className="type-tag">{p.terminalType}</span>
                     {isMstsc ? null : (
@@ -110,6 +110,7 @@ export default function Nav() {
                         disabled={busyId === p.id}
                         onClick={() => createNew(p)}
                         title="新建连接"
+                        aria-label={`新建 ${p.name} 连接`}
                       >
                         {busyId === p.id ? '…' : '+'}
                       </button>

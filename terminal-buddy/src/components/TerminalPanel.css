@@ -3,7 +3,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   overflow: hidden;
 }
 
@@ -89,21 +89,28 @@
 }
 
 .terminal-empty {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  min-width: 0;
+  min-height: 0;
   color: var(--text-secondary);
+  gap: 10px;
+  background: var(--bg-primary);
 }
 
 .empty-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
+  width: 34px;
+  height: 34px;
+  color: var(--text-tertiary);
+  stroke-width: 1.35;
 }
 
 .empty-text {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .context-submenu {
@@ -181,7 +188,7 @@
 .terminal-content.split-grid {
   display: grid;
   gap: 2px;
-  background: var(--border);
+  background: var(--border-subtle);
 }
 .terminal-content.split-2x1 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -222,10 +229,10 @@
   z-index: 5;
 }
 .terminal-content.split-grid .split-cell.active::after {
-  border: 2px solid var(--accent, #0078d4);
+  border: 1px solid var(--accent);
 }
 .terminal-content.split-grid .split-cell.drag-over::after {
-  border: 2px dashed var(--accent, #0078d4);
+  border: 2px dashed var(--accent);
   z-index: 6;
 }
 
@@ -238,11 +245,11 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 24px;
+  height: 28px;
   flex-shrink: 0;
   padding: 0 6px;
   background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
   cursor: grab;
   user-select: none;
   font-size: 12px;
@@ -261,24 +268,32 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #555;
+  background: var(--text-tertiary);
   flex-shrink: 0;
 }
 .pane-working-dot.on {
-  background: #f5a623;
+  background: var(--warning);
 }
 .pane-close {
   background: none;
   border: none;
   color: var(--text-tertiary);
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0 2px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+.pane-close svg {
+  width: 13px;
+  height: 13px;
 }
 .pane-close:hover {
   color: var(--text-primary);
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 /* xterm measures .pane-body; min-height:0 lets it shrink inside the flex column. */

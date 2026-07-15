@@ -1,4 +1,5 @@
 import { FC, FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import {
   gitCheckoutBranch,
   gitCommitPaths,
@@ -841,7 +842,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 disabled={action === 'commit'}
                 title="关闭"
               >
-                ×
+                <X aria-hidden="true" />
               </button>
             </div>
 
@@ -1019,7 +1020,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 disabled={pullDialog.phase === 'running'}
                 title="关闭"
               >
-                ×
+                <X aria-hidden="true" />
               </button>
             </div>
 
@@ -1166,7 +1167,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 disabled={pushDialog.phase === 'running'}
                 title="关闭"
               >
-                ×
+                <X aria-hidden="true" />
               </button>
             </div>
 

@@ -1,4 +1,5 @@
 import { FC, useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react';
+import { X } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -1882,7 +1883,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           </button>
           <button className="terminal-search-nav" onClick={() => handleSearch('prev')} title="上一个">▲</button>
           <button className="terminal-search-nav" onClick={() => handleSearch('next')} title="下一个">▼</button>
-          <button className="terminal-search-close" onClick={handleCloseSearch} title="关闭 (Esc)">×</button>
+          <button className="terminal-search-close" onClick={handleCloseSearch} title="关闭 (Esc)" aria-label="关闭搜索">
+            <X aria-hidden="true" />
+          </button>
         </div>
       )}
       {contextMenu.visible && (

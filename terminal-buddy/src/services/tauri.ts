@@ -162,6 +162,10 @@ export async function answerClaudeHookDecision(decisionId: string, answers: Reco
   return invoke('answer_claude_hook_decision', { decisionId, answers });
 }
 
+export async function continueClaudeHookInTerminal(decisionId: string): Promise<void> {
+  return invoke('continue_claude_hook_in_terminal', { decisionId });
+}
+
 export async function sendClaudeHookDecisionNotification(decisionId: string): Promise<void> {
   return invoke('send_claude_hook_decision_notification', { decisionId });
 }

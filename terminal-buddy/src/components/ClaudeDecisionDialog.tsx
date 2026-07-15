@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { Bot, Check, Terminal, X } from 'lucide-react';
+import { useAppStore } from '../stores/appStore';
 import {
   answerClaudeHookDecision,
+  continueClaudeHookInTerminal,
   onClaudeHookDecision,
   onClaudeHookDecisionExpired,
   onClaudeHookDecisionResolved,
@@ -16,8 +19,13 @@ export function ClaudeDecisionDialog() {
   const [selections, setSelections] = useState<Selections>({});
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [returning, setReturning] = useState(false);
   const [error, setError] = useState('');
+  const sessions = useAppStore(state => state.sessions);
   const decision = queue[0];
+  const terminalName = decision
+    ? sessions.find(session => session.id === decision.terminalId)?.profileName || 'Claude Code'
+    : '';
 
   useEffect(() => {
     let unlistenDecision: (() => void) | undefined;
@@ -61,6 +69,8 @@ export function ClaudeDecisionDialog() {
     ));
     setError('');
     setCustomAnswers({});
+    setSubmitting(false);
+    setReturning(false);
   }, [decision?.decisionId]);
 
   const complete = useMemo(() => decision?.questions.every(question => (
@@ -83,6 +93,34 @@ export function ClaudeDecisionDialog() {
     setError('');
   };
 
+  const focusTerminal = async () => {
+    const store = useAppStore.getState();
+    if (!store.sessions.some(session => session.id === decision.terminalId)) return;
+    if (store.splitMode !== 'off'
+      && !store.splitSlots.some(slot => slot.sessionId === decision.terminalId)) {
+      store.placeSessionInSplitSlot(decision.terminalId);
+    } else {
+      store.setActiveSession(decision.terminalId);
+    }
+    const appWindow = getCurrentWindow();
+    await appWindow.unminimize().catch(() => {});
+    await appWindow.show().catch(() => {});
+    await appWindow.setFocus().catch(() => {});
+  };
+
+  const continueInTerminal = async (focus: boolean) => {
+    setReturning(true);
+    setError('');
+    try {
+      await continueClaudeHookInTerminal(decision.decisionId);
+      setQueue(previous => previous.filter(item => item.decisionId !== decision.decisionId));
+      if (focus) await focusTerminal();
+    } catch (continueError) {
+      setError(String(continueError));
+      setReturning(false);
+    }
+  };
+
   const submit = async () => {
     if (!complete) return;
     setSubmitting(true);
@@ -100,24 +138,40 @@ export function ClaudeDecisionDialog() {
       setQueue(previous => previous.filter(item => item.decisionId !== decision.decisionId));
     } catch (submitError) {
       setError(String(submitError));
-    } finally {
       setSubmitting(false);
     }
   };
 
+  const busy = submitting || returning;
+
   return (
-    <div className="claude-decision-overlay">
-      <div className="claude-decision-dialog" role="dialog" aria-modal="true" aria-labelledby="claude-decision-title">
-        <div className="claude-decision-header">
-          <div>
-            <h2 id="claude-decision-title">Claude Code 等待回答</h2>
-            <span>{queue.length > 1 ? `还有 ${queue.length - 1} 个待处理决策` : '请选择后提交'}</span>
+    <div className="claude-decision-region" aria-live="polite">
+      <section className="claude-decision-dialog" role="dialog" aria-modal="false" aria-labelledby="claude-decision-title">
+        <header className="claude-decision-header">
+          <span className="claude-decision-agent"><Bot size={15} /></span>
+          <div className="claude-decision-heading">
+            <div className="claude-decision-title-row">
+              <h2 id="claude-decision-title">Claude 等待决策</h2>
+              {queue.length > 1 && <span className="claude-decision-count">{queue.length}</span>}
+            </div>
+            <span className="claude-decision-terminal">{terminalName}</span>
           </div>
-        </div>
+          <button
+            type="button"
+            className="claude-decision-icon-button"
+            title="关闭并在终端内决策"
+            aria-label="关闭并在终端内决策"
+            disabled={busy}
+            onClick={() => void continueInTerminal(false)}
+          >
+            <X size={16} />
+          </button>
+        </header>
+
         <div className="claude-decision-content">
-          {decision.questions.map(question => (
+          {decision.questions.map((question, questionIndex) => (
             <fieldset key={question.question} className="claude-decision-question">
-              <legend>{question.header || '选择'}</legend>
+              <legend>{question.header || `问题 ${questionIndex + 1}`}</legend>
               <p>{question.question}</p>
               <div className="claude-decision-options">
                 {question.options.map(option => {
@@ -126,12 +180,12 @@ export function ClaudeDecisionDialog() {
                     <label className={`claude-decision-option${checked ? ' selected' : ''}`} key={option.label}>
                       <input
                         type={question.multiSelect ? 'checkbox' : 'radio'}
-                        name={question.question}
+                        name={`${decision.decisionId}-${questionIndex}`}
                         checked={checked}
                         onChange={() => toggle(question.question, option.label, question.multiSelect)}
                       />
-                      <span className="claude-decision-check"><Check size={14} /></span>
-                      <span>
+                      <span className="claude-decision-check"><Check size={12} /></span>
+                      <span className="claude-decision-option-text">
                         <strong>{option.label}</strong>
                         {option.description && <small>{option.description}</small>}
                       </span>
@@ -152,12 +206,28 @@ export function ClaudeDecisionDialog() {
           ))}
           {error && <div className="claude-decision-error" role="alert">{error}</div>}
         </div>
-        <div className="claude-decision-footer">
-          <button className="btn-primary" disabled={!complete || submitting} onClick={() => void submit()}>
-            <Check size={16} />{submitting ? '正在提交...' : '提交回答'}
+
+        <footer className="claude-decision-footer">
+          <button
+            type="button"
+            className="claude-decision-terminal-button"
+            disabled={busy}
+            onClick={() => void continueInTerminal(true)}
+          >
+            <Terminal size={14} />
+            {returning ? '正在返回...' : '回到终端'}
           </button>
-        </div>
-      </div>
+          <button
+            type="button"
+            className="claude-decision-submit"
+            disabled={!complete || busy}
+            onClick={() => void submit()}
+          >
+            <Check size={14} />
+            {submitting ? '正在提交...' : '提交'}
+          </button>
+        </footer>
+      </section>
     </div>
   );
 }
