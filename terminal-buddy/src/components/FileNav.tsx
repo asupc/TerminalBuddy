@@ -322,6 +322,7 @@ function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): 
 
 interface ConfiguredFileRootProps {
   path: string;
+  pinned: boolean;
   refreshVersion: number;
   collapseVersion: number;
   revealVersion: number;
@@ -340,6 +341,7 @@ interface ConfiguredFileRootProps {
 
 const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   path,
+  pinned,
   refreshVersion,
   collapseVersion,
   revealVersion,
@@ -437,7 +439,7 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
         className={`tree-item file-nav-root ${selectedPath === path ? 'selected' : ''} ${pathError ? 'error' : ''}`}
         role="button"
         aria-expanded={expanded}
-        aria-label={`${name}，${path}，${expanded ? '已展开' : '已折叠'}`}
+        aria-label={`${name}，${path}，${pinned ? '已置顶，' : ''}${expanded ? '已展开' : '已折叠'}`}
         tabIndex={0}
         title={`${name} - ${path}`}
         onClick={(e) => {
@@ -469,7 +471,7 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
           ? <FolderOpen className="file-nav-root-icon" size={16} strokeWidth={1.8} />
           : <Folder className="file-nav-root-icon" size={16} strokeWidth={1.8} />}
         <span className="file-nav-root-label">
-          <strong className="file-nav-root-name">{name}</strong>
+          <strong className="file-nav-root-name">{pinned ? `【置顶】${name}` : name}</strong>
           <span className="file-nav-root-path"> - {path}</span>
         </span>
         {pathError && <span className="path-error" role="alert" aria-label="路径不存在" title="路径不存在">!</span>}
@@ -516,6 +518,9 @@ export const FileNav: FC = () => {
   const addBookmark = useAppStore(s => s.addBookmark);
   const removeBookmark = useAppStore(s => s.removeBookmark);
   const renameBookmark = useAppStore(s => s.renameBookmark);
+  const pinnedFileRoots = useAppStore(s => s.pinnedFileRoots);
+  const pinFileRoot = useAppStore(s => s.pinFileRoot);
+  const unpinFileRoot = useAppStore(s => s.unpinFileRoot);
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
@@ -555,13 +560,29 @@ export const FileNav: FC = () => {
   }, [profiles]);
 
   const rootDirectories = useMemo(() => {
-    if (!bookmarkRootPath) return configuredDirectories;
-    const bookmarkKey = bookmarkRootPath.toLowerCase();
-    if (configuredDirectories.some(path => path.toLowerCase() === bookmarkKey)) {
-      return configuredDirectories;
+    const directories = [...configuredDirectories];
+    if (bookmarkRootPath) {
+      const bookmarkKey = bookmarkRootPath.toLowerCase();
+      if (!directories.some(path => path.toLowerCase() === bookmarkKey)) {
+        directories.push(bookmarkRootPath);
+      }
     }
-    return [...configuredDirectories, bookmarkRootPath];
-  }, [bookmarkRootPath, configuredDirectories]);
+
+    const directoriesByKey = new Map(directories.map(path => [path.toLowerCase(), path]));
+    const pinnedDirectories = pinnedFileRoots
+      .map(path => directoriesByKey.get(path.toLowerCase()))
+      .filter((path): path is string => Boolean(path));
+    const pinnedKeys = new Set(pinnedDirectories.map(path => path.toLowerCase()));
+    return [
+      ...pinnedDirectories,
+      ...directories.filter(path => !pinnedKeys.has(path.toLowerCase())),
+    ];
+  }, [bookmarkRootPath, configuredDirectories, pinnedFileRoots]);
+
+  const pinnedFileRootKeys = useMemo(
+    () => new Set(pinnedFileRoots.map(path => path.toLowerCase())),
+    [pinnedFileRoots],
+  );
 
   const activeSessionDirectory = useMemo(() => {
     if (!activeSessionId) return '';
@@ -856,6 +877,7 @@ export const FileNav: FC = () => {
           <ConfiguredFileRoot
             key={`${path.toLowerCase()}:${rootRefreshVersion}`}
             path={path}
+            pinned={pinnedFileRootKeys.has(path.toLowerCase())}
             refreshVersion={rootRefreshVersion}
             collapseVersion={rootCollapseVersion}
             revealVersion={rootRevealRequest?.path.toLowerCase() === path.toLowerCase() ? rootRevealRequest.version : 0}
@@ -978,6 +1000,17 @@ export const FileNav: FC = () => {
           {!ctxMenu.path && ctxMenu.dir && (
             <>
               <div className="context-menu-separator" />
+              <div className="context-menu-item" onClick={() => {
+                const dir = ctxMenu.dir!;
+                if (pinnedFileRootKeys.has(dir.toLowerCase())) {
+                  unpinFileRoot(dir);
+                } else {
+                  pinFileRoot(dir);
+                }
+                setCtxMenu(null);
+              }}>
+                {pinnedFileRootKeys.has(ctxMenu.dir.toLowerCase()) ? '取消置顶' : '置顶'}
+              </div>
               <div className="context-menu-item" onClick={async () => {
                 const dir = ctxMenu.dir!;
                 setCtxMenu(null);
