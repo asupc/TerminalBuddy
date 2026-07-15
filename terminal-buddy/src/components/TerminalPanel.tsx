@@ -188,6 +188,7 @@ export const TerminalPanel: FC = () => {
                 colorTheme={resolvedTheme}
                 onOutput={handleTerminalInput}
                 isActive={isActivePane}
+                visible={!hidden}
                 readOnly={!settings.webApiShareSessions && session.owner === 'web'}
                 splitMode={splitMode}
               />
