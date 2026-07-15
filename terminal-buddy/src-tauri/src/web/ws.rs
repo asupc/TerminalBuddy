@@ -9,7 +9,7 @@ use crate::models::web_api::{MetaServerMessage, WsClientMessage, WsServerMessage
 use crate::services::WebServiceState;
 use crate::web::auth::verify_token;
 use crate::web::server::AppState;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 static WS_CONNECTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 const MAX_GLOBAL_WS_CONNECTIONS: usize = 50;
@@ -149,7 +149,13 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
                                 // 否则 TUI（如 Claude Code）按更宽的列数绘制会在窄屏溢出。
                                 // 多端同看一终端时桌面视图会随之变化，属可接受折中。
                                 let ts = app.state::<TerminalService>();
-                                let _ = ts.resize_terminal(&tid, rows, cols, true);
+                                if ts.resize_terminal(&tid, rows, cols, true).is_ok() {
+                                    let _ = app.emit("terminal-web-resize", serde_json::json!({
+                                        "terminalId": tid,
+                                        "rows": rows,
+                                        "cols": cols,
+                                    }));
+                                }
 
                                 // 首个 resize 到达 → 通知 send_task 可以回放历史输出了。
                                 if !ready_sent {
@@ -174,6 +180,9 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
     }
 
     web_state.unsubscribe(&terminal_id, &sub_id);
+    if web_state.get_subscriber_count(&terminal_id) == 0 {
+        let _ = state.app_handle.emit("terminal-web-takeover-ended", &terminal_id);
+    }
     WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
 }
 

@@ -10,7 +10,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openPath, readClipboardFilePaths, readClipboardImageAsFile, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../services/tauri';
 import { ServerMonitor } from './ServerMonitor';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getAppSettings } from '../utils/settings';
 import { bootLog } from '../utils/bootLog';
 import { useAppStore } from '../stores/appStore';
@@ -43,6 +43,12 @@ interface TerminalInstanceProps {
   readOnly?: boolean;
   splitMode?: 'off' | '2x1' | '2x2';
 }
+
+type WebTerminalResizePayload = {
+  terminalId: string;
+  rows: number;
+  cols: number;
+};
 
 type XtermCompositionHelper = {
   updateCompositionElements?: (dontRecurse?: boolean) => void;
@@ -703,6 +709,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
     let resizeInFlight = false;
     let pendingPtyResize: { rows: number; cols: number } | null = null;
+    let webTakeoverDimensions: { rows: number; cols: number } | null = null;
 
     // Tauri invokes are asynchronous. Keep one resize in flight per terminal and
     // collapse rapid layout transitions to the newest dimensions so an older
@@ -934,7 +941,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       if (visibleRef.current) {
         const tFit = performance.now();
-        fitAddon.fit();
+        if (webTakeoverDimensions) {
+          terminal.resize(webTakeoverDimensions.cols, webTakeoverDimensions.rows);
+        } else {
+          fitAddon.fit();
+        }
         void bootLog(`initTerminal[${terminalId}]: fitAddon.fit() took ${(performance.now() - tFit).toFixed(0)}ms`);
       }
 
@@ -950,7 +961,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // A split-hidden pane has display:none and xterm would measure it as 5x10.
       // Wait until it is visible before fitting or synchronizing its PTY.
-      if (visibleRef.current) {
+      if (visibleRef.current && !webTakeoverDimensions) {
         queuePtyResize(terminal.rows, terminal.cols);
       }
 
@@ -967,6 +978,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // --- Resize handling (learned from VS Code's terminalResizeDebouncer) ---
       const doFit = (force?: boolean, redeclarePty?: boolean) => {
         if (disposed || !visibleRef.current || !xtermRef.current || !fitAddonRef.current) return;
+
+        if (webTakeoverDimensions) {
+          const { rows, cols } = webTakeoverDimensions;
+          if (terminal.rows !== rows || terminal.cols !== cols) {
+            terminal.resize(cols, rows);
+          }
+          lastDimensionsRef.current = { cols, rows };
+          return;
+        }
 
         // Don't resize while TUI is active in alternate buffer.
         // TUI programs (claude code, vim, htop) manage their own screen layout
@@ -1559,6 +1579,48 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       });
 
     };
+
+    void Promise.all([
+      listen<WebTerminalResizePayload>('terminal-web-resize', (event) => {
+        const payload = event.payload;
+        if (payload.terminalId !== terminalId || disposed) return;
+
+        webTakeoverDimensions = { rows: payload.rows, cols: payload.cols };
+        pendingPtyResize = null;
+        lastPtyDimensionsRef.current = webTakeoverDimensions;
+
+        const terminal = xtermRef.current;
+        if (!terminal) return;
+        if (terminal.rows !== payload.rows || terminal.cols !== payload.cols) {
+          terminal.resize(payload.cols, payload.rows);
+        }
+        lastDimensionsRef.current = { cols: payload.cols, rows: payload.rows };
+        try { terminal.refresh(0, terminal.rows - 1); } catch { /* renderer may be disposing */ }
+      }),
+      listen<string>('terminal-web-takeover-ended', (event) => {
+        if (event.payload !== terminalId || disposed) return;
+
+        webTakeoverDimensions = null;
+        pendingPtyResize = null;
+        lastPtyDimensionsRef.current = null;
+
+        const terminal = xtermRef.current;
+        if (!terminal || !visibleRef.current) return;
+        const forceFit = (terminal as any)._tbForceFit;
+        if (typeof forceFit === 'function') {
+          forceFit(true, true);
+        } else if (fitAddonRef.current) {
+          fitAddonRef.current.fit();
+          queuePtyResize(terminal.rows, terminal.cols, true);
+        }
+      }),
+    ]).then((unlisteners) => {
+      if (disposed) {
+        unlisteners.forEach((unlisten) => unlisten());
+        return;
+      }
+      cleanupFns.push(...unlisteners);
+    });
 
     // Register Tauri event listener, then drain buffered backend output
     (async () => {
