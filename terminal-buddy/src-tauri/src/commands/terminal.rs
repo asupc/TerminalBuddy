@@ -799,9 +799,13 @@ pub fn resize_terminal(
     rows: u16,
     cols: u16,
     terminal_service: State<TerminalService>,
+    web_service_state: State<WebServiceState>,
 ) -> Result<(), String> {
     terminal_service.check_pc_permission(&id)?;
-    // Desktop (Tauri invoke) always allows shrink — it's the primary viewer
+    if web_service_state.get_subscriber_count(&id) > 0 {
+        return Ok(());
+    }
+    // Without an active Web takeover, the desktop remains the primary viewer.
     terminal_service.resize_terminal(&id, rows, cols, true)
 }
 

@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronRight, File, Folder, FolderOpen, RefreshCw, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, File, Folder, FolderOpen, ListChevronsDownUp, RefreshCw, X } from 'lucide-react';
 import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
@@ -13,7 +13,9 @@ import './FileNav.css';
 interface TreeNodeProps {
   node: FileNode;
   depth: number;
+  parentPath: string;
   selectedPath: string | null;
+  onActivate: (path: string) => void;
   onSelect: (path: string) => void;
   onNavigate: (path: string) => void;
   onContextMenu: (e: React.MouseEvent, path: string, isDir: boolean) => void;
@@ -22,12 +24,33 @@ interface TreeNodeProps {
   setRenamingPath: (path: string | null) => void;
 }
 
-const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNavigate, onContextMenu, onRename, renamingPath, setRenamingPath }) => {
+function scrollFileTreeItemToTop(item: HTMLElement | null): void {
+  if (!item) return;
+
+  requestAnimationFrame(() => {
+    if (!item.isConnected) return;
+    const scrollContainer = item.closest('.file-nav-content') as HTMLElement | null;
+    if (!scrollContainer) return;
+
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    const paddingTop = Number.parseFloat(window.getComputedStyle(scrollContainer).paddingTop) || 0;
+    const top = scrollContainer.scrollTop + itemRect.top - containerRect.top - paddingTop;
+    const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth';
+
+    scrollContainer.scrollTo({ top: Math.max(0, top), behavior });
+  });
+}
+
+const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, onActivate, onSelect, onNavigate, onContextMenu, onRename, renamingPath, setRenamingPath }) => {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const itemRef = useRef<HTMLDivElement>(null);
+  const pinToTopAfterLoadRef = useRef(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
   const setDragPaths = useAppStore(s => s.setDragPaths);
@@ -36,25 +59,14 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     onSelect(node.path);
-    if (node.is_directory) {
-      if (!expanded) {
-        setLoading(true);
-        listDirectory(node.path, exclusionPatterns).then((entries) => {
-          setChildren(entries);
-          setLoading(false);
-        }).catch((err) => {
-          console.error('Failed to load directory:', err);
-          setLoading(false);
-        });
-      }
-      setExpanded(!expanded);
-    }
+    onActivate(node.is_directory ? node.path : parentPath);
     (e.currentTarget as HTMLElement).focus();
-  }, [node.path, node.is_directory, expanded, exclusionPatterns, onSelect]);
+  }, [node.is_directory, node.path, onActivate, onSelect, parentPath]);
 
   const handleArrowClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (!node.is_directory) return;
+    pinToTopAfterLoadRef.current = false;
     if (!expanded) {
       setLoading(true);
       listDirectory(node.path, exclusionPatterns).then((entries) => {
@@ -71,6 +83,21 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
   const handleDoubleClick = useCallback(async () => {
     if (node.is_directory) {
       onNavigate(node.path);
+      if (!expanded) {
+        pinToTopAfterLoadRef.current = true;
+        scrollFileTreeItemToTop(itemRef.current);
+        setLoading(true);
+        listDirectory(node.path, exclusionPatterns).then((entries) => {
+          setChildren(entries);
+          setLoading(false);
+        }).catch((err) => {
+          console.error('Failed to load directory:', err);
+          setLoading(false);
+        });
+      } else {
+        pinToTopAfterLoadRef.current = false;
+      }
+      setExpanded(!expanded);
       return;
     }
     // 开关开启时，双击 .bat 直接运行（等同“在系统中打开”）；否则按文本文件在编辑器中打开
@@ -89,7 +116,13 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
     } else {
       openPath(node.path).catch((err) => console.error('Failed to open file:', err));
     }
-  }, [node.is_directory, node.path, onNavigate]);
+  }, [node.is_directory, node.path, expanded, exclusionPatterns, onNavigate]);
+
+  useLayoutEffect(() => {
+    if (!expanded || loading || !pinToTopAfterLoadRef.current) return;
+    pinToTopAfterLoadRef.current = false;
+    scrollFileTreeItemToTop(itemRef.current);
+  }, [children, expanded, loading]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'c' && e.ctrlKey && !e.shiftKey) {
@@ -212,7 +245,9 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, selectedPath, onSelect, onNa
               key={child.path}
               node={child}
               depth={depth + 1}
+              parentPath={node.path}
               selectedPath={selectedPath}
+              onActivate={onActivate}
               onSelect={onSelect}
               onNavigate={onNavigate}
               onContextMenu={onContextMenu}
@@ -253,34 +288,243 @@ function directoryName(path: string): string {
   return normalized.split(/[\\/]/).filter(Boolean).pop() || normalized;
 }
 
+function normalizeConfiguredPath(path: string): string {
+  const slashNormalized = path.trim().replace(/\//g, '\\');
+  if (slashNormalized.startsWith('\\\\?\\')) {
+    const extendedBody = slashNormalized.slice(4).replace(/\\+/g, '\\');
+    if (/^[a-zA-Z]:\\$/.test(extendedBody)) return `\\\\?\\${extendedBody}`;
+    return `\\\\?\\${extendedBody.replace(/\\+$/, '')}`;
+  }
+  const isUnc = /^\\{2,}/.test(slashNormalized);
+  const body = isUnc ? slashNormalized.replace(/^\\+/, '') : slashNormalized;
+  const normalized = (isUnc ? '\\\\' : '') + body.replace(/\\+/g, '\\');
+  if (/^[a-zA-Z]:\\$/.test(normalized)) {
+    return `${normalized.slice(0, 2)}\\`;
+  }
+  return normalized.replace(/\\+$/, '');
+}
+
+function isPathEqualOrInside(path: string, root: string): boolean {
+  const normalizedPath = normalizeConfiguredPath(path).toLowerCase();
+  const normalizedRoot = normalizeConfiguredPath(root).toLowerCase();
+  if (!normalizedPath || !normalizedRoot) return false;
+  if (normalizedPath === normalizedRoot) return true;
+  const prefix = normalizedRoot.endsWith('\\') ? normalizedRoot : `${normalizedRoot}\\`;
+  return normalizedPath.startsWith(prefix);
+}
+
+function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
+  const normalizedPath = normalizeConfiguredPath(path);
+  const normalizedOldPrefix = normalizeConfiguredPath(oldPrefix);
+  if (!isPathEqualOrInside(normalizedPath, normalizedOldPrefix)) return path;
+  return `${normalizeConfiguredPath(newPrefix)}${normalizedPath.slice(normalizedOldPrefix.length)}`;
+}
+
+interface ConfiguredFileRootProps {
+  path: string;
+  refreshVersion: number;
+  collapseVersion: number;
+  revealVersion: number;
+  sortBy: 'name' | 'size' | 'modified';
+  sortDir: 'asc' | 'desc';
+  selectedPath: string | null;
+  onActivate: (path: string) => void;
+  onSelect: (path: string) => void;
+  onNavigate: (path: string) => void;
+  onContextMenu: (e: React.MouseEvent, path: string, isDir: boolean) => void;
+  onRootContextMenu: (e: React.MouseEvent, path: string) => void;
+  onRename: (path: string, newName: string) => Promise<void>;
+  renamingPath: string | null;
+  setRenamingPath: (path: string | null) => void;
+}
+
+const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
+  path,
+  refreshVersion,
+  collapseVersion,
+  revealVersion,
+  sortBy,
+  sortDir,
+  selectedPath,
+  onActivate,
+  onSelect,
+  onNavigate,
+  onContextMenu,
+  onRootContextMenu,
+  onRename,
+  renamingPath,
+  setRenamingPath,
+}) => {
+  const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
+  const [expanded, setExpanded] = useState(false);
+  const [nodes, setNodes] = useState<FileNode[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [pathError, setPathError] = useState(false);
+  const itemRef = useRef<HTMLDivElement>(null);
+  const pinToTopAfterLoadRef = useRef(false);
+
+  useEffect(() => {
+    pinToTopAfterLoadRef.current = false;
+    setExpanded(false);
+  }, [collapseVersion]);
+
+  useEffect(() => {
+    if (revealVersion === 0) return;
+    const frame = requestAnimationFrame(() => {
+      pinToTopAfterLoadRef.current = true;
+      setLoading(true);
+      setExpanded(true);
+      scrollFileTreeItemToTop(itemRef.current);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [revealVersion]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+    setLoading(true);
+
+    listDirectory(path, exclusionPatterns)
+      .then((entries) => {
+        if (cancelled) return;
+        setNodes(entries);
+        setPathError(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('Failed to load configured directory:', err);
+        setNodes([]);
+        setPathError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [path, exclusionPatterns, refreshVersion, expanded]);
+
+  useLayoutEffect(() => {
+    if (!expanded || loading || !pinToTopAfterLoadRef.current) return;
+    pinToTopAfterLoadRef.current = false;
+    scrollFileTreeItemToTop(itemRef.current);
+  }, [expanded, loading, nodes]);
+
+  const sortedNodes = useMemo(
+    () => [...nodes].sort((a, b) => compareNodes(a, b, sortBy, sortDir)),
+    [nodes, sortBy, sortDir],
+  );
+  const name = directoryName(path);
+
+  const toggle = useCallback(() => {
+    setExpanded(value => !value);
+  }, []);
+
+  const handleDoubleClick = useCallback(() => {
+    if (!expanded) {
+      pinToTopAfterLoadRef.current = true;
+      setLoading(true);
+      scrollFileTreeItemToTop(itemRef.current);
+    } else {
+      pinToTopAfterLoadRef.current = false;
+    }
+    toggle();
+  }, [expanded, toggle]);
+
+  return (
+    <div className="file-nav-configured-root">
+      <div
+        ref={itemRef}
+        className={`tree-item file-nav-root ${selectedPath === path ? 'selected' : ''} ${pathError ? 'error' : ''}`}
+        role="button"
+        aria-expanded={expanded}
+        aria-label={`${name}，${path}，${expanded ? '已展开' : '已折叠'}`}
+        tabIndex={0}
+        title={`${name} - ${path}`}
+        onClick={(e) => {
+          onSelect(path);
+          onActivate(path);
+          e.currentTarget.focus();
+        }}
+        onDoubleClick={handleDoubleClick}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          onSelect(path);
+          onActivate(path);
+          toggle();
+        }}
+        onContextMenu={(e) => onRootContextMenu(e, path)}
+      >
+        <span
+          className={`tree-arrow ${expanded ? 'expanded' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggle();
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <ChevronRight size={13} strokeWidth={2} />
+        </span>
+        {expanded
+          ? <FolderOpen className="file-nav-root-icon" size={16} strokeWidth={1.8} />
+          : <Folder className="file-nav-root-icon" size={16} strokeWidth={1.8} />}
+        <span className="file-nav-root-label">
+          <strong className="file-nav-root-name">{name}</strong>
+          <span className="file-nav-root-path"> - {path}</span>
+        </span>
+        {pathError && <span className="path-error" role="alert" aria-label="路径不存在" title="路径不存在">!</span>}
+      </div>
+      {expanded && (
+        <div className="file-nav-root-children">
+          {loading && <div className="tree-loading file-nav-root-loading">加载中...</div>}
+          {!loading && !pathError && sortedNodes.length === 0 && (
+            <div className="empty-hint file-nav-root-empty">目录为空</div>
+          )}
+          {!loading && sortedNodes.map((node) => (
+            <TreeNode
+              key={node.path}
+              node={node}
+              depth={1}
+              parentPath={path}
+              selectedPath={selectedPath}
+              onActivate={onActivate}
+              onSelect={onSelect}
+              onNavigate={onNavigate}
+              onContextMenu={onContextMenu}
+              onRename={onRename}
+              renamingPath={renamingPath}
+              setRenamingPath={setRenamingPath}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const FileNav: FC = () => {
   const currentDirectory = useAppStore(s => s.currentDirectory);
-  const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
-  const navigateWithHistory = useAppStore(s => s.navigateWithHistory);
-  const navBack = useAppStore(s => s.navBack);
-  const navForward = useAppStore(s => s.navForward);
-  const navBackStack = useAppStore(s => s.navBackStack);
-  const navForwardStack = useAppStore(s => s.navForwardStack);
   const fileSortBy = useAppStore(s => s.fileSortBy);
   const fileSortDir = useAppStore(s => s.fileSortDir);
   const setFileSort = useAppStore(s => s.setFileSort);
-  const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
   const activeSessionId = useAppStore(s => s.activeSessionId);
+  const sessionDirectories = useAppStore(s => s.sessionDirectories);
+  const sessions = useAppStore(s => s.sessions);
+  const profiles = useAppStore(s => s.profiles);
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
   const bookmarks = useAppStore(s => s.bookmarks);
   const addBookmark = useAppStore(s => s.addBookmark);
   const removeBookmark = useAppStore(s => s.removeBookmark);
   const renameBookmark = useAppStore(s => s.renameBookmark);
-  const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
-  const [rootNodes, setRootNodes] = useState<FileNode[]>([]);
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editValue, setEditValue] = useState('');
-  const [pathError, setPathError] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
-  const [rootExpanded, setRootExpanded] = useState(true);
+  const [gitTargetOverride, setGitTargetOverride] = useState<string | null>(null);
+  const [bookmarkRootPath, setBookmarkRootPath] = useState<string | null>(null);
+  const [rootRefreshVersion, setRootRefreshVersion] = useState(0);
+  const [rootCollapseVersion, setRootCollapseVersion] = useState(0);
+  const [rootRevealRequest, setRootRevealRequest] = useState<{ path: string; version: number } | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean; dir?: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -293,9 +537,67 @@ export const FileNav: FC = () => {
   const setBookmarkHeightStore = useAppStore(s => s.setBookmarkHeight);
   const renameBookmarkInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
+
+  const activeSession = sessions.find(s => s.id === activeSessionId);
+  const isSsh = activeSession?.terminalType === 'ssh';
+  const configuredDirectories = useMemo(() => {
+    const uniquePaths = new Map<string, string>();
+    for (const profile of profiles) {
+      if (profile.terminalType !== 'powershell' && profile.terminalType !== 'cmd') continue;
+      const path = normalizeConfiguredPath(profile.startupPath || '');
+      if (!path) continue;
+      const key = path.toLowerCase();
+      if (!uniquePaths.has(key)) uniquePaths.set(key, path);
+    }
+    return [...uniquePaths.values()];
+  }, [profiles]);
+
+  const rootDirectories = useMemo(() => {
+    if (!bookmarkRootPath) return configuredDirectories;
+    const bookmarkKey = bookmarkRootPath.toLowerCase();
+    if (configuredDirectories.some(path => path.toLowerCase() === bookmarkKey)) {
+      return configuredDirectories;
+    }
+    return [...configuredDirectories, bookmarkRootPath];
+  }, [bookmarkRootPath, configuredDirectories]);
+
+  const activeSessionDirectory = useMemo(() => {
+    if (!activeSessionId) return '';
+    const trackedDirectory = sessionDirectories[activeSessionId]?.trim();
+    if (trackedDirectory) return trackedDirectory;
+    const session = sessions.find(item => item.id === activeSessionId);
+    if (!session) return '';
+    return profiles.find(profile => profile.id === session.profileId)?.startupPath?.trim() || '';
+  }, [activeSessionId, profiles, sessionDirectories, sessions]);
+
+  const gitTargetDirectory = gitTargetOverride
+    || activeSessionDirectory
+    || (!activeSessionId ? currentDirectory : '');
+
+  const visibleConfiguredDirectories = useMemo(() => {
+    const query = filterQuery.trim().toLowerCase();
+    if (!query) return rootDirectories;
+    return rootDirectories.filter(path => (
+      directoryName(path).toLowerCase().includes(query)
+      || path.toLowerCase().includes(query)
+    ));
+  }, [filterQuery, rootDirectories]);
+  const selectedVisibleRoot = useMemo(() => {
+    if (!selectedPath) return null;
+    return [...visibleConfiguredDirectories]
+      .sort((a, b) => b.length - a.length)
+      .find(root => isPathEqualOrInside(selectedPath, root)) || null;
+  }, [selectedPath, visibleConfiguredDirectories]);
+
+  useEffect(() => {
+    const belongsToVisibleTree = (path: string) => (
+      rootDirectories.some(root => isPathEqualOrInside(path, root))
+    );
+    setSelectedPath(path => path && !belongsToVisibleTree(path) ? null : path);
+    setGitTargetOverride(path => path && !belongsToVisibleTree(path) ? null : path);
+  }, [rootDirectories]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {
@@ -306,47 +608,9 @@ export const FileNav: FC = () => {
     }).catch(() => {});
   }, []);
 
-  // Load root directory on mount
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadRoot = async () => {
-      if (useAppStore.getState().currentDirectory) return;
-      try {
-        const defaultPath = 'C:\\';
-        const entries = await listDirectory(defaultPath, exclusionPatterns);
-        if (!cancelled && !useAppStore.getState().currentDirectory) {
-          setRootNodes(entries);
-          setCurrentDirectory(defaultPath);
-        }
-      } catch (err) {
-        if (!cancelled) console.error('Failed to load root directory:', err);
-      }
-    };
-    loadRoot();
-    return () => { cancelled = true; };
-  }, [exclusionPatterns]);
-
-  const navigateTo = useCallback((path: string) => {
-    navigateWithHistory(path);
-    if (activeSessionId) {
-      setSessionDirectory(activeSessionId, path);
-    }
-  }, [navigateWithHistory, setSessionDirectory, activeSessionId]);
-
-  const handleNavBack = useCallback(() => {
-    const target = navBack();
-    if (target && activeSessionId) {
-      setSessionDirectory(activeSessionId, target);
-    }
-  }, [navBack, setSessionDirectory, activeSessionId]);
-
-  const handleNavForward = useCallback(() => {
-    const target = navForward();
-    if (target && activeSessionId) {
-      setSessionDirectory(activeSessionId, target);
-    }
-  }, [navForward, setSessionDirectory, activeSessionId]);
+  const activateTreeDirectory = useCallback((path: string) => {
+    setGitTargetOverride(path);
+  }, []);
 
   const cycleSortField = useCallback(() => {
     const fields: Array<'name' | 'size' | 'modified'> = ['name', 'size', 'modified'];
@@ -359,69 +623,14 @@ export const FileNav: FC = () => {
     setFileSort(fileSortBy, fileSortDir === 'asc' ? 'desc' : 'asc');
   }, [fileSortBy, fileSortDir, setFileSort]);
 
-  // Load directory when currentDirectory changes
-  useEffect(() => {
-    if (!currentDirectory) return;
-
-    let cancelled = false;
-    setRootExpanded(true);
-
-    const loadDirectory = async () => {
-      try {
-        const entries = await listDirectory(currentDirectory, exclusionPatterns);
-        if (cancelled) return;
-        setRootNodes(entries);
-        setPathError(false);
-      } catch (err) {
-        if (cancelled) return;
-        console.error('Failed to load directory:', err);
-        setPathError(true);
-      }
-    };
-    loadDirectory();
-    return () => { cancelled = true; };
-  }, [currentDirectory, exclusionPatterns]);
-
   const handleSelect = useCallback((path: string) => {
     setSelectedPath(path);
   }, []);
 
-  const filteredSortedNodes = useMemo<FileNode[]>(() => {
-    const q = filterQuery.trim().toLowerCase();
-    const filtered = q
-      ? rootNodes.filter(n => n.name.toLowerCase().includes(q))
-      : rootNodes;
-    return [...filtered].sort((a, b) => compareNodes(a, b, fileSortBy, fileSortDir));
-  }, [rootNodes, filterQuery, fileSortBy, fileSortDir]);
-
-  const currentDirectoryName = useMemo(
-    () => currentDirectory ? directoryName(currentDirectory) : '无路径',
-    [currentDirectory],
-  );
-
-  // Alt+Left / Alt+Right back/forward — skip when terminal/editor has focus.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-      const target = e.target as HTMLElement | null;
-      if (target && (target.closest('.xterm') || target.closest('.monaco-editor') || target.closest('input, textarea'))) {
-        return;
-      }
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        handleNavBack();
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        handleNavForward();
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [handleNavBack, handleNavForward]);
-
   const handleNavigate = useCallback((path: string) => {
-    navigateTo(path);
-  }, [navigateTo]);
+    setSelectedPath(path);
+    activateTreeDirectory(path);
+  }, [activateTreeDirectory]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -466,66 +675,29 @@ export const FileNav: FC = () => {
     };
   }, [isResizing, handleMouseMove, handleMouseUp]);
 
-  const handleRefresh = async () => {
-    if (!currentDirectory) return;
-    try {
-      const entries = await listDirectory(currentDirectory, exclusionPatterns);
-      setRootNodes(entries);
-    } catch (err) {
-      console.error('Failed to refresh:', err);
-    }
-  };
+  const handleRefresh = useCallback(() => {
+    setRootRefreshVersion(version => version + 1);
+  }, []);
 
-  const handleGoUp = async () => {
-    if (!currentDirectory) return;
-    const parent = currentDirectory.substring(0, currentDirectory.lastIndexOf('\\'));
-    if (parent.length >= 3) {
-      navigateTo(parent);
-    }
-  };
+  const handleCollapseAll = useCallback(() => {
+    setRootCollapseVersion(version => version + 1);
+  }, []);
 
-  const handlePathDoubleClick = () => {
-    setIsEditing(true);
-    setEditValue(currentDirectory);
-    setTimeout(() => {
-      inputRef.current?.select();
-    }, 0);
-  };
-
-  const handlePathSubmit = () => {
-    const path = editValue.trim();
-    if (!path) {
-      setIsEditing(false);
-      return;
-    }
-    let normalizedPath = path.replace(/\//g, '\\');
-    if (!normalizedPath.endsWith('\\')) {
-      normalizedPath += '\\';
-    }
-    listDirectory(normalizedPath, exclusionPatterns).then(() => {
-      setPathError(false);
-      navigateTo(normalizedPath);
-      setIsEditing(false);
-    }).catch(() => {
-      setPathError(true);
-    });
-  };
-
-  const handlePathKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handlePathSubmit();
-    } else if (e.key === 'Escape') {
-      setIsEditing(false);
-      setPathError(false);
-    }
-  };
+  const handleRootContextMenu = useCallback((e: React.MouseEvent, path: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedPath(path);
+    activateTreeDirectory(path);
+    setCtxMenu({ x: e.clientX, y: e.clientY, dir: path });
+  }, [activateTreeDirectory]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, path: string, isDir: boolean) => {
     e.preventDefault();
     e.stopPropagation();
     setSelectedPath(path);
+    if (isDir) activateTreeDirectory(path);
     setCtxMenu({ x: e.clientX, y: e.clientY, path, isDir });
-  }, []);
+  }, [activateTreeDirectory]);
 
   const handleShowInExplorer = useCallback(async () => {
     if (!ctxMenu?.path) return;
@@ -540,11 +712,11 @@ export const FileNav: FC = () => {
   }, [ctxMenu]);
 
   const handleShowCurrentDirInExplorer = useCallback(async (dir?: string) => {
-    const target = dir || currentDirectory;
+    const target = dir || gitTargetDirectory;
     if (!target) return;
     try { await openInExplorer(target); } catch (err) { console.error(err); }
     setCtxMenu(null);
-  }, [currentDirectory]);
+  }, [gitTargetDirectory]);
 
   const handleDeleteItem = useCallback(() => {
     setConfirmDelete(ctxMenu?.path || null);
@@ -555,14 +727,16 @@ export const FileNav: FC = () => {
     if (!confirmDelete) return;
     try {
       await deletePath(confirmDelete);
-      const entries = await listDirectory(currentDirectory, exclusionPatterns);
-      setRootNodes(entries);
+      setSelectedPath(path => path && isPathEqualOrInside(path, confirmDelete) ? null : path);
+      setGitTargetOverride(path => path && isPathEqualOrInside(path, confirmDelete) ? null : path);
+      setBookmarkRootPath(path => path && isPathEqualOrInside(path, confirmDelete) ? null : path);
+      setRootRefreshVersion(version => version + 1);
     } catch (err) {
       console.error(err);
       alert('删除失败: ' + String(err));
     }
     setConfirmDelete(null);
-  }, [confirmDelete, currentDirectory, exclusionPatterns]);
+  }, [confirmDelete]);
 
   const cancelDeleteItem = useCallback(() => {
     setConfirmDelete(null);
@@ -577,16 +751,18 @@ export const FileNav: FC = () => {
   const handleRenameInline = useCallback(async (path: string, newName: string) => {
     try {
       await renamePath(path, newName);
-      const entries = await listDirectory(currentDirectory, exclusionPatterns);
-      setRootNodes(entries);
       const parent = path.substring(0, path.lastIndexOf('\\'));
-      setSelectedPath(parent + '\\' + newName);
+      const renamedPath = parent + '\\' + newName;
+      setSelectedPath(current => current ? replacePathPrefix(current, path, renamedPath) : renamedPath);
+      setGitTargetOverride(current => current ? replacePathPrefix(current, path, renamedPath) : current);
+      setBookmarkRootPath(current => current ? replacePathPrefix(current, path, renamedPath) : current);
+      setRootRefreshVersion(version => version + 1);
     } catch (err) {
       console.error(err);
       alert('重命名失败: ' + String(err));
     }
     setRenamingPath(null);
-  }, [currentDirectory, exclusionPatterns]);
+  }, []);
 
   // Close context menu on outside click, keydown, or scroll
   useEffect(() => {
@@ -624,11 +800,6 @@ export const FileNav: FC = () => {
     return () => window.removeEventListener('resize', adjustCtxMenuPosition);
   }, [ctxMenu, adjustCtxMenuPosition]);
 
-  const sessions = useAppStore(s => s.sessions);
-  const activeTerminalId = useAppStore(s => s.activeSessionId);
-  const activeSession = sessions.find(s => s.id === activeTerminalId);
-  const isSsh = activeSession?.terminalType === 'ssh';
-
   if (isSsh && activeSession) {
     return <RemoteFileTree terminalId={activeSession.id} />;
   }
@@ -638,11 +809,8 @@ export const FileNav: FC = () => {
       <div className="panel-titlebar">
         <span className="panel-title">文件</span>
         <div className="file-nav-actions">
-          <button type="button" onClick={handleNavBack} disabled={navBackStack.length === 0} title="后退 (Alt+←)" aria-label="后退">
-            <ArrowLeft aria-hidden="true" />
-          </button>
-          <button type="button" onClick={handleNavForward} disabled={navForwardStack.length === 0} title="前进 (Alt+→)" aria-label="前进">
-            <ArrowRight aria-hidden="true" />
+          <button type="button" onClick={handleCollapseAll} title="全部折叠" aria-label="折叠所有目录">
+            <ListChevronsDownUp aria-hidden="true" />
           </button>
           <button type="button" onClick={handleRefresh} title="刷新" aria-label="刷新文件列表">
             <RefreshCw aria-hidden="true" />
@@ -655,13 +823,18 @@ export const FileNav: FC = () => {
           </button>
         </div>
       </div>
-      <GitNavBar currentDirectory={currentDirectory} onRepositoryChanged={handleRefresh} />
+      <GitNavBar
+        key={gitTargetDirectory.toLowerCase() || 'none'}
+        currentDirectory={gitTargetDirectory}
+        onRepositoryChanged={handleRefresh}
+      />
       <div className="file-nav-filter">
         <input
           className="filter-input"
-          placeholder="过滤当前目录…"
+          placeholder="过滤父级目录…"
           value={filterQuery}
           onChange={(e) => setFilterQuery(e.target.value)}
+          aria-label="过滤父级目录"
         />
       </div>
       <div
@@ -670,94 +843,35 @@ export const FileNav: FC = () => {
           const target = e.target as HTMLElement;
           if (target.closest('.tree-item')) return;
           e.preventDefault();
-          setCtxMenu({ x: e.clientX, y: e.clientY, dir: currentDirectory });
+          setCtxMenu({ x: e.clientX, y: e.clientY, dir: selectedVisibleRoot || undefined });
         }}
       >
-        <div
-          className={`tree-item file-nav-root ${selectedPath === currentDirectory ? 'selected' : ''} ${pathError ? 'error' : ''}`}
-          role="button"
-          aria-expanded={rootExpanded}
-          aria-label={`${currentDirectoryName}，${rootExpanded ? '已展开' : '已折叠'}`}
-          tabIndex={0}
-          title={currentDirectory ? `${currentDirectoryName} - ${currentDirectory}` : '无路径'}
-          onClick={(e) => {
-            if ((e.target as HTMLElement).closest('input')) return;
-            setSelectedPath(currentDirectory || null);
-            setRootExpanded(expanded => !expanded);
-            e.currentTarget.focus();
-          }}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter' && e.key !== ' ') return;
-            e.preventDefault();
-            setSelectedPath(currentDirectory || null);
-            setRootExpanded(expanded => !expanded);
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setSelectedPath(currentDirectory || null);
-            setCtxMenu({ x: e.clientX, y: e.clientY, dir: currentDirectory });
-          }}
-        >
-          <span
-            className={`tree-arrow ${rootExpanded ? 'expanded' : ''}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              setRootExpanded(expanded => !expanded);
-            }}
-          >
-            <ChevronRight size={13} strokeWidth={2} />
-          </span>
-          {rootExpanded
-            ? <FolderOpen className="file-nav-root-icon" size={16} strokeWidth={1.8} />
-            : <Folder className="file-nav-root-icon" size={16} strokeWidth={1.8} />}
-          {isEditing ? (
-            <input
-              ref={inputRef}
-              className="path-edit-input file-nav-root-input"
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              onBlur={handlePathSubmit}
-              onKeyDown={handlePathKeyDown}
-              onClick={(e) => e.stopPropagation()}
-              autoFocus
-            />
-          ) : (
-            <span
-              className="file-nav-root-label"
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                handlePathDoubleClick();
-              }}
-              title="双击编辑路径"
-            >
-              <strong className="file-nav-root-name">{currentDirectoryName}</strong>
-              {currentDirectory && <span className="file-nav-root-path"> - {currentDirectory}</span>}
-            </span>
-          )}
-          {pathError && <span className="path-error" role="alert" aria-label="路径不存在" title="路径不存在">!</span>}
-        </div>
-        {rootExpanded && (
-          <div className="file-nav-root-children">
-            {filteredSortedNodes.length === 0 && filterQuery.trim() && (
-              <div className="empty-hint">无匹配项</div>
-            )}
-            {filteredSortedNodes.map((node) => (
-              <TreeNode
-                key={node.path}
-                node={node}
-                depth={1}
-                selectedPath={selectedPath}
-                onSelect={handleSelect}
-                onNavigate={handleNavigate}
-                onContextMenu={handleContextMenu}
-                onRename={handleRenameInline}
-                renamingPath={renamingPath}
-                setRenamingPath={setRenamingPath}
-              />
-            ))}
-          </div>
+        {rootDirectories.length === 0 && (
+          <div className="empty-state file-nav-empty-state">暂无已配置的起始路径</div>
         )}
+        {rootDirectories.length > 0 && visibleConfiguredDirectories.length === 0 && (
+          <div className="empty-hint">无匹配目录</div>
+        )}
+        {visibleConfiguredDirectories.map(path => (
+          <ConfiguredFileRoot
+            key={`${path.toLowerCase()}:${rootRefreshVersion}`}
+            path={path}
+            refreshVersion={rootRefreshVersion}
+            collapseVersion={rootCollapseVersion}
+            revealVersion={rootRevealRequest?.path.toLowerCase() === path.toLowerCase() ? rootRevealRequest.version : 0}
+            sortBy={fileSortBy}
+            sortDir={fileSortDir}
+            selectedPath={selectedPath}
+            onActivate={activateTreeDirectory}
+            onSelect={handleSelect}
+            onNavigate={handleNavigate}
+            onContextMenu={handleContextMenu}
+            onRootContextMenu={handleRootContextMenu}
+            onRename={handleRenameInline}
+            renamingPath={renamingPath}
+            setRenamingPath={setRenamingPath}
+          />
+        ))}
       </div>
       {bookmarks.length > 0 && (
         <div className="bookmark-section" style={{ height: bookmarkHeight }}>
@@ -784,7 +898,20 @@ export const FileNav: FC = () => {
             <div
               key={bm.path}
               className="bookmark-tag"
-              onClick={() => { if (!renamingBookmark || renamingBookmark !== bm.path) navigateTo(bm.path); }}
+              onClick={() => {
+                if (renamingBookmark === bm.path) return;
+                const path = normalizeConfiguredPath(bm.path);
+                if (!path) return;
+                setBookmarkRootPath(path);
+                setRootCollapseVersion(version => version + 1);
+                setRootRevealRequest(request => ({
+                  path,
+                  version: (request?.version ?? 0) + 1,
+                }));
+                setFilterQuery('');
+                setSelectedPath(path);
+                activateTreeDirectory(path);
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setBookmarkCtxMenu({ x: e.clientX, y: e.clientY, path: bm.path });
@@ -847,9 +974,6 @@ export const FileNav: FC = () => {
         >
           <div className="context-menu-item" onClick={() => { setCtxMenu(null); handleRefresh(); }}>
             刷新
-          </div>
-          <div className="context-menu-item" onClick={() => { setCtxMenu(null); handleGoUp(); }}>
-            上一级目录
           </div>
           {!ctxMenu.path && ctxMenu.dir && (
             <>
