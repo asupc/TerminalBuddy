@@ -1,5 +1,5 @@
 import { FC, FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { CircleSlash2, GitBranch as GitBranchIcon, LoaderCircle, TriangleAlert, X } from 'lucide-react';
 import {
   gitCheckoutBranch,
   gitCommitPaths,
@@ -18,6 +18,7 @@ import {
   type GitRepositoryStatus,
 } from '../services/tauri';
 import {
+  GIT_STATUS_CACHE_TTL_MS,
   getCachedGitRepositoryStatus,
   loadGitRepositoryStatus,
 } from '../services/gitStatusCache';
@@ -144,10 +145,9 @@ function buildPushCommandPreview(dialog: PushDialogState): string {
 
 export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryChanged }) => {
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
-  const [status, setStatus] = useState<GitRepositoryStatus | null>(
-    () => getCachedGitRepositoryStatus(currentDirectory)?.status ?? null,
-  );
-  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [popover, setPopover] = useState<GitPopover>(null);
   const [action, setAction] = useState<GitAction>(null);
   const [branches, setBranches] = useState<GitBranch[]>([]);
@@ -170,16 +170,27 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   useLayoutEffect(() => {
     let cancelled = false;
     const cached = getCachedGitRepositoryStatus(currentDirectory);
+    const freshCached = cached && Date.now() - cached.updatedAt < GIT_STATUS_CACHE_TTL_MS
+      ? cached
+      : undefined;
 
     setPopover(null);
     setBranches([]);
-    setStatus(cached?.status ?? null);
+    setLoadError('');
     if (!currentDirectory) {
+      setStatus(null);
       setLoading(false);
       return;
     }
 
-    setLoading(!cached);
+    if (freshCached) {
+      setStatus(freshCached.status);
+      setLoading(false);
+      return;
+    }
+
+    setStatus(null);
+    setLoading(true);
     loadGitRepositoryStatus(currentDirectory)
       .then((next) => {
         if (!cancelled) setStatus(next);
@@ -187,7 +198,8 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       .catch((err) => {
         if (!cancelled) {
           console.error('Failed to load git status:', err);
-          if (!cached) setStatus(null);
+          setStatus(null);
+          setLoadError(String(err));
         }
       })
       .finally(() => {
@@ -222,12 +234,14 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const refreshStatus = useCallback(async () => {
     if (!currentDirectory) {
       setStatus(null);
+      setLoadError('');
       return null;
     }
 
     const requestedDirectory = currentDirectory;
     if (currentDirectoryRef.current === requestedDirectory) {
       setLoading(true);
+      setLoadError('');
     }
     try {
       const next = await loadGitRepositoryStatus(requestedDirectory, { force: true });
@@ -237,6 +251,9 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       return next;
     } catch (err) {
       console.error('Failed to refresh git status:', err);
+      if (currentDirectoryRef.current === requestedDirectory) {
+        setLoadError(String(err));
+      }
       return null;
     } finally {
       if (currentDirectoryRef.current === requestedDirectory) {
@@ -739,7 +756,28 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   };
 
   if (!status) {
-    return null;
+    const state = loading
+      ? { kind: 'loading', label: '正在加载 Git 信息...', icon: LoaderCircle }
+      : !currentDirectory
+        ? { kind: 'empty', label: '请选择目录以检查 Git 仓库', icon: CircleSlash2 }
+        : loadError
+          ? { kind: 'error', label: 'Git 信息加载失败', icon: TriangleAlert }
+          : { kind: 'empty', label: '当前目录不是 Git 仓库', icon: GitBranchIcon };
+    const StateIcon = state.icon;
+
+    return (
+      <div
+        ref={rootRef}
+        className={`git-nav-bar git-nav-state ${state.kind}`}
+        role="status"
+        aria-live="polite"
+        aria-busy={loading}
+        title={loadError || currentDirectory || undefined}
+      >
+        <StateIcon className="git-nav-state-icon" aria-hidden="true" />
+        <span>{state.label}</span>
+      </div>
+    );
   }
 
   const busy = action !== null || loading;
@@ -753,7 +791,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
         disabled={busy}
         title={buildStatusTitle(status)}
       >
-        <span className="git-branch-icon">⑂</span>
+        <GitBranchIcon className="git-branch-icon" aria-hidden="true" />
         <span className="git-branch-name">{status.branch}</span>
       </button>
       {hasChanges && (

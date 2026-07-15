@@ -3,7 +3,7 @@ import {
   type GitRepositoryStatus,
 } from './tauri';
 
-const STATUS_REUSE_WINDOW_MS = 2_000;
+export const GIT_STATUS_CACHE_TTL_MS = 60_000;
 const MAX_CACHE_ENTRIES = 100;
 
 export interface CachedGitRepositoryStatus {
@@ -70,7 +70,7 @@ export async function loadGitRepositoryStatus(
   if (!key) return null;
 
   const cached = getCachedGitRepositoryStatus(path);
-  if (!options.force && cached && Date.now() - cached.updatedAt < STATUS_REUSE_WINDOW_MS) {
+  if (!options.force && cached && Date.now() - cached.updatedAt < GIT_STATUS_CACHE_TTL_MS) {
     return cached.status;
   }
 

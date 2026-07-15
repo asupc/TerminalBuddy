@@ -136,7 +136,35 @@
   overflow-y: auto;
   padding: 3px 0;
   will-change: transform;
+  overflow-anchor: none;
   overscroll-behavior: contain;
+}
+
+.file-nav-content::after {
+  content: '';
+  display: block;
+  min-height: calc(100% - 34px);
+  pointer-events: none;
+}
+
+.file-nav-configured-root + .file-nav-configured-root {
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+}
+
+.file-nav-root-loading {
+  padding-left: 42px;
+}
+
+.file-nav-root-empty {
+  padding: 8px 12px 8px 42px;
+  text-align: left;
+}
+
+.file-nav-empty-state {
+  padding: 24px 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: center;
 }
 
 .file-nav-root {
@@ -567,12 +595,59 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  min-height: 29px;
-  padding: 3px 6px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  min-height: 34px;
+  margin: 4px 8px 0;
+  padding: 4px 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
   box-sizing: border-box;
   flex-shrink: 0;
+}
+
+.git-nav-state {
+  min-width: 0;
+  justify-content: center;
+  gap: 6px;
+  padding-right: 10px;
+  padding-left: 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.git-nav-state span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-nav-state.error {
+  color: var(--danger);
+}
+
+.git-nav-state-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  stroke-width: 1.8;
+}
+
+.git-nav-state.loading .git-nav-state-icon {
+  color: var(--accent);
+  animation: git-status-spin 0.8s linear infinite;
+}
+
+@keyframes git-status-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .git-nav-state.loading .git-nav-state-icon {
+    animation: none;
+  }
 }
 
 .git-branch-button {
@@ -609,9 +684,10 @@
 
 .git-branch-icon {
   width: 12px;
+  height: 12px;
   flex-shrink: 0;
   color: var(--accent);
-  text-align: center;
+  stroke-width: 1.8;
 }
 
 .git-branch-name {
@@ -2595,7 +2671,7 @@
 
 /* File nav filter input */
 .file-nav-filter {
-  padding: 7px 8px;
+  padding: 4px 8px 7px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
