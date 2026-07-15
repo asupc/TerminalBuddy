@@ -129,16 +129,25 @@ export async function initFileTreeNav() {
       if (data?.sortDir === 'asc' || data?.sortDir === 'desc') {
         useAppStore.setState({ fileSortDir: data.sortDir });
       }
+      if (Array.isArray(data?.pinnedRoots)) {
+        const pinnedFileRoots = data.pinnedRoots
+          .filter((path: unknown): path is string => typeof path === 'string' && path.trim().length > 0)
+          .filter((path: string, index: number, paths: string[]) => (
+            paths.findIndex(candidate => candidate.toLowerCase() === path.toLowerCase()) === index
+          ));
+        useAppStore.setState({ pinnedFileRoots });
+      }
     }
   } catch {}
 }
 
-function persistFileTreeNav(state: { navBackStack: string[]; navForwardStack: string[]; fileSortBy: 'name' | 'size' | 'modified'; fileSortDir: 'asc' | 'desc' }) {
+function persistFileTreeNav(state: { navBackStack: string[]; navForwardStack: string[]; fileSortBy: 'name' | 'size' | 'modified'; fileSortDir: 'asc' | 'desc'; pinnedFileRoots: string[] }) {
   writeClientData('file_nav', JSON.stringify({
     backStack: state.navBackStack,
     forwardStack: state.navForwardStack,
     sortBy: state.fileSortBy,
     sortDir: state.fileSortDir,
+    pinnedRoots: state.pinnedFileRoots,
   })).catch(() => {});
 }
 
@@ -228,6 +237,9 @@ interface AppState {
   fileSortBy: 'name' | 'size' | 'modified';
   fileSortDir: 'asc' | 'desc';
   setFileSort: (by: 'name' | 'size' | 'modified', dir: 'asc' | 'desc') => void;
+  pinnedFileRoots: string[];
+  pinFileRoot: (path: string) => void;
+  unpinFileRoot: (path: string) => void;
 
   // Custom themes
   customThemes: CustomTheme[];
@@ -461,6 +473,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   setFileSort: (by, dir) => set((state) => {
     persistFileTreeNav({ ...state, fileSortBy: by, fileSortDir: dir });
     return { fileSortBy: by, fileSortDir: dir };
+  }),
+  pinnedFileRoots: [],
+  pinFileRoot: (path) => set((state) => {
+    const pathKey = path.toLowerCase();
+    const pinnedFileRoots = [
+      path,
+      ...state.pinnedFileRoots.filter(candidate => candidate.toLowerCase() !== pathKey),
+    ];
+    persistFileTreeNav({ ...state, pinnedFileRoots });
+    return { pinnedFileRoots };
+  }),
+  unpinFileRoot: (path) => set((state) => {
+    const pathKey = path.toLowerCase();
+    const pinnedFileRoots = state.pinnedFileRoots.filter(candidate => candidate.toLowerCase() !== pathKey);
+    persistFileTreeNav({ ...state, pinnedFileRoots });
+    return { pinnedFileRoots };
   }),
 
   // Custom themes
