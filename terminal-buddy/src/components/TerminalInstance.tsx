@@ -39,6 +39,7 @@ interface TerminalInstanceProps {
   onOutput: (sessionId: string, data: string) => void;
   colorTheme?: TerminalColors;
   isActive?: boolean;
+  visible?: boolean;
   readOnly?: boolean;
   splitMode?: 'off' | '2x1' | '2x2';
 }
@@ -536,6 +537,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   onOutput,
   colorTheme,
   isActive,
+  visible = true,
   readOnly,
   splitMode = 'off',
 }) => {
@@ -544,6 +546,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onOutputRef = useRef(onOutput);
   onOutputRef.current = onOutput;
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   // 让 initTerminal 在首次创建 xterm 时读到最新分屏模式,避免初次即处于分屏时字号漏改。
   const splitModeRef = useRef(splitMode);
   splitModeRef.current = splitMode;
@@ -667,7 +671,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const lastPtyDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
   const [termBg, setTermBg] = useState(colorTheme?.background || '#1e1e1e');
   const inAltBufferRef = useRef(false);
-  const lastTuiRedrawLayoutVersionRef = useRef<number | null>(null);
 
   // Output tracking refs (learned from VS Code's terminalInstance.ts)
   // These track write/parse state to ensure cursor position stays in sync
@@ -698,6 +701,51 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
+    let resizeInFlight = false;
+    let pendingPtyResize: { rows: number; cols: number } | null = null;
+
+    // Tauri invokes are asynchronous. Keep one resize in flight per terminal and
+    // collapse rapid layout transitions to the newest dimensions so an older
+    // response can never arrive after the stable layout resize.
+    const flushPtyResize = async () => {
+      if (resizeInFlight || disposed) return;
+      resizeInFlight = true;
+      try {
+        while (!disposed && pendingPtyResize) {
+          if (!visibleRef.current) {
+            pendingPtyResize = null;
+            break;
+          }
+          const next = pendingPtyResize;
+          pendingPtyResize = null;
+          lastPtyDimensionsRef.current = next;
+          try {
+            await resizeTerminal(terminalId, next.rows, next.cols);
+          } catch { /* terminal may have closed while the resize was queued */ }
+        }
+      } finally {
+        resizeInFlight = false;
+        if (!disposed && pendingPtyResize) void flushPtyResize();
+      }
+    };
+
+    const queuePtyResize = (rows: number, cols: number, redeclare = false) => {
+      if (disposed || !visibleRef.current || rows < 1 || cols < 1) return;
+      const next = { rows, cols };
+      const pending = pendingPtyResize;
+      const last = lastPtyDimensionsRef.current;
+      if (!redeclare) {
+        if (pending?.rows === rows && pending.cols === cols) return;
+        if (last?.rows === rows && last.cols === cols) {
+          // The latest layout returned to the size currently being processed;
+          // discard an obsolete intermediate pending resize.
+          pendingPtyResize = null;
+          return;
+        }
+      }
+      pendingPtyResize = next;
+      void flushPtyResize();
+    };
 
     const checkBufferForPrompt = () => {
       if (disposed || !xtermRef.current) return false;
@@ -830,7 +878,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (usesVsCodeTerminal) {
         const da1Handler = terminal.parser.registerCsiHandler({ final: 'c' }, params => {
           if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
-            onOutputRef.current(terminalId, '\x1b[?61;4c');
+            // The VS Code terminal host answers DA1 synchronously. Consume the
+            // forwarded query here so xterm does not send a delayed duplicate.
             return true;
           }
           return false;
@@ -883,9 +932,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       attachWebgl();
       void bootLog(`initTerminal[${terminalId}]: WebGL addon took ${(performance.now() - tWebgl).toFixed(0)}ms`);
 
-      const tFit = performance.now();
-      fitAddon.fit();
-      void bootLog(`initTerminal[${terminalId}]: fitAddon.fit() took ${(performance.now() - tFit).toFixed(0)}ms`);
+      if (visibleRef.current) {
+        const tFit = performance.now();
+        fitAddon.fit();
+        void bootLog(`initTerminal[${terminalId}]: fitAddon.fit() took ${(performance.now() - tFit).toFixed(0)}ms`);
+      }
 
       xtermRef.current = terminal;
 
@@ -897,10 +948,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       );
       if (disposeStableImeAnchor) cleanupFns.push(disposeStableImeAnchor);
 
-      // Immediately sync PTY dimensions so TUI programs (claude code, vim, etc.)
-      // get the correct size from the start instead of the estimated values
-      resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
-      lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
+      // A split-hidden pane has display:none and xterm would measure it as 5x10.
+      // Wait until it is visible before fitting or synchronizing its PTY.
+      if (visibleRef.current) {
+        queuePtyResize(terminal.rows, terminal.cols);
+      }
 
       // Flush buffered output that arrived before xterm was ready in one write.
       if (preOpenOutputBuffer.length > 0) {
@@ -913,8 +965,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       void bootLog(`initTerminal[${terminalId}]: TOTAL took ${(performance.now() - tTotal).toFixed(0)}ms`);
 
       // --- Resize handling (learned from VS Code's terminalResizeDebouncer) ---
-      const doFit = (force?: boolean) => {
-        if (disposed || !xtermRef.current || !fitAddonRef.current) return;
+      const doFit = (force?: boolean, redeclarePty?: boolean) => {
+        if (disposed || !visibleRef.current || !xtermRef.current || !fitAddonRef.current) return;
 
         // Don't resize while TUI is active in alternate buffer.
         // TUI programs (claude code, vim, htop) manage their own screen layout
@@ -935,18 +987,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           if (rect.width < 1 || rect.height < 1) return;
         }
 
-        const prevCols = terminal.cols;
-        const prevRows = terminal.rows;
         fitAddonRef.current.fit();
-        // Sync new dimensions with PTY backend, avoiding redundant calls
-        if (terminal.cols !== prevCols || terminal.rows !== prevRows) {
-          if (!lastPtyDimensionsRef.current ||
-              lastPtyDimensionsRef.current.cols !== terminal.cols ||
-              lastPtyDimensionsRef.current.rows !== terminal.rows) {
-            lastPtyDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
-            resizeTerminal(terminalId, terminal.rows, terminal.cols).catch(() => {});
-          }
-        }
+        // A final layout repair may redeclare an unchanged stable size. This is
+        // intentionally still serialized with all ordinary resize requests.
+        queuePtyResize(terminal.rows, terminal.cols, redeclarePty);
         lastDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
       };
 
@@ -982,13 +1026,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         }
       };
 
-      const forceFit = (force?: boolean) => {
-        if (disposed) return;
+      const forceFit = (force?: boolean, redeclarePty?: boolean) => {
+        if (disposed || !visibleRef.current) return;
         if (resizeTimerRef.current) {
           clearTimeout(resizeTimerRef.current);
           resizeTimerRef.current = null;
         }
-        doFit(force);
+        doFit(force, redeclarePty);
         if (force) {
           syncImeAnchorThroughTuiRedraw();
         } else {
@@ -1007,7 +1051,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       let pendingResizeTimer: ReturnType<typeof setTimeout> | null = null;
 
       const applyResize = (immediate: boolean) => {
-        if (disposed || !xtermRef.current) return;
+        if (disposed || !visibleRef.current || !xtermRef.current) return;
 
         const bufferLength = xtermRef.current.buffer.normal.length;
         const isSmallBuffer = bufferLength < DEBOUNCE_THRESHOLD;
@@ -1036,7 +1080,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       const resizeObserver = new ResizeObserver(() => {
-        if (disposed || !xtermRef.current) return;
+        if (disposed || !visibleRef.current || !xtermRef.current) return;
         applyResize(false);
       });
       const activateTimer = setTimeout(() => {
@@ -1559,6 +1603,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Reset output tracking refs
       latestWriteDataRef.current = 0;
       latestParseDataRef.current = 0;
+      pendingPtyResize = null;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;
@@ -1570,7 +1615,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   // correct dimensions. This mirrors VS Code's setVisible() which flushes pending
   // resizes and re-evaluates dimensions on visibility change.
   useEffect(() => {
-    if (!isActive) return;
+    if (!visible) return;
     // Use double rAF to ensure the CSS visibility transition has completed
     // and layout is stable before measuring
     let raf1: number;
@@ -1586,14 +1631,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         try {
           if (term.rows > 0) term.refresh(0, term.rows - 1);
         } catch { /* renderer may be disposing */ }
-        term.focus();
+        if (isActive) term.focus();
       });
     });
     return () => {
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
     };
-  }, [isActive]);
+  }, [isActive, visible]);
 
   // Split-screen layout changes (enter/exit/2x1<->2x2) must force a resize even
   // when a TUI (vim/claude code) is running, so the program redraws via SIGWINCH.
@@ -1602,7 +1647,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let raf1 = 0;
     let raf2 = 0;
     let repairTimers: ReturnType<typeof setTimeout>[] = [];
-    let tuiRedrawTimer: ReturnType<typeof setTimeout> | null = null;
     const clearPendingRepair = () => {
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
@@ -1610,10 +1654,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       raf2 = 0;
       repairTimers.forEach(timer => clearTimeout(timer));
       repairTimers = [];
-      if (tuiRedrawTimer) {
-        clearTimeout(tuiRedrawTimer);
-        tuiRedrawTimer = null;
-      }
     };
     const isCurrentLayout = (detail: TerminalResizeDetail) => {
       const state = useAppStore.getState();
@@ -1622,28 +1662,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (state.splitMode !== 'off' && !state.splitSlots.some(slot => slot.sessionId === terminalId)) return false;
       return true;
     };
-    const runLayoutRepair = (detail: TerminalResizeDetail) => {
-      if (!isCurrentLayout(detail)) return;
+    const runLayoutRepair = (detail: TerminalResizeDetail, redeclarePty = false) => {
+      if (!visibleRef.current || !isCurrentLayout(detail)) return;
       const term = xtermRef.current;
       if (!term) return;
       const forceFit = (term as any)._tbForceFit;
-      if (typeof forceFit === 'function') forceFit(true);
+      if (typeof forceFit === 'function') forceFit(true, redeclarePty);
       try { term.refresh(0, term.rows - 1); } catch { /* renderer may be disposing */ }
-      if (
-        !readOnly &&
-        detail.reason === 'split-layout' &&
-        lastTuiRedrawLayoutVersionRef.current !== detail.layoutVersion &&
-        (inAltBufferRef.current || hasTuiInputChrome(term))
-      ) {
-        lastTuiRedrawLayoutVersionRef.current = detail.layoutVersion;
-        tuiRedrawTimer = setTimeout(() => {
-          tuiRedrawTimer = null;
-          if (!isCurrentLayout(detail)) return;
-          const currentTerm = xtermRef.current;
-          if (!currentTerm || (!inAltBufferRef.current && !hasTuiInputChrome(currentTerm))) return;
-          onOutputRef.current(terminalId, '\x0c');
-        }, 260);
-      }
       // Only the focused pane should steal keyboard focus on a layout change.
       if (useAppStore.getState().activeSessionId === terminalId) term.focus();
     };
@@ -1654,7 +1679,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       raf1 = requestAnimationFrame(() => {
         raf2 = requestAnimationFrame(() => {
           runLayoutRepair(detail);
-          repairTimers = [80, 220].map(delay => setTimeout(() => runLayoutRepair(detail), delay));
+          repairTimers = [80, 220].map((delay, index, delays) =>
+            setTimeout(() => runLayoutRepair(detail, index === delays.length - 1), delay)
+          );
         });
       });
     };
@@ -1663,18 +1690,19 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       window.removeEventListener(TERMINAL_RESIZE_EVENT, onSplitResize);
       clearPendingRepair();
     };
-  }, [terminalId, readOnly]);
+  }, [terminalId]);
 
   // 分屏模式下缩小终端字号(2x1→12px)，退出分屏恢复原值。
   // 这里只改字号,不立即 fit；TerminalPanel 会在布局稳定后派发带版本号的
   // TERMINAL_RESIZE_EVENT，避免快速连点时把 2x1/2x2/off 的中间尺寸同步给 PTY。
   useEffect(() => {
+    if (!visible) return;
     const term = xtermRef.current;
     if (!term) return;
     const newSize = SPLIT_FONT_SIZE[splitMode];
     if (term.options.fontSize === newSize) return;
     term.options.fontSize = newSize;
-  }, [splitMode]);
+  }, [splitMode, visible]);
 
   // F11 切换 windowMode（panels-hidden）时，.terminal-content 宽度突变，grid 重排
   // 需要时间落定。这里直接订阅 windowMode 再补一次 forceFit，与 TerminalPanel 派发

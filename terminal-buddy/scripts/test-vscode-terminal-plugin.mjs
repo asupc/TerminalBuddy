@@ -37,7 +37,6 @@ let handshake = Buffer.alloc(0);
 let output = '';
 let stderr = '';
 let shellPid = 0;
-let da1Responses = 0;
 let resolveHandshake;
 const handshakeReady = new Promise(resolve => {
   resolveHandshake = resolve;
@@ -54,12 +53,6 @@ child.stdout.on('data', chunk => {
     assert.ok(shellPid > 0, 'handshake must contain the real shell pid');
     output += handshake.subarray(8).toString('utf8');
     resolveHandshake();
-  }
-
-  const queries = output.match(/\x1b\[(?:0)?c/g)?.length ?? 0;
-  while (da1Responses < queries) {
-    da1Responses += 1;
-    writeFrame(1, '\x1b[?61;4c');
   }
 });
 child.stderr.on('data', chunk => {
@@ -100,6 +93,15 @@ try {
   let redrawMs = handshakeMs;
 
   if (!handshakeOnly) {
+    await new Promise(resolve => setTimeout(resolve, 300));
+    writeFrame(1, 'powershell.exe -NoLogo -NoProfile\r');
+    writeFrame(1, 'Write-Output __TB_POWERSHELL_READY__\r');
+    await waitFor(() => output.includes('__TB_POWERSHELL_READY__'), 'PowerShell startup');
+    assert.ok(!output.includes('?61;4cpowershell.exe'), 'DA1 response leaked into the shell command');
+    const exitOutputOffset = output.length;
+    writeFrame(1, 'exit\r');
+    await waitFor(() => output.slice(exitOutputOffset).includes('cmd.exe'), 'cmd.exe resume');
+
     const resizePayload = Buffer.allocUnsafe(4);
     resizePayload.writeUInt16LE(100, 0);
     resizePayload.writeUInt16LE(30, 2);

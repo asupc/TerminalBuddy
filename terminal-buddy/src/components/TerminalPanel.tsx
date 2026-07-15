@@ -1,4 +1,4 @@
-import { FC, useCallback, useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { FC, Fragment, useCallback, useState, useEffect, useRef, lazy, Suspense } from 'react';
 import type { CSSProperties } from 'react';
 import { SquareTerminal, X } from 'lucide-react';
 import type { TerminalSession } from '../types';
@@ -188,6 +188,7 @@ export const TerminalPanel: FC = () => {
                 colorTheme={resolvedTheme}
                 onOutput={handleTerminalInput}
                 isActive={isActivePane}
+                visible={!hidden}
                 readOnly={!settings.webApiShareSessions && session.owner === 'web'}
                 splitMode={splitMode}
               />
@@ -199,38 +200,48 @@ export const TerminalPanel: FC = () => {
   };
 
   const renderTerminalContent = () => {
-    if (splitMode === 'off') {
-      if (sessions.length === 0) {
-        return (
-          <div className="terminal-empty">
-            <SquareTerminal className="empty-icon" aria-hidden="true" />
-            <div className="empty-text">暂无终端会话</div>
-          </div>
-        );
-      }
-      return sessions.map(session =>
-        renderPane(session, { active: activeSpecialTab === null && activeSessionId === session.id, hidden: false })
+    if (splitMode === 'off' && sessions.length === 0) {
+      return (
+        <div className="terminal-empty">
+          <SquareTerminal className="empty-icon" aria-hidden="true" />
+          <div className="empty-text">暂无终端会话</div>
+        </div>
       );
     }
 
     return (
       <>
-        {/* Split slots, in order — filled cells keyed by session.id, blanks by index */}
-        {splitSlots.map((slot, i) => {
-          const session = slot.sessionId ? sessions.find(s => s.id === slot.sessionId) : undefined;
-          if (!slot.sessionId || !session) {
-            return (
-              <div key={`blank-${i}`} className="split-cell split-blank" style={gridStyleFor(splitMode, i)}>
-                暂无终端会话
-              </div>
-            );
-          }
-          return renderPane(session, { slot: i, active: activeSpecialTab === null && activeSessionId === slot.sessionId, hidden: false });
-        })}
-        {/* Non-slot sessions: keep mounted but hidden (display:none) so PTY/xterm state survives */}
-        {sessions.filter(s => !splitSlots.some(slot => slot.sessionId === s.id)).map(session =>
-          renderPane(session, { active: false, hidden: true })
+        {splitMode !== 'off' && (
+          <Fragment key="split-blanks">
+            {splitSlots.map((slot, i) => {
+              const sessionExists = slot.sessionId && sessions.some(session => session.id === slot.sessionId);
+              if (sessionExists) return null;
+              return (
+                <div key={`blank-${i}`} className="split-cell split-blank" style={gridStyleFor(splitMode, i)}>
+                  暂无终端会话
+                </div>
+              );
+            })}
+          </Fragment>
         )}
+        {/* Keep every session in this same keyed list across all layout modes. Moving a
+            terminal between the hidden pool and a split slot must not remount xterm. */}
+        <Fragment key="terminal-sessions">
+          {sessions.map(session => {
+            if (splitMode === 'off') {
+              return renderPane(session, {
+                active: activeSpecialTab === null && activeSessionId === session.id,
+                hidden: false,
+              });
+            }
+            const slot = splitSlots.findIndex(item => item.sessionId === session.id);
+            return renderPane(session, {
+              ...(slot >= 0 ? { slot } : {}),
+              active: slot >= 0 && activeSpecialTab === null && activeSessionId === session.id,
+              hidden: slot < 0,
+            });
+          })}
+        </Fragment>
       </>
     );
   };
