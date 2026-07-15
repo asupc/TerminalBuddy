@@ -12,7 +12,7 @@ use crate::commands::{send_bot_notification, TerminalService};
 use crate::models::{BotDecisionOption, BotNotificationRequest};
 use crate::services::{
     card_decision_id, BotSettingsService, ClaudeHookDecisionEvent, ClaudeHookQuestion,
-    ClaudeHookService,
+    ClaudeHookResolution, ClaudeHookService,
 };
 
 #[derive(Debug, Deserialize)]
@@ -113,7 +113,7 @@ pub(crate) async fn claude_hook(
     )
     .await
     {
-        Ok(Ok(answers)) => {
+        Ok(Ok(ClaudeHookResolution::Answers(answers))) => {
             let _ = app.emit("claude-hook-decision-resolved", json!({ "decisionId": decision_id }));
             Json(json!({
                 "hookSpecificOutput": {
@@ -127,6 +127,10 @@ pub(crate) async fn claude_hook(
                 }
             }))
             .into_response()
+        }
+        Ok(Ok(ClaudeHookResolution::ContinueInTerminal)) => {
+            let _ = app.emit("claude-hook-decision-resolved", json!({ "decisionId": decision_id }));
+            StatusCode::NO_CONTENT.into_response()
         }
         _ => {
             ClaudeHookService::expire_decision(&decision_id);
@@ -142,6 +146,11 @@ pub fn answer_claude_hook_decision(
     answers: HashMap<String, String>,
 ) -> Result<(), String> {
     ClaudeHookService::answer_all(&decision_id, answers)
+}
+
+#[tauri::command]
+pub fn continue_claude_hook_in_terminal(decision_id: String) -> Result<(), String> {
+    ClaudeHookService::continue_in_terminal(&decision_id)
 }
 
 #[tauri::command]

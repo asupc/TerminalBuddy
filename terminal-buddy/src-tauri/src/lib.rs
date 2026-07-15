@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 use std::fs::OpenOptions;
 use std::io::Write;
-use crate::web::handlers::claude_hook_handler::{answer_claude_hook_decision, send_claude_hook_decision_notification};
+use crate::web::handlers::claude_hook_handler::{answer_claude_hook_decision, continue_claude_hook_in_terminal, send_claude_hook_decision_notification};
 
 /// 进程启动时间锚点；全链路启动日志统一以此为 0 点。
 static BOOT_START: OnceLock<Instant> = OnceLock::new();
@@ -226,6 +226,7 @@ pub fn run() {
             bot_scan_poll,
             cancel_bot_decision,
             answer_claude_hook_decision,
+            continue_claude_hook_in_terminal,
             send_claude_hook_decision_notification,
             get_terminal_process_id,
             get_terminal_loading_mode,

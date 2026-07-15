@@ -39,8 +39,13 @@ struct PendingDecision {
     terminal_id: String,
     questions: Vec<ClaudeHookQuestion>,
     answers: HashMap<String, String>,
-    response: Option<oneshot::Sender<HashMap<String, String>>>,
+    response: Option<oneshot::Sender<ClaudeHookResolution>>,
     notification_sent: bool,
+}
+
+pub enum ClaudeHookResolution {
+    Answers(HashMap<String, String>),
+    ContinueInTerminal,
 }
 
 fn pending() -> &'static Mutex<HashMap<String, PendingDecision>> {
@@ -86,7 +91,7 @@ impl ClaudeHookService {
         decision_id: String,
         terminal_id: String,
         questions: Vec<ClaudeHookQuestion>,
-    ) -> oneshot::Receiver<HashMap<String, String>> {
+    ) -> oneshot::Receiver<ClaudeHookResolution> {
         let (tx, rx) = oneshot::channel();
         pending()
             .lock()
@@ -142,7 +147,7 @@ impl ClaudeHookService {
             .response
             .take()
             .ok_or_else(|| "该 Claude 决策已处理".to_string())?;
-        let _ = response.send(answers);
+        let _ = response.send(ClaudeHookResolution::Answers(answers));
         current.remove(decision_id);
         drop(current);
         for index in 0..question_count {
@@ -187,11 +192,30 @@ impl ClaudeHookService {
         if complete {
             let answers = decision.answers.clone();
             if let Some(response) = decision.response.take() {
-                let _ = response.send(answers);
+                let _ = response.send(ClaudeHookResolution::Answers(answers));
             }
             current.remove(decision_id);
         }
         Ok(true)
+    }
+
+    pub fn continue_in_terminal(decision_id: &str) -> Result<(), String> {
+        let mut current = pending().lock().unwrap_or_else(|value| value.into_inner());
+        let mut decision = current
+            .remove(decision_id)
+            .ok_or_else(|| "该 Claude 决策已失效".to_string())?;
+        let question_count = decision.questions.len();
+        let response = decision
+            .response
+            .take()
+            .ok_or_else(|| "该 Claude 决策已处理".to_string())?;
+        let _ = response.send(ClaudeHookResolution::ContinueInTerminal);
+        drop(current);
+        for index in 0..question_count {
+            let _ =
+                crate::services::BotBindingService::cancel(&card_decision_id(decision_id, index));
+        }
+        Ok(())
     }
 
     pub fn answer_card_text(card_decision_id: &str, text: &str) -> Result<bool, String> {
@@ -220,7 +244,7 @@ impl ClaudeHookService {
         if complete {
             let answers = decision.answers.clone();
             if let Some(response) = decision.response.take() {
-                let _ = response.send(answers);
+                let _ = response.send(ClaudeHookResolution::Answers(answers));
             }
             current.remove(decision_id);
         }
@@ -343,7 +367,7 @@ fn ensure_hook(
 mod tests {
     use super::{
         card_decision_id, ensure_hook, parse_card_decision_id, ClaudeHookOption,
-        ClaudeHookQuestion, ClaudeHookService, CLAUDE_HOOK_URL,
+        ClaudeHookQuestion, ClaudeHookResolution, ClaudeHookService, CLAUDE_HOOK_URL,
     };
     use serde_json::json;
 
@@ -445,7 +469,30 @@ mod tests {
             }],
         );
         assert!(ClaudeHookService::answer_card(&card_decision_id(decision_id, 0), &[1]).unwrap());
-        let answers = receiver.await.unwrap();
+        let ClaudeHookResolution::Answers(answers) = receiver.await.unwrap() else {
+            panic!("应返回结构化回答");
+        };
         assert_eq!(answers.get("选择语言").map(String::as_str), Some("English"));
+    }
+
+    #[tokio::test]
+    async fn continue_in_terminal_releases_the_hook_without_answers() {
+        let decision_id = "session:terminal-test";
+        let receiver = ClaudeHookService::insert_decision(
+            decision_id.to_string(),
+            "terminal-test".to_string(),
+            vec![ClaudeHookQuestion {
+                question: "继续处理？".to_string(),
+                header: "处理方式".to_string(),
+                options: vec![],
+                multi_select: false,
+            }],
+        );
+
+        ClaudeHookService::continue_in_terminal(decision_id).unwrap();
+        assert!(matches!(
+            receiver.await.unwrap(),
+            ClaudeHookResolution::ContinueInTerminal
+        ));
     }
 }
