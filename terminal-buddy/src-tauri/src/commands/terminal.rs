@@ -407,9 +407,21 @@ impl TerminalService {
         let mut env_vars: Vec<(String, String)> = profile.as_ref()
             .map(|p| p.environment_variables.iter().map(|(k,v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
+        if !env_vars
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"))
+        {
+            if let Some(config_dir) = SettingsService::get_settings().claude_hook_config_dir {
+                env_vars.push(("CLAUDE_CONFIG_DIR".to_string(), config_dir));
+            }
+        }
         let hook_token = ClaudeHookService::register_terminal(&terminal_id);
         env_vars.push(("TERMINAL_BUDDY_TERMINAL_ID".to_string(), terminal_id.clone()));
         env_vars.push(("TERMINAL_BUDDY_HOOK_TOKEN".to_string(), hook_token));
+        env_vars.push((
+            "TERMINAL_BUDDY_HOOK_PORT".to_string(),
+            ClaudeHookService::server_port().to_string(),
+        ));
 
         log_debug(&format!("[create] type={}, path={:?}, commands={}, envs={}",
             terminal_type, startup_path, startup_commands.len(), env_vars.len()));
@@ -681,10 +693,17 @@ impl TerminalService {
         let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
         let loading_mode = SettingsService::get_settings().terminal_loading_mode;
         let hook_token = ClaudeHookService::register_terminal(&terminal_id);
-        let env_vars = vec![
+        let mut env_vars = vec![
             ("TERMINAL_BUDDY_TERMINAL_ID".to_string(), terminal_id.clone()),
             ("TERMINAL_BUDDY_HOOK_TOKEN".to_string(), hook_token),
+            (
+                "TERMINAL_BUDDY_HOOK_PORT".to_string(),
+                ClaudeHookService::server_port().to_string(),
+            ),
         ];
+        if let Some(config_dir) = SettingsService::get_settings().claude_hook_config_dir {
+            env_vars.push(("CLAUDE_CONFIG_DIR".to_string(), config_dir));
+        }
         let (backend, backend_reader, output_buffer_mode) = spawn_terminal_backend(
             &app,
             &loading_mode,

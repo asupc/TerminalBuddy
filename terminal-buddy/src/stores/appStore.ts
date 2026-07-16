@@ -34,6 +34,21 @@ export interface GitHistoryTab {
 
 export type WorkspaceSpecialTab = 'git-history' | null;
 
+export type TerminalRuntimeKind = 'shell' | 'claude';
+export type TerminalActivityPhase = 'idle' | 'running' | 'attention' | 'completed' | 'failed';
+
+export interface TerminalActivityState {
+  runtimeKind: TerminalRuntimeKind;
+  source: 'legacy' | 'hook';
+  phase: TerminalActivityPhase;
+  updatedAt: number;
+  lastHookAt?: number;
+}
+
+export function isTerminalWorking(activity: TerminalActivityState | undefined): boolean {
+  return activity?.phase === 'running';
+}
+
 export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: string | null) {
   try {
     const dirs = useAppStore.getState().sessionDirectories;
@@ -247,9 +262,13 @@ interface AppState {
   claudeSessionIds: Record<string, string>;
   setClaudeSessionId: (sessionId: string, claudeSessionId: string) => void;
 
-  // Working state (yellow dot when command is running)
-  workingSessions: Record<string, boolean>;
-  setSessionWorking: (sessionId: string, working: boolean) => void;
+  // Unified terminal activity. Claude Hook becomes authoritative after first valid event.
+  terminalActivities: Record<string, TerminalActivityState>;
+  setTerminalFallbackWorking: (sessionId: string, working: boolean) => void;
+  applyClaudeHookActivity: (sessionId: string, phase: TerminalActivityPhase, updatedAt: number) => boolean;
+  endClaudeHookSession: (sessionId: string, updatedAt: number) => boolean;
+  expireClaudeHookActivity: (sessionId: string, expectedUpdatedAt: number) => void;
+  handleTerminalInputActivity: (sessionId: string) => void;
 
   // Split Screen mode
   splitMode: 'off' | '2x1' | '2x2';
@@ -503,6 +522,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? sessions[0]?.id ?? null
           : state.activeSessionId;
       const { [id]: _, ...restCache } = state.remoteFileCache;
+      const { [id]: _activity, ...terminalActivities } = state.terminalActivities;
+      const { [id]: _claudeSession, ...claudeSessionIds } = state.claudeSessionIds;
+      const { [id]: _directory, ...sessionDirectories } = state.sessionDirectories;
       // Split-slot cleanup: free any slot referencing the closed session.
       // If the closed pane was focused, refocus the first remaining filled slot
       // (split mode is preserved even if all slots become blank).
@@ -518,6 +540,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         sessions,
         activeSessionId,
         remoteFileCache: restCache,
+        terminalActivities,
+        claudeSessionIds,
+        sessionDirectories,
         splitSlots,
         terminalLayoutVersion: splitSlots !== state.splitSlots
           ? state.terminalLayoutVersion + 1
@@ -528,7 +553,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const normalized = sessions.map(s => ({ ...s, createdAt: s.createdAt ?? Date.now() }));
     const activeSessionId = normalized[0]?.id ?? null;
     saveTabsToStorage(normalized, activeSessionId);
-    set({ sessions: normalized, activeSessionId });
+    set({ sessions: normalized, activeSessionId, terminalActivities: {} });
   },
   setActiveSession: (id) => set((state) => {
     // 文件导航跟随当前连接：优先使用会话内已记录的目录（用户浏览或 cd 过的）；
@@ -705,10 +730,91 @@ export const useAppStore = create<AppState>((set, get) => ({
   setClaudeSessionId: (sessionId, claudeSessionId) => set((state) => ({
     claudeSessionIds: { ...state.claudeSessionIds, [sessionId]: claudeSessionId },
   })),
-  workingSessions: {},
-  setSessionWorking: (sessionId, working) => set((state) => ({
-    workingSessions: { ...state.workingSessions, [sessionId]: working },
-  })),
+  terminalActivities: {},
+  setTerminalFallbackWorking: (sessionId, working) => set((state) => {
+    const current = state.terminalActivities[sessionId];
+    if (current?.runtimeKind === 'claude') return state;
+    const phase: TerminalActivityPhase = working ? 'running' : 'idle';
+    if (current?.source === 'legacy' && current.phase === phase) return state;
+    return {
+      terminalActivities: {
+        ...state.terminalActivities,
+        [sessionId]: { runtimeKind: 'shell', source: 'legacy', phase, updatedAt: Date.now(), lastHookAt: current?.lastHookAt },
+      },
+    };
+  }),
+  applyClaudeHookActivity: (sessionId, phase, updatedAt) => {
+    let applied = false;
+    set((state) => {
+      const current = state.terminalActivities[sessionId];
+      if (current?.lastHookAt !== undefined && current.lastHookAt >= updatedAt) return state;
+      applied = true;
+      return {
+        terminalActivities: {
+          ...state.terminalActivities,
+          [sessionId]: { runtimeKind: 'claude', source: 'hook', phase, updatedAt, lastHookAt: updatedAt },
+        },
+      };
+    });
+    return applied;
+  },
+  endClaudeHookSession: (sessionId, updatedAt) => {
+    let applied = false;
+    set((state) => {
+      const current = state.terminalActivities[sessionId];
+      if (current?.lastHookAt !== undefined && current.lastHookAt >= updatedAt) return state;
+      applied = true;
+      return {
+        terminalActivities: {
+          ...state.terminalActivities,
+          [sessionId]: { runtimeKind: 'shell', source: 'legacy', phase: 'idle', updatedAt, lastHookAt: updatedAt },
+        },
+      };
+    });
+    return applied;
+  },
+  expireClaudeHookActivity: (sessionId, expectedUpdatedAt) => set((state) => {
+    const current = state.terminalActivities[sessionId];
+    if (current?.runtimeKind !== 'claude' || current.phase !== 'running' || current.updatedAt !== expectedUpdatedAt) {
+      return state;
+    }
+    return {
+      terminalActivities: {
+        ...state.terminalActivities,
+        [sessionId]: {
+          ...current,
+          runtimeKind: 'shell',
+          source: 'legacy',
+          phase: 'idle',
+          updatedAt: Date.now(),
+        },
+      },
+    };
+  }),
+  handleTerminalInputActivity: (sessionId) => set((state) => {
+    const current = state.terminalActivities[sessionId];
+    if (current?.runtimeKind === 'claude') {
+      if (current.phase !== 'attention') return state;
+      return {
+        terminalActivities: {
+          ...state.terminalActivities,
+          [sessionId]: { ...current, phase: 'running', updatedAt: Date.now() },
+        },
+      };
+    }
+    return {
+      terminalActivities: {
+        ...state.terminalActivities,
+        [sessionId]: {
+          runtimeKind: 'shell',
+          source: 'legacy',
+          phase: 'running',
+          updatedAt: Date.now(),
+          lastHookAt: current?.lastHookAt,
+        },
+      },
+    };
+  }),
 
   // --- Split Screen ---
   splitMode: 'off',

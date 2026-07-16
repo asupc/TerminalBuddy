@@ -37,13 +37,22 @@ impl WebServiceState {
         }
     }
 
-    pub fn unsubscribe(&self, terminal_id: &str, sub_id: &str) {
+    pub fn unsubscribe_and_notify_if_last<F>(&self, terminal_id: &str, sub_id: &str, on_last: F)
+    where
+        F: FnOnce(),
+    {
         let mut subs = self.output_subscribers.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(senders) = subs.get_mut(terminal_id) {
+        let is_last = if let Some(senders) = subs.get_mut(terminal_id) {
             senders.retain(|(id, _)| id != sub_id);
-            if senders.is_empty() {
-                subs.remove(terminal_id);
-            }
+            senders.is_empty()
+        } else {
+            true
+        };
+        if is_last {
+            subs.remove(terminal_id);
+            // Keep the subscriber lock until the event is queued so a reconnect
+            // cannot publish its resize before this older connection's end event.
+            on_last();
         }
     }
 

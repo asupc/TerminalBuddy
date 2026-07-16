@@ -33,6 +33,10 @@ pub fn show_claude_code_notification(
             "Claude Code 任务已完成",
             format!("{} 已完成当前任务", terminal_name),
         ),
+        "failed" => (
+            "Claude Code 任务执行失败",
+            format!("{} 未能完成当前任务", terminal_name),
+        ),
         _ => return Err(format!("无效的 Claude Code 通知类型: {}", notification_kind)),
     };
     // --no-bundle 产物没有安装器注册 AppUserModelID，需要在当前用户范围补充注册。

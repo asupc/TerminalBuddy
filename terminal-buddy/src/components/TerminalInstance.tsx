@@ -17,7 +17,7 @@ import { useAppStore } from '../stores/appStore';
 import { getTerminalSuggestions, type SuggestionItem } from '../data/commandTemplates';
 import type { TerminalColors } from '../utils/terminalTheme';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
-import { cancelPendingClaudeCompletion } from '../services/claudeNotification';
+import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
@@ -558,6 +558,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   onOutputRef.current = onOutput;
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const pendingWebTakeoverRecoveryRef = useRef(false);
   // 让 initTerminal 在首次创建 xterm 时读到最新分屏模式,避免初次即处于分屏时字号漏改。
   const splitModeRef = useRef(splitMode);
   splitModeRef.current = splitMode;
@@ -702,6 +703,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
   useEffect(() => {
     if (!terminalRef.current) return;
+    pendingWebTakeoverRecoveryRef.current = false;
     let disposed = false;
     let usesVsCodeTerminal = false;
     let unsentAckCharCount = 0;
@@ -787,7 +789,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const checkWorkingState = () => {
       if (disposed) return;
       if (checkBufferForPrompt()) {
-        useAppStore.getState().setSessionWorking(terminalId, false);
+        useAppStore.getState().setTerminalFallbackWorking(terminalId, false);
         if (workingFallback) clearTimeout(workingFallback);
       }
     };
@@ -828,7 +830,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // 静默一段时间后恢复空闲；Claude 的精确完成状态由 Stop Hook 更新。
       workingFallback = setTimeout(() => {
         if (!disposed) {
-          useAppStore.getState().setSessionWorking(terminalId, false);
+          useAppStore.getState().setTerminalFallbackWorking(terminalId, false);
         }
       }, 1500);
     };
@@ -993,8 +995,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       void bootLog(`initTerminal[${terminalId}]: TOTAL took ${(performance.now() - tTotal).toFixed(0)}ms`);
 
       // --- Resize handling (learned from VS Code's terminalResizeDebouncer) ---
-      const doFit = (force?: boolean, redeclarePty?: boolean) => {
-        if (disposed || !visibleRef.current || !xtermRef.current || !fitAddonRef.current) return;
+      const doFit = (force?: boolean, redeclarePty?: boolean): boolean => {
+        if (disposed || !visibleRef.current || !xtermRef.current || !fitAddonRef.current) return false;
 
         if (webTakeoverDimensions) {
           const { rows, cols } = webTakeoverDimensions;
@@ -1002,7 +1004,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             terminal.resize(cols, rows);
           }
           lastDimensionsRef.current = { cols, rows };
-          return;
+          return true;
         }
 
         // Don't resize while TUI is active in alternate buffer.
@@ -1010,7 +1012,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // and expect stable terminal dimensions.  Resize is triggered when
         // exiting the alt buffer via checkAltBuffer().
         // `force` bypasses this guard for deliberate split-screen layout changes.
-        if ((inAltBufferRef.current || hasTuiInputChrome(terminal)) && !force) return;
+        if ((inAltBufferRef.current || hasTuiInputChrome(terminal)) && !force) return false;
 
         // 防止 fit() 在容器尺寸为 0 时把 xterm 设为 0×0（布局过渡期间可能发生）。
         // F11 切换 panels-hidden + 分屏场景：.terminal-content 宽度突变时，
@@ -1021,7 +1023,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         const container = terminalRef.current;
         if (container) {
           const rect = container.getBoundingClientRect();
-          if (rect.width < 1 || rect.height < 1) return;
+          if (rect.width < 1 || rect.height < 1) return false;
         }
 
         fitAddonRef.current.fit();
@@ -1029,6 +1031,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // intentionally still serialized with all ordinary resize requests.
         queuePtyResize(terminal.rows, terminal.cols, redeclarePty);
         lastDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
+        return true;
       };
 
       // Force an immediate resize (bypasses debounce) for tab switches and other
@@ -1064,17 +1067,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       const forceFit = (force?: boolean, redeclarePty?: boolean) => {
-        if (disposed || !visibleRef.current) return;
+        if (disposed || !visibleRef.current) return false;
         if (resizeTimerRef.current) {
           clearTimeout(resizeTimerRef.current);
           resizeTimerRef.current = null;
         }
-        doFit(force, redeclarePty);
+        const fitted = doFit(force, redeclarePty);
         if (force) {
           syncImeAnchorThroughTuiRedraw();
         } else {
           syncImeAnchorAfterLayout();
         }
+        return fitted;
       };
 
       // ResizeObserver: respond to container size changes with debouncing.
@@ -1218,8 +1222,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       terminal.onData((data) => {
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
-          cancelPendingClaudeCompletion(terminalId);
-          useAppStore.getState().setSessionWorking(terminalId, true);
+          handleClaudeTerminalInputActivity(terminalId);
           clearAutocomplete();
           // Enter 后稍等缓冲区刷新，检测 cd 命令并记录目录
           setTimeout(() => {
@@ -1618,6 +1621,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         const payload = event.payload;
         if (payload.terminalId !== terminalId || disposed) return;
 
+        pendingWebTakeoverRecoveryRef.current = false;
         webTakeoverDimensions = { rows: payload.rows, cols: payload.cols };
         pendingPtyResize = null;
         lastPtyDimensionsRef.current = webTakeoverDimensions;
@@ -1638,13 +1642,17 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         lastPtyDimensionsRef.current = null;
 
         const terminal = xtermRef.current;
-        if (!terminal || !visibleRef.current) return;
+        if (!terminal || !visibleRef.current) {
+          pendingWebTakeoverRecoveryRef.current = true;
+          return;
+        }
         const forceFit = (terminal as any)._tbForceFit;
         if (typeof forceFit === 'function') {
-          forceFit(true, true);
+          pendingWebTakeoverRecoveryRef.current = !forceFit(true, true);
         } else if (fitAddonRef.current) {
           fitAddonRef.current.fit();
           queuePtyResize(terminal.rows, terminal.cols, true);
+          pendingWebTakeoverRecoveryRef.current = false;
         }
       }),
     ]).then((unlisteners) => {
@@ -1682,7 +1690,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     return () => {
       disposed = true;
-      cancelPendingClaudeCompletion(terminalId);
+      cancelPendingClaudeNotifications(terminalId);
       if (autocompleteTimer) {
         clearTimeout(autocompleteTimer);
         autocompleteTimer = null;
@@ -1721,7 +1729,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (!term) return;
         const forceFit = (term as any)._tbForceFit;
         if (typeof forceFit === 'function') {
-          forceFit();
+          const recoverFromWebTakeover = pendingWebTakeoverRecoveryRef.current;
+          const fitted = forceFit(recoverFromWebTakeover, recoverFromWebTakeover);
+          if (recoverFromWebTakeover) {
+            pendingWebTakeoverRecoveryRef.current = !fitted;
+          }
         }
         try {
           if (term.rows > 0) term.refresh(0, term.rows - 1);

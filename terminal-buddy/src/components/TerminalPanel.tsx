@@ -3,10 +3,11 @@ import type { CSSProperties } from 'react';
 import { SquareTerminal, X } from 'lucide-react';
 import type { TerminalSession } from '../types';
 import { TerminalTabBar } from './TerminalTabBar';
-import { useAppStore } from '../stores/appStore';
+import { isTerminalWorking, useAppStore } from '../stores/appStore';
 import { writeToTerminal } from '../services/tauri';
 import { getAppSettings, getEffectiveThemeMode } from '../utils/settings';
 import { resolveTerminalColors } from '../utils/terminalTheme';
+import { getWorkingDotColor } from '../utils/tabColor';
 import {
   TERMINAL_RESIZE_EVENT,
   TERMINAL_SPLIT_LAYOUT_SETTLE_MS,
@@ -34,7 +35,7 @@ export const TerminalPanel: FC = () => {
   const profiles = useAppStore(s => s.profiles);
   const splitMode = useAppStore(s => s.splitMode);
   const splitSlots = useAppStore(s => s.splitSlots);
-  const workingSessions = useAppStore(s => s.workingSessions);
+  const terminalActivities = useAppStore(s => s.terminalActivities);
   const setActiveSession = useAppStore(s => s.setActiveSession);
   const windowMode = useAppStore(s => s.windowMode);
   const terminalLayoutVersion = useAppStore(s => s.terminalLayoutVersion);
@@ -159,7 +160,10 @@ export const TerminalPanel: FC = () => {
             onDragStart={() => { dragSrcRef.current = slot!; }}
             onDragEnd={() => { dragSrcRef.current = null; setDragOverIndex(null); }}
           >
-            <span className={`pane-working-dot ${workingSessions[session.id] ? 'on' : ''}`} />
+            <span
+              className={`pane-working-dot ${isTerminalWorking(terminalActivities[session.id]) ? 'on' : ''}`}
+              style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
+            />
             <span className="pane-name" title={session.profileName}>{session.profileName}</span>
             <button
               className="pane-close"

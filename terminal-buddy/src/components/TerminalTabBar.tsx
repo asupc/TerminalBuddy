@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
 import { FileText, GitBranch, X } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
+import { isTerminalWorking, useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 import { getWorkingDotColor } from '../utils/tabColor';
@@ -13,7 +13,7 @@ export const TerminalTabBar: FC = () => {
   const removeSession = useAppStore(s => s.removeSession);
 
   const renameSession = useAppStore(s => s.renameSession);
-  const workingSessions = useAppStore(s => s.workingSessions);
+  const terminalActivities = useAppStore(s => s.terminalActivities);
   const settingsVersion = useAppStore(s => s.settingsVersion);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
@@ -153,8 +153,8 @@ export const TerminalTabBar: FC = () => {
             <FileText className="tab-file-icon" aria-hidden="true" />
           ) : (
             <span
-              className={`terminal-tab-dot${workingSessions[session.id] ? ' working' : ''}`}
-              style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
+              className={`terminal-tab-dot${isTerminalWorking(terminalActivities[session.id]) ? ' working' : ''}`}
+              style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
             />
           )}
           {session.isDirty && <span className="tab-dirty-dot" />}

@@ -729,21 +729,6 @@
   stroke-width: 1.8;
 }
 
-.git-nav-state.loading .git-nav-state-icon {
-  color: var(--accent);
-  animation: git-status-spin 0.8s linear infinite;
-}
-
-@keyframes git-status-spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .git-nav-state.loading .git-nav-state-icon {
-    animation: none;
-  }
-}
-
 .git-branch-button {
   min-width: 0;
   height: 22px;

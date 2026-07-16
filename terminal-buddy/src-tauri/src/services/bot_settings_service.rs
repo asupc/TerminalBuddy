@@ -1,5 +1,5 @@
 use crate::models::{BotChannelConfig, BotSettings};
-use crate::services::{crypto_service, PathService};
+use crate::services::{atomic_write, crypto_service, PathService};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -202,9 +202,8 @@ impl BotSettingsService {
         let content = serde_json::to_string_pretty(&stored)
             .map_err(|error| format!("序列化机器人设置失败: {}", error))?;
         let path = Self::path();
-        let temp = path.with_extension("json.tmp");
-        fs::write(&temp, content).map_err(|error| format!("写入机器人设置失败: {}", error))?;
-        fs::rename(&temp, &path).map_err(|error| format!("保存机器人设置失败: {}", error))?;
+        atomic_write(&path, content.as_bytes())
+            .map_err(|error| format!("保存机器人设置失败: {}", error))?;
         drop(_guard);
         Ok(Self::get_public())
     }

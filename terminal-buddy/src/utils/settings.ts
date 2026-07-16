@@ -35,6 +35,7 @@ export interface AppSettings {
   launchAtLogin: boolean;
   terminalFollowAppTheme: boolean;
   autoResumeClaudeSession: boolean;
+  claudeHookConfigDir: string;
   claudeCodeNotifications: boolean;
   claudeDecisionNotifications: boolean;
   claudeDecisionNotificationDelaySeconds: number;
@@ -75,6 +76,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false,
   terminalFollowAppTheme: true,
   autoResumeClaudeSession: true,
+  claudeHookConfigDir: '',
   claudeCodeNotifications: true,
   claudeDecisionNotifications: true,
   claudeDecisionNotificationDelaySeconds: 0,

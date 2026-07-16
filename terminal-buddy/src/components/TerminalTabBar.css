@@ -130,6 +130,12 @@
   50% { opacity: 0.4; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .terminal-tab-dot.working {
+    animation: none;
+  }
+}
+
 .terminal-tab-name {
   font-size: 12px;
   color: inherit;

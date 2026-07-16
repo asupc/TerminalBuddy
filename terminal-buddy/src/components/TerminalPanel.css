@@ -272,7 +272,18 @@
   flex-shrink: 0;
 }
 .pane-working-dot.on {
-  background: var(--warning);
+  animation: pane-working-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pane-working-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-working-dot.on {
+    animation: none;
+  }
 }
 .pane-close {
   background: none;
