@@ -142,14 +142,12 @@ terminal-buddy/
 │       │   ├── clipboard.rs  # 剪贴板操作
 │       │   ├── fs.rs  # 本地文件系统操作
 │       │   ├── templates.rs  # 命令模板管理
-│       │   ├── theme.rs  # 自定义主题 CRUD
 │       │   ├── web.rs  # Web API 服务器控制
 │       │   └── workspace.rs  # 工作区 CRUD
 │       ├── services/  # 业务逻辑
 │       │   ├── profile_service.rs  # 配置文件 JSON 读写
 │       │   ├── settings_service.rs  # 设置 JSON 读写
 │       │   ├── template_service.rs  # 模板 JSON 读写
-│       │   ├── theme_service.rs  # 主题 JSON 读写
 │       │   ├── workspace_service.rs  # 工作区 JSON 读写
 │       │   ├── web_service.rs  # 终端输出发布/订阅（WebSocket）
 │       │   ├── path_service.rs  # 数据目录解析与迁移
@@ -180,7 +178,6 @@ terminal-buddy/
 ```
 %APPDATA%/TerminalBuddy/
 ├── Profiles/                  # 终端配置文件
-├── Themes/                    # 自定义主题
 ├── Workspaces/                # 保存的工作区
 ├── command_history.json       # 命令历史（含备注）
 ├── command_templates.json     # 命令模板
@@ -194,7 +191,6 @@ terminal-buddy/
 | 通用 | 恢复标签页、关闭行为、启动窗口模式、开机自启、标签导航、主题模式、列表选中样式、数据路径、导入/导出 |
 | 连接管理 | 创建、编辑、删除、复制、分组配置文件 |
 | 命令模板 | 10 个分类模板、自定义命令、显示/隐藏、编辑描述 |
-| 主题管理 | 8 款预设 + 自定义 16 色编辑器，实时预览 |
 | 命令历史 | 搜索、编辑命令和备注、清空 |
 | 文件排除 | 文件树排除规则（精确名称、`*.ext`、`**/*.ext`） |
 | AI 用量 | 智谱 GLM API Key、百度千帆 Cookie、DeepSeek API Key、Minimax API Key、火山方舟 Cookie |

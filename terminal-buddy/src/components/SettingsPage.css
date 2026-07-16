@@ -934,161 +934,6 @@ input.data-path-input {
   outline-offset: 2px;
 }
 
-/* Theme manager */
-.theme-manager {
-  display: flex;
-  gap: 24px;
-  width: 100%;
-  max-width: 780px;
-  min-height: 300px;
-}
-
-.theme-list {
-  min-width: 196px;
-  max-width: 220px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-right: 16px;
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
-}
-
-.theme-card {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 6px 9px;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s;
-  position: relative;
-}
-
-.theme-card:hover {
-  background: var(--settings-control-hover);
-}
-
-.theme-card.active {
-  background: var(--settings-selected-bg);
-  border-color: var(--settings-selected-border);
-  outline: none;
-}
-
-.theme-swatch {
-  width: 24px;
-  height: 16px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.theme-card-name {
-  flex: 1;
-  font-size: 13px;
-}
-
-.theme-badge {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 3px;
-}
-
-.theme-badge.preset {
-  background: var(--settings-control-bg);
-  color: var(--settings-text-secondary);
-}
-
-.theme-badge.custom {
-  background: var(--settings-selected-bg);
-  color: var(--accent);
-}
-
-.theme-card-delete {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0;
-  border-radius: 3px;
-}
-
-.theme-card-delete:hover {
-  color: var(--settings-danger);
-  background: color-mix(in srgb, var(--settings-danger) 12%, transparent);
-}
-
-.theme-create-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 36px;
-  padding: 0 10px;
-  background: var(--settings-control-bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 13px;
-  transition: border-color 0.15s;
-}
-
-.theme-create-btn:hover {
-  background: var(--settings-control-hover);
-  border-color: var(--settings-selected-border);
-}
-
-/* Theme editor */
-.theme-editor {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.theme-editor-header {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.theme-editor-name {
-  flex: 1;
-  height: 36px;
-  padding: 0 10px;
-  background: var(--settings-control-bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--settings-text-primary);
-  font-size: 14px;
-  outline: none;
-}
-
-.theme-editor-name:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-
-.theme-editor-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.color-slots {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 8px;
-}
-
 .color-slot {
   display: flex;
   align-items: center;
@@ -1133,15 +978,6 @@ input.data-path-input {
 .color-input-wrap input[type="text"]:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
-}
-
-.theme-preview {
-  padding: 14px 16px;
-  border-radius: 4px;
-  font-family: 'Consolas', 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  border: 1px solid var(--settings-selected-border);
 }
 
 /* Exclusion list */
@@ -1264,27 +1100,9 @@ input.data-path-input {
   background: color-mix(in srgb, var(--settings-danger) 12%, transparent) !important;
 }
 
-@media (max-width: 700px) {
-  .settings-page .theme-manager {
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .settings-page .theme-list {
-    width: 100%;
-    min-width: 0;
-    max-width: none;
-    max-height: 176px;
-    padding: 0 0 14px;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-}
-
 @media (max-width: 480px) {
   .settings-page .data-path-row,
-  .settings-page .cmd-add-form,
-  .settings-page .theme-editor-header {
+  .settings-page .cmd-add-form {
     flex-wrap: wrap;
   }
 
@@ -1301,14 +1119,6 @@ input.data-path-input {
   .settings-page .commands-toolbar .settings-add-btn {
     width: 100%;
     box-sizing: border-box;
-  }
-
-  .settings-page .theme-editor-actions {
-    width: 100%;
-  }
-
-  .settings-page .theme-editor-actions button {
-    flex: 1;
   }
 
   .settings-page .cmd-cat-cmd {

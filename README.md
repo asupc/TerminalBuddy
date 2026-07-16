@@ -140,14 +140,12 @@ terminal-buddy/
 │       │   ├── clipboard.rs  # Clipboard operations
 │       │   ├── fs.rs  # Local filesystem operations
 │       │   ├── templates.rs  # Command templates management
-│       │   ├── theme.rs  # Custom theme CRUD
 │       │   ├── web.rs  # Web API server control
 │       │   └── workspace.rs  # Workspace CRUD
 │       ├── services/  # Business logic
 │       │   ├── profile_service.rs  # Profile JSON I/O
 │       │   ├── settings_service.rs  # Settings JSON I/O
 │       │   ├── template_service.rs  # Template JSON I/O
-│       │   ├── theme_service.rs  # Theme JSON I/O
 │       │   ├── workspace_service.rs  # Workspace JSON I/O
 │       │   ├── web_service.rs  # Terminal output pub/sub for WebSocket
 │       │   ├── path_service.rs  # Data directory resolution & migration
@@ -178,7 +176,6 @@ All user data is stored as JSON files under `%APPDATA%/TerminalBuddy/`:
 ```
 %APPDATA%/TerminalBuddy/
 ├── Profiles/                  # Terminal profiles
-├── Themes/                    # Custom themes
 ├── Workspaces/                # Saved workspaces
 ├── command_history.json       # Command history with notes
 ├── command_templates.json     # Command templates
@@ -192,7 +189,6 @@ All user data is stored as JSON files under `%APPDATA%/TerminalBuddy/`:
 | General | Restore tabs, close behavior, launch window mode, launch at login, tab navigation, theme mode, list selection style, data path, import/export |
 | Profiles | Create, edit, delete, copy, group profiles |
 | Commands | 10 categories of templates, custom commands, show/hide, edit descriptions |
-| Themes | 8 presets + custom 16-color editor with live preview |
 | History | Search, edit commands and notes, clear |
 | Exclusions | File tree exclusion patterns (exact name, `*.ext`, `**/*.ext`) |
 | AI Usage | Zhipu GLM API key, Baidu Qianfan cookie, DeepSeek API key, Minimax API key, Volcano Ark (火山方舟) cookie |

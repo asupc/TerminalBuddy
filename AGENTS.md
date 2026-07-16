@@ -43,7 +43,7 @@ No lint, formatter, or test suites exist. TypeScript strict mode enforces `noUnu
 - `sccache` is configured via `src-tauri/.cargo/config.toml`.
 - Dev profile uses `opt-level = 1` + incremental; release uses LTO thin + strip.
 - `portable-pty` is **locally patched** at `src-tauri/portable-pty-patched/` — never update it from crates.io without verifying the patch.
-- All Tauri commands are registered in `lib.rs` `invoke_handler![]` (currently ~79 commands). When adding a command: define in `commands/`, re-export via `commands/mod.rs`, add to `invoke_handler![]`.
+- All Tauri commands are registered in `lib.rs` `invoke_handler![]`. When adding a command: define in `commands/`, re-export via `commands/mod.rs`, add to `invoke_handler![]`.
 - Rust↔TypeScript serialization uses `camelCase` everywhere (`serde(rename_all = "camelCase")`).
 
 ## Frontend specifics
@@ -56,7 +56,7 @@ No lint, formatter, or test suites exist. TypeScript strict mode enforces `noUnu
 
 ## Data model
 
-All user data is JSON files under `%APPDATA%/TerminalBuddy/`: `Profiles/*.json`, `Themes/*.json`, `Workspaces/*.json`, `settings.json`, `command_templates.json`, `command_history.json`. No database.
+All user data is JSON files under `%APPDATA%/TerminalBuddy/`: `Profiles/*.json`, `Workspaces/*.json`, `settings.json`, `command_templates.json`, `command_history.json`. No database.
 
 ## Web API
 

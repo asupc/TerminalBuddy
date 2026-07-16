@@ -39,18 +39,6 @@ export interface ColorTheme {
   foreground: string;
 }
 
-export interface CustomTheme extends ColorTheme {
-  cursor: string;
-  black: string;
-  red: string;
-  green: string;
-  yellow: string;
-  blue: string;
-  magenta: string;
-  cyan: string;
-  white: string;
-}
-
 export const PRESET_THEMES: ColorTheme[] = [
   { id: 'dark-default', name: '深色默认', background: '#1E1E1E', foreground: '#CCCCCC' },
   { id: 'dark-green', name: '黑客绿', background: '#0C0C0C', foreground: '#00FF00' },

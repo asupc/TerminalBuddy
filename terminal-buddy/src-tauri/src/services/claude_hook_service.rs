@@ -37,7 +37,7 @@ const HOOK_DEFINITIONS: &[HookDefinition] = &[
     HookDefinition {
         key: "attention",
         event: "Notification",
-        matcher: Some("permission_prompt|idle_prompt"),
+        matcher: Some("permission_prompt"),
         status_message: "TerminalBuddy 正在同步待处理状态",
     },
     HookDefinition {

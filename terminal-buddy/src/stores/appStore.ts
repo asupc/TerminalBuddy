@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem } from '../types';
+import type { Profile, TerminalSession, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem } from '../types';
 import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath, saveEnableTabNavigation, updateTerminalDisplayName } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from '../utils/terminalResizeEvent';
@@ -214,13 +214,6 @@ interface AppState {
   fileRoots: string[];
   addFileRoot: (path: string) => void;
   removeFileRoot: (path: string) => void;
-
-  // Custom themes
-  customThemes: CustomTheme[];
-  setCustomThemes: (themes: CustomTheme[]) => void;
-  addCustomTheme: (theme: CustomTheme) => void;
-  updateCustomTheme: (theme: CustomTheme) => void;
-  removeCustomTheme: (id: string) => void;
 
   // Tab Groups
   groups: TabGroup[];
@@ -443,20 +436,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     persistFileTreeNav({ ...state, fileRoots });
     return { fileRoots };
   }),
-
-  // Custom themes
-  customThemes: [],
-  setCustomThemes: (themes) => set({ customThemes: themes }),
-  addCustomTheme: (theme) =>
-    set((state) => ({ customThemes: [...state.customThemes, theme] })),
-  updateCustomTheme: (theme) =>
-    set((state) => ({
-      customThemes: state.customThemes.map((t) => (t.id === theme.id ? theme : t)),
-    })),
-  removeCustomTheme: (id) =>
-    set((state) => ({
-      customThemes: state.customThemes.filter((t) => t.id !== id),
-    })),
 
   // Tab Groups
   groups: [{ id: 'default', name: '默认', collapsed: false }],

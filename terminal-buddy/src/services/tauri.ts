@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { Profile, CustomTheme, Workspace, RemoteFileEntry, ServerStats } from '../types';
+import type { Profile, Workspace, RemoteFileEntry, ServerStats } from '../types';
 
 // Profile Commands
 export async function getAllProfiles(): Promise<Profile[]> {
@@ -40,8 +40,8 @@ export async function importAllProfiles(path: string): Promise<Profile[]> {
 }
 
 // Terminal Commands
-export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number, displayName?: string): Promise<string> {
-  return invoke('start_terminal', { profileId, displayName: displayName || null, extraStartupParams: extraStartupParams || null, initialRows: initialRows || 0, initialCols: initialCols || 0 });
+export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number, displayName?: string, startupPath?: string): Promise<string> {
+  return invoke('start_terminal', { profileId, displayName: displayName || null, extraStartupParams: extraStartupParams || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null });
 }
 
 export async function updateTerminalDisplayName(id: string, displayName: string): Promise<void> {
@@ -574,23 +574,6 @@ export const gitGetHistoryFileDiff = (
     statusCode,
     binary,
   });
-
-// Theme Commands
-export async function getAllThemes(): Promise<CustomTheme[]> {
-  return invoke('get_all_themes');
-}
-
-export async function createTheme(name: string): Promise<CustomTheme> {
-  return invoke('create_theme', { name });
-}
-
-export async function updateTheme(theme: CustomTheme): Promise<void> {
-  return invoke('update_theme', { theme });
-}
-
-export async function deleteTheme(id: string): Promise<void> {
-  return invoke('delete_theme', { id });
-}
 
 // Workspace Commands
 export async function getAllWorkspaces(): Promise<Workspace[]> {

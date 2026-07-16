@@ -28,12 +28,6 @@ impl PathService {
         dir
     }
 
-    pub fn get_themes_dir() -> PathBuf {
-        let dir = Self::get_data_dir().join("Themes");
-        fs::create_dir_all(&dir).ok();
-        dir
-    }
-
     pub fn get_bots_dir() -> PathBuf {
         let dir = Self::get_data_dir().join("Bots");
         fs::create_dir_all(&dir).ok();

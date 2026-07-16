@@ -5,7 +5,6 @@ import {
   MessageSquareMore,
   Database,
   FileX2,
-  Palette,
   Plug,
   Server,
   Settings,
@@ -30,7 +29,6 @@ const BehaviorSettings = lazy(() => import('./settings/BehaviorSettings').then(m
 const DataSettings = lazy(() => import('./settings/DataSettings').then(module => ({ default: module.DataSettings })));
 const ProfilesSettings = lazy(() => import('./settings/ProfilesSettings').then(module => ({ default: module.ProfilesSettings })));
 const CommandsSettings = lazy(() => import('./settings/CommandsSettings').then(module => ({ default: module.CommandsSettings })));
-const ThemesSettings = lazy(() => import('./settings/ThemesSettings').then(module => ({ default: module.ThemesSettings })));
 const ExclusionSettings = lazy(() => import('./settings/ExclusionSettings').then(module => ({ default: module.ExclusionSettings })));
 const AiUsageSettings = lazy(() => import('./settings/AiUsageSettings').then(module => ({ default: module.AiUsageSettings })));
 const SshSettings = lazy(() => import('./settings/SshSettings').then(module => ({ default: module.SshSettings })));
@@ -46,7 +44,6 @@ type SettingsSectionId =
   | 'data'
   | 'profiles'
   | 'commands'
-  | 'themes'
   | 'exclusions'
   | 'ai-usage'
   | 'ssh'
@@ -64,7 +61,6 @@ const SECTIONS: ReadonlyArray<SettingsSection> = [
   { id: 'data', label: '数据管理', icon: Database },
   { id: 'profiles', label: '连接管理', icon: Plug },
   { id: 'commands', label: '命令模板', icon: SquareTerminal },
-  { id: 'themes', label: '主题管理', icon: Palette },
   { id: 'exclusions', label: '文件排除', icon: FileX2 },
   { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit },
   { id: 'ssh', label: 'SSH 设置', icon: Server },
@@ -189,8 +185,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         return <ProfilesSettings askConfirm={askConfirm} dismissConfirm={() => setConfirmDialog(null)} />;
       case 'commands':
         return <CommandsSettings askConfirm={askConfirm} dismissConfirm={() => setConfirmDialog(null)} />;
-      case 'themes':
-        return <ThemesSettings />;
       case 'exclusions':
         return <ExclusionSettings askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />;
       case 'ai-usage':
