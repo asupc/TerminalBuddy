@@ -386,7 +386,7 @@ impl TerminalService {
         }).collect()
     }
 
-    pub fn create_terminal(&self, profile_id: &str, display_name: Option<&str>, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
+    pub fn create_terminal(&self, profile_id: &str, display_name: Option<&str>, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, startup_path_override: Option<&str>, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create] start, id={}, profile_id={}", terminal_id, profile_id));
 
@@ -398,9 +398,15 @@ impl TerminalService {
             .or_else(|| profile.as_ref().map(|p| p.name.clone()))
             .unwrap_or_default();
         let terminal_type = profile.as_ref().map_or("powershell", |p| p.terminal_type.as_str());
-        let startup_path = profile.as_ref().and_then(|p| {
+        let profile_startup_path = profile.as_ref().and_then(|p| {
             if p.startup_path.is_empty() { None } else { Some(p.startup_path.clone()) }
         });
+        let startup_path_override = startup_path_override
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .filter(|path| std::path::Path::new(path).is_dir())
+            .map(str::to_string);
+        let startup_path = startup_path_override.or(profile_startup_path);
         let startup_commands: Vec<String> = profile.as_ref()
             .map(|p| p.startup_commands.clone())
             .unwrap_or_default();
@@ -715,6 +721,11 @@ impl TerminalService {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create-blank] start, id={}, type={}", terminal_id, terminal_type));
         crate::boot_log(format!("[create_blank_terminal] start type={}", terminal_type));
+        let startup_path = startup_path
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .filter(|path| std::path::Path::new(path).is_dir())
+            .map(str::to_string);
 
         // Blank terminals only support cmd and powershell;
         // ssh/docker/k8s require connection parameters from a profile
@@ -753,7 +764,7 @@ impl TerminalService {
             &loading_mode,
             init_rows,
             init_cols,
-            startup_path,
+            startup_path.as_deref(),
             &env_vars,
         )
         .map_err(|error| {
@@ -830,6 +841,7 @@ pub async fn start_terminal(
     extra_startup_params: Option<String>,
     initial_rows: u16,
     initial_cols: u16,
+    startup_path: Option<String>,
     app: AppHandle,
     terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
@@ -841,6 +853,7 @@ pub async fn start_terminal(
             extra_startup_params.as_deref(),
             initial_rows,
             initial_cols,
+            startup_path.as_deref(),
             app,
             TerminalOwner::Pc,
         )

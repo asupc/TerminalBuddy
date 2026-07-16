@@ -153,49 +153,98 @@ npm run tauri build
 ## 🏗️ 项目结构
 
 ```
-TerminalBuddy/
-├── CHANGELOG.md              # 更新日志
-├── LICENSE                   # MIT 许可证
-├── README.md                 # 本文件
-└── terminal-buddy/           # 主项目
-    ├── package.json          # 前端依赖与版本号
-    ├── src/                  # React 前端源码
-    │   ├── App.tsx           # 根组件
-    │   ├── components/       # UI 组件（30+ 组件）
-    │   │   ├── TitleBar.tsx          # 无边框标题栏
-    │   │   ├── ConfigNav.tsx         # 配置列表面板 + 级联分组
-    │   │   ├── ConfigEditDialog.tsx  # 终端配置编辑对话框
-    │   │   ├── FileNav.tsx           # 本地文件浏览器
-    │   │   ├── GitNavBar.tsx         # Git 操作工具栏
-    │   │   ├── GitHistoryPage.tsx    # Git 提交历史页
-    │   │   ├── RemoteFileTree.tsx    # SSH 远程文件管理
-    │   │   ├── ServerMonitor.tsx     # 服务器监控面板
-    │   │   ├── TerminalInstance.tsx  # xterm.js 终端实例
-    │   │   ├── TerminalPanel.tsx     # 终端面板路由 + 分屏
-    │   │   ├── TabNav.tsx            # 垂直标签导航
-    │   │   ├── TabGroup.tsx          # 标签分组
-    │   │   ├── SettingsPage.tsx      # 设置页（8 个分区）
-    │   │   ├── TextEditor.tsx        # Monaco Editor 编辑器
-    │   │   ├── AiUsagePanel.tsx      # AI 用量看板
-    │   │   └── Toast.tsx             # 全局 Toast 通知
-    │   ├── stores/           # Zustand 状态管理
-    │   ├── services/         # Tauri 命令调用封装（79 个命令）
-    │   ├── data/             # 命令模板、历史记录、建议词
-    │   ├── types/            # TypeScript 类型定义与预设
-    │   └── utils/            # 工具函数
-    ├── src-tauri/            # Rust 后端
-    │   └── src/
-    │       ├── lib.rs        # 应用入口（托盘、单实例、Web API）
-    │       ├── commands/     # Tauri 命令处理器（14 个模块，79 个命令）
-    │       ├── services/     # 业务逻辑层（JSON 读写、SSH、路径管理）
-    │       ├── models/       # 数据模型（Profile、Settings、Workspace 等）
-    │       └── web/          # 内嵌 Web API（axum + WebSocket + JWT）
-    └── web/                  # Web 远程访问前端（独立 React SPA）
-        └── src/
-            ├── screens/      # 登录页、主布局、终端页
-            ├── components/   # 终端组件、移动端输入栏
-            ├── api/          # REST + WebSocket 客户端
-            └── hooks/        # useTerminal、useMeta 等 hooks
+terminal-buddy/
+├── src/                          # Desktop frontend (React/TypeScript)
+│   ├── App.tsx  # Root component
+│   ├── components/
+│   │   ├── TitleBar.tsx  # Custom frameless title bar
+│   │   ├── ConfigNav.tsx  # Profile list panel with hierarchical groups
+│   │   ├── ConfigEditDialog.tsx  # Profile create/edit modal with GroupCascader
+│   │   ├── GroupCascader.tsx  # Multi-level group cascade selector
+│   │   ├── FileNav.tsx  # Local file browser (bookmarks, inline rename) + embedded Git bar
+│   │   ├── GitNavBar.tsx  # Git operations toolbar (status, branch, pull, commit, push)
+│   │   ├── GitHistoryPage.tsx  # Commit history page with SVG graph
+│   │   ├── GitHistoryDiffPreview.tsx  # Historical file diff preview
+│   │   ├── HistoryGraphSvg.tsx  # SVG commit-graph renderer
+│   │   ├── RemoteFileTree.tsx  # SSH remote file browser with upload/download/chmod
+│   │   ├── ServerMonitor.tsx  # Real-time SSH server monitoring panel
+│   │   ├── ChmodDialog.tsx  # Remote file permission editor
+│   │   ├── ExtraParamsDialog.tsx  # SSH parameter presets
+│   │   ├── TransferPanel.tsx  # Remote file transfer queue/progress
+│   │   ├── TerminalInstance.tsx  # xterm.js terminal with addons
+│   │   ├── TerminalPanel.tsx  # Terminal routing, split layout, hosts GitHistoryPage
+│   │   ├── TerminalTab.tsx  # Individual tab component
+│   │   ├── TabNav.tsx  # Vertical tab navigation
+│   │   ├── TerminalTabBar.tsx  # Horizontal tab bar
+│   │   ├── TreeView.tsx  # Reusable tree view component
+│   │   ├── SettingsPage.tsx  # Settings overlay (IntersectionObserver side-nav)
+│   │   ├── TextEditor.tsx  # Monaco Editor text editor
+│   │   ├── AiUsagePanel.tsx  # AI usage hover panel (5 providers)
+│   │   ├── WebManageDialog.tsx  # Web remote-management dialog (start/stop, QR code)
+│   │   ├── AboutDialog.tsx  # About / version dialog
+│   │   └── Toast.tsx  # Global toast notifications
+│   ├── stores/appStore.ts  # Zustand state management
+│   ├── services/tauri.ts  # Tauri invoke wrappers (108 commands)
+│   ├── services/aiUsage.ts  # AI API usage fetching (5 providers)
+│   ├── data/commandTemplates.ts  # Template definitions & history
+│   ├── data/terminalSuggestions.ts  # VS Code-style prompt suggestions
+│   ├── utils/  # Utility modules
+│   │   ├── settings.ts  # Frontend settings (localStorage)
+│   │   ├── contextMenu.ts  # Edge-aware context-menu positioning
+│   │   ├── terminalTheme.ts  # Terminal theme helpers
+│   │   ├── terminalResizeEvent.ts  # Terminal resize events
+│   │   ├── openTerminalInDir.ts  # Open terminal in directory
+│   │   ├── fileExtensions.ts  # File extension mapping
+│   │   ├── groupHierarchy.ts  # Group hierarchy utilities
+│   │   ├── groupTree.ts  # Group tree building
+│   │   ├── tabColor.ts  # Tab color utilities
+│   │   ├── formatDuration.ts  # Duration formatting
+│   │   ├── migration.ts  # Data migration helpers
+│   │   └── bootLog.ts  # Boot logging
+│   └── types/index.ts  # TypeScript types & presets
+├── src-tauri/                    # Backend (Rust/Tauri)
+│   └── src/
+│       ├── lib.rs  # App setup, tray, single instance, Web API (108 commands)
+│       ├── commands/  # Tauri command handlers
+│       │   ├── terminal.rs  # PTY management (TerminalService)
+│       │   ├── profile.rs  # Profile CRUD + export/import
+│       │   ├── settings.rs  # App settings, data path, Web API settings
+│       │   ├── git.rs  # Git GUI backend (status, branch, pull, push, commit, history, diff)
+│       │   ├── window.rs  # Window controls (minimize/maximize/close)
+│       │   ├── remote_file.rs  # SSH remote file operations
+│       │   ├── server_monitor.rs  # SSH server stats monitoring
+│       │   ├── client_data.rs  # Client-side data persistence
+│       │   ├── ai_usage.rs  # AI API usage (Qianfan, Deepseek, Minimax, Ark)
+│       │   ├── clipboard.rs  # Clipboard operations
+│       │   ├── fs.rs  # Local filesystem operations
+│       │   ├── templates.rs  # Command templates management
+│       │   ├── web.rs  # Web API server control
+│       │   └── workspace.rs  # Workspace CRUD
+│       ├── services/  # Business logic
+│       │   ├── profile_service.rs  # Profile JSON I/O
+│       │   ├── settings_service.rs  # Settings JSON I/O
+│       │   ├── template_service.rs  # Template JSON I/O
+│       │   ├── workspace_service.rs  # Workspace JSON I/O
+│       │   ├── web_service.rs  # Terminal output pub/sub for WebSocket
+│       │   ├── path_service.rs  # Data directory resolution & migration
+│       │   ├── ssh_session_service.rs  # SSH session management
+│       │   ├── client_data_service.rs  # Client data persistence
+│       │   └── crypto_service.rs  # Encryption helpers
+│       ├── models/  # Data structures (Profile, AppSettings, etc.)
+│       ├── web/  # Web API module (axum)
+│       │   ├── server.rs  # Axum router & SPA serving
+│       │   ├── auth.rs  # JWT authentication
+│       │   ├── ws.rs  # WebSocket terminal I/O
+│       │   ├── error.rs  # Error types
+│       │   └── handlers/  # REST handlers (auth, profiles, terminals)
+│       └── portable-pty-patched/  # Local patch for portable-pty
+└── web/  # Web frontend (separate React SPA)
+    └── src/
+        ├── screens/  # Login, Nav, Terminal
+        ├── components/  # Xterm (mobile-friendly), InputBar
+        ├── api.ts  # Auth + REST client
+        ├── hooks/useMetaWs.ts  # Meta channel (profile/terminal lists, session events)
+        └── hooks/useTerminalWs.ts  # Per-terminal WebSocket I/O
 ```
 
 ### 架构分层
@@ -218,17 +267,24 @@ TerminalBuddy/
 
 ```
 %APPDATA%/TerminalBuddy/
-├── Profiles/              # 终端配置文件
-├── Themes/                # 自定义主题
-├── Workspaces/            # 工作区布局
-├── command_history.json   # 命令历史（含结构化备注）
-├── command_templates.json # 命令模板
-└── settings.json          # 应用设置
+├── Profiles/                  # Terminal profiles
+├── Workspaces/                # Saved workspaces
+├── command_history.json       # Command history with notes
+├── command_templates.json     # Command templates
+└── settings.json              # App settings
 ```
 
 ---
 
-## ⚙️ 设置分区
+| Section | Description |
+|---------|-------------|
+| General | Restore tabs, close behavior, launch window mode, launch at login, tab navigation, theme mode, list selection style, data path, import/export |
+| Profiles | Create, edit, delete, copy, group profiles |
+| Commands | 10 categories of templates, custom commands, show/hide, edit descriptions |
+| History | Search, edit commands and notes, clear |
+| Exclusions | File tree exclusion patterns (exact name, `*.ext`, `**/*.ext`) |
+| AI Usage | Zhipu GLM API key, Baidu Qianfan cookie, DeepSeek API key, Minimax API key, Volcano Ark (火山方舟) cookie |
+| Web Management | Enable/disable Web API, port, credentials, server control, session sharing |
 
 | 分区 | 内容 |
 |---|---|

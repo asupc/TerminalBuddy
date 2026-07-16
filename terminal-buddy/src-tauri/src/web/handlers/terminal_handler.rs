@@ -31,6 +31,7 @@ pub async fn start(
         None,
         req.rows.unwrap_or(0),
         req.cols.unwrap_or(0),
+        None,
         state.app_handle.clone(),
         TerminalOwner::Web,
     ).map_err(ApiError::Internal)?;

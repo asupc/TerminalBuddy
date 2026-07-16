@@ -57,9 +57,18 @@ async function focusTerminal(terminalId: string): Promise<void> {
   await appWindow.setFocus().catch(() => {});
 }
 
-async function terminalIsBeingViewed(terminalId: string): Promise<boolean> {
-  const focused = await getCurrentWindow().isFocused().catch(() => false);
-  if (!focused) return false;
+async function appIsInForeground(): Promise<boolean> {
+  const appWindow = getCurrentWindow();
+  const [focused, minimized, visible] = await Promise.all([
+    appWindow.isFocused().catch(() => false),
+    appWindow.isMinimized().catch(() => true),
+    appWindow.isVisible().catch(() => false),
+  ]);
+  return focused && visible && !minimized;
+}
+
+function terminalIsBeingViewed(terminalId: string, appInForeground: boolean): boolean {
+  if (!appInForeground) return false;
   const store = useAppStore.getState();
   if (store.activeSpecialTab !== null) return false;
   return store.activeSessionId === terminalId
@@ -73,9 +82,9 @@ function terminalName(terminalId: string): string | null {
 async function showStructuredDecisionNotification(decision: ClaudeHookDecisionEvent, isCurrent: NotificationGuard): Promise<void> {
   const name = terminalName(decision.terminalId);
   if (!name) return;
-  const isBeingViewed = await terminalIsBeingViewed(decision.terminalId);
+  const appInForeground = await appIsInForeground();
   if (!isCurrent()) return;
-  const nativePromise = getAppSettings().claudeDecisionNotifications && !isBeingViewed
+  const nativePromise = getAppSettings().claudeDecisionNotifications && !appInForeground
     ? showNativeNotification(decision.terminalId, name, 'question')
         .catch(error => console.error('发送 Claude Code 决策通知失败:', error))
     : Promise.resolve();
@@ -92,14 +101,16 @@ async function showAttentionNotification(event: ClaudeHookTerminalEvent, isCurre
   if (!nativeEnabled && !botEnabled) return;
 
   const name = terminalName(event.terminalId);
-  if (!name || await terminalIsBeingViewed(event.terminalId)) return;
+  if (!name) return;
+  const appInForeground = await appIsInForeground();
   if (!isCurrent()) return;
+  const isBeingViewed = terminalIsBeingViewed(event.terminalId, appInForeground);
   const isPermission = event.notificationType === 'permission_prompt';
-  const nativePromise = nativeEnabled
+  const nativePromise = nativeEnabled && !appInForeground
     ? showNativeNotification(event.terminalId, name, isPermission ? 'confirmation' : 'question')
         .catch(error => console.error('发送 Claude Code 待处理通知失败:', error))
     : Promise.resolve();
-  const botPromise = botEnabled
+  const botPromise = botEnabled && !isBeingViewed
     ? sendBotNotification({
         eventId: event.eventId,
         terminalId: event.terminalId,
@@ -125,11 +136,13 @@ async function showCompletionNotification(
   const nativeEnabled = settings.claudeCompletionNotifications;
   const botSettings = await getBotSettings().catch(() => null);
   const botEnabled = Boolean(botSettings?.enabled && botSettings.sendCompletionNotifications);
-  if ((!nativeEnabled && !botEnabled) || await terminalIsBeingViewed(terminalId)) return;
+  if (!nativeEnabled && !botEnabled) return;
+  const appInForeground = await appIsInForeground();
   if (!isCurrent()) return;
 
   const name = terminalName(terminalId);
   if (!name) return;
+  const isBeingViewed = terminalIsBeingViewed(terminalId, appInForeground);
   const failed = phase === 'failed';
   const taskTitle = details.taskTitle?.trim();
   const title = taskTitle
@@ -137,11 +150,11 @@ async function showCompletionNotification(
     : failed ? 'Claude Code 任务执行失败' : 'Claude Code 任务已完成';
   const summary = details.summary?.trim()
     || (failed ? 'Claude Code 未能完成当前任务。' : 'Claude Code 已完成当前任务。');
-  const nativePromise = nativeEnabled
+  const nativePromise = nativeEnabled && !appInForeground
     ? showNativeNotification(terminalId, name, failed ? 'failed' : 'completed', title, summary)
         .catch(error => console.error('发送 Claude Code 任务结束通知失败:', error))
     : Promise.resolve();
-  const botPromise = botEnabled
+  const botPromise = botEnabled && !isBeingViewed
     ? sendBotNotification({
         eventId: details.eventId,
         terminalId,

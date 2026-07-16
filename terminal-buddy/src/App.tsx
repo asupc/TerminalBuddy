@@ -35,6 +35,10 @@ function estimateTerminalSize(): { rows: number; cols: number } {
   return { rows, cols };
 }
 
+function isLocalShellTerminal(terminalType: string): boolean {
+  return terminalType === 'powershell' || terminalType === 'cmd';
+}
+
 const RESTORE_TERMINAL_CONCURRENCY = 2;
 
 function waitForNextFrame(): Promise<void> {
@@ -395,9 +399,12 @@ function App() {
                 launchParams = launchParams ? `${launchParams} ${resumeParam}` : resumeParam;
               }
             }
+            const startupPath = tab.directory && isLocalShellTerminal(tab.terminalType)
+              ? tab.directory
+              : undefined;
             const terminalId = tab.profileId
-              ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName)
-              : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols, undefined, tab.profileName);
+              ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath)
+              : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols, startupPath, tab.profileName);
             store.addSession({
               id: terminalId,
               profileId: tab.profileId,
@@ -414,10 +421,13 @@ function App() {
             if (tab.claudeSessionId) {
               store.setClaudeSessionId(terminalId, tab.claudeSessionId);
             }
-            // 恢复上次记录的目录：同步 sessionDirectories 并发送 cd 命令
+            // 恢复上次记录的目录：本地 shell 直接用启动 cwd，避免恢复时额外写入
+            // 可见的 cd 命令与后端启动命令（powershell/claude）发生竞态。
             if (tab.directory) {
               store.setSessionDirectory(terminalId, tab.directory);
-              writeToTerminal(terminalId, `cd "${tab.directory}"\r`).catch(() => {});
+              if (!startupPath) {
+                writeToTerminal(terminalId, `cd "${tab.directory}"\r`).catch(() => {});
+              }
             }
             if (i === activeIndex || useAppStore.getState().activeSessionId === null) {
               store.setActiveSession(terminalId);

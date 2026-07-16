@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   Box,
   Command,
@@ -13,10 +13,11 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api';
-import { useStore } from '../store';
-import { useMetaWs } from '../hooks/useMetaWs';
+import { ConnectionPickerDialog } from '../components/ConnectionPickerDialog';
 import { Dialog } from '../components/Dialog';
-import type { Profile, TerminalType } from '../types';
+import { useMetaWs } from '../hooks/useMetaWs';
+import { useStore } from '../store';
+import type { Profile, TerminalInfo, TerminalType } from '../types';
 
 const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
   powershell: { icon: SquareTerminal, label: 'PowerShell' },
@@ -27,61 +28,67 @@ const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
   mstsc: { icon: Monitor, label: '远程桌面' },
 };
 
+const FALLBACK_TYPE = { icon: SquareTerminal, label: '终端' };
+
+function getTypeInfo(type: string) {
+  return TYPE_INFO[type as TerminalType] ?? FALLBACK_TYPE;
+}
+
 export default function Nav() {
-  const profiles = useStore((s) => s.profiles);
-  const setProfiles = useStore((s) => s.setProfiles);
-  const sessions = useStore((s) => s.sessions);
-  const metaOnline = useStore((s) => s.metaOnline);
-  const setView = useStore((s) => s.setView);
-  const logout = useStore((s) => s.logout);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState('');
+  const profiles = useStore((state) => state.profiles);
+  const setProfiles = useStore((state) => state.setProfiles);
+  const sessions = useStore((state) => state.sessions);
+  const metaOnline = useStore((state) => state.metaOnline);
+  const setView = useStore((state) => state.setView);
+  const logout = useStore((state) => state.logout);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+  const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
 
   useMetaWs();
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const p = await api.getProfiles();
-        if (!cancelled) setProfiles(p);
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : '加载失败');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const loadProfiles = useCallback(async () => {
+    setProfilesLoading(true);
+    setError('');
+    try {
+      setProfiles(await api.getProfiles());
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '加载连接配置失败');
+    } finally {
+      setProfilesLoading(false);
+    }
   }, [setProfiles]);
 
-  // 按 group 分组（空 group 归入「默认」）
-  const groups: Record<string, Profile[]> = {};
-  for (const p of profiles) {
-    const g = p.group || '默认';
-    (groups[g] = groups[g] || []).push(p);
-  }
+  const openPicker = () => {
+    setPickerOpen(true);
+    void loadProfiles();
+  };
 
-  const [takeover, setTakeover] = useState<{ id: string; name: string } | null>(null);
+  const openSession = (session: TerminalInfo) => {
+    const name = session.profileName || getTypeInfo(session.terminalType).label;
+    if (session.owner === 'pc') {
+      setTakeover(session);
+      return;
+    }
+    setView({ screen: 'terminal', terminalId: session.id, profileName: name, owner: 'web' });
+  };
 
-  const openExisting = (id: string, name: string, owner: 'pc' | 'web') =>
-    setView({ screen: 'terminal', terminalId: id, profileName: name, owner });
-
-  const createNew = async (p: Profile) => {
-    setBusyId(p.id);
-    setErr('');
+  const createNew = async (profile: Profile) => {
+    setBusyId(profile.id);
+    setError('');
     try {
-      const info = await api.createTerminal(p.id);
+      const info = await api.createTerminal(profile.id);
+      setPickerOpen(false);
       setView({
         screen: 'terminal',
         terminalId: info.id,
-        profileName: info.profileName || p.name,
+        profileName: info.profileName || profile.name,
         owner: 'web',
       });
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '创建失败');
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : '创建连接失败');
     } finally {
       setBusyId(null);
     }
@@ -91,9 +98,7 @@ export default function Nav() {
     <div className="screen nav-screen">
       <header className="topbar app-topbar">
         <div className="topbar-brand">
-          <span className="brand-mark" aria-hidden="true">
-            <TerminalSquare size={20} />
-          </span>
+          <span className="brand-mark" aria-hidden="true"><TerminalSquare size={20} /></span>
           <span className="brand-name">Terminal Buddy</span>
         </div>
         <div className={`status-pill ${metaOnline ? 'online' : 'offline'}`}>
@@ -104,103 +109,75 @@ export default function Nav() {
           <LogOut size={19} />
         </button>
       </header>
+
       <main className="nav-body" id="main-content">
         <div className="nav-shell">
-          <section className="nav-heading" aria-labelledby="connections-title">
+          <section className="nav-heading" aria-labelledby="tabs-title">
             <div>
               <p className="eyebrow">远程工作台</p>
-              <h1 id="connections-title">连接</h1>
+              <h1 id="tabs-title">选项卡</h1>
             </div>
-            <div className="nav-counts" aria-label="连接统计">
-              <span><strong>{profiles.length}</strong> 个配置</span>
-              <span><strong>{sessions.length}</strong> 个会话</span>
+            <div className="nav-heading-actions">
+              <span className="open-session-count">{sessions.length} 个已打开</span>
+              <button type="button" className="btn primary nav-new-button" onClick={openPicker}>
+                <Plus aria-hidden="true" />
+                新建
+              </button>
             </div>
           </section>
 
-          {loading && <div className="empty-state">正在加载连接…</div>}
-          {!loading && err && <div className="empty-state error-state">{err}</div>}
-          {!loading && profiles.length === 0 && !err && (
-            <div className="empty-state">
-              <Server size={28} aria-hidden="true" />
-              <span>电脑端尚未配置连接</span>
+          {sessions.length === 0 ? (
+            <div className="session-empty-state">
+              <Server aria-hidden="true" />
+              <strong>暂无打开的连接</strong>
+              <button type="button" className="btn" onClick={openPicker}>
+                <Plus aria-hidden="true" />
+                新建连接
+              </button>
+            </div>
+          ) : (
+            <div className="open-session-grid" aria-label="已打开的连接">
+              {sessions.map((session) => {
+                const type = getTypeInfo(session.terminalType);
+                const TypeIcon = type.icon;
+                const name = session.profileName || type.label;
+                return (
+                  <button
+                    type="button"
+                    className="open-session-tab"
+                    key={session.id}
+                    onClick={() => openSession(session)}
+                    aria-label={`${name}，${session.owner === 'pc' ? '桌面端，接管' : '网页端，继续'}`}
+                  >
+                    <span className="open-session-icon" aria-hidden="true"><TypeIcon /></span>
+                    <span className="open-session-copy">
+                      <strong>{name}</strong>
+                      <small>{type.label}</small>
+                    </span>
+                    <span className={`open-session-owner ${session.owner}`}>
+                      {session.owner === 'pc' ? 'PC' : 'WEB'}
+                    </span>
+                    <span className="open-session-action">
+                      {session.owner === 'pc' ? '接管' : '继续'}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
-
-          <div className="connection-groups">
-            {Object.entries(groups).map(([g, ps], groupIndex) => (
-              <section className="connection-group" key={g} aria-labelledby={`group-${groupIndex}`}>
-                <div className="group-head">
-                  <h2 id={`group-${groupIndex}`}>{g}</h2>
-                  <span>{ps.length}</span>
-                </div>
-                <div className="profile-grid">
-                  {ps.map((p) => {
-                    const insts = sessions.filter((s) => s.profileId === p.id);
-                    const isMstsc = p.terminalType === 'mstsc';
-                    const TypeIcon = TYPE_INFO[p.terminalType].icon;
-                    return (
-                      <article className="profile-card" key={p.id}>
-                        <div className="profile-row">
-                          <span className="profile-type-icon" aria-hidden="true">
-                            <TypeIcon size={20} strokeWidth={1.8} />
-                          </span>
-                          <div className="profile-copy">
-                            <h3>{p.name}</h3>
-                            <span>{TYPE_INFO[p.terminalType].label}</span>
-                          </div>
-                          {!isMstsc && (
-                            <button
-                              className="new-session-button"
-                              disabled={busyId === p.id}
-                              onClick={() => createNew(p)}
-                              title="新建连接"
-                              aria-label={`新建 ${p.name} 连接`}
-                            >
-                              {busyId === p.id ? (
-                                <span className="button-progress">…</span>
-                              ) : (
-                                <Plus size={20} />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                        {insts.length > 0 ? (
-                          <div className="instances">
-                            {insts.map((s) => {
-                              const name = s.profileName || p.name;
-                              const isPc = s.owner === 'pc';
-                              return (
-                                <button
-                                  type="button"
-                                  key={s.id}
-                                  className="instance-row"
-                                  onClick={() =>
-                                    isPc
-                                      ? setTakeover({ id: s.id, name })
-                                      : openExisting(s.id, name, 'web')
-                                  }
-                                >
-                                  <span className={`dot ${isPc ? 'takeover' : 'online'}`} aria-hidden="true" />
-                                  <span className="iname">{name}</span>
-                                  <span className={`session-action ${isPc ? 'takeover' : ''}`}>
-                                    {isPc ? '接管' : '继续'}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="profile-idle">暂无运行中的会话</div>
-                        )}
-                      </article>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
-          </div>
         </div>
       </main>
+
+      {pickerOpen && (
+        <ConnectionPickerDialog
+          profiles={profiles}
+          loading={profilesLoading}
+          error={error}
+          busyId={busyId}
+          onClose={() => setPickerOpen(false)}
+          onSelect={createNew}
+        />
+      )}
 
       {takeover && (
         <Dialog
@@ -208,15 +185,18 @@ export default function Nav() {
           onClose={() => setTakeover(null)}
           footer={(
             <>
-              <button className="btn" onClick={() => setTakeover(null)}>
-                取消
-              </button>
+              <button className="btn" onClick={() => setTakeover(null)}>取消</button>
               <button
                 className="btn primary"
                 onClick={() => {
-                  const t = takeover;
+                  const session = takeover;
                   setTakeover(null);
-                  openExisting(t.id, t.name, 'pc');
+                  setView({
+                    screen: 'terminal',
+                    terminalId: session.id,
+                    profileName: session.profileName || getTypeInfo(session.terminalType).label,
+                    owner: 'pc',
+                  });
                 }}
               >
                 接管
@@ -225,7 +205,7 @@ export default function Nav() {
           )}
         >
           <div className="web-dialog-desc">
-            「{takeover.name}」正在电脑端运行。接管后终端会切到手机尺寸，电脑端视图会随之重排跟随。
+            「{takeover.profileName || getTypeInfo(takeover.terminalType).label}」正在电脑端运行。接管后终端会切到当前网页尺寸。
           </div>
         </Dialog>
       )}

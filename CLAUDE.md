@@ -35,12 +35,11 @@ cd src-tauri && cargo check  # Rust compilation check
 
 Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (business logic) → **models** (data structures), plus a **web** module for the HTTP/WebSocket API.
 
-**Command modules** (`commands/`): profile, terminal, settings, theme, workspace, templates, fs, clipboard, window, ai_usage, web, remote_file, server_monitor, client_data. All re-exported via `mod.rs`. Registered in `lib.rs` `invoke_handler![]` (79 commands).
+**Command modules** (`commands/`): profile, terminal, settings, workspace, templates, fs, clipboard, window, ai_usage, web, remote_file, server_monitor, client_data. All re-exported via `mod.rs`. Registered in `lib.rs` `invoke_handler![]`.
 
 **Service modules** (`services/`): Each service manages a JSON file or subsystem:
 - `profile_service` — CRUD for `Profiles/*.json`
 - `template_service` — `command_templates.json`, auto-initializes from defaults if missing
-- `theme_service` — CRUD for `Themes/*.json`
 - `settings_service` — `settings.json` (close_behavior, data_path, tab_sidebar_width, enable_tab_navigation, single_instance, web_api settings, ssh_download_dir, server_monitor_interval)
 - `workspace_service` — CRUD for `Workspaces/*.json`
 - `path_service` — Centralizes data directory resolution (default: `%APPDATA%/TerminalBuddy`), validates custom paths, provides `copy_dir_recursive` for migration/export
@@ -56,15 +55,15 @@ Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (b
 - `error.rs` — Error types
 - `handlers/` — REST handlers: `auth_handler.rs`, `profile_handler.rs`, `terminal_handler.rs`
 
-**Models** (`models/`): `Profile` (with SSH/Docker/K8s/MSTSC fields), `AppSettings` (close_behavior, data_path, web_api settings including `web_api_share_sessions`, ssh_download_dir, server_monitor_interval), `CustomTheme` (16-color ANSI palette), `Workspace` (groups, terminals), `TerminalOwner` (Pc/Web enum), `ssh_types` (SSH session types), `web_api.rs` (LoginRequest, WsClientMessage, WsServerMessage with Error variant, TerminalInfo with owner field, etc.).
+**Models** (`models/`): `Profile` (with SSH/Docker/K8s/MSTSC fields), `AppSettings` (close_behavior, data_path, web_api settings including `web_api_share_sessions`, ssh_download_dir, server_monitor_interval), `Workspace` (groups, terminals), `TerminalOwner` (Pc/Web enum), `ssh_types` (SSH session types), `web_api.rs` (LoginRequest, WsClientMessage, WsServerMessage with Error variant, TerminalInfo with owner field, etc.).
 
 **App setup** (`lib.rs`): System tray with "打开窗口"/"退出", close-to-tray behavior, single instance (tauri-plugin-single-instance), window close interception, Web API server startup.
 
 ### Frontend (React/TypeScript) — `src/`
 
-**State management**: Zustand store (`stores/appStore.ts`) holds profiles, sessions, tab groups, custom themes, bookmarks, exclusion patterns, drag state. Persists tabs/bookmarks to `localStorage`.
+**State management**: Zustand store (`stores/appStore.ts`) holds profiles, sessions, tab groups, bookmarks, exclusion patterns, drag state. Persists tabs/bookmarks to `localStorage`.
 
-**Backend bridge**: `services/tauri.ts` — typed `invoke()` wrappers for all 79 commands, plus `onTerminalOutput` event listener.
+**Backend bridge**: `services/tauri.ts` — typed `invoke()` wrappers for backend commands, plus `onTerminalOutput` event listener.
 
 **Data layer**: `data/commandTemplates.ts` — 10 categories of command templates, overrides (localStorage), custom commands, history cache (`HistoryEntry[]`), autocomplete suggestions. Templates are persisted to backend via `initPersistedTemplates()`.
 
@@ -91,7 +90,7 @@ Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (b
 - `GroupCascader.tsx` — Multi-level group cascade selector for profile grouping
 - `AiUsagePanel.tsx` — Hover panel showing AI usage bars for Zhipu GLM, Baidu Qianfan, and Minimax
 
-**Types** (`types/index.ts`): `Profile`, `TerminalSession`, `CustomTheme`, `TabGroup`, `SplitNode`, `Workspace`, `RemoteFileEntry`, `ServerStats`, `ExtraParamPreset`, plus `PRESET_THEMES` (8 themes) and `TAB_COLORS` (26 entries: null + 25 named colors).
+**Types** (`types/index.ts`): `Profile`, `TerminalSession`, `TabGroup`, `SplitNode`, `Workspace`, `RemoteFileEntry`, `ServerStats`, `ExtraParamPreset`, plus `PRESET_THEMES` (8 themes) and `TAB_COLORS` (26 entries: null + 25 named colors).
 
 ### Web Frontend — `web/`
 
@@ -123,7 +122,7 @@ Embedded in the Rust binary via `include_dir!` in release mode; served from `web
 
 **AppSettings (frontend, localStorage):** restoreTabsOnStartup, configPanelAutoExpand, fileTreeAutoExpand, closeBehavior, enableTabNavigation, singleInstance, rightClickPaste, zhipuApiKey, qianfanCookie, webApiEnabled, webApiPort, webApiUsername, webApiShareSessions.
 
-**Storage layout:** `%APPDATA%/TerminalBuddy/` — `Profiles/`, `Themes/`, `Workspaces/`, `command_history.json`, `command_templates.json`, `settings.json`.
+**Storage layout:** `%APPDATA%/TerminalBuddy/` — `Profiles/`, `Workspaces/`, `command_history.json`, `command_templates.json`, `settings.json`.
 
 ## Key Constraints
 

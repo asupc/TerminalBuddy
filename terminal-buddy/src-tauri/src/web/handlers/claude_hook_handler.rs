@@ -131,6 +131,10 @@ fn task_content(
     }
 }
 
+fn is_actionable_notification(request: &ClaudeHookRequest) -> bool {
+    request.notification_type.as_deref() == Some("permission_prompt")
+}
+
 fn emit_terminal_event(
     app: &tauri::AppHandle,
     terminal_id: &str,
@@ -180,10 +184,7 @@ pub(crate) async fn claude_hook(
             return StatusCode::NO_CONTENT.into_response();
         }
         "Notification" => {
-            if matches!(
-                request.notification_type.as_deref(),
-                Some("permission_prompt" | "idle_prompt")
-            ) {
+            if is_actionable_notification(&request) {
                 emit_terminal_event(&app, terminal_id, &request, "attention");
             }
             return StatusCode::NO_CONTENT.into_response();
@@ -385,8 +386,8 @@ pub async fn send_claude_hook_decision_notification(
 #[cfg(test)]
 mod tests {
     use super::{
-        compact_hook_text, next_hook_timestamp, task_content, truncate_unicode,
-        ClaudeHookRequest,
+        compact_hook_text, is_actionable_notification, next_hook_timestamp, task_content,
+        truncate_unicode, ClaudeHookRequest,
     };
     use crate::services::ClaudeHookService;
     use serde_json::json;
@@ -460,5 +461,24 @@ mod tests {
         .unwrap();
         let (_, summary) = task_content("failure-terminal", &with_last_message);
         assert_eq!(summary.as_deref(), Some("无法完成请求"));
+    }
+
+    #[test]
+    fn only_permission_notifications_require_attention() {
+        let permission: ClaudeHookRequest = serde_json::from_value(json!({
+            "session_id": "notification-session",
+            "hook_event_name": "Notification",
+            "notification_type": "permission_prompt"
+        }))
+        .unwrap();
+        let idle: ClaudeHookRequest = serde_json::from_value(json!({
+            "session_id": "notification-session",
+            "hook_event_name": "Notification",
+            "notification_type": "idle_prompt"
+        }))
+        .unwrap();
+
+        assert!(is_actionable_notification(&permission));
+        assert!(!is_actionable_notification(&idle));
     }
 }
