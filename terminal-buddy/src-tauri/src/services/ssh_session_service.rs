@@ -602,8 +602,11 @@ impl SshSessionService {
     }
 
     pub fn close_session(&self, terminal_id: &str) {
-        if let Ok(mut sessions) = self.sessions.lock() {
-            sessions.remove(terminal_id);
+        let session = self.sessions.lock()
+            .ok()
+            .and_then(|mut sessions| sessions.remove(terminal_id));
+        if let Some(session) = session {
+            let _cleanup_task = tauri::async_runtime::spawn_blocking(move || drop(session));
         }
     }
 }

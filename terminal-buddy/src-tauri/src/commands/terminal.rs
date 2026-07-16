@@ -684,37 +684,44 @@ impl TerminalService {
     }
 
     pub fn close_terminal(&self, id: &str) -> Result<(), String> {
-        let mut instance = {
+        let instance = {
             let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.remove(id).ok_or("Terminal not found".to_string())?
         };
-        instance.backend.close();
-        ClaudeHookService::unregister_terminal(id);
-        self.notify_sessions_changed();
+        self.schedule_terminal_cleanup(id, instance);
         Ok(())
     }
 
     pub fn close_terminal_with_check(&self, id: &str, required_owner: Option<TerminalOwner>) -> Result<(), String> {
-        {
-            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(instance) = instances.get(id) {
-                if let Some(expected) = required_owner {
-                    if instance.owner != expected {
-                        return Err("无权限关闭此终端".to_string());
-                    }
-                }
-            } else {
-                return Err("Terminal not found".to_string());
-            }
-        }
-        let mut instance = {
+        let instance = {
             let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            let instance = instances.get(id).ok_or("Terminal not found".to_string())?;
+            if let Some(expected) = required_owner {
+                if instance.owner != expected {
+                    return Err("无权限关闭此终端".to_string());
+                }
+            }
             instances.remove(id).ok_or("Terminal not found".to_string())?
         };
-        instance.backend.close();
+        self.schedule_terminal_cleanup(id, instance);
+        Ok(())
+    }
+
+    fn schedule_terminal_cleanup(&self, id: &str, mut instance: TerminalInstance) {
         ClaudeHookService::unregister_terminal(id);
         self.notify_sessions_changed();
-        Ok(())
+        log_debug(&format!("[close] detached, id={}", id));
+
+        let terminal_id = id.to_string();
+        let _cleanup_task = tauri::async_runtime::spawn_blocking(move || {
+            let started = Instant::now();
+            instance.backend.close();
+            log_debug(&format!(
+                "[close] cleanup DONE, id={}, elapsed_ms={}",
+                terminal_id,
+                started.elapsed().as_millis(),
+            ));
+        });
     }
 
     pub fn create_blank_terminal(&self, terminal_type: &str, display_name: Option<&str>, initial_rows: u16, initial_cols: u16, startup_path: Option<&str>, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
