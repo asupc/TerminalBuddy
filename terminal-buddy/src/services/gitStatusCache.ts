@@ -3,7 +3,7 @@ import {
   type GitRepositoryStatus,
 } from './tauri';
 
-export const GIT_STATUS_CACHE_TTL_MS = 60_000;
+export const GIT_STATUS_REFRESH_INTERVAL_MS = 5_000;
 const MAX_CACHE_ENTRIES = 100;
 
 export interface CachedGitRepositoryStatus {
@@ -17,6 +17,12 @@ interface LoadGitRepositoryStatusOptions {
 
 const statusCache = new Map<string, CachedGitRepositoryStatus>();
 const pendingRequests = new Map<string, Promise<GitRepositoryStatus | null>>();
+const statusListeners = new Set<() => void>();
+let pollingOwner = 0;
+let pollingPaths: string[] = [];
+let pollingTimer: ReturnType<typeof setInterval> | null = null;
+let pollInFlight = false;
+let pollAgainAfterCurrentRun = false;
 
 function normalizePath(path: string): string {
   const normalized = path.trim().replace(/\//g, '\\');
@@ -25,6 +31,24 @@ function normalizePath(path: string): string {
 
 function isPathInside(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}\\`);
+}
+
+function areStatusesEqual(
+  left: GitRepositoryStatus | null | undefined,
+  right: GitRepositoryStatus | null,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.repoRoot === right.repoRoot
+    && left.branch === right.branch
+    && left.upstream === right.upstream
+    && left.ahead === right.ahead
+    && left.behind === right.behind
+    && left.changedCount === right.changedCount
+    && left.stagedCount === right.stagedCount
+    && left.unstagedCount === right.unstagedCount
+    && left.untrackedCount === right.untrackedCount
+    && left.hasRemote === right.hasRemote;
 }
 
 function cacheEntry(path: string, entry: CachedGitRepositoryStatus): void {
@@ -39,6 +63,21 @@ function cacheEntry(path: string, entry: CachedGitRepositoryStatus): void {
     if (!oldestKey) break;
     statusCache.delete(oldestKey);
   }
+}
+
+function notifyStatusListeners(): void {
+  for (const listener of statusListeners) {
+    listener();
+  }
+}
+
+function uniquePaths(paths: string[]): string[] {
+  const unique = new Map<string, string>();
+  for (const path of paths) {
+    const key = normalizePath(path);
+    if (key && !unique.has(key)) unique.set(key, path.trim());
+  }
+  return [...unique.values()];
 }
 
 export function getCachedGitRepositoryStatus(path: string): CachedGitRepositoryStatus | undefined {
@@ -62,6 +101,11 @@ export function getCachedGitRepositoryStatus(path: string): CachedGitRepositoryS
   return newest ?? exact;
 }
 
+export function subscribeGitRepositoryStatus(listener: () => void): () => void {
+  statusListeners.add(listener);
+  return () => statusListeners.delete(listener);
+}
+
 export async function loadGitRepositoryStatus(
   path: string,
   options: LoadGitRepositoryStatusOptions = {},
@@ -70,7 +114,7 @@ export async function loadGitRepositoryStatus(
   if (!key) return null;
 
   const cached = getCachedGitRepositoryStatus(path);
-  if (!options.force && cached && Date.now() - cached.updatedAt < GIT_STATUS_CACHE_TTL_MS) {
+  if (!options.force && cached) {
     return cached.status;
   }
 
@@ -86,10 +130,13 @@ export async function loadGitRepositoryStatus(
 
   const request = getGitRepositoryStatus(path)
     .then((status) => {
-      const entry = { status, updatedAt: Date.now() };
+      const currentStatus = getCachedGitRepositoryStatus(path)?.status;
+      const nextStatus = areStatusesEqual(currentStatus, status) ? currentStatus ?? null : status;
+      const entry = { status: nextStatus, updatedAt: Date.now() };
       cacheEntry(path, entry);
-      if (status) cacheEntry(status.repoRoot, entry);
-      return status;
+      if (nextStatus) cacheEntry(nextStatus.repoRoot, entry);
+      notifyStatusListeners();
+      return nextStatus;
     })
     .finally(() => {
       if (pendingRequests.get(requestKey) === request) {
@@ -99,4 +146,54 @@ export async function loadGitRepositoryStatus(
 
   pendingRequests.set(requestKey, request);
   return request;
+}
+
+async function refreshAllPollingPaths(queueIfBusy: boolean): Promise<void> {
+  if (pollInFlight) {
+    if (queueIfBusy) pollAgainAfterCurrentRun = true;
+    return;
+  }
+
+  const paths = pollingPaths;
+  if (paths.length === 0) return;
+
+  pollInFlight = true;
+  try {
+    await Promise.allSettled(
+      paths.map(path => loadGitRepositoryStatus(path, { force: true })),
+    );
+  } finally {
+    pollInFlight = false;
+    if (pollAgainAfterCurrentRun) {
+      pollAgainAfterCurrentRun = false;
+      void refreshAllPollingPaths(false);
+    }
+  }
+}
+
+function stopGitStatusPolling(): void {
+  pollingPaths = [];
+  pollAgainAfterCurrentRun = false;
+  if (pollingTimer !== null) {
+    clearInterval(pollingTimer);
+    pollingTimer = null;
+  }
+}
+
+export function startGitStatusPolling(paths: string[]): () => void {
+  const owner = ++pollingOwner;
+  stopGitStatusPolling();
+  pollingPaths = uniquePaths(paths);
+
+  if (pollingPaths.length > 0) {
+    void refreshAllPollingPaths(true);
+    pollingTimer = setInterval(() => {
+      void refreshAllPollingPaths(false);
+    }, GIT_STATUS_REFRESH_INTERVAL_MS);
+  }
+
+  return () => {
+    if (pollingOwner !== owner) return;
+    stopGitStatusPolling();
+  };
 }

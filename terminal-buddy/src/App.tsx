@@ -73,11 +73,18 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     let dispose: (() => void) | undefined;
     void initializeClaudeNotificationActions()
-      .then(cleanup => { dispose = cleanup; })
+      .then(cleanup => {
+        if (cancelled) cleanup();
+        else dispose = cleanup;
+      })
       .catch(error => console.error('初始化桌面通知失败:', error));
-    return () => dispose?.();
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
   }, []);
 
   // F11 键监听：切换窗口模式
@@ -179,6 +186,7 @@ function App() {
           launchWindowMode: backend.launchWindowMode,
           enableTabNavigation: backend.enableTabNavigation,
           singleInstance: backend.singleInstance,
+          claudeHookConfigDir: backend.claudeHookConfigDir ?? settings.claudeHookConfigDir,
         };
         saveAppSettings(synced);
         setEnableTabNav(synced.enableTabNavigation);
@@ -210,7 +218,8 @@ function App() {
     const settings = getAppSettings();
     if (!settings.autoResumeClaudeSession) return;
 
-    const { sessions, profiles } = useAppStore.getState();
+    const store = useAppStore.getState();
+    const { sessions, profiles } = store;
     if (sessions.length === 0) return;
 
     // 先筛选出 Claude 终端
@@ -220,7 +229,10 @@ function App() {
       const profile = profiles.find(p => p.id === session.profileId);
       const startupCommands = profile?.startupCommands || [];
       const extraParams = session.extraParams || '';
-      const isClaudeTerminal = startupCommands.some(cmd => cmd.includes('claude')) || extraParams.includes('claude');
+      const hookIdentified = store.terminalActivities[session.id]?.runtimeKind === 'claude';
+      const configuredClaude = [...startupCommands, extraParams]
+        .some(command => /(^|[\s;&|])claude(?:\.(?:cmd|exe|ps1))?(?=$|\s)/i.test(command));
+      const isClaudeTerminal = hookIdentified || configuredClaude;
       if (isClaudeTerminal) claudeTerminalIds.push(session.id);
     }
 

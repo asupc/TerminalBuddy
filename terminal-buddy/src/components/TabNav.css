@@ -207,6 +207,12 @@
   50% { opacity: 0.4; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .tab-nav-dot.working {
+    animation: none;
+  }
+}
+
 .tab-nav-name {
   flex: 1;
   font-size: 12px;

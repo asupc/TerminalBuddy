@@ -7,6 +7,7 @@ import { getAppSettings } from '../utils/settings';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../utils/contextMenu';
 import { showAlert } from '../services/dialog';
+import { startGitStatusPolling } from '../services/gitStatusCache';
 import { GitNavBar } from './GitNavBar';
 import { RemoteFileTree } from './RemoteFileTree';
 import { ConfirmDialog, Dialog } from './Dialog';
@@ -610,6 +611,8 @@ export const FileNav: FC = () => {
   useEffect(() => {
     if (!fileTreeVisible) setShowRootPicker(false);
   }, [fileTreeVisible]);
+
+  useEffect(() => startGitStatusPolling(rootDirectories), [rootDirectories]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {

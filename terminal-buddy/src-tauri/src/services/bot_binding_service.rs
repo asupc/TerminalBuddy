@@ -1,5 +1,5 @@
 use crate::models::DecisionBinding;
-use crate::services::PathService;
+use crate::services::{atomic_write, PathService};
 use chrono::Utc;
 use std::fs;
 use std::path::PathBuf;
@@ -28,15 +28,16 @@ impl BotBindingService {
         let content = serde_json::to_string_pretty(bindings)
             .map_err(|error| format!("序列化决策绑定失败: {}", error))?;
         let path = Self::path();
-        let temp = path.with_extension("json.tmp");
-        fs::write(&temp, content).map_err(|error| format!("写入决策绑定失败: {}", error))?;
-        fs::rename(&temp, &path).map_err(|error| format!("保存决策绑定失败: {}", error))
+        atomic_write(&path, content.as_bytes())
+            .map_err(|error| format!("保存决策绑定失败: {}", error))
     }
 
     fn prune(bindings: &mut Vec<DecisionBinding>) {
         let now = Utc::now().timestamp_millis();
         for binding in bindings.iter_mut() {
-            if binding.status == "pending" && binding.expires_at <= now {
+            if matches!(binding.status.as_str(), "pending" | "processing")
+                && binding.expires_at <= now
+            {
                 binding.status = "expired".to_string();
             }
         }
@@ -52,7 +53,10 @@ impl BotBindingService {
         Self::prune(&mut bindings);
         if bindings
             .iter()
-            .any(|item| item.decision_id == binding.decision_id && item.status != "pending")
+            .any(|item| {
+                item.decision_id == binding.decision_id
+                    && !matches!(item.status.as_str(), "pending" | "processing")
+            })
         {
             return Ok(());
         }
@@ -71,7 +75,9 @@ impl BotBindingService {
         let mut bindings = Self::read();
         let mut changed = false;
         for binding in &mut bindings {
-            if binding.decision_id == decision_id && binding.status == "pending" {
+            if binding.decision_id == decision_id
+                && matches!(binding.status.as_str(), "pending" | "processing")
+            {
                 binding.status = "cancelled".to_string();
                 changed = true;
             }
@@ -107,37 +113,65 @@ impl BotBindingService {
     where
         F: FnOnce(&DecisionBinding) -> Result<(), String>,
     {
+        let binding = {
+            let _guard = binding_lock()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let mut bindings = Self::read();
+            Self::prune(&mut bindings);
+            let index = bindings
+                .iter()
+                .position(|binding| {
+                    binding.channel_id == channel_id
+                        && binding.external_message_id == external_message_id
+                })
+                .ok_or_else(|| "未找到被引用的待决策消息".to_string())?;
+            let binding = bindings[index].clone();
+            match binding.status.as_str() {
+                "pending" => {}
+                "processing" => return Err("该决策正在处理".to_string()),
+                "consumed" => return Err("该决策已经处理".to_string()),
+                "expired" => return Err("该决策已经过期".to_string()),
+                _ => return Err("该决策已经取消".to_string()),
+            }
+            if binding.expires_at <= Utc::now().timestamp_millis() {
+                bindings[index].status = "expired".to_string();
+                Self::write(&bindings)?;
+                return Err("该决策已经过期".to_string());
+            }
+            bindings[index].status = "processing".to_string();
+            Self::write(&bindings)?;
+            binding
+        };
+
+        let result = write(&binding);
         let _guard = binding_lock()
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let mut bindings = Self::read();
         Self::prune(&mut bindings);
-        let index = bindings
-            .iter()
-            .position(|binding| {
-                binding.channel_id == channel_id
-                    && binding.external_message_id == external_message_id
-            })
-            .ok_or_else(|| "未找到被引用的待决策消息".to_string())?;
-        let binding = bindings[index].clone();
-        match binding.status.as_str() {
-            "pending" => {}
-            "consumed" => return Err("该决策已经处理".to_string()),
-            "expired" => return Err("该决策已经过期".to_string()),
-            _ => return Err("该决策已经取消".to_string()),
-        }
-        if binding.expires_at <= Utc::now().timestamp_millis() {
-            bindings[index].status = "expired".to_string();
-            Self::write(&bindings)?;
-            return Err("该决策已经过期".to_string());
-        }
-        write(&binding)?;
-        for item in &mut bindings {
-            if item.decision_id == binding.decision_id && item.status == "pending" {
-                item.status = "consumed".to_string();
+        match &result {
+            Ok(()) => {
+                for item in &mut bindings {
+                    if item.decision_id == binding.decision_id
+                        && matches!(item.status.as_str(), "pending" | "processing")
+                    {
+                        item.status = "consumed".to_string();
+                    }
+                }
+            }
+            Err(_) => {
+                if let Some(item) = bindings.iter_mut().find(|item| {
+                    item.channel_id == channel_id
+                        && item.external_message_id == external_message_id
+                        && item.status == "processing"
+                }) {
+                    item.status = "pending".to_string();
+                }
             }
         }
         Self::write(&bindings)?;
+        result?;
         Ok(binding)
     }
 }

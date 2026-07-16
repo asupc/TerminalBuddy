@@ -1,5 +1,5 @@
-import { FC, FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CircleSlash2, GitBranch as GitBranchIcon, LoaderCircle, TriangleAlert } from 'lucide-react';
+import { FC, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CircleSlash2, GitBranch as GitBranchIcon, TriangleAlert } from 'lucide-react';
 import {
   gitCheckoutBranch,
   gitCommitPaths,
@@ -18,9 +18,9 @@ import {
   type GitRepositoryStatus,
 } from '../services/tauri';
 import {
-  GIT_STATUS_CACHE_TTL_MS,
   getCachedGitRepositoryStatus,
   loadGitRepositoryStatus,
+  subscribeGitRepositoryStatus,
 } from '../services/gitStatusCache';
 import { useAppStore } from '../stores/appStore';
 import { Dialog } from './Dialog';
@@ -147,8 +147,9 @@ function buildPushCommandPreview(dialog: PushDialogState): string {
 
 export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryChanged }) => {
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
-  const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const initialCachedStatus = getCachedGitRepositoryStatus(currentDirectory);
+  const [status, setStatus] = useState<GitRepositoryStatus | null>(initialCachedStatus?.status ?? null);
+  const [statusResolved, setStatusResolved] = useState(Boolean(initialCachedStatus));
   const [loadError, setLoadError] = useState('');
   const [popover, setPopover] = useState<GitPopover>(null);
   const [action, setAction] = useState<GitAction>(null);
@@ -169,47 +170,42 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const currentDirectoryRef = useRef(currentDirectory);
   currentDirectoryRef.current = currentDirectory;
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     let cancelled = false;
     const cached = getCachedGitRepositoryStatus(currentDirectory);
-    const freshCached = cached && Date.now() - cached.updatedAt < GIT_STATUS_CACHE_TTL_MS
-      ? cached
-      : undefined;
 
     setPopover(null);
     setBranches([]);
     setLoadError('');
+    setStatus(cached?.status ?? null);
+    setStatusResolved(Boolean(cached));
     if (!currentDirectory) {
-      setStatus(null);
-      setLoading(false);
       return;
     }
 
-    if (freshCached) {
-      setStatus(freshCached.status);
-      setLoading(false);
-      return;
-    }
+    const applyCachedStatus = () => {
+      const nextCached = getCachedGitRepositoryStatus(currentDirectory);
+      if (!nextCached || cancelled) return;
+      setStatus(nextCached.status);
+      setStatusResolved(true);
+      setLoadError('');
+    };
+    const unsubscribe = subscribeGitRepositoryStatus(applyCachedStatus);
 
-    setStatus(null);
-    setLoading(true);
-    loadGitRepositoryStatus(currentDirectory)
-      .then((next) => {
-        if (!cancelled) setStatus(next);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          console.error('Failed to load git status:', err);
-          setStatus(null);
-          setLoadError(String(err));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    if (!cached) {
+      loadGitRepositoryStatus(currentDirectory)
+        .then(() => applyCachedStatus())
+        .catch((err) => {
+          if (!cancelled) {
+            console.error('Failed to load git status:', err);
+            setLoadError(String(err));
+          }
+        });
+    }
 
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [currentDirectory]);
 
@@ -236,19 +232,18 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const refreshStatus = useCallback(async () => {
     if (!currentDirectory) {
       setStatus(null);
+      setStatusResolved(true);
       setLoadError('');
       return null;
     }
 
     const requestedDirectory = currentDirectory;
-    if (currentDirectoryRef.current === requestedDirectory) {
-      setLoading(true);
-      setLoadError('');
-    }
+    if (currentDirectoryRef.current === requestedDirectory) setLoadError('');
     try {
       const next = await loadGitRepositoryStatus(requestedDirectory, { force: true });
       if (currentDirectoryRef.current === requestedDirectory) {
         setStatus(next);
+        setStatusResolved(true);
       }
       return next;
     } catch (err) {
@@ -257,10 +252,6 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
         setLoadError(String(err));
       }
       return null;
-    } finally {
-      if (currentDirectoryRef.current === requestedDirectory) {
-        setLoading(false);
-      }
     }
   }, [currentDirectory]);
 
@@ -746,13 +737,13 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   };
 
   if (!status) {
-    const state = loading
-      ? { kind: 'loading', label: '正在加载 Git 信息...', icon: LoaderCircle }
-      : !currentDirectory
+    const state = !currentDirectory
         ? { kind: 'empty', label: '请选择目录以检查 Git 仓库', icon: CircleSlash2 }
         : loadError
           ? { kind: 'error', label: 'Git 信息加载失败', icon: TriangleAlert }
-          : { kind: 'empty', label: '当前目录不是 Git 仓库', icon: GitBranchIcon };
+          : statusResolved
+            ? { kind: 'empty', label: '当前目录不是 Git 仓库', icon: GitBranchIcon }
+            : { kind: 'pending', label: 'Git', icon: GitBranchIcon };
     const StateIcon = state.icon;
 
     return (
@@ -761,7 +752,6 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
         className={`git-nav-bar git-nav-state ${state.kind}`}
         role="status"
         aria-live="polite"
-        aria-busy={loading}
         title={loadError || currentDirectory || undefined}
       >
         <StateIcon className="git-nav-state-icon" aria-hidden="true" />
@@ -770,7 +760,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     );
   }
 
-  const busy = action !== null || loading;
+  const busy = action !== null;
   const hasChanges = status.changedCount > 0;
 
   return (

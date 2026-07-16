@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { ChevronRight, FileText, X } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
+import { isTerminalWorking, useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent, openInExplorer } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
@@ -31,7 +31,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
   const removeSession = useAppStore(s => s.removeSession);
 
   const renameSession = useAppStore(s => s.renameSession);
-  const workingSessions = useAppStore(s => s.workingSessions);
+  const terminalActivities = useAppStore(s => s.terminalActivities);
   const settingsVersion = useAppStore(s => s.settingsVersion);
   const dragProfileId = useAppStore(s => s.dragProfileId);
   const setDragProfileId = useAppStore(s => s.setDragProfileId);
@@ -165,8 +165,8 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
                 </span>
               ) : (
                 <span
-                  className={`tab-nav-dot${workingSessions[session.id] ? ' working' : ''}`}
-                  style={{ background: getWorkingDotColor(workingSessions[session.id], session.tabColor) }}
+                  className={`tab-nav-dot${isTerminalWorking(terminalActivities[session.id]) ? ' working' : ''}`}
+                  style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
                 />
               ),
               data: session,
@@ -198,7 +198,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
     }
 
     return items;
-  }, [sessions, profiles, workingSessions, settingsVersion]);
+  }, [sessions, profiles, terminalActivities, settingsVersion]);
 
   // Build submenu tree: PowerShell/CMD always visible, then groups collapsed (hierarchical)
   const submenuTree = useMemo(() => {
@@ -495,8 +495,8 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
                 <div className="tree-item" style={{ paddingLeft: `${indent + 12}px` }}>
                   {child.icon || (
                     <span
-                      className={`tab-nav-dot${workingSessions[child.id] ? ' working' : ''}`}
-                      style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
+                      className={`tab-nav-dot${isTerminalWorking(terminalActivities[child.id]) ? ' working' : ''}`}
+                      style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[child.id]), (child.data as any)?.tabColor) }}
                     />
                   )}
                   <input
@@ -545,8 +545,8 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
                 >
                   {child.icon || (
                     <span
-                      className={`tab-nav-dot${workingSessions[child.id] ? ' working' : ''}`}
-                      style={{ background: getWorkingDotColor(workingSessions[child.id], (child.data as any)?.tabColor) }}
+                      className={`tab-nav-dot${isTerminalWorking(terminalActivities[child.id]) ? ' working' : ''}`}
+                      style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[child.id]), (child.data as any)?.tabColor) }}
                     />
                   )}
                   <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>

@@ -6,13 +6,14 @@ use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tauri::{Emitter, Manager};
 
 use crate::commands::{send_bot_notification, TerminalService};
 use crate::models::{BotDecisionOption, BotNotificationRequest};
 use crate::services::{
     card_decision_id, BotSettingsService, ClaudeHookDecisionEvent, ClaudeHookQuestion,
-    ClaudeHookResolution, ClaudeHookService,
+    ClaudeHookResolution, ClaudeHookService, ClaudeHookTerminalEvent,
 };
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +30,12 @@ pub(crate) struct ClaudeHookRequest {
     background_tasks: Vec<Value>,
     #[serde(default)]
     session_crons: Vec<Value>,
+    #[serde(default)]
+    notification_type: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,6 +61,41 @@ fn terminal_name(app: &tauri::AppHandle, terminal_id: &str) -> String {
         .unwrap_or_else(|| "Claude Code".to_string())
 }
 
+fn next_hook_timestamp() -> i64 {
+    static LAST_TIMESTAMP: AtomicI64 = AtomicI64::new(0);
+    loop {
+        let previous = LAST_TIMESTAMP.load(Ordering::SeqCst);
+        let now = Utc::now().timestamp_millis();
+        let next = now.max(previous.saturating_add(1));
+        if LAST_TIMESTAMP
+            .compare_exchange(previous, next, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return next;
+        }
+    }
+}
+
+fn emit_terminal_event(
+    app: &tauri::AppHandle,
+    terminal_id: &str,
+    request: &ClaudeHookRequest,
+    phase: &str,
+) {
+    let event = ClaudeHookTerminalEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        terminal_id: terminal_id.to_string(),
+        session_id: request.session_id.clone(),
+        event_name: request.hook_event_name.clone(),
+        phase: phase.to_string(),
+        occurred_at: next_hook_timestamp(),
+        notification_type: request.notification_type.clone(),
+        title: request.title.clone(),
+        message: request.message.clone(),
+    };
+    let _ = app.emit("claude-hook-terminal-event", event);
+}
+
 pub(crate) async fn claude_hook(
     headers: HeaderMap,
     State(app): State<tauri::AppHandle>,
@@ -66,15 +108,39 @@ pub(crate) async fn claude_hook(
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
-    if request.hook_event_name == "Stop" {
-        if !request.background_tasks.is_empty() || !request.session_crons.is_empty() {
+    match request.hook_event_name.as_str() {
+        "SessionStart" => {
+            emit_terminal_event(&app, terminal_id, &request, "idle");
             return StatusCode::NO_CONTENT.into_response();
         }
-        let _ = app.emit("claude-hook-completed", json!({
-            "terminalId": terminal_id,
-            "sessionId": request.session_id,
-        }));
-        return StatusCode::NO_CONTENT.into_response();
+        "UserPromptSubmit" => {
+            emit_terminal_event(&app, terminal_id, &request, "running");
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        "Notification" => {
+            if matches!(
+                request.notification_type.as_deref(),
+                Some("permission_prompt" | "idle_prompt")
+            ) {
+                emit_terminal_event(&app, terminal_id, &request, "attention");
+            }
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        "Stop" => {
+            if request.background_tasks.is_empty() && request.session_crons.is_empty() {
+                emit_terminal_event(&app, terminal_id, &request, "completed");
+            }
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        "StopFailure" => {
+            emit_terminal_event(&app, terminal_id, &request, "failed");
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        "SessionEnd" => {
+            emit_terminal_event(&app, terminal_id, &request, "ended");
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        _ => {}
     }
 
     if request.hook_event_name != "PreToolUse"
@@ -82,28 +148,46 @@ pub(crate) async fn claude_hook(
     {
         return StatusCode::NO_CONTENT.into_response();
     }
-    let Some(tool_use_id) = request.tool_use_id.filter(|value| !value.is_empty()) else {
+    let Some(tool_use_id) = request
+        .tool_use_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    else {
         return (StatusCode::BAD_REQUEST, "缺少 tool_use_id").into_response();
     };
-    let questions = request.tool_input.map(|input| input.questions).unwrap_or_default();
+    let questions = request
+        .tool_input
+        .as_ref()
+        .map(|input| input.questions.clone())
+        .unwrap_or_default();
     if questions.is_empty() {
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    let decision_id = format!("{}:{}", request.session_id, tool_use_id);
+    emit_terminal_event(&app, terminal_id, &request, "attention");
+    let decision_id = format!(
+        "{}:{}:{}",
+        request.session_id,
+        tool_use_id,
+        uuid::Uuid::new_v4()
+    );
     let bot_settings = BotSettingsService::get_runtime().unwrap_or_default();
     let ttl_minutes = bot_settings.decision_ttl_minutes.clamp(1, 1440);
-    let expires_at = (Utc::now() + Duration::minutes(ttl_minutes as i64)).timestamp_millis();
+    let occurred_at = next_hook_timestamp();
+    let expires_at = occurred_at + Duration::minutes(ttl_minutes as i64).num_milliseconds();
     let receiver = ClaudeHookService::insert_decision(
         decision_id.clone(),
         terminal_id.to_string(),
         questions.clone(),
+        expires_at,
+        occurred_at,
     );
     let event = ClaudeHookDecisionEvent {
         decision_id: decision_id.clone(),
         terminal_id: terminal_id.to_string(),
         questions: questions.clone(),
         expires_at,
+        occurred_at,
     };
     let _ = app.emit("claude-hook-decision", &event);
 
@@ -114,7 +198,12 @@ pub(crate) async fn claude_hook(
     .await
     {
         Ok(Ok(ClaudeHookResolution::Answers(answers))) => {
-            let _ = app.emit("claude-hook-decision-resolved", json!({ "decisionId": decision_id }));
+            let _ = app.emit("claude-hook-decision-resolved", json!({
+                "decisionId": decision_id,
+                "terminalId": terminal_id,
+                "occurredAt": next_hook_timestamp(),
+                "resolution": "answered",
+            }));
             Json(json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
@@ -129,12 +218,21 @@ pub(crate) async fn claude_hook(
             .into_response()
         }
         Ok(Ok(ClaudeHookResolution::ContinueInTerminal)) => {
-            let _ = app.emit("claude-hook-decision-resolved", json!({ "decisionId": decision_id }));
+            let _ = app.emit("claude-hook-decision-resolved", json!({
+                "decisionId": decision_id,
+                "terminalId": terminal_id,
+                "occurredAt": next_hook_timestamp(),
+                "resolution": "continueInTerminal",
+            }));
             StatusCode::NO_CONTENT.into_response()
         }
         _ => {
             ClaudeHookService::expire_decision(&decision_id);
-            let _ = app.emit("claude-hook-decision-expired", json!({ "decisionId": decision_id }));
+            let _ = app.emit("claude-hook-decision-expired", json!({
+                "decisionId": decision_id,
+                "terminalId": terminal_id,
+                "occurredAt": next_hook_timestamp(),
+            }));
             StatusCode::NO_CONTENT.into_response()
         }
     }
@@ -154,15 +252,27 @@ pub fn continue_claude_hook_in_terminal(decision_id: String) -> Result<(), Strin
 }
 
 #[tauri::command]
+pub fn get_pending_claude_hook_decisions() -> Vec<ClaudeHookDecisionEvent> {
+    ClaudeHookService::list_pending_decisions()
+}
+
+#[tauri::command]
 pub async fn send_claude_hook_decision_notification(
     app: tauri::AppHandle,
     decision_id: String,
 ) -> Result<(), String> {
-    let Some((terminal_id, questions)) = ClaudeHookService::take_notification(&decision_id) else {
+    let Some(lease) = ClaudeHookService::begin_notification(&decision_id) else {
         return Ok(());
     };
+    let terminal_id = lease.terminal_id;
+    let questions = lease.questions;
+    let generation = lease.generation;
     let name = terminal_name(&app, &terminal_id);
     for (question_index, question) in questions.iter().enumerate() {
+        if !ClaudeHookService::notification_is_current(&decision_id, generation) {
+            ClaudeHookService::cancel_notification_cards(&decision_id, questions.len());
+            return Ok(());
+        }
         let options = question
             .options
             .iter()
@@ -190,10 +300,33 @@ pub async fn send_claude_hook_decision_notification(
             decision_submit_move_count: None,
             custom_option_down_count: None,
         };
-        let reports = send_bot_notification(notification).await?;
+        let reports = match send_bot_notification(notification).await {
+            Ok(reports) => reports,
+            Err(error) => {
+                ClaudeHookService::finish_notification(&decision_id, generation, false);
+                return Err(error);
+            }
+        };
+        if !ClaudeHookService::notification_is_current(&decision_id, generation) {
+            ClaudeHookService::cancel_notification_cards(&decision_id, questions.len());
+            return Ok(());
+        }
         for report in reports.into_iter().filter(|report| !report.success) {
             eprintln!("[ClaudeHook] 通道“{}”发送失败: {}", report.channel_name, report.error.unwrap_or_default());
         }
     }
+    ClaudeHookService::finish_notification(&decision_id, generation, true);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_hook_timestamp;
+
+    #[test]
+    fn hook_timestamps_are_strictly_monotonic() {
+        let first = next_hook_timestamp();
+        let second = next_hook_timestamp();
+        assert!(second > first);
+    }
 }

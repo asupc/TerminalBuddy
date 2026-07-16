@@ -35,13 +35,14 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
   }, []);
 
   const connect = useCallback(() => {
-    if (!terminalId) return;
+    if (!terminalId || disposedRef.current) return;
     const token = useStore.getState().token;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/terminal/${terminalId}?token=${token}`);
     wsRef.current = ws;
 
     ws.onmessage = (e) => {
+      if (wsRef.current !== ws || disposedRef.current) return;
       try {
         const m = JSON.parse(e.data);
         switch (m.type) {
@@ -62,12 +63,17 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
     };
 
     ws.onopen = () => {
+      if (wsRef.current !== ws || disposedRef.current) return;
       retryRef.current = 0;
       flushPendingResize();
       cbRef.current.onConnected?.();
     };
 
     ws.onclose = () => {
+      // An older socket can finish closing after a new StrictMode/retry connection
+      // has already replaced it. It must not update state or schedule another retry.
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
       cbRef.current.onClose?.();
       if (!disposedRef.current && !exitedRef.current && retryRef.current < 5) {
         retryRef.current += 1;
@@ -85,7 +91,9 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
     return () => {
       disposedRef.current = true;
       if (timerRef.current) clearTimeout(timerRef.current);
-      wsRef.current?.close();
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
     };
   }, [connect]);
 

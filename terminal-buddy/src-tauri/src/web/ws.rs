@@ -4,17 +4,21 @@ use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use crate::commands::TerminalService;
 use crate::models::web_api::{MetaServerMessage, WsClientMessage, WsServerMessage};
 use crate::services::WebServiceState;
 use crate::web::auth::verify_token;
 use crate::web::server::AppState;
 use tauri::{Emitter, Manager};
+use tokio::time::{self, Instant, MissedTickBehavior};
 
 static WS_CONNECTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 const MAX_GLOBAL_WS_CONNECTIONS: usize = 50;
 const MAX_PER_TERMINAL_WS_CONNECTIONS: usize = 5;
 const MAX_WS_MESSAGE_SIZE: usize = 64 * 1024; // 64KB
+const WS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+const WS_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ───────────────────────── 终端 I/O WebSocket ─────────────────────────
 
@@ -75,10 +79,20 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
     // recv_task → send_task: frontend sent its first resize, safe to replay history.
     let (ready_tx, mut ready_rx) = tokio::sync::oneshot::channel::<()>();
     let mut ready_tx = Some(ready_tx);
+    // Browsers automatically answer protocol-level Ping frames with Pong. This lets
+    // the server release a takeover even when a dead client never sends Close.
+    let (activity_tx, mut activity_rx) = tokio::sync::watch::channel(Instant::now());
+    let heartbeat_terminal_id = terminal_id.clone();
 
     // Forward PTY output → WebSocket
-    let send_task = tokio::spawn(async move {
+    let mut send_task = tokio::spawn(async move {
         let mut history_sent = false;
+        let mut error_channel_open = true;
+        let mut heartbeat = time::interval_at(
+            Instant::now() + WS_HEARTBEAT_INTERVAL,
+            WS_HEARTBEAT_INTERVAL,
+        );
+        heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 biased;
@@ -89,6 +103,11 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
                         }
                     }
                     history_sent = true;
+                }
+                _ = heartbeat.tick() => {
+                    if ws_sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
                 }
                 data = output_rx.recv() => {
                     match data {
@@ -107,11 +126,14 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
                         }
                     }
                 }
-                error_msg = error_rx.recv() => {
-                    if let Some(msg) = error_msg {
-                        if ws_sender.send(Message::Text(msg.into())).await.is_err() {
-                            break;
+                error_msg = error_rx.recv(), if error_channel_open => {
+                    match error_msg {
+                        Some(msg) => {
+                            if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+                                break;
+                            }
                         }
+                        None => error_channel_open = false,
                     }
                 }
             }
@@ -122,9 +144,14 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
     // Forward WebSocket input → PTY
     let app = state.app_handle.clone();
     let tid = terminal_id.clone();
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         let mut ready_sent = false;
-        while let Some(Ok(msg)) = ws_receiver.next().await {
+        while let Some(result) = ws_receiver.next().await {
+            let msg = match result {
+                Ok(msg) => msg,
+                Err(_) => break,
+            };
+            activity_tx.send_replace(Instant::now());
             match msg {
                 Message::Text(text) => {
                     if text.len() > MAX_WS_MESSAGE_SIZE {
@@ -174,15 +201,50 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
         }
     });
 
-    tokio::select! {
-        _ = send_task => {}
-        _ = recv_task => {}
+    enum SocketExit {
+        Send,
+        Receive,
+        HeartbeatTimeout,
     }
 
-    web_state.unsubscribe(&terminal_id, &sub_id);
-    if web_state.get_subscriber_count(&terminal_id) == 0 {
-        let _ = state.app_handle.emit("terminal-web-takeover-ended", &terminal_id);
+    // This deadline is outside the sender task so TCP write backpressure cannot
+    // prevent a dead connection from being reclaimed.
+    let mut heartbeat_deadline = Box::pin(time::sleep(WS_HEARTBEAT_TIMEOUT));
+    let exit_reason = loop {
+        tokio::select! {
+            _ = &mut send_task => break SocketExit::Send,
+            _ = &mut recv_task => break SocketExit::Receive,
+            _ = &mut heartbeat_deadline => break SocketExit::HeartbeatTimeout,
+            activity = activity_rx.changed() => {
+                if activity.is_err() {
+                    break SocketExit::Receive;
+                }
+                let last_activity = *activity_rx.borrow_and_update();
+                heartbeat_deadline.as_mut().reset(last_activity + WS_HEARTBEAT_TIMEOUT);
+            }
+        }
+    };
+    match exit_reason {
+        SocketExit::Send => {
+            recv_task.abort();
+            let _ = recv_task.await;
+        }
+        SocketExit::Receive => {
+            send_task.abort();
+            let _ = send_task.await;
+        }
+        SocketExit::HeartbeatTimeout => {
+            eprintln!("[WS] Heartbeat timeout for terminal {}", heartbeat_terminal_id);
+            send_task.abort();
+            recv_task.abort();
+            let _ = send_task.await;
+            let _ = recv_task.await;
+        }
     }
+
+    web_state.unsubscribe_and_notify_if_last(&terminal_id, &sub_id, || {
+        let _ = state.app_handle.emit("terminal-web-takeover-ended", &terminal_id);
+    });
     WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
 }
 

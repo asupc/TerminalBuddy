@@ -90,6 +90,8 @@ pub struct AppSettings {
     pub web_api_share_sessions: bool,
     #[serde(default = "default_launch_at_login")]
     pub launch_at_login: bool,
+    #[serde(default)]
+    pub claude_hook_config_dir: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -112,6 +114,7 @@ impl Default for AppSettings {
             server_monitor_interval: 3,
             web_api_share_sessions: false,
             launch_at_login: false,
+            claude_hook_config_dir: None,
         }
     }
 }

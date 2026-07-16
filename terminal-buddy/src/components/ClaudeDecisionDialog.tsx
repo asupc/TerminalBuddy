@@ -5,6 +5,7 @@ import { useAppStore } from '../stores/appStore';
 import {
   answerClaudeHookDecision,
   continueClaudeHookInTerminal,
+  getPendingClaudeHookDecisions,
   onClaudeHookDecision,
   onClaudeHookDecisionExpired,
   onClaudeHookDecisionResolved,
@@ -29,30 +30,57 @@ export function ClaudeDecisionDialog() {
     : '';
 
   useEffect(() => {
-    let unlistenDecision: (() => void) | undefined;
-    let unlistenExpired: (() => void) | undefined;
-    let unlistenResolved: (() => void) | undefined;
-    void Promise.all([
+    let cancelled = false;
+    let cleanups: Array<() => void> = [];
+    const settledDecisionIds = new Set<string>();
+    const addDecision = (payload: ClaudeHookDecisionEvent) => {
+      if (settledDecisionIds.has(payload.decisionId)) return;
+      setQueue(previous => previous.some(item => item.decisionId === payload.decisionId)
+        ? previous
+        : [...previous, payload]);
+    };
+    void Promise.allSettled([
       onClaudeHookDecision(payload => {
-        setQueue(previous => previous.some(item => item.decisionId === payload.decisionId)
-          ? previous
-          : [...previous, payload]);
+        if (!cancelled) addDecision(payload);
       }),
-      onClaudeHookDecisionExpired(decisionId => {
-        setQueue(previous => previous.filter(item => item.decisionId !== decisionId));
+      onClaudeHookDecisionExpired(payload => {
+        if (cancelled) return;
+        settledDecisionIds.add(payload.decisionId);
+        setQueue(previous => previous.filter(item => item.decisionId !== payload.decisionId));
       }),
-      onClaudeHookDecisionResolved(decisionId => {
-        setQueue(previous => previous.filter(item => item.decisionId !== decisionId));
+      onClaudeHookDecisionResolved(payload => {
+        if (cancelled) return;
+        settledDecisionIds.add(payload.decisionId);
+        setQueue(previous => previous.filter(item => item.decisionId !== payload.decisionId));
       }),
-    ]).then(([decisionCleanup, expiredCleanup, resolvedCleanup]) => {
-      unlistenDecision = decisionCleanup;
-      unlistenExpired = expiredCleanup;
-      unlistenResolved = resolvedCleanup;
+    ]).then(results => {
+      const listeners: Array<() => void> = [];
+      let registrationFailed = false;
+      let registrationError: unknown;
+      for (const result of results) {
+        if (result.status === 'fulfilled') listeners.push(result.value);
+        else {
+          registrationFailed = true;
+          if (registrationError === undefined) registrationError = result.reason;
+        }
+      }
+      if (cancelled || registrationFailed) {
+        listeners.forEach(cleanup => cleanup());
+        if (!cancelled && registrationFailed) {
+          console.error('初始化 Claude 决策监听失败:', registrationError ?? '未知错误');
+        }
+        return;
+      }
+      cleanups = listeners;
+      void getPendingClaudeHookDecisions()
+        .then(pending => {
+          if (!cancelled) pending.forEach(addDecision);
+        })
+        .catch(() => {});
     });
     return () => {
-      unlistenDecision?.();
-      unlistenExpired?.();
-      unlistenResolved?.();
+      cancelled = true;
+      cleanups.forEach(cleanup => cleanup());
     };
   }, []);
 

@@ -11,6 +11,7 @@ import {
   Settings,
   SlidersHorizontal,
   SquareTerminal,
+  Webhook,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -34,6 +35,7 @@ const ExclusionSettings = lazy(() => import('./settings/ExclusionSettings').then
 const AiUsageSettings = lazy(() => import('./settings/AiUsageSettings').then(module => ({ default: module.AiUsageSettings })));
 const SshSettings = lazy(() => import('./settings/SshSettings').then(module => ({ default: module.SshSettings })));
 const BotNotificationSettings = lazy(() => import('./settings/BotNotificationSettings').then(module => ({ default: module.BotNotificationSettings })));
+const HookSettings = lazy(() => import('./settings/HookSettings').then(module => ({ default: module.HookSettings })));
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -48,6 +50,7 @@ type SettingsSectionId =
   | 'exclusions'
   | 'ai-usage'
   | 'ssh'
+  | 'hooks'
   | 'bot-notifications';
 
 interface SettingsSection {
@@ -65,6 +68,7 @@ const SECTIONS: ReadonlyArray<SettingsSection> = [
   { id: 'exclusions', label: '文件排除', icon: FileX2 },
   { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit },
   { id: 'ssh', label: 'SSH 设置', icon: Server },
+  { id: 'hooks', label: 'Hook 设置', icon: Webhook },
   { id: 'bot-notifications', label: '机器人通知', icon: MessageSquareMore },
 ];
 
@@ -95,11 +99,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   };
 
   useEffect(() => {
-    const timer = setTimeout(() => saveAppSettings(settings), 300);
-    return () => clearTimeout(timer);
-  }, [settings]);
-
-  useEffect(() => {
     getBackendAppSettings().then(backend => {
       const previous = getAppSettings();
       const synced = {
@@ -109,6 +108,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         terminalLoadingMode: backend.terminalLoadingMode,
         enableTabNavigation: backend.enableTabNavigation,
         singleInstance: backend.singleInstance,
+        claudeHookConfigDir: backend.claudeHookConfigDir ?? previous.claudeHookConfigDir,
       };
       setSettings(synced);
       saveAppSettings(synced);
@@ -197,6 +197,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         return <AiUsageSettings settings={settings} updateSetting={updateSetting} />;
       case 'ssh':
         return <SshSettings settings={settings} updateSetting={updateSetting} />;
+      case 'hooks':
+        return <HookSettings settings={settings} updateSetting={updateSetting} />;
       case 'bot-notifications':
         return <BotNotificationSettings />;
     }
