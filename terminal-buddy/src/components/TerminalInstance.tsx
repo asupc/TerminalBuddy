@@ -173,6 +173,10 @@ function hasTuiInputChrome(terminal: Terminal): boolean {
   return horizontalRuleCount >= 2;
 }
 
+function allowsTerminalAutocomplete(terminal: Terminal): boolean {
+  return terminal.buffer.active !== terminal.buffer.alternate && !hasTuiInputChrome(terminal);
+}
+
 function getLastNonBlankCell(line: ReturnType<Terminal['buffer']['active']['getLine']>, cols: number): number {
   if (!line) return 0;
 
@@ -711,6 +715,16 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let pendingPtyResize: { rows: number; cols: number } | null = null;
     let webTakeoverDimensions: { rows: number; cols: number } | null = null;
 
+    const clearAutocomplete = () => {
+      if (autocompleteTimer) {
+        clearTimeout(autocompleteTimer);
+        autocompleteTimer = null;
+      }
+      if (autocompleteRef.current) {
+        updateAutocomplete(null);
+      }
+    };
+
     // Tauri invokes are asynchronous. Keep one resize in flight per terminal and
     // collapse rapid layout transitions to the newest dimensions so an older
     // response can never arrive after the stable layout resize.
@@ -789,6 +803,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const messageId = ++latestWriteDataRef.current;
       term.write(output, () => {
         latestParseDataRef.current = messageId;
+        if (!allowsTerminalAutocomplete(term)) {
+          clearAutocomplete();
+        }
         if (usesVsCodeTerminal) {
           unsentAckCharCount += output.length;
           while (unsentAckCharCount > 5000) {
@@ -1124,6 +1141,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // Track alternate buffer to detect TUI programs (vim, claude, htop, etc.)
       const checkAltBuffer = () => {
         const inAlt = terminal.buffer.active === terminal.buffer.alternate;
+        if (inAlt) {
+          clearAutocomplete();
+        }
         if (inAltBufferRef.current && !inAlt) {
           // TUI program just exited: force viewport refresh to clear stale content.
           // This mirrors VS Code's forceRefresh() which calls viewport._innerRefresh().
@@ -1200,7 +1220,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (data === '\r' || data === '\n') {
           cancelPendingClaudeCompletion(terminalId);
           useAppStore.getState().setSessionWorking(terminalId, true);
-          updateAutocomplete(null);
+          clearAutocomplete();
           // Enter 后稍等缓冲区刷新，检测 cd 命令并记录目录
           setTimeout(() => {
             if (!disposed) detectAndTrackCd(terminal, terminalId);
@@ -1240,7 +1260,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       terminal.onKey(() => {
         if (autocompleteTimer) clearTimeout(autocompleteTimer);
         autocompleteTimer = setTimeout(() => {
+          autocompleteTimer = null;
           if (disposed) return;
+          if (!allowsTerminalAutocomplete(terminal)) {
+            clearAutocomplete();
+            return;
+          }
           const buffer = terminal.buffer.active;
           const input = getInputAtCursor(terminal) ?? '';
           if (!input || input.length < 1) {
@@ -1283,6 +1308,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const containerEl = terminalRef.current!;
 
       const acceptAutocompleteCommand = (command: string): boolean => {
+        if (!allowsTerminalAutocomplete(terminal)) {
+          clearAutocomplete();
+          return false;
+        }
         const input = getInputAtCursor(terminal);
         if (!input) return false;
         const completion = getAutocompleteCompletion(command, input);
@@ -1321,8 +1350,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           e.stopPropagation();
           return;
         }
+        const autocompleteAllowed = allowsTerminalAutocomplete(terminal);
+        if (!autocompleteAllowed) {
+          clearAutocomplete();
+        }
         // Tab: accept autocomplete suggestion
-        if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
+        if (autocompleteAllowed && e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
           if (acceptActiveAutocomplete()) {
             e.preventDefault();
             e.stopPropagation();
@@ -1330,7 +1363,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
         }
         // RightArrow: accept inline ghost suggestion, matching common terminal UX.
-        if (e.key === 'ArrowRight' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        if (autocompleteAllowed && e.key === 'ArrowRight' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
           const ac = autocompleteRef.current;
           if (ac?.inlineCompletion && acceptActiveAutocomplete()) {
             e.preventDefault();
@@ -1339,7 +1372,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
         }
         // Escape: close autocomplete
-        if (e.key === 'Escape') {
+        if (autocompleteAllowed && e.key === 'Escape') {
           if (autocompleteRef.current) {
             e.preventDefault();
             e.stopPropagation();
@@ -1348,7 +1381,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
         }
         // ArrowUp/ArrowDown: navigate autocomplete
-        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && autocompleteRef.current) {
+        if (autocompleteAllowed && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && autocompleteRef.current) {
           const ac = autocompleteRef.current;
           if (ac.items.length > 0) {
             e.preventDefault();
@@ -1369,7 +1402,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           }
         }
         // Enter: accept autocomplete suggestion without submitting
-        if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey && autocompleteRef.current) {
+        if (autocompleteAllowed && e.key === 'Enter' && !e.ctrlKey && !e.shiftKey && autocompleteRef.current) {
           const ac = autocompleteRef.current;
           if (ac.items.length > 0 && ac.index >= 0 && ac.selectionExplicit) {
             e.preventDefault();
@@ -2019,7 +2052,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               onClick={() => {
                 const buffer = xtermRef.current?.buffer.active;
                 const term = xtermRef.current;
-                if (!buffer || !term) return;
+                if (!buffer || !term || !allowsTerminalAutocomplete(term)) {
+                  updateAutocomplete(null);
+                  return;
+                }
                 const input = getInputAtCursor(term);
                 if (input) {
                   const completion = getAutocompleteCompletion(cmd.command, input);

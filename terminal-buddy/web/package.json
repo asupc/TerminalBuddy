@@ -13,6 +13,7 @@
     "@xterm/addon-unicode11": "^0.10.0-beta.285",
     "@xterm/xterm": "^6.1.0-beta.285",
     "axios": "^1.7.0",
+    "lucide-react": "^1.24.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "zustand": "^5.0.14"

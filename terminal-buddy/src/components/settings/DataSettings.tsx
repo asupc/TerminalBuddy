@@ -2,6 +2,7 @@ import { FC, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { Download, FolderOpen, Upload } from 'lucide-react';
 import { setDataPath as setDataPathCmd, exportAllData, importAllData } from '../../services/tauri';
+import { showAlert } from '../../services/dialog';
 
 interface DataSettingsProps {
   dataPath: string;
@@ -49,7 +50,7 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
                     await setDataPathCmd(pendingDataPath);
                     setPendingDataPath('');
                   } catch (err) {
-                    alert('迁移失败: ' + String(err));
+                    void showAlert('迁移失败: ' + String(err), '迁移失败');
                   }
                   setIsMigrating(false);
                 });
@@ -70,10 +71,10 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
               });
               if (selected) {
                 await exportAllData(selected as string);
-                alert('数据导出成功');
+                void showAlert('数据导出成功', '导出完成');
               }
             } catch (err) {
-              alert('导出失败: ' + String(err));
+              void showAlert('导出失败: ' + String(err), '导出失败');
             }
           }}>
             <Download size={15} aria-hidden="true" />
@@ -91,14 +92,14 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
                   setConfirmDialog(null);
                   try {
                     await importAllData(selected as string);
-                    alert('数据导入成功，部分设置需要重启后生效');
+                    void showAlert('数据导入成功，部分设置需要重启后生效', '导入完成');
                   } catch (err) {
-                    alert('导入失败: ' + String(err));
+                    void showAlert('导入失败: ' + String(err), '导入失败');
                   }
                 });
               }
             } catch (err) {
-              alert('导入失败: ' + String(err));
+              void showAlert('导入失败: ' + String(err), '导入失败');
             }
           }}>
             <Upload size={15} aria-hidden="true" />

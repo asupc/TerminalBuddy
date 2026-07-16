@@ -1,5 +1,5 @@
 import { FC, FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CircleSlash2, GitBranch as GitBranchIcon, LoaderCircle, TriangleAlert, X } from 'lucide-react';
+import { CircleSlash2, GitBranch as GitBranchIcon, LoaderCircle, TriangleAlert } from 'lucide-react';
 import {
   gitCheckoutBranch,
   gitCommitPaths,
@@ -23,6 +23,8 @@ import {
   loadGitRepositoryStatus,
 } from '../services/gitStatusCache';
 import { useAppStore } from '../stores/appStore';
+import { Dialog } from './Dialog';
+import { showAlert } from '../services/dialog';
 
 type GitPopover = 'branches' | null;
 type GitAction = 'checkout' | 'commit' | 'pull' | 'push' | null;
@@ -279,10 +281,10 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       }
       setPopover(null);
       const extra = compactOutput(output);
-      alert(extra ? `${label}完成\n\n${extra}` : `${label}完成`);
+      void showAlert(extra ? `${label}完成\n\n${extra}` : `${label}完成`, `${label}完成`);
       return true;
     } catch (err) {
-      alert(`${label}失败：${String(err)}`);
+      void showAlert(`${label}失败：${String(err)}`, `${label}失败`);
       return false;
     } finally {
       setAction(null);
@@ -306,22 +308,26 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       const result = await gitPull(status.repoRoot);
       await refreshStatus();
       await onRepositoryChanged?.();
-      setPullDialog({
-        phase: 'success',
-        command: result.command || command,
-        output: result.output || 'Already up to date.',
-        activeTab: result.updatedCommits.length > 0 ? 'commits' : 'log',
-        result,
-      });
+      setPullDialog((current) => current?.phase === 'running'
+        ? {
+            phase: 'success',
+            command: result.command || command,
+            output: result.output || 'Already up to date.',
+            activeTab: result.updatedCommits.length > 0 ? 'commits' : 'log',
+            result,
+          }
+        : current);
     } catch (err) {
       const message = String(err);
-      setPullDialog({
-        phase: 'error',
-        command,
-        output: message,
-        activeTab: 'log',
-        error: message,
-      });
+      setPullDialog((current) => current?.phase === 'running'
+        ? {
+            phase: 'error',
+            command,
+            output: message,
+            activeTab: 'log',
+            error: message,
+          }
+        : current);
     } finally {
       setAction(null);
     }
@@ -501,15 +507,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
             error: '',
             operationId: null,
           }
-        : {
-            ...pushDialog,
-            phase: 'success',
-            command: result.command,
-            output: result.output || '推送完成。',
-            result,
-            error: '',
-            operationId: null,
-          });
+        : current);
     } catch (err) {
       const message = String(err);
       setPushDialog((current) => current?.operationId === operationId
@@ -522,15 +520,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
             result: null,
             operationId: null,
           }
-        : {
-            ...pushDialog,
-            phase: 'error',
-            command: commandPreview,
-            output: message,
-            error: message,
-            result: null,
-            operationId: null,
-          });
+        : current);
     } finally {
       unlistenPushOutput?.();
       setAction(null);
@@ -545,7 +535,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     try {
       setBranches(await gitListBranches(status.repoRoot));
     } catch (err) {
-      alert(`读取分支失败：${String(err)}`);
+      void showAlert(`读取分支失败：${String(err)}`, '读取分支失败');
     } finally {
       setBranchesLoading(false);
     }
@@ -859,31 +849,17 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       )}
 
       {commitDialogOpen && (
-        <div className="git-commit-dialog-backdrop" onMouseDown={(e) => {
-          if (action !== 'commit' && e.target === e.currentTarget) {
-            setCommitDialogOpen(false);
-          }
-        }}>
-          <form
-            className="git-commit-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Git 提交"
-            onSubmit={submitCommitDialog}
-          >
-            <div className="git-commit-titlebar">
-              <div className="git-commit-title">{status.repoRoot} - 提交</div>
-              <button
-                type="button"
-                className="git-commit-window-close"
-                onClick={() => setCommitDialogOpen(false)}
-                disabled={action === 'commit'}
-                title="关闭"
-              >
-                <X aria-hidden="true" />
-              </button>
-            </div>
-
+        <Dialog
+          title={`${status.repoRoot} - 提交`}
+          ariaLabel="Git 提交"
+          className="git-commit-dialog"
+          headerClassName="git-commit-titlebar"
+          titleClassName="git-commit-title"
+          closeButtonClassName="git-commit-window-close"
+          bodyClassName="git-dialog-layout"
+          onClose={() => setCommitDialogOpen(false)}
+          onSubmit={submitCommitDialog}
+        >
             <div className="git-commit-body">
               <div className="git-commit-target-row">
                 <span>提交至:</span>
@@ -1036,32 +1012,25 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 </button>
               </div>
             </div>
-          </form>
-        </div>
+        </Dialog>
       )}
 
       {pullDialog && (
-        <div className="git-pull-dialog-backdrop" onMouseDown={(e) => {
-          if (pullDialog.phase !== 'running' && e.target === e.currentTarget) {
-            setPullDialog(null);
-          }
-        }}>
-          <div className="git-pull-dialog" role="dialog" aria-modal="true" aria-label="Git 拉取">
-            <div className="git-pull-titlebar">
-              <div className="git-pull-title">
-                <span className={`git-pull-state-dot ${pullDialog.phase}`} />
-                <span>{status.repoRoot} - Git拉取</span>
-              </div>
-              <button
-                className="git-pull-window-close"
-                onClick={() => setPullDialog(null)}
-                disabled={pullDialog.phase === 'running'}
-                title="关闭"
-              >
-                <X aria-hidden="true" />
-              </button>
-            </div>
-
+        <Dialog
+          title={(
+            <>
+              <span className={`git-pull-state-dot ${pullDialog.phase}`} />
+              <span>{status.repoRoot} - Git拉取</span>
+            </>
+          )}
+          ariaLabel="Git 拉取"
+          className="git-pull-dialog"
+          headerClassName="git-pull-titlebar"
+          titleClassName="git-pull-title"
+          closeButtonClassName="git-pull-window-close"
+          bodyClassName="git-dialog-layout"
+          onClose={() => setPullDialog(null)}
+        >
             <div className="git-pull-body">
               <div className="git-pull-top">
                 <div className="git-pull-visual" aria-hidden="true">
@@ -1183,32 +1152,25 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
 
       {pushDialog && (
-        <div className="git-push-dialog-backdrop" onMouseDown={(e) => {
-          if (pushDialog.phase !== 'running' && e.target === e.currentTarget) {
-            setPushDialog(null);
-          }
-        }}>
-          <div className="git-push-dialog" role="dialog" aria-modal="true" aria-label="Git 推送">
-            <div className="git-push-titlebar">
-              <div className="git-push-title">
-                <span className={`git-push-state-dot ${pushDialog.phase}`} />
-                <span>{status.repoRoot} - Git推送</span>
-              </div>
-              <button
-                className="git-push-window-close"
-                onClick={() => setPushDialog(null)}
-                disabled={pushDialog.phase === 'running'}
-                title="关闭"
-              >
-                <X aria-hidden="true" />
-              </button>
-            </div>
-
+        <Dialog
+          title={(
+            <>
+              <span className={`git-push-state-dot ${pushDialog.phase}`} />
+              <span>{status.repoRoot} - Git推送</span>
+            </>
+          )}
+          ariaLabel="Git 推送"
+          className="git-push-dialog"
+          headerClassName="git-push-titlebar"
+          titleClassName="git-push-title"
+          closeButtonClassName="git-push-window-close"
+          bodyClassName="git-dialog-layout"
+          onClose={() => setPushDialog(null)}
+        >
             <div className="git-push-body">
               {pushDialog.phase === 'form' ? (
                 <div className="git-push-form">
@@ -1346,8 +1308,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 )}
               </div>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
     </div>
   );

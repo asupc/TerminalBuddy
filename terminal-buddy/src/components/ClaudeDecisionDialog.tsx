@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Bot, Check, Terminal, X } from 'lucide-react';
+import { Bot, Check, Terminal } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import {
   answerClaudeHookDecision,
@@ -10,6 +10,7 @@ import {
   onClaudeHookDecisionResolved,
   type ClaudeHookDecisionEvent,
 } from '../services/tauri';
+import { Dialog } from './Dialog';
 import './ClaudeDecisionDialog.css';
 
 type Selections = Record<string, string[]>;
@@ -145,30 +146,56 @@ export function ClaudeDecisionDialog() {
   const busy = submitting || returning;
 
   return (
-    <div className="claude-decision-region" aria-live="polite">
-      <section className="claude-decision-dialog" role="dialog" aria-modal="false" aria-labelledby="claude-decision-title">
-        <header className="claude-decision-header">
+    <Dialog
+      title={(
+        <>
           <span className="claude-decision-agent"><Bot size={15} /></span>
           <div className="claude-decision-heading">
             <div className="claude-decision-title-row">
-              <h2 id="claude-decision-title">Claude 等待决策</h2>
+              <span className="claude-decision-title-text">Claude 等待决策</span>
               {queue.length > 1 && <span className="claude-decision-count">{queue.length}</span>}
             </div>
             <span className="claude-decision-terminal">{terminalName}</span>
           </div>
+        </>
+      )}
+      ariaLabel="Claude 等待决策"
+      modal={false}
+      autoFocus={false}
+      className="claude-decision-dialog"
+      overlayClassName="claude-decision-region"
+      positionerClassName="claude-decision-positioner"
+      headerClassName="claude-decision-header"
+      titleClassName="claude-decision-header-content"
+      closeButtonClassName="claude-decision-icon-button"
+      bodyClassName="claude-decision-content"
+      footerClassName="claude-decision-footer"
+      closeLabel="关闭并在终端内决策"
+      closeDisabled={busy}
+      onClose={() => void continueInTerminal(false)}
+      footer={(
+        <>
           <button
             type="button"
-            className="claude-decision-icon-button"
-            title="关闭并在终端内决策"
-            aria-label="关闭并在终端内决策"
+            className="claude-decision-terminal-button"
             disabled={busy}
-            onClick={() => void continueInTerminal(false)}
+            onClick={() => void continueInTerminal(true)}
           >
-            <X size={16} />
+            <Terminal size={14} />
+            {returning ? '正在返回...' : '回到终端'}
           </button>
-        </header>
-
-        <div className="claude-decision-content">
+          <button
+            type="button"
+            className="claude-decision-submit"
+            disabled={!complete || busy}
+            onClick={() => void submit()}
+          >
+            <Check size={14} />
+            {submitting ? '正在提交...' : '提交'}
+          </button>
+        </>
+      )}
+    >
           {decision.questions.map((question, questionIndex) => (
             <fieldset key={question.question} className="claude-decision-question">
               <legend>{question.header || `问题 ${questionIndex + 1}`}</legend>
@@ -205,29 +232,6 @@ export function ClaudeDecisionDialog() {
             </fieldset>
           ))}
           {error && <div className="claude-decision-error" role="alert">{error}</div>}
-        </div>
-
-        <footer className="claude-decision-footer">
-          <button
-            type="button"
-            className="claude-decision-terminal-button"
-            disabled={busy}
-            onClick={() => void continueInTerminal(true)}
-          >
-            <Terminal size={14} />
-            {returning ? '正在返回...' : '回到终端'}
-          </button>
-          <button
-            type="button"
-            className="claude-decision-submit"
-            disabled={!complete || busy}
-            onClick={() => void submit()}
-          >
-            <Check size={14} />
-            {submitting ? '正在提交...' : '提交'}
-          </button>
-        </footer>
-      </section>
-    </div>
+    </Dialog>
   );
 }

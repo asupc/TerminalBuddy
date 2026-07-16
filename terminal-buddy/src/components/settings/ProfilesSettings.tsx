@@ -9,6 +9,7 @@ import {
 import { useAppStore } from '../../stores/appStore';
 import type { Profile } from '../../types';
 import { ConfigEditDialog } from '../ConfigEditDialog';
+import { showAlert } from '../../services/dialog';
 
 interface ProfilesSettingsProps {
   askConfirm: (message: string, onConfirm: () => void) => void;
@@ -82,7 +83,7 @@ export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismis
         await deleteProfileCmd(profile.id);
         await loadProfiles();
       } catch (error) {
-        alert('删除失败: ' + String(error));
+        void showAlert('删除失败: ' + String(error), '删除失败');
       }
     });
   };
@@ -172,7 +173,7 @@ export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismis
               await updateProfile({ ...profile, id: copied.id, name: `${profile.name} (副本)`, pinned: false });
               await loadProfiles();
             } catch (error) {
-              alert('复制失败: ' + String(error));
+              void showAlert('复制失败: ' + String(error), '复制失败');
             }
           }}>复制</div>
           <div className="context-menu-separator" />

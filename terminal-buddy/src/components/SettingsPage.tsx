@@ -11,7 +11,6 @@ import {
   Settings,
   SlidersHorizontal,
   SquareTerminal,
-  X,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -23,6 +22,7 @@ import {
   type VsCodeTerminalSupport,
 } from '../services/tauri';
 import { type AppSettings, getAppSettings, saveAppSettings } from '../utils/settings';
+import { ConfirmDialog, Dialog } from './Dialog';
 import './SettingsPage.css';
 
 const BehaviorSettings = lazy(() => import('./settings/BehaviorSettings').then(module => ({ default: module.BehaviorSettings })));
@@ -78,8 +78,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   );
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
 
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const navButtonRefs = useRef<Partial<Record<SettingsSectionId, HTMLButtonElement | null>>>({});
   const dataPathLoadedRef = useRef(false);
   const sshDefaultRequestedRef = useRef(false);
@@ -95,49 +93,6 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       return next;
     });
   };
-
-  useEffect(() => {
-    const previouslyFocused = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    closeButtonRef.current?.focus();
-    return () => previouslyFocused?.focus();
-  }, []);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const dialog = dialogRef.current;
-      if (!dialog) return;
-
-      const nestedDialog = dialog.querySelector<HTMLElement>('.dialog-overlay .dialog');
-      if (event.key === 'Escape' && !nestedDialog && !confirmDialog) {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-
-      if (event.key !== 'Tab') return;
-      const focusScope = confirmDialog
-        ? dialog.querySelector<HTMLElement>('.confirm-dialog')
-        : nestedDialog ?? dialog;
-      if (!focusScope) return;
-      const focusable = Array.from(focusScope.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-      )).filter(element => element.offsetParent !== null);
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && (document.activeElement === first || !focusScope.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (document.activeElement === last || !focusScope.contains(document.activeElement))) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [confirmDialog, onClose]);
 
   useEffect(() => {
     const timer = setTimeout(() => saveAppSettings(settings), 300);
@@ -248,32 +203,20 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="settings-dialog-overlay" onMouseDown={onClose}>
-      <div
-        ref={dialogRef}
-        className="settings-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-dialog-title"
-        onMouseDown={event => event.stopPropagation()}
-      >
-        <header className="settings-dialog-header">
-          <div className="settings-dialog-heading">
+    <>
+      <Dialog
+        title={(
+          <>
             <Settings size={18} aria-hidden="true" />
-            <h2 id="settings-dialog-title">设置</h2>
-          </div>
-          <button
-            ref={closeButtonRef}
-            className="settings-close-btn"
-            type="button"
-            onClick={onClose}
-            title="关闭设置"
-            aria-label="关闭设置"
-          >
-            <X size={18} aria-hidden="true" />
-          </button>
-        </header>
-
+            <span>设置</span>
+          </>
+        )}
+        ariaLabel="设置"
+        className="settings-dialog"
+        titleClassName="settings-dialog-heading"
+        bodyClassName="settings-dialog-shell"
+        onClose={onClose}
+      >
         <div className="settings-page">
           <nav className="settings-nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
             {SECTIONS.map((section, index) => {
@@ -328,19 +271,15 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
           </div>
         </div>
 
-        {confirmDialog && (
-          <div className="confirm-dialog-overlay" onClick={() => setConfirmDialog(null)}>
-            <div className="confirm-dialog" role="alertdialog" aria-modal="true" onClick={event => event.stopPropagation()}>
-              <div className="confirm-dialog-title">确认操作</div>
-              <div className="confirm-dialog-message">{confirmDialog.message}</div>
-              <div className="confirm-dialog-buttons">
-                <button className="btn-secondary" onClick={() => setConfirmDialog(null)}>取消</button>
-                <button className="btn-danger" onClick={confirmDialog.onConfirm}>确定</button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+      </Dialog>
+      {confirmDialog && (
+        <ConfirmDialog
+          title="确认操作"
+          message={confirmDialog.message}
+          onClose={() => setConfirmDialog(null)}
+          onConfirm={confirmDialog.onConfirm}
+        />
+      )}
+    </>
   );
 };

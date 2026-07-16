@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { RefreshCw, X } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import {
   botScanBegin,
   botScanPoll,
@@ -8,6 +8,7 @@ import {
   type ScanCredentials,
   type ScanPollResult,
 } from '../../services/tauri';
+import { Dialog } from '../Dialog';
 
 type Phase = 'loading' | 'waiting' | 'success' | 'failed' | 'expired';
 
@@ -101,15 +102,12 @@ export function BotScanDialog({ platform, onClose, onSuccess }: BotScanDialogPro
   }, [phase, begin]);
 
   return (
-    <div className="bot-scan-overlay" onClick={onClose}>
-      <div className="bot-scan-dialog" onClick={event => event.stopPropagation()}>
-        <div className="bot-scan-header">
-          <span>{PLATFORM_LABEL[platform]} 扫码配置</span>
-          <button className="bot-action-btn" onClick={onClose} title="关闭" aria-label="关闭">
-            <X size={16} />
-          </button>
-        </div>
-        <div className="bot-scan-body">
+    <Dialog
+      title={`${PLATFORM_LABEL[platform]} 扫码配置`}
+      className="bot-scan-dialog"
+      bodyClassName="bot-scan-body"
+      onClose={onClose}
+    >
           {phase === 'loading' && <div className="bot-scan-status">正在生成二维码...</div>}
           {phase === 'waiting' && qrDataUrl && (
             <>
@@ -137,8 +135,6 @@ export function BotScanDialog({ platform, onClose, onSuccess }: BotScanDialogPro
               </button>
             </>
           )}
-        </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }

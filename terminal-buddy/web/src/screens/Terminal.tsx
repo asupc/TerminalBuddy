@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ArrowLeft, MoreHorizontal, Unplug } from 'lucide-react';
 import { api } from '../api';
 import { useStore } from '../store';
 import Xterm from '../components/Xterm';
@@ -40,17 +41,29 @@ export default function Terminal({ terminalId, profileName, owner }: Props) {
   }, [exited]);
 
   return (
-    <div className="screen">
-      <div className="topbar">
-        <button className="btn icon" onClick={goBack} title="返回">
-          ‹
+    <div className="screen terminal-screen">
+      <header className="topbar terminal-topbar">
+        <button className="icon-button" onClick={goBack} title="返回" aria-label="返回连接列表">
+          <ArrowLeft size={20} />
         </button>
-        <span className={`dot ${connected ? 'online' : 'offline'}`} />
-        <span className="title">{profileName}</span>
-        <button className="btn icon" onClick={() => setMenuOpen((v) => !v)} title="菜单">
-          ⋯
+        <div className="terminal-title">
+          <span className="title">{profileName}</span>
+          <span className={`terminal-status ${connected ? 'online' : 'offline'}`}>
+            <span className="dot" aria-hidden="true" />
+            {connected ? '已连接' : everConnected ? '正在重连' : '正在连接'}
+          </span>
+        </div>
+        {owner === 'pc' && <span className="owner-badge">PC 接管</span>}
+        <button
+          className="icon-button"
+          onClick={() => setMenuOpen((v) => !v)}
+          title="会话菜单"
+          aria-label="会话菜单"
+          aria-expanded={menuOpen}
+        >
+          <MoreHorizontal size={21} />
         </button>
-      </div>
+      </header>
 
       {menuOpen && (
         <>
@@ -60,6 +73,7 @@ export default function Terminal({ terminalId, profileName, owner }: Props) {
               className="terminal-menu-danger"
               onClick={closeTerminal}
             >
+              <Unplug size={17} />
               {owner === 'web' ? '关闭连接' : '断开接管'}
             </button>
           </div>

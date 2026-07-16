@@ -4,6 +4,7 @@ import { useAppStore } from '../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 import { getWorkingDotColor } from '../utils/tabColor';
+import { ConfirmDialog } from './Dialog';
 import './TerminalTabBar.css';
 
 export const TerminalTabBar: FC = () => {
@@ -275,16 +276,12 @@ export const TerminalTabBar: FC = () => {
         </>
       )}
       {confirmDialog && (
-        <div className="confirm-dialog-overlay" onClick={() => setConfirmDialog(null)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">{confirmDialog.title}</div>
-            <div className="confirm-dialog-message">{confirmDialog.message}</div>
-            <div className="confirm-dialog-buttons">
-              <button className="btn-secondary" onClick={() => setConfirmDialog(null)}>取消</button>
-              <button className="btn-danger" onClick={confirmDialog.onConfirm}>确定</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title={confirmDialog.title}
+          message={confirmDialog.message}
+          onClose={() => setConfirmDialog(null)}
+          onConfirm={confirmDialog.onConfirm}
+        />
       )}
     </div>
   );

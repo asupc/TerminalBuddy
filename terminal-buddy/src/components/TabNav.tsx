@@ -8,6 +8,7 @@ import { formatDuration } from '../utils/formatDuration';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getWorkingDotColor } from '../utils/tabColor';
 import { TreeView, type TreeItem } from './TreeView';
+import { ConfirmDialog, Dialog } from './Dialog';
 import { buildGroupTree, type GroupNode } from '../utils/groupTree';
 import type { Profile, TerminalSession } from '../types';
 import './TabNav.css';
@@ -778,29 +779,29 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
         </>
       )}
       {confirmDialog && (
-        <div className="confirm-dialog-overlay" onClick={() => setConfirmDialog(null)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">{confirmDialog.title}</div>
-            <div className="confirm-dialog-message">{confirmDialog.message}</div>
-            <div className="confirm-dialog-buttons">
-              <button className="btn-secondary" onClick={() => setConfirmDialog(null)}>取消</button>
-              <button className="btn-danger" onClick={confirmDialog.onConfirm}>确定</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title={confirmDialog.title}
+          message={confirmDialog.message}
+          onClose={() => setConfirmDialog(null)}
+          onConfirm={confirmDialog.onConfirm}
+        />
       )}
       {draftCloseDialog && (
-        <div className="confirm-dialog-overlay" onClick={() => setDraftCloseDialog(null)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">草稿有未保存的内容</div>
-            <div className="confirm-dialog-message">是否保存此草稿？</div>
-            <div className="confirm-dialog-buttons">
+        <Dialog
+          title="草稿有未保存的内容"
+          role="alertdialog"
+          className="tb-confirm-dialog"
+          onClose={() => setDraftCloseDialog(null)}
+          footer={(
+            <>
               <button className="btn-secondary" onClick={() => setDraftCloseDialog(null)}>取消</button>
               <button className="btn-danger" onClick={handleDraftDiscard}>不保存</button>
               <button className="btn-primary" onClick={handleDraftSaveAs}>另存为...</button>
-            </div>
-          </div>
-        </div>
+            </>
+          )}
+        >
+          <div className="tb-confirm-message">是否保存此草稿？</div>
+        </Dialog>
       )}
     </div>
   );

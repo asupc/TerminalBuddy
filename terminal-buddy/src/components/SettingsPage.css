@@ -1,38 +1,13 @@
-.settings-dialog-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1500;
-  display: grid;
-  place-items: center;
-  padding: 32px;
-  background: var(--bg-overlay);
-  animation: settings-overlay-enter var(--motion-fast) var(--ease-standard);
-}
-
 .settings-dialog {
   width: min(1024px, calc(100vw - 64px));
   height: min(720px, calc(100vh - 64px));
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-dialog);
-  animation: settings-dialog-enter var(--motion-normal) var(--ease-enter);
 }
 
-.settings-dialog-header {
-  height: 52px;
-  flex: 0 0 52px;
+.settings-dialog-shell {
+  flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px 0 18px;
-  background: var(--bg-primary);
-  border-bottom: 1px solid var(--border);
+  padding: 0;
+  overflow: hidden;
 }
 
 .settings-dialog-heading {
@@ -43,7 +18,7 @@
   color: var(--text-primary);
 }
 
-.settings-dialog-heading h2 {
+.settings-dialog-heading > span {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
@@ -255,21 +230,7 @@
   font-size: 13px;
 }
 
-@keyframes settings-overlay-enter {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes settings-dialog-enter {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 @media (max-width: 700px) {
-  .settings-dialog-overlay {
-    padding: 12px;
-  }
-
   .settings-dialog {
     width: calc(100vw - 24px);
     height: calc(100vh - 24px);
@@ -317,11 +278,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-dialog-overlay,
-  .settings-dialog {
-    animation: none;
-  }
-
   .settings-page *,
   .settings-page *::before,
   .settings-page *::after {
@@ -1642,36 +1598,8 @@ input.data-path-input {
   }
 }
 
-/* 机器人扫码配置弹窗 */
-.bot-scan-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
-}
-
 .bot-scan-dialog {
   width: 320px;
-  max-width: calc(100vw - 32px);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-dialog);
-  overflow: hidden;
-}
-
-.bot-scan-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border);
 }
 
 .bot-scan-body {

@@ -3,10 +3,11 @@ import { X } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { open } from '@tauri-apps/plugin-dialog';
 import { createProfile, updateProfile, deleteProfile } from '../services/tauri';
+import { showAlert } from '../services/dialog';
 import { PRESET_THEMES, TAB_COLORS, type Profile } from '../types';
 import { COMMAND_TEMPLATES } from '../data/commandTemplates';
-import { useDraggable } from '../hooks/useDraggable';
 import { GroupCascader } from './GroupCascader';
+import { ConfirmDialog, Dialog } from './Dialog';
 import './ConfigEditDialog.css';
 
 interface ConfigEditDialogProps {
@@ -77,9 +78,6 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const [mstscUser, setMstscUser] = useState(profile?.mstscUser || '');
   const [mstscPassword, setMstscPassword] = useState(profile?.mstscPassword || '');
   const [mstscResolution, setMstscResolution] = useState(profile?.mstscResolution || '');
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const { offset: dialogOffset, dragHandleProps } = useDraggable('.dialog-content');
-
   useEffect(() => {
     return () => {
       if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
@@ -247,24 +245,18 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
       }
     } catch (err) {
       console.error('打开目录对话框失败:', err);
-      alert('打开目录对话框失败: ' + String(err));
+      void showAlert('打开目录对话框失败: ' + String(err), '打开失败');
     }
   };
 
   return (
-    <div className="dialog-overlay">
-      <div
-        ref={dialogRef}
+    <>
+      <Dialog
+        title={profile ? '编辑连接' : '新建连接'}
         className="dialog dialog-large"
-        style={{ transform: `translate(${dialogOffset.x}px, ${dialogOffset.y}px)` }}
-        onMouseDown={dragHandleProps.onMouseDown}
+        bodyClassName="dialog-shell-body"
+        onClose={onClose}
       >
-        <div className="dialog-header dialog-drag-handle">
-          <h3>{profile ? '编辑连接' : '新建连接'}</h3>
-          <button type="button" className="dialog-close" onClick={onClose} title="关闭" aria-label="关闭">
-            <X aria-hidden="true" />
-          </button>
-        </div>
         {saveError && (
           <div className="dialog-error">{saveError}</div>
         )}
@@ -578,19 +570,16 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             </button>
           </div>
         </form>
-      </div>
+      </Dialog>
       {confirmDelete && (
-        <div className="confirm-dialog-overlay" onClick={() => setConfirmDelete(false)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">确认删除</div>
-            <div className="confirm-dialog-message">确定要删除此连接吗？</div>
-            <div className="confirm-dialog-buttons">
-              <button className="btn-secondary" onClick={() => setConfirmDelete(false)}>取消</button>
-              <button className="btn-danger" onClick={confirmDeleteProfile}>删除</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="确认删除"
+          message="确定要删除此连接吗？"
+          onClose={() => setConfirmDelete(false)}
+          onConfirm={confirmDeleteProfile}
+          confirmText="删除"
+        />
       )}
-    </div>
+    </>
   );
 };
