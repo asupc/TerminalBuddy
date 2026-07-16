@@ -1,5 +1,5 @@
 import { FC, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
-import { ArrowDown, ArrowUp, ChevronRight, File, Folder, FolderOpen, ListChevronsDownUp, RefreshCw, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, File, Folder, FolderOpen, FolderPlus, ListChevronsDownUp, Plus, RefreshCw } from 'lucide-react';
 import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
@@ -9,7 +9,7 @@ import { fitContextMenuToViewport } from '../utils/contextMenu';
 import { showAlert } from '../services/dialog';
 import { GitNavBar } from './GitNavBar';
 import { RemoteFileTree } from './RemoteFileTree';
-import { ConfirmDialog } from './Dialog';
+import { ConfirmDialog, Dialog } from './Dialog';
 import './FileNav.css';
 
 interface TreeNodeProps {
@@ -324,10 +324,8 @@ function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): 
 
 interface ConfiguredFileRootProps {
   path: string;
-  pinned: boolean;
   refreshVersion: number;
   collapseVersion: number;
-  revealVersion: number;
   sortBy: 'name' | 'size' | 'modified';
   sortDir: 'asc' | 'desc';
   selectedPath: string | null;
@@ -336,6 +334,7 @@ interface ConfiguredFileRootProps {
   onNavigate: (path: string) => void;
   onContextMenu: (e: React.MouseEvent, path: string, isDir: boolean) => void;
   onRootContextMenu: (e: React.MouseEvent, path: string) => void;
+  onExpandedChange: (path: string, expanded: boolean) => void;
   onRename: (path: string, newName: string) => Promise<void>;
   renamingPath: string | null;
   setRenamingPath: (path: string | null) => void;
@@ -343,10 +342,8 @@ interface ConfiguredFileRootProps {
 
 const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   path,
-  pinned,
   refreshVersion,
   collapseVersion,
-  revealVersion,
   sortBy,
   sortDir,
   selectedPath,
@@ -355,6 +352,7 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   onNavigate,
   onContextMenu,
   onRootContextMenu,
+  onExpandedChange,
   onRename,
   renamingPath,
   setRenamingPath,
@@ -371,16 +369,6 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
     pinToTopAfterLoadRef.current = false;
     setExpanded(false);
   }, [collapseVersion]);
-
-  useEffect(() => {
-    if (revealVersion === 0) return;
-    const frame = requestAnimationFrame(() => {
-      pinToTopAfterLoadRef.current = true;
-      setExpanded(true);
-      scrollFileTreeItemToTop(itemRef.current);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [revealVersion]);
 
   useEffect(() => {
     if (!expanded) {
@@ -422,8 +410,10 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   const name = directoryName(path);
 
   const toggle = useCallback(() => {
-    setExpanded(value => !value);
-  }, []);
+    const nextExpanded = !expanded;
+    setExpanded(nextExpanded);
+    onExpandedChange(path, nextExpanded);
+  }, [expanded, onExpandedChange, path]);
 
   const handleDoubleClick = useCallback(() => {
     if (!expanded) {
@@ -443,7 +433,7 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
         className={`tree-item file-nav-root ${selectedPath === path ? 'selected' : ''} ${pathError ? 'error' : ''}`}
         role="button"
         aria-expanded={expanded}
-        aria-label={`${name}，${path}，${pinned ? '已置顶，' : ''}${expanded ? '已展开' : '已折叠'}`}
+        aria-label={`${name}，${path}，${expanded ? '已展开' : '已折叠'}`}
         tabIndex={0}
         title={`${name} - ${path}`}
         onClick={(e) => {
@@ -475,7 +465,7 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
           ? <FolderOpen className="file-nav-root-icon" size={16} strokeWidth={1.8} />
           : <Folder className="file-nav-root-icon" size={16} strokeWidth={1.8} />}
         <span className="file-nav-root-label">
-          <strong className="file-nav-root-name">{pinned ? `【置顶】${name}` : name}</strong>
+          <strong className="file-nav-root-name">{name}</strong>
           <span className="file-nav-root-path"> - {path}</span>
         </span>
         {pathError && <span className="path-error" role="alert" aria-label="路径不存在" title="路径不存在">!</span>}
@@ -518,34 +508,24 @@ export const FileNav: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const profiles = useAppStore(s => s.profiles);
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
-  const bookmarks = useAppStore(s => s.bookmarks);
-  const addBookmark = useAppStore(s => s.addBookmark);
-  const removeBookmark = useAppStore(s => s.removeBookmark);
-  const renameBookmark = useAppStore(s => s.renameBookmark);
-  const pinnedFileRoots = useAppStore(s => s.pinnedFileRoots);
-  const pinFileRoot = useAppStore(s => s.pinFileRoot);
-  const unpinFileRoot = useAppStore(s => s.unpinFileRoot);
+  const fileRoots = useAppStore(s => s.fileRoots);
+  const addFileRoot = useAppStore(s => s.addFileRoot);
+  const removeFileRoot = useAppStore(s => s.removeFileRoot);
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
   const [gitTargetOverride, setGitTargetOverride] = useState<string | null>(null);
-  const [bookmarkRootPath, setBookmarkRootPath] = useState<string | null>(null);
+  const [showRootPicker, setShowRootPicker] = useState(false);
+  const [focusedRootPath, setFocusedRootPath] = useState<string | null>(null);
   const [rootRefreshVersion, setRootRefreshVersion] = useState(0);
   const [rootCollapseVersion, setRootCollapseVersion] = useState(0);
-  const [rootRevealRequest, setRootRevealRequest] = useState<{ path: string; version: number } | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean; dir?: string } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean; dir?: string; root?: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
-  const [confirmBookmarkDelete, setConfirmBookmarkDelete] = useState<string | null>(null);
-  const [bookmarkCtxMenu, setBookmarkCtxMenu] = useState<{ x: number; y: number; path: string } | null>(null);
-  const [renamingBookmark, setRenamingBookmark] = useState<string | null>(null);
-  const [renamingBookmarkValue, setRenamingBookmarkValue] = useState('');
-  const bookmarkHeight = useAppStore(s => s.bookmarkHeight);
-  const setBookmarkHeightStore = useAppStore(s => s.setBookmarkHeight);
-  const renameBookmarkInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
 
@@ -564,28 +544,25 @@ export const FileNav: FC = () => {
   }, [profiles]);
 
   const rootDirectories = useMemo(() => {
-    const directories = [...configuredDirectories];
-    if (bookmarkRootPath) {
-      const bookmarkKey = bookmarkRootPath.toLowerCase();
-      if (!directories.some(path => path.toLowerCase() === bookmarkKey)) {
-        directories.push(bookmarkRootPath);
-      }
-    }
+    const seen = new Set<string>();
+    return fileRoots
+      .map(normalizeConfiguredPath)
+      .filter(path => {
+        const key = path.toLowerCase();
+        if (!path || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }, [fileRoots]);
 
-    const directoriesByKey = new Map(directories.map(path => [path.toLowerCase(), path]));
-    const pinnedDirectories = pinnedFileRoots
-      .map(path => directoriesByKey.get(path.toLowerCase()))
-      .filter((path): path is string => Boolean(path));
-    const pinnedKeys = new Set(pinnedDirectories.map(path => path.toLowerCase()));
-    return [
-      ...pinnedDirectories,
-      ...directories.filter(path => !pinnedKeys.has(path.toLowerCase())),
-    ];
-  }, [bookmarkRootPath, configuredDirectories, pinnedFileRoots]);
+  const fileRootKeys = useMemo(
+    () => new Set(rootDirectories.map(path => path.toLowerCase())),
+    [rootDirectories],
+  );
 
-  const pinnedFileRootKeys = useMemo(
-    () => new Set(pinnedFileRoots.map(path => path.toLowerCase())),
-    [pinnedFileRoots],
+  const availableDirectories = useMemo(
+    () => configuredDirectories.filter(path => !fileRootKeys.has(path.toLowerCase())),
+    [configuredDirectories, fileRootKeys],
   );
 
   const activeSessionDirectory = useMemo(() => {
@@ -609,12 +586,17 @@ export const FileNav: FC = () => {
       || path.toLowerCase().includes(query)
     ));
   }, [filterQuery, rootDirectories]);
+  const displayedRootDirectories = useMemo(() => {
+    if (!focusedRootPath) return visibleConfiguredDirectories;
+    const focusedRoot = rootDirectories.find(path => path.toLowerCase() === focusedRootPath.toLowerCase());
+    return focusedRoot ? [focusedRoot] : visibleConfiguredDirectories;
+  }, [focusedRootPath, rootDirectories, visibleConfiguredDirectories]);
   const selectedVisibleRoot = useMemo(() => {
     if (!selectedPath) return null;
-    return [...visibleConfiguredDirectories]
+    return [...displayedRootDirectories]
       .sort((a, b) => b.length - a.length)
       .find(root => isPathEqualOrInside(selectedPath, root)) || null;
-  }, [selectedPath, visibleConfiguredDirectories]);
+  }, [displayedRootDirectories, selectedPath]);
 
   useEffect(() => {
     const belongsToVisibleTree = (path: string) => (
@@ -622,7 +604,12 @@ export const FileNav: FC = () => {
     );
     setSelectedPath(path => path && !belongsToVisibleTree(path) ? null : path);
     setGitTargetOverride(path => path && !belongsToVisibleTree(path) ? null : path);
+    setFocusedRootPath(path => path && !rootDirectories.some(root => root.toLowerCase() === path.toLowerCase()) ? null : path);
   }, [rootDirectories]);
+
+  useEffect(() => {
+    if (!fileTreeVisible) setShowRootPicker(false);
+  }, [fileTreeVisible]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {
@@ -705,15 +692,52 @@ export const FileNav: FC = () => {
   }, []);
 
   const handleCollapseAll = useCallback(() => {
+    setFocusedRootPath(null);
     setRootCollapseVersion(version => version + 1);
+    contentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }, []);
+
+  const handleRootExpandedChange = useCallback((path: string, expanded: boolean) => {
+    setFocusedRootPath(expanded ? path : null);
+    if (expanded) {
+      setSelectedPath(path);
+      activateTreeDirectory(path);
+      requestAnimationFrame(() => contentRef.current?.scrollTo({ top: 0, behavior: 'auto' }));
+    }
+  }, [activateTreeDirectory]);
+
+  const handleAddRoot = useCallback((path: string) => {
+    const normalizedPath = normalizeConfiguredPath(path);
+    if (!normalizedPath) return;
+    addFileRoot(normalizedPath);
+    setFilterQuery('');
+    setSelectedPath(normalizedPath);
+    activateTreeDirectory(normalizedPath);
+    requestAnimationFrame(() => {
+      const content = contentRef.current;
+      if (!content) return;
+      const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'auto'
+        : 'smooth';
+      content.scrollTo({ top: content.scrollHeight, behavior });
+    });
+  }, [activateTreeDirectory, addFileRoot]);
+
+  const handleRemoveRoot = useCallback((path: string) => {
+    removeFileRoot(path);
+    setFocusedRootPath(current => current?.toLowerCase() === path.toLowerCase() ? null : current);
+    setSelectedPath(current => current && isPathEqualOrInside(current, path) ? null : current);
+    setGitTargetOverride(current => current && isPathEqualOrInside(current, path) ? null : current);
+    if (rootDirectories.length === 1) setFilterQuery('');
+    setCtxMenu(null);
+  }, [removeFileRoot, rootDirectories.length]);
 
   const handleRootContextMenu = useCallback((e: React.MouseEvent, path: string) => {
     e.preventDefault();
     e.stopPropagation();
     setSelectedPath(path);
     activateTreeDirectory(path);
-    setCtxMenu({ x: e.clientX, y: e.clientY, dir: path });
+    setCtxMenu({ x: e.clientX, y: e.clientY, dir: path, root: true });
   }, [activateTreeDirectory]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, path: string, isDir: boolean) => {
@@ -754,7 +778,6 @@ export const FileNav: FC = () => {
       await deletePath(confirmDelete);
       setSelectedPath(path => path && isPathEqualOrInside(path, confirmDelete) ? null : path);
       setGitTargetOverride(path => path && isPathEqualOrInside(path, confirmDelete) ? null : path);
-      setBookmarkRootPath(path => path && isPathEqualOrInside(path, confirmDelete) ? null : path);
       setRootRefreshVersion(version => version + 1);
     } catch (err) {
       console.error(err);
@@ -780,7 +803,6 @@ export const FileNav: FC = () => {
       const renamedPath = parent + '\\' + newName;
       setSelectedPath(current => current ? replacePathPrefix(current, path, renamedPath) : renamedPath);
       setGitTargetOverride(current => current ? replacePathPrefix(current, path, renamedPath) : current);
-      setBookmarkRootPath(current => current ? replacePathPrefix(current, path, renamedPath) : current);
       setRootRefreshVersion(version => version + 1);
     } catch (err) {
       console.error(err);
@@ -834,36 +856,89 @@ export const FileNav: FC = () => {
       <div className="panel-titlebar">
         <span className="panel-title">文件</span>
         <div className="file-nav-actions">
-          <button type="button" onClick={handleCollapseAll} title="全部折叠" aria-label="折叠所有目录">
+          <button
+            type="button"
+            className={showRootPicker ? 'active' : ''}
+            onClick={() => setShowRootPicker(value => !value)}
+            title="添加文件夹"
+            aria-label="添加文件夹"
+            aria-expanded={showRootPicker}
+            aria-haspopup="dialog"
+          >
+            <Plus aria-hidden="true" />
+          </button>
+          <button type="button" onClick={handleCollapseAll} title="全部折叠" aria-label="折叠所有目录" disabled={rootDirectories.length === 0}>
             <ListChevronsDownUp aria-hidden="true" />
           </button>
-          <button type="button" onClick={handleRefresh} title="刷新" aria-label="刷新文件列表">
+          <button type="button" onClick={handleRefresh} title="刷新" aria-label="刷新文件列表" disabled={rootDirectories.length === 0}>
             <RefreshCw aria-hidden="true" />
           </button>
-          <button type="button" onClick={toggleSortDir} title={`方向：${fileSortDir === 'asc' ? '升序' : '降序'}（点击翻转）`} aria-label={`切换为${fileSortDir === 'asc' ? '降序' : '升序'}`}>
+          <button type="button" className="file-nav-sort-direction" onClick={toggleSortDir} title={`方向：${fileSortDir === 'asc' ? '升序' : '降序'}（点击翻转）`} aria-label={`切换为${fileSortDir === 'asc' ? '降序' : '升序'}`} disabled={rootDirectories.length === 0}>
             {fileSortDir === 'asc' ? <ArrowUp aria-hidden="true" /> : <ArrowDown aria-hidden="true" />}
           </button>
-          <button type="button" className="file-nav-sort-field" onClick={cycleSortField} title={`排序：${sortLabel(fileSortBy)}（点击切换）`}>
+          <button type="button" className="file-nav-sort-field" onClick={cycleSortField} title={`排序：${sortLabel(fileSortBy)}（点击切换）`} disabled={rootDirectories.length === 0}>
             {sortLabel(fileSortBy)}
           </button>
         </div>
       </div>
-      <GitNavBar
-        key={gitTargetDirectory.toLowerCase() || 'none'}
-        currentDirectory={gitTargetDirectory}
-        onRepositoryChanged={handleRefresh}
-      />
-      <div className="file-nav-filter">
-        <input
-          className="filter-input"
-          placeholder="过滤父级目录…"
-          value={filterQuery}
-          onChange={(e) => setFilterQuery(e.target.value)}
-          aria-label="过滤父级目录"
+      {showRootPicker && (
+        <Dialog
+          title={(
+            <span className="file-root-dialog-title">
+              <span>添加文件夹</span>
+              <span className="file-root-picker-count">{availableDirectories.length}</span>
+            </span>
+          )}
+          className="file-root-dialog"
+          bodyClassName="file-root-dialog-body"
+          onClose={() => setShowRootPicker(false)}
+        >
+          <div className="file-root-picker-list">
+            {availableDirectories.map(path => (
+              <button
+                key={path.toLowerCase()}
+                type="button"
+                className="file-root-option"
+                onClick={() => handleAddRoot(path)}
+                title={path}
+              >
+                <Folder className="file-root-option-icon" aria-hidden="true" />
+                <span className="file-root-option-copy">
+                  <strong>{directoryName(path)}</strong>
+                  <span>{path}</span>
+                </span>
+                <Plus className="file-root-option-add" aria-hidden="true" />
+              </button>
+            ))}
+            {availableDirectories.length === 0 && (
+              <div className="file-root-picker-empty">
+                {configuredDirectories.length === 0 ? '暂无可添加的文件夹' : '所有文件夹均已添加'}
+              </div>
+            )}
+          </div>
+        </Dialog>
+      )}
+      {rootDirectories.length > 0 && (
+        <GitNavBar
+          key={gitTargetDirectory.toLowerCase() || 'none'}
+          currentDirectory={gitTargetDirectory}
+          onRepositoryChanged={handleRefresh}
         />
-      </div>
+      )}
+      {rootDirectories.length > 0 && !focusedRootPath && (
+        <div className="file-nav-filter">
+          <input
+            className="filter-input"
+            placeholder="过滤父级目录…"
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            aria-label="过滤父级目录"
+          />
+        </div>
+      )}
       <div
-        className="file-nav-content"
+        ref={contentRef}
+        className={`file-nav-content ${rootDirectories.length === 0 ? 'empty' : ''}`}
         onContextMenu={(e) => {
           const target = e.target as HTMLElement;
           if (target.closest('.tree-item')) return;
@@ -872,19 +947,24 @@ export const FileNav: FC = () => {
         }}
       >
         {rootDirectories.length === 0 && (
-          <div className="empty-state file-nav-empty-state">暂无已配置的起始路径</div>
+          <div className="file-nav-empty-state">
+            <FolderPlus className="file-nav-empty-icon" aria-hidden="true" />
+            <span>暂无文件夹</span>
+            <button type="button" onClick={() => setShowRootPicker(true)}>
+              <Plus aria-hidden="true" />
+              添加文件夹
+            </button>
+          </div>
         )}
-        {rootDirectories.length > 0 && visibleConfiguredDirectories.length === 0 && (
+        {rootDirectories.length > 0 && !focusedRootPath && visibleConfiguredDirectories.length === 0 && (
           <div className="empty-hint">无匹配目录</div>
         )}
-        {visibleConfiguredDirectories.map(path => (
+        {displayedRootDirectories.map(path => (
           <ConfiguredFileRoot
-            key={`${path.toLowerCase()}:${rootRefreshVersion}`}
+            key={path.toLowerCase()}
             path={path}
-            pinned={pinnedFileRootKeys.has(path.toLowerCase())}
             refreshVersion={rootRefreshVersion}
             collapseVersion={rootCollapseVersion}
-            revealVersion={rootRevealRequest?.path.toLowerCase() === path.toLowerCase() ? rootRevealRequest.version : 0}
             sortBy={fileSortBy}
             sortDir={fileSortDir}
             selectedPath={selectedPath}
@@ -893,99 +973,13 @@ export const FileNav: FC = () => {
             onNavigate={handleNavigate}
             onContextMenu={handleContextMenu}
             onRootContextMenu={handleRootContextMenu}
+            onExpandedChange={handleRootExpandedChange}
             onRename={handleRenameInline}
             renamingPath={renamingPath}
             setRenamingPath={setRenamingPath}
           />
         ))}
       </div>
-      {bookmarks.length > 0 && (
-        <div className="bookmark-section" style={{ height: bookmarkHeight }}>
-          <div
-            className="bookmark-resize-handle"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              const startY = e.clientY;
-              const startH = bookmarkHeight;
-              const onMove = (ev: MouseEvent) => {
-                const newH = Math.max(64, Math.min(300, startH - (ev.clientY - startY)));
-                setBookmarkHeightStore(newH);
-              };
-              const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-              };
-              document.addEventListener('mousemove', onMove);
-              document.addEventListener('mouseup', onUp);
-            }}
-          />
-          <div className="bookmark-bar">
-          {bookmarks.map((bm) => (
-            <div
-              key={bm.path}
-              className="bookmark-tag"
-              onClick={() => {
-                if (renamingBookmark === bm.path) return;
-                const path = normalizeConfiguredPath(bm.path);
-                if (!path) return;
-                setBookmarkRootPath(path);
-                setRootCollapseVersion(version => version + 1);
-                setRootRevealRequest(request => ({
-                  path,
-                  version: (request?.version ?? 0) + 1,
-                }));
-                setFilterQuery('');
-                setSelectedPath(path);
-                activateTreeDirectory(path);
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setBookmarkCtxMenu({ x: e.clientX, y: e.clientY, path: bm.path });
-              }}
-              title={bm.path}
-            >
-              <Folder className="bookmark-icon" aria-hidden="true" />
-              {renamingBookmark === bm.path ? (
-                <input
-                  ref={renameBookmarkInputRef}
-                  className="bookmark-rename-input"
-                  value={renamingBookmarkValue}
-                  onChange={(e) => setRenamingBookmarkValue(e.target.value)}
-                  onBlur={() => {
-                    const trimmed = renamingBookmarkValue.trim();
-                    if (trimmed) renameBookmark(renamingBookmark!, trimmed);
-                    setRenamingBookmark(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const trimmed = renamingBookmarkValue.trim();
-                      if (trimmed) renameBookmark(renamingBookmark!, trimmed);
-                      setRenamingBookmark(null);
-                    } else if (e.key === 'Escape') {
-                      setRenamingBookmark(null);
-                    }
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  autoFocus
-                />
-              ) : (
-                <span className="bookmark-name">{bm.name}</span>
-              )}
-              <button
-                className="bookmark-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setConfirmBookmarkDelete(bm.path);
-                }}
-                title="删除书签"
-              >
-                <X aria-hidden="true" />
-              </button>
-            </div>
-          ))}
-          </div>
-        </div>
-      )}
       <div
         className={`resize-handle ${isResizing ? 'active' : ''}`}
         onMouseDown={handleMouseDown}
@@ -1004,17 +998,6 @@ export const FileNav: FC = () => {
           {!ctxMenu.path && ctxMenu.dir && (
             <>
               <div className="context-menu-separator" />
-              <div className="context-menu-item" onClick={() => {
-                const dir = ctxMenu.dir!;
-                if (pinnedFileRootKeys.has(dir.toLowerCase())) {
-                  unpinFileRoot(dir);
-                } else {
-                  pinFileRoot(dir);
-                }
-                setCtxMenu(null);
-              }}>
-                {pinnedFileRootKeys.has(ctxMenu.dir.toLowerCase()) ? '取消置顶' : '置顶'}
-              </div>
               <div className="context-menu-item" onClick={async () => {
                 const dir = ctxMenu.dir!;
                 setCtxMenu(null);
@@ -1022,17 +1005,17 @@ export const FileNav: FC = () => {
               }}>
                 在当前目录打开命令窗口
               </div>
-              <div className="context-menu-item" onClick={() => {
-                const dir = ctxMenu.dir!;
-                const name = dir.split('\\').filter(Boolean).pop() || dir;
-                addBookmark(name, dir);
-                setCtxMenu(null);
-              }}>
-                添加到书签
-              </div>
               <div className="context-menu-item" onClick={() => handleShowCurrentDirInExplorer(ctxMenu.dir)}>
                 在文件资源管理器中显示
               </div>
+              {ctxMenu.root && (
+                <>
+                  <div className="context-menu-separator" />
+                  <div className="context-menu-item danger" onClick={() => handleRemoveRoot(ctxMenu.dir!)}>
+                    从文件列表中删除
+                  </div>
+                </>
+              )}
             </>
           )}
           {ctxMenu.path && (
@@ -1055,15 +1038,6 @@ export const FileNav: FC = () => {
                   在当前目录打开命令窗口
                 </div>
               )}
-              {ctxMenu.isDir && (
-                <div className="context-menu-item" onClick={() => {
-                  const name = ctxMenu.path!.split('\\').pop() || ctxMenu.path!;
-                  addBookmark(name, ctxMenu.path!);
-                  setCtxMenu(null);
-                }}>
-                  添加到书签
-                </div>
-              )}
               <div className="context-menu-item" onClick={handleRenameItem}>
                 重命名
               </div>
@@ -1084,44 +1058,6 @@ export const FileNav: FC = () => {
           confirmText="删除"
         />
       )}
-      {confirmBookmarkDelete && (
-        <ConfirmDialog
-          title="确认删除"
-          message="确定删除此书签吗？"
-          onClose={() => setConfirmBookmarkDelete(null)}
-          onConfirm={() => {
-            removeBookmark(confirmBookmarkDelete);
-            setConfirmBookmarkDelete(null);
-          }}
-          confirmText="删除"
-        />
-      )}
-      {bookmarkCtxMenu && (() => {
-        const menuH = 64;
-        const top = bookmarkCtxMenu.y + menuH > window.innerHeight
-          ? bookmarkCtxMenu.y - menuH
-          : bookmarkCtxMenu.y;
-        return (
-        <>
-          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 9998 }} onClick={() => setBookmarkCtxMenu(null)} />
-          <div className="context-menu" style={{ left: bookmarkCtxMenu.x, top, zIndex: 9999 }}>
-            <div className="context-menu-item" onClick={() => {
-              const bm = bookmarks.find(b => b.path === bookmarkCtxMenu.path);
-              if (bm) {
-                setRenamingBookmarkValue(bm.name);
-                setRenamingBookmark(bm.path);
-                setTimeout(() => renameBookmarkInputRef.current?.select(), 0);
-              }
-              setBookmarkCtxMenu(null);
-            }}>重命名</div>
-            <div className="context-menu-item danger" onClick={() => {
-              setConfirmBookmarkDelete(bookmarkCtxMenu.path);
-              setBookmarkCtxMenu(null);
-            }}>删除</div>
-          </div>
-        </>
-        );
-      })()}
     </div>
   );
 };

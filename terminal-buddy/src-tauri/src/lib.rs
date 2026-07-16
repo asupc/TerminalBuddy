@@ -12,6 +12,7 @@ use tauri::Manager;
 use tauri::Emitter;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 use std::fs::OpenOptions;
@@ -20,6 +21,7 @@ use crate::web::handlers::claude_hook_handler::{answer_claude_hook_decision, con
 
 /// 进程启动时间锚点；全链路启动日志统一以此为 0 点。
 static BOOT_START: OnceLock<Instant> = OnceLock::new();
+static MAIN_WINDOW_REVEALED: AtomicBool = AtomicBool::new(false);
 
 fn boot_ms() -> u128 {
     BOOT_START.get().map(|b| b.elapsed().as_millis()).unwrap_or(0)
@@ -46,9 +48,9 @@ fn log_boot(msg: String, ts: Option<f64>) {
     boot_log(format!("js+{} {}", js_ms, msg));
 }
 
-fn apply_startup_window_mode(app: &tauri::App) {
+fn prepare_startup_window(app: &tauri::App) {
     let Some(window) = app.get_webview_window("main") else {
-        boot_log("main window not found while applying startup window mode");
+        boot_log("main window not found while preparing startup window");
         return;
     };
 
@@ -73,13 +75,26 @@ fn apply_startup_window_mode(app: &tauri::App) {
             boot_log("startup window mode applied: maximized");
         }
     }
+}
 
+fn reveal_main_window(webview: &tauri::Webview) {
+    if MAIN_WINDOW_REVEALED
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+
+    let window = webview.window();
     if let Err(e) = window.show() {
-        boot_log(format!("show window failed: {}", e));
+        MAIN_WINDOW_REVEALED.store(false, Ordering::Release);
+        boot_log(format!("show window after page load failed: {}", e));
+        return;
     }
     if let Err(e) = window.set_focus() {
-        boot_log(format!("focus window failed: {}", e));
+        boot_log(format!("focus window after page load failed: {}", e));
     }
+    boot_log("main window revealed after page load");
 }
 
 pub fn run() {
@@ -109,6 +124,14 @@ pub fn run() {
     }
 
     builder
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            {
+                boot_log(format!("main page load finished: {}", payload.url()));
+                reveal_main_window(webview);
+            }
+        })
         .setup(|app| {
             boot_log("setup enter");
             let show_item = MenuItemBuilder::with_id("show", "打开窗口").build(app)?;
@@ -158,7 +181,7 @@ pub fn run() {
                 .build(app)?;
             boot_log("tray built");
 
-            apply_startup_window_mode(app);
+            prepare_startup_window(app);
 
             // Sync launch_at_login setting with Windows Registry
             let _ = commands::sync_launch_at_login();
@@ -185,7 +208,7 @@ pub fn run() {
             tauri::async_runtime::spawn(crate::web::claude_hook_server::run(app.handle().clone()));
             boot_log("Claude hook HTTP server task spawned");
 
-            boot_log("setup done — WebView about to load URL");
+            boot_log("setup done — waiting for WebView page load before showing window");
             Ok(())
         })
         .on_window_event(|window, event| {
