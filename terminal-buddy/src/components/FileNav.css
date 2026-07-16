@@ -1,12 +1,27 @@
 .file-nav {
+  --file-nav-surface: color-mix(in srgb, var(--bg-secondary) 84%, var(--bg-primary));
+  --file-nav-toolbar: color-mix(in srgb, var(--bg-secondary) 94%, var(--bg-elevated));
+  --file-nav-control: color-mix(in srgb, var(--bg-primary) 72%, var(--bg-tertiary));
   display: flex;
   flex-direction: column;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border-subtle);
+  background: var(--file-nav-surface);
+  border-right: 1px solid var(--border);
   position: relative;
   min-width: 120px;
   max-width: 500px;
   flex-shrink: 1;
+  container-type: inline-size;
+}
+
+.file-nav > .panel-titlebar {
+  min-height: 42px;
+  padding: 0 10px 0 14px;
+  background: var(--file-nav-toolbar);
+  border-bottom: 0;
+}
+
+.file-nav > .panel-titlebar .panel-title {
+  font-size: 13px;
 }
 
 .file-nav.collapsed {
@@ -54,8 +69,20 @@
 }
 
 .file-nav-actions button:hover {
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-hover);
+}
+
+.file-nav-actions button.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.file-nav-actions button:focus-visible,
+.file-nav-empty-state button:focus-visible,
+.file-root-option:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .file-nav-actions button:disabled {
@@ -66,6 +93,132 @@
 .file-nav-actions button:disabled:hover {
   background: transparent;
   color: var(--text-secondary);
+}
+
+@container (max-width: 205px) {
+  .file-nav-actions .file-nav-sort-field {
+    display: none;
+  }
+}
+
+@container (max-width: 165px) {
+  .file-nav-actions .file-nav-sort-direction {
+    display: none;
+  }
+}
+
+.file-root-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-root-dialog {
+  width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+}
+
+.file-root-dialog-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.file-root-picker-count {
+  min-width: 20px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-secondary) 13%, transparent);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.file-root-picker-list {
+  min-height: 0;
+  flex: 1;
+  max-height: min(520px, calc(100vh - 128px));
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.file-root-option {
+  width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+}
+
+.file-root-option:hover {
+  background: var(--list-hover-bg);
+}
+
+.file-root-option-icon,
+.file-root-option-add {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  stroke-width: 1.8;
+}
+
+.file-root-option-icon {
+  color: var(--accent);
+}
+
+.file-root-option-add {
+  color: var(--text-tertiary);
+}
+
+.file-root-option:hover .file-root-option-add {
+  color: var(--accent);
+}
+
+.file-root-option-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-root-option-copy strong,
+.file-root-option-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+
+.file-root-option-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.file-root-option-copy span {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.file-root-picker-empty {
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: center;
 }
 
 .file-nav-path {
@@ -134,21 +287,20 @@
 .file-nav-content {
   flex: 1;
   overflow-y: auto;
-  padding: 3px 0;
+  padding: 4px 0;
+  background: var(--file-nav-surface);
   will-change: transform;
   overflow-anchor: none;
   overscroll-behavior: contain;
 }
 
-.file-nav-content::after {
-  content: '';
-  display: block;
-  min-height: calc(100% - 34px);
-  pointer-events: none;
+.file-nav-content.empty {
+  display: flex;
+  align-items: stretch;
 }
 
 .file-nav-configured-root + .file-nav-configured-root {
-  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 58%, transparent);
 }
 
 .file-nav-root-loading {
@@ -161,10 +313,52 @@
 }
 
 .file-nav-empty-state {
-  padding: 24px 12px;
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 12px 64px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
+}
+
+.file-nav-empty-icon {
+  width: 30px;
+  height: 30px;
+  color: var(--text-tertiary);
+  stroke-width: 1.35;
+}
+
+.file-nav-empty-state button {
+  min-height: var(--control-height-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  color: var(--accent-hover);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+}
+
+.file-nav-empty-state button:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent-hover);
+}
+
+.file-nav-empty-state button svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
 }
 
 .file-nav-root {
@@ -246,6 +440,7 @@
   font-size: 12px;
   color: var(--text-primary);
   gap: 4px;
+  transition: background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
 }
 
 .tree-item:hover {
@@ -288,15 +483,13 @@
   font-size: 12px;
 }
 
-.tree-icon svg,
-.bookmark-icon {
+.tree-icon svg {
   width: 14px;
   height: 14px;
   stroke-width: 1.8;
 }
 
-.file-nav .tree-icon,
-.file-nav .bookmark-icon {
+.file-nav .tree-icon {
   transform: scale(0.8);
   transform-origin: center;
 }
@@ -342,104 +535,6 @@
 .resize-handle:hover,
 .resize-handle.active {
   background: color-mix(in srgb, var(--accent) 72%, transparent);
-}
-
-/* Bookmark section */
-.bookmark-section {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 64px;
-  position: relative;
-}
-
-.bookmark-resize-handle {
-  height: 4px;
-  cursor: ns-resize;
-  flex-shrink: 0;
-  border-top: 1px solid var(--border);
-}
-
-.bookmark-resize-handle:hover {
-  background: var(--accent);
-  opacity: 0.5;
-}
-
-.bookmark-bar {
-  display: flex;
-  gap: 4px 0;
-  padding: 6px 8px 8px;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  justify-content: space-evenly;
-}
-
-.bookmark-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  white-space: nowrap;
-  cursor: pointer;
-  border: 1px solid transparent;
-  transition: border-color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
-}
-
-.bookmark-tag:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.bookmark-icon {
-  font-size: 10px;
-}
-
-.bookmark-name {
-  color: var(--text-primary);
-}
-
-.bookmark-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 12px;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  padding: 0 0 0 2px;
-  margin: 0;
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s;
-}
-
-.bookmark-close:hover {
-  color: #f44;
-}
-
-.bookmark-tag:hover .bookmark-close {
-  visibility: visible;
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.bookmark-rename-input {
-  background: var(--bg-primary);
-  border: 1px solid var(--accent);
-  color: var(--text-primary);
-  font-size: 11px;
-  padding: 0 4px;
-  width: 60px;
-  border-radius: 2px;
-  outline: none;
 }
 
 /* Drag ghost indicator */
@@ -596,12 +691,11 @@
   align-items: center;
   gap: 4px;
   min-height: 34px;
-  margin: 4px 8px 0;
+  margin: 0 8px 5px;
   padding: 4px 6px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+  background: color-mix(in srgb, var(--accent) 5%, var(--file-nav-control));
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border-subtle));
+  border-radius: var(--radius-sm);
   box-sizing: border-box;
   flex-shrink: 0;
 }
@@ -671,7 +765,7 @@
 .git-icon-btn:hover:not(:disabled),
 .git-popover-actions button:hover:not(:disabled),
 .git-list-row:hover {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
   color: var(--text-primary);
 }
 
@@ -2627,8 +2721,8 @@
 
 /* File nav filter input */
 .file-nav-filter {
-  padding: 4px 8px 7px;
-  background: var(--bg-secondary);
+  padding: 0 8px 8px;
+  background: var(--file-nav-toolbar);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
@@ -2637,21 +2731,26 @@
   width: 100%;
   box-sizing: border-box;
   height: var(--control-height-sm);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
+  background: var(--file-nav-control);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 12px;
   padding: 0 9px;
   outline: none;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+}
+
+.filter-input::placeholder {
+  color: var(--text-tertiary);
 }
 
 .filter-input:focus {
+  background: color-mix(in srgb, var(--bg-primary) 82%, var(--bg-tertiary));
   border-color: var(--accent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
-.bookmark-close svg,
 .cmd-remove-btn svg,
 .env-remove-btn svg {
   width: 13px;

@@ -4,7 +4,6 @@ const MIGRATION_SENTINEL = 'terminalbuddy_migrated_v2';
 
 const MIGRATION_KEYS: Record<string, string> = {
   'saved_tabs': 'terminalbuddy_saved_tabs',
-  'bookmarks': 'terminalbuddy_bookmarks',
   'extra_param_presets': 'terminalbuddy_extra_param_presets',
   'settings': 'terminalbuddy_settings',
   'theme': 'terminalbuddy_theme',

@@ -72,42 +72,11 @@ export async function loadSavedTabs(): Promise<{ tabs: SavedTab[]; activeIndex: 
   return { tabs: [], activeIndex: 0 };
 }
 
-const DEFAULT_BOOKMARKS = [
-  { name: '主目录', path: 'C:\\Users' },
-  { name: '桌面', path: 'C:\\Users\\Public\\Desktop' },
-  { name: '文档', path: 'C:\\Users\\Public\\Documents' },
-];
-
-export async function initBookmarks() {
-  try {
-    const raw = await readClientData('bookmarks');
-    if (raw) {
-      useAppStore.setState({ bookmarks: JSON.parse(raw) });
-    } else {
-      useAppStore.setState({ bookmarks: DEFAULT_BOOKMARKS });
-    }
-  } catch {
-    useAppStore.setState({ bookmarks: DEFAULT_BOOKMARKS });
-  }
-}
-
 export async function initExtraParamPresets() {
   try {
     const raw = await readClientData('extra_param_presets');
     if (raw) {
       useAppStore.setState({ extraParamPresets: JSON.parse(raw) });
-    }
-  } catch {}
-}
-
-export async function initBookmarkHeight() {
-  try {
-    const raw = await readClientData('bookmark_height');
-    if (raw) {
-      const height = JSON.parse(raw);
-      if (typeof height === 'number' && height >= 64 && height <= 300) {
-        useAppStore.setState({ bookmarkHeight: height });
-      }
     }
   } catch {}
 }
@@ -129,25 +98,25 @@ export async function initFileTreeNav() {
       if (data?.sortDir === 'asc' || data?.sortDir === 'desc') {
         useAppStore.setState({ fileSortDir: data.sortDir });
       }
-      if (Array.isArray(data?.pinnedRoots)) {
-        const pinnedFileRoots = data.pinnedRoots
+      if (Array.isArray(data?.roots)) {
+        const fileRoots = data.roots
           .filter((path: unknown): path is string => typeof path === 'string' && path.trim().length > 0)
           .filter((path: string, index: number, paths: string[]) => (
             paths.findIndex(candidate => candidate.toLowerCase() === path.toLowerCase()) === index
           ));
-        useAppStore.setState({ pinnedFileRoots });
+        useAppStore.setState({ fileRoots });
       }
     }
   } catch {}
 }
 
-function persistFileTreeNav(state: { navBackStack: string[]; navForwardStack: string[]; fileSortBy: 'name' | 'size' | 'modified'; fileSortDir: 'asc' | 'desc'; pinnedFileRoots: string[] }) {
+function persistFileTreeNav(state: { navBackStack: string[]; navForwardStack: string[]; fileSortBy: 'name' | 'size' | 'modified'; fileSortDir: 'asc' | 'desc'; fileRoots: string[] }) {
   writeClientData('file_nav', JSON.stringify({
     backStack: state.navBackStack,
     forwardStack: state.navForwardStack,
     sortBy: state.fileSortBy,
     sortDir: state.fileSortDir,
-    pinnedRoots: state.pinnedFileRoots,
+    roots: state.fileRoots,
   })).catch(() => {});
 }
 
@@ -216,16 +185,6 @@ interface AppState {
   exclusionPatterns: string[];
   setExclusionPatterns: (patterns: string[]) => void;
 
-  // Directory bookmarks
-  bookmarks: { name: string; path: string }[];
-  addBookmark: (name: string, path: string) => void;
-  removeBookmark: (path: string) => void;
-  renameBookmark: (path: string, newName: string) => void;
-
-  // Bookmark section height
-  bookmarkHeight: number;
-  setBookmarkHeight: (height: number) => void;
-
   // File tree navigation history (back/forward across directories)
   navBackStack: string[];
   navForwardStack: string[];
@@ -237,9 +196,9 @@ interface AppState {
   fileSortBy: 'name' | 'size' | 'modified';
   fileSortDir: 'asc' | 'desc';
   setFileSort: (by: 'name' | 'size' | 'modified', dir: 'asc' | 'desc') => void;
-  pinnedFileRoots: string[];
-  pinFileRoot: (path: string) => void;
-  unpinFileRoot: (path: string) => void;
+  fileRoots: string[];
+  addFileRoot: (path: string) => void;
+  removeFileRoot: (path: string) => void;
 
   // Custom themes
   customThemes: CustomTheme[];
@@ -411,31 +370,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   exclusionPatterns: ['node_modules', '.git'],
   setExclusionPatterns: (patterns) => set({ exclusionPatterns: patterns }),
 
-  // Directory bookmarks
-  bookmarks: [],
-  addBookmark: (name, path) => set((state) => {
-    const next = [...state.bookmarks, { name, path }];
-    writeClientData('bookmarks', JSON.stringify(next)).catch(() => {});
-    return { bookmarks: next };
-  }),
-  removeBookmark: (path) => set((state) => {
-    const next = state.bookmarks.filter(b => b.path !== path);
-    writeClientData('bookmarks', JSON.stringify(next)).catch(() => {});
-    return { bookmarks: next };
-  }),
-  renameBookmark: (path, newName) => set((state) => {
-    const next = state.bookmarks.map(b => b.path === path ? { ...b, name: newName } : b);
-    writeClientData('bookmarks', JSON.stringify(next)).catch(() => {});
-    return { bookmarks: next };
-  }),
-
-  // Bookmark section height
-  bookmarkHeight: 64,
-  setBookmarkHeight: (height) => {
-    writeClientData('bookmark_height', JSON.stringify(height)).catch(() => {});
-    set({ bookmarkHeight: height });
-  },
-
   // File tree navigation history
   navBackStack: [],
   navForwardStack: [],
@@ -474,21 +408,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     persistFileTreeNav({ ...state, fileSortBy: by, fileSortDir: dir });
     return { fileSortBy: by, fileSortDir: dir };
   }),
-  pinnedFileRoots: [],
-  pinFileRoot: (path) => set((state) => {
+  fileRoots: [],
+  addFileRoot: (path) => set((state) => {
     const pathKey = path.toLowerCase();
-    const pinnedFileRoots = [
-      path,
-      ...state.pinnedFileRoots.filter(candidate => candidate.toLowerCase() !== pathKey),
-    ];
-    persistFileTreeNav({ ...state, pinnedFileRoots });
-    return { pinnedFileRoots };
+    if (state.fileRoots.some(candidate => candidate.toLowerCase() === pathKey)) return state;
+    const fileRoots = [...state.fileRoots, path];
+    persistFileTreeNav({ ...state, fileRoots });
+    return { fileRoots };
   }),
-  unpinFileRoot: (path) => set((state) => {
+  removeFileRoot: (path) => set((state) => {
     const pathKey = path.toLowerCase();
-    const pinnedFileRoots = state.pinnedFileRoots.filter(candidate => candidate.toLowerCase() !== pathKey);
-    persistFileTreeNav({ ...state, pinnedFileRoots });
-    return { pinnedFileRoots };
+    const fileRoots = state.fileRoots.filter(candidate => candidate.toLowerCase() !== pathKey);
+    persistFileTreeNav({ ...state, fileRoots });
+    return { fileRoots };
   }),
 
   // Custom themes
