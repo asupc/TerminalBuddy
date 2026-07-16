@@ -1,16 +1,30 @@
 import { useEffect, useState } from 'react';
+import {
+  Box,
+  Command,
+  KeyRound,
+  LogOut,
+  Monitor,
+  Network,
+  Plus,
+  Server,
+  SquareTerminal,
+  TerminalSquare,
+  type LucideIcon,
+} from 'lucide-react';
 import { api } from '../api';
 import { useStore } from '../store';
 import { useMetaWs } from '../hooks/useMetaWs';
+import { Dialog } from '../components/Dialog';
 import type { Profile, TerminalType } from '../types';
 
-const TYPE_ICON: Record<TerminalType, string> = {
-  powershell: 'PS',
-  cmd: 'CMD',
-  ssh: 'SSH',
-  docker: 'DK',
-  k8s: 'K8S',
-  mstsc: 'RDP',
+const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
+  powershell: { icon: SquareTerminal, label: 'PowerShell' },
+  cmd: { icon: Command, label: 'CMD' },
+  ssh: { icon: KeyRound, label: 'SSH' },
+  docker: { icon: Box, label: 'Docker' },
+  k8s: { icon: Network, label: 'Kubernetes' },
+  mstsc: { icon: Monitor, label: '远程桌面' },
 };
 
 export default function Nav() {
@@ -74,88 +88,126 @@ export default function Nav() {
   };
 
   return (
-    <div className="screen">
-      <div className="topbar">
-        <span className={`dot ${metaOnline ? 'online' : 'offline'}`} />
-        <span className="title">连接</span>
-        <button className="btn" onClick={logout}>
-          退出
+    <div className="screen nav-screen">
+      <header className="topbar app-topbar">
+        <div className="topbar-brand">
+          <span className="brand-mark" aria-hidden="true">
+            <TerminalSquare size={20} />
+          </span>
+          <span className="brand-name">Terminal Buddy</span>
+        </div>
+        <div className={`status-pill ${metaOnline ? 'online' : 'offline'}`}>
+          <span className="dot" aria-hidden="true" />
+          <span>{metaOnline ? '服务在线' : '等待连接'}</span>
+        </div>
+        <button className="icon-button" onClick={logout} title="退出登录" aria-label="退出登录">
+          <LogOut size={19} />
         </button>
-      </div>
-      <div className="nav-body">
-        {loading && <div className="empty-hint">加载中…</div>}
-        {!loading && err && (
-          <div className="empty-hint" style={{ color: 'var(--danger)' }}>
-            {err}
-          </div>
-        )}
-        {!loading && profiles.length === 0 && !err && (
-          <div className="empty-hint">电脑端尚未配置连接</div>
-        )}
-        {Object.entries(groups).map(([g, ps]) => (
-          <div key={g}>
-            <div className="group-head">{g}</div>
-            {ps.map((p) => {
-              const insts = sessions.filter((s) => s.profileId === p.id);
-              const isMstsc = p.terminalType === 'mstsc';
-              return (
-                <div className="profile-card" key={p.id}>
-                  <div className="profile-row">
-                    <span className="profile-type-icon">{TYPE_ICON[p.terminalType]}</span>
-                    <span className="pname">{p.name}</span>
-                    <span className="type-tag">{p.terminalType}</span>
-                    {isMstsc ? null : (
-                      <button
-                        className="add-btn"
-                        disabled={busyId === p.id}
-                        onClick={() => createNew(p)}
-                        title="新建连接"
-                        aria-label={`新建 ${p.name} 连接`}
-                      >
-                        {busyId === p.id ? '…' : '+'}
-                      </button>
-                    )}
-                  </div>
-                  {insts.length > 0 && (
-                    <div className="instances">
-                      {insts.map((s) => {
-                        const name = s.profileName || p.name;
-                        const isPc = s.owner === 'pc';
-                        return (
-                          <div
-                            key={s.id}
-                            className="instance-row"
-                            onClick={() =>
-                              isPc
-                                ? setTakeover({ id: s.id, name })
-                                : openExisting(s.id, name, 'web')
-                            }
-                          >
-                            <span className={`dot ${isPc ? 'takeover' : 'online'}`} />
-                            <span className="iname">{name}</span>
-                            <span className={`type-tag ${isPc ? 'tk' : ''}`}>
-                              {isPc ? '接管' : '继续'}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+      </header>
+      <main className="nav-body" id="main-content">
+        <div className="nav-shell">
+          <section className="nav-heading" aria-labelledby="connections-title">
+            <div>
+              <p className="eyebrow">远程工作台</p>
+              <h1 id="connections-title">连接</h1>
+            </div>
+            <div className="nav-counts" aria-label="连接统计">
+              <span><strong>{profiles.length}</strong> 个配置</span>
+              <span><strong>{sessions.length}</strong> 个会话</span>
+            </div>
+          </section>
+
+          {loading && <div className="empty-state">正在加载连接…</div>}
+          {!loading && err && <div className="empty-state error-state">{err}</div>}
+          {!loading && profiles.length === 0 && !err && (
+            <div className="empty-state">
+              <Server size={28} aria-hidden="true" />
+              <span>电脑端尚未配置连接</span>
+            </div>
+          )}
+
+          <div className="connection-groups">
+            {Object.entries(groups).map(([g, ps], groupIndex) => (
+              <section className="connection-group" key={g} aria-labelledby={`group-${groupIndex}`}>
+                <div className="group-head">
+                  <h2 id={`group-${groupIndex}`}>{g}</h2>
+                  <span>{ps.length}</span>
                 </div>
-              );
-            })}
+                <div className="profile-grid">
+                  {ps.map((p) => {
+                    const insts = sessions.filter((s) => s.profileId === p.id);
+                    const isMstsc = p.terminalType === 'mstsc';
+                    const TypeIcon = TYPE_INFO[p.terminalType].icon;
+                    return (
+                      <article className="profile-card" key={p.id}>
+                        <div className="profile-row">
+                          <span className="profile-type-icon" aria-hidden="true">
+                            <TypeIcon size={20} strokeWidth={1.8} />
+                          </span>
+                          <div className="profile-copy">
+                            <h3>{p.name}</h3>
+                            <span>{TYPE_INFO[p.terminalType].label}</span>
+                          </div>
+                          {!isMstsc && (
+                            <button
+                              className="new-session-button"
+                              disabled={busyId === p.id}
+                              onClick={() => createNew(p)}
+                              title="新建连接"
+                              aria-label={`新建 ${p.name} 连接`}
+                            >
+                              {busyId === p.id ? (
+                                <span className="button-progress">…</span>
+                              ) : (
+                                <Plus size={20} />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                        {insts.length > 0 ? (
+                          <div className="instances">
+                            {insts.map((s) => {
+                              const name = s.profileName || p.name;
+                              const isPc = s.owner === 'pc';
+                              return (
+                                <button
+                                  type="button"
+                                  key={s.id}
+                                  className="instance-row"
+                                  onClick={() =>
+                                    isPc
+                                      ? setTakeover({ id: s.id, name })
+                                      : openExisting(s.id, name, 'web')
+                                  }
+                                >
+                                  <span className={`dot ${isPc ? 'takeover' : 'online'}`} aria-hidden="true" />
+                                  <span className="iname">{name}</span>
+                                  <span className={`session-action ${isPc ? 'takeover' : ''}`}>
+                                    {isPc ? '接管' : '继续'}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="profile-idle">暂无运行中的会话</div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      </main>
 
       {takeover && (
-        <div className="modal-mask" onClick={() => setTakeover(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-title">接管 PC 端终端？</div>
-            <div className="modal-desc">
-              「{takeover.name}」正在电脑端运行。接管后终端会切到手机尺寸，电脑端视图会随之重排跟随。
-            </div>
-            <div className="modal-actions">
+        <Dialog
+          title="接管 PC 端终端？"
+          onClose={() => setTakeover(null)}
+          footer={(
+            <>
               <button className="btn" onClick={() => setTakeover(null)}>
                 取消
               </button>
@@ -169,9 +221,13 @@ export default function Nav() {
               >
                 接管
               </button>
-            </div>
+            </>
+          )}
+        >
+          <div className="web-dialog-desc">
+            「{takeover.name}」正在电脑端运行。接管后终端会切到手机尺寸，电脑端视图会随之重排跟随。
           </div>
-        </div>
+        </Dialog>
       )}
     </div>
   );

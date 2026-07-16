@@ -2,6 +2,7 @@ import { FC } from 'react';
 import { BookOpen, Download, Globe2, MessageSquareWarning } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
 import { APP_VERSION } from '../version';
+import { Dialog } from './Dialog';
 import './AboutDialog.css';
 
 interface AboutDialogProps {
@@ -12,17 +13,34 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
   const appVersion = APP_VERSION;
 
   return (
-    <div className="about-dialog-overlay" onClick={onClose}>
-      <div className="about-dialog" onClick={e => e.stopPropagation()}>
-        <div className="about-header">
+    <Dialog
+      title={(
+        <>
           <img src={appIcon} alt="TerminalBuddy" className="about-logo" />
           <div className="about-title-section">
             <h1 className="about-title">TerminalBuddy</h1>
             <p className="about-version">v{appVersion}</p>
           </div>
-        </div>
-
-        <div className="about-content">
+        </>
+      )}
+      ariaLabel="关于 TerminalBuddy"
+      className="about-dialog"
+      headerClassName="about-header"
+      titleClassName="about-header-title"
+      bodyClassName="about-content"
+      footerClassName="about-footer"
+      footer={(
+        <>
+          <p className="about-copyright">
+            © 2026 TerminalBuddy • MIT 许可证
+          </p>
+          <button className="about-close-btn" onClick={onClose}>
+            关闭
+          </button>
+        </>
+      )}
+      onClose={onClose}
+    >
           <p className="about-description">面向 Windows 的桌面终端与远程连接工具。</p>
 
           <div className="about-tech">
@@ -78,17 +96,6 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
               </a>
             </div>
           </div>
-        </div>
-
-        <div className="about-footer">
-          <p className="about-copyright">
-            © 2026 TerminalBuddy • MIT 许可证
-          </p>
-          <button className="about-close-btn" onClick={onClose}>
-            关闭
-          </button>
-        </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

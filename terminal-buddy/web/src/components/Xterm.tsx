@@ -95,15 +95,23 @@ export default function Xterm({ terminalId, onStateChange, onExited }: Props) {
       if (m) buildNumber = parseInt(m[1], 10);
     }
 
+    const getFontSize = () => (window.innerWidth >= 768 ? 14 : 13);
     const term = new Terminal({
       cursorBlink: false,
       cursorStyle: 'block',
       cursorInactiveStyle: 'outline',
       cursorWidth: 1,
-      fontSize: 12,
+      fontSize: getFontSize(),
       fontFamily: "Cascadia Code, Consolas, 'Courier New', monospace",
       scrollback: 1000,
-      theme: { background: '#0c0c1e', foreground: '#e0e0e0' },
+      minimumContrastRatio: 4.5,
+      theme: {
+        background: '#0b0e0f',
+        foreground: '#e6ebe9',
+        cursor: '#65d5a5',
+        cursorAccent: '#0b0e0f',
+        selectionBackground: '#285d49',
+      },
       allowProposedApi: true,
       ...(isWindows && buildNumber
         ? { windowsPty: { backend: 'conpty' as const, buildNumber } }
@@ -121,10 +129,16 @@ export default function Xterm({ terminalId, onStateChange, onExited }: Props) {
     fit.fit();
     sendResize(term.cols, term.rows); // 首帧 resize → 触发后端回放历史输出
 
+    let lastFontSize = getFontSize();
     let lastCols = term.cols;
     let lastRows = term.rows;
     const doFit = () => {
       if (!termRef.current || !fitRef.current) return;
+      const nextFontSize = getFontSize();
+      if (nextFontSize !== lastFontSize) {
+        lastFontSize = nextFontSize;
+        termRef.current.options.fontSize = nextFontSize;
+      }
       fitRef.current.fit();
       if (termRef.current.cols !== lastCols || termRef.current.rows !== lastRows) {
         lastCols = termRef.current.cols;

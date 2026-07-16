@@ -3,6 +3,7 @@ import { Check, Plus, Trash2, X } from 'lucide-react';
 import { getAllThemes, createTheme, updateTheme, deleteTheme } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { PRESET_THEMES, type CustomTheme } from '../../types';
+import { showAlert } from '../../services/dialog';
 
 export const ThemesSettings: FC = () => {
   const customThemes = useAppStore(s => s.customThemes);
@@ -26,7 +27,7 @@ export const ThemesSettings: FC = () => {
       setSelectedThemeId(saved.id);
       setEditingTheme(saved);
     } catch (err) {
-      alert('创建主题失败: ' + String(err));
+      void showAlert('创建主题失败: ' + String(err), '创建失败');
     }
   };
 
@@ -37,7 +38,7 @@ export const ThemesSettings: FC = () => {
       setCustomThemes(customThemes.map(t => t.id === editingTheme.id ? editingTheme : t));
       setEditingTheme(null);
     } catch (err) {
-      alert('保存主题失败: ' + String(err));
+      void showAlert('保存主题失败: ' + String(err), '保存失败');
     }
   };
 
@@ -50,7 +51,7 @@ export const ThemesSettings: FC = () => {
         setEditingTheme(null);
       }
     } catch (err) {
-      alert('删除主题失败: ' + String(err));
+      void showAlert('删除主题失败: ' + String(err), '删除失败');
     }
   };
 

@@ -10,6 +10,8 @@ import { ActivityBar, type SidebarPanel } from './components/ActivityBar';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
 import { ClaudeDecisionDialog } from './components/ClaudeDecisionDialog';
+import { ConfirmDialog } from './components/Dialog';
+import { GlobalDialogHost } from './components/GlobalDialogHost';
 import { Toast } from './components/Toast';
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initBookmarks, initExtraParamPresets, initBookmarkHeight, initFileTreeNav } from './stores/appStore';
@@ -18,6 +20,7 @@ import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './
 import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
 import { initializeClaudeNotificationActions } from './services/claudeNotification';
+import { showAlert } from './services/dialog';
 
 /** Estimate terminal rows/cols from the .terminal-content container size. */
 function estimateTerminalSize(): { rows: number; cols: number } {
@@ -494,7 +497,7 @@ function App() {
         setCurrentDirectory(profile.startupPath);
       }
     } catch (err) {
-      alert('启动终端失败: ' + String(err));
+      void showAlert('启动终端失败: ' + String(err), '启动失败');
     }
   }, [addSession]);
 
@@ -569,7 +572,7 @@ function App() {
       if (st.splitMode !== 'off') st.placeSessionInSplitSlot(terminalId);
     } catch (err) {
       console.error('Failed to start blank terminal:', err);
-      alert('启动终端失败: ' + String(err));
+      void showAlert('启动终端失败: ' + String(err), '启动失败');
     }
   }, [addSession]);
 
@@ -671,19 +674,17 @@ function App() {
         <ExtraParamsDialog onClose={() => setShowExtraParamsDialog(false)} />
       )}
       {closeConfirm && (
-        <div className="confirm-dialog-overlay" onClick={handleCloseCancel}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">确认退出</div>
-            <div className="confirm-dialog-message">当前有 {closeConfirm.sessionCount} 个终端正在运行，确定要退出吗？</div>
-            <div className="confirm-dialog-buttons">
-              <button className="btn-secondary" onClick={handleCloseCancel}>取消</button>
-              <button className="btn-danger" onClick={handleCloseConfirm}>退出</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="确认退出"
+          message={`当前有 ${closeConfirm.sessionCount} 个终端正在运行，确定要退出吗？`}
+          onClose={handleCloseCancel}
+          onConfirm={handleCloseConfirm}
+          confirmText="退出"
+        />
       )}
       <ClaudeDecisionDialog />
       <Toast />
+      <GlobalDialogHost />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { openTerminalInDir } from '../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../utils/contextMenu';
 import type { Profile } from '../types';
 import { TreeView, type TreeItem } from './TreeView';
+import { ConfirmDialog } from './Dialog';
 import { buildGroupTree, renameGroupInPath } from '../utils/groupTree';
 import './ConfigNav.css';
 
@@ -574,16 +575,13 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       )}
 
       {confirmDelete && (
-        <div className="confirm-dialog-overlay" onClick={() => setConfirmDelete(null)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">确认删除</div>
-            <div className="confirm-dialog-message">确定要删除此配置吗？</div>
-            <div className="confirm-dialog-buttons">
-              <button className="btn-secondary" onClick={() => setConfirmDelete(null)}>取消</button>
-              <button className="btn-danger" onClick={confirmDeleteProfile}>删除</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="确认删除"
+          message="确定要删除此配置吗？"
+          onClose={() => setConfirmDelete(null)}
+          onConfirm={confirmDeleteProfile}
+          confirmText="删除"
+        />
       )}
       <div
         className={`config-nav-resize-handle ${isResizing ? 'active' : ''}`}

@@ -933,17 +933,6 @@
   white-space: nowrap;
 }
 
-.git-history-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.42);
-}
-
 .git-history-dialog {
   width: min(1320px, calc(100vw - 48px));
   height: min(780px, calc(100vh - 48px));
@@ -1461,17 +1450,6 @@
   font-size: 12px;
 }
 
-.git-pull-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.42);
-}
-
 .git-pull-dialog {
   width: min(820px, calc(100vw - 48px));
   height: min(650px, calc(100vh - 48px));
@@ -1904,17 +1882,6 @@
 
 /* ===== Git Push 弹窗（TortoiseGit 风格） ===== */
 
-.git-push-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.42);
-}
-
 .git-push-dialog {
   width: min(720px, calc(100vw - 48px));
   height: min(560px, calc(100vh - 48px));
@@ -2319,17 +2286,6 @@
   cursor: default;
 }
 
-.git-commit-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.42);
-}
-
 .git-commit-dialog {
   width: min(760px, calc(100vw - 48px));
   height: min(760px, calc(100vh - 48px));
@@ -2717,10 +2673,12 @@
 }
 
 /* Git 与传输工具共享应用级浮层语言，保留各流程自己的信息结构。 */
-.git-pull-dialog-backdrop,
-.git-push-dialog-backdrop,
-.git-commit-dialog-backdrop {
-  background: var(--bg-overlay);
+.git-dialog-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
 }
 
 .git-pull-dialog,

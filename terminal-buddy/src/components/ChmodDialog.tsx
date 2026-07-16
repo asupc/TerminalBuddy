@@ -1,4 +1,5 @@
 import { FC, useState, useMemo } from 'react';
+import { Dialog } from './Dialog';
 
 interface ChmodDialogProps {
   path: string;
@@ -61,9 +62,18 @@ export const ChmodDialog: FC<ChmodDialogProps> = ({ path, currentMode, onConfirm
   const fileName = path.split('/').pop() || path;
 
   return (
-    <div className="confirm-dialog-overlay" onClick={onClose}>
-      <div className="confirm-dialog" style={{ width: 320 }} onClick={e => e.stopPropagation()}>
-        <div className="confirm-dialog-title">修改权限 - {fileName}</div>
+    <Dialog
+      title={`修改权限 - ${fileName}`}
+      role="alertdialog"
+      style={{ width: 320 }}
+      onClose={onClose}
+      footer={(
+        <>
+          <button className="btn-secondary" onClick={onClose}>取消</button>
+          <button className="btn-primary" onClick={() => onConfirm(mode)}>确定</button>
+        </>
+      )}
+    >
         <div style={{ margin: '12px 0' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '60px 60px 60px 60px', gap: 2, marginBottom: 8 }}>
             <span />
@@ -91,11 +101,6 @@ export const ChmodDialog: FC<ChmodDialogProps> = ({ path, currentMode, onConfirm
             <span>八进制: <code style={{ background: 'var(--bg-tertiary)', padding: '1px 4px', borderRadius: 2 }}>{octal}</code></span>
           </div>
         </div>
-        <div className="confirm-dialog-buttons">
-          <button className="btn-secondary" onClick={onClose}>取消</button>
-          <button className="btn-primary" onClick={() => onConfirm(mode)}>确定</button>
-        </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

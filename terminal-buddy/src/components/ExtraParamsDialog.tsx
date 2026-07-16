@@ -1,7 +1,7 @@
 import { FC, useState } from 'react';
 import { X } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
-import { useDraggable } from '../hooks/useDraggable';
+import { Dialog } from './Dialog';
 import './ExtraParamsDialog.css';
 
 interface ExtraParamsDialogProps {
@@ -12,8 +12,6 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
   const { extraParamPresets, addExtraParamPreset, removeExtraParamPreset } = useAppStore();
   const [name, setName] = useState('');
   const [params, setParams] = useState('');
-  const { offset: dialogOffset, dragHandleProps } = useDraggable('.extra-params-dialog-content');
-
   const handleAdd = () => {
     if (!name.trim() || !params.trim()) return;
     addExtraParamPreset(name.trim(), params.trim());
@@ -29,21 +27,12 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="dialog-overlay">
-      <div
-        className="dialog"
-        onClick={(e) => e.stopPropagation()}
-        style={{ transform: `translate(${dialogOffset.x}px, ${dialogOffset.y}px)` }}
-        onMouseDown={dragHandleProps.onMouseDown}
-      >
-        <div className="dialog-header dialog-drag-handle">
-          <h3>管理额外参数</h3>
-          <button type="button" className="dialog-close" onClick={onClose} title="关闭" aria-label="关闭">
-            <X aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="extra-params-dialog-content">
+    <Dialog
+      title="管理额外参数"
+      className="extra-params-dialog"
+      bodyClassName="extra-params-dialog-content"
+      onClose={onClose}
+    >
           <div className="extra-params-input-section">
             <div className="form-row">
               <div className="form-group" style={{ flex: '0 0 120px' }}>
@@ -97,8 +86,6 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
               </div>
             ))}
           </div>
-        </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

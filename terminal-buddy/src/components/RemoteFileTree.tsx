@@ -10,6 +10,7 @@ import {
 } from '../services/tauri';
 import { isTextFile } from '../utils/fileExtensions';
 import { getAppSettings } from '../utils/settings';
+import { showAlert, showConfirm } from '../services/dialog';
 import { ChmodDialog } from './ChmodDialog';
 import { TransferPanel } from './TransferPanel';
 import type { RemoteFileEntry } from '../types';
@@ -299,7 +300,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       loadDirectory(file.path);
     } else if (isTextFile(file.name)) {
       if (file.size > 10 * 1024 * 1024) {
-        alert('超大文件不支持编辑（>10MB）');
+        void showAlert('超大文件不支持编辑（>10MB）');
         return;
       }
       handleEdit(file);
@@ -373,7 +374,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setContextMenu(null);
     startDownload(file).catch(err => {
       console.error('Download failed:', err);
-      alert('下载失败: ' + String(err));
+      void showAlert('下载失败: ' + String(err), '下载失败');
     });
   };
 
@@ -400,7 +401,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       await openPath(localPath);
     } catch (err) {
       console.error('Open in system failed:', err);
-      alert('打开失败: ' + String(err));
+      void showAlert('打开失败: ' + String(err), '打开失败');
     }
   };
 
@@ -417,7 +418,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       useAppStore.getState().openEditorSession(localPath, file.path, terminalId);
     } catch (err) {
       console.error('Edit failed:', err);
-      alert('打开编辑器失败: ' + String(err));
+      void showAlert('打开编辑器失败: ' + String(err), '打开编辑器失败');
     }
   };
 
@@ -441,7 +442,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       await handleRefresh();
     } catch (err) {
       console.error('Rename failed:', err);
-      alert('重命名失败: ' + String(err));
+      void showAlert('重命名失败: ' + String(err), '重命名失败');
     }
     setRenaming(null);
   };
@@ -475,7 +476,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       await handleRefresh();
     } catch (err) {
       console.error('Paste failed:', err);
-      alert('粘贴失败: ' + String(err));
+      void showAlert('粘贴失败: ' + String(err), '粘贴失败');
     }
   };
 
@@ -491,20 +492,23 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       await handleRefresh();
     } catch (err) {
       console.error('Chmod failed:', err);
-      alert('修改权限失败: ' + String(err));
+      void showAlert('修改权限失败: ' + String(err), '修改权限失败');
     }
     setChmodFile(null);
   };
 
   const handleDelete = async (file: RemoteFileEntry) => {
     setContextMenu(null);
-    if (!confirm(`确定删除 "${file.name}" 吗？`)) return;
+    if (!await showConfirm(`确定删除 "${file.name}" 吗？`, {
+      title: '确认删除',
+      confirmText: '删除',
+    })) return;
     try {
       await remoteRemove(terminalId, file.path, file.isDir);
       await handleRefresh();
     } catch (err) {
       console.error('Delete failed:', err);
-      alert('删除失败: ' + String(err));
+      void showAlert('删除失败: ' + String(err), '删除失败');
     }
   };
 
@@ -531,7 +535,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
       await handleRefresh();
     } catch (err) {
       console.error('Create failed:', err);
-      alert('创建失败: ' + String(err));
+      void showAlert('创建失败: ' + String(err), '创建失败');
     }
     setCreating(null);
   };
@@ -566,7 +570,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
           console.error('Upload failed:', err);
           const store = useAppStore.getState();
           store.failTransfer(id, String(err));
-          alert('上传失败: ' + String(err));
+          void showAlert('上传失败: ' + String(err), '上传失败');
         });
     }
   };

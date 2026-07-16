@@ -1,5 +1,4 @@
 import { FC, useState, useEffect, useCallback } from 'react';
-import { X } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
   getWebApiStatus,
@@ -9,6 +8,7 @@ import {
   getWebQuickAccessUrl,
 } from '../services/tauri';
 import { getAppSettings } from '../utils/settings';
+import { Dialog } from './Dialog';
 import './WebManageDialog.css';
 
 interface WebManageDialogProps {
@@ -118,16 +118,12 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="web-dialog-overlay" onClick={onClose}>
-      <div className="web-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="web-dialog-header">
-          <h2 className="web-dialog-title">Web 远程管理</h2>
-          <button className="web-dialog-close" onClick={onClose} title="关闭" aria-label="关闭">
-            <X aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="web-dialog-body">
+    <Dialog
+      title="Web 远程管理"
+      className="web-dialog"
+      bodyClassName="web-dialog-body"
+      onClose={onClose}
+    >
           <p className="web-dialog-desc">启用后可通过浏览器远程访问终端</p>
 
           <div className="web-field">
@@ -211,8 +207,6 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
               </div>
             </>
           )}
-        </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

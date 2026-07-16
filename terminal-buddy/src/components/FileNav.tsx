@@ -6,8 +6,10 @@ import { isTextFile } from '../utils/fileExtensions';
 import { getAppSettings } from '../utils/settings';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../utils/contextMenu';
+import { showAlert } from '../services/dialog';
 import { GitNavBar } from './GitNavBar';
 import { RemoteFileTree } from './RemoteFileTree';
+import { ConfirmDialog } from './Dialog';
 import './FileNav.css';
 
 interface TreeNodeProps {
@@ -106,7 +108,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, on
       try {
         const size = await getFileSize(node.path);
         if (size > 1024 * 1024) {
-          alert('文件过大，无法在编辑器中打开（超过 1MB）');
+          void showAlert('文件过大，无法在编辑器中打开（超过 1MB）');
           return;
         }
       } catch {
@@ -360,7 +362,7 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
   const [expanded, setExpanded] = useState(false);
   const [nodes, setNodes] = useState<FileNode[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [pathError, setPathError] = useState(false);
   const itemRef = useRef<HTMLDivElement>(null);
   const pinToTopAfterLoadRef = useRef(false);
@@ -374,7 +376,6 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
     if (revealVersion === 0) return;
     const frame = requestAnimationFrame(() => {
       pinToTopAfterLoadRef.current = true;
-      setLoading(true);
       setExpanded(true);
       scrollFileTreeItemToTop(itemRef.current);
     });
@@ -382,7 +383,10 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   }, [revealVersion]);
 
   useEffect(() => {
-    if (!expanded) return;
+    if (!expanded) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
 
@@ -754,7 +758,7 @@ export const FileNav: FC = () => {
       setRootRefreshVersion(version => version + 1);
     } catch (err) {
       console.error(err);
-      alert('删除失败: ' + String(err));
+      void showAlert('删除失败: ' + String(err), '删除失败');
     }
     setConfirmDelete(null);
   }, [confirmDelete]);
@@ -780,7 +784,7 @@ export const FileNav: FC = () => {
       setRootRefreshVersion(version => version + 1);
     } catch (err) {
       console.error(err);
-      alert('重命名失败: ' + String(err));
+      void showAlert('重命名失败: ' + String(err), '重命名失败');
     }
     setRenamingPath(null);
   }, []);
@@ -1072,35 +1076,25 @@ export const FileNav: FC = () => {
       )}
 
       {confirmDelete && (
-        <div className="confirm-dialog-overlay" onClick={cancelDeleteItem}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">确认删除</div>
-            <div className="confirm-dialog-message">确定删除 "{confirmDelete}" 吗？</div>
-            <div className="confirm-dialog-buttons">
-              <button className="btn-secondary" onClick={cancelDeleteItem}>
-                取消
-              </button>
-              <button className="btn-danger" onClick={confirmDeleteItem}>
-                删除
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="确认删除"
+          message={`确定删除 "${confirmDelete}" 吗？`}
+          onClose={cancelDeleteItem}
+          onConfirm={confirmDeleteItem}
+          confirmText="删除"
+        />
       )}
       {confirmBookmarkDelete && (
-        <div className="confirm-dialog-overlay" onClick={() => setConfirmBookmarkDelete(null)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">确认删除</div>
-            <div className="confirm-dialog-message">确定删除此书签吗？</div>
-            <div className="confirm-dialog-buttons">
-              <button className="btn-secondary" onClick={() => setConfirmBookmarkDelete(null)}>取消</button>
-              <button className="btn-danger" onClick={() => {
-                removeBookmark(confirmBookmarkDelete);
-                setConfirmBookmarkDelete(null);
-              }}>删除</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="确认删除"
+          message="确定删除此书签吗？"
+          onClose={() => setConfirmBookmarkDelete(null)}
+          onConfirm={() => {
+            removeBookmark(confirmBookmarkDelete);
+            setConfirmBookmarkDelete(null);
+          }}
+          confirmText="删除"
+        />
       )}
       {bookmarkCtxMenu && (() => {
         const menuH = 64;

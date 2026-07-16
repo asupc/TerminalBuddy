@@ -6,6 +6,8 @@ import { readFileContent, writeFileContent, remoteUpload, getFileMeta, onTransfe
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '../stores/appStore';
 import { getMonacoLanguage } from '../utils/fileExtensions';
+import { Dialog } from './Dialog';
+import { showAlert } from '../services/dialog';
 import './TextEditor.css';
 
 const CONTEXT_MENU_ITEMS = [
@@ -336,7 +338,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
             await remoteUpload(session.sshTerminalId, filePath, session.sshRemotePath, crypto.randomUUID(), terminalSession?.profileId || '');
           } catch (uploadErr) {
             console.error('Auto-upload to server failed:', uploadErr);
-            alert('已保存到本地，但上传到服务器失败: ' + String(uploadErr));
+            void showAlert('已保存到本地，但上传到服务器失败: ' + String(uploadErr), '上传失败');
           }
         }
         onDirtyChange(false);
@@ -422,23 +424,26 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
         </>
       )}
       {conflictDialog && (
-        <>
-          <div className="editor-conflict-overlay" />
-          <div className="editor-conflict-dialog">
-            <div className="editor-conflict-title">文件已被外部修改</div>
-            <div className="editor-conflict-message">
-              此文件在编辑器外已被修改，且您有未保存的更改。
-            </div>
-            <div className="editor-conflict-actions">
+        <Dialog
+          title="文件已被外部修改"
+          role="alertdialog"
+          className="editor-conflict-dialog"
+          bodyClassName="editor-conflict-message"
+          footerClassName="editor-conflict-actions"
+          onClose={() => setConflictDialog(null)}
+          footer={(
+            <>
               <button className="editor-conflict-btn overwrite" onClick={handleOverwriteSave}>
                 覆盖保存
               </button>
               <button className="editor-conflict-btn discard" onClick={handleDiscard}>
                 放弃修改
               </button>
-            </div>
-          </div>
-        </>
+            </>
+          )}
+        >
+          此文件在编辑器外已被修改，且您有未保存的更改。
+        </Dialog>
       )}
     </div>
   );

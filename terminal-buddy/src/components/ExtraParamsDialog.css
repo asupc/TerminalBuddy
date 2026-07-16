@@ -1,3 +1,7 @@
+.extra-params-dialog {
+  width: min(600px, calc(100vw - 48px));
+}
+
 .extra-params-dialog-content {
   padding: 20px;
   overflow-y: auto;
