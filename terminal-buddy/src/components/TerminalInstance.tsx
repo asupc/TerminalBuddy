@@ -1621,6 +1621,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         const payload = event.payload;
         if (payload.terminalId !== terminalId || disposed) return;
 
+        useAppStore.getState().setTerminalWebTakeover(terminalId, true);
         pendingWebTakeoverRecoveryRef.current = false;
         webTakeoverDimensions = { rows: payload.rows, cols: payload.cols };
         pendingPtyResize = null;
@@ -1637,6 +1638,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       listen<string>('terminal-web-takeover-ended', (event) => {
         if (event.payload !== terminalId || disposed) return;
 
+        useAppStore.getState().setTerminalWebTakeover(terminalId, false);
         webTakeoverDimensions = null;
         pendingPtyResize = null;
         lastPtyDimensionsRef.current = null;

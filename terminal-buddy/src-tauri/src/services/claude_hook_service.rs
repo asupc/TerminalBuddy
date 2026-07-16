@@ -146,6 +146,10 @@ pub struct ClaudeHookTerminalEvent {
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 pub enum ClaudeHookResolution {
@@ -161,6 +165,11 @@ fn pending() -> &'static Mutex<HashMap<String, PendingDecision>> {
 fn terminal_tokens() -> &'static Mutex<HashMap<String, String>> {
     static TOKENS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     TOKENS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn recent_prompts() -> &'static Mutex<HashMap<(String, String), String>> {
+    static PROMPTS: OnceLock<Mutex<HashMap<(String, String), String>>> = OnceLock::new();
+    PROMPTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn hook_server_running() -> &'static AtomicBool {
@@ -215,6 +224,10 @@ impl ClaudeHookService {
             .lock()
             .unwrap_or_else(|value| value.into_inner())
             .remove(terminal_id);
+        recent_prompts()
+            .lock()
+            .unwrap_or_else(|value| value.into_inner())
+            .retain(|(registered_terminal_id, _), _| registered_terminal_id != terminal_id);
         let removed = {
             let mut current = pending().lock().unwrap_or_else(|value| value.into_inner());
             let removed = current
@@ -266,6 +279,28 @@ impl ClaudeHookService {
                 },
             );
         rx
+    }
+
+    pub fn remember_prompt(terminal_id: &str, session_id: &str, prompt: String) {
+        recent_prompts()
+            .lock()
+            .unwrap_or_else(|value| value.into_inner())
+            .insert((terminal_id.to_string(), session_id.to_string()), prompt);
+    }
+
+    pub fn recent_prompt(terminal_id: &str, session_id: &str) -> Option<String> {
+        recent_prompts()
+            .lock()
+            .unwrap_or_else(|value| value.into_inner())
+            .get(&(terminal_id.to_string(), session_id.to_string()))
+            .cloned()
+    }
+
+    pub fn clear_session_prompt(terminal_id: &str, session_id: &str) {
+        recent_prompts()
+            .lock()
+            .unwrap_or_else(|value| value.into_inner())
+            .remove(&(terminal_id.to_string(), session_id.to_string()));
     }
 
     pub fn list_pending_decisions() -> Vec<ClaudeHookDecisionEvent> {
@@ -973,6 +1008,38 @@ mod tests {
         ));
         assert!(ClaudeHookService::begin_notification(&decision_id).is_none());
         ClaudeHookService::expire_decision(&decision_id);
+    }
+
+    #[test]
+    fn recent_prompts_are_isolated_by_terminal_and_session_and_cleared_on_unregister() {
+        let terminal_id = format!("prompt-terminal-{}", uuid::Uuid::new_v4());
+        let other_terminal_id = format!("prompt-terminal-{}", uuid::Uuid::new_v4());
+        ClaudeHookService::remember_prompt(&terminal_id, "session-a", "任务 A".to_string());
+        ClaudeHookService::remember_prompt(&terminal_id, "session-b", "任务 B".to_string());
+        ClaudeHookService::remember_prompt(
+            &other_terminal_id,
+            "session-a",
+            "其他终端任务".to_string(),
+        );
+
+        assert_eq!(
+            ClaudeHookService::recent_prompt(&terminal_id, "session-a").as_deref(),
+            Some("任务 A")
+        );
+        ClaudeHookService::clear_session_prompt(&terminal_id, "session-a");
+        assert!(ClaudeHookService::recent_prompt(&terminal_id, "session-a").is_none());
+        assert_eq!(
+            ClaudeHookService::recent_prompt(&terminal_id, "session-b").as_deref(),
+            Some("任务 B")
+        );
+
+        ClaudeHookService::unregister_terminal(&terminal_id);
+        assert!(ClaudeHookService::recent_prompt(&terminal_id, "session-b").is_none());
+        assert_eq!(
+            ClaudeHookService::recent_prompt(&other_terminal_id, "session-a").as_deref(),
+            Some("其他终端任务")
+        );
+        ClaudeHookService::unregister_terminal(&other_terminal_id);
     }
 
     #[test]

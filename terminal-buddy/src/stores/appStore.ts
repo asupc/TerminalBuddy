@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Profile, TerminalSession, CustomTheme, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem } from '../types';
-import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath, saveEnableTabNavigation } from '../services/tauri';
+import { readClientData, writeClientData, getDataPath, ensureDir, writeFileContent, deletePath, saveEnableTabNavigation, updateTerminalDisplayName } from '../services/tauri';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from '../utils/terminalResizeEvent';
 
@@ -264,6 +264,8 @@ interface AppState {
 
   // Unified terminal activity. Claude Hook becomes authoritative after first valid event.
   terminalActivities: Record<string, TerminalActivityState>;
+  terminalWebTakeovers: Record<string, boolean>;
+  setTerminalWebTakeover: (sessionId: string, active: boolean) => void;
   setTerminalFallbackWorking: (sessionId: string, working: boolean) => void;
   applyClaudeHookActivity: (sessionId: string, phase: TerminalActivityPhase, updatedAt: number) => boolean;
   endClaudeHookSession: (sessionId: string, updatedAt: number) => boolean;
@@ -525,6 +527,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const { [id]: _activity, ...terminalActivities } = state.terminalActivities;
       const { [id]: _claudeSession, ...claudeSessionIds } = state.claudeSessionIds;
       const { [id]: _directory, ...sessionDirectories } = state.sessionDirectories;
+      const terminalWebTakeovers = { ...state.terminalWebTakeovers };
+      delete terminalWebTakeovers[id];
       // Split-slot cleanup: free any slot referencing the closed session.
       // If the closed pane was focused, refocus the first remaining filled slot
       // (split mode is preserved even if all slots become blank).
@@ -541,6 +545,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeSessionId,
         remoteFileCache: restCache,
         terminalActivities,
+        terminalWebTakeovers,
         claudeSessionIds,
         sessionDirectories,
         splitSlots,
@@ -553,7 +558,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const normalized = sessions.map(s => ({ ...s, createdAt: s.createdAt ?? Date.now() }));
     const activeSessionId = normalized[0]?.id ?? null;
     saveTabsToStorage(normalized, activeSessionId);
-    set({ sessions: normalized, activeSessionId, terminalActivities: {} });
+    set({ sessions: normalized, activeSessionId, terminalActivities: {}, terminalWebTakeovers: {} });
   },
   setActiveSession: (id) => set((state) => {
     // 文件导航跟随当前连接：优先使用会话内已记录的目录（用户浏览或 cd 过的）；
@@ -577,14 +582,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     return { activeSessionId: id, currentDirectory, activeSpecialTab: null };
   }),
-  renameSession: (id, name) =>
+  renameSession: (id, name) => {
+    const session = get().sessions.find((item) => item.id === id);
+    if (session && session.sessionType !== 'editor') {
+      void updateTerminalDisplayName(id, name).catch((error) => {
+        console.error('Failed to sync terminal display name:', error);
+      });
+    }
     set((state) => {
       const newSessions = state.sessions.map((s) =>
         s.id === id ? { ...s, profileName: name } : s
       );
       debouncedSaveTabs(newSessions, state.activeSessionId);
       return { sessions: newSessions };
-    }),
+    });
+  },
   updateSession: (id, updates) =>
     set((state) => {
       const newSessions = state.sessions.map((s) =>
@@ -731,6 +743,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     claudeSessionIds: { ...state.claudeSessionIds, [sessionId]: claudeSessionId },
   })),
   terminalActivities: {},
+  terminalWebTakeovers: {},
+  setTerminalWebTakeover: (sessionId, active) => set((state) => {
+    const isActive = Boolean(state.terminalWebTakeovers[sessionId]);
+    if (isActive === active) return state;
+    if (active) {
+      return {
+        terminalWebTakeovers: {
+          ...state.terminalWebTakeovers,
+          [sessionId]: true,
+        },
+      };
+    }
+    const terminalWebTakeovers = { ...state.terminalWebTakeovers };
+    delete terminalWebTakeovers[sessionId];
+    return { terminalWebTakeovers };
+  }),
   setTerminalFallbackWorking: (sessionId, working) => set((state) => {
     const current = state.terminalActivities[sessionId];
     if (current?.runtimeKind === 'claude') return state;

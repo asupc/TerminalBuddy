@@ -28,6 +28,7 @@ pub async fn start(
     let terminal_id = ts.create_terminal(
         &req.profile_id,
         None,
+        None,
         req.rows.unwrap_or(0),
         req.cols.unwrap_or(0),
         state.app_handle.clone(),

@@ -276,13 +276,6 @@ export function BotNotificationSettings() {
 
   return (
     <div className="settings-general bot-settings">
-      <div className="bot-settings-toolbar">
-        <div>
-          <div className="bot-settings-title">机器人通知</div>
-          <div className="bot-settings-subtitle">已启用 {enabledCount} 个通道</div>
-        </div>
-      </div>
-
       <div className="settings-section bot-global-options">
         <label className="settings-toggle">
           <input type="checkbox" checked={settings.enabled} onChange={event => updateGlobal('enabled', event.target.checked)} />
@@ -314,7 +307,7 @@ export function BotNotificationSettings() {
       </div>
 
       <div className="bot-channel-heading">
-        <span>通知通道</span>
+        <span>通知通道（已启用 {enabledCount} 个）</span>
         <button
           className="settings-add-btn bot-icon-text-btn"
           onClick={() => {

@@ -189,29 +189,6 @@
   display: none;
 }
 
-.settings-panel-header {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-height: 38px;
-  margin-bottom: 16px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
-  color: var(--settings-text-primary);
-}
-
-.settings-panel-header svg {
-  flex: 0 0 auto;
-  color: var(--accent);
-}
-
-.settings-panel-header h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
 .settings-panel::-webkit-scrollbar {
   width: 6px;
 }
@@ -1344,29 +1321,15 @@ input.data-path-input {
   gap: 18px;
 }
 
-.bot-settings-toolbar,
 .bot-channel-heading,
 .bot-channel-summary {
   display: flex;
   align-items: center;
 }
 
-.bot-settings-toolbar,
 .bot-channel-heading {
   justify-content: space-between;
   gap: 12px;
-}
-
-.bot-settings-title {
-  color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.bot-settings-subtitle {
-  margin-top: 3px;
-  color: var(--text-secondary);
-  font-size: 12px;
 }
 
 .bot-icon-text-btn {

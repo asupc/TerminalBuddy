@@ -82,6 +82,10 @@
   color: var(--accent-hover);
 }
 
+.terminal-tab.active .terminal-takeover-badge {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+}
+
 /* 浅色（白板）：选中调淡——淡蓝底 + 深蓝字，降低蓝色饱和度与明度 */
 [data-theme="light"] .terminal-tab.active {
   background: color-mix(in srgb, var(--accent) 9%, #ffffff);
@@ -220,6 +224,17 @@
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent-hover);
   font-weight: 500;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.terminal-takeover-badge {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+  font-size: 9px;
+  font-weight: 600;
   line-height: 1;
   flex-shrink: 0;
 }
