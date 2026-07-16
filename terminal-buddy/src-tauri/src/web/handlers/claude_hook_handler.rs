@@ -21,6 +21,12 @@ pub(crate) struct ClaudeHookRequest {
     session_id: String,
     hook_event_name: String,
     #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    last_assistant_message: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
     tool_name: Option<String>,
     #[serde(default)]
     tool_use_id: Option<String>,
@@ -76,12 +82,62 @@ fn next_hook_timestamp() -> i64 {
     }
 }
 
+fn compact_whitespace(value: &str) -> Option<String> {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!compact.is_empty()).then_some(compact)
+}
+
+fn truncate_unicode(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars == 0 {
+        return String::new();
+    }
+    let mut result = value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    result.push('…');
+    result
+}
+
+fn compact_hook_text(value: Option<&str>, max_chars: usize) -> Option<String> {
+    compact_whitespace(value?)
+        .map(|compact| truncate_unicode(&compact, max_chars))
+        .filter(|compact| !compact.is_empty())
+}
+
+fn task_content(
+    terminal_id: &str,
+    request: &ClaudeHookRequest,
+) -> (Option<String>, Option<String>) {
+    match request.hook_event_name.as_str() {
+        "Stop" => (
+            ClaudeHookService::recent_prompt(terminal_id, &request.session_id)
+                .and_then(|prompt| compact_hook_text(Some(&prompt), 72)),
+            compact_hook_text(request.last_assistant_message.as_deref(), 220),
+        ),
+        "StopFailure" => (
+            ClaudeHookService::recent_prompt(terminal_id, &request.session_id)
+                .and_then(|prompt| compact_hook_text(Some(&prompt), 72)),
+            compact_hook_text(request.reason.as_deref(), 220)
+                .or_else(|| compact_hook_text(request.message.as_deref(), 220))
+                .or_else(|| {
+                    compact_hook_text(request.last_assistant_message.as_deref(), 220)
+                }),
+        ),
+        _ => (None, None),
+    }
+}
+
 fn emit_terminal_event(
     app: &tauri::AppHandle,
     terminal_id: &str,
     request: &ClaudeHookRequest,
     phase: &str,
 ) {
+    let (task_title, summary) = task_content(terminal_id, request);
     let event = ClaudeHookTerminalEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
         terminal_id: terminal_id.to_string(),
@@ -92,6 +148,8 @@ fn emit_terminal_event(
         notification_type: request.notification_type.clone(),
         title: request.title.clone(),
         message: request.message.clone(),
+        task_title,
+        summary,
     };
     let _ = app.emit("claude-hook-terminal-event", event);
 }
@@ -110,10 +168,14 @@ pub(crate) async fn claude_hook(
 
     match request.hook_event_name.as_str() {
         "SessionStart" => {
+            ClaudeHookService::clear_session_prompt(terminal_id, &request.session_id);
             emit_terminal_event(&app, terminal_id, &request, "idle");
             return StatusCode::NO_CONTENT.into_response();
         }
         "UserPromptSubmit" => {
+            if let Some(prompt) = compact_hook_text(request.prompt.as_deref(), 72) {
+                ClaudeHookService::remember_prompt(terminal_id, &request.session_id, prompt);
+            }
             emit_terminal_event(&app, terminal_id, &request, "running");
             return StatusCode::NO_CONTENT.into_response();
         }
@@ -138,6 +200,7 @@ pub(crate) async fn claude_hook(
         }
         "SessionEnd" => {
             emit_terminal_event(&app, terminal_id, &request, "ended");
+            ClaudeHookService::clear_session_prompt(terminal_id, &request.session_id);
             return StatusCode::NO_CONTENT.into_response();
         }
         _ => {}
@@ -321,12 +384,81 @@ pub async fn send_claude_hook_decision_notification(
 
 #[cfg(test)]
 mod tests {
-    use super::next_hook_timestamp;
+    use super::{
+        compact_hook_text, next_hook_timestamp, task_content, truncate_unicode,
+        ClaudeHookRequest,
+    };
+    use crate::services::ClaudeHookService;
+    use serde_json::json;
 
     #[test]
     fn hook_timestamps_are_strictly_monotonic() {
         let first = next_hook_timestamp();
         let second = next_hook_timestamp();
         assert!(second > first);
+    }
+
+    #[test]
+    fn hook_text_is_compact_and_truncated_on_unicode_boundaries() {
+        assert_eq!(
+            compact_hook_text(Some("  第一行\n\t第二行   内容  "), 20).as_deref(),
+            Some("第一行 第二行 内容")
+        );
+        assert_eq!(truncate_unicode("甲乙丙丁戊", 4), "甲乙丙…");
+        assert_eq!(truncate_unicode("Claude", 6), "Claude");
+    }
+
+    #[test]
+    fn stop_uses_recent_prompt_and_last_assistant_message() {
+        let terminal_id = format!("terminal-{}", uuid::Uuid::new_v4());
+        let session_id = format!("session-{}", uuid::Uuid::new_v4());
+        ClaudeHookService::remember_prompt(
+            &terminal_id,
+            &session_id,
+            "  修复\n通知逻辑  ".to_string(),
+        );
+        let request: ClaudeHookRequest = serde_json::from_value(json!({
+            "session_id": session_id,
+            "hook_event_name": "Stop",
+            "last_assistant_message": " 已完成修改。\n 编译检查通过。 "
+        }))
+        .unwrap();
+
+        let (title, summary) = task_content(&terminal_id, &request);
+        assert_eq!(title.as_deref(), Some("修复 通知逻辑"));
+        assert_eq!(summary.as_deref(), Some("已完成修改。 编译检查通过。"));
+        ClaudeHookService::unregister_terminal(&terminal_id);
+    }
+
+    #[test]
+    fn stop_failure_prefers_reason_and_falls_back_to_message() {
+        let with_reason: ClaudeHookRequest = serde_json::from_value(json!({
+            "session_id": "failure-session",
+            "hook_event_name": "StopFailure",
+            "reason": " 工具执行失败 ",
+            "message": "备用信息"
+        }))
+        .unwrap();
+        let (_, summary) = task_content("failure-terminal", &with_reason);
+        assert_eq!(summary.as_deref(), Some("工具执行失败"));
+
+        let with_message: ClaudeHookRequest = serde_json::from_value(json!({
+            "session_id": "failure-session",
+            "hook_event_name": "StopFailure",
+            "reason": "  ",
+            "message": " 网络连接中断 "
+        }))
+        .unwrap();
+        let (_, summary) = task_content("failure-terminal", &with_message);
+        assert_eq!(summary.as_deref(), Some("网络连接中断"));
+
+        let with_last_message: ClaudeHookRequest = serde_json::from_value(json!({
+            "session_id": "failure-session",
+            "hook_event_name": "StopFailure",
+            "last_assistant_message": " 无法完成请求 "
+        }))
+        .unwrap();
+        let (_, summary) = task_content("failure-terminal", &with_last_message);
+        assert_eq!(summary.as_deref(), Some("无法完成请求"));
     }
 }

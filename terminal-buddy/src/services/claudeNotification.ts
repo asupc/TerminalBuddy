@@ -23,6 +23,14 @@ interface PendingNotification {
   token: number;
 }
 
+interface CompletionNotificationDetails {
+  eventId: string;
+  terminalId: string;
+  phase: 'completed' | 'failed';
+  taskTitle?: string;
+  summary?: string;
+}
+
 const pendingCompletionNotifications = new Map<string, PendingNotification>();
 const pendingAttentionNotifications = new Map<
   string,
@@ -109,10 +117,10 @@ async function showAttentionNotification(event: ClaudeHookTerminalEvent, isCurre
 }
 
 async function showCompletionNotification(
-  terminalId: string,
-  phase: 'completed' | 'failed',
+  details: CompletionNotificationDetails,
   isCurrent: NotificationGuard,
 ): Promise<void> {
+  const { terminalId, phase } = details;
   const settings = getAppSettings();
   const nativeEnabled = settings.claudeCompletionNotifications;
   const botSettings = await getBotSettings().catch(() => null);
@@ -123,18 +131,24 @@ async function showCompletionNotification(
   const name = terminalName(terminalId);
   if (!name) return;
   const failed = phase === 'failed';
+  const taskTitle = details.taskTitle?.trim();
+  const title = taskTitle
+    ? `${failed ? '任务失败' : '任务完成'}：${taskTitle}`
+    : failed ? 'Claude Code 任务执行失败' : 'Claude Code 任务已完成';
+  const summary = details.summary?.trim()
+    || (failed ? 'Claude Code 未能完成当前任务。' : 'Claude Code 已完成当前任务。');
   const nativePromise = nativeEnabled
-    ? showNativeNotification(terminalId, name, failed ? 'failed' : 'completed')
+    ? showNativeNotification(terminalId, name, failed ? 'failed' : 'completed', title, summary)
         .catch(error => console.error('发送 Claude Code 任务结束通知失败:', error))
     : Promise.resolve();
   const botPromise = botEnabled
     ? sendBotNotification({
-        eventId: crypto.randomUUID(),
+        eventId: details.eventId,
         terminalId,
         terminalName: name,
         kind: 'completed',
-        title: failed ? 'Claude Code 任务执行失败' : 'Claude Code 任务已完成',
-        summary: failed ? 'Claude Code 未能完成当前任务。' : 'Claude Code 已完成当前任务。',
+        title,
+        summary,
       }).then(reports => {
         reports.filter(report => !report.success).forEach(report => {
           console.error(`机器人通道「${report.channelName}」通知失败:`, report.error);
@@ -165,17 +179,17 @@ function scheduleStructuredDecision(decision: ClaudeHookDecisionEvent): void {
   scheduleAttention(decision.decisionId, decision.terminalId, isCurrent => showStructuredDecisionNotification(decision, isCurrent));
 }
 
-function scheduleCompletion(terminalId: string, phase: 'completed' | 'failed'): void {
-  cancelPendingClaudeCompletion(terminalId);
+function scheduleCompletion(details: CompletionNotificationDetails): void {
+  cancelPendingClaudeCompletion(details.terminalId);
   const token = ++notificationToken;
   const delayMs = Math.max(0, getAppSettings().claudeCompletionNotificationDelaySeconds) * 1_000;
   const timer = setTimeout(() => {
-    const isCurrent = () => pendingCompletionNotifications.get(terminalId)?.token === token;
-    void showCompletionNotification(terminalId, phase, isCurrent).finally(() => {
-      if (isCurrent()) pendingCompletionNotifications.delete(terminalId);
+    const isCurrent = () => pendingCompletionNotifications.get(details.terminalId)?.token === token;
+    void showCompletionNotification(details, isCurrent).finally(() => {
+      if (isCurrent()) pendingCompletionNotifications.delete(details.terminalId);
     });
   }, delayMs);
-  pendingCompletionNotifications.set(terminalId, { timer, token });
+  pendingCompletionNotifications.set(details.terminalId, { timer, token });
 }
 
 function cancelAttention(key: string): void {
@@ -254,7 +268,13 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
   } else if (event.phase === 'completed' || event.phase === 'failed') {
     cancelClaudeActivityExpiry(event.terminalId);
     cancelAttentionForTerminal(event.terminalId);
-    scheduleCompletion(event.terminalId, event.phase);
+    scheduleCompletion({
+      eventId: event.eventId,
+      terminalId: event.terminalId,
+      phase: event.phase,
+      taskTitle: event.taskTitle,
+      summary: event.summary,
+    });
   }
 }
 

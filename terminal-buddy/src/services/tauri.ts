@@ -40,8 +40,12 @@ export async function importAllProfiles(path: string): Promise<Profile[]> {
 }
 
 // Terminal Commands
-export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number): Promise<string> {
-  return invoke('start_terminal', { profileId, extraStartupParams: extraStartupParams || null, initialRows: initialRows || 0, initialCols: initialCols || 0 });
+export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number, displayName?: string): Promise<string> {
+  return invoke('start_terminal', { profileId, displayName: displayName || null, extraStartupParams: extraStartupParams || null, initialRows: initialRows || 0, initialCols: initialCols || 0 });
+}
+
+export async function updateTerminalDisplayName(id: string, displayName: string): Promise<void> {
+  return invoke('update_terminal_display_name', { id, displayName });
 }
 
 export async function startMstsc(profileId: string): Promise<void> {
@@ -67,9 +71,17 @@ export async function getTerminalProcessId(terminalId: string): Promise<number |
 export async function showClaudeCodeNotification(
   terminalId: string,
   terminalName: string,
-  notificationKind: 'confirmation' | 'question' | 'completed' | 'failed'
+  notificationKind: 'confirmation' | 'question' | 'completed' | 'failed',
+  customTitle?: string,
+  customSummary?: string,
 ): Promise<void> {
-  return invoke('show_claude_code_notification', { terminalId, terminalName, notificationKind });
+  return invoke('show_claude_code_notification', {
+    terminalId,
+    terminalName,
+    notificationKind,
+    customTitle: customTitle || null,
+    customSummary: customSummary || null,
+  });
 }
 
 export async function onClaudeNotificationActivated(callback: (terminalId: string) => void): Promise<UnlistenFn> {
@@ -178,6 +190,8 @@ export interface ClaudeHookTerminalEvent {
   notificationType?: 'permission_prompt' | 'idle_prompt' | string;
   title?: string;
   message?: string;
+  taskTitle?: string;
+  summary?: string;
 }
 
 export interface ClaudeHookSettingsStatus {
@@ -313,8 +327,8 @@ export async function onClaudeBotReplyForwarded(callback: (payload: { terminalId
   return listen('claude-bot-reply-forwarded', event => callback(event.payload as { terminalId: string; decisionId: string }));
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string): Promise<string> {
-  return invoke('start_blank_terminal', { terminalType, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null });
+export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string): Promise<string> {
+  return invoke('start_blank_terminal', { terminalType, displayName: displayName || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null });
 }
 
 export async function writeToTerminal(id: string, data: string): Promise<void> {

@@ -396,8 +396,8 @@ function App() {
               }
             }
             const terminalId = tab.profileId
-              ? await startTerminal(tab.profileId, launchParams, estRows, estCols)
-              : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols);
+              ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName)
+              : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols, undefined, tab.profileName);
             store.addSession({
               id: terminalId,
               profileId: tab.profileId,
@@ -484,10 +484,10 @@ function App() {
       }
       // Split mode: when the grid is full, placeSessionInSplitSlot will auto-replace the oldest slot.
       const { rows, cols } = estimateTerminalSize();
-      const terminalId = await startTerminal(profile.id, extraParams, rows, cols);
+      const resolvedTabName = tabName ?? (presetName ? `${profile.name}[${presetName}]` : profile.name);
+      const terminalId = await startTerminal(profile.id, extraParams, rows, cols, resolvedTabName);
       await updateProfileLastUsed(profile.id);
       const theme = PRESET_THEMES.find(t => t.id === profile.colorTheme) || PRESET_THEMES[0];
-      const resolvedTabName = tabName ?? (presetName ? `${profile.name}[${presetName}]` : profile.name);
       addSession({
         id: terminalId,
         profileId: profile.id,
@@ -567,7 +567,7 @@ function App() {
       }
       const name = terminalType === 'powershell' ? 'PowerShell' : 'CMD';
       const { rows, cols } = estimateTerminalSize();
-      const terminalId = await startBlankTerminal(terminalType, rows, cols);
+      const terminalId = await startBlankTerminal(terminalType, rows, cols, undefined, name);
       addSession({
         id: terminalId,
         profileId: '',

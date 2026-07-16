@@ -41,6 +41,7 @@ fn shell_escape(s: &str) -> String {
 pub struct TerminalInstance {
     pub id: String,
     pub profile_id: String,
+    pub display_name: String,
     pub owner: TerminalOwner,
     backend: TerminalBackend,
     pub output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
@@ -360,19 +361,24 @@ impl TerminalService {
     /// 构建当前存活终端的列表（供 REST `GET /api/terminals`、Tauri 命令、meta WS 共用）。
     /// 过滤掉 PTY 已退出的实例，并用 ProfileService 补全 profile 元数据。
     pub fn list_terminals_info(&self) -> Vec<TerminalInfo> {
-        let entries: Vec<(String, String, TerminalOwner)> = {
+        let entries: Vec<(String, String, String, TerminalOwner)> = {
             let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.values()
                 .filter(|inst| !inst.exited.load(Ordering::SeqCst))
-                .map(|inst| (inst.id.clone(), inst.profile_id.clone(), inst.owner.clone()))
+                .map(|inst| (
+                    inst.id.clone(),
+                    inst.profile_id.clone(),
+                    inst.display_name.clone(),
+                    inst.owner.clone(),
+                ))
                 .collect()
         };
-        entries.into_iter().map(|(id, profile_id, owner)| {
+        entries.into_iter().map(|(id, profile_id, display_name, owner)| {
             let profile = ProfileService::get_profile(&profile_id).ok();
             TerminalInfo {
                 id,
                 group: profile.as_ref().map(|p| p.group.clone()).unwrap_or_default(),
-                profile_name: profile.as_ref().map(|p| p.name.clone()).unwrap_or_default(),
+                profile_name: display_name,
                 terminal_type: profile.as_ref().map(|p| p.terminal_type.clone()).unwrap_or_default(),
                 profile_id,
                 owner,
@@ -380,12 +386,17 @@ impl TerminalService {
         }).collect()
     }
 
-    pub fn create_terminal(&self, profile_id: &str, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
+    pub fn create_terminal(&self, profile_id: &str, display_name: Option<&str>, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create] start, id={}, profile_id={}", terminal_id, profile_id));
 
         // Load profile settings
         let profile = ProfileService::get_profile(profile_id).ok();
+        let display_name = display_name
+            .filter(|name| !name.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| profile.as_ref().map(|p| p.name.clone()))
+            .unwrap_or_default();
         let terminal_type = profile.as_ref().map_or("powershell", |p| p.terminal_type.as_str());
         let startup_path = profile.as_ref().and_then(|p| {
             if p.startup_path.is_empty() { None } else { Some(p.startup_path.clone()) }
@@ -450,6 +461,7 @@ impl TerminalService {
         let instance = TerminalInstance {
             id: terminal_id.clone(),
             profile_id: profile_id.to_string(),
+            display_name,
             owner,
             backend,
             output_buffer: output_buffer.clone(),
@@ -560,6 +572,28 @@ impl TerminalService {
         } else {
             Err("Terminal not found".to_string())
         }
+    }
+
+    pub fn update_terminal_display_name(&self, id: &str, display_name: &str) -> Result<(), String> {
+        let display_name = display_name.trim();
+        if display_name.is_empty() {
+            return Err("终端名称不能为空".to_string());
+        }
+
+        let changed = {
+            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            let instance = instances.get_mut(id).ok_or("Terminal not found".to_string())?;
+            if instance.display_name == display_name {
+                false
+            } else {
+                instance.display_name = display_name.to_string();
+                true
+            }
+        };
+        if changed {
+            self.notify_sessions_changed();
+        }
+        Ok(())
     }
 
     pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16, allow_shrink: bool) -> Result<(), String> {
@@ -677,7 +711,7 @@ impl TerminalService {
         Ok(())
     }
 
-    pub fn create_blank_terminal(&self, terminal_type: &str, initial_rows: u16, initial_cols: u16, startup_path: Option<&str>, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
+    pub fn create_blank_terminal(&self, terminal_type: &str, display_name: Option<&str>, initial_rows: u16, initial_cols: u16, startup_path: Option<&str>, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create-blank] start, id={}, type={}", terminal_id, terminal_type));
         crate::boot_log(format!("[create_blank_terminal] start type={}", terminal_type));
@@ -689,6 +723,16 @@ impl TerminalService {
             "powershell" => "powershell",
             _ => "powershell", // fallback for ssh/docker/k8s without profile
         };
+        let display_name = display_name
+            .filter(|name| !name.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if effective_type == "cmd" {
+                    "CMD".to_string()
+                } else {
+                    "PowerShell".to_string()
+                }
+            });
         let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
         let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
         let loading_mode = SettingsService::get_settings().terminal_loading_mode;
@@ -724,6 +768,7 @@ impl TerminalService {
         let instance = TerminalInstance {
             id: terminal_id.clone(),
             profile_id: String::new(),
+            display_name,
             owner,
             backend,
             output_buffer: output_buffer.clone(),
@@ -781,6 +826,7 @@ impl TerminalService {
 #[command]
 pub async fn start_terminal(
     profile_id: String,
+    display_name: Option<String>,
     extra_startup_params: Option<String>,
     initial_rows: u16,
     initial_cols: u16,
@@ -791,6 +837,7 @@ pub async fn start_terminal(
     tauri::async_runtime::spawn_blocking(move || {
         terminal_service.create_terminal(
             &profile_id,
+            display_name.as_deref(),
             extra_startup_params.as_deref(),
             initial_rows,
             initial_cols,
@@ -800,6 +847,15 @@ pub async fn start_terminal(
     })
     .await
     .map_err(|error| format!("终端后台启动失败：{}", error))?
+}
+
+#[command]
+pub fn update_terminal_display_name(
+    id: String,
+    display_name: String,
+    terminal_service: State<TerminalService>,
+) -> Result<(), String> {
+    terminal_service.update_terminal_display_name(&id, &display_name)
 }
 
 #[command]
@@ -883,6 +939,7 @@ pub fn list_terminals(
 #[command]
 pub async fn start_blank_terminal(
     terminal_type: String,
+    display_name: Option<String>,
     initial_rows: u16,
     initial_cols: u16,
     startup_path: Option<String>,
@@ -893,6 +950,7 @@ pub async fn start_blank_terminal(
     tauri::async_runtime::spawn_blocking(move || {
         terminal_service.create_blank_terminal(
             &terminal_type,
+            display_name.as_deref(),
             initial_rows,
             initial_cols,
             startup_path.as_deref(),

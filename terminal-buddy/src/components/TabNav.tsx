@@ -32,6 +32,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
 
   const renameSession = useAppStore(s => s.renameSession);
   const terminalActivities = useAppStore(s => s.terminalActivities);
+  const terminalWebTakeovers = useAppStore(s => s.terminalWebTakeovers);
   const settingsVersion = useAppStore(s => s.settingsVersion);
   const dragProfileId = useAppStore(s => s.dragProfileId);
   const setDragProfileId = useAppStore(s => s.setDragProfileId);
@@ -560,6 +561,9 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
                     })()}
                   </span>
                   {(child.data as any)?.owner === 'web' && <span className="tab-nav-owner-badge">Web</span>}
+                  {(child.data as any)?.owner !== 'web' && terminalWebTakeovers[child.id] && (
+                    <span className="tab-nav-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
+                  )}
                   <span className="tree-item-end">
                     <button
                       className="tree-item-close"

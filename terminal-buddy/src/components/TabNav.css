@@ -408,6 +408,17 @@
   flex-shrink: 0;
 }
 
+.tab-nav-takeover-badge {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .tab-nav-uptime {
   color: var(--text-muted, #888);
   font-size: 11px;

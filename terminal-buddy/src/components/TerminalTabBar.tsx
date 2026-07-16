@@ -14,6 +14,7 @@ export const TerminalTabBar: FC = () => {
 
   const renameSession = useAppStore(s => s.renameSession);
   const terminalActivities = useAppStore(s => s.terminalActivities);
+  const terminalWebTakeovers = useAppStore(s => s.terminalWebTakeovers);
   const settingsVersion = useAppStore(s => s.settingsVersion);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
@@ -188,6 +189,9 @@ export const TerminalTabBar: FC = () => {
             <>
               <span className="terminal-tab-name" style={session.tabColor ? { color: session.tabColor } : undefined}>{session.profileName}</span>
               {session.owner === 'web' && <span className="terminal-owner-badge">Web</span>}
+              {session.owner !== 'web' && terminalWebTakeovers[session.id] && (
+                <span className="terminal-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
+              )}
             </>
           )}
           <button
