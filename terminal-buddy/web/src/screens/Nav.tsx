@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   Box,
   Command,
@@ -46,6 +46,22 @@ export default function Nav() {
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
+
+  const sessionGroups = useMemo(() => {
+    const grouped = new Map<string, TerminalInfo[]>();
+    for (const session of sessions) {
+      const group = session.group?.trim() || '默认';
+      const items = grouped.get(group);
+      if (items) items.push(session);
+      else grouped.set(group, [session]);
+    }
+
+    return Array.from(grouped, ([name, items]) => ({ name, items })).sort((a, b) => {
+      if (a.name === '默认') return -1;
+      if (b.name === '默认') return 1;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    });
+  }, [sessions]);
 
   useMetaWs();
 
@@ -136,33 +152,42 @@ export default function Nav() {
               </button>
             </div>
           ) : (
-            <div className="open-session-grid" aria-label="已打开的连接">
-              {sessions.map((session) => {
-                const type = getTypeInfo(session.terminalType);
-                const TypeIcon = type.icon;
-                const name = session.profileName || type.label;
-                return (
-                  <button
-                    type="button"
-                    className="open-session-tab"
-                    key={session.id}
-                    onClick={() => openSession(session)}
-                    aria-label={`${name}，${session.owner === 'pc' ? '桌面端，接管' : '网页端，继续'}`}
-                  >
-                    <span className="open-session-icon" aria-hidden="true"><TypeIcon /></span>
-                    <span className="open-session-copy">
-                      <strong>{name}</strong>
-                      <small>{type.label}</small>
-                    </span>
-                    <span className={`open-session-owner ${session.owner}`}>
-                      {session.owner === 'pc' ? 'PC' : 'WEB'}
-                    </span>
-                    <span className="open-session-action">
-                      {session.owner === 'pc' ? '接管' : '继续'}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="connection-groups" aria-label="已打开的连接">
+              {sessionGroups.map((group) => (
+                <section key={group.name}>
+                  <div className="group-head">
+                    <h2>{group.name}</h2>
+                  </div>
+                  <div className="open-session-grid">
+                    {group.items.map((session) => {
+                      const type = getTypeInfo(session.terminalType);
+                      const TypeIcon = type.icon;
+                      const name = session.profileName || type.label;
+                      return (
+                        <button
+                          type="button"
+                          className="open-session-tab"
+                          key={session.id}
+                          onClick={() => openSession(session)}
+                          aria-label={`${name}，${session.owner === 'pc' ? '桌面端，接管' : '网页端，继续'}`}
+                        >
+                          <span className="open-session-icon" aria-hidden="true"><TypeIcon /></span>
+                          <span className="open-session-copy">
+                            <strong>{name}</strong>
+                            <small>{type.label}</small>
+                          </span>
+                          <span className={`open-session-owner ${session.owner}`}>
+                            {session.owner === 'pc' ? 'PC' : 'WEB'}
+                          </span>
+                          <span className="open-session-action">
+                            {session.owner === 'pc' ? '接管' : '继续'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
             </div>
           )}
         </div>
