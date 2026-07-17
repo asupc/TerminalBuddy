@@ -238,6 +238,7 @@ interface AppState {
   _skipSaveTabs: boolean;
   addSession: (session: TerminalSession, keepActive?: boolean) => void;
   removeSession: (id: string) => void;
+  removeSessions: (ids: readonly string[]) => void;
   setActiveSession: (id: string | null) => void;
   setSessions: (sessions: TerminalSession[]) => void;
   renameSession: (id: string, name: string) => void;
@@ -495,26 +496,39 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeSpecialTab: null,
       };
     }),
-  removeSession: (id) =>
+  removeSession: (id) => get().removeSessions([id]),
+  removeSessions: (ids) =>
     set((state) => {
-      const sessions = state.sessions.filter((s) => s.id !== id);
+      const idsToRemove = new Set(ids);
+      if (idsToRemove.size === 0 || !state.sessions.some((session) => idsToRemove.has(session.id))) {
+        return state;
+      }
+      const sessions = state.sessions.filter((session) => !idsToRemove.has(session.id));
       let activeSessionId =
-        state.activeSessionId === id
+        state.activeSessionId !== null && idsToRemove.has(state.activeSessionId)
           ? sessions[0]?.id ?? null
           : state.activeSessionId;
-      const { [id]: _, ...restCache } = state.remoteFileCache;
-      const { [id]: _activity, ...terminalActivities } = state.terminalActivities;
-      const { [id]: _claudeSession, ...claudeSessionIds } = state.claudeSessionIds;
-      const { [id]: _directory, ...sessionDirectories } = state.sessionDirectories;
+      const restCache = { ...state.remoteFileCache };
+      const terminalActivities = { ...state.terminalActivities };
+      const claudeSessionIds = { ...state.claudeSessionIds };
+      const sessionDirectories = { ...state.sessionDirectories };
       const terminalWebTakeovers = { ...state.terminalWebTakeovers };
-      delete terminalWebTakeovers[id];
+      for (const id of idsToRemove) {
+        delete restCache[id];
+        delete terminalActivities[id];
+        delete claudeSessionIds[id];
+        delete sessionDirectories[id];
+        delete terminalWebTakeovers[id];
+      }
       // Split-slot cleanup: free any slot referencing the closed session.
       // If the closed pane was focused, refocus the first remaining filled slot
       // (split mode is preserved even if all slots become blank).
       let splitSlots = state.splitSlots;
-      if (state.splitMode !== 'off' && splitSlots.some(s => s.sessionId === id)) {
-        splitSlots = splitSlots.map(s => s.sessionId === id ? { sessionId: null, enteredAt: 0 } : s);
-        if (state.activeSessionId === id) {
+      if (state.splitMode !== 'off' && splitSlots.some((slot) => slot.sessionId !== null && idsToRemove.has(slot.sessionId))) {
+        splitSlots = splitSlots.map((slot) =>
+          slot.sessionId !== null && idsToRemove.has(slot.sessionId) ? { sessionId: null, enteredAt: 0 } : slot
+        );
+        if (state.activeSessionId !== null && idsToRemove.has(state.activeSessionId)) {
           activeSessionId = splitSlots.find(s => s.sessionId !== null)?.sessionId ?? null;
         }
       }

@@ -29,6 +29,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const removeSession = useAppStore(s => s.removeSession);
+  const removeSessions = useAppStore(s => s.removeSessions);
 
   const renameSession = useAppStore(s => s.renameSession);
   const terminalActivities = useAppStore(s => s.terminalActivities);
@@ -281,8 +282,8 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
       }
       removeSession(sessionId);
     } else {
-      try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
       removeSession(sessionId);
+      void closeTerminalCmd(sessionId).catch(err => console.error(err));
     }
   };
 
@@ -323,15 +324,17 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
       onConfirm: async () => {
         setConfirmDialog(null);
         const store = useAppStore.getState();
+        const terminalIds = groupSessions
+          .filter(session => session.sessionType !== 'editor')
+          .map(session => session.id);
         for (const session of groupSessions) {
-          if (session.sessionType !== 'editor') {
-            try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
-          } else {
+          if (session.sessionType === 'editor') {
             const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
-            if (isDraft) store.removeDraftFile(session.profileId);
+            if (isDraft) void store.removeDraftFile(session.profileId);
           }
-          removeSession(session.id);
         }
+        removeSessions(groupSessions.map(session => session.id));
+        void Promise.all(terminalIds.map(id => closeTerminalCmd(id).catch(err => console.error(err))));
       },
     });
   };
@@ -347,15 +350,17 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
       onConfirm: async () => {
         setConfirmDialog(null);
         const store = useAppStore.getState();
+        const terminalIds = sessions
+          .filter(session => session.sessionType !== 'editor')
+          .map(session => session.id);
         for (const session of sessions) {
-          if (session.sessionType !== 'editor') {
-            try { await closeTerminalCmd(session.id); } catch (err) { console.error(err); }
-          } else {
+          if (session.sessionType === 'editor') {
             const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
-            if (isDraft) store.removeDraftFile(session.profileId);
+            if (isDraft) void store.removeDraftFile(session.profileId);
           }
         }
-        store.setSessions([]);
+        removeSessions(sessions.map(session => session.id));
+        void Promise.all(terminalIds.map(id => closeTerminalCmd(id).catch(err => console.error(err))));
         setShowContextMenu(false);
       },
     });
