@@ -12,15 +12,8 @@ import {
   type BotLongConnectionStatus,
   type ScanCredentials,
 } from '../../services/tauri';
+import { BOT_PLATFORM_OPTIONS, BotChannelDialog } from './BotChannelDialog';
 import { BotScanDialog } from './BotScanDialog';
-
-const PLATFORM_OPTIONS: ReadonlyArray<{ value: BotChannelConfig['platform']; label: string; bidirectional: boolean }> = [
-  { value: 'feishu', label: '飞书应用机器人', bidirectional: true },
-  { value: 'weixin', label: '微信机器人', bidirectional: true },
-  { value: 'dingtalk', label: '钉钉应用机器人', bidirectional: false },
-  { value: 'qq', label: 'QQ 机器人桥接', bidirectional: true },
-  { value: 'bridge', label: '通用机器人桥接', bidirectional: true },
-];
 
 const EMPTY_SETTINGS: BotSettings = {
   enabled: false,
@@ -46,24 +39,6 @@ function normalizeSettings(settings: BotSettings): BotSettings {
   };
 }
 
-function createChannel(): BotChannelConfig {
-  return {
-    id: crypto.randomUUID(),
-    name: '飞书通知',
-    platform: 'feishu',
-    enabled: true,
-    targetId: '',
-    receiveIdType: 'chat_id',
-    webhookUrl: '',
-    appId: '',
-    secret: '',
-    callbackToken: '',
-    allowedUserIds: [],
-    hasSecret: false,
-    hasCallbackToken: false,
-  };
-}
-
 export function BotNotificationSettings() {
   const [settings, setSettings] = useState<BotSettings>(EMPTY_SETTINGS);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -75,6 +50,7 @@ export function BotNotificationSettings() {
   const [callbackBaseUrl, setCallbackBaseUrl] = useState('http://<电脑IP>:9600');
   const [longConnectionStatuses, setLongConnectionStatuses] = useState<Record<string, BotLongConnectionStatus>>({});
   const [scanChannelId, setScanChannelId] = useState<string | null>(null);
+  const [showChannelDialog, setShowChannelDialog] = useState(false);
 
   const settingsRef = useRef(settings);
   const latestSavedSettingsRef = useRef(settings);
@@ -87,7 +63,11 @@ export function BotNotificationSettings() {
 
   settingsRef.current = settings;
 
-  const persist = (snapshot: BotSettings, successText = '机器人通知设置已自动保存'): Promise<BotSettings> => {
+  const persist = (
+    snapshot: BotSettings,
+    successText = '机器人通知设置已自动保存',
+    applySnapshot = false,
+  ): Promise<BotSettings> => {
     const snapshotSignature = JSON.stringify(snapshot);
     const request = saveQueueRef.current
       .catch(() => latestSavedSettingsRef.current)
@@ -103,7 +83,7 @@ export function BotNotificationSettings() {
           lastSubmittedSignatureRef.current = snapshotSignature;
           lastSavedStateSignatureRef.current = JSON.stringify(saved);
 
-          if (mountedRef.current && JSON.stringify(settingsRef.current) === snapshotSignature) {
+          if (mountedRef.current && (applySnapshot || JSON.stringify(settingsRef.current) === snapshotSignature)) {
             settingsRef.current = saved;
             setSettings(saved);
             setStatus({ type: 'success', text: successText });
@@ -205,6 +185,15 @@ export function BotNotificationSettings() {
     setStatus(null);
   };
 
+  const handleAddChannel = async (channel: BotChannelConfig) => {
+    const next = normalizeSettings({
+      ...settingsRef.current,
+      channels: [...settingsRef.current.channels, channel],
+    });
+    await persist(next, `通知通道「${channel.name}」已添加。`, true);
+    setShowChannelDialog(false);
+  };
+
   const handleTest = async (channelId: string) => {
     setTestingId(channelId);
     setStatus(null);
@@ -237,7 +226,7 @@ export function BotNotificationSettings() {
       const result = await testBotDecisionChannel(channelId);
       const channel = settings.channels.find(item => item.id === channelId);
       const successText = channel?.platform === 'weixin'
-        ? `测试决策已发送到「${result.channelName}」，请在微信中引用消息回复“确认”`
+        ? `测试决策已发送到「${result.channelName}」，请在微信中引用消息回复选项编号`
         : `测试决策已发送到「${result.channelName}」，请在飞书中点击选项`;
       setStatus(result.success
         ? { type: 'success', text: successText }
@@ -323,11 +312,7 @@ export function BotNotificationSettings() {
         <span>通知通道（已启用 {enabledCount} 个）</span>
         <button
           className="settings-add-btn bot-icon-text-btn"
-          onClick={() => {
-            const channel = createChannel();
-            setSettings(previous => ({ ...previous, channels: [...previous.channels, channel] }));
-            setExpandedId(channel.id);
-          }}
+          onClick={() => setShowChannelDialog(true)}
         >
           <Plus size={15} aria-hidden="true" />新增通道
         </button>
@@ -336,7 +321,7 @@ export function BotNotificationSettings() {
       <div className="bot-channel-list">
         {settings.channels.length === 0 && <div className="settings-empty-state">暂无机器人通道</div>}
         {settings.channels.map(channel => {
-          const platform = PLATFORM_OPTIONS.find(option => option.value === channel.platform) || PLATFORM_OPTIONS[0];
+          const platform = BOT_PLATFORM_OPTIONS.find(option => option.value === channel.platform) || BOT_PLATFORM_OPTIONS[0];
           const expanded = expandedId === channel.id;
           const usesAppCredentials = channel.platform === 'feishu'
             || channel.platform === 'weixin'
@@ -386,8 +371,8 @@ export function BotNotificationSettings() {
                     className="bot-action-btn"
                     onClick={() => void handleTestDecision(channel.id)}
                     disabled={testingId === channel.id || testingDecisionId === channel.id}
-                    title="发送测试决策卡片"
-                    aria-label="发送测试决策卡片"
+                    title="发送测试决策"
+                    aria-label="发送测试决策"
                   >
                     <ListChecks size={15} />
                   </button>
@@ -408,7 +393,7 @@ export function BotNotificationSettings() {
                   <label>
                     <span>平台</span>
                     <select value={channel.platform} onChange={event => updateChannel(channel.id, 'platform', event.target.value as BotChannelConfig['platform'])}>
-                      {PLATFORM_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
+                      {BOT_PLATFORM_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
                     </select>
                   </label>
                   {usesAppCredentials && (
@@ -516,6 +501,14 @@ export function BotNotificationSettings() {
           platform={(settings.channels.find(channel => channel.id === scanChannelId)?.platform ?? 'feishu') as 'feishu' | 'weixin' | 'dingtalk'}
           onClose={() => setScanChannelId(null)}
           onSuccess={handleScanSuccess(scanChannelId)}
+        />
+      )}
+
+      {showChannelDialog && (
+        <BotChannelDialog
+          callbackBaseUrl={callbackBaseUrl}
+          onClose={() => setShowChannelDialog(false)}
+          onConfirm={handleAddChannel}
         />
       )}
     </div>

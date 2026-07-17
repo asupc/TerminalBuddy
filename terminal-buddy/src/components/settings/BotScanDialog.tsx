@@ -118,7 +118,7 @@ export function BotScanDialog({ platform, onClose, onSuccess }: BotScanDialogPro
             </>
           )}
           {phase === 'success' && (
-            <div className="bot-scan-status success">授权成功，凭证已自动保存。</div>
+            <div className="bot-scan-status success">授权成功，正在回填凭证...</div>
           )}
           {phase === 'expired' && (
             <>

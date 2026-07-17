@@ -32,11 +32,94 @@ fn notification_body(request: &BotNotificationRequest) -> String {
         parts.push(request.summary.trim().to_string());
     }
     if request.decision_id.is_some() {
-        parts.push(
-            "请引用此消息回复：“确认”采用推荐选项，其他内容将作为自定义消息。"
-                .to_string(),
-        );
+        parts.push("请引用此消息回复：“确认”采用推荐选项，其他内容将作为自定义消息。".to_string());
     }
+    parts.join("\n\n")
+}
+
+fn truncate_decision_text(value: &str, max_chars: usize) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= max_chars {
+        return compact;
+    }
+    let mut truncated = compact
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
+fn weixin_decision_body(request: &BotNotificationRequest) -> String {
+    let title = request
+        .decision_title
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(request.title.trim());
+    let question = request
+        .decision_question
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(request.summary.trim());
+    let mut parts = vec![
+        truncate_decision_text(title, 120),
+        format!(
+            "终端：{}\n时间：{}",
+            request.terminal_name.trim(),
+            Utc::now().format("%Y-%m-%d %H:%M:%S")
+        ),
+    ];
+    if !question.trim().is_empty() {
+        parts.push(truncate_decision_text(question, 500));
+    }
+
+    let options = request.decision_options.as_deref().unwrap_or_default();
+    if options.is_empty() {
+        parts.push("请引用本消息回复“确认”采用推荐选项，其他内容将作为自定义消息。".to_string());
+        return parts.join("\n\n");
+    }
+
+    // 微信手机端会重排 Markdown 列表的缩进续行，选项统一输出为单行纯文本。
+    let option_lines = options
+        .iter()
+        .enumerate()
+        .map(|(index, option)| {
+            let mut flags = Vec::new();
+            if option.recommended {
+                flags.push("推荐");
+            }
+            if request.decision_multi_select && option.selected {
+                flags.push("已选");
+            }
+            let suffix = if flags.is_empty() {
+                String::new()
+            } else {
+                format!("（{}）", flags.join("、"))
+            };
+            let mut line = format!(
+                "{}. {}{}",
+                index + 1,
+                truncate_decision_text(&option.label, 120),
+                suffix
+            );
+            if let Some(description) = option
+                .description
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                line.push('：');
+                line.push_str(&truncate_decision_text(description, 180));
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    parts.push(option_lines);
+    parts.push(if request.decision_multi_select {
+        "请引用本消息回复选项编号，多个编号用逗号分隔（如 1,3）。".to_string()
+    } else {
+        "请引用本消息回复选项编号（如 2）；回复“确认”采用推荐选项。".to_string()
+    });
     parts.join("\n\n")
 }
 
@@ -407,9 +490,7 @@ async fn send_dingtalk(
         .and_then(|map| map.values().next())
         .and_then(Value::as_str)
         .map(str::to_string);
-    Ok(AdapterResult {
-        message_id,
-    })
+    Ok(AdapterResult { message_id })
 }
 
 async fn send_weixin(
@@ -420,18 +501,11 @@ async fn send_weixin(
 ) -> Result<AdapterResult, String> {
     let message_id = new_weixin_message_id();
     let content = if request.decision_id.is_some() {
-        append_weixin_reply_marker(body, &message_id)
+        append_weixin_reply_marker(&weixin_decision_body(request), &message_id)
     } else {
         body.to_string()
     };
-    send_weixin_text_with_id(
-        client,
-        channel,
-        &channel.target_id,
-        &content,
-        &message_id,
-    )
-    .await?;
+    send_weixin_text_with_id(client, channel, &channel.target_id, &content, &message_id).await?;
     Ok(AdapterResult {
         message_id: Some(message_id),
     })
@@ -476,9 +550,7 @@ async fn send_bridge(
         .get("messageId")
         .and_then(Value::as_str)
         .map(str::to_string);
-    Ok(AdapterResult {
-        message_id,
-    })
+    Ok(AdapterResult { message_id })
 }
 
 async fn dispatch_channel(
@@ -494,6 +566,10 @@ async fn dispatch_channel(
         "qq" | "bridge" => send_bridge(client, channel, request, body).await,
         other => Err(format!("不支持的机器人平台: {}", other)),
     }
+}
+
+fn is_mobile_bot_notification(kind: &str, decision_id: Option<&str>) -> bool {
+    kind == "completed" || decision_id.is_some()
 }
 
 #[tauri::command]
@@ -545,6 +621,9 @@ pub async fn send_bot_notification(
     if !settings.enabled {
         return Ok(Vec::new());
     }
+    if !is_mobile_bot_notification(&request.kind, request.decision_id.as_deref()) {
+        return Ok(Vec::new());
+    }
     let is_completion = request.kind == "completed";
     if (is_completion && !settings.send_completion_notifications)
         || (!is_completion && !settings.send_decision_notifications)
@@ -571,6 +650,38 @@ pub async fn send_bot_notification(
                         target_id: channel.target_id.clone(),
                         external_message_id: message_id.clone(),
                         custom_option_down_count: request.custom_option_down_count,
+                        option_move_counts: request
+                            .decision_options
+                            .as_deref()
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|option| option.move_count)
+                            .collect(),
+                        option_labels: request
+                            .decision_options
+                            .as_deref()
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|option| option.label.trim().to_string())
+                            .collect(),
+                        initial_selected_move_counts: request
+                            .decision_options
+                            .as_deref()
+                            .unwrap_or_default()
+                            .iter()
+                            .filter(|option| option.selected)
+                            .map(|option| option.move_count)
+                            .collect(),
+                        recommended_move_count: request
+                            .decision_options
+                            .as_deref()
+                            .unwrap_or_default()
+                            .iter()
+                            .find(|option| option.recommended)
+                            .map(|option| option.move_count),
+                        multi_select: request.decision_multi_select,
+                        submit_move_count: request.decision_submit_move_count,
+                        created_at: Utc::now().timestamp_millis(),
                         status: "pending".to_string(),
                         expires_at: (Utc::now()
                             + Duration::minutes(settings.decision_ttl_minutes as i64))
@@ -597,15 +708,8 @@ pub async fn send_bot_notification(
     Ok(reports)
 }
 
-#[tauri::command]
-pub async fn test_bot_channel(channel_id: String) -> Result<BotDeliveryReport, String> {
-    let settings = BotSettingsService::get_runtime()?;
-    let channel = settings
-        .channels
-        .iter()
-        .find(|channel| channel.id == channel_id)
-        .ok_or_else(|| "机器人通道不存在".to_string())?;
-    let request = BotNotificationRequest {
+fn bot_connection_test_request() -> BotNotificationRequest {
+    BotNotificationRequest {
         event_id: uuid::Uuid::new_v4().to_string(),
         decision_id: None,
         terminal_id: "test".to_string(),
@@ -619,7 +723,11 @@ pub async fn test_bot_channel(channel_id: String) -> Result<BotDeliveryReport, S
         decision_multi_select: false,
         decision_submit_move_count: None,
         custom_option_down_count: None,
-    };
+    }
+}
+
+async fn dispatch_connection_test(channel: &BotChannelConfig) -> Result<BotDeliveryReport, String> {
+    let request = bot_connection_test_request();
     let body = notification_body(&request);
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(20))
@@ -644,9 +752,23 @@ pub async fn test_bot_channel(channel_id: String) -> Result<BotDeliveryReport, S
 }
 
 #[tauri::command]
-pub async fn test_bot_decision_channel(
-    channel_id: String,
-) -> Result<BotDeliveryReport, String> {
+pub async fn test_bot_channel(channel_id: String) -> Result<BotDeliveryReport, String> {
+    let settings = BotSettingsService::get_runtime()?;
+    let channel = settings
+        .channels
+        .iter()
+        .find(|channel| channel.id == channel_id)
+        .ok_or_else(|| "机器人通道不存在".to_string())?;
+    dispatch_connection_test(channel).await
+}
+
+#[tauri::command]
+pub async fn verify_bot_channel(channel: BotChannelConfig) -> Result<BotDeliveryReport, String> {
+    dispatch_connection_test(&channel).await
+}
+
+#[tauri::command]
+pub async fn test_bot_decision_channel(channel_id: String) -> Result<BotDeliveryReport, String> {
     let settings = BotSettingsService::get_runtime()?;
     if !settings.enabled {
         return Err("请先启用机器人通知".to_string());
@@ -675,9 +797,7 @@ pub async fn test_bot_decision_channel(
         title: "TerminalBuddy 测试决策".to_string(),
         summary: "请选择一个测试选项。".to_string(),
         decision_title: Some("决策通知测试".to_string()),
-        decision_question: Some(
-            "请选择一个选项，用于验证飞书卡片、二次确认和长连接事件。".to_string(),
-        ),
+        decision_question: Some("请选择一个选项，用于验证机器人决策通知和回复事件。".to_string()),
         decision_options: Some(vec![
             BotDecisionOption {
                 label: "选项 A - 推荐方案".to_string(),
@@ -729,10 +849,41 @@ pub async fn test_bot_decision_channel(
                 target_id: channel.target_id.clone(),
                 external_message_id: message_id,
                 custom_option_down_count: Some(3),
+                option_move_counts: request
+                    .decision_options
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|option| option.move_count)
+                    .collect(),
+                option_labels: request
+                    .decision_options
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|option| option.label.trim().to_string())
+                    .collect(),
+                initial_selected_move_counts: request
+                    .decision_options
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|option| option.selected)
+                    .map(|option| option.move_count)
+                    .collect(),
+                recommended_move_count: request
+                    .decision_options
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .find(|option| option.recommended)
+                    .map(|option| option.move_count),
+                multi_select: request.decision_multi_select,
+                submit_move_count: request.decision_submit_move_count,
+                created_at: Utc::now().timestamp_millis(),
                 status: "pending".to_string(),
-                expires_at: (Utc::now()
-                    + Duration::minutes(settings.decision_ttl_minutes as i64))
-                .timestamp_millis(),
+                expires_at: (Utc::now() + Duration::minutes(settings.decision_ttl_minutes as i64))
+                    .timestamp_millis(),
             })?;
             Ok(BotDeliveryReport {
                 channel_id: channel.id.clone(),
@@ -782,6 +933,128 @@ fn is_recommended_reply(text: &str) -> bool {
         text.trim().to_lowercase().as_str(),
         "确认" | "推荐" | "回车" | "enter" | "ok"
     )
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ParsedDecisionReply {
+    Recommended(i16),
+    Single { number: usize, move_count: i16 },
+    Multi(Vec<(usize, i16)>),
+    Custom,
+}
+
+fn parse_decision_reply(
+    text: &str,
+    binding: &DecisionBinding,
+) -> Result<ParsedDecisionReply, String> {
+    if is_recommended_reply(text) {
+        return Ok(ParsedDecisionReply::Recommended(
+            binding.recommended_move_count.unwrap_or(0),
+        ));
+    }
+    if binding.option_move_counts.is_empty() {
+        return Ok(ParsedDecisionReply::Custom);
+    }
+
+    let trimmed = text.trim();
+    let is_separator = |character: char| {
+        character == ',' || character == '，' || character == '、' || character.is_whitespace()
+    };
+    if trimmed.is_empty()
+        || !trimmed
+            .chars()
+            .all(|character| character.is_ascii_digit() || is_separator(character))
+        || !trimmed.chars().any(|character| character.is_ascii_digit())
+    {
+        return Ok(ParsedDecisionReply::Custom);
+    }
+
+    let mut indexes = Vec::new();
+    let mut seen = HashSet::new();
+    for token in trimmed
+        .split(is_separator)
+        .filter(|value| !value.is_empty())
+    {
+        let number = token
+            .parse::<usize>()
+            .map_err(|_| "选项编号格式无效".to_string())?;
+        if number == 0 || number > binding.option_move_counts.len() {
+            return Err(format!(
+                "选项编号 {} 无效，请回复 1-{}",
+                number,
+                binding.option_move_counts.len()
+            ));
+        }
+        if seen.insert(number) {
+            indexes.push(number - 1);
+        }
+    }
+    if indexes.is_empty() {
+        return Err("请至少回复一个选项编号".to_string());
+    }
+    if !binding.multi_select && indexes.len() != 1 {
+        return Err("该决策只能选择一个选项".to_string());
+    }
+
+    let selections = indexes
+        .into_iter()
+        .map(|index| (index + 1, binding.option_move_counts[index]))
+        .collect::<Vec<_>>();
+    if binding.multi_select {
+        Ok(ParsedDecisionReply::Multi(selections))
+    } else {
+        Ok(ParsedDecisionReply::Single {
+            number: selections[0].0,
+            move_count: selections[0].1,
+        })
+    }
+}
+
+fn option_feedback(binding: &DecisionBinding, number: usize) -> String {
+    let label = binding
+        .option_labels
+        .get(number.saturating_sub(1))
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("未命名选项");
+    format!("{}：{}", number, label)
+}
+
+fn decision_reply_feedback(binding: &DecisionBinding, reply: &ParsedDecisionReply) -> String {
+    match reply {
+        ParsedDecisionReply::Recommended(move_count) => {
+            let number = binding
+                .option_move_counts
+                .iter()
+                .position(|value| value == move_count)
+                .map(|index| index + 1)
+                .unwrap_or(1);
+            format!("已采用推荐选项 {}", option_feedback(binding, number))
+        }
+        ParsedDecisionReply::Single { number, .. } => {
+            format!("您选择了 {}", option_feedback(binding, *number))
+        }
+        ParsedDecisionReply::Multi(selections) => {
+            let choices = selections
+                .iter()
+                .map(|(number, _)| option_feedback(binding, *number))
+                .collect::<Vec<_>>()
+                .join("；");
+            format!("您选择了 {}", choices)
+        }
+        ParsedDecisionReply::Custom => format!("已写入自定义消息：{}", binding.terminal_name),
+    }
+}
+
+fn single_select_input(move_count: i16) -> Result<String, String> {
+    if move_count.unsigned_abs() > 20 {
+        return Err("选项位置无效，请返回终端操作".to_string());
+    }
+    let arrow = if move_count >= 0 { "\x1b[B" } else { "\x1b[A" };
+    Ok(format!(
+        "{}\r",
+        arrow.repeat(move_count.unsigned_abs() as usize)
+    ))
 }
 
 fn validate_bot_sender(
@@ -926,10 +1199,8 @@ pub fn process_bot_multi_selection(
             .iter()
             .map(|value| usize::try_from(*value).map_err(|_| "多选项位置无效".to_string()))
             .collect::<Result<Vec<_>, _>>()?;
-        if crate::services::ClaudeHookService::answer_card(
-            &binding.decision_id,
-            &selected_indexes,
-        )? {
+        if crate::services::ClaudeHookService::answer_card(&binding.decision_id, &selected_indexes)?
+        {
             return Ok(());
         }
         let data = multi_select_input(
@@ -964,52 +1235,94 @@ pub fn process_bot_reply(
     inbound: &BridgeInboundMessage,
 ) -> Result<String, String> {
     validate_bot_sender(channel, &inbound.sender_id, &inbound.conversation_id)?;
-    let reply_to = inbound
-        .reply_to_message_id
-        .as_deref()
-        .ok_or_else(|| "请引用需要决策的机器人消息后再回复".to_string())?;
     let settings = BotSettingsService::get_runtime()?;
-    let use_recommended = is_recommended_reply(&inbound.text);
-    let binding = BotBindingService::consume_with(&channel.id, reply_to, |binding| {
-        let hook_reply = if use_recommended {
-            crate::services::ClaudeHookService::answer_card(&binding.decision_id, &[0])?
-        } else {
-            crate::services::ClaudeHookService::answer_card_text(
-                &binding.decision_id,
-                &inbound.text,
-            )?
-        };
-        if hook_reply {
-            return Ok(());
-        }
-        if binding.terminal_id == BOT_TEST_TERMINAL_ID {
-            return Ok(());
-        }
-        let exists = terminal_service
-            .instances
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .contains_key(&binding.terminal_id);
-        if !exists {
-            return Err("对应终端已经关闭".to_string());
-        }
-        let data = if use_recommended {
-            "\r".to_string()
-        } else {
-            let down_count = binding.custom_option_down_count.ok_or_else(|| {
-                "无法识别自定义输入选项，请回复“确认”采用推荐选项或返回终端操作"
-                    .to_string()
-            })?;
-            if down_count > 20 {
-                return Err("自定义输入选项位置无效，请返回终端操作".to_string());
+    let binding = BotBindingService::consume_reply_with(
+        &channel.id,
+        &inbound.sender_id,
+        &inbound.conversation_id,
+        inbound.reply_to_message_id.as_deref(),
+        |binding| {
+            let reply = parse_decision_reply(&inbound.text, binding)?;
+            let hook_reply = match &reply {
+                ParsedDecisionReply::Recommended(move_count)
+                | ParsedDecisionReply::Single { move_count, .. }
+                    if *move_count >= 0 =>
+                {
+                    crate::services::ClaudeHookService::answer_card(
+                        &binding.decision_id,
+                        &[*move_count as usize],
+                    )?
+                }
+                ParsedDecisionReply::Multi(selections)
+                    if selections.iter().all(|(_, move_count)| *move_count >= 0) =>
+                {
+                    let selected_indexes = selections
+                        .iter()
+                        .map(|(_, move_count)| *move_count as usize)
+                        .collect::<Vec<_>>();
+                    crate::services::ClaudeHookService::answer_card(
+                        &binding.decision_id,
+                        &selected_indexes,
+                    )?
+                }
+                ParsedDecisionReply::Custom => {
+                    crate::services::ClaudeHookService::answer_card_text(
+                        &binding.decision_id,
+                        &inbound.text,
+                    )?
+                }
+                _ => false,
+            };
+            if hook_reply {
+                return Ok(());
             }
-            let custom_reply = sanitize_reply(&inbound.text, settings.append_enter)?;
-            format!("{}\r{}", "\x1b[B".repeat(down_count as usize), custom_reply)
-        };
-        terminal_service.write_to_terminal(&binding.terminal_id, &data)
-    })?;
+            if binding.terminal_id == BOT_TEST_TERMINAL_ID {
+                return Ok(());
+            }
+            let exists = terminal_service
+                .instances
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .contains_key(&binding.terminal_id);
+            if !exists {
+                return Err("对应终端已经关闭".to_string());
+            }
+            let data = match reply {
+                ParsedDecisionReply::Recommended(move_count)
+                | ParsedDecisionReply::Single { move_count, .. } => {
+                    single_select_input(move_count)?
+                }
+                ParsedDecisionReply::Multi(selections) => {
+                    let move_counts = selections
+                        .iter()
+                        .map(|(_, move_count)| *move_count)
+                        .collect::<Vec<_>>();
+                    multi_select_input(
+                        &move_counts,
+                        &binding.initial_selected_move_counts,
+                        binding
+                            .submit_move_count
+                            .ok_or_else(|| "多选决策缺少提交位置，请返回终端操作".to_string())?,
+                    )?
+                }
+                ParsedDecisionReply::Custom => {
+                    let down_count = binding.custom_option_down_count.ok_or_else(|| {
+                        "无法识别自定义输入选项，请回复编号、回复“确认”或返回终端操作".to_string()
+                    })?;
+                    if down_count > 20 {
+                        return Err("自定义输入选项位置无效，请返回终端操作".to_string());
+                    }
+                    let custom_reply = sanitize_reply(&inbound.text, settings.append_enter)?;
+                    format!("{}\r{}", "\x1b[B".repeat(down_count as usize), custom_reply)
+                }
+            };
+            terminal_service.write_to_terminal(&binding.terminal_id, &data)
+        },
+    )?;
+    let reply = parse_decision_reply(&inbound.text, &binding)?;
+    let feedback = decision_reply_feedback(&binding, &reply);
     if binding.terminal_id == BOT_TEST_TERMINAL_ID {
-        return Ok("测试决策回复成功".to_string());
+        return Ok(feedback);
     }
     emit_bot_reply_forwarded(
         app,
@@ -1018,12 +1331,7 @@ pub fn process_bot_reply(
         &inbound.sender_id,
         &inbound.message_id,
     );
-    let action = if use_recommended {
-        "已采用推荐选项"
-    } else {
-        "已写入自定义消息"
-    };
-    Ok(format!("{}：{}", action, binding.terminal_name))
+    Ok(feedback)
 }
 
 #[tauri::command]
@@ -1038,11 +1346,43 @@ pub async fn bot_scan_poll(begin: ScanBeginResult) -> Result<ScanPollResult, Str
 
 #[cfg(test)]
 mod tests {
-    use super::multi_select_input;
+    use super::{
+        decision_reply_feedback, multi_select_input, parse_decision_reply, weixin_decision_body,
+        ParsedDecisionReply,
+    };
+    use crate::models::{BotDecisionOption, BotNotificationRequest, DecisionBinding};
+
+    fn decision_binding(multi_select: bool) -> DecisionBinding {
+        DecisionBinding {
+            decision_id: "decision".to_string(),
+            terminal_id: "terminal".to_string(),
+            terminal_name: "测试终端".to_string(),
+            channel_id: "channel".to_string(),
+            target_id: "target".to_string(),
+            external_message_id: "message".to_string(),
+            custom_option_down_count: Some(3),
+            option_move_counts: vec![0, 2, 1],
+            option_labels: vec![
+                "允许执行".to_string(),
+                "拒绝".to_string(),
+                "返回终端".to_string(),
+            ],
+            initial_selected_move_counts: vec![0],
+            recommended_move_count: Some(0),
+            multi_select,
+            submit_move_count: Some(3),
+            created_at: 0,
+            status: "pending".to_string(),
+            expires_at: i64::MAX,
+        }
+    }
 
     #[test]
     fn multi_select_keeps_default_and_submits() {
-        assert_eq!(multi_select_input(&[0], &[0], 3).unwrap(), "\x1b[B\x1b[B\x1b[B\r");
+        assert_eq!(
+            multi_select_input(&[0], &[0], 3).unwrap(),
+            "\x1b[B\x1b[B\x1b[B\r"
+        );
     }
 
     #[test]
@@ -1064,5 +1404,89 @@ mod tests {
     #[test]
     fn multi_select_rejects_out_of_range_positions() {
         assert!(multi_select_input(&[21], &[], 3).is_err());
+    }
+
+    #[test]
+    fn numbered_reply_maps_to_original_move_count() {
+        assert_eq!(
+            parse_decision_reply("2", &decision_binding(false)).unwrap(),
+            ParsedDecisionReply::Single {
+                number: 2,
+                move_count: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn numbered_multi_reply_accepts_chinese_separator() {
+        assert_eq!(
+            parse_decision_reply("1，3", &decision_binding(true)).unwrap(),
+            ParsedDecisionReply::Multi(vec![(1, 0), (3, 1)])
+        );
+    }
+
+    #[test]
+    fn numbered_reply_rejects_out_of_range_option() {
+        assert!(parse_decision_reply("4", &decision_binding(false)).is_err());
+    }
+
+    #[test]
+    fn mobile_bot_only_accepts_decisions_and_completions() {
+        assert!(!super::is_mobile_bot_notification("confirmation", None));
+        assert!(!super::is_mobile_bot_notification("question", None));
+        assert!(super::is_mobile_bot_notification(
+            "question",
+            Some("decision")
+        ));
+        assert!(super::is_mobile_bot_notification("completed", None));
+    }
+
+    #[test]
+    fn single_reply_feedback_contains_number_and_label() {
+        let binding = decision_binding(false);
+        let reply = parse_decision_reply("1", &binding).unwrap();
+        assert_eq!(
+            decision_reply_feedback(&binding, &reply),
+            "您选择了 1：允许执行"
+        );
+    }
+
+    #[test]
+    fn weixin_decision_body_contains_numbered_options() {
+        let request = BotNotificationRequest {
+            event_id: "event".to_string(),
+            decision_id: Some("decision".to_string()),
+            terminal_id: "terminal".to_string(),
+            terminal_name: "测试终端".to_string(),
+            kind: "question".to_string(),
+            title: "需要确认".to_string(),
+            summary: "请选择处理方式".to_string(),
+            decision_title: Some("执行命令".to_string()),
+            decision_question: Some("是否允许执行？".to_string()),
+            decision_options: Some(vec![
+                BotDecisionOption {
+                    label: "允许执行".to_string(),
+                    description: Some("继续运行命令".to_string()),
+                    move_count: 0,
+                    recommended: true,
+                    selected: false,
+                },
+                BotDecisionOption {
+                    label: "拒绝".to_string(),
+                    description: None,
+                    move_count: 1,
+                    recommended: false,
+                    selected: false,
+                },
+            ]),
+            decision_multi_select: false,
+            decision_submit_move_count: None,
+            custom_option_down_count: Some(2),
+        };
+        let body = weixin_decision_body(&request);
+        assert!(body.contains("1. 允许执行（推荐）：继续运行命令\n2. 拒绝"));
+        assert!(!body.contains('#'));
+        assert!(!body.contains("**"));
+        assert!(body.contains("回复选项编号"));
     }
 }

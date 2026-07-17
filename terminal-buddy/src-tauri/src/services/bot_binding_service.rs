@@ -5,9 +5,53 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+const DECISION_BATCH_WINDOW_MS: u64 = 10_000;
+
 fn binding_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn binding_created_at(binding: &DecisionBinding) -> i64 {
+    if binding.created_at > 0 {
+        binding.created_at
+    } else {
+        // Older persisted bindings did not store createdAt. Their shared TTL keeps
+        // expiresAt in the same relative order, so it remains a usable fallback.
+        binding.expires_at
+    }
+}
+
+fn select_reply_binding_index(
+    bindings: &[DecisionBinding],
+    channel_id: &str,
+    sender_id: &str,
+    conversation_id: &str,
+    reply_to_message_id: Option<&str>,
+) -> Option<usize> {
+    let exact = reply_to_message_id.and_then(|message_id| {
+        bindings.iter().rposition(|binding| {
+            binding.channel_id == channel_id && binding.external_message_id == message_id
+        })
+    });
+    exact.or_else(|| {
+        let matches_reply = |binding: &DecisionBinding| {
+            binding.channel_id == channel_id
+                && (binding.target_id == sender_id || binding.target_id == conversation_id)
+                && binding.status == "pending"
+        };
+        let latest_index = bindings.iter().rposition(matches_reply)?;
+        let latest_created_at = binding_created_at(&bindings[latest_index]);
+        bindings
+            .iter()
+            .enumerate()
+            .find(|(_, binding)| {
+                matches_reply(binding)
+                    && binding_created_at(binding).abs_diff(latest_created_at)
+                        <= DECISION_BATCH_WINDOW_MS
+            })
+            .map(|(index, _)| index)
+    })
 }
 
 pub struct BotBindingService;
@@ -51,13 +95,10 @@ impl BotBindingService {
             .unwrap_or_else(|error| error.into_inner());
         let mut bindings = Self::read();
         Self::prune(&mut bindings);
-        if bindings
-            .iter()
-            .any(|item| {
-                item.decision_id == binding.decision_id
-                    && !matches!(item.status.as_str(), "pending" | "processing")
-            })
-        {
+        if bindings.iter().any(|item| {
+            item.decision_id == binding.decision_id
+                && !matches!(item.status.as_str(), "pending" | "processing")
+        }) {
             return Ok(());
         }
         bindings.retain(|item| {
@@ -94,6 +135,13 @@ impl BotBindingService {
                 target_id: String::new(),
                 external_message_id: String::new(),
                 custom_option_down_count: None,
+                option_move_counts: Vec::new(),
+                option_labels: Vec::new(),
+                initial_selected_move_counts: Vec::new(),
+                recommended_move_count: None,
+                multi_select: false,
+                submit_move_count: None,
+                created_at: Utc::now().timestamp_millis(),
                 status: "cancelled".to_string(),
                 expires_at: Utc::now().timestamp_millis() + 24 * 60 * 60 * 1_000,
             });
@@ -105,13 +153,14 @@ impl BotBindingService {
         Ok(())
     }
 
-    pub fn consume_with<F>(
-        channel_id: &str,
-        external_message_id: &str,
+    fn consume_selected_with<F, S>(
+        select: S,
+        not_found_message: &str,
         write: F,
     ) -> Result<DecisionBinding, String>
     where
         F: FnOnce(&DecisionBinding) -> Result<(), String>,
+        S: FnOnce(&[DecisionBinding]) -> Option<usize>,
     {
         let binding = {
             let _guard = binding_lock()
@@ -119,13 +168,7 @@ impl BotBindingService {
                 .unwrap_or_else(|error| error.into_inner());
             let mut bindings = Self::read();
             Self::prune(&mut bindings);
-            let index = bindings
-                .iter()
-                .position(|binding| {
-                    binding.channel_id == channel_id
-                        && binding.external_message_id == external_message_id
-                })
-                .ok_or_else(|| "未找到被引用的待决策消息".to_string())?;
+            let index = select(&bindings).ok_or_else(|| not_found_message.to_string())?;
             let binding = bindings[index].clone();
             match binding.status.as_str() {
                 "pending" => {}
@@ -162,8 +205,8 @@ impl BotBindingService {
             }
             Err(_) => {
                 if let Some(item) = bindings.iter_mut().find(|item| {
-                    item.channel_id == channel_id
-                        && item.external_message_id == external_message_id
+                    item.channel_id == binding.channel_id
+                        && item.external_message_id == binding.external_message_id
                         && item.status == "processing"
                 }) {
                     item.status = "pending".to_string();
@@ -173,5 +216,130 @@ impl BotBindingService {
         Self::write(&bindings)?;
         result?;
         Ok(binding)
+    }
+
+    pub fn consume_with<F>(
+        channel_id: &str,
+        external_message_id: &str,
+        write: F,
+    ) -> Result<DecisionBinding, String>
+    where
+        F: FnOnce(&DecisionBinding) -> Result<(), String>,
+    {
+        Self::consume_selected_with(
+            |bindings| {
+                bindings.iter().position(|binding| {
+                    binding.channel_id == channel_id
+                        && binding.external_message_id == external_message_id
+                })
+            },
+            "未找到被引用的待决策消息",
+            write,
+        )
+    }
+
+    pub fn consume_reply_with<F>(
+        channel_id: &str,
+        sender_id: &str,
+        conversation_id: &str,
+        reply_to_message_id: Option<&str>,
+        write: F,
+    ) -> Result<DecisionBinding, String>
+    where
+        F: FnOnce(&DecisionBinding) -> Result<(), String>,
+    {
+        Self::consume_selected_with(
+            |bindings| {
+                select_reply_binding_index(
+                    bindings,
+                    channel_id,
+                    sender_id,
+                    conversation_id,
+                    reply_to_message_id,
+                )
+            },
+            "当前没有可回复的待决策消息",
+            write,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_reply_binding_index;
+    use crate::models::DecisionBinding;
+
+    fn binding_at(
+        message_id: &str,
+        target_id: &str,
+        status: &str,
+        created_at: i64,
+    ) -> DecisionBinding {
+        DecisionBinding {
+            decision_id: format!("decision-{}", message_id),
+            terminal_id: "terminal".to_string(),
+            terminal_name: "终端".to_string(),
+            channel_id: "weixin".to_string(),
+            target_id: target_id.to_string(),
+            external_message_id: message_id.to_string(),
+            custom_option_down_count: None,
+            option_move_counts: vec![0, 1],
+            option_labels: vec!["一".to_string(), "二".to_string()],
+            initial_selected_move_counts: Vec::new(),
+            recommended_move_count: Some(0),
+            multi_select: false,
+            submit_move_count: None,
+            created_at,
+            status: status.to_string(),
+            expires_at: i64::MAX,
+        }
+    }
+
+    #[test]
+    fn direct_reply_selects_latest_pending_binding() {
+        let bindings = vec![
+            binding_at("first", "user", "pending", 1_000),
+            binding_at("second", "user", "pending", 12_000),
+        ];
+        assert_eq!(
+            select_reply_binding_index(&bindings, "weixin", "user", "user", None),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn ten_second_batch_processes_bindings_in_event_order() {
+        let bindings = vec![
+            binding_at("first", "user", "pending", 1_000),
+            binding_at("second", "user", "pending", 11_000),
+        ];
+        assert_eq!(
+            select_reply_binding_index(&bindings, "weixin", "user", "user", None),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn ten_second_batch_advances_after_first_binding_is_consumed() {
+        let bindings = vec![
+            binding_at("first", "user", "consumed", 1_000),
+            binding_at("second", "user", "pending", 11_000),
+        ];
+        assert_eq!(
+            select_reply_binding_index(&bindings, "weixin", "user", "user", None),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn unknown_mobile_quote_falls_back_to_latest_pending_binding() {
+        let bindings = vec![
+            binding_at("first-client-id", "user", "pending", 1_000),
+            binding_at("second-client-id", "user", "pending", 12_000),
+        ];
+        assert_eq!(
+            select_reply_binding_index(&bindings, "weixin", "user", "user", Some("server-msg-id"),),
+            Some(1)
+        );
     }
 }
