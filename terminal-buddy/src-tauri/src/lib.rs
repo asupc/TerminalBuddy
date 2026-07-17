@@ -200,9 +200,9 @@ pub fn run() {
                     .map_err(std::io::Error::other)?;
                 boot_log("HTTP server task spawned");
             }
-            crate::services::sync_feishu_long_connections(app.handle().clone())
+            crate::services::sync_bot_long_connections(app.handle().clone())
                 .map_err(std::io::Error::other)?;
-            boot_log("Feishu long-connection tasks synchronized");
+            boot_log("Bot long-connection tasks synchronized");
 
             match crate::services::repair_claude_http_hooks_if_managed(None) {
                 Ok(status) => boot_log(format!("Claude hooks status: {}", status.status)),

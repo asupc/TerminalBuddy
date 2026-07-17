@@ -15,7 +15,7 @@ import { getAppSettings } from '../utils/settings';
 import { bootLog } from '../utils/bootLog';
 import { useAppStore } from '../stores/appStore';
 import { getTerminalSuggestions, type SuggestionItem } from '../data/commandTemplates';
-import type { TerminalColors } from '../utils/terminalTheme';
+import { isLightBackground, type TerminalColors } from '../utils/terminalTheme';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
@@ -26,6 +26,9 @@ const BASE_FONT_SIZE = 14;
 const FLOATING_MENU_MARGIN = 8;
 const RIGHT_CLICK_PASTE_DEDUPE_MS = 750;
 const RIGHT_CLICK_NATIVE_PASTE_SUPPRESS_MS = 1200;
+const CODEX_INPUT_BACKGROUND_LIGHT = '48;2;244;244;244';
+const CODEX_INPUT_BACKGROUND_DARK = '48;2;57;57;57';
+const CODEX_INPUT_BACKGROUND_FALLBACK_DARK = '48;2;41;41;41';
 // 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
 // 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
 const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
@@ -33,6 +36,53 @@ const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
   '2x1': 12,
   '2x2': 11,
 };
+
+function adaptCodexInputBackground(data: string, lightBackground: boolean): string {
+  if (lightBackground) {
+    return data
+      .split(CODEX_INPUT_BACKGROUND_DARK).join(CODEX_INPUT_BACKGROUND_LIGHT)
+      .split(CODEX_INPUT_BACKGROUND_FALLBACK_DARK).join(CODEX_INPUT_BACKGROUND_LIGHT);
+  }
+  return data.split(CODEX_INPUT_BACKGROUND_LIGHT).join(CODEX_INPUT_BACKGROUND_DARK);
+}
+
+function recolorCodexInputBuffer(term: Terminal, lightBackground: boolean): void {
+  const light = 0xf4f4f4;
+  const dark = 0x393939;
+  const fallbackDark = 0x292929;
+  const buffer = term.buffer.active;
+  const reusableCell = buffer.getNullCell();
+  let changed = false;
+
+  // xterm's public buffer API intentionally exposes cells as read-only. The returned
+  // cell and line view still wrap mutable xterm data, so update only exact Codex input
+  // background matches and leave all characters and other attributes untouched.
+  for (let y = buffer.viewportY; y < Math.min(buffer.length, buffer.viewportY + term.rows); y++) {
+    const line = buffer.getLine(y);
+    const mutableLine = (line as unknown as {
+      _line?: { setCell: (index: number, cell: unknown) => void };
+    } | undefined)?._line;
+    if (!line || !mutableLine) continue;
+
+    for (let x = 0; x < Math.min(line.length, term.cols); x++) {
+      const cell = line.getCell(x, reusableCell);
+      if (!cell?.isBgRGB()) continue;
+
+      const current = cell.getBgColor();
+      const replacement = lightBackground
+        ? (current === dark || current === fallbackDark ? light : null)
+        : (current === light ? dark : null);
+      if (replacement === null) continue;
+
+      const mutableCell = cell as unknown as { bg: number };
+      mutableCell.bg = (mutableCell.bg & ~0xffffff) | replacement;
+      mutableLine.setCell(x, mutableCell);
+      changed = true;
+    }
+  }
+
+  if (changed && term.rows > 0) term.refresh(0, term.rows - 1);
+}
 
 interface TerminalInstanceProps {
   terminalId: string;
@@ -585,6 +635,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const autocompletePopupRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const colorThemeRef = useRef(colorTheme);
+  const codexTuiRef = useRef(false);
   const rightClickPasteRef = useRef<RightClickPasteState>({
     inFlight: false,
     suppressNativePasteUntil: 0,
@@ -698,6 +749,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const term = xtermRef.current;
     if (term) {
       applyXtermTheme(term);
+      if (codexTuiRef.current) {
+        const lightBackground = !!colorTheme?.lightOptimized
+          || isLightBackground(colorTheme?.background || '#1e1e1e');
+        recolorCodexInputBuffer(term, lightBackground);
+      }
     }
   }, [colorTheme, applyXtermTheme]);
 
@@ -802,8 +858,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         return;
       }
 
+      const currentTheme = colorThemeRef.current;
+      const lightBackground = !!currentTheme?.lightOptimized
+        || isLightBackground(currentTheme?.background || '#1e1e1e');
+      const renderedOutput = codexTuiRef.current
+        ? adaptCodexInputBackground(output, lightBackground)
+        : output;
+
       const messageId = ++latestWriteDataRef.current;
-      term.write(output, () => {
+      term.write(renderedOutput, () => {
         latestParseDataRef.current = messageId;
         if (!allowsTerminalAutocomplete(term)) {
           clearAutocomplete();
@@ -820,6 +883,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
+      if (!codexTuiRef.current && /OpenAI Codex|codex-cli/.test(output)) {
+        codexTuiRef.current = true;
+      }
       writeTerminalOutput(output);
 
       // Working state: reset debounce on each output, check xterm buffer for prompt

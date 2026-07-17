@@ -4,8 +4,9 @@ use crate::models::{
     BridgeInboundMessage, DecisionBinding,
 };
 use crate::services::{
-    begin_scan, get_feishu_long_connection_status, install_claude_http_hooks, poll_scan,
-    sync_feishu_long_connections, BotBindingService, BotSettingsService, ScanBeginResult,
+    append_weixin_reply_marker, begin_scan, get_bot_long_connection_statuses,
+    install_claude_http_hooks, new_weixin_message_id, poll_scan, send_weixin_text_with_id,
+    sync_bot_long_connections, BotBindingService, BotSettingsService, ScanBeginResult,
     ScanPollResult,
 };
 use chrono::{Duration, Utc};
@@ -411,6 +412,31 @@ async fn send_dingtalk(
     })
 }
 
+async fn send_weixin(
+    client: &Client,
+    channel: &BotChannelConfig,
+    request: &BotNotificationRequest,
+    body: &str,
+) -> Result<AdapterResult, String> {
+    let message_id = new_weixin_message_id();
+    let content = if request.decision_id.is_some() {
+        append_weixin_reply_marker(body, &message_id)
+    } else {
+        body.to_string()
+    };
+    send_weixin_text_with_id(
+        client,
+        channel,
+        &channel.target_id,
+        &content,
+        &message_id,
+    )
+    .await?;
+    Ok(AdapterResult {
+        message_id: Some(message_id),
+    })
+}
+
 async fn send_bridge(
     client: &Client,
     channel: &BotChannelConfig,
@@ -464,6 +490,7 @@ async fn dispatch_channel(
     match channel.platform.as_str() {
         "feishu" => send_feishu(client, channel, request, body).await,
         "dingtalk" => send_dingtalk(client, channel, body).await,
+        "weixin" => send_weixin(client, channel, request, body).await,
         "qq" | "bridge" => send_bridge(client, channel, request, body).await,
         other => Err(format!("不支持的机器人平台: {}", other)),
     }
@@ -476,7 +503,7 @@ pub fn get_bot_settings() -> BotSettings {
 
 #[tauri::command]
 pub fn get_bot_long_connection_status() -> Vec<crate::models::BotLongConnectionStatus> {
-    get_feishu_long_connection_status()
+    get_bot_long_connection_statuses()
 }
 
 #[tauri::command]
@@ -505,7 +532,7 @@ pub async fn save_bot_settings(
         })?;
     }
     let saved = BotSettingsService::save(settings)?;
-    sync_feishu_long_connections(app.clone())?;
+    sync_bot_long_connections(app.clone())?;
     crate::commands::web::sync_http_server_for_bot(app)?;
     Ok(saved)
 }
@@ -629,11 +656,11 @@ pub async fn test_bot_decision_channel(
         .iter()
         .find(|channel| channel.id == channel_id)
         .ok_or_else(|| "机器人通道不存在".to_string())?;
-    if channel.platform != "feishu" {
-        return Err("测试决策卡片目前仅支持飞书通道".to_string());
+    if !matches!(channel.platform.as_str(), "feishu" | "weixin") {
+        return Err("测试决策目前仅支持飞书和微信通道".to_string());
     }
     if !channel.enabled {
-        return Err("请先启用飞书通道".to_string());
+        return Err("请先启用该机器人通道".to_string());
     }
     if channel.allowed_user_ids.is_empty() {
         return Err("请先配置允许操作卡片的用户 ID".to_string());
@@ -691,7 +718,7 @@ pub async fn test_bot_decision_channel(
                     channel_name: channel.name.clone(),
                     success: false,
                     message_id: None,
-                    error: Some("飞书响应缺少消息标识".to_string()),
+                    error: Some("机器人响应缺少消息标识".to_string()),
                 });
             };
             BotBindingService::add(DecisionBinding {

@@ -597,23 +597,18 @@ fn backup_and_write_settings(path: &Path, root: &serde_json::Value) -> Result<()
         .map_err(|error| format!("保存 Claude 设置失败: {}", error))
 }
 
-fn hook_client_command() -> Result<String, String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("获取 TerminalBuddy 程序路径失败: {}", error))?;
-    let escaped = executable.to_string_lossy().replace('\'', "''");
-    Ok(format!(
-        "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '{}' {}\"",
-        escaped, CLAUDE_HOOK_CLIENT_ARG
-    ))
-}
-
-fn hook_handler(definition: HookDefinition) -> Result<serde_json::Value, String> {
-    Ok(serde_json::json!({
-        "type": "command",
-        "command": hook_client_command()?,
+fn hook_handler(definition: HookDefinition) -> serde_json::Value {
+    serde_json::json!({
+        "type": "http",
+        "url": CLAUDE_HOOK_URL,
+        "headers": {
+            "Authorization": "Bearer ${TERMINAL_BUDDY_HOOK_TOKEN}",
+            "X-TerminalBuddy-Terminal-Id": "${TERMINAL_BUDDY_TERMINAL_ID}"
+        },
+        "allowedEnvVars": ["TERMINAL_BUDDY_HOOK_TOKEN", "TERMINAL_BUDDY_TERMINAL_ID"],
         "timeout": 90000,
         "statusMessage": definition.status_message
-    }))
+    })
 }
 
 fn matcher_matches(group: &serde_json::Value, matcher: Option<&str>) -> bool {
@@ -632,9 +627,7 @@ fn is_managed_handler(value: &serde_json::Value) -> bool {
 }
 
 fn hook_registered(root: &serde_json::Value, definition: HookDefinition) -> bool {
-    let Ok(expected) = hook_handler(definition) else {
-        return false;
-    };
+    let expected = hook_handler(definition);
     root.pointer(&format!("/hooks/{}", definition.event))
         .and_then(serde_json::Value::as_array)
         .is_some_and(|groups| {
@@ -789,7 +782,7 @@ fn ensure_hook(root: &mut serde_json::Value, definition: HookDefinition) -> Resu
         .or_insert_with(|| serde_json::json!([]))
         .as_array_mut()
         .ok_or_else(|| format!("Claude {} hooks 设置不是数组", definition.event))?;
-    let handler = hook_handler(definition)?;
+    let handler = hook_handler(definition);
     let mut changed = false;
     let mut found = false;
     for group in groups.iter_mut() {
@@ -878,8 +871,8 @@ fn remove_managed_hooks(root: &mut serde_json::Value) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        card_decision_id, ensure_hook, normalize_claude_config_dir, parse_card_decision_id,
-        remove_managed_hooks,
+        card_decision_id, ensure_hook, hook_handler, normalize_claude_config_dir,
+        parse_card_decision_id, remove_managed_hooks,
         ClaudeHookOption, ClaudeHookQuestion, ClaudeHookResolution, ClaudeHookService,
         HookDefinition, CLAUDE_HOOK_CLIENT_ARG, CLAUDE_HOOK_URL, HOOK_DEFINITIONS,
     };
@@ -897,6 +890,41 @@ mod tests {
     fn card_decision_id_round_trip() {
         let value = card_decision_id("session:tool", 2);
         assert_eq!(parse_card_decision_id(&value), Some(("session:tool", 2)));
+    }
+
+    #[test]
+    fn all_hook_definitions_generate_authenticated_http_handlers() {
+        for definition in HOOK_DEFINITIONS {
+            let handler = hook_handler(*definition);
+            assert_eq!(
+                handler.get("type").and_then(|value| value.as_str()),
+                Some("http")
+            );
+            assert_eq!(
+                handler.get("url").and_then(|value| value.as_str()),
+                Some(CLAUDE_HOOK_URL)
+            );
+            assert!(handler.get("command").is_none());
+            assert_eq!(
+                handler
+                    .pointer("/headers/Authorization")
+                    .and_then(|value| value.as_str()),
+                Some("Bearer ${TERMINAL_BUDDY_HOOK_TOKEN}")
+            );
+            assert_eq!(
+                handler
+                    .pointer("/headers/X-TerminalBuddy-Terminal-Id")
+                    .and_then(|value| value.as_str()),
+                Some("${TERMINAL_BUDDY_TERMINAL_ID}")
+            );
+            assert_eq!(
+                handler
+                    .get("allowedEnvVars")
+                    .and_then(|value| value.as_array())
+                    .map(Vec::len),
+                Some(2)
+            );
+        }
     }
 
     #[test]
@@ -925,11 +953,11 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("existing")
         );
-        assert!(
+        assert_eq!(
             pre_tool_use[1]
-                .pointer("/hooks/0/command")
-                .and_then(|value| value.as_str())
-                .is_some_and(|command| command.contains(CLAUDE_HOOK_CLIENT_ARG))
+                .pointer("/hooks/0/url")
+                .and_then(|value| value.as_str()),
+            Some(CLAUDE_HOOK_URL)
         );
         assert_eq!(
             root.pointer("/hooks/Stop/0/hooks/0/timeout")
@@ -960,11 +988,55 @@ mod tests {
             groups[1].get("matcher").and_then(|value| value.as_str()),
             Some("AskUserQuestion")
         );
-        assert!(
+        assert_eq!(
             groups[1]
-                .pointer("/hooks/0/command")
-                .and_then(|value| value.as_str())
-                .is_some_and(|command| command.contains(CLAUDE_HOOK_CLIENT_ARG))
+                .pointer("/hooks/0/url")
+                .and_then(|value| value.as_str()),
+            Some(CLAUDE_HOOK_URL)
+        );
+    }
+
+    #[test]
+    fn hook_installation_migrates_legacy_command_hooks_to_http() {
+        let legacy_command = format!("terminal-buddy.exe {}", CLAUDE_HOOK_CLIENT_ARG);
+        let mut root = json!({
+            "hooks": {
+                "Stop": [{
+                    "hooks": [
+                        { "type": "command", "command": legacy_command },
+                        {
+                            "type": "http",
+                            "url": CLAUDE_HOOK_URL,
+                            "headers": {}
+                        }
+                    ]
+                }]
+            }
+        });
+
+        assert!(ensure_hook(&mut root, definition("completion")).unwrap());
+        assert!(!ensure_hook(&mut root, definition("completion")).unwrap());
+
+        let handlers = root
+            .pointer("/hooks/Stop/0/hooks")
+            .and_then(|value| value.as_array())
+            .unwrap();
+        assert_eq!(handlers.len(), 1);
+        assert_eq!(
+            handlers[0].get("type").and_then(|value| value.as_str()),
+            Some("http")
+        );
+        assert_eq!(
+            handlers[0]
+                .pointer("/headers/Authorization")
+                .and_then(|value| value.as_str()),
+            Some("Bearer ${TERMINAL_BUDDY_HOOK_TOKEN}")
+        );
+        assert_eq!(
+            handlers[0]
+                .pointer("/allowedEnvVars/1")
+                .and_then(|value| value.as_str()),
+            Some("TERMINAL_BUDDY_TERMINAL_ID")
         );
     }
 
