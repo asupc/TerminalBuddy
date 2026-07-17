@@ -6,23 +6,11 @@ use crate::services::{ClaudeHookService, CLAUDE_HOOK_PORT};
 use crate::web::handlers::claude_hook_handler;
 
 pub fn bind() -> Result<std::net::TcpListener, String> {
-    let preferred_address = SocketAddr::from(([127, 0, 0, 1], CLAUDE_HOOK_PORT));
-    let listener = match std::net::TcpListener::bind(preferred_address) {
-        Ok(listener) => listener,
-        Err(error) => {
-            eprintln!(
-                "[ClaudeHook] 首选端口绑定失败 {}: {}，尝试随机端口",
-                preferred_address, error
-            );
-            match std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))) {
-                Ok(listener) => listener,
-                Err(error) => {
-                    ClaudeHookService::set_server_state(false, 0);
-                    return Err(format!("Claude Hook 本机服务绑定失败: {}", error));
-                }
-            }
-        }
-    };
+    let address = SocketAddr::from(([127, 0, 0, 1], CLAUDE_HOOK_PORT));
+    let listener = std::net::TcpListener::bind(address).map_err(|error| {
+        ClaudeHookService::set_server_state(false, 0);
+        format!("Claude Hook 本机服务绑定失败 {}: {}", address, error)
+    })?;
     listener
         .set_nonblocking(true)
         .map_err(|error| format!("Claude Hook listener 配置失败: {}", error))?;
