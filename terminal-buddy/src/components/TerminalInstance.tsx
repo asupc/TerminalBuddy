@@ -15,7 +15,7 @@ import { getAppSettings } from '../utils/settings';
 import { bootLog } from '../utils/bootLog';
 import { useAppStore } from '../stores/appStore';
 import { getTerminalSuggestions, type SuggestionItem } from '../data/commandTemplates';
-import type { TerminalColors } from '../utils/terminalTheme';
+import { isLightBackground, type TerminalColors } from '../utils/terminalTheme';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../utils/terminalResizeEvent';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
@@ -26,6 +26,9 @@ const BASE_FONT_SIZE = 14;
 const FLOATING_MENU_MARGIN = 8;
 const RIGHT_CLICK_PASTE_DEDUPE_MS = 750;
 const RIGHT_CLICK_NATIVE_PASTE_SUPPRESS_MS = 1200;
+const CODEX_INPUT_BACKGROUND_LIGHT = '48;2;244;244;244';
+const CODEX_INPUT_BACKGROUND_DARK = '48;2;57;57;57';
+const CODEX_INPUT_BACKGROUND_FALLBACK_DARK = '48;2;41;41;41';
 // 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
 // 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
 const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
@@ -33,6 +36,27 @@ const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
   '2x1': 12,
   '2x2': 11,
 };
+
+function adaptCodexInputBackground(data: string, lightBackground: boolean): string {
+  if (lightBackground) {
+    return data
+      .split(CODEX_INPUT_BACKGROUND_DARK).join(CODEX_INPUT_BACKGROUND_LIGHT)
+      .split(CODEX_INPUT_BACKGROUND_FALLBACK_DARK).join(CODEX_INPUT_BACKGROUND_LIGHT);
+  }
+  return data.split(CODEX_INPUT_BACKGROUND_LIGHT).join(CODEX_INPUT_BACKGROUND_DARK);
+}
+
+function toOscRgb(hex: string, fallback: string): string {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!match) return fallback;
+  return `rgb:${match[1]}${match[1]}/${match[2]}${match[2]}/${match[3]}${match[3]}`;
+}
+
+function createTerminalColorReport(theme: TerminalColors | undefined): string {
+  const foreground = toOscRgb(theme?.foreground || '#cccccc', 'rgb:cccc/cccc/cccc');
+  const background = toOscRgb(theme?.background || '#1e1e1e', 'rgb:1e1e/1e1e/1e1e');
+  return `\x1b]10;${foreground}\x1b\\\x1b]11;${background}\x1b\\`;
+}
 
 interface TerminalInstanceProps {
   terminalId: string;
@@ -585,6 +609,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const autocompletePopupRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
   const colorThemeRef = useRef(colorTheme);
+  const codexTuiRef = useRef(false);
   const rightClickPasteRef = useRef<RightClickPasteState>({
     inFlight: false,
     suppressNativePasteUntil: 0,
@@ -698,8 +723,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const term = xtermRef.current;
     if (term) {
       applyXtermTheme(term);
+      if (codexTuiRef.current) {
+        onOutputRef.current(terminalId, createTerminalColorReport(colorTheme));
+      }
     }
-  }, [colorTheme, applyXtermTheme]);
+  }, [terminalId, colorTheme, applyXtermTheme]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -802,8 +830,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         return;
       }
 
+      const currentTheme = colorThemeRef.current;
+      const lightBackground = !!currentTheme?.lightOptimized
+        || isLightBackground(currentTheme?.background || '#1e1e1e');
+      const renderedOutput = codexTuiRef.current
+        ? adaptCodexInputBackground(output, lightBackground)
+        : output;
+
       const messageId = ++latestWriteDataRef.current;
-      term.write(output, () => {
+      term.write(renderedOutput, () => {
         latestParseDataRef.current = messageId;
         if (!allowsTerminalAutocomplete(term)) {
           clearAutocomplete();
@@ -820,6 +855,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
+      if (!codexTuiRef.current && /OpenAI Codex|codex-cli/.test(output)) {
+        codexTuiRef.current = true;
+      }
       writeTerminalOutput(output);
 
       // Working state: reset debounce on each output, check xterm buffer for prompt
