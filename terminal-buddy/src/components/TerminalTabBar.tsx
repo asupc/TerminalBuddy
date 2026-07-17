@@ -11,6 +11,7 @@ export const TerminalTabBar: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const removeSession = useAppStore(s => s.removeSession);
+  const removeSessions = useAppStore(s => s.removeSessions);
 
   const renameSession = useAppStore(s => s.renameSession);
   const terminalActivities = useAppStore(s => s.terminalActivities);
@@ -43,37 +44,42 @@ export const TerminalTabBar: FC = () => {
       }
       removeSession(sessionId);
     } else {
-      try { await closeTerminalCmd(sessionId); } catch (err) { console.error(err); }
       removeSession(sessionId);
+      void closeTerminalCmd(sessionId).catch(err => console.error(err));
     }
   }, [sessions, removeSession]);
 
   const closeOthers = useCallback((sessionId: string) => {
-    for (const s of sessions) {
-      if (s.id !== sessionId) {
-        closeTerminalCmd(s.id).catch(() => {});
-        removeSession(s.id);
-      }
-    }
-  }, [sessions, removeSession]);
+    const sessionsToClose = sessions.filter(session => session.id !== sessionId);
+    removeSessions(sessionsToClose.map(session => session.id));
+    void Promise.all(
+      sessionsToClose
+        .filter(session => session.sessionType !== 'editor')
+        .map(session => closeTerminalCmd(session.id).catch(() => {}))
+    );
+  }, [sessions, removeSessions]);
 
   const closeLeft = useCallback((sessionId: string) => {
     const idx = sessions.findIndex(s => s.id === sessionId);
-    for (let i = 0; i < idx; i++) {
-      const s = sessions[i];
-      closeTerminalCmd(s.id).catch(() => {});
-      removeSession(s.id);
-    }
-  }, [sessions, removeSession]);
+    const sessionsToClose = idx < 0 ? [] : sessions.slice(0, idx);
+    removeSessions(sessionsToClose.map(session => session.id));
+    void Promise.all(
+      sessionsToClose
+        .filter(session => session.sessionType !== 'editor')
+        .map(session => closeTerminalCmd(session.id).catch(() => {}))
+    );
+  }, [sessions, removeSessions]);
 
   const closeRight = useCallback((sessionId: string) => {
     const idx = sessions.findIndex(s => s.id === sessionId);
-    for (let i = idx + 1; i < sessions.length; i++) {
-      const s = sessions[i];
-      closeTerminalCmd(s.id).catch(() => {});
-      removeSession(s.id);
-    }
-  }, [sessions, removeSession]);
+    const sessionsToClose = idx < 0 ? [] : sessions.slice(idx + 1);
+    removeSessions(sessionsToClose.map(session => session.id));
+    void Promise.all(
+      sessionsToClose
+        .filter(session => session.sessionType !== 'editor')
+        .map(session => closeTerminalCmd(session.id).catch(() => {}))
+    );
+  }, [sessions, removeSessions]);
 
   useEffect(() => {
     if (!contextMenu) return;
