@@ -16,6 +16,7 @@ import { BotScanDialog } from './BotScanDialog';
 
 const PLATFORM_OPTIONS: ReadonlyArray<{ value: BotChannelConfig['platform']; label: string; bidirectional: boolean }> = [
   { value: 'feishu', label: '飞书应用机器人', bidirectional: true },
+  { value: 'weixin', label: '微信机器人', bidirectional: true },
   { value: 'dingtalk', label: '钉钉应用机器人', bidirectional: false },
   { value: 'qq', label: 'QQ 机器人桥接', bidirectional: true },
   { value: 'bridge', label: '通用机器人桥接', bidirectional: true },
@@ -234,8 +235,12 @@ export function BotNotificationSettings() {
         return;
       }
       const result = await testBotDecisionChannel(channelId);
+      const channel = settings.channels.find(item => item.id === channelId);
+      const successText = channel?.platform === 'weixin'
+        ? `测试决策已发送到「${result.channelName}」，请在微信中引用消息回复“确认”`
+        : `测试决策已发送到「${result.channelName}」，请在飞书中点击选项`;
       setStatus(result.success
-        ? { type: 'success', text: `测试决策已发送到「${result.channelName}」，请在飞书中点击选项` }
+        ? { type: 'success', text: successText }
         : { type: 'error', text: result.error || '测试决策发送失败' });
     } catch (error) {
       setStatus({ type: 'error', text: `测试决策发送失败：${String(error)}` });
@@ -250,7 +255,13 @@ export function BotNotificationSettings() {
       ...settings,
       channels: settings.channels.map(channel => {
         if (channel.id !== channelId) return channel;
-        const receiveIdType = channel.platform === 'feishu' && credentials.targetId ? 'open_id' : channel.receiveIdType;
+        const isWeixin = channel.platform === 'weixin';
+        const receiveIdType = channel.platform === 'feishu' && credentials.targetId
+          ? 'open_id'
+          : (isWeixin ? 'chat_id' : channel.receiveIdType);
+        const allowedUserIds = isWeixin && credentials.targetId
+          ? Array.from(new Set([...channel.allowedUserIds, credentials.targetId]))
+          : channel.allowedUserIds;
         return {
           ...channel,
           appId: credentials.appId,
@@ -258,6 +269,8 @@ export function BotNotificationSettings() {
           hasSecret: true,
           targetId: credentials.targetId || channel.targetId,
           receiveIdType,
+          webhookUrl: credentials.baseUrl || channel.webhookUrl,
+          allowedUserIds,
         };
       }),
     });
@@ -325,13 +338,15 @@ export function BotNotificationSettings() {
         {settings.channels.map(channel => {
           const platform = PLATFORM_OPTIONS.find(option => option.value === channel.platform) || PLATFORM_OPTIONS[0];
           const expanded = expandedId === channel.id;
-          const usesAppCredentials = channel.platform === 'feishu' || channel.platform === 'dingtalk';
-          const usesWebhook = channel.platform !== 'feishu' && channel.platform !== 'dingtalk';
+          const usesAppCredentials = channel.platform === 'feishu'
+            || channel.platform === 'weixin'
+            || channel.platform === 'dingtalk';
+          const usesWebhook = channel.platform === 'qq' || channel.platform === 'bridge';
           const supportsInbound = platform.bidirectional;
-          const longConnectionStatus = channel.platform === 'feishu'
+          const longConnectionStatus = channel.platform === 'feishu' || channel.platform === 'weixin'
             ? longConnectionStatuses[channel.id]
             : undefined;
-          const capabilityLabel = channel.platform === 'feishu'
+          const capabilityLabel = channel.platform === 'feishu' || channel.platform === 'weixin'
             ? ({
                 connecting: '连接中',
                 connected: '长连接',
@@ -366,7 +381,7 @@ export function BotNotificationSettings() {
                 <button className="bot-action-btn" onClick={() => void handleTest(channel.id)} disabled={testingId === channel.id || testingDecisionId === channel.id} title="发送测试消息" aria-label="发送测试消息">
                   <Send size={15} />
                 </button>
-                {channel.platform === 'feishu' && (
+                {(channel.platform === 'feishu' || channel.platform === 'weixin') && (
                   <button
                     className="bot-action-btn"
                     onClick={() => void handleTestDecision(channel.id)}
@@ -402,13 +417,26 @@ export function BotNotificationSettings() {
                         <button type="button" className="settings-add-btn bot-icon-text-btn" onClick={() => setScanChannelId(channel.id)}>
                           <QrCode size={15} aria-hidden="true" />扫码配置
                         </button>
-                        <span className="bot-form-hint">用 {platform.label} App 扫码自动获取凭证</span>
+                        <span className="bot-form-hint">
+                          {channel.platform === 'weixin'
+                            ? '用微信扫码创建独立的个人微信 iLink Bot 身份'
+                            : `用 ${platform.label} App 扫码自动获取凭证`}
+                        </span>
                       </div>
-                      <label><span>App ID</span><input value={channel.appId} onChange={event => updateChannel(channel.id, 'appId', event.target.value)} /></label>
                       <label>
-                        <span>App Secret</span>
-                        <input type="password" value={channel.secret} onChange={event => updateChannel(channel.id, 'secret', event.target.value)} placeholder={channel.hasSecret ? '已配置，留空保持不变' : '请输入 App Secret'} />
+                        <span>{channel.platform === 'weixin' ? 'Bot ID' : 'App ID'}</span>
+                        <input value={channel.appId} onChange={event => updateChannel(channel.id, 'appId', event.target.value)} />
                       </label>
+                      <label>
+                        <span>{channel.platform === 'weixin' ? 'Bot Token' : 'App Secret'}</span>
+                        <input type="password" value={channel.secret} onChange={event => updateChannel(channel.id, 'secret', event.target.value)} placeholder={channel.hasSecret ? '已配置，留空保持不变' : (channel.platform === 'weixin' ? '请扫码获取 Bot Token' : '请输入 App Secret')} />
+                      </label>
+                      {channel.platform === 'weixin' && (
+                        <label className="bot-form-wide">
+                          <span>iLink API 地址</span>
+                          <input value={channel.webhookUrl} onChange={event => updateChannel(channel.id, 'webhookUrl', event.target.value)} placeholder="https://ilinkai.weixin.qq.com" />
+                        </label>
+                      )}
                       {channel.platform === 'feishu' && (
                         <label>
                           <span>接收 ID 类型</span>
@@ -435,12 +463,12 @@ export function BotNotificationSettings() {
                     </label>
                   )}
                   <label>
-                    <span>{channel.platform === 'dingtalk' ? '收件人 userId' : '目标会话 ID'}</span>
-                    <input value={channel.targetId} onChange={event => updateChannel(channel.id, 'targetId', event.target.value)} placeholder={channel.platform === 'dingtalk' ? '在钉钉管理后台获取用户 userId' : ''} />
+                    <span>{channel.platform === 'dingtalk' ? '收件人 userId' : (channel.platform === 'weixin' ? '目标用户 ID' : '目标会话 ID')}</span>
+                    <input value={channel.targetId} onChange={event => updateChannel(channel.id, 'targetId', event.target.value)} placeholder={channel.platform === 'dingtalk' ? '在钉钉管理后台获取用户 userId' : (channel.platform === 'weixin' ? '扫码账号的 iLink 用户 ID' : '')} />
                   </label>
                   {supportsInbound && (
                     <>
-                      {channel.platform !== 'feishu' && (
+                      {channel.platform !== 'feishu' && channel.platform !== 'weixin' && (
                         <label>
                           <span>回调验证 Token</span>
                           <input type="password" value={channel.callbackToken} onChange={event => updateChannel(channel.id, 'callbackToken', event.target.value)} placeholder={channel.hasCallbackToken ? '已配置，留空保持不变' : '必填'} />
@@ -455,7 +483,7 @@ export function BotNotificationSettings() {
                           placeholder="多个 ID 使用逗号分隔"
                         />
                       </label>
-                      {channel.platform === 'feishu' ? (
+                      {channel.platform === 'feishu' || channel.platform === 'weixin' ? (
                         <div className="bot-callback-path bot-form-wide" title={longConnectionStatus?.error}>
                           事件接收：{capabilityLabel}（无需公网回调）
                         </div>
@@ -485,7 +513,7 @@ export function BotNotificationSettings() {
 
       {scanChannelId && (
         <BotScanDialog
-          platform={(settings.channels.find(channel => channel.id === scanChannelId)?.platform ?? 'feishu') as 'feishu' | 'dingtalk'}
+          platform={(settings.channels.find(channel => channel.id === scanChannelId)?.platform ?? 'feishu') as 'feishu' | 'weixin' | 'dingtalk'}
           onClose={() => setScanChannelId(null)}
           onSuccess={handleScanSuccess(scanChannelId)}
         />

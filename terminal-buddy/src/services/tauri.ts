@@ -91,7 +91,7 @@ export async function onClaudeNotificationActivated(callback: (terminalId: strin
 export interface BotChannelConfig {
   id: string;
   name: string;
-  platform: 'feishu' | 'dingtalk' | 'qq' | 'bridge';
+  platform: 'feishu' | 'weixin' | 'dingtalk' | 'qq' | 'bridge';
   enabled: boolean;
   targetId: string;
   receiveIdType: string;
@@ -262,7 +262,7 @@ export async function uninstallClaudeHooks(selectedDir?: string): Promise<Claude
 }
 
 export interface ScanBeginResult {
-  platform: 'feishu' | 'dingtalk';
+  platform: 'feishu' | 'weixin' | 'dingtalk';
   qrUrl: string;
   handle: string;
   interval: number;
@@ -273,6 +273,7 @@ export interface ScanCredentials {
   appId: string;
   appSecret: string;
   targetId?: string;
+  baseUrl?: string;
 }
 
 export interface ScanPollResult {
@@ -311,7 +312,7 @@ export async function testBotDecisionChannel(channelId: string): Promise<BotDeli
   return invoke('test_bot_decision_channel', { channelId });
 }
 
-export async function botScanBegin(platform: 'feishu' | 'dingtalk'): Promise<ScanBeginResult> {
+export async function botScanBegin(platform: 'feishu' | 'weixin' | 'dingtalk'): Promise<ScanBeginResult> {
   return invoke('bot_scan_begin', { platform });
 }
 

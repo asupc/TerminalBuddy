@@ -13,13 +13,14 @@ import { Dialog } from '../Dialog';
 type Phase = 'loading' | 'waiting' | 'success' | 'failed' | 'expired';
 
 interface BotScanDialogProps {
-  platform: 'feishu' | 'dingtalk';
+  platform: 'feishu' | 'weixin' | 'dingtalk';
   onClose: () => void;
   onSuccess: (credentials: ScanCredentials) => void;
 }
 
 const PLATFORM_LABEL: Record<BotScanDialogProps['platform'], string> = {
   feishu: '飞书',
+  weixin: '微信',
   dingtalk: '钉钉',
 };
 

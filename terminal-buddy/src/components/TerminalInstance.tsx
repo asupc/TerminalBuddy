@@ -46,16 +46,42 @@ function adaptCodexInputBackground(data: string, lightBackground: boolean): stri
   return data.split(CODEX_INPUT_BACKGROUND_LIGHT).join(CODEX_INPUT_BACKGROUND_DARK);
 }
 
-function toOscRgb(hex: string, fallback: string): string {
-  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
-  if (!match) return fallback;
-  return `rgb:${match[1]}${match[1]}/${match[2]}${match[2]}/${match[3]}${match[3]}`;
-}
+function recolorCodexInputBuffer(term: Terminal, lightBackground: boolean): void {
+  const light = 0xf4f4f4;
+  const dark = 0x393939;
+  const fallbackDark = 0x292929;
+  const buffer = term.buffer.active;
+  const reusableCell = buffer.getNullCell();
+  let changed = false;
 
-function createTerminalColorReport(theme: TerminalColors | undefined): string {
-  const foreground = toOscRgb(theme?.foreground || '#cccccc', 'rgb:cccc/cccc/cccc');
-  const background = toOscRgb(theme?.background || '#1e1e1e', 'rgb:1e1e/1e1e/1e1e');
-  return `\x1b]10;${foreground}\x1b\\\x1b]11;${background}\x1b\\`;
+  // xterm's public buffer API intentionally exposes cells as read-only. The returned
+  // cell and line view still wrap mutable xterm data, so update only exact Codex input
+  // background matches and leave all characters and other attributes untouched.
+  for (let y = buffer.viewportY; y < Math.min(buffer.length, buffer.viewportY + term.rows); y++) {
+    const line = buffer.getLine(y);
+    const mutableLine = (line as unknown as {
+      _line?: { setCell: (index: number, cell: unknown) => void };
+    } | undefined)?._line;
+    if (!line || !mutableLine) continue;
+
+    for (let x = 0; x < Math.min(line.length, term.cols); x++) {
+      const cell = line.getCell(x, reusableCell);
+      if (!cell?.isBgRGB()) continue;
+
+      const current = cell.getBgColor();
+      const replacement = lightBackground
+        ? (current === dark || current === fallbackDark ? light : null)
+        : (current === light ? dark : null);
+      if (replacement === null) continue;
+
+      const mutableCell = cell as unknown as { bg: number };
+      mutableCell.bg = (mutableCell.bg & ~0xffffff) | replacement;
+      mutableLine.setCell(x, mutableCell);
+      changed = true;
+    }
+  }
+
+  if (changed && term.rows > 0) term.refresh(0, term.rows - 1);
 }
 
 interface TerminalInstanceProps {
@@ -724,10 +750,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     if (term) {
       applyXtermTheme(term);
       if (codexTuiRef.current) {
-        onOutputRef.current(terminalId, createTerminalColorReport(colorTheme));
+        const lightBackground = !!colorTheme?.lightOptimized
+          || isLightBackground(colorTheme?.background || '#1e1e1e');
+        recolorCodexInputBuffer(term, lightBackground);
       }
     }
-  }, [terminalId, colorTheme, applyXtermTheme]);
+  }, [colorTheme, applyXtermTheme]);
 
   useEffect(() => {
     if (!terminalRef.current) return;

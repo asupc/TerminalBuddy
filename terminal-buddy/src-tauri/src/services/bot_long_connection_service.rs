@@ -1,9 +1,13 @@
 use crate::commands::{
-    process_bot_card_selection, process_bot_multi_selection, process_bot_reply,
-    send_feishu_reply, TerminalService,
+    process_bot_card_selection, process_bot_multi_selection, process_bot_reply, send_feishu_reply,
+    TerminalService,
 };
 use crate::models::{BotChannelConfig, BotLongConnectionStatus, BridgeInboundMessage};
-use crate::services::BotSettingsService;
+use crate::services::{
+    extract_weixin_reply_to, extract_weixin_text, get_weixin_updates, load_weixin_state,
+    save_weixin_context_token, save_weixin_sync_buf, send_weixin_reply, validate_weixin_response,
+    BotSettingsService,
+};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use lark_channel::lark_openapi::{
@@ -12,8 +16,9 @@ use lark_channel::lark_openapi::{
 use lark_channel::{
     ChannelConfig, ChannelEvent, EventLoop, EventLoopOptions, OpenApiWebSocketEventConnector,
 };
-use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use reqwest::Client;
+use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -227,7 +232,7 @@ async fn handle_event(
     }
 }
 
-async fn run_connection(app: AppHandle, channels: Vec<BotChannelConfig>) {
+async fn run_feishu_connection(app: AppHandle, channels: Vec<BotChannelConfig>) {
     let Some(primary) = channels.first() else {
         return;
     };
@@ -258,7 +263,181 @@ async fn run_connection(app: AppHandle, channels: Vec<BotChannelConfig>) {
     }
 }
 
-pub fn sync_feishu_long_connections(app: AppHandle) -> Result<(), String> {
+async fn handle_weixin_message(
+    app: &AppHandle,
+    client: &Client,
+    channels: &[BotChannelConfig],
+    state: &mut crate::services::WeixinRuntimeState,
+    message: &Value,
+) {
+    if message.get("message_type").and_then(Value::as_i64) == Some(2) {
+        return;
+    }
+    let sender_id = message
+        .get("from_user_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    if sender_id.is_empty() {
+        return;
+    }
+    let Some(channel) = matching_channel(channels, sender_id, sender_id).cloned() else {
+        return;
+    };
+    if sender_id == channel.app_id {
+        return;
+    }
+
+    if let Some(context_token) = message
+        .get("context_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        state
+            .context_tokens
+            .insert(sender_id.to_string(), context_token.to_string());
+        if let Err(error) =
+            save_weixin_context_token(&channel.app_id, sender_id, Some(context_token))
+        {
+            eprintln!("[Bot/Weixin] 保存 context_token 失败: {}", error);
+        }
+    }
+
+    let text = extract_weixin_text(message);
+    if text.trim().is_empty() {
+        return;
+    }
+    let inbound = BridgeInboundMessage {
+        sender_id: sender_id.to_string(),
+        conversation_id: sender_id.to_string(),
+        message_id: message
+            .get("message_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        reply_to_message_id: extract_weixin_reply_to(message),
+        text,
+    };
+    let terminal_service = app.state::<TerminalService>();
+    let result = process_bot_reply(app, &terminal_service, &channel, &inbound);
+    if channel
+        .allowed_user_ids
+        .iter()
+        .any(|allowed| allowed == sender_id)
+    {
+        let response = match result {
+            Ok(message) => message,
+            Err(error) => error,
+        };
+        if let Err(error) = send_weixin_reply(client, &channel, sender_id, &response).await {
+            eprintln!("[Bot/Weixin] 发送回复回执失败: {}", error);
+        }
+    }
+}
+
+async fn run_weixin_connection(app: AppHandle, channels: Vec<BotChannelConfig>) {
+    let Some(primary) = channels.first().cloned() else {
+        return;
+    };
+    set_status(&channels, "connecting", None);
+    let client = match Client::builder().build() {
+        Ok(client) => client,
+        Err(error) => {
+            set_status(
+                &channels,
+                "error",
+                Some(format!("创建微信 iLink 客户端失败: {}", error)),
+            );
+            return;
+        }
+    };
+    let mut state = load_weixin_state(&primary.app_id);
+    let mut timeout_ms = 35_000u64;
+    let mut consecutive_failures = 0u8;
+    let mut recent_message_ids = HashSet::new();
+    let mut message_id_order = VecDeque::new();
+    set_status(&channels, "connected", None);
+
+    loop {
+        let response =
+            match get_weixin_updates(&client, &primary, &state.sync_buf, timeout_ms).await {
+                Ok(response) => response,
+                Err(error) => {
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    if consecutive_failures >= 3 {
+                        set_status(&channels, "error", Some(error.clone()));
+                    }
+                    eprintln!("[Bot/Weixin] 长轮询失败: {}", error);
+                    tokio::time::sleep(Duration::from_secs(if consecutive_failures >= 3 {
+                        30
+                    } else {
+                        2
+                    }))
+                    .await;
+                    if consecutive_failures >= 3 {
+                        consecutive_failures = 0;
+                    }
+                    continue;
+                }
+            };
+        if let Err(error) = validate_weixin_response(&response, "接收消息") {
+            let session_expired = response.get("ret").and_then(Value::as_i64) == Some(-14)
+                || response.get("errcode").and_then(Value::as_i64) == Some(-14);
+            let display_error = if session_expired {
+                "微信登录会话已过期，请重新扫码配置".to_string()
+            } else {
+                error.clone()
+            };
+            set_status(&channels, "error", Some(display_error));
+            eprintln!("[Bot/Weixin] iLink 长轮询返回错误: {}", error);
+            tokio::time::sleep(Duration::from_secs(if session_expired { 60 } else { 2 })).await;
+            continue;
+        }
+
+        consecutive_failures = 0;
+        set_status(&channels, "connected", None);
+        if let Some(suggested) = response
+            .get("longpolling_timeout_ms")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+        {
+            timeout_ms = suggested;
+        }
+        if let Some(sync_buf) = response
+            .get("get_updates_buf")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
+            state.sync_buf = sync_buf.to_string();
+            if let Err(error) = save_weixin_sync_buf(&primary.app_id, &state.sync_buf) {
+                eprintln!("[Bot/Weixin] 保存同步游标失败: {}", error);
+            }
+        }
+        if let Some(messages) = response.get("msgs").and_then(Value::as_array) {
+            for message in messages {
+                if let Some(message_id) = message
+                    .get("message_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                {
+                    if !recent_message_ids.insert(message_id.to_string()) {
+                        continue;
+                    }
+                    message_id_order.push_back(message_id.to_string());
+                    if message_id_order.len() > 1_024 {
+                        if let Some(oldest) = message_id_order.pop_front() {
+                            recent_message_ids.remove(&oldest);
+                        }
+                    }
+                }
+                handle_weixin_message(&app, &client, &channels, &mut state, message).await;
+            }
+        }
+    }
+}
+
+pub fn sync_bot_long_connections(app: AppHandle) -> Result<(), String> {
     {
         let mut running = tasks().lock().unwrap_or_else(|value| value.into_inner());
         for task in running.drain(..) {
@@ -274,32 +453,54 @@ pub fn sync_feishu_long_connections(app: AppHandle) -> Result<(), String> {
     if !settings.enabled {
         return Ok(());
     }
-    let mut grouped: HashMap<(String, String), Vec<BotChannelConfig>> = HashMap::new();
+    let mut feishu_grouped: HashMap<(String, String), Vec<BotChannelConfig>> = HashMap::new();
+    let mut weixin_grouped: HashMap<(String, String, String), Vec<BotChannelConfig>> =
+        HashMap::new();
     let mut seen_channels = HashSet::new();
-    for channel in settings.channels.into_iter().filter(|channel| {
-        channel.enabled
-            && channel.platform == "feishu"
-            && !channel.app_id.is_empty()
-            && !channel.secret.is_empty()
-    }) {
-        if seen_channels.insert(channel.id.clone()) {
-            grouped
-                .entry((channel.app_id.clone(), channel.secret.clone()))
-                .or_default()
-                .push(channel);
+    for channel in settings
+        .channels
+        .into_iter()
+        .filter(|channel| channel.enabled)
+    {
+        if !seen_channels.insert(channel.id.clone()) {
+            continue;
+        }
+        match channel.platform.as_str() {
+            "feishu" if !channel.app_id.is_empty() && !channel.secret.is_empty() => {
+                feishu_grouped
+                    .entry((channel.app_id.clone(), channel.secret.clone()))
+                    .or_default()
+                    .push(channel);
+            }
+            "weixin" if !channel.app_id.is_empty() && !channel.secret.is_empty() => {
+                weixin_grouped
+                    .entry((
+                        channel.app_id.clone(),
+                        channel.secret.clone(),
+                        channel.webhook_url.clone(),
+                    ))
+                    .or_default()
+                    .push(channel);
+            }
+            _ => {}
         }
     }
 
     let mut running = tasks().lock().unwrap_or_else(|value| value.into_inner());
-    for channels in grouped.into_values() {
+    for channels in feishu_grouped.into_values() {
         let app = app.clone();
-        let task = tauri::async_runtime::spawn(run_connection(app, channels));
+        let task = tauri::async_runtime::spawn(run_feishu_connection(app, channels));
+        running.push(task);
+    }
+    for channels in weixin_grouped.into_values() {
+        let app = app.clone();
+        let task = tauri::async_runtime::spawn(run_weixin_connection(app, channels));
         running.push(task);
     }
     Ok(())
 }
 
-pub fn get_feishu_long_connection_status() -> Vec<BotLongConnectionStatus> {
+pub fn get_bot_long_connection_statuses() -> Vec<BotLongConnectionStatus> {
     statuses()
         .lock()
         .unwrap_or_else(|value| value.into_inner())
