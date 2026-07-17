@@ -308,6 +308,10 @@ export async function testBotChannel(channelId: string): Promise<BotDeliveryRepo
   return invoke('test_bot_channel', { channelId });
 }
 
+export async function verifyBotChannel(channel: BotChannelConfig): Promise<BotDeliveryReport> {
+  return invoke('verify_bot_channel', { channel });
+}
+
 export async function testBotDecisionChannel(channelId: string): Promise<BotDeliveryReport> {
   return invoke('test_bot_decision_channel', { channelId });
 }

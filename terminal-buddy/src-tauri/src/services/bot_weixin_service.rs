@@ -18,8 +18,6 @@ pub const WEIXIN_REPLY_MARKER: &str = "TerminalBuddy-ID:";
 
 const WEIXIN_APP_CLIENT_VERSION: &str = "131584";
 const WEIXIN_CHANNEL_VERSION: &str = "2.2.0";
-const WEIXIN_REPLY_INSTRUCTION: &str =
-    "请引用此消息回复：“确认”采用推荐选项，其他内容将作为自定义消息。";
 const WEIXIN_MESSAGE_TYPE_BOT: i64 = 2;
 const WEIXIN_MESSAGE_STATE_FINISH: i64 = 2;
 const WEIXIN_TEXT_ITEM: i64 = 1;
@@ -280,17 +278,26 @@ pub fn new_weixin_message_id() -> String {
 }
 
 pub fn append_weixin_reply_marker(text: &str, message_id: &str) -> String {
-    let trimmed = text.trim_end();
-    let body = trimmed
-        .strip_suffix(WEIXIN_REPLY_INSTRUCTION)
-        .unwrap_or(trimmed)
-        .trim_end();
-    let suffix = format!(
-        "\n\n{}\n\n{} {}",
-        WEIXIN_REPLY_INSTRUCTION, WEIXIN_REPLY_MARKER, message_id
-    );
+    let body = text.trim_end();
+    let suffix = format!("\n\n{} {}", WEIXIN_REPLY_MARKER, message_id);
     let available = WEIXIN_MAX_TEXT_LENGTH.saturating_sub(suffix.chars().count());
-    let body = body.chars().take(available).collect::<String>();
+    let body = if body.chars().count() <= available {
+        body.to_string()
+    } else {
+        let separator = "\n\n…\n\n";
+        let separator_length = separator.chars().count();
+        let tail_length = available.saturating_sub(separator_length).min(420);
+        let head_length = available.saturating_sub(tail_length + separator_length);
+        let head = body.chars().take(head_length).collect::<String>();
+        let mut tail = body.chars().rev().take(tail_length).collect::<Vec<_>>();
+        tail.reverse();
+        format!(
+            "{}{}{}",
+            head,
+            separator,
+            tail.into_iter().collect::<String>()
+        )
+    };
     format!("{}{}", body, suffix)
 }
 
@@ -395,8 +402,10 @@ pub fn extract_weixin_reply_to(message: &Value) -> Option<String> {
         for pointer in [
             "/message_id",
             "/client_id",
+            "/msg_id",
             "/message_item/message_id",
             "/message_item/client_id",
+            "/message_item/msg_id",
         ] {
             if let Some(value) = reference
                 .pointer(pointer)
@@ -447,10 +456,34 @@ mod tests {
     }
 
     #[test]
+    fn mobile_quote_extracts_server_message_id_without_text() {
+        let message = json!({
+            "item_list": [{
+                "type": 1,
+                "text_item": { "text": "1" },
+                "ref_msg": {
+                    "message_item": {
+                        "type": 0,
+                        "msg_id": "7483828209308800008"
+                    }
+                }
+            }]
+        });
+        assert_eq!(
+            extract_weixin_reply_to(&message).as_deref(),
+            Some("7483828209308800008")
+        );
+    }
+
+    #[test]
     fn decision_marker_stays_in_one_message() {
-        let message = append_weixin_reply_marker(&"问".repeat(3_000), "message-123");
+        let text = format!(
+            "{}\n\n请引用本消息回复选项编号（如 2）。",
+            "问".repeat(3_000)
+        );
+        let message = append_weixin_reply_marker(&text, "message-123");
         assert_eq!(message.chars().count(), WEIXIN_MAX_TEXT_LENGTH);
-        assert!(message.contains("请引用此消息回复"));
+        assert!(message.contains("请引用本消息回复选项编号"));
         assert!(message.ends_with("TerminalBuddy-ID: message-123"));
     }
 }

@@ -129,6 +129,20 @@ pub struct DecisionBinding {
     pub external_message_id: String,
     #[serde(default)]
     pub custom_option_down_count: Option<u16>,
+    #[serde(default)]
+    pub option_move_counts: Vec<i16>,
+    #[serde(default)]
+    pub option_labels: Vec<String>,
+    #[serde(default)]
+    pub initial_selected_move_counts: Vec<i16>,
+    #[serde(default)]
+    pub recommended_move_count: Option<i16>,
+    #[serde(default)]
+    pub multi_select: bool,
+    #[serde(default)]
+    pub submit_move_count: Option<i16>,
+    #[serde(default)]
+    pub created_at: i64,
     pub status: String,
     pub expires_at: i64,
 }

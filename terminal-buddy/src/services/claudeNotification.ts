@@ -96,35 +96,17 @@ async function showStructuredDecisionNotification(decision: ClaudeHookDecisionEv
 async function showAttentionNotification(event: ClaudeHookTerminalEvent, isCurrent: NotificationGuard): Promise<void> {
   const settings = getAppSettings();
   const nativeEnabled = settings.claudeDecisionNotifications;
-  const botSettings = await getBotSettings().catch(() => null);
-  const botEnabled = Boolean(botSettings?.enabled && botSettings.sendDecisionNotifications);
-  if (!nativeEnabled && !botEnabled) return;
+  if (!nativeEnabled) return;
 
   const name = terminalName(event.terminalId);
   if (!name) return;
   const appInForeground = await appIsInForeground();
   if (!isCurrent()) return;
-  const isBeingViewed = terminalIsBeingViewed(event.terminalId, appInForeground);
   const isPermission = event.notificationType === 'permission_prompt';
-  const nativePromise = nativeEnabled && !appInForeground
-    ? showNativeNotification(event.terminalId, name, isPermission ? 'confirmation' : 'question')
-        .catch(error => console.error('发送 Claude Code 待处理通知失败:', error))
-    : Promise.resolve();
-  const botPromise = botEnabled && !isBeingViewed
-    ? sendBotNotification({
-        eventId: event.eventId,
-        terminalId: event.terminalId,
-        terminalName: name,
-        kind: isPermission ? 'confirmation' : 'question',
-        title: isPermission ? 'Claude Code 等待确认' : 'Claude Code 等待输入',
-        summary: event.message?.trim() || (isPermission ? 'Claude Code 需要你的确认。' : 'Claude Code 正在等待你的输入。'),
-      }).then(reports => {
-        reports.filter(report => !report.success).forEach(report => {
-          console.error(`机器人通道「${report.channelName}」通知失败:`, report.error);
-        });
-      }).catch(error => console.error('发送 Claude Code 机器人待处理通知失败:', error))
-    : Promise.resolve();
-  await Promise.all([nativePromise, botPromise]);
+  if (!appInForeground) {
+    await showNativeNotification(event.terminalId, name, isPermission ? 'confirmation' : 'question')
+      .catch(error => console.error('发送 Claude Code 待处理通知失败:', error));
+  }
 }
 
 async function showCompletionNotification(

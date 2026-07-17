@@ -304,6 +304,7 @@ async fn handle_weixin_message(
     }
 
     let text = extract_weixin_text(message);
+    let reply_to_message_id = extract_weixin_reply_to(message);
     if text.trim().is_empty() {
         return;
     }
@@ -316,7 +317,7 @@ async fn handle_weixin_message(
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-        reply_to_message_id: extract_weixin_reply_to(message),
+        reply_to_message_id,
         text,
     };
     let terminal_service = app.state::<TerminalService>();
