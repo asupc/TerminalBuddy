@@ -995,7 +995,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       terminal.open(terminalRef.current!);
       void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
-      const tWebgl = performance.now();
       // dispose 后 xterm 会永久回退到 CPU canvas 渲染器（字形抗锯齿变化、滚动卡顿，
       // 看起来像「字体变了 / GPU 加速没了」）。这里在 context-loss 后重建 WebGL
       // 渲染器恢复 GPU 加速；webglRetries 上限防 GPU 持续 lost 下的重建风暴，
@@ -1021,9 +1020,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           // WebGL not supported, fall back to canvas renderer
         }
       };
-      attachWebgl();
-      void bootLog(`initTerminal[${terminalId}]: WebGL addon took ${(performance.now() - tWebgl).toFixed(0)}ms`);
-
       if (visibleRef.current) {
         const tFit = performance.now();
         if (webTakeoverDimensions) {
@@ -1035,6 +1031,26 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       }
 
       xtermRef.current = terminal;
+
+      // 创建 WebGL context 通常会连续占用主线程 20-40ms。先让终端首帧完成，
+      // 再在浏览器空闲阶段切换到 GPU 渲染器，避免新建页签时出现明显掉帧。
+      const attachWebglWhenIdle = () => {
+        if (disposed) return;
+        const tWebgl = performance.now();
+        attachWebgl();
+        void bootLog(`initTerminal[${terminalId}]: deferred WebGL addon took ${(performance.now() - tWebgl).toFixed(0)}ms`);
+      };
+      const idleWindow = window as Window & {
+        requestIdleCallback?: Window['requestIdleCallback'];
+        cancelIdleCallback?: Window['cancelIdleCallback'];
+      };
+      if (idleWindow.requestIdleCallback) {
+        const idleId = idleWindow.requestIdleCallback(attachWebglWhenIdle, { timeout: 500 });
+        cleanupFns.push(() => idleWindow.cancelIdleCallback?.(idleId));
+      } else {
+        const timerId = setTimeout(attachWebglWhenIdle, 50);
+        cleanupFns.push(() => clearTimeout(timerId));
+      }
 
       // Keep the OS IME candidate anchor stable while composing. Some TUIs
       // repaint status areas while keeping their visual input prompt elsewhere.
