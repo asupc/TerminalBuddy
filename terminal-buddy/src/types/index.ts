@@ -105,6 +105,7 @@ export interface TerminalSession {
   extraParams?: string;
   claudeSessionId?: string;
   createdAt?: number;   // 启动时间戳；addSession 时默认 Date.now()
+  starting?: boolean;   // 后端 PTY 尚在创建；此时仅展示占位页签，不挂载 xterm
 }
 
 export interface Workspace {

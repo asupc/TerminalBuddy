@@ -43,6 +43,8 @@ export const TerminalTabBar: FC = () => {
         return;
       }
       removeSession(sessionId);
+    } else if (session?.starting) {
+      removeSession(sessionId);
     } else {
       removeSession(sessionId);
       void closeTerminalCmd(sessionId).catch(err => console.error(err));
@@ -54,7 +56,7 @@ export const TerminalTabBar: FC = () => {
     removeSessions(sessionsToClose.map(session => session.id));
     void Promise.all(
       sessionsToClose
-        .filter(session => session.sessionType !== 'editor')
+        .filter(session => session.sessionType !== 'editor' && !session.starting)
         .map(session => closeTerminalCmd(session.id).catch(() => {}))
     );
   }, [sessions, removeSessions]);
@@ -65,7 +67,7 @@ export const TerminalTabBar: FC = () => {
     removeSessions(sessionsToClose.map(session => session.id));
     void Promise.all(
       sessionsToClose
-        .filter(session => session.sessionType !== 'editor')
+        .filter(session => session.sessionType !== 'editor' && !session.starting)
         .map(session => closeTerminalCmd(session.id).catch(() => {}))
     );
   }, [sessions, removeSessions]);
@@ -76,7 +78,7 @@ export const TerminalTabBar: FC = () => {
     removeSessions(sessionsToClose.map(session => session.id));
     void Promise.all(
       sessionsToClose
-        .filter(session => session.sessionType !== 'editor')
+        .filter(session => session.sessionType !== 'editor' && !session.starting)
         .map(session => closeTerminalCmd(session.id).catch(() => {}))
     );
   }, [sessions, removeSessions]);

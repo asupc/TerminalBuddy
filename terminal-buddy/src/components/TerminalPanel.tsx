@@ -1,6 +1,6 @@
 import { FC, Fragment, useCallback, useState, useEffect, useRef, lazy, Suspense } from 'react';
 import type { CSSProperties } from 'react';
-import { SquareTerminal, X } from 'lucide-react';
+import { LoaderCircle, SquareTerminal, X } from 'lucide-react';
 import type { TerminalSession } from '../types';
 import { TerminalTabBar } from './TerminalTabBar';
 import { isTerminalWorking, useAppStore } from '../stores/appStore';
@@ -174,7 +174,12 @@ export const TerminalPanel: FC = () => {
           </div>
         )}
         <div key="body" className="pane-body">
-          {session.sessionType === 'editor' ? (
+          {session.starting ? (
+            <div className="terminal-starting" role="status" aria-live="polite">
+              <LoaderCircle aria-hidden="true" />
+              <span>正在启动 {session.profileName}…</span>
+            </div>
+          ) : session.sessionType === 'editor' ? (
             <Suspense fallback={hidden ? null : <div className="lazy-panel-loading">加载编辑器…</div>}>
               <TextEditor
                 key="editor"

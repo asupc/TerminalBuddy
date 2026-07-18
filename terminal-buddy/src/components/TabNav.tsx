@@ -281,6 +281,8 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
         return;
       }
       removeSession(sessionId);
+    } else if (session?.starting) {
+      removeSession(sessionId);
     } else {
       removeSession(sessionId);
       void closeTerminalCmd(sessionId).catch(err => console.error(err));
@@ -325,7 +327,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
         setConfirmDialog(null);
         const store = useAppStore.getState();
         const terminalIds = groupSessions
-          .filter(session => session.sessionType !== 'editor')
+          .filter(session => session.sessionType !== 'editor' && !session.starting)
           .map(session => session.id);
         for (const session of groupSessions) {
           if (session.sessionType === 'editor') {
@@ -351,7 +353,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
         setConfirmDialog(null);
         const store = useAppStore.getState();
         const terminalIds = sessions
-          .filter(session => session.sessionType !== 'editor')
+          .filter(session => session.sessionType !== 'editor' && !session.starting)
           .map(session => session.id);
         for (const session of sessions) {
           if (session.sessionType === 'editor') {

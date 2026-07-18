@@ -53,7 +53,9 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
   try {
     const dirs = useAppStore.getState().sessionDirectories;
     const claudeIds = useAppStore.getState().claudeSessionIds;
-    const tabs: SavedTab[] = sessions.map(s => ({
+    // 启动中的临时会话没有后端 PTY，退出应用后不能恢复，也不能影响 activeIndex。
+    const persistedSessions = sessions.filter(s => !s.starting);
+    const tabs: SavedTab[] = persistedSessions.map(s => ({
       profileId: s.profileId,
       profileName: s.profileName,
       terminalType: s.terminalType,
@@ -67,9 +69,10 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
       directory: dirs[s.id],
       claudeSessionId: claudeIds[s.id],
     }));
-    const activeIndex = activeSessionId
-      ? sessions.findIndex(s => s.id === activeSessionId)
+    const resolvedActiveIndex = activeSessionId
+      ? persistedSessions.findIndex(s => s.id === activeSessionId)
       : -1;
+    const activeIndex = resolvedActiveIndex >= 0 ? resolvedActiveIndex : 0;
     writeClientData('saved_tabs', JSON.stringify({ tabs, activeIndex })).catch(() => {});
   } catch {}
 }
@@ -237,6 +240,7 @@ interface AppState {
   setCurrentDirectory: (path: string) => void;
   _skipSaveTabs: boolean;
   addSession: (session: TerminalSession, keepActive?: boolean) => void;
+  resolveStartingSession: (startingId: string, terminalId: string) => boolean;
   removeSession: (id: string) => void;
   removeSessions: (ids: readonly string[]) => void;
   setActiveSession: (id: string | null) => void;
@@ -487,7 +491,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         createdAt: session.createdAt ?? Date.now(),
       };
       const sessions = [...state.sessions, s];
-      if (!state._skipSaveTabs) {
+      if (!state._skipSaveTabs && !s.starting) {
         debouncedSaveTabs(sessions, s.id);
       }
       return {
@@ -496,6 +500,36 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeSpecialTab: null,
       };
     }),
+  resolveStartingSession: (startingId, terminalId) => {
+    let resolved = false;
+    set((state) => {
+      if (!state.sessions.some(session => session.id === startingId && session.starting)) {
+        return state;
+      }
+      resolved = true;
+      const sessions = state.sessions.map(session => session.id === startingId
+        ? { ...session, id: terminalId, starting: false }
+        : session
+      );
+      const activeSessionId = state.activeSessionId === startingId ? terminalId : state.activeSessionId;
+      const splitSlots = state.splitSlots.map(slot => slot.sessionId === startingId
+        ? { ...slot, sessionId: terminalId }
+        : slot
+      );
+      if (!state._skipSaveTabs) {
+        debouncedSaveTabs(sessions, activeSessionId);
+      }
+      return {
+        sessions,
+        activeSessionId,
+        splitSlots,
+        terminalLayoutVersion: splitSlots.some((slot, index) => slot !== state.splitSlots[index])
+          ? state.terminalLayoutVersion + 1
+          : state.terminalLayoutVersion,
+      };
+    });
+    return resolved;
+  },
   removeSession: (id) => get().removeSessions([id]),
   removeSessions: (ids) =>
     set((state) => {
@@ -577,7 +611,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
   renameSession: (id, name) => {
     const session = get().sessions.find((item) => item.id === id);
-    if (session && session.sessionType !== 'editor') {
+    if (session && session.sessionType !== 'editor' && !session.starting) {
       void updateTerminalDisplayName(id, name).catch((error) => {
         console.error('Failed to sync terminal display name:', error);
       });

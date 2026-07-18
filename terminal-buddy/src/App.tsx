@@ -15,7 +15,7 @@ import { GlobalDialogHost } from './components/GlobalDialogHost';
 import { Toast } from './components/Toast';
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, getClaudeSessionsForTerminals } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, closeTerminal, getClaudeSessionsForTerminals } from './services/tauri';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
@@ -50,6 +50,7 @@ import { PRESET_THEMES } from './types';
 function App() {
   const setProfiles = useAppStore(s => s.setProfiles);
   const addSession = useAppStore(s => s.addSession);
+  const resolveStartingSession = useAppStore(s => s.resolveStartingSession);
   const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
   const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
   const configPanelVisible = useAppStore(s => s.configPanelVisible);
@@ -486,6 +487,7 @@ function App() {
   }, [setProfiles]);
 
   const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, presetName?: string, tabName?: string) => {
+    let startingId: string | null = null;
     try {
       if (profile.terminalType === 'mstsc') {
         await startMstsc(profile.id);
@@ -495,11 +497,10 @@ function App() {
       // Split mode: when the grid is full, placeSessionInSplitSlot will auto-replace the oldest slot.
       const { rows, cols } = estimateTerminalSize();
       const resolvedTabName = tabName ?? (presetName ? `${profile.name}[${presetName}]` : profile.name);
-      const terminalId = await startTerminal(profile.id, extraParams, rows, cols, resolvedTabName);
-      await updateProfileLastUsed(profile.id);
       const theme = PRESET_THEMES.find(t => t.id === profile.colorTheme) || PRESET_THEMES[0];
+      startingId = crypto.randomUUID();
       addSession({
-        id: terminalId,
+        id: startingId,
         profileId: profile.id,
         profileName: resolvedTabName,
         terminalType: profile.terminalType,
@@ -508,18 +509,28 @@ function App() {
         groupId: 'default',
         owner: 'pc',
         extraParams,
+        starting: true,
       });
-      // Split mode: place the new session into the first blank slot (and focus it).
-      const st = useAppStore.getState();
-      if (st.splitMode !== 'off') st.placeSessionInSplitSlot(terminalId);
+      const pendingStore = useAppStore.getState();
+      if (pendingStore.splitMode !== 'off') pendingStore.placeSessionInSplitSlot(startingId);
+
+      const terminalId = await startTerminal(profile.id, extraParams, rows, cols, resolvedTabName);
+      if (!resolveStartingSession(startingId, terminalId)) {
+        void closeTerminal(terminalId).catch(() => {});
+        return;
+      }
+      void updateProfileLastUsed(profile.id).catch(err => console.error('Failed to update profile last used:', err));
       if (profile.startupPath) {
         setSessionDirectory(terminalId, profile.startupPath);
         setCurrentDirectory(profile.startupPath);
       }
     } catch (err) {
-      void showAlert('启动终端失败: ' + String(err), '启动失败');
+      const startingSessionVisible = startingId !== null
+        && useAppStore.getState().sessions.some(session => session.id === startingId);
+      if (startingId) useAppStore.getState().removeSession(startingId);
+      if (startingSessionVisible) void showAlert('启动终端失败: ' + String(err), '启动失败');
     }
-  }, [addSession]);
+  }, [addSession, resolveStartingSession]);
 
   const handleEditProfile = useCallback((profile: Profile) => {
     setDefaultGroupForNewProfile(undefined);
@@ -569,6 +580,7 @@ function App() {
   }, [openSettingsDialog]);
 
   const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'cmd') => {
+    let startingId: string | null = null;
     try {
       const store = useAppStore.getState();
       if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
@@ -577,9 +589,9 @@ function App() {
       }
       const name = terminalType === 'powershell' ? 'PowerShell' : 'CMD';
       const { rows, cols } = estimateTerminalSize();
-      const terminalId = await startBlankTerminal(terminalType, rows, cols, undefined, name);
+      startingId = crypto.randomUUID();
       addSession({
-        id: terminalId,
+        id: startingId,
         profileId: '',
         profileName: name,
         terminalType,
@@ -587,14 +599,23 @@ function App() {
         tabColor: null,
         groupId: 'default',
         owner: 'pc',
+        starting: true,
       });
-      const st = useAppStore.getState();
-      if (st.splitMode !== 'off') st.placeSessionInSplitSlot(terminalId);
+      const pendingStore = useAppStore.getState();
+      if (pendingStore.splitMode !== 'off') pendingStore.placeSessionInSplitSlot(startingId);
+
+      const terminalId = await startBlankTerminal(terminalType, rows, cols, undefined, name);
+      if (!resolveStartingSession(startingId, terminalId)) {
+        void closeTerminal(terminalId).catch(() => {});
+      }
     } catch (err) {
+      const startingSessionVisible = startingId !== null
+        && useAppStore.getState().sessions.some(session => session.id === startingId);
+      if (startingId) useAppStore.getState().removeSession(startingId);
       console.error('Failed to start blank terminal:', err);
-      void showAlert('启动终端失败: ' + String(err), '启动失败');
+      if (startingSessionVisible) void showAlert('启动终端失败: ' + String(err), '启动失败');
     }
-  }, [addSession]);
+  }, [addSession, resolveStartingSession]);
 
   const handleStartTextEditor = useCallback(() => {
     useAppStore.getState().openDraftSession();
