@@ -14,12 +14,14 @@ const FOCUSABLE_SELECTOR = 'button:not([disabled]), input:not([disabled]), selec
 interface DialogProps {
   title?: ReactNode;
   ariaLabel?: string;
+  className?: string;
+  bodyClassName?: string;
   children: ReactNode;
   footer?: ReactNode;
   onClose: () => void;
 }
 
-export function Dialog({ title, ariaLabel, children, footer, onClose }: DialogProps) {
+export function Dialog({ title, ariaLabel, className, bodyClassName, children, footer, onClose }: DialogProps) {
   const titleId = useId();
   const stackIdRef = useRef(Symbol('web-dialog'));
   const positionerRef = useRef<HTMLDivElement>(null);
@@ -146,7 +148,7 @@ export function Dialog({ title, ariaLabel, children, footer, onClose }: DialogPr
       <div ref={positionerRef} className="web-dialog-positioner">
         <section
           ref={surfaceRef}
-          className="web-dialog-surface"
+          className={"web-dialog-surface" + (className ? " " + className : "")}
           role="dialog"
           aria-modal="true"
           aria-labelledby={hasTitle && !ariaLabel ? titleId : undefined}
@@ -165,7 +167,7 @@ export function Dialog({ title, ariaLabel, children, footer, onClose }: DialogPr
               <X aria-hidden="true" />
             </button>
           </header>
-          <div className="web-dialog-body">{children}</div>
+          <div className={"web-dialog-body" + (bodyClassName ? " " + bodyClassName : "")}>{children}</div>
           {footer !== undefined && <footer className="web-dialog-footer">{footer}</footer>}
         </section>
       </div>

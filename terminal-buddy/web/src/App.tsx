@@ -1,4 +1,5 @@
 import { useStore } from './store';
+import { useDualPane } from './hooks/useMediaQuery';
 import Login from './screens/Login';
 import Nav from './screens/Nav';
 import Terminal from './screens/Terminal';
@@ -29,8 +30,33 @@ applyUrlTokenOnce();
 export default function App() {
   const token = useStore((s) => s.token);
   const view = useStore((s) => s.view);
+  const dualPane = useDualPane();
 
   if (!token) return <Login />;
+
+  // ≥960px：侧边栏（Nav）+ 主区（Terminal 或占位）并排
+  if (dualPane) {
+    return (
+      <div className="app-dual-pane">
+        <aside className="app-sidebar">
+          <Nav variant="sidebar" />
+        </aside>
+        <main className="app-main">
+          {view.screen === 'terminal' ? (
+            <Terminal
+              terminalId={view.terminalId}
+              profileName={view.profileName}
+              owner={view.owner}
+            />
+          ) : (
+            <div className="main-placeholder">选择左侧的连接开始</div>
+          )}
+        </main>
+      </div>
+    );
+  }
+
+  // <960px：保持单列全屏切换
   if (view.screen === 'terminal') {
     return (
       <Terminal

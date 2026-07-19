@@ -1,5 +1,5 @@
 import { useStore } from './store';
-import type { Profile, TerminalInfo } from './types';
+import type { ExtraParamPreset, Profile, TerminalInfo } from './types';
 
 const BASE = '/api';
 
@@ -62,14 +62,26 @@ export async function login(
   return res.json();
 }
 
+export interface CreateTerminalOptions {
+  extraStartupParams?: string;
+  extraParamTag?: string;
+  extraParamTagColor?: string | null;
+}
+
 export const api = {
   getProfiles: () => req<Profile[]>('/profiles'),
   getTerminals: () => req<TerminalInfo[]>('/terminals'),
-  createTerminal: (profileId: string) =>
+  createTerminal: (profileId: string, options?: CreateTerminalOptions) =>
     req<TerminalInfo>('/terminals', {
       method: 'POST',
-      body: JSON.stringify({ profileId, rows: 0, cols: 0 }),
+      body: JSON.stringify({ profileId, rows: 0, cols: 0, ...options }),
     }),
   deleteTerminal: (id: string) =>
     req<{ closed: boolean }>(`/terminals/${id}`, { method: 'DELETE' }),
+  getExtraParamPresets: () => req<ExtraParamPreset[]>('/extra-param-presets'),
+  replaceExtraParamPresets: (presets: ExtraParamPreset[]) =>
+    req<ExtraParamPreset[]>('/extra-param-presets', {
+      method: 'PUT',
+      body: JSON.stringify(presets),
+    }),
 };

@@ -12,6 +12,7 @@ interface Props {
 
 export default function Terminal({ terminalId, profileName, owner }: Props) {
   const setView = useStore((s) => s.setView);
+  const session = useStore((s) => s.sessions.find((x) => x.id === terminalId));
   const [connected, setConnected] = useState(false);
   const [everConnected, setEverConnected] = useState(false);
   const [exited, setExited] = useState(false);
@@ -48,6 +49,18 @@ export default function Terminal({ terminalId, profileName, owner }: Props) {
         </button>
         <div className="terminal-title">
           <span className="title">{profileName}</span>
+          {session?.extraParamTag && (
+            <span
+              className="session-tag-chip"
+              style={
+                session.extraParamTagColor
+                  ? { backgroundColor: session.extraParamTagColor }
+                  : undefined
+              }
+            >
+              {session.extraParamTag}
+            </span>
+          )}
           <span className={`terminal-status ${connected ? 'online' : 'offline'}`}>
             <span className="dot" aria-hidden="true" />
             {connected ? '已连接' : everConnected ? '正在重连' : '正在连接'}

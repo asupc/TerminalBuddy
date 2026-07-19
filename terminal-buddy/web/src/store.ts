@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Profile, TerminalInfo } from './types';
+import { api } from './api';
+import type { ExtraParamPreset, Profile, TerminalInfo } from './types';
 
 export type View =
   | { screen: 'nav' }
@@ -14,6 +15,9 @@ interface AppState {
   profiles: Profile[];
   sessions: TerminalInfo[];
   metaOnline: boolean;
+  // 启动参数预设（不持久化，从后端 ClientData 加载，与 PC 端共享）
+  extraParamPresets: ExtraParamPreset[];
+  presetsLoading: boolean;
   // 当前界面
   view: View;
 
@@ -23,28 +27,71 @@ interface AppState {
   setSessions: (s: TerminalInfo[]) => void;
   setMetaOnline: (b: boolean) => void;
   setView: (v: View) => void;
+
+  loadExtraParamPresets: () => Promise<void>;
+  addExtraParamPreset: (name: string, params: string, tagColor: string | null, commandMatch: string | null) => Promise<void>;
+  updateExtraParamPreset: (id: string, patch: Partial<Omit<ExtraParamPreset, 'id'>>) => Promise<void>;
+  removeExtraParamPreset: (id: string) => Promise<void>;
 }
 
 export const useStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       token: null,
       username: null,
       profiles: [],
       sessions: [],
       metaOnline: false,
+      extraParamPresets: [],
+      presetsLoading: false,
       view: { screen: 'nav' },
       setAuth: (token, username) => set({ token, username }),
       logout: () =>
-        set({ token: null, username: null, profiles: [], sessions: [], view: { screen: 'nav' } }),
+        set({ token: null, username: null, profiles: [], sessions: [], extraParamPresets: [], view: { screen: 'nav' } }),
       setProfiles: (profiles) => set({ profiles }),
       setSessions: (sessions) => set({ sessions }),
       setMetaOnline: (metaOnline) => set({ metaOnline }),
       setView: (view) => set({ view }),
+
+      loadExtraParamPresets: async () => {
+        set({ presetsLoading: true });
+        try {
+          const presets = await api.getExtraParamPresets();
+          set({ extraParamPresets: presets });
+        } catch {
+          /* 静默失败，不影响主流程 */
+        } finally {
+          set({ presetsLoading: false });
+        }
+      },
+      addExtraParamPreset: async (name, params, tagColor, commandMatch) => {
+        const preset: ExtraParamPreset = {
+          id: crypto.randomUUID(),
+          name,
+          params,
+          tagColor,
+          commandMatch,
+        };
+        const next = [...get().extraParamPresets, preset];
+        set({ extraParamPresets: next });
+        await api.replaceExtraParamPresets(next);
+      },
+      updateExtraParamPreset: async (id, patch) => {
+        const next = get().extraParamPresets.map((p) =>
+          p.id === id ? { ...p, ...patch } : p,
+        );
+        set({ extraParamPresets: next });
+        await api.replaceExtraParamPresets(next);
+      },
+      removeExtraParamPreset: async (id) => {
+        const next = get().extraParamPresets.filter((p) => p.id !== id);
+        set({ extraParamPresets: next });
+        await api.replaceExtraParamPresets(next);
+      },
     }),
     {
       name: 'terminalbuddy_mobile_auth',
-      // 只持久化登录态，profiles/sessions/view 每次进入重新获取
+      // 只持久化登录态，profiles/sessions/presets/view 每次进入重新获取
       partialize: (s) => ({ token: s.token, username: s.username }),
     },
   ),
