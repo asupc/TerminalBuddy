@@ -1,5 +1,5 @@
 .web-dialog {
-  width: 400px;
+  width: 480px;
 }
 
 .web-dialog-body {
@@ -60,7 +60,7 @@
 
 .web-field-inline {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
+  grid-template-columns: 84px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
@@ -68,6 +68,11 @@
 
 .web-field-inline .web-label {
   margin-bottom: 0;
+  white-space: nowrap;
+}
+
+.web-field-inline .web-field-error {
+  grid-column: 1 / -1;
 }
 
 .web-label {

@@ -1,5 +1,4 @@
-import { FC, useState, useEffect, useCallback, type FormEvent } from 'react';
-import { Globe2 } from 'lucide-react';
+import { FC, useState, useEffect, useCallback } from 'react';
 import QRCode from 'qrcode';
 import {
   getWebApiStatus,
@@ -66,28 +65,63 @@ const formatCustomEndpoint = ({ host, port }: CustomEndpoint): string => {
   return `${host.includes(':') ? `[${host}]` : host}:${port}`;
 };
 
+// 解析 "地址:端口" 格式的内联输入；返回 null 表示格式不合法。
+const parseCustomEndpointInput = (value: string): CustomEndpoint | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  // IPv6 方括号写法：[::1]:9600
+  const ipv6Match = trimmed.match(/^\[([^\]]+)\]:(\d{1,5})$/);
+  if (ipv6Match) {
+    const port = parseInt(ipv6Match[2], 10);
+    if (port < 1 || port > 65535) return null;
+    const host = ipv6Match[1].trim();
+    if (!host || getCustomHostError(host, true)) return null;
+    return { host, port };
+  }
+  // 通用写法：以最后一个冒号分隔 host 与 port
+  const lastColon = trimmed.lastIndexOf(':');
+  if (lastColon <= 0 || lastColon === trimmed.length - 1) return null;
+  const host = trimmed.slice(0, lastColon).trim();
+  const portStr = trimmed.slice(lastColon + 1).trim();
+  if (!host || !portStr) return null;
+  const port = parseInt(portStr, 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  if (getCustomHostError(host, true)) return null;
+  return { host, port };
+};
+
+const getCustomEndpointInputError = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (!parseCustomEndpointInput(trimmed)) {
+    return '请输入 "地址:端口" 格式，例如 192.168.1.10:9600';
+  }
+  return '';
+};
+
 const replaceUrlEndpoint = (url: string, customEndpoint: CustomEndpoint | null): string => {
   if (!customEndpoint) return url;
 
-  const parsedUrl = new URL(url);
-  const urlHost = customEndpoint.host.includes(':') ? `[${customEndpoint.host}]` : customEndpoint.host;
-  parsedUrl.hostname = new URL(`http://${urlHost}`).hostname;
-  parsedUrl.port = String(customEndpoint.port);
-
-  const replaced = parsedUrl.toString();
-  const sourceHadBareOrigin = parsedUrl.pathname === '/' && !parsedUrl.search && !parsedUrl.hash && !url.endsWith('/');
-  return sourceHadBareOrigin ? replaced.slice(0, -1) : replaced;
+  try {
+    const parsedUrl = new URL(url);
+    const urlHost = customEndpoint.host.includes(':') ? `[${customEndpoint.host}]` : customEndpoint.host;
+    const newHostname = new URL(`http://${urlHost}`).hostname;
+    if (!newHostname) return url;
+    parsedUrl.hostname = newHostname;
+    parsedUrl.port = String(customEndpoint.port);
+    const replaced = parsedUrl.toString();
+    const sourceHadBareOrigin = parsedUrl.pathname === '/' && !parsedUrl.search && !parsedUrl.hash && !url.endsWith('/');
+    return sourceHadBareOrigin ? replaced.slice(0, -1) : replaced;
+  } catch {
+    // 自定义 host 无法嵌入 URL（如历史脏数据）时回退到原始地址，避免渲染崩溃。
+    return url;
+  }
 };
 
 export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
   const [customEndpoint, setCustomEndpoint] = useState<CustomEndpoint | null>(null);
-  const [customDialogOpen, setCustomDialogOpen] = useState(false);
-  const [customHostDraft, setCustomHostDraft] = useState('');
-  const [customPortDraft, setCustomPortDraft] = useState('');
-  const [customHostError, setCustomHostError] = useState('');
-  const [customPortError, setCustomPortError] = useState('');
-  const [customSaveError, setCustomSaveError] = useState('');
-  const [customSaving, setCustomSaving] = useState(false);
+  const [customEndpointDraft, setCustomEndpointDraft] = useState('');
+  const [customEndpointError, setCustomEndpointError] = useState('');
   const [port, setPort] = useState(9600);
   const [username, setUsername] = useState('admin');
   const [webPassword, setWebPassword] = useState('');
@@ -126,9 +160,16 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
         const raw = await readClientData(CUSTOM_ENDPOINT_KEY);
         if (!raw || cancelled) return;
         const saved = JSON.parse(raw) as CustomEndpoint | null;
-        if (!saved || typeof saved.host !== 'string' || typeof saved.port !== 'number') return;
+        if (!saved) {
+          if (!cancelled) setCustomEndpointDraft('');
+          return;
+        }
+        if (typeof saved.host !== 'string' || typeof saved.port !== 'number') return;
         if (getCustomHostError(saved.host, true) || getCustomPortError(String(saved.port))) return;
-        setCustomEndpoint({ host: normalizeCustomHost(saved.host), port: saved.port });
+        if (cancelled) return;
+        const endpoint = { host: normalizeCustomHost(saved.host), port: saved.port };
+        setCustomEndpoint(endpoint);
+        setCustomEndpointDraft(formatCustomEndpoint(endpoint));
       } catch {
         /* ignore invalid or unavailable saved data */
       }
@@ -198,55 +239,30 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
     setServerLoading(false);
   };
 
-  const openCustomDialog = () => {
-    setCustomHostDraft(customEndpoint?.host ?? '');
-    setCustomPortDraft(String(customEndpoint?.port ?? port));
-    setCustomHostError('');
-    setCustomPortError('');
-    setCustomSaveError('');
-    setCustomDialogOpen(true);
-  };
-
-  const closeCustomDialog = () => {
-    if (!customSaving) setCustomDialogOpen(false);
-  };
-
-  const handleSaveCustomEndpoint = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const hostError = getCustomHostError(customHostDraft, true);
-    const portError = getCustomPortError(customPortDraft);
-    setCustomHostError(hostError);
-    setCustomPortError(portError);
-    setCustomSaveError('');
-    if (hostError || portError) return;
-
-    const endpoint = {
-      host: normalizeCustomHost(customHostDraft),
-      port: Number(customPortDraft),
-    };
-    setCustomSaving(true);
-    try {
-      await writeClientData(CUSTOM_ENDPOINT_KEY, JSON.stringify(endpoint));
-      setCustomEndpoint(endpoint);
-      setCustomDialogOpen(false);
-    } catch (error) {
-      setCustomSaveError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCustomSaving(false);
+  const handleCustomEndpointBlur = async () => {
+    const trimmed = customEndpointDraft.trim();
+    if (!trimmed) {
+      setCustomEndpointError('');
+      if (customEndpoint) {
+        try {
+          await writeClientData(CUSTOM_ENDPOINT_KEY, 'null');
+        } catch {
+          /* ignore */
+        }
+        setCustomEndpoint(null);
+      }
+      return;
     }
-  };
-
-  const handleClearCustomEndpoint = async () => {
-    setCustomSaving(true);
-    setCustomSaveError('');
+    const error = getCustomEndpointInputError(trimmed);
+    setCustomEndpointError(error);
+    if (error) return;
+    const parsed = parseCustomEndpointInput(trimmed);
+    if (!parsed) return;
     try {
-      await writeClientData(CUSTOM_ENDPOINT_KEY, 'null');
-      setCustomEndpoint(null);
-      setCustomDialogOpen(false);
-    } catch (error) {
-      setCustomSaveError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setCustomSaving(false);
+      await writeClientData(CUSTOM_ENDPOINT_KEY, JSON.stringify(parsed));
+      setCustomEndpoint(parsed);
+    } catch {
+      /* ignore */
     }
   };
 
@@ -274,15 +290,6 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
     >
           <div className="web-dialog-intro">
             <p className="web-dialog-desc">启用后可通过浏览器远程访问终端</p>
-            <button
-              type="button"
-              className="web-custom-host-btn"
-              onClick={openCustomDialog}
-              title={customEndpoint ? formatCustomEndpoint(customEndpoint) : '设置自定义连接地址'}
-            >
-              <Globe2 aria-hidden="true" />
-              <span>自定义 Host</span>
-            </button>
           </div>
 
           <div className="web-field web-field-inline">
@@ -320,6 +327,33 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
               onChange={(e) => setWebPassword(e.target.value)}
             />
           </div>
+
+          {serverRunning && (
+            <div className="web-field web-field-inline">
+              <label className="web-label" htmlFor="web-api-custom-endpoint">自定义 Host</label>
+              <input
+                id="web-api-custom-endpoint"
+                className="web-input"
+                type="text"
+                value={customEndpointDraft}
+                placeholder="地址:端口，留空使用自动地址"
+                autoCapitalize="none"
+                spellCheck={false}
+                aria-invalid={Boolean(customEndpointError)}
+                aria-describedby={customEndpointError ? 'web-api-custom-endpoint-error' : undefined}
+                onChange={(event) => {
+                  setCustomEndpointDraft(event.target.value);
+                  if (customEndpointError) setCustomEndpointError(getCustomEndpointInputError(event.target.value));
+                }}
+                onBlur={handleCustomEndpointBlur}
+              />
+              {customEndpointError && (
+                <div id="web-api-custom-endpoint-error" className="web-field-error" role="alert">
+                  {customEndpointError}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="web-status-row">
             <span className={`web-status-dot ${serverRunning ? 'on' : 'off'}`} />
@@ -365,91 +399,6 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
             </>
           )}
     </Dialog>
-
-    {customDialogOpen && (
-      <Dialog
-        title="自定义 Host"
-        className="web-custom-dialog"
-        bodyClassName="web-custom-dialog-body"
-        onClose={closeCustomDialog}
-        closeDisabled={customSaving}
-        onSubmit={handleSaveCustomEndpoint}
-        autoFocus={false}
-        footer={(
-          <>
-            {customEndpoint && (
-              <button
-                type="button"
-                className="btn-danger web-custom-clear-btn"
-                onClick={() => void handleClearCustomEndpoint()}
-                disabled={customSaving}
-              >
-                恢复自动地址
-              </button>
-            )}
-            <button type="button" className="btn-secondary" onClick={closeCustomDialog} disabled={customSaving}>
-              取消
-            </button>
-            <button type="submit" className="btn-primary" disabled={customSaving}>
-              {customSaving ? '保存中…' : '保存'}
-            </button>
-          </>
-        )}
-      >
-        <div className="web-field">
-          <label className="web-label" htmlFor="web-custom-host">IP / 域名</label>
-          <input
-            id="web-custom-host"
-            className="web-input"
-            type="text"
-            value={customHostDraft}
-            placeholder="例如 192.168.1.20 或 terminal.example.com"
-            autoCapitalize="none"
-            spellCheck={false}
-            autoFocus
-            aria-invalid={Boolean(customHostError)}
-            aria-describedby={customHostError ? 'web-custom-host-error' : undefined}
-            onBlur={() => setCustomHostError(getCustomHostError(customHostDraft, true))}
-            onChange={(event) => {
-              setCustomHostDraft(event.target.value);
-              if (customHostError) setCustomHostError(getCustomHostError(event.target.value, true));
-            }}
-          />
-          {customHostError && (
-            <div id="web-custom-host-error" className="web-field-error" role="alert">
-              {customHostError}
-            </div>
-          )}
-        </div>
-
-        <div className="web-field">
-          <label className="web-label" htmlFor="web-custom-port">连接端口</label>
-          <input
-            id="web-custom-port"
-            className="web-input"
-            type="number"
-            min={1}
-            max={65535}
-            value={customPortDraft}
-            aria-invalid={Boolean(customPortError)}
-            aria-describedby={customPortError ? 'web-custom-port-error' : undefined}
-            onBlur={() => setCustomPortError(getCustomPortError(customPortDraft))}
-            onChange={(event) => {
-              setCustomPortDraft(event.target.value);
-              if (customPortError) setCustomPortError(getCustomPortError(event.target.value));
-            }}
-          />
-          {customPortError && (
-            <div id="web-custom-port-error" className="web-field-error" role="alert">
-              {customPortError}
-            </div>
-          )}
-        </div>
-
-        <p className="web-custom-dialog-help">保存后仅替换连接地址和二维码，不改变服务监听端口。</p>
-        {customSaveError && <div className="web-error" role="alert">{customSaveError}</div>}
-      </Dialog>
-    )}
     </>
   );
 };
