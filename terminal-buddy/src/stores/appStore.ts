@@ -105,6 +105,7 @@ export async function initExtraParamPresets() {
         name: p.name ?? '',
         params: p.params ?? '',
         tagColor: p.tagColor ?? null,
+        commandMatch: p.commandMatch ?? null,
       }));
       useAppStore.setState({ extraParamPresets: normalized });
     }
@@ -316,7 +317,7 @@ interface AppState {
 
   // Extra param presets
   extraParamPresets: ExtraParamPreset[];
-  addExtraParamPreset: (name: string, params: string, tagColor?: string | null) => void;
+  addExtraParamPreset: (name: string, params: string, tagColor?: string | null, commandMatch?: string | null) => void;
   updateExtraParamPreset: (id: string, patch: Partial<Omit<ExtraParamPreset, 'id'>>) => void;
   removeExtraParamPreset: (id: string) => void;
 
@@ -1036,8 +1037,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Extra param presets
   extraParamPresets: [],
-  addExtraParamPreset: (name, params, tagColor = null) => set((state) => {
-    const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params, tagColor }];
+  addExtraParamPreset: (name, params, tagColor = null, commandMatch = null) => set((state) => {
+    const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params, tagColor, commandMatch }];
     writeClientData('extra_param_presets', JSON.stringify(next)).catch(() => {});
     return { extraParamPresets: next };
   }),

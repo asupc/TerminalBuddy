@@ -2,6 +2,7 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
   type CSSProperties,
   type FormEventHandler,
   type PointerEvent as ReactPointerEvent,
@@ -58,6 +59,12 @@ export interface DialogProps {
   onSubmit?: FormEventHandler<HTMLFormElement>;
   autoFocus?: boolean;
   modal?: boolean;
+  /** 受控可见性。传入后由该 prop 控制渲染与离场动画；不传则维持原有行为。 */
+  open?: boolean;
+  /** 离场动画时长（毫秒），仅在传入 open 时生效 */
+  leaveDurationMs?: number;
+  /** 受控模式下，离场动画结束后调用一次。父级可借此销毁外层包装。 */
+  onExit?: () => void;
 }
 
 export function Dialog({
@@ -81,6 +88,9 @@ export function Dialog({
   onSubmit,
   autoFocus = true,
   modal = true,
+  open,
+  leaveDurationMs = 160,
+  onExit,
 }: DialogProps) {
   const titleId = useId();
   const stackIdRef = useRef(Symbol('dialog'));
@@ -90,11 +100,64 @@ export function Dialog({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
   const closeDisabledRef = useRef(closeDisabled);
+  const onExitRef = useRef(onExit);
+  onExitRef.current = onExit;
   const offsetRef = useRef({ x: 0, y: 0 });
   const dragCleanupRef = useRef<(() => void) | null>(null);
+  // 受控 open 模式下的内部状态：mounted 控制是否渲染，phase 控制动画阶段
+  const isControlled = open !== undefined;
+  const [mounted, setMounted] = useState(!isControlled || open !== false);
+  const [phase, setPhase] = useState<'enter' | 'open' | 'leave'>(
+    isControlled && open === false ? 'leave' : 'enter',
+  );
+  // 在 keydown 中读取最新 phase，避免 leave 阶段的关闭反复触发
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const leaveTimerRef = useRef<number | null>(null);
   if (layerRef.current === null) layerRef.current = nextLayer++;
   onCloseRef.current = onClose;
   closeDisabledRef.current = closeDisabled;
+
+  // 受控模式：监听 open 切换进入/离开阶段
+  useEffect(() => {
+    if (!isControlled) return;
+    if (open) {
+      if (leaveTimerRef.current !== null) {
+        window.clearTimeout(leaveTimerRef.current);
+        leaveTimerRef.current = null;
+      }
+      setMounted(true);
+      setPhase('enter');
+      // 下一帧切换到 open，让入场动画从头播
+      const id = requestAnimationFrame(() => setPhase('open'));
+      return () => cancelAnimationFrame(id);
+    }
+    if (open === false && phase !== 'leave') {
+      setPhase('leave');
+      leaveTimerRef.current = window.setTimeout(() => {
+        setMounted(false);
+        leaveTimerRef.current = null;
+        onExitRef.current?.();
+      }, leaveDurationMs);
+    }
+  }, [open, isControlled, leaveDurationMs, phase]);
+
+  // 非受控模式：mount 后下一帧切换到 open，触发入场动画
+  useEffect(() => {
+    if (isControlled) return;
+    const id = requestAnimationFrame(() => setPhase('open'));
+    return () => cancelAnimationFrame(id);
+  }, [isControlled]);
+
+  // 卸载时清掉未触发的 timer，避免在快速切换时残留
+  useEffect(() => {
+    return () => {
+      if (leaveTimerRef.current !== null) {
+        window.clearTimeout(leaveTimerRef.current);
+        leaveTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const stackId = stackIdRef.current;
@@ -113,6 +176,8 @@ export function Dialog({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (dialogStack[dialogStack.length - 1] !== stackId) return;
+      // 离场阶段忽略键盘，避免反复触发关闭
+      if (phaseRef.current === 'leave') return;
 
       if (event.key === 'Escape' && !closeDisabledRef.current) {
         event.preventDefault();
@@ -257,15 +322,19 @@ export function Dialog({
     'aria-label': accessibleName,
   } as const;
 
+  if (!mounted) return null;
+
   return createPortal(
     <div
       className={joinClassNames('tb-dialog-overlay', !modal && 'tb-dialog-overlay-nonmodal', overlayClassName)}
       style={{ zIndex: layerRef.current }}
+      data-state={phase}
     >
       <div ref={positionerRef} className={joinClassNames('tb-dialog-positioner', positionerClassName)}>
         {onSubmit ? (
           <form
             {...sharedSurfaceProps}
+            data-state={phase}
             ref={element => { surfaceRef.current = element; }}
             onSubmit={onSubmit}
           >
@@ -274,6 +343,7 @@ export function Dialog({
         ) : (
           <section
             {...sharedSurfaceProps}
+            data-state={phase}
             ref={element => { surfaceRef.current = element; }}
           >
             {surfaceContent}
@@ -304,16 +374,20 @@ export function ConfirmDialog({
   cancelText = '取消',
   confirmVariant = 'danger',
 }: ConfirmDialogProps) {
+  const [open, setOpen] = useState(true);
+  const requestClose = () => setOpen(false);
   return (
     <Dialog
+      open={open}
+      onClose={requestClose}
+      onExit={onClose}
       title={title}
       role="alertdialog"
       className="tb-confirm-dialog"
-      onClose={onClose}
       footer={(
         <>
-          <button type="button" className="btn-secondary" onClick={onClose}>{cancelText}</button>
-          <button type="button" className={`btn-${confirmVariant}`} onClick={onConfirm}>{confirmText}</button>
+          <button type="button" className="btn-secondary" onClick={requestClose}>{cancelText}</button>
+          <button type="button" className={`btn-${confirmVariant}`} onClick={() => { onConfirm(); requestClose(); }}>{confirmText}</button>
         </>
       )}
     >

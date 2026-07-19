@@ -7,7 +7,14 @@
   justify-content: center;
   padding: 24px;
   background: var(--bg-overlay);
-  animation: tb-dialog-overlay-enter var(--motion-fast) var(--ease-standard);
+}
+
+.tb-dialog-overlay[data-state="enter"] {
+  animation: tb-dialog-overlay-enter var(--motion-fast) var(--ease-standard) both;
+}
+
+.tb-dialog-overlay[data-state="leave"] {
+  animation: tb-dialog-overlay-leave var(--motion-fast) var(--ease-standard) both;
 }
 
 .tb-dialog-overlay-nonmodal {
@@ -45,7 +52,14 @@
   background: var(--bg-elevated);
   color: var(--text-primary);
   box-shadow: var(--shadow-dialog);
-  animation: tb-dialog-surface-enter var(--motion-normal) var(--ease-enter);
+}
+
+.tb-dialog-surface[data-state="enter"] {
+  animation: tb-dialog-surface-enter var(--motion-normal) var(--ease-enter) both;
+}
+
+.tb-dialog-surface[data-state="leave"] {
+  animation: tb-dialog-surface-leave var(--motion-fast) var(--ease-standard) both;
 }
 
 .tb-dialog-header {
@@ -154,9 +168,19 @@
   to { opacity: 1; }
 }
 
+@keyframes tb-dialog-overlay-leave {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 @keyframes tb-dialog-surface-enter {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes tb-dialog-surface-leave {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(6px) scale(0.985); }
 }
 
 @media (max-width: 560px) {

@@ -518,7 +518,7 @@ function App() {
       const pendingStore = useAppStore.getState();
       if (pendingStore.splitMode !== 'off') pendingStore.placeSessionInSplitSlot(startingId);
 
-      const terminalId = await startTerminal(profile.id, extraParams, rows, cols, resolvedTabName);
+      const terminalId = await startTerminal(profile.id, extraParams, rows, cols, resolvedTabName, undefined, presetTag, presetTagColor ?? null);
       if (!resolveStartingSession(startingId, terminalId)) {
         void closeTerminal(terminalId).catch(() => {});
         return;

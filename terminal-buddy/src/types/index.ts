@@ -161,6 +161,8 @@ export interface ExtraParamPreset {
   params: string;
   // tag 底色，取自 TAB_COLORS；为空表示使用主题默认色（预设名直接作为 tab 上的 tag 显示）
   tagColor: string | null;
+  // 命令匹配：仅当配置的启动命令包含此字符串时，右键菜单才显示该预设；为空表示对所有配置可用
+  commandMatch: string | null;
 }
 
 export interface RemoteFileEntry {

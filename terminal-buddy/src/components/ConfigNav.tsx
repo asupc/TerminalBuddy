@@ -476,7 +476,14 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             if (target) onStartTerminal(target);
             closeContextMenu();
           }}>启动</div>
-          {extraParamPresets.map((preset) => (
+          {extraParamPresets
+            .filter((preset) => {
+              if (!preset.commandMatch) return true;
+              const target = profiles.find((p) => p.id === contextMenu.profileId);
+              const match = preset.commandMatch.toLowerCase();
+              return (target?.startupCommands || []).some((cmd) => cmd.toLowerCase().includes(match));
+            })
+            .map((preset) => (
             <div key={preset.id} className="context-menu-item" onClick={() => {
               const target = profiles.find((p) => p.id === contextMenu.profileId);
               if (target) onStartTerminal(target, preset.params, preset.name, undefined, preset.name, preset.tagColor);
