@@ -43,6 +43,8 @@ pub struct TerminalInstance {
     pub profile_id: String,
     pub display_name: String,
     pub owner: TerminalOwner,
+    pub extra_param_tag: Option<String>,
+    pub extra_param_tag_color: Option<String>,
     backend: TerminalBackend,
     pub output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
     current_rows: u16,
@@ -361,7 +363,7 @@ impl TerminalService {
     /// 构建当前存活终端的列表（供 REST `GET /api/terminals`、Tauri 命令、meta WS 共用）。
     /// 过滤掉 PTY 已退出的实例，并用 ProfileService 补全 profile 元数据。
     pub fn list_terminals_info(&self) -> Vec<TerminalInfo> {
-        let entries: Vec<(String, String, String, TerminalOwner)> = {
+        let entries: Vec<(String, String, String, TerminalOwner, Option<String>, Option<String>)> = {
             let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.values()
                 .filter(|inst| !inst.exited.load(Ordering::SeqCst))
@@ -370,10 +372,12 @@ impl TerminalService {
                     inst.profile_id.clone(),
                     inst.display_name.clone(),
                     inst.owner.clone(),
+                    inst.extra_param_tag.clone(),
+                    inst.extra_param_tag_color.clone(),
                 ))
                 .collect()
         };
-        entries.into_iter().map(|(id, profile_id, display_name, owner)| {
+        entries.into_iter().map(|(id, profile_id, display_name, owner, extra_param_tag, extra_param_tag_color)| {
             let profile = ProfileService::get_profile(&profile_id).ok();
             TerminalInfo {
                 id,
@@ -382,11 +386,13 @@ impl TerminalService {
                 terminal_type: profile.as_ref().map(|p| p.terminal_type.clone()).unwrap_or_default(),
                 profile_id,
                 owner,
+                extra_param_tag,
+                extra_param_tag_color,
             }
         }).collect()
     }
 
-    pub fn create_terminal(&self, profile_id: &str, display_name: Option<&str>, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, startup_path_override: Option<&str>, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
+    pub fn create_terminal(&self, profile_id: &str, display_name: Option<&str>, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, startup_path_override: Option<&str>, extra_param_tag: Option<&str>, extra_param_tag_color: Option<&str>, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!("[create] start, id={}, profile_id={}", terminal_id, profile_id));
 
@@ -469,6 +475,8 @@ impl TerminalService {
             profile_id: profile_id.to_string(),
             display_name,
             owner,
+            extra_param_tag: extra_param_tag.map(str::to_string),
+            extra_param_tag_color: extra_param_tag_color.map(str::to_string),
             backend,
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
@@ -793,6 +801,8 @@ impl TerminalService {
             current_rows: init_rows,
             current_cols: init_cols,
             exited: AtomicBool::new(false),
+            extra_param_tag: None,
+            extra_param_tag_color: None,
         };
 
         {
@@ -849,6 +859,8 @@ pub async fn start_terminal(
     initial_rows: u16,
     initial_cols: u16,
     startup_path: Option<String>,
+    extra_param_tag: Option<String>,
+    extra_param_tag_color: Option<String>,
     app: AppHandle,
     terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
@@ -861,6 +873,8 @@ pub async fn start_terminal(
             initial_rows,
             initial_cols,
             startup_path.as_deref(),
+            extra_param_tag.as_deref(),
+            extra_param_tag_color.as_deref(),
             app,
             TerminalOwner::Pc,
         )

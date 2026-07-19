@@ -38,6 +38,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/bot/inbound/{channel_id}", post(handlers::bot_handler::bridge_inbound))
         // 连接（profile）只读列表 —— 手机端不管理 profile，照搬电脑端已配置的导航
         .route("/api/profiles", get(handlers::profile_handler::list))
+        // 启动参数预设（与 PC 端共享 ClientData/extra_param_presets.json）
+        .route("/api/extra-param-presets", get(handlers::preset_handler::list).put(handlers::preset_handler::replace))
         // 终端会话：列表 / 新建 / 关闭
         .route("/api/terminals", get(handlers::terminal_handler::list).post(handlers::terminal_handler::start))
         .route("/api/terminals/{id}", delete(handlers::terminal_handler::close))

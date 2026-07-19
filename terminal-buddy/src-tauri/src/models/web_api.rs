@@ -38,6 +38,10 @@ pub struct TerminalInfo {
     pub group: String,
     pub terminal_type: String,
     pub owner: TerminalOwner,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_param_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_param_tag_color: Option<String>,
 }
 
 /// meta WebSocket 推送的消息（会话列表实时同步）。
@@ -75,4 +79,10 @@ pub struct StartTerminalRequest {
     pub profile_id: String,
     pub rows: Option<u16>,
     pub cols: Option<u16>,
+    #[serde(default)]
+    pub extra_startup_params: Option<String>,
+    #[serde(default)]
+    pub extra_param_tag: Option<String>,
+    #[serde(default)]
+    pub extra_param_tag_color: Option<String>,
 }

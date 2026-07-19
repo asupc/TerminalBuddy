@@ -28,10 +28,12 @@ pub async fn start(
     let terminal_id = ts.create_terminal(
         &req.profile_id,
         None,
-        None,
+        req.extra_startup_params.as_deref(),
         req.rows.unwrap_or(0),
         req.cols.unwrap_or(0),
         None,
+        req.extra_param_tag.as_deref(),
+        req.extra_param_tag_color.as_deref(),
         state.app_handle.clone(),
         TerminalOwner::Web,
     ).map_err(ApiError::Internal)?;
@@ -44,6 +46,8 @@ pub async fn start(
         group: profile.group,
         terminal_type: profile.terminal_type,
         owner: TerminalOwner::Web,
+        extra_param_tag: req.extra_param_tag,
+        extra_param_tag_color: req.extra_param_tag_color,
     };
     let _ = state.app_handle.emit("terminal-created", info.clone());
     Ok(Json(info))
