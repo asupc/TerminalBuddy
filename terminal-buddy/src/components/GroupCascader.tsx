@@ -155,7 +155,13 @@ export const GroupCascader: React.FC<GroupCascaderProps> = ({ value, onChange, p
                         if (e.key === 'Enter') handleAddGroup(li);
                         if (e.key === 'Escape') setAddingAtLevel(null);
                       }}
-                      onBlur={() => { if (!newGroupName.trim()) setAddingAtLevel(null); }}
+                      onBlur={() => {
+                          if (newGroupName.trim()) {
+                            handleAddGroup(li);
+                          } else {
+                            setAddingAtLevel(null);
+                          }
+                        }}
                       placeholder="分组名称"
                     />
                   </div>

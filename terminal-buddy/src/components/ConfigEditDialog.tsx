@@ -252,7 +252,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   return (
     <>
       <Dialog
-        title={profile ? '编辑连接' : '新建连接'}
+        title={profile ? '编辑配置' : '新建配置'}
         className="dialog dialog-large"
         bodyClassName="dialog-shell-body"
         onClose={onClose}
@@ -262,7 +262,27 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
         )}
 
         <form onSubmit={handleSubmit(onSubmit)} className="dialog-content">
+          <div className="form-group">
+            <label>终端类型</label>
+            <select {...register('terminalType')}>
+              <option value="powershell">PowerShell</option>
+              <option value="cmd">CMD</option>
+              <option value="ssh">SSH</option>
+              <option value="docker">Docker</option>
+              <option value="k8s">Kubernetes</option>
+              <option value="mstsc">远程桌面 (RDP)</option>
+            </select>
+          </div>
+
           <div className="form-row">
+            <div className="form-group">
+              <label>名称</label>
+              <input
+                {...register('name', { required: '请输入配置名称' })}
+                placeholder="配置名称"
+              />
+              {errors.name && <span className="error">{errors.name.message}</span>}
+            </div>
             <div className="form-group">
               <label>分组</label>
               <GroupCascader
@@ -270,14 +290,6 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
                 onChange={(val) => setValue('group', val)}
                 profiles={profiles}
               />
-            </div>
-            <div className="form-group">
-              <label>名称</label>
-              <input
-                {...register('name', { required: '请输入连接名称' })}
-                placeholder="连接名称"
-              />
-              {errors.name && <span className="error">{errors.name.message}</span>}
             </div>
           </div>
 
@@ -410,28 +422,15 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
           </>
           )}
 
-          <div className="form-row">
-            <div className="form-group">
-              <label>终端类型</label>
-              <select {...register('terminalType')}>
-                <option value="powershell">PowerShell</option>
-                <option value="cmd">CMD</option>
-                <option value="ssh">SSH</option>
-                <option value="docker">Docker</option>
-                <option value="k8s">Kubernetes</option>
-                <option value="mstsc">远程桌面 (RDP)</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>颜色主题</label>
-              <select {...register('colorTheme')}>
-                {PRESET_THEMES.map((theme) => (
-                  <option key={theme.id} value={theme.id}>
-                    {theme.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="form-group">
+            <label>颜色主题</label>
+            <select {...register('colorTheme')}>
+              {PRESET_THEMES.map((theme) => (
+                <option key={theme.id} value={theme.id}>
+                  {theme.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           {watch('terminalType') === 'ssh' && (

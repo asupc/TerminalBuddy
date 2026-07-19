@@ -66,7 +66,7 @@
 
 .group-cascader-columns {
   display: flex;
-  max-height: 240px;
+  max-height: 360px;
   overflow-x: auto;
 }
 
