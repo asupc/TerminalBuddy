@@ -148,6 +148,26 @@
   text-overflow: ellipsis;
 }
 
+.terminal-tab-tag-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #fff;
+  background: var(--accent);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .terminal-tab-close {
   background: none;
   border: none;

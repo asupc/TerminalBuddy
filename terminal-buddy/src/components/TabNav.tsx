@@ -16,7 +16,7 @@ import './TabNav.css';
 interface TabSidebarProps {
   isActive: boolean;
   profiles: Profile[];
-  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => void;
   onStartBlankTerminal: (terminalType: 'powershell' | 'cmd') => void;
   onStartTextEditor: () => void;
 }
@@ -160,16 +160,31 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
             return {
               id: session.id,
               label: session.profileName,
-              icon: isEditor ? (
-                <span className="tab-nav-file-icon">
-                  {session.isDirty && <span className="tab-nav-dirty-dot" />}
-                  <FileText aria-hidden="true" />
-                </span>
-              ) : (
-                <span
-                  className={`tab-nav-dot${isTerminalWorking(terminalActivities[session.id]) ? ' working' : ''}`}
-                  style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
-                />
+              icon: (
+                <>
+                  {isEditor ? (
+                    <span className="tab-nav-file-icon">
+                      {session.isDirty && <span className="tab-nav-dirty-dot" />}
+                      <FileText aria-hidden="true" />
+                    </span>
+                  ) : (
+                    <>
+                      <span
+                        className={`tab-nav-dot${isTerminalWorking(terminalActivities[session.id]) ? ' working' : ''}`}
+                        style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
+                      />
+                      {session.extraParamTag && (
+                        <span
+                          className="tab-nav-tag-chip"
+                          style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
+                          title="启动参数预设"
+                        >
+                          {session.extraParamTag}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </>
               ),
               data: session,
             };
@@ -672,7 +687,14 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
               if (!profile) return null;
               return (
                 <div className="context-menu-item" onClick={() => {
-                  onStartTerminal(profile, undefined, undefined, session.profileName);
+                  onStartTerminal(
+                    profile,
+                    session.extraParams,
+                    session.extraParamTag,
+                    session.profileName,
+                    session.extraParamTag,
+                    session.extraParamTagColor,
+                  );
                   setTabContextMenu(null);
                 }}>以此配置新建终端</div>
               );

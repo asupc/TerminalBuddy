@@ -19,7 +19,7 @@ const PINNED_GROUP_ID = '__pinned__';
 
 interface ConfigPanelProps {
   isActive: boolean;
-  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
   onAddProfile: (defaultGroup?: string) => void;
@@ -479,10 +479,15 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           {extraParamPresets.map((preset) => (
             <div key={preset.id} className="context-menu-item" onClick={() => {
               const target = profiles.find((p) => p.id === contextMenu.profileId);
-              if (target) onStartTerminal(target, preset.params, preset.name);
+              if (target) onStartTerminal(target, preset.params, preset.name, undefined, preset.name, preset.tagColor);
               closeContextMenu();
             }}>
-              启动[<span style={{ color: '#FFD700' }}>{preset.name}</span>]
+              启动<span
+                className="config-nav-preset-chip"
+                style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
+              >
+                {preset.name}
+              </span>
             </div>
           ))}
           <div className="context-menu-item" onClick={async () => {
@@ -569,7 +574,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             添加配置
           </div>
           <div className="context-menu-item" onClick={() => { onManageExtraParams(); closeContextMenu(); }}>
-            添加额外参数
+            添加启动参数
           </div>
         </div>
       )}

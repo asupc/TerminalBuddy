@@ -195,6 +195,15 @@ export const TerminalTabBar: FC = () => {
             />
           ) : (
             <>
+              {session.extraParamTag && session.sessionType !== 'editor' && (
+                <span
+                  className="terminal-tab-tag-chip"
+                  style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
+                  title="启动参数预设"
+                >
+                  {session.extraParamTag}
+                </span>
+              )}
               <span className="terminal-tab-name" style={session.tabColor ? { color: session.tabColor } : undefined}>{session.profileName}</span>
               {session.owner === 'web' && <span className="terminal-owner-badge">Web</span>}
               {session.owner !== 'web' && terminalWebTakeovers[session.id] && (

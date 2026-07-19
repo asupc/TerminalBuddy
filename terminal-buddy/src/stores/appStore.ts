@@ -23,6 +23,8 @@ interface SavedTab {
   isDirty?: boolean;
   owner?: 'pc' | 'web';
   extraParams?: string;
+  extraParamTag?: string;
+  extraParamTagColor?: string | null;
   directory?: string;
   claudeSessionId?: string;
 }
@@ -66,6 +68,8 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
       isDirty: s.sessionType === 'editor' ? false : undefined,
       owner: s.owner,
       extraParams: s.extraParams,
+      extraParamTag: s.extraParamTag,
+      extraParamTagColor: s.extraParamTagColor ?? null,
       directory: dirs[s.id],
       claudeSessionId: claudeIds[s.id],
     }));
@@ -94,7 +98,15 @@ export async function initExtraParamPresets() {
   try {
     const raw = await readClientData('extra_param_presets');
     if (raw) {
-      useAppStore.setState({ extraParamPresets: JSON.parse(raw) });
+      const parsed = JSON.parse(raw) as Array<Partial<ExtraParamPreset>>;
+      // 兼容旧数据：补齐 tagColor 字段
+      const normalized: ExtraParamPreset[] = (Array.isArray(parsed) ? parsed : []).map((p) => ({
+        id: p.id ?? crypto.randomUUID(),
+        name: p.name ?? '',
+        params: p.params ?? '',
+        tagColor: p.tagColor ?? null,
+      }));
+      useAppStore.setState({ extraParamPresets: normalized });
     }
   } catch {}
 }
@@ -304,7 +316,8 @@ interface AppState {
 
   // Extra param presets
   extraParamPresets: ExtraParamPreset[];
-  addExtraParamPreset: (name: string, params: string) => void;
+  addExtraParamPreset: (name: string, params: string, tagColor?: string | null) => void;
+  updateExtraParamPreset: (id: string, patch: Partial<Omit<ExtraParamPreset, 'id'>>) => void;
   removeExtraParamPreset: (id: string) => void;
 
   // Last click region for F2 routing
@@ -1023,8 +1036,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Extra param presets
   extraParamPresets: [],
-  addExtraParamPreset: (name, params) => set((state) => {
-    const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params }];
+  addExtraParamPreset: (name, params, tagColor = null) => set((state) => {
+    const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params, tagColor }];
+    writeClientData('extra_param_presets', JSON.stringify(next)).catch(() => {});
+    return { extraParamPresets: next };
+  }),
+  updateExtraParamPreset: (id, patch) => set((state) => {
+    const next = state.extraParamPresets.map(p => p.id === id ? { ...p, ...patch } : p);
     writeClientData('extra_param_presets', JSON.stringify(next)).catch(() => {});
     return { extraParamPresets: next };
   }),

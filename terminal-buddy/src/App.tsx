@@ -416,6 +416,8 @@ function App() {
               groupId: tab.groupId || 'default',
               owner: 'pc',
               extraParams: baseParams,
+              extraParamTag: tab.extraParamTag,
+              extraParamTagColor: tab.extraParamTagColor ?? null,
             }, true);
             restoredSessionIds[i] = terminalId;
             // 保存 claudeSessionId 到 store
@@ -486,7 +488,7 @@ function App() {
     }
   }, [setProfiles]);
 
-  const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, presetName?: string, tabName?: string) => {
+  const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, _presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => {
     let startingId: string | null = null;
     try {
       if (profile.terminalType === 'mstsc') {
@@ -496,7 +498,7 @@ function App() {
       }
       // Split mode: when the grid is full, placeSessionInSplitSlot will auto-replace the oldest slot.
       const { rows, cols } = estimateTerminalSize();
-      const resolvedTabName = tabName ?? (presetName ? `${profile.name}[${presetName}]` : profile.name);
+      const resolvedTabName = tabName ?? profile.name;
       const theme = PRESET_THEMES.find(t => t.id === profile.colorTheme) || PRESET_THEMES[0];
       startingId = crypto.randomUUID();
       addSession({
@@ -509,6 +511,8 @@ function App() {
         groupId: 'default',
         owner: 'pc',
         extraParams,
+        extraParamTag: presetTag,
+        extraParamTagColor: presetTagColor ?? null,
         starting: true,
       });
       const pendingStore = useAppStore.getState();

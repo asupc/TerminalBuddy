@@ -60,6 +60,25 @@
   line-height: 1.4;
 }
 
+.config-nav-preset-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  margin-left: 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #fff;
+  background: var(--accent);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty-state {
   text-align: center;
   padding: 20px;
