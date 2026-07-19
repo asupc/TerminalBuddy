@@ -428,9 +428,14 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                   step={1}
                   value={value}
                   onChange={(e) => {
-                    const raw = Number(e.target.value);
-                    const next = Number.isFinite(raw)
-                      ? Math.max(8, Math.min(32, Math.round(raw)))
+                    const raw = e.target.value.trim();
+                    if (raw === '' || raw === '-') {
+                      updateSetting(row.key, row.defaultValue);
+                      return;
+                    }
+                    const num = Number(raw);
+                    const next = Number.isFinite(num) && num > 0
+                      ? Math.max(8, Math.min(32, Math.round(num)))
                       : row.defaultValue;
                     updateSetting(row.key, next);
                   }}
