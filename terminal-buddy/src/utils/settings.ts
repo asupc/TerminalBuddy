@@ -46,6 +46,9 @@ export interface AppSettings {
   listSelectionFg: string;
   listSelectionBorderColor: string;
   listSelectionBorderWidth: number;
+  terminalFontSizeOff: number;
+  terminalFontSize2x1: number;
+  terminalFontSize2x2: number;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -87,6 +90,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   listSelectionFg: '#ffffff',
   listSelectionBorderColor: '#ffffff',
   listSelectionBorderWidth: 0,
+  terminalFontSizeOff: 14,
+  terminalFontSize2x1: 12,
+  terminalFontSize2x2: 11,
 };
 
 let _cachedSettings: AppSettings | null = null;
