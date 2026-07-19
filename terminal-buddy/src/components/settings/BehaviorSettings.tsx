@@ -407,6 +407,43 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         </div>
         <p className="settings-desc">连接导航与文件导航中，被选中列表条目的配色（上方为实时预览）</p>
       </div>
+      <div className="settings-section">
+        <label className="settings-label">终端字号</label>
+        <div className="settings-grid-2col">
+          {(
+            [
+              { key: 'terminalFontSizeOff', label: '单屏', defaultValue: 14 },
+              { key: 'terminalFontSize2x1', label: '一分二（2×1）', defaultValue: 12 },
+              { key: 'terminalFontSize2x2', label: '四分屏（2×2）', defaultValue: 11 },
+            ] as const
+          ).map((row) => {
+            const value = settings[row.key];
+            return (
+              <div key={row.key} className="settings-number-row">
+                <span className="settings-number-label">{row.label}</span>
+                <input
+                  type="number"
+                  min={8}
+                  max={32}
+                  step={1}
+                  value={value}
+                  onChange={(e) => {
+                    const raw = Number(e.target.value);
+                    const next = Number.isFinite(raw)
+                      ? Math.max(8, Math.min(32, Math.round(raw)))
+                      : row.defaultValue;
+                    updateSetting(row.key, next);
+                  }}
+                />
+                <span className="settings-number-unit">px</span>
+              </div>
+            );
+          })}
+        </div>
+        <p className="settings-desc">
+          单屏 / 一分二 / 四分屏三种模式下使用的 xterm 字号；可保留默认 14 / 12 / 11，无视觉变化
+        </p>
+      </div>
     </div>
   );
 };
