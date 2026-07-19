@@ -21,21 +21,33 @@ import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } f
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 
-// 终端基础字号。分屏模式下按比例缩小:2x1 → 0.9、2x2 → 0.8、单屏 → 1.0。
-const BASE_FONT_SIZE = 14;
 const FLOATING_MENU_MARGIN = 8;
 const RIGHT_CLICK_PASTE_DEDUPE_MS = 750;
 const RIGHT_CLICK_NATIVE_PASTE_SUPPRESS_MS = 1200;
 const CODEX_INPUT_BACKGROUND_LIGHT = '48;2;244;244;244';
 const CODEX_INPUT_BACKGROUND_DARK = '48;2;57;57;57';
 const CODEX_INPUT_BACKGROUND_FALLBACK_DARK = '48;2;41;41;41';
-// 分屏按格子缩小字号；直接定义目标字号而非浮点缩放系数，避免 14×0.9=12.6→13
-// 这种非主流字号（等宽字形度量/ClearType 与 14px 差异大，视觉上像换了字体）。
-const SPLIT_FONT_SIZE: Record<'off' | '2x1' | '2x2', number> = {
-  off: BASE_FONT_SIZE,
+
+const SPLIT_FONT_SIZE_FALLBACK: Record<'off' | '2x1' | '2x2', number> = {
+  off: 14,
   '2x1': 12,
   '2x2': 11,
 };
+
+function clampFontSize(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(8, Math.min(32, Math.round(value)));
+}
+
+function resolveSplitFontSize(
+  splitMode: 'off' | '2x1' | '2x2',
+  settings: { terminalFontSizeOff: number; terminalFontSize2x1: number; terminalFontSize2x2: number },
+): number {
+  const fallback = SPLIT_FONT_SIZE_FALLBACK[splitMode];
+  if (splitMode === 'off') return clampFontSize(settings.terminalFontSizeOff, fallback);
+  if (splitMode === '2x1') return clampFontSize(settings.terminalFontSize2x1, fallback);
+  return clampFontSize(settings.terminalFontSize2x2, fallback);
+}
 
 function adaptCodexInputBackground(data: string, lightBackground: boolean): string {
   if (lightBackground) {
@@ -628,6 +640,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [internalDragOver, setInternalDragOver] = useState(false);
   const isSsh = useAppStore(s => s.sessions.find(sess => sess.id === terminalId)?.terminalType === 'ssh');
   const windowMode = useAppStore(s => s.windowMode);
+  const [fontSizeSettings, setFontSizeSettings] = useState(() => {
+    const s = getAppSettings();
+    return {
+      terminalFontSizeOff: s.terminalFontSizeOff,
+      terminalFontSize2x1: s.terminalFontSize2x1,
+      terminalFontSize2x2: s.terminalFontSize2x2,
+    };
+  });
   const [scrollInfo, setScrollInfo] = useState({ top: 0, height: 0, visible: false });
   const scrollThumbRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLElement | null>(null);
@@ -930,7 +950,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         cursorStyle: 'block',
         cursorInactiveStyle: 'outline',
         cursorWidth: 1,
-        fontSize: SPLIT_FONT_SIZE[splitModeRef.current],
+        fontSize: resolveSplitFontSize(splitModeRef.current, getAppSettings()),
         fontFamily: "'Cascadia Mono', Consolas, 'Courier New', monospace",
         fontWeight: 'normal',
         fontWeightBold: 'bold',
@@ -1883,17 +1903,38 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     };
   }, [terminalId]);
 
-  // 分屏模式下缩小终端字号(2x1→12px)，退出分屏恢复原值。
+  // 监听用户在设置面板改了终端字号，同步到本地 fontSizeSettings 以驱动下方
+  // splitMode effect 重算。空依赖：mount 时挂一次，unmount 时解绑。
+  useEffect(() => {
+    const sync = () => {
+      const s = getAppSettings();
+      setFontSizeSettings({
+        terminalFontSizeOff: s.terminalFontSizeOff,
+        terminalFontSize2x1: s.terminalFontSize2x1,
+        terminalFontSize2x2: s.terminalFontSize2x2,
+      });
+    };
+    window.addEventListener('app-settings-changed', sync);
+    return () => window.removeEventListener('app-settings-changed', sync);
+  }, []);
+
+  // 分屏/单屏字号跟随设置：splitMode 切换或用户在设置面板改值都会重新评估。
   // 这里只改字号,不立即 fit；TerminalPanel 会在布局稳定后派发带版本号的
   // TERMINAL_RESIZE_EVENT，避免快速连点时把 2x1/2x2/off 的中间尺寸同步给 PTY。
   useEffect(() => {
     if (!visible) return;
     const term = xtermRef.current;
     if (!term) return;
-    const newSize = SPLIT_FONT_SIZE[splitMode];
+    const newSize = resolveSplitFontSize(splitMode, fontSizeSettings);
     if (term.options.fontSize === newSize) return;
     term.options.fontSize = newSize;
-  }, [splitMode, visible]);
+  }, [
+    splitMode,
+    visible,
+    fontSizeSettings.terminalFontSizeOff,
+    fontSizeSettings.terminalFontSize2x1,
+    fontSizeSettings.terminalFontSize2x2,
+  ]);
 
   // F11 切换 windowMode（panels-hidden）时，.terminal-content 宽度突变，grid 重排
   // 需要时间落定。这里直接订阅 windowMode 再补一次 forceFit，与 TerminalPanel 派发
@@ -2129,7 +2170,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             top: autocomplete.inlineY,
             height: autocomplete.inlineHeight,
             lineHeight: `${autocomplete.inlineHeight}px`,
-            fontSize: `${SPLIT_FONT_SIZE[splitMode]}px`,
+            fontSize: `${resolveSplitFontSize(splitMode, getAppSettings())}px`,
           }}
         >
           {autocomplete.inlineCompletion}
