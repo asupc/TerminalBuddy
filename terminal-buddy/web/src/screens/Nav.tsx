@@ -16,6 +16,8 @@ import {
   LogOut,
   Monitor,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   Server,
   SquareTerminal,
   X,
@@ -144,8 +146,9 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const logout = useStore((state) => state.logout);
   const extraParamPresets = useStore((state) => state.extraParamPresets);
   const loadExtraParamPresets = useStore((state) => state.loadExtraParamPresets);
-  const loadCommandHistory = useStore((state) => state.loadCommandHistory);
   const view = useStore((state) => state.view);
+  const navCollapsed = useStore((state) => state.navCollapsed);
+  const toggleNavCollapsed = useStore((state) => state.toggleNavCollapsed);
   const hasHover = useHasHover();
 
   const [tab, setTab] = useState<'sessions' | 'profiles'>('sessions');
@@ -168,8 +171,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
   useEffect(() => {
     void loadExtraParamPresets();
-    void loadCommandHistory();
-  }, [loadExtraParamPresets, loadCommandHistory]);
+  }, [loadExtraParamPresets]);
 
   const loadProfiles = useCallback(async () => {
     setError('');
@@ -442,7 +444,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const menuProfile = contextMenu ? profiles.find((p) => p.id === contextMenu.profileId) : null;
 
   return (
-    <div className={`screen nav-screen${variant === 'sidebar' ? ' sidebar-variant' : ''}`}>
+    <div className={`screen nav-screen${variant === 'sidebar' ? ' sidebar-variant' : ''}${navCollapsed ? ' nav-collapsed' : ''}`}>
       <header className="topbar app-topbar">
         <div className="topbar-brand">
           <img className="brand-mark" src={appIcon} alt="" draggable={false} />
@@ -452,6 +454,15 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           <span className="dot" aria-hidden="true" />
           <span>{metaOnline ? '服务在线' : '等待连接'}</span>
         </div>
+        <button
+          className="icon-button nav-collapse-toggle"
+          onClick={toggleNavCollapsed}
+          title="折叠导航"
+          aria-label="折叠导航"
+          aria-pressed={navCollapsed}
+        >
+          <PanelLeftClose size={19} />
+        </button>
         <button className="icon-button" onClick={logout} title="退出登录" aria-label="退出登录">
           <LogOut size={19} />
         </button>
@@ -820,6 +831,58 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           </div>
         </Dialog>
       )}
+
+      {/* 折叠态下的极简活动条：tab 切换 + 展开 + 登出；展开态由 CSS 隐藏 */}
+      <nav className="nav-activity-bar" aria-label="导航活动条">
+        <img className="activity-brand" src={appIcon} alt="" draggable={false} />
+        <div className="activity-spacer" />
+        <button
+          type="button"
+          className={`activity-btn${tab === 'sessions' ? ' active' : ''}`}
+          onClick={() => {
+            setTab('sessions');
+            if (navCollapsed) toggleNavCollapsed();
+          }}
+          aria-pressed={tab === 'sessions'}
+          aria-label="会话"
+          title="会话"
+        >
+          <SquareTerminal size={20} aria-hidden="true" />
+          {sessions.length > 0 && <span className="activity-badge">{sessions.length}</span>}
+        </button>
+        <button
+          type="button"
+          className={`activity-btn${tab === 'profiles' ? ' active' : ''}`}
+          onClick={() => {
+            setTab('profiles');
+            if (navCollapsed) toggleNavCollapsed();
+          }}
+          aria-pressed={tab === 'profiles'}
+          aria-label="连接"
+          title="连接"
+        >
+          <Network size={20} aria-hidden="true" />
+        </button>
+        <div className="activity-spacer" />
+        <button
+          type="button"
+          className="activity-btn"
+          onClick={toggleNavCollapsed}
+          aria-label="展开导航"
+          title="展开导航"
+        >
+          <PanelLeftOpen size={20} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="activity-btn"
+          onClick={logout}
+          aria-label="退出登录"
+          title="退出登录"
+        >
+          <LogOut size={20} aria-hidden="true" />
+        </button>
+      </nav>
     </div>
   );
 }

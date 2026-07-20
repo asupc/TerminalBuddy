@@ -1,13 +1,9 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { CornerDownLeft, Send, Trash2 } from 'lucide-react';
-import { useStore } from '../store';
-
 interface Props {
   onSend: (data: string) => void;
 }
 
-/** 手机上难输入的常用键，点击直接发送转义序列（易输入的符号走输入框） */
-const SPECIAL_KEYS: { label: string; data: string; mode?: 'insert' }[] = [
+/** 手机上难输入的常用控制键，点击直接发送转义序列 */
+const SPECIAL_KEYS: { label: string; data: string }[] = [
   { label: '↑', data: '\x1b[A' },
   { label: '↓', data: '\x1b[B' },
   { label: '←', data: '\x1b[D' },
@@ -15,148 +11,27 @@ const SPECIAL_KEYS: { label: string; data: string; mode?: 'insert' }[] = [
   { label: 'Enter', data: '\r' },
   { label: 'Esc', data: '\x1b' },
   { label: 'Tab', data: '\t' },
-  { label: 'Ctrl+C', data: '\x03' },
-  { label: 'Backspace', data: '\x7f' },
-  { label: 'Ctrl+D', data: '\x04' },
-  { label: 'Ctrl+Z', data: '\x1a' },
-  { label: 'Ctrl+L', data: '\x0c' },
-  { label: 'Home', data: '\x1b[H' },
-  { label: 'End', data: '\x1b[F' },
-  { label: '|', data: '|', mode: 'insert' },
-  { label: '/', data: '/', mode: 'insert' },
-  { label: '\\', data: '\\', mode: 'insert' },
-  { label: '~', data: '~', mode: 'insert' },
-  { label: '-', data: '-', mode: 'insert' },
-  { label: '_', data: '_', mode: 'insert' },
 ];
 
 /**
- * 「先输入后发送」输入栏：写完一行点发送（默认补回车）；
- * + 特殊键芯片直接发转义序列。规避手机 IME 逐键捕获问题。
+ * 终端快捷键工具栏：仅提供方向键、Enter、Esc、Tab 等控制序列 chips，
+ * 不再提供命令输入框（PC 端接管场景下直接落到 xterm）。
  */
 export default function InputBar({ onSend }: Props) {
-  const [value, setValue] = useState('');
-  const [autoEnter, setAutoEnter] = useState(true);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const appendCommandHistory = useStore((s) => s.appendCommandHistory);
-
-  const resizeInput = (element: HTMLTextAreaElement) => {
-    element.style.height = '44px';
-    element.style.height = `${Math.min(element.scrollHeight, 112)}px`;
-  };
-
-  const submit = () => {
-    if (!value) return;
-    const text = value;
-    onSend(text + (autoEnter ? '\r' : ''));
-    // 仅在「带回车」的真实命令执行时计入历史（与 PC 端语义一致）
-    if (autoEnter) void appendCommandHistory(text);
-    setValue('');
-    if (inputRef.current) inputRef.current.style.height = '44px';
-    inputRef.current?.focus();
-  };
-
-  const insertAtCursor = (text: string) => {
-    const input = inputRef.current;
-    if (!input) return;
-    const start = input.selectionStart;
-    const end = input.selectionEnd;
-    setValue((current) => current.slice(0, start) + text + current.slice(end));
-    requestAnimationFrame(() => {
-      const nextCursor = start + text.length;
-      input.focus();
-      input.setSelectionRange(nextCursor, nextCursor);
-      resizeInput(input);
-    });
-  };
-
-  const preserveInputFocus = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (document.activeElement === inputRef.current) event.preventDefault();
-  };
-
   return (
-    <div className="input-bar">
-      <div className="input-row">
-        <label className="sr-only" htmlFor="command-input">命令输入</label>
-        <div className="command-input-shell">
-          <textarea
-            id="command-input"
-            ref={inputRef}
-            className="command-line"
-            value={value}
-            placeholder="输入命令…"
-            rows={1}
-            onChange={(e) => {
-              setValue(e.target.value);
-              resizeInput(e.target);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            enterKeyHint="send"
-            inputMode="text"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-          <button
-            className="clear-command"
-            type="button"
-            onPointerDown={preserveInputFocus}
-            onClick={() => {
-              setValue('');
-              if (inputRef.current) inputRef.current.style.height = '44px';
-              inputRef.current?.focus();
-            }}
-            disabled={!value}
-            title="清空输入"
-            aria-label="清空输入"
-          >
-            <Trash2 size={18} />
-          </button>
-        </div>
+    <div className="special-keys">
+      {SPECIAL_KEYS.map((k) => (
         <button
-          className={`composer-button auto-enter${autoEnter ? ' active' : ''}`}
+          key={k.label}
           type="button"
-          onPointerDown={preserveInputFocus}
-          onClick={() => setAutoEnter((v) => !v)}
-          title={autoEnter ? '发送后自动回车' : '发送时不回车'}
-          aria-label={autoEnter ? '自动回车已开启' : '自动回车已关闭'}
-          aria-pressed={autoEnter}
+          className="key"
+          onClick={() => onSend(k.data)}
+          aria-label={`发送 ${k.label}`}
+          title={`发送 ${k.label}`}
         >
-          <CornerDownLeft size={19} />
+          {k.label}
         </button>
-        <button
-          className="send-button"
-          type="button"
-          onPointerDown={preserveInputFocus}
-          onClick={submit}
-          disabled={!value}
-          title="发送命令"
-          aria-label="发送命令"
-        >
-          <Send size={18} />
-          <span>发送</span>
-        </button>
-      </div>
-      <div className="special-keys">
-        {SPECIAL_KEYS.map((k) => (
-          <button
-            key={k.label}
-            className={`key${k.mode === 'insert' ? ' symbol' : ''}`}
-            type="button"
-            onPointerDown={preserveInputFocus}
-            onClick={() => k.mode === 'insert' ? insertAtCursor(k.data) : onSend(k.data)}
-            aria-label={k.mode === 'insert' ? `插入 ${k.label}` : `发送 ${k.label}`}
-            title={k.mode === 'insert' ? `插入 ${k.label}` : `发送 ${k.label}`}
-          >
-            {k.label}
-          </button>
-        ))}
-      </div>
+      ))}
     </div>
   );
 }

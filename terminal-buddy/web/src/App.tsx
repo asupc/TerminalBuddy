@@ -1,5 +1,7 @@
+import { useEffect } from 'react';
 import { useStore } from './store';
 import { useDualPane } from './hooks/useMediaQuery';
+import { useVisualViewport } from './hooks/useVisualViewport';
 import Login from './screens/Login';
 import Nav from './screens/Nav';
 import Terminal from './screens/Terminal';
@@ -31,13 +33,25 @@ export default function App() {
   const token = useStore((s) => s.token);
   const view = useStore((s) => s.view);
   const dualPane = useDualPane();
+  const navCollapsed = useStore((s) => s.navCollapsed);
+  const setNavCollapsed = useStore((s) => s.setNavCollapsed);
+
+  // 同步 --vh 到 visualViewport，让 --vh 跟随软键盘实时收紧；详见 hook 注释
+  useVisualViewport();
+
+  // 单列 + 未进入 terminal：若 navCollapsed=true 自动展开（没有主区可看）
+  useEffect(() => {
+    if (!dualPane && view.screen === 'nav' && navCollapsed) {
+      setNavCollapsed(false);
+    }
+  }, [dualPane, view.screen, navCollapsed, setNavCollapsed]);
 
   if (!token) return <Login />;
 
-  // ≥960px：侧边栏（Nav）+ 主区（Terminal 或占位）并排
+  // ≥960px：侧边栏（Nav）+ 主区（Terminal 或占位）并排；navCollapsed 控制 sidebar 折叠
   if (dualPane) {
     return (
-      <div className="app-dual-pane">
+      <div className={`app-dual-pane${navCollapsed ? ' nav-collapsed' : ''}`}>
         <aside className="app-sidebar">
           <Nav variant="sidebar" />
         </aside>
@@ -50,14 +64,25 @@ export default function App() {
               owner={view.owner}
             />
           ) : (
-            <div className="main-placeholder">选择左侧的连接开始</div>
+            <div className="main-placeholder">
+              <span>选择左侧的连接开始</span>
+              {navCollapsed && (
+                <button
+                  type="button"
+                  className="btn primary placeholder-expand-btn"
+                  onClick={() => setNavCollapsed(false)}
+                >
+                  展开导航
+                </button>
+              )}
+            </div>
           )}
         </main>
       </div>
     );
   }
 
-  // <960px：保持单列全屏切换
+  // <960px：单列全屏切换
   if (view.screen === 'terminal') {
     return (
       <Terminal

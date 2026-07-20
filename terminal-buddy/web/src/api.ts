@@ -1,5 +1,5 @@
 import { useStore } from './store';
-import type { ExtraParamPreset, HistoryEntry, Profile, TerminalInfo } from './types';
+import type { ExtraParamPreset, Profile, TerminalInfo } from './types';
 
 const BASE = '/api';
 
@@ -83,12 +83,5 @@ export const api = {
     req<ExtraParamPreset[]>('/extra-param-presets', {
       method: 'PUT',
       body: JSON.stringify(presets),
-    }),
-  // 命令历史（与 PC 端共享 ClientData/command_history.json）
-  getCommandHistory: () => req<HistoryEntry[]>('/command-history'),
-  replaceCommandHistory: (entries: HistoryEntry[]) =>
-    req<HistoryEntry[]>('/command-history', {
-      method: 'PUT',
-      body: JSON.stringify(entries),
     }),
 };
