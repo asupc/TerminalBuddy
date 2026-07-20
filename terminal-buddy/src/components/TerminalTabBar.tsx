@@ -45,43 +45,109 @@ export const TerminalTabBar: FC = () => {
       removeSession(sessionId);
     } else if (session?.starting) {
       removeSession(sessionId);
-    } else {
+    } else if (session) {
+      // 活跃终端（正在执行任务）关闭前弹窗确认
+      if (isTerminalWorking(terminalActivities[sessionId])) {
+        setConfirmDialog({
+          title: '终端正在执行任务',
+          message: `终端「${session.profileName}」正在执行任务，确定要关闭吗？`,
+          onConfirm: () => {
+            setConfirmDialog(null);
+            removeSession(sessionId);
+            void closeTerminalCmd(sessionId).catch(err => console.error(err));
+          },
+        });
+        return;
+      }
       removeSession(sessionId);
       void closeTerminalCmd(sessionId).catch(err => console.error(err));
     }
-  }, [sessions, removeSession]);
+  }, [sessions, removeSession, terminalActivities]);
 
   const closeOthers = useCallback((sessionId: string) => {
     const sessionsToClose = sessions.filter(session => session.id !== sessionId);
-    removeSessions(sessionsToClose.map(session => session.id));
-    void Promise.all(
-      sessionsToClose
-        .filter(session => session.sessionType !== 'editor' && !session.starting)
-        .map(session => closeTerminalCmd(session.id).catch(() => {}))
-    );
-  }, [sessions, removeSessions]);
+    const workingCount = sessionsToClose.filter(
+      s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
+    ).length;
+    const performClose = () => {
+      removeSessions(sessionsToClose.map(session => session.id));
+      void Promise.all(
+        sessionsToClose
+          .filter(session => session.sessionType !== 'editor' && !session.starting)
+          .map(session => closeTerminalCmd(session.id).catch(() => {}))
+      );
+    };
+    if (workingCount > 0) {
+      setConfirmDialog({
+        title: '关闭其他',
+        message: `其他 ${sessionsToClose.length} 个选项卡中有 ${workingCount} 个终端正在执行任务，确定要关闭吗？`,
+        onConfirm: () => {
+          setConfirmDialog(null);
+          performClose();
+        },
+      });
+      return;
+    }
+    performClose();
+  }, [sessions, removeSessions, terminalActivities]);
 
   const closeLeft = useCallback((sessionId: string) => {
     const idx = sessions.findIndex(s => s.id === sessionId);
     const sessionsToClose = idx < 0 ? [] : sessions.slice(0, idx);
-    removeSessions(sessionsToClose.map(session => session.id));
-    void Promise.all(
-      sessionsToClose
-        .filter(session => session.sessionType !== 'editor' && !session.starting)
-        .map(session => closeTerminalCmd(session.id).catch(() => {}))
-    );
-  }, [sessions, removeSessions]);
+    if (sessionsToClose.length === 0) return;
+    const workingCount = sessionsToClose.filter(
+      s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
+    ).length;
+    const performClose = () => {
+      removeSessions(sessionsToClose.map(session => session.id));
+      void Promise.all(
+        sessionsToClose
+          .filter(session => session.sessionType !== 'editor' && !session.starting)
+          .map(session => closeTerminalCmd(session.id).catch(() => {}))
+      );
+    };
+    if (workingCount > 0) {
+      setConfirmDialog({
+        title: '关闭左侧',
+        message: `左侧 ${sessionsToClose.length} 个选项卡中有 ${workingCount} 个终端正在执行任务，确定要关闭吗？`,
+        onConfirm: () => {
+          setConfirmDialog(null);
+          performClose();
+        },
+      });
+      return;
+    }
+    performClose();
+  }, [sessions, removeSessions, terminalActivities]);
 
   const closeRight = useCallback((sessionId: string) => {
     const idx = sessions.findIndex(s => s.id === sessionId);
     const sessionsToClose = idx < 0 ? [] : sessions.slice(idx + 1);
-    removeSessions(sessionsToClose.map(session => session.id));
-    void Promise.all(
-      sessionsToClose
-        .filter(session => session.sessionType !== 'editor' && !session.starting)
-        .map(session => closeTerminalCmd(session.id).catch(() => {}))
-    );
-  }, [sessions, removeSessions]);
+    if (sessionsToClose.length === 0) return;
+    const workingCount = sessionsToClose.filter(
+      s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
+    ).length;
+    const performClose = () => {
+      removeSessions(sessionsToClose.map(session => session.id));
+      void Promise.all(
+        sessionsToClose
+          .filter(session => session.sessionType !== 'editor' && !session.starting)
+          .map(session => closeTerminalCmd(session.id).catch(() => {}))
+      );
+    };
+    if (workingCount > 0) {
+      setConfirmDialog({
+        title: '关闭右侧',
+        message: `右侧 ${sessionsToClose.length} 个选项卡中有 ${workingCount} 个终端正在执行任务，确定要关闭吗？`,
+        onConfirm: () => {
+          setConfirmDialog(null);
+          performClose();
+        },
+      });
+      return;
+    }
+    performClose();
+  }, [sessions, removeSessions, terminalActivities]);
 
   useEffect(() => {
     if (!contextMenu) return;

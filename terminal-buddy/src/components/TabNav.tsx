@@ -298,7 +298,20 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
       removeSession(sessionId);
     } else if (session?.starting) {
       removeSession(sessionId);
-    } else {
+    } else if (session) {
+      // 活跃终端（正在执行任务）关闭前弹窗确认
+      if (isTerminalWorking(terminalActivities[sessionId])) {
+        setConfirmDialog({
+          title: '终端正在执行任务',
+          message: `终端「${session.profileName}」正在执行任务，确定要关闭吗？`,
+          onConfirm: () => {
+            setConfirmDialog(null);
+            removeSession(sessionId);
+            void closeTerminalCmd(sessionId).catch(err => console.error(err));
+          },
+        });
+        return;
+      }
       removeSession(sessionId);
       void closeTerminalCmd(sessionId).catch(err => console.error(err));
     }
@@ -335,9 +348,14 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
   };
 
   const handleCloseGroup = async (groupName: string, groupSessions: typeof sessions) => {
+    const workingCount = groupSessions.filter(
+      s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
+    ).length;
     setConfirmDialog({
       title: '确认关闭分组',
-      message: `确定要关闭分组「${groupName}」中的所有 ${groupSessions.length} 个终端吗？`,
+      message: workingCount > 0
+        ? `分组「${groupName}」中有 ${workingCount} 个终端正在执行任务，确定要关闭全部 ${groupSessions.length} 个终端吗？`
+        : `确定要关闭分组「${groupName}」中的所有 ${groupSessions.length} 个终端吗？`,
       onConfirm: async () => {
         setConfirmDialog(null);
         const store = useAppStore.getState();
@@ -359,11 +377,22 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
   const handleCloseAllTabs = () => {
     if (sessions.length === 0) return;
     const hasDirty = sessions.some(s => s.sessionType === 'editor' && s.isDirty);
+    const workingCount = sessions.filter(
+      s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
+    ).length;
+    let message: string;
+    if (workingCount > 0 && hasDirty) {
+      message = `有未保存的文件更改，且 ${workingCount} 个终端正在执行任务，确定关闭所有 ${sessions.length} 个选项卡吗？`;
+    } else if (workingCount > 0) {
+      message = `有 ${workingCount} 个终端正在执行任务，确定关闭所有 ${sessions.length} 个选项卡吗？`;
+    } else if (hasDirty) {
+      message = `有未保存的文件更改，确定关闭所有 ${sessions.length} 个选项卡吗？`;
+    } else {
+      message = `确定关闭所有 ${sessions.length} 个选项卡吗？`;
+    }
     setConfirmDialog({
       title: '确认关闭所有选项卡',
-      message: hasDirty
-        ? `有未保存的文件更改，确定关闭所有 ${sessions.length} 个选项卡吗？`
-        : `确定关闭所有 ${sessions.length} 个选项卡吗？`,
+      message,
       onConfirm: async () => {
         setConfirmDialog(null);
         const store = useAppStore.getState();
