@@ -9,12 +9,7 @@ const SPECIAL_KEYS: { label: string; data: string }[] = [
   { label: '←', data: '\x1b[D' },
   { label: '→', data: '\x1b[C' },
   // 方向键后置的符号键：因输入框已下线，点击即直接送字符到终端
-  { label: '|', data: '|' },
   { label: '/', data: '/' },
-  { label: '\\', data: '\\' },
-  { label: '~', data: '~' },
-  { label: '-', data: '-' },
-  { label: '_', data: '_' },
   { label: 'Enter', data: '\r' },
   { label: 'Esc', data: '\x1b' },
   { label: 'Tab', data: '\t' },
