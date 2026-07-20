@@ -40,6 +40,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/profiles", get(handlers::profile_handler::list))
         // 启动参数预设（与 PC 端共享 ClientData/extra_param_presets.json）
         .route("/api/extra-param-presets", get(handlers::preset_handler::list).put(handlers::preset_handler::replace))
+        // 命令历史（与 PC 端共享 ClientData/command_history.json）
+        .route("/api/command-history", get(handlers::history_handler::list).put(handlers::history_handler::replace))
         // 终端会话：列表 / 新建 / 关闭
         .route("/api/terminals", get(handlers::terminal_handler::list).post(handlers::terminal_handler::start))
         .route("/api/terminals/{id}", delete(handlers::terminal_handler::close))

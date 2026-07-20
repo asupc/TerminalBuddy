@@ -97,3 +97,34 @@ export interface ExtraParamPreset {
   /** 命令匹配（PC 端用，Web 端保留字段不做过滤） */
   commandMatch: string | null;
 }
+
+/** 终端主题色（与 PC 端 src/types/index.ts PRESET_THEMES 保持一致） */
+export interface ColorTheme {
+  id: string;
+  name: string;
+  background: string;
+  foreground: string;
+}
+
+export const PRESET_THEMES: ColorTheme[] = [
+  { id: 'dark-default', name: '深色默认', background: '#1E1E1E', foreground: '#CCCCCC' },
+  { id: 'dark-green', name: '黑客绿', background: '#0C0C0C', foreground: '#00FF00' },
+  { id: 'dark-blue', name: '海洋蓝', background: '#0D1B2A', foreground: '#E0E0E0' },
+  { id: 'dark-powershell', name: 'PS深色', background: '#012456', foreground: '#F1F1F1' },
+  { id: 'light', name: '浅色', background: '#FFFFFF', foreground: '#333333' },
+  { id: 'solarized-dark', name: 'Solarized暗', background: '#002B36', foreground: '#839496' },
+  { id: 'solarized-light', name: 'Solarized亮', background: '#FDF6E3', foreground: '#657B83' },
+  { id: 'vintage', name: '复古绿屏', background: '#0A0A0A', foreground: '#33FF33' },
+];
+
+export const DEFAULT_THEME_ID = 'dark-default';
+
+export function resolveTheme(themeId?: string): ColorTheme {
+  return PRESET_THEMES.find((t) => t.id === themeId) ?? PRESET_THEMES[0];
+}
+
+/** 历史命令条目（与 PC 端 HistoryEntry 同构） */
+export interface HistoryEntry {
+  command: string;
+  note?: string;
+}

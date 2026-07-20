@@ -1,5 +1,6 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { CornerDownLeft, Send, Trash2 } from 'lucide-react';
+import { useStore } from '../store';
 
 interface Props {
   onSend: (data: string) => void;
@@ -37,6 +38,7 @@ export default function InputBar({ onSend }: Props) {
   const [value, setValue] = useState('');
   const [autoEnter, setAutoEnter] = useState(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const appendCommandHistory = useStore((s) => s.appendCommandHistory);
 
   const resizeInput = (element: HTMLTextAreaElement) => {
     element.style.height = '44px';
@@ -45,7 +47,10 @@ export default function InputBar({ onSend }: Props) {
 
   const submit = () => {
     if (!value) return;
-    onSend(value + (autoEnter ? '\r' : ''));
+    const text = value;
+    onSend(text + (autoEnter ? '\r' : ''));
+    // 仅在「带回车」的真实命令执行时计入历史（与 PC 端语义一致）
+    if (autoEnter) void appendCommandHistory(text);
     setValue('');
     if (inputRef.current) inputRef.current.style.height = '44px';
     inputRef.current?.focus();
