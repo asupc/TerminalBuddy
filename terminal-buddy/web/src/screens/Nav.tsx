@@ -17,7 +17,6 @@ import {
   Monitor,
   Network,
   PanelLeftClose,
-  PanelLeftOpen,
   Server,
   SquareTerminal,
   X,
@@ -870,15 +869,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           );
         })}
         <div className="activity-spacer" />
-        <button
-          type="button"
-          className="activity-btn"
-          onClick={toggleNavCollapsed}
-          aria-label="展开导航"
-          title="展开导航"
-        >
-          <PanelLeftOpen size={20} aria-hidden="true" />
-        </button>
       </nav>
     </div>
   );
