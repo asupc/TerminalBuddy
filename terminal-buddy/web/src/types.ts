@@ -124,9 +124,3 @@ export const DEFAULT_THEME_ID = 'dark-default';
 export function resolveTheme(themeId?: string): ColorTheme {
   return PRESET_THEMES.find((t) => t.id === themeId) ?? PRESET_THEMES[0];
 }
-
-/** 历史命令条目（与 PC 端 HistoryEntry 同构） */
-export interface HistoryEntry {
-  command: string;
-  note?: string;
-}

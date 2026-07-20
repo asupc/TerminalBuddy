@@ -836,33 +836,42 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       <nav className="nav-activity-bar" aria-label="导航活动条">
         <img className="activity-brand" src={appIcon} alt="" draggable={false} />
         <div className="activity-spacer" />
-        <button
-          type="button"
-          className={`activity-btn${tab === 'sessions' ? ' active' : ''}`}
-          onClick={() => {
-            setTab('sessions');
-            if (navCollapsed) toggleNavCollapsed();
-          }}
-          aria-pressed={tab === 'sessions'}
-          aria-label="会话"
-          title="会话"
-        >
-          <SquareTerminal size={20} aria-hidden="true" />
-          {sessions.length > 0 && <span className="activity-badge">{sessions.length}</span>}
-        </button>
-        <button
-          type="button"
-          className={`activity-btn${tab === 'profiles' ? ' active' : ''}`}
-          onClick={() => {
-            setTab('profiles');
-            if (navCollapsed) toggleNavCollapsed();
-          }}
-          aria-pressed={tab === 'profiles'}
-          aria-label="连接"
-          title="连接"
-        >
-          <Network size={20} aria-hidden="true" />
-        </button>
+        {(
+          [
+            {
+              key: 'sessions' as const,
+              label: '会话',
+              icon: SquareTerminal,
+              badge: sessions.length,
+            },
+            {
+              key: 'profiles' as const,
+              label: '连接',
+              icon: Network,
+              badge: 0,
+            },
+          ]
+        ).map((entry) => {
+          const Icon = entry.icon;
+          const active = tab === entry.key;
+          return (
+            <button
+              key={entry.key}
+              type="button"
+              className={`activity-btn${active ? ' active' : ''}`}
+              onClick={() => {
+                setTab(entry.key);
+                if (navCollapsed) toggleNavCollapsed();
+              }}
+              aria-pressed={active}
+              aria-label={entry.label}
+              title={entry.label}
+            >
+              <Icon size={20} aria-hidden="true" />
+              {entry.badge > 0 && <span className="activity-badge">{entry.badge}</span>}
+            </button>
+          );
+        })}
         <div className="activity-spacer" />
         <button
           type="button"
