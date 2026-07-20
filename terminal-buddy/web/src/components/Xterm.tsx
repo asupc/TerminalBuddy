@@ -94,6 +94,11 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
 
     const ua = (navigator as { userAgentData?: { platform?: string }; userAgent: string });
     const isWindows = /Windows/i.test(ua.userAgentData?.platform || ua.userAgent || '');
+    // iPadOS 13+ 在桌面 Safari 上 UA 标自己是 MacIntel，靠多点触控特征识别。
+    // iPad Safari 对合成 wheel 事件的 deltaY 解读与 PC 相反，需要对翻号后再派发。
+    const isIPad = /iPad/.test(ua.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const touchSign = isIPad ? -1 : 1;
     let buildNumber: number | null = null;
     if (isWindows) {
       const m = ua.userAgent.match(/Build\/(\d+)/);
@@ -261,7 +266,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
 
       if (event.cancelable) event.preventDefault();
       const now = performance.now();
-      const deltaY = touch.clientY - touchScroll.lastY;
+      const deltaY = (touch.clientY - touchScroll.lastY) * touchSign;
       const dt = Math.max(1, now - touchScroll.lastTime);
       touchScroll.lastY = touch.clientY;
       touchScroll.lastTime = now;
