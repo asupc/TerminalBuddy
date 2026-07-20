@@ -308,7 +308,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         if (session.owner === 'pc') setTakeover(session);
         else {
           const name = session.profileName || getTypeInfo(session.terminalType).label;
-          setView({ screen: 'terminal', terminalId: session.id, profileName: name, owner: 'web' });
+          setView({ screen: 'terminal', terminalId: session.id, profileName: name, loadingMode: session.loadingMode, owner: 'web' });
         }
         return;
       }
