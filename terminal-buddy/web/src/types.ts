@@ -1,4 +1,5 @@
 export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
+export type TerminalLoadingMode = 'default' | 'vsCode';
 
 /** 连接配置（手机端只读，仅需导航用到的字段；后端 Profile 还有更多字段） */
 export interface Profile {
@@ -17,6 +18,7 @@ export interface TerminalInfo {
   profileName: string;
   group: string;
   terminalType: TerminalType;
+  loadingMode: TerminalLoadingMode;
   owner: 'pc' | 'web';
   /** 启动参数预设的 tag（启动时快照，跨端可见、刷新不丢） */
   extraParamTag?: string;

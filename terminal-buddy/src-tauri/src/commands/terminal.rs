@@ -363,7 +363,15 @@ impl TerminalService {
     /// 构建当前存活终端的列表（供 REST `GET /api/terminals`、Tauri 命令、meta WS 共用）。
     /// 过滤掉 PTY 已退出的实例，并用 ProfileService 补全 profile 元数据。
     pub fn list_terminals_info(&self) -> Vec<TerminalInfo> {
-        let entries: Vec<(String, String, String, TerminalOwner, Option<String>, Option<String>)> = {
+        let entries: Vec<(
+            String,
+            String,
+            String,
+            String,
+            TerminalOwner,
+            Option<String>,
+            Option<String>,
+        )> = {
             let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances.values()
                 .filter(|inst| !inst.exited.load(Ordering::SeqCst))
@@ -371,19 +379,29 @@ impl TerminalService {
                     inst.id.clone(),
                     inst.profile_id.clone(),
                     inst.display_name.clone(),
+                    inst.backend.loading_mode().to_string(),
                     inst.owner.clone(),
                     inst.extra_param_tag.clone(),
                     inst.extra_param_tag_color.clone(),
                 ))
                 .collect()
         };
-        entries.into_iter().map(|(id, profile_id, display_name, owner, extra_param_tag, extra_param_tag_color)| {
+        entries.into_iter().map(|(
+            id,
+            profile_id,
+            display_name,
+            loading_mode,
+            owner,
+            extra_param_tag,
+            extra_param_tag_color,
+        )| {
             let profile = ProfileService::get_profile(&profile_id).ok();
             TerminalInfo {
                 id,
                 group: profile.as_ref().map(|p| p.group.clone()).unwrap_or_default(),
                 profile_name: display_name,
                 terminal_type: profile.as_ref().map(|p| p.terminal_type.clone()).unwrap_or_default(),
+                loading_mode,
                 profile_id,
                 owner,
                 extra_param_tag,
