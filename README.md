@@ -4,7 +4,7 @@
 
 **基于 Tauri 2 + React 19 + Rust 的现代化 Windows 桌面终端模拟器**
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](terminal-buddy/package.json)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](terminal-buddy/package.json)
 [![Rust](https://img.shields.io/badge/Rust-edition%202021-orange)](terminal-buddy/src-tauri/Cargo.toml)
 [![React](https://img.shields.io/badge/React-19-blue)](terminal-buddy/package.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -111,8 +111,8 @@
 
 从 [Releases](https://gitee.com/updateme/terminal-buddy/releases) 页面下载最新版本：
 
-- `TerminalBuddy_1.2.0_x64-setup.exe` — NSIS 安装包（推荐）
-- `TerminalBuddy_1.2.0_x64.zip` — 便携版压缩包
+- `TerminalBuddy_1.3.0_x64-setup.exe` — NSIS 安装包（推荐）
+- `TerminalBuddy_1.3.0_x64.zip` — 便携版压缩包
 
 ---
 
@@ -310,6 +310,60 @@ terminal-buddy/
 ## 📄 许可证
 
 本项目采用 [MIT 许可证](LICENSE) 开源。
+
+---
+
+## 📝 版本历史
+
+### v1.3.0 (2026-07-20) — 当前版本
+
+**🎯 启动参数预设体系（ExtraParamsPreset）**
+- 后端新增启动参数预设 REST 接口，终端实例挂载 `tag` 字段
+- 桌面端支持预设命令模糊匹配过滤、Dialog 受控离场动画
+- 桌面/Web 双向对齐：`terminal-created` 事件补齐 `extraParamTag/Color`，预设支持 tag 颜色并在 tab 上展示
+
+**🌐 Web 端能力补齐**
+- Nav 复用 PC `TreeView` 类名重构，新增会话右键菜单，Terminal 主题色随 profile 切换
+- Nav 重构为"会话 / 连接"双 tab，新增 profile 属性面板与会话分组折叠/关闭入口
+- 命令历史 REST 接口打通，与 PC 端 `ClientData` 共享；接入终端主题色类型
+- 自定义 Host 改为内联输入；InputBar 快捷键面板重排，方向键靠前
+- 修复网页端启动乱码问题
+
+**🔤 分屏终端字号可配置**
+- `AppSettings` 新增分屏终端三档字号字段（off / 2x1 / 2x2）
+- 行为页新增终端字号配置入口
+- 分屏/单屏字号改读设置并响应 `app-settings-changed` 事件
+- 字号空输入回退到行默认值（对齐 spec §6）
+
+**⚡ 终端性能与稳定性**
+- 新增启动中占位会话，避免 PTY 创建过程页签跳变
+- WebGL 渲染器延迟挂载，减少新建页签掉帧
+- 批量关闭终端减少状态更新次数，关闭卡顿修复
+- 终端偶现乱码修复
+
+**🤖 机器人与 Hook 体系**
+- 新增微信 ClawBot 机器人支持
+- Hook 全部迁移为 HTTP 模式，简化集成链路
+
+**🛠️ 文件模块与 UI**
+- 文件模块支持多项目，重构文件管理交互
+- 统一弹框组件，优化手机端访问体验
+- 配置编辑对话框字段顺序优化，`GroupCascader` 支持失焦提交
+- 修复切换黑白主题输入框背景不适配、分屏切换显示异常、web 管理手机端布局等多项 UI 问题
+
+> 📄 完整更新说明：[RELEASE_NOTES_v1.3.0.md](./RELEASE_NOTES_v1.3.0.md)
+
+### v1.2.0 (2026-07-15)
+
+- 设计系统全局刷新：令牌化色板 + lucide 图标组件化 + 无障碍标注
+- Claude Hook 终端内决策交互，桌面 Toast 通知体系
+- 多平台机器人通知（飞书/钉钉），飞书长连接 WebSocket，扫码授权流程
+- VSCode Activity Bar 风格侧边栏，设置页重构与自动保存
+- Git 信息缓存复用 + 历史记录树形展示
+- MSTSC 凭据安全升级（Win32 `CredWriteW` API）
+- 启动性能优化（异步 PTY + 并发标签恢复）
+
+> 📄 完整更新说明：[RELEASE_NOTES_v1.2.0.md](./RELEASE_NOTES_v1.2.0.md)
 
 ---
 
