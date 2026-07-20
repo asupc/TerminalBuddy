@@ -282,8 +282,8 @@ function App() {
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
-    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web' }>('terminal-created', (event) => {
-      const { id, profileId, profileName, terminalType, owner } = event.payload;
+    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; extraParamTag?: string; extraParamTagColor?: string }>('terminal-created', (event) => {
+      const { id, profileId, profileName, terminalType, owner, extraParamTag, extraParamTagColor } = event.payload;
       const store = useAppStore.getState();
       // Skip if already in sessions
       if (store.sessions.find((s) => s.id === id)) return;
@@ -300,6 +300,8 @@ function App() {
         tabColor: profile?.tabColor || null,
         groupId: 'default',
         owner,
+        extraParamTag,
+        extraParamTagColor: extraParamTagColor ?? null,
       }, true);
     });
 
