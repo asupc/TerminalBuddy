@@ -1,6 +1,6 @@
 export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
 
-/** 连接配置（手机端只读，仅需导航用到的字段；后端 Profile 还有更多字段） */
+/** 连接配置（与后端 Profile 同构，仅取 Web 端会用到的字段；其余字段均视作可选以兼容精简场景） */
 export interface Profile {
   id: string;
   name: string;
@@ -8,6 +8,34 @@ export interface Profile {
   terminalType: TerminalType;
   /** 启动命令（用于启动参数预设的 commandMatch 匹配） */
   startupCommands?: string[];
+  /** 起始路径（powershell / cmd） */
+  startupPath?: string;
+  /** 环境变量（powershell / cmd） */
+  environmentVariables?: Record<string, string>;
+  /** 主题 id */
+  colorTheme?: string;
+  /** tab 标签颜色 */
+  tabColor?: string | null;
+  /** 终端窗口尺寸 */
+  windowSize?: { width: number; height: number } | null;
+  // SSH
+  sshHost?: string;
+  sshPort?: number;
+  sshUser?: string;
+  sshAuthType?: 'password' | 'key' | string;
+  sshKeyPath?: string;
+  // Docker
+  dockerContainerId?: string;
+  dockerContainerName?: string;
+  // Kubernetes
+  k8sNamespace?: string;
+  k8sPodName?: string;
+  k8sContainerName?: string;
+  // 远程桌面（Web 端不会列出 mstsc，但类型完整保留）
+  mstscHost?: string;
+  mstscPort?: number;
+  mstscUser?: string;
+  mstscResolution?: string;
 }
 
 /** 存活终端实例（来自 GET /api/terminals 与 meta WS 推送） */

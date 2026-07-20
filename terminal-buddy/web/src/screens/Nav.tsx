@@ -9,6 +9,7 @@ import {
 } from 'react';
 import {
   Box,
+  ChevronRight,
   Command,
   KeyRound,
   LogOut,
@@ -18,6 +19,7 @@ import {
   Settings,
   SquareTerminal,
   TerminalSquare,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api';
@@ -43,6 +45,70 @@ function getTypeInfo(type: string) {
   return TYPE_INFO[type as TerminalType] ?? FALLBACK_TYPE;
 }
 
+interface PropertyRow {
+  label: string;
+  value: string;
+}
+
+/** 根据 profile 类型抽取可展示的属性行（与 PC 端 ConfigEditDialog 的字段顺序对齐） */
+function buildPropertyRows(profile: Profile): PropertyRow[] {
+  const rows: PropertyRow[] = [
+    { label: '分组', value: profile.group?.trim() || '默认' },
+    { label: '终端类型', value: getTypeInfo(profile.terminalType).label },
+  ];
+  switch (profile.terminalType) {
+    case 'ssh':
+      if (profile.sshHost) rows.push({ label: '主机地址', value: profile.sshHost });
+      if (profile.sshPort) rows.push({ label: '端口', value: String(profile.sshPort) });
+      if (profile.sshUser) rows.push({ label: '用户名', value: profile.sshUser });
+      if (profile.sshAuthType) {
+        rows.push({
+          label: '认证方式',
+          value: profile.sshAuthType === 'key' ? '密钥认证' : '密码认证',
+        });
+      }
+      if (profile.sshKeyPath) rows.push({ label: '密钥路径', value: profile.sshKeyPath });
+      break;
+    case 'docker':
+      if (profile.dockerContainerName) rows.push({ label: '容器名称', value: profile.dockerContainerName });
+      if (profile.dockerContainerId) rows.push({ label: '容器 ID', value: profile.dockerContainerId });
+      break;
+    case 'k8s':
+      if (profile.k8sNamespace) rows.push({ label: 'Namespace', value: profile.k8sNamespace });
+      if (profile.k8sPodName) rows.push({ label: 'Pod 名称', value: profile.k8sPodName });
+      if (profile.k8sContainerName) rows.push({ label: 'Container 名称', value: profile.k8sContainerName });
+      break;
+    case 'powershell':
+    case 'cmd': {
+      if (profile.startupPath?.trim()) rows.push({ label: '起始路径', value: profile.startupPath });
+      const cmds = (profile.startupCommands || []).filter((c) => c.trim());
+      if (cmds.length > 0) rows.push({ label: '启动命令', value: cmds.join('\n') });
+      const envCount = Object.keys(profile.environmentVariables || {}).length;
+      if (envCount > 0) rows.push({ label: '环境变量', value: `${envCount} 项` });
+      break;
+    }
+    // mstsc 不在 Web 端出现；其它类型无额外属性
+  }
+  return rows;
+}
+
+function ProfileProperties({ profile }: { profile: Profile }) {
+  const rows = useMemo(() => buildPropertyRows(profile), [profile]);
+  if (rows.length === 0) {
+    return <div className="profile-properties profile-properties-empty">无额外属性</div>;
+  }
+  return (
+    <dl className="profile-properties">
+      {rows.map((row) => (
+        <div className="profile-prop" key={row.label}>
+          <dt>{row.label}</dt>
+          <dd>{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 interface ContextMenuState {
   profileId: string;
   x: number;
@@ -58,6 +124,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const logout = useStore((state) => state.logout);
   const extraParamPresets = useStore((state) => state.extraParamPresets);
   const loadExtraParamPresets = useStore((state) => state.loadExtraParamPresets);
+  const view = useStore((state) => state.view);
   const hasHover = useHasHover();
 
   const [tab, setTab] = useState<'sessions' | 'profiles'>('sessions');
@@ -66,6 +133,10 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
   const [presetDialogOpen, setPresetDialogOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  // 「连接」tab 中各 profile 的属性面板展开状态，默认全部折叠
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  // 「会话」tab 中各分组的折叠状态，默认全部展开（与 PC 端 TabNav 行为一致）
+  const [collapsedSessionGroups, setCollapsedSessionGroups] = useState<Set<string>>(() => new Set());
 
   const longPressTimer = useRef<number | null>(null);
   const longPressFired = useRef(false);
@@ -132,6 +203,38 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     }
     setView({ screen: 'terminal', terminalId: session.id, profileName: name, owner: 'web' });
   };
+
+  // 关闭会话：仅 Web 拥有的会话可关（后端会校验 owner），meta WS 收到推送后自动更新列表
+  const handleCloseSession = useCallback(async (sessionId: string) => {
+    setError('');
+    try {
+      await api.deleteTerminal(sessionId);
+    } catch (closeError) {
+      setError(closeError instanceof Error ? closeError.message : '关闭连接失败');
+    }
+  }, []);
+
+  // 切换 profile 属性面板折叠
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // 切换 session 分组折叠
+  const toggleSessionGroup = useCallback((name: string) => {
+    setCollapsedSessionGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+
+  const activeTerminalId = view.screen === 'terminal' ? view.terminalId : null;
 
   const createNew = useCallback(
     async (profile: Profile, preset?: ExtraParamPreset) => {
@@ -305,50 +408,96 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                 </div>
               )
               : (
-                <div className="connection-groups" aria-label="已打开的连接">
-                  {sessionGroups.map((group) => (
-                    <section key={group.name}>
-                      <div className="group-head"><h2>{group.name}</h2></div>
-                      <div className="open-session-grid">
-                        {group.items.map((session) => {
-                          const type = getTypeInfo(session.terminalType);
-                          const TypeIcon = type.icon;
-                          const name = session.profileName || type.label;
-                          return (
-                            <button
-                              type="button"
-                              className="open-session-tab"
-                              key={session.id}
-                              onClick={() => openSession(session)}
-                              aria-label={`${name}，${session.owner === 'pc' ? '桌面端，接管' : '网页端，继续'}`}
-                            >
-                              <span className="open-session-icon" aria-hidden="true"><TypeIcon /></span>
-                              <span className="open-session-copy">
-                                <strong>
-                                  {name}
-                                  {session.extraParamTag && (
-                                    <span
-                                      className="session-tag-chip"
-                                      style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
-                                    >
-                                      {session.extraParamTag}
+                <div className="connection-groups session-tree-groups" aria-label="已打开的连接">
+                  {sessionGroups.map((group) => {
+                    const isCollapsed = collapsedSessionGroups.has(group.name);
+                    return (
+                      <section key={group.name} className="session-group">
+                        <header
+                          className="session-group-header"
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={!isCollapsed}
+                          onClick={() => toggleSessionGroup(group.name)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              toggleSessionGroup(group.name);
+                            }
+                          }}
+                        >
+                          <ChevronRight
+                            className={`session-group-arrow${isCollapsed ? ' collapsed' : ''}`}
+                            size={14}
+                            aria-hidden="true"
+                          />
+                          <h2 className="session-group-name">{group.name}</h2>
+                          <span className="session-group-count">{group.items.length}</span>
+                        </header>
+                        {!isCollapsed && (
+                          <ul className="session-tree" role="list">
+                            {group.items.map((session) => {
+                              const type = getTypeInfo(session.terminalType);
+                              const TypeIcon = type.icon;
+                              const name = session.profileName || type.label;
+                              const isActive = activeTerminalId === session.id;
+                              const canClose = session.owner === 'web';
+                              return (
+                                <li key={session.id}>
+                                  <div
+                                    role="button"
+                                    tabIndex={0}
+                                    className={`session-row${isActive ? ' active' : ''}`}
+                                    onClick={() => openSession(session)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        openSession(session);
+                                      }
+                                    }}
+                                    aria-label={`${name}，${session.owner === 'pc' ? '桌面端，接管' : '网页端，继续'}`}
+                                  >
+                                    <span className="session-row-icon" aria-hidden="true"><TypeIcon /></span>
+                                    <span className="session-row-name">
+                                      <span className="session-row-title">{name}</span>
+                                      {session.extraParamTag && (
+                                        <span
+                                          className="session-tag-chip"
+                                          style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
+                                        >
+                                          {session.extraParamTag}
+                                        </span>
+                                      )}
                                     </span>
-                                  )}
-                                </strong>
-                                <small>{type.label}</small>
-                              </span>
-                              <span className={`open-session-owner ${session.owner}`}>
-                                {session.owner === 'pc' ? 'PC' : 'WEB'}
-                              </span>
-                              <span className="open-session-action">
-                                {session.owner === 'pc' ? '接管' : '继续'}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))}
+                                    <span className={`session-row-owner ${session.owner}`}>
+                                      {session.owner === 'pc' ? 'PC' : 'WEB'}
+                                    </span>
+                                    <span className="session-row-action">
+                                      {session.owner === 'pc' ? '接管' : '继续'}
+                                    </span>
+                                    {canClose && (
+                                      <button
+                                        type="button"
+                                        className="session-row-close"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleCloseSession(session.id);
+                                        }}
+                                        aria-label="关闭"
+                                        title="关闭"
+                                      >
+                                        <X size={14} aria-hidden="true" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </section>
+                    );
+                  })}
                 </div>
               )
             : profiles.length === 0
@@ -369,30 +518,48 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                           const type = TYPE_INFO[profile.terminalType] ?? FALLBACK_TYPE;
                           const TypeIcon = type.icon;
                           const isBusy = busyId === profile.id;
+                          const isExpanded = expandedIds.has(profile.id);
                           return (
-                            <button
-                              type="button"
-                              key={profile.id}
-                              className="profile-row"
-                              disabled={busyId !== null}
-                              onClick={() => handleProfileClick(profile)}
-                              onDoubleClick={() => handleProfileDoubleClick(profile)}
-                              onContextMenu={(e) => handleProfileContextMenu(e, profile)}
-                              onTouchStart={(e) => handleProfileTouchStart(e, profile)}
-                              onTouchEnd={handleProfileTouchEnd}
-                              onTouchMove={handleProfileTouchMove}
-                              aria-busy={isBusy || undefined}
-                              aria-label={profile.name}
-                            >
-                              <span className="profile-row-icon" aria-hidden="true"><TypeIcon /></span>
-                              <span className="profile-row-copy">
-                                <strong>{profile.name}</strong>
-                                <small>{type.label}</small>
-                              </span>
-                              <span className="profile-row-action">
-                                {isBusy ? '连接中…' : hasHover ? '双击启动' : '启动'}
-                              </span>
-                            </button>
+                            <div className="profile-card" key={profile.id}>
+                              <div className="profile-row-header">
+                                <button
+                                  type="button"
+                                  className="profile-toggle"
+                                  aria-expanded={isExpanded}
+                                  aria-label={isExpanded ? '收起属性' : '展开属性'}
+                                  onClick={() => toggleExpanded(profile.id)}
+                                >
+                                  <ChevronRight
+                                    size={14}
+                                    className={isExpanded ? 'expanded' : ''}
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="profile-row"
+                                  disabled={busyId !== null}
+                                  onClick={() => handleProfileClick(profile)}
+                                  onDoubleClick={() => handleProfileDoubleClick(profile)}
+                                  onContextMenu={(e) => handleProfileContextMenu(e, profile)}
+                                  onTouchStart={(e) => handleProfileTouchStart(e, profile)}
+                                  onTouchEnd={handleProfileTouchEnd}
+                                  onTouchMove={handleProfileTouchMove}
+                                  aria-busy={isBusy || undefined}
+                                  aria-label={profile.name}
+                                >
+                                  <span className="profile-row-icon" aria-hidden="true"><TypeIcon /></span>
+                                  <span className="profile-row-copy">
+                                    <strong>{profile.name}</strong>
+                                    <small>{type.label}</small>
+                                  </span>
+                                  <span className="profile-row-action">
+                                    {isBusy ? '连接中…' : hasHover ? '双击启动' : '启动'}
+                                  </span>
+                                </button>
+                              </div>
+                              {isExpanded && <ProfileProperties profile={profile} />}
+                            </div>
                           );
                         })}
                       </div>
