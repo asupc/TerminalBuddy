@@ -57,6 +57,7 @@ export const useStore = create<AppState>()(
       view: { screen: 'nav' },
       navCollapsed: false,
       setAuth: (token, username) => set({ token, username }),
+      // 仅供 api.ts 的 401 handler 调用以清除过期 token；UI 已下线
       logout: () =>
         set({ token: null, username: null, profiles: [], sessions: [], extraParamPresets: [], view: { screen: 'nav' } }),
       setProfiles: (profiles) => set({ profiles }),

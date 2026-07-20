@@ -2217,13 +2217,6 @@ textarea:focus-visible {
   padding: 8px 0 10px;
 }
 
-.activity-brand {
-  width: 26px;
-  height: 26px;
-  margin-bottom: 4px;
-  border-radius: var(--radius-sm);
-}
-
 .activity-spacer {
   flex: 1 1 auto;
   min-height: 8px;

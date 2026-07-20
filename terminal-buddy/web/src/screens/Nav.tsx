@@ -13,7 +13,7 @@ import {
   ChevronRight,
   Command,
   KeyRound,
-  LogOut,
+  ListTree,
   Monitor,
   Network,
   PanelLeftClose,
@@ -143,7 +143,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const sessions = useStore((state) => state.sessions);
   const metaOnline = useStore((state) => state.metaOnline);
   const setView = useStore((state) => state.setView);
-  const logout = useStore((state) => state.logout);
   const extraParamPresets = useStore((state) => state.extraParamPresets);
   const loadExtraParamPresets = useStore((state) => state.loadExtraParamPresets);
   const view = useStore((state) => state.view);
@@ -463,9 +462,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         >
           <PanelLeftClose size={19} />
         </button>
-        <button className="icon-button" onClick={logout} title="退出登录" aria-label="退出登录">
-          <LogOut size={19} />
-        </button>
+        {/* 退出登录按钮已下线；token 失效由 api.ts 的 401 处理器自动清除 */}
       </header>
 
       <div className="nav-tabs" role="tablist" aria-label="导航视图">
@@ -834,20 +831,20 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
       {/* 折叠态下的极简活动条：tab 切换 + 展开 + 登出；展开态由 CSS 隐藏 */}
       <nav className="nav-activity-bar" aria-label="导航活动条">
-        <img className="activity-brand" src={appIcon} alt="" draggable={false} />
+        {/* 顶部留一个 spacer 当占位；折叠态 logo 由 topbar 的 brand-mark 在缩小后顶上，activity-bar 居中堆叠切换按钮 */}
         <div className="activity-spacer" />
         {(
           [
             {
               key: 'sessions' as const,
               label: '会话',
-              icon: SquareTerminal,
+              icon: ListTree,
               badge: sessions.length,
             },
             {
               key: 'profiles' as const,
               label: '连接',
-              icon: Network,
+              icon: Server,
               badge: 0,
             },
           ]
@@ -867,7 +864,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
               aria-label={entry.label}
               title={entry.label}
             >
-              <Icon size={20} aria-hidden="true" />
+              <Icon size={20} strokeWidth={1.7} aria-hidden="true" />
               {entry.badge > 0 && <span className="activity-badge">{entry.badge}</span>}
             </button>
           );
@@ -881,15 +878,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           title="展开导航"
         >
           <PanelLeftOpen size={20} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="activity-btn"
-          onClick={logout}
-          aria-label="退出登录"
-          title="退出登录"
-        >
-          <LogOut size={20} aria-hidden="true" />
         </button>
       </nav>
     </div>
