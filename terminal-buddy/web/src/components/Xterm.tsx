@@ -187,6 +187,9 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
     if (viewport) viewport.style.touchAction = 'none';
     if (scrollable) scrollable.style.touchAction = 'none';
 
+    // 触屏手指像素 → 合成 wheel 的 deltaY 之前放大，让 xterm 翻译成行滚动时跟上指尖速度。
+    // 单帧 deltaY 较小（<16px）时 xterm 默认按行高阈值换算容易丢事件。
+    const TOUCH_SCROLL_GAIN = 2.5;
     let touchScroll: TouchScrollState | null = null;
     let momentumFrame: number | null = null;
     const stopMomentum = () => {
@@ -266,7 +269,8 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
 
       if (event.cancelable) event.preventDefault();
       const now = performance.now();
-      const deltaY = (touch.clientY - touchScroll.lastY) * touchSign;
+      const rawDeltaY = (touch.clientY - touchScroll.lastY) * touchSign;
+      const deltaY = rawDeltaY * TOUCH_SCROLL_GAIN;
       const dt = Math.max(1, now - touchScroll.lastTime);
       touchScroll.lastY = touch.clientY;
       touchScroll.lastTime = now;
