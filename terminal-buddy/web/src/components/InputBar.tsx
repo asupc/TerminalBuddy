@@ -2,12 +2,19 @@ interface Props {
   onSend: (data: string) => void;
 }
 
-/** 手机上难输入的常用控制键，点击直接发送转义序列 */
+/** 手机上难输入的常用控制键与易出错的符号键，点击直接发送转义序列或字符 */
 const SPECIAL_KEYS: { label: string; data: string }[] = [
   { label: '↑', data: '\x1b[A' },
   { label: '↓', data: '\x1b[B' },
   { label: '←', data: '\x1b[D' },
   { label: '→', data: '\x1b[C' },
+  // 方向键后置的符号键：因输入框已下线，点击即直接送字符到终端
+  { label: '|', data: '|' },
+  { label: '/', data: '/' },
+  { label: '\\', data: '\\' },
+  { label: '~', data: '~' },
+  { label: '-', data: '-' },
+  { label: '_', data: '_' },
   { label: 'Enter', data: '\r' },
   { label: 'Esc', data: '\x1b' },
   { label: 'Tab', data: '\t' },
