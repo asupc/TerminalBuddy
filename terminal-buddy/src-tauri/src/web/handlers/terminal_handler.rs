@@ -39,12 +39,17 @@ pub async fn start(
     ).map_err(ApiError::Internal)?;
 
     let profile = ProfileService::get_profile(&req.profile_id).map_err(ApiError::Internal)?;
+    let loading_mode = ts
+        .terminal_loading_mode(&terminal_id)
+        .map_err(ApiError::Internal)?
+        .to_string();
     let info = TerminalInfo {
         id: terminal_id,
         profile_id: req.profile_id,
         profile_name: profile.name,
         group: profile.group,
         terminal_type: profile.terminal_type,
+        loading_mode,
         owner: TerminalOwner::Web,
         extra_param_tag: req.extra_param_tag,
         extra_param_tag_color: req.extra_param_tag_color,

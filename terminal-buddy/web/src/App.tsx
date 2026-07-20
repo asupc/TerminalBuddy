@@ -46,6 +46,7 @@ export default function App() {
             <Terminal
               terminalId={view.terminalId}
               profileName={view.profileName}
+              loadingMode={view.loadingMode}
               owner={view.owner}
             />
           ) : (
@@ -62,6 +63,7 @@ export default function App() {
       <Terminal
         terminalId={view.terminalId}
         profileName={view.profileName}
+        loadingMode={view.loadingMode}
         owner={view.owner}
       />
     );

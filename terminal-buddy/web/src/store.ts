@@ -1,11 +1,17 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from './api';
-import type { ExtraParamPreset, HistoryEntry, Profile, TerminalInfo } from './types';
+import type { ExtraParamPreset, HistoryEntry, Profile, TerminalInfo, TerminalLoadingMode } from './types';
 
 export type View =
   | { screen: 'nav' }
-  | { screen: 'terminal'; terminalId: string; profileName: string; owner: 'pc' | 'web' };
+  | {
+      screen: 'terminal';
+      terminalId: string;
+      profileName: string;
+      loadingMode: TerminalLoadingMode;
+      owner: 'pc' | 'web';
+    };
 
 interface AppState {
   // 鉴权（持久化）

@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
 import { useTerminalWs } from '../hooks/useTerminalWs';
+import type { TerminalLoadingMode } from '../types';
 import InputBar from './InputBar';
 import { PRESET_THEMES, type ColorTheme } from '../types';
 
@@ -11,6 +12,7 @@ interface Props {
   terminalId: string;
   /** PC 端 Profile.colorTheme 解析得到的主题色；缺省取 dark-default */
   theme?: ColorTheme;
+  loadingMode: TerminalLoadingMode;
   onStateChange?: (connected: boolean) => void;
   onExited?: () => void;
 }
@@ -32,7 +34,7 @@ interface TouchScrollState {
  * - ConPTY buildNumber 从 UA 解析
  * - 手机触摸拖动桥接到 xterm 自带滚动管线，并补离手惯性
  */
-export default function Xterm({ terminalId, theme, onStateChange, onExited }: Props) {
+export default function Xterm({ terminalId, theme, loadingMode, onStateChange, onExited }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -129,6 +131,16 @@ export default function Xterm({ terminalId, theme, onStateChange, onExited }: Pr
     term.loadAddon(fit);
     term.loadAddon(uni);
     term.unicode.activeVersion = '11';
+    const da1Handler = loadingMode === 'vsCode'
+      ? term.parser.registerCsiHandler({ final: 'c' }, (params) => {
+          if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
+            // VS Code's terminal host already answers this startup query. Consuming
+            // the forwarded copy prevents xterm's delayed reply prefixing cmd input.
+            return true;
+          }
+          return false;
+        })
+      : null;
     term.open(containerRef.current);
     fit.fit();
     sendResize(term.cols, term.rows); // 首帧 resize → 触发后端回放历史输出
@@ -276,11 +288,12 @@ export default function Xterm({ terminalId, theme, onStateChange, onExited }: Pr
       rafRef.current = null;
       pendingRef.current = [];
       bufRef.current = [];
+      da1Handler?.dispose();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [terminalId, sendResize, sendInput, writeOutput]);
+  }, [terminalId, loadingMode, sendResize, sendInput, writeOutput]);
 
   // 地址栏/横屏变化时重新 fit（visualViewport 触发 doFit 经 ResizeObserver）
   useEffect(() => {

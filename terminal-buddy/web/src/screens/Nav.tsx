@@ -234,7 +234,13 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       setTakeover(session);
       return;
     }
-    setView({ screen: 'terminal', terminalId: session.id, profileName: name, owner: 'web' });
+    setView({
+      screen: 'terminal',
+      terminalId: session.id,
+      profileName: name,
+      loadingMode: session.loadingMode,
+      owner: 'web',
+    });
   };
 
   const activeTerminalId = view.screen === 'terminal' ? view.terminalId : null;
@@ -258,6 +264,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           screen: 'terminal',
           terminalId: info.id,
           profileName: info.profileName || profile.name,
+          loadingMode: info.loadingMode,
           owner: 'web',
         });
       } catch (createError) {
@@ -798,6 +805,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                     screen: 'terminal',
                     terminalId: session.id,
                     profileName: session.profileName || getTypeInfo(session.terminalType).label,
+                    loadingMode: session.loadingMode,
                     owner: 'pc',
                   });
                 }}

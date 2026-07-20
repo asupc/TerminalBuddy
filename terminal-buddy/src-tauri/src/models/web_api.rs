@@ -37,6 +37,7 @@ pub struct TerminalInfo {
     pub profile_name: String,
     pub group: String,
     pub terminal_type: String,
+    pub loading_mode: String,
     pub owner: TerminalOwner,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_param_tag: Option<String>,
