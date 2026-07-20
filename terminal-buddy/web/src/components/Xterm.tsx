@@ -5,9 +5,12 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
 import { useTerminalWs } from '../hooks/useTerminalWs';
 import InputBar from './InputBar';
+import { PRESET_THEMES, type ColorTheme } from '../types';
 
 interface Props {
   terminalId: string;
+  /** PC 端 Profile.colorTheme 解析得到的主题色；缺省取 dark-default */
+  theme?: ColorTheme;
   onStateChange?: (connected: boolean) => void;
   onExited?: () => void;
 }
@@ -29,7 +32,7 @@ interface TouchScrollState {
  * - ConPTY buildNumber 从 UA 解析
  * - 手机触摸拖动桥接到 xterm 自带滚动管线，并补离手惯性
  */
-export default function Xterm({ terminalId, onStateChange, onExited }: Props) {
+export default function Xterm({ terminalId, theme, onStateChange, onExited }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -96,6 +99,7 @@ export default function Xterm({ terminalId, onStateChange, onExited }: Props) {
     }
 
     const getFontSize = () => (window.innerWidth >= 768 ? 14 : 13);
+    const resolved = theme ?? PRESET_THEMES[0];
     const term = new Terminal({
       cursorBlink: false,
       cursorStyle: 'block',
@@ -106,10 +110,10 @@ export default function Xterm({ terminalId, onStateChange, onExited }: Props) {
       scrollback: 1000,
       minimumContrastRatio: 4.5,
       theme: {
-        background: '#0b0e0f',
-        foreground: '#e6ebe9',
+        background: resolved.background,
+        foreground: resolved.foreground,
         cursor: '#65d5a5',
-        cursorAccent: '#0b0e0f',
+        cursorAccent: resolved.background,
         selectionBackground: '#285d49',
       },
       allowProposedApi: true,

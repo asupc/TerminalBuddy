@@ -231,6 +231,16 @@ textarea:focus-visible {
   color: var(--accent-ink);
 }
 
+.brand-mark {
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  background: transparent;
+  color: inherit;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
 .login-mark {
   width: 48px;
   height: 48px;
@@ -345,10 +355,9 @@ textarea:focus-visible {
 }
 
 .brand-mark {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
-  border-radius: var(--radius-md);
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
 }
 
 .brand-name {
@@ -379,15 +388,13 @@ textarea:focus-visible {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 22px max(14px, env(safe-area-inset-right))
-    max(40px, calc(env(safe-area-inset-bottom) + 24px))
-    max(14px, env(safe-area-inset-left));
+  padding: 0;
   -webkit-overflow-scrolling: touch;
 }
 
 .nav-shell {
-  width: min(100%, 1180px);
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
 }
 
 .nav-heading {
@@ -756,8 +763,9 @@ textarea:focus-visible {
   display: flex;
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
 }
 
 .terminal-title .title {
@@ -767,6 +775,8 @@ textarea:focus-visible {
   line-height: 19px;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .terminal-status {
@@ -776,6 +786,8 @@ textarea:focus-visible {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 16px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .terminal-status .dot {
@@ -1455,8 +1467,7 @@ textarea:focus-visible {
   }
 
   .nav-body {
-    padding: 30px max(24px, env(safe-area-inset-right)) 52px
-      max(24px, env(safe-area-inset-left));
+    padding: 0;
   }
 
   .nav-heading {
@@ -1486,7 +1497,7 @@ textarea:focus-visible {
   }
 
   .nav-body {
-    padding-top: 38px;
+    padding: 0;
   }
 
   .nav-heading h1 {
@@ -1716,7 +1727,8 @@ textarea:focus-visible {
 .terminal-title .session-tag-chip {
   height: 20px;
   font-size: 12px;
-  margin-left: 8px;
+  margin-left: 0;
+  flex-shrink: 0;
 }
 
 /* ===== 双栏布局（≥960px：平板横屏 / 桌面） ===== */
@@ -1927,6 +1939,374 @@ textarea:focus-visible {
   color: var(--text-muted);
 }
 
+/* ===== 连接树与会话树（直接复用 PC 端类名） ===== */
+/* PC TreeView.css 原样复制（仅变量映射：--text-primary→--text, --text-secondary→--text-soft, --text-muted→--text-muted, --list-hover-bg→新增, --list-active-bg→新增, --motion-instant→新增） */
+:root {
+  --list-hover-bg: color-mix(in srgb, var(--text) 5%, transparent);
+  --list-active-bg: color-mix(in srgb, var(--accent) 14%, transparent);
+  --motion-instant: 80ms;
+}
+
+[data-theme="light"] {
+  --list-hover-bg: color-mix(in srgb, var(--text) 6%, transparent);
+  --list-active-bg: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* TreeView.css */
+.tree-node {
+  user-select: none;
+}
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  gap: 4px;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-instant) var(--ease-standard),
+    color var(--motion-instant) var(--ease-standard);
+}
+
+.tree-item:hover {
+  background: var(--list-hover-bg);
+}
+
+.tree-item.selected {
+  background: var(--list-active-bg);
+}
+
+.tree-arrow {
+  font-size: 8px;
+  color: var(--text-soft);
+  transition: transform var(--motion-fast) var(--ease-standard);
+  width: 14px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 3px;
+}
+
+.tree-arrow:hover {
+  color: var(--text);
+}
+
+.tree-arrow.expanded {
+  transform: rotate(90deg);
+}
+
+.tree-arrow-placeholder {
+  width: 14px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.tree-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tree-children {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
+
+.tree-rename-input {
+  flex: 1;
+  font-size: 12px;
+  padding: 1px 4px;
+  background: var(--canvas-soft);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+}
+
+.tree-item-end {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.tree-item-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 4px;
+  border-radius: 3px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.tree-item-close {
+  background: none;
+  border: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tree-item:hover .tree-item-close,
+.tree-item:focus-within .tree-item-close {
+  opacity: 1;
+}
+
+.tree-item-close:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+
+/* ConfigNav.css — 类型徽标与启动参数预设 chip */
+.config-nav-icon-type {
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 24px;
+  padding: 1px 4px;
+  background: color-mix(in srgb, var(--text-soft) 11%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  text-align: center;
+  display: inline-block;
+  line-height: 1.4;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.config-nav-preset-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  margin-left: 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #fff;
+  background: var(--accent);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* TabNav.css — 会话行专用修饰（叠加在 .tree-item 上） */
+.tab-nav-item {
+  position: relative;
+}
+
+.tab-nav-item.active {
+  background: var(--list-active-bg);
+}
+
+.tab-nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.tab-nav-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--accent);
+}
+
+.tab-nav-dot.working {
+  animation: working-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes working-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-nav-dot.working { animation: none; }
+}
+
+.tab-nav-tag-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #fff;
+  background: var(--accent);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-nav-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tab-nav-close {
+  background: none;
+  border: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-nav-item:hover .tab-nav-close,
+.tab-nav-item:focus-within .tab-nav-close {
+  opacity: 1;
+}
+
+.tab-nav-close:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+
+.tab-nav-owner-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--blue) 20%, transparent);
+  color: var(--blue);
+  font-weight: 500;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.tab-nav-takeover-badge {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.tab-nav-uptime {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: 2px;
+}
+
+/* ===== Web 端容器（不在 PC 端存在，仅作为外层包装） ===== */
+.profile-tree,
+.session-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 8px;
+}
+
+/* ===== 连接属性（行内展开，与 PC ConfigEditDialog 的 form 风格对齐） ===== */
+.profile-properties {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px 8px 36px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.profile-properties-empty {
+  color: var(--text-muted);
+}
+
+.profile-prop {
+  display: grid;
+  grid-template-columns: minmax(64px, max-content) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 1px 0;
+  line-height: 1.5;
+}
+
+.profile-prop-label {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.profile-prop-value {
+  min-width: 0;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-family: inherit;
+  color: var(--text);
+}
+
+/* 会话右键菜单（复用 PC .context-menu 样式） */
+.session-context-menu {
+  position: fixed;
+  z-index: 12000;
+  min-width: 180px;
+  max-width: calc(100vw - 32px);
+  padding: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-menu);
+  animation: web-dialog-enter var(--motion-normal) var(--ease-enter);
+}
+
 /* ===== 启动参数 / 右键 / 长按菜单 ===== */
 .profile-context-menu {
   position: fixed;
@@ -1957,6 +2337,10 @@ textarea:focus-visible {
 
 .context-menu-item:hover {
   background: var(--surface-hover);
+}
+
+.context-menu-item.danger {
+  color: var(--danger);
 }
 
 .context-menu-item-preset {

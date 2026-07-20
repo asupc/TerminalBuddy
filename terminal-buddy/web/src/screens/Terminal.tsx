@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, MoreHorizontal, Unplug } from 'lucide-react';
 import { api } from '../api';
 import { useStore } from '../store';
 import Xterm from '../components/Xterm';
+import { resolveTheme } from '../types';
 
 interface Props {
   terminalId: string;
@@ -13,6 +14,12 @@ interface Props {
 export default function Terminal({ terminalId, profileName, owner }: Props) {
   const setView = useStore((s) => s.setView);
   const session = useStore((s) => s.sessions.find((x) => x.id === terminalId));
+  // 从 store 中按 session.profileId 查 profile；profiles 在「连接」tab 进入时已加载，
+  // 这里若未加载则退回到默认主题；xterm 的色彩仍由 profile.colorTheme 决定。
+  const profile = useStore((s) =>
+    session ? s.profiles.find((p) => p.id === session.profileId) : undefined,
+  );
+  const theme = useMemo(() => resolveTheme(profile?.colorTheme), [profile?.colorTheme]);
   const [connected, setConnected] = useState(false);
   const [everConnected, setEverConnected] = useState(false);
   const [exited, setExited] = useState(false);
@@ -93,7 +100,7 @@ export default function Terminal({ terminalId, profileName, owner }: Props) {
         </>
       )}
 
-      <div className="term-body">
+      <div className="term-body" style={{ background: theme.background }}>
         {!exited && !connected && (
           <div className="banner info">{everConnected ? '重连中…' : '连接中…'}</div>
         )}
@@ -104,6 +111,7 @@ export default function Terminal({ terminalId, profileName, owner }: Props) {
         )}
         <Xterm
           terminalId={terminalId}
+          theme={theme}
           onStateChange={(c) => {
             setConnected(c);
             if (c) setEverConnected(true);
