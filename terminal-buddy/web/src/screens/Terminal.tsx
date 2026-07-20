@@ -2,15 +2,17 @@ import { useEffect, useState } from 'react';
 import { ArrowLeft, MoreHorizontal, Unplug } from 'lucide-react';
 import { api } from '../api';
 import { useStore } from '../store';
+import type { TerminalLoadingMode } from '../types';
 import Xterm from '../components/Xterm';
 
 interface Props {
   terminalId: string;
   profileName: string;
+  loadingMode: TerminalLoadingMode;
   owner: 'pc' | 'web';
 }
 
-export default function Terminal({ terminalId, profileName, owner }: Props) {
+export default function Terminal({ terminalId, profileName, loadingMode, owner }: Props) {
   const setView = useStore((s) => s.setView);
   const session = useStore((s) => s.sessions.find((x) => x.id === terminalId));
   const [connected, setConnected] = useState(false);
@@ -104,6 +106,7 @@ export default function Terminal({ terminalId, profileName, owner }: Props) {
         )}
         <Xterm
           terminalId={terminalId}
+          loadingMode={loadingMode}
           onStateChange={(c) => {
             setConnected(c);
             if (c) setEverConnected(true);
