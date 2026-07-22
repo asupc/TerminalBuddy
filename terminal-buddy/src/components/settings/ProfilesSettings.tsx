@@ -131,7 +131,7 @@ export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismis
             }}
           >
             <span className="profile-type-badge">
-              {{ powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', editor: 'ED', mstsc: 'RDP' }[profile.terminalType]}
+              {{ powershell: 'PS', pwsh: 'PS7', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', editor: 'ED', mstsc: 'RDP' }[profile.terminalType]}
             </span>
             <code className="cmd-cat-cmd profile-name" style={{ color: profile.tabColor || undefined }}>{profile.name}</code>
             <span className="cmd-cat-desc profile-target">
@@ -169,7 +169,7 @@ export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismis
             const profile = contextMenu.profile;
             setContextMenu(null);
             try {
-              const copied = await createProfile(`${profile.name} (副本)`, profile.group || '默认', profile.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s');
+              const copied = await createProfile(`${profile.name} (副本)`, profile.group || '默认', profile.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s');
               await updateProfile({ ...profile, id: copied.id, name: `${profile.name} (副本)`, pinned: false });
               await loadProfiles();
             } catch (error) {

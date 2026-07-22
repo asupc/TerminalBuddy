@@ -32,6 +32,7 @@ import type { ExtraParamPreset, Profile, TerminalInfo, TerminalType } from '../t
 
 const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
   powershell: { icon: SquareTerminal, label: 'PowerShell' },
+  pwsh: { icon: SquareTerminal, label: 'PowerShell 7' },
   cmd: { icon: Command, label: 'CMD' },
   ssh: { icon: KeyRound, label: 'SSH' },
   docker: { icon: Box, label: 'Docker' },
@@ -39,9 +40,10 @@ const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
   mstsc: { icon: Monitor, label: '远程桌面' },
 };
 
-/** PC 端 ConfigNav 类型徽标（PS/CMD/SSH/DK/K8S/RDP） */
+/** PC 端 ConfigNav 类型徽标（PS/PS7/CMD/SSH/DK/K8S/RDP） */
 const TYPE_BADGE: Record<TerminalType, string> = {
   powershell: 'PS',
+  pwsh: 'PS7',
   cmd: 'CMD',
   ssh: 'SSH',
   docker: 'DK',
@@ -100,6 +102,7 @@ function buildPropertyRows(profile: Profile): PropertyRow[] {
       if (profile.k8sContainerName) rows.push({ label: 'Container 名称', value: profile.k8sContainerName });
       break;
     case 'powershell':
+    case 'pwsh':
     case 'cmd': {
       if (profile.startupPath?.trim()) rows.push({ label: '起始路径', value: profile.startupPath });
       const cmds = (profile.startupCommands || []).filter((c) => c.trim());

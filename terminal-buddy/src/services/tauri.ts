@@ -14,7 +14,7 @@ export async function getProfile(id: string): Promise<Profile> {
 export async function createProfile(
   name: string,
   group: string,
-  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc'
+  terminalType: 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc'
 ): Promise<Profile> {
   return invoke('create_profile', { name, group, terminalType });
 }
@@ -332,7 +332,7 @@ export async function onClaudeBotReplyForwarded(callback: (payload: { terminalId
   return listen('claude-bot-reply-forwarded', event => callback(event.payload as { terminalId: string; decisionId: string }));
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string): Promise<string> {
+export async function startBlankTerminal(terminalType: 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string): Promise<string> {
   return invoke('start_blank_terminal', { terminalType, displayName: displayName || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null });
 }
 

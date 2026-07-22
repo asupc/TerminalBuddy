@@ -36,7 +36,7 @@ function estimateTerminalSize(): { rows: number; cols: number } {
 }
 
 function isLocalShellTerminal(terminalType: string): boolean {
-  return terminalType === 'powershell' || terminalType === 'cmd';
+  return terminalType === 'powershell' || terminalType === 'pwsh' || terminalType === 'cmd';
 }
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
@@ -407,7 +407,7 @@ function App() {
               : undefined;
             const terminalId = tab.profileId
               ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath)
-              : await startBlankTerminal(tab.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols, startupPath, tab.profileName);
+              : await startBlankTerminal(tab.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols, startupPath, tab.profileName);
             store.addSession({
               id: terminalId,
               profileId: tab.profileId,
@@ -549,7 +549,7 @@ function App() {
       const newProfile = await createProfile(
         `${profile.name} (副本)`,
         profile.group,
-        profile.terminalType as 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc'
+        profile.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc'
       );
       await updateProfile({
         ...newProfile,
@@ -585,7 +585,7 @@ function App() {
     openSettingsDialog();
   }, [openSettingsDialog]);
 
-  const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'cmd') => {
+  const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'pwsh' | 'cmd') => {
     let startingId: string | null = null;
     try {
       const store = useAppStore.getState();
@@ -593,7 +593,7 @@ function App() {
         store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
         return;
       }
-      const name = terminalType === 'powershell' ? 'PowerShell' : 'CMD';
+      const name = terminalType === 'powershell' ? 'PowerShell' : terminalType === 'pwsh' ? 'PowerShell 7' : 'CMD';
       const { rows, cols } = estimateTerminalSize();
       startingId = crypto.randomUUID();
       addSession({

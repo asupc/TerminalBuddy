@@ -21,7 +21,7 @@ interface ConfigEditDialogProps {
 interface FormData {
   name: string;
   group: string;
-  terminalType: 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
+  terminalType: 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
   startupPath: string;
   colorTheme: string;
   tabColor: string;
@@ -266,6 +266,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             <label>终端类型</label>
             <select {...register('terminalType')}>
               <option value="powershell">PowerShell</option>
+              <option value="pwsh">PowerShell 7</option>
               <option value="cmd">CMD</option>
               <option value="ssh">SSH</option>
               <option value="docker">Docker</option>
@@ -293,7 +294,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             </div>
           </div>
 
-          {['powershell', 'cmd'].includes(watch('terminalType')) && (
+          {['powershell', 'pwsh', 'cmd'].includes(watch('terminalType')) && (
           <>
           <div className="form-group">
             <label>启动命令</label>

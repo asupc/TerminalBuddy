@@ -535,7 +535,7 @@ export const FileNav: FC = () => {
   const configuredDirectories = useMemo(() => {
     const uniquePaths = new Map<string, string>();
     for (const profile of profiles) {
-      if (profile.terminalType !== 'powershell' && profile.terminalType !== 'cmd') continue;
+      if (profile.terminalType !== 'powershell' && profile.terminalType !== 'pwsh' && profile.terminalType !== 'cmd') continue;
       const path = normalizeConfiguredPath(profile.startupPath || '');
       if (!path) continue;
       const key = path.toLowerCase();

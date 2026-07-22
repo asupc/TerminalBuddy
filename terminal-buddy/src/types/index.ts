@@ -1,4 +1,4 @@
-export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
+export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
 
 export interface Profile {
   id: string;

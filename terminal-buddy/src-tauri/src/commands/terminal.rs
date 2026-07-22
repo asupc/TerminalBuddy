@@ -38,6 +38,28 @@ fn shell_escape(s: &str) -> String {
     }
 }
 
+/// 定位 PowerShell 7.x 的 pwsh.exe：先查标准安装路径，再在 PATH 中查找
+fn resolve_pwsh_exe() -> Result<String, String> {
+    let default = r"C:\Program Files\PowerShell\7\pwsh.exe";
+    if std::path::Path::new(default).is_file() {
+        return Ok(default.to_string());
+    }
+    // PATH 查找：把 PATH 按 ';' 拆分，逐个目录检查 pwsh.exe / pwsh
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            for name in &["pwsh.exe", "pwsh.cmd", "pwsh"] {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    if let Some(s) = candidate.to_str() {
+                        return Ok(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+    Err("未找到 PowerShell 7.x 可执行文件（pwsh.exe）。请从 https://aka.ms/install-powershell 安装 PowerShell 7，或将其所在目录加入 PATH".to_string())
+}
+
 pub struct TerminalInstance {
     pub id: String,
     pub profile_id: String,
@@ -515,6 +537,12 @@ impl TerminalService {
                 cmds.extend(startup_commands);
                 cmds
             }
+            "pwsh" => {
+                let pwsh = resolve_pwsh_exe()?;
+                let mut cmds = vec![pwsh];
+                cmds.extend(startup_commands);
+                cmds
+            }
             "ssh" => {
                 let p = profile.as_ref();
                 let host = p.and_then(|p| p.ssh_host.clone()).unwrap_or_default();
@@ -765,16 +793,17 @@ impl TerminalService {
         let effective_type = match terminal_type {
             "cmd" => "cmd",
             "powershell" => "powershell",
+            "pwsh" => "pwsh",
             _ => "powershell", // fallback for ssh/docker/k8s without profile
         };
         let display_name = display_name
             .filter(|name| !name.trim().is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| {
-                if effective_type == "cmd" {
-                    "CMD".to_string()
-                } else {
-                    "PowerShell".to_string()
+                match effective_type {
+                    "cmd" => "CMD".to_string(),
+                    "pwsh" => "PowerShell 7".to_string(),
+                    _ => "PowerShell".to_string(),
                 }
             });
         let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
@@ -830,10 +859,11 @@ impl TerminalService {
 
         // For "cmd" type: cmd.exe is already the base shell, no need to start another one
         // For "powershell" type: need to start powershell.exe
-        let shell_cmd = if effective_type == "cmd" {
-            String::new()
-        } else {
-            "powershell.exe".to_string()
+        // For "pwsh" type: need to start pwsh.exe (PowerShell 7.x)
+        let shell_cmd = match effective_type {
+            "cmd" => String::new(),
+            "pwsh" => resolve_pwsh_exe()?,
+            _ => "powershell.exe".to_string(),
         };
         let tid = terminal_id.clone();
         let instances = self.instances.clone();

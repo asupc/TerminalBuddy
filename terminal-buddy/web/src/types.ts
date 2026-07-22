@@ -1,4 +1,4 @@
-export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
+export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
 export type TerminalLoadingMode = 'default' | 'vsCode';
 
 /** 连接配置（与后端 Profile 同构，仅取 Web 端会用到的字段；其余字段均视作可选以兼容精简场景） */
