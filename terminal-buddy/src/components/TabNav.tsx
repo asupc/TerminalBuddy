@@ -17,7 +17,7 @@ interface TabSidebarProps {
   isActive: boolean;
   profiles: Profile[];
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => void;
-  onStartBlankTerminal: (terminalType: 'powershell' | 'cmd') => void;
+  onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd') => void;
   onStartTextEditor: () => void;
 }
 
@@ -68,8 +68,10 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'F2') return;
       if (!isActive) return;
+      // 仅在 region 是 'tab' 或尚未初始化（null）时响应。
+      // ConfigNav 的 React onMouseDown / 原生 mousedown 会把 region 设为 'config'，从而屏蔽此处。
       const region = useAppStore.getState().lastClickRegion;
-      if (region && region !== 'tab') return;
+      if (region === 'config') return;
       if (!activeSessionId) return;
       const session = sessions.find(s => s.id === activeSessionId);
       if (session && session.sessionType !== 'editor') {
@@ -243,6 +245,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
   const visibleSubmenuItems = useMemo(() => {
     const result: TreeItem[] = [];
     result.push({ id: 'powershell', label: 'PowerShell', data: { terminalType: 'powershell' as const } });
+    result.push({ id: 'pwsh', label: 'PowerShell 7', data: { terminalType: 'pwsh' as const } });
     result.push({ id: 'cmd', label: 'CMD', data: { terminalType: 'cmd' as const } });
 
     const flattenTree = (items: TreeItem[], expanded: Set<string>) => {
@@ -458,7 +461,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
           } else if (item.data) {
             const d = item.data as Record<string, unknown>;
             if ('group' in d) onStartTerminalRef.current(item.data as Profile);
-            else if (d.terminalType) onStartBlankTerminalRef.current(d.terminalType as 'powershell' | 'cmd');
+            else if (d.terminalType) onStartBlankTerminalRef.current(d.terminalType as 'powershell' | 'pwsh' | 'cmd');
             setShowContextMenu(false);
           }
         }
@@ -577,8 +580,10 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
                 <div
                   className={`tree-item tab-nav-item ${activeSpecialTab === null && activeSessionId === child.id ? 'active' : ''}`}
                   style={{ paddingLeft: `${indent + 12}px` }}
+                  onMouseDown={() => { useAppStore.getState().setLastClickRegion('tab'); }}
                   onClick={() => {
                     const store = useAppStore.getState();
+                    store.setLastClickRegion('tab');
                     if (store.splitMode !== 'off') {
                       if (!store.splitSlots.some(slot => slot.sessionId === child.id)) {
                         store.placeSessionInSplitSlot(child.id);
@@ -744,7 +749,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
               if (!session || session.sessionType === 'editor') return null;
               const profile = profiles.find(p => p.id === session.profileId);
               if (!profile) return null;
-              const isLocal = profile.terminalType === 'powershell' || profile.terminalType === 'cmd';
+              const isLocal = profile.terminalType === 'powershell' || profile.terminalType === 'pwsh' || profile.terminalType === 'cmd';
               const hasPath = !!profile.startupPath && profile.startupPath.trim() !== '';
               if (!isLocal || !hasPath) return null;
               return (
@@ -816,7 +821,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
                     if (item.data) {
                       const d = item.data as Record<string, unknown>;
                       if ('group' in d) onStartTerminal(item.data as Profile);
-                      else if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'cmd');
+                      else if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'pwsh' | 'cmd');
                       setShowContextMenu(false);
                     }
                   }}

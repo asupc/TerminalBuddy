@@ -11,7 +11,7 @@ import { buildGroupTree, renameGroupInPath } from '../utils/groupTree';
 import './ConfigNav.css';
 
 const TYPE_ICONS: Record<string, string> = {
-  powershell: 'PS', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
+  powershell: 'PS', pwsh: 'PS7', cmd: 'CMD', ssh: 'SSH', docker: 'DK', k8s: 'K8S', mstsc: 'RDP',
 };
 
 /** 虚拟置顶分组 id：置顶的配置聚合到此分组，永远显示在列表最顶部 */
@@ -187,7 +187,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     setSortDropdownOpen(false);
   };
 
-  const isLocalProfile = (p: Profile) => p.terminalType === 'powershell' || p.terminalType === 'cmd';
+  const isLocalProfile = (p: Profile) => p.terminalType === 'powershell' || p.terminalType === 'pwsh' || p.terminalType === 'cmd';
   const hasStartupPath = (p: Profile) => !!p.startupPath && p.startupPath.trim() !== '';
 
   const adjustContextMenuPosition = useCallback(() => {
@@ -363,12 +363,17 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   }, []);
 
   // F2 快速重命名分组/配置
+  // 注意：TreeView 组件内部已经独立注册了 group 重命名的 onKeyDown（不检查 lastClickRegion）。
+  // 我们这里不传 onGroupRename 给 TreeView，避免它在焦点残留时被错误触发。
+  // ConfigNav 的 document 级 F2 handler 已统一处理 group 和 profile 两类重命名。
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'F2') return;
       if (!isActive) return;
       const region = useAppStore.getState().lastClickRegion;
-      if (region && region !== 'config') return;
+      // 仅在 region 是 'config' 或尚未初始化（null）时响应。
+      // TabNav 的 React onClick / 原生 mousedown 会把 region 设为 'tab'，从而屏蔽此处。
+      if (region === 'tab') return;
       if (!selectedProfileId) return;
       const item = findTreeItemById(treeItems, selectedProfileId);
       if (item?.isGroup || (item?.children && item.children.length > 0)) {
@@ -384,7 +389,13 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   }, [isActive, selectedProfileId, treeItems]);
 
   return (
-    <div ref={containerRef} className={`config-nav ${!configPanelVisible ? 'collapsed' : ''}`} style={{ width }} onClick={closeContextMenu}>
+    <div
+      ref={containerRef}
+      className={`config-nav ${!configPanelVisible ? 'collapsed' : ''}`}
+      style={{ width }}
+      onMouseDown={() => { useAppStore.getState().setLastClickRegion('config'); }}
+      onClick={closeContextMenu}
+    >
       <div className="panel-titlebar">
         <span className="panel-title">配置</span>
         <span className="panel-title-count">{profiles.length}</span>
@@ -448,7 +459,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           onRenameValueChange={setNewGroupName}
           onRenameSubmit={(id) => handleFinishRename(id)}
           onRenameCancel={() => setRenamingGroup(null)}
-          onGroupRename={(id) => handleStartRename(id)}
           renamingProfileId={renamingProfileId}
           renamingProfileValue={renamingProfileName}
           onRenamingProfileChange={setRenamingProfileName}
