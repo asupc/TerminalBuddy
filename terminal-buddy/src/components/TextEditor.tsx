@@ -1,12 +1,13 @@
-import { FC, useEffect, useRef, useState, useCallback } from 'react';
-import { FileWarning } from 'lucide-react';
+import { CSSProperties, FC, KeyboardEvent, PointerEvent, useEffect, useRef, useState, useCallback } from 'react';
+import { BookOpen, FileWarning } from 'lucide-react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { editor as MonacoEditor, KeyMod, KeyCode } from 'monaco-editor';
 import { readFileContent, writeFileContent, remoteUpload, getFileMeta, onTransferProgress, onTransferError } from '../services/tauri';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '../stores/appStore';
-import { getMonacoLanguage } from '../utils/fileExtensions';
+import { getMonacoLanguage, isMarkdownFile } from '../utils/fileExtensions';
 import { Dialog } from './Dialog';
+import { MarkdownPreview, MarkdownPreviewHandle } from './MarkdownPreview';
 import { showAlert } from '../services/dialog';
 import './TextEditor.css';
 
@@ -28,6 +29,20 @@ const CONTEXT_MENU_ITEMS = [
   { id: 'editor.action.blockComment', label: '切换块注释', shortcut: 'Shift+Alt+A' },
 ];
 
+const MARKDOWN_PREVIEW_DEFAULT_WIDTH = 50;
+const MARKDOWN_PREVIEW_MIN_PANE_WIDTH = 240;
+const MARKDOWN_PREVIEW_RESIZER_WIDTH = 5;
+
+function getEditorSourceLineAtTop(editor: MonacoEditor.IStandaloneCodeEditor): number {
+  const model = editor.getModel();
+  const firstVisiblePosition = editor.getVisibleRanges()[0]?.getStartPosition();
+  if (!model || !firstVisiblePosition) return 0;
+
+  const lineLength = model.getLineLength(firstVisiblePosition.lineNumber);
+  const lineProgress = (firstVisiblePosition.column - 1) / (lineLength + 2);
+  return firstVisiblePosition.lineNumber - 1 + lineProgress;
+}
+
 interface TextEditorProps {
   filePath: string;
   isDirty: boolean;
@@ -37,18 +52,28 @@ interface TextEditorProps {
 
 export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChange, isActive }) => {
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const markdownPreviewRef = useRef<MarkdownPreviewHandle>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [conflictDialog, setConflictDialog] = useState<'overwrite' | 'discard' | null>(null);
   const [saveNotify, setSaveNotify] = useState<{ type: 'saving' | 'success' | 'error'; msg: string } | null>(null);
+  const [isMarkdownPreviewOpen, setIsMarkdownPreviewOpen] = useState(false);
+  const [markdownPreviewWidth, setMarkdownPreviewWidth] = useState(MARKDOWN_PREVIEW_DEFAULT_WIDTH);
+  const [isMarkdownPreviewResizing, setIsMarkdownPreviewResizing] = useState(false);
+  const [markdownPreviewToggleRight, setMarkdownPreviewToggleRight] = useState(112);
   const saveNotifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markdownResizePointerRef = useRef<number | null>(null);
+  const editorScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingEditorSourceLineRef = useRef(0);
+  const previewDrivingEditorUntilRef = useRef(0);
   const diskModTimeRef = useRef<number>(0);
   const isDirtyRef = useRef(isDirty);
   const lastLoadedContentRef = useRef<string | null>(null);
   const isInternalUpdateRef = useRef(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isMarkdown = isMarkdownFile(filePath);
 
   isDirtyRef.current = isDirty;
 
@@ -177,9 +202,143 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
     };
   }, [isActive, filePath, loadFileContent, conflictDialog]);
 
+  useEffect(() => {
+    if (!isMarkdown) setIsMarkdownPreviewOpen(false);
+  }, [isMarkdown]);
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.layout();
+      if (isMarkdownPreviewOpen) {
+        markdownPreviewRef.current?.scrollToSourceLine(getEditorSourceLineAtTop(editor));
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isMarkdownPreviewOpen, markdownPreviewWidth]);
+
+  useEffect(() => {
+    if (!isMarkdownPreviewResizing) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isMarkdownPreviewResizing]);
+
+  useEffect(() => () => {
+    if (editorScrollTimerRef.current) clearTimeout(editorScrollTimerRef.current);
+  }, []);
+
+  const setMarkdownPreviewWidthFromClientX = useCallback((clientX: number) => {
+    const bounds = containerRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+
+    const availableWidth = bounds.width - MARKDOWN_PREVIEW_RESIZER_WIDTH;
+    if (availableWidth < MARKDOWN_PREVIEW_MIN_PANE_WIDTH * 2) return;
+
+    const previewWidth = Math.min(
+      availableWidth - MARKDOWN_PREVIEW_MIN_PANE_WIDTH,
+      Math.max(
+        MARKDOWN_PREVIEW_MIN_PANE_WIDTH,
+        bounds.right - clientX - MARKDOWN_PREVIEW_RESIZER_WIDTH / 2,
+      ),
+    );
+    setMarkdownPreviewWidth((previewWidth / bounds.width) * 100);
+  }, []);
+
+  const handleMarkdownResizeStart = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    markdownResizePointerRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsMarkdownPreviewResizing(true);
+    setMarkdownPreviewWidthFromClientX(event.clientX);
+  }, [setMarkdownPreviewWidthFromClientX]);
+
+  const handleMarkdownResizeMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (markdownResizePointerRef.current !== event.pointerId) return;
+    setMarkdownPreviewWidthFromClientX(event.clientX);
+  }, [setMarkdownPreviewWidthFromClientX]);
+
+  const handleMarkdownResizeEnd = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (markdownResizePointerRef.current !== event.pointerId) return;
+    markdownResizePointerRef.current = null;
+    setIsMarkdownPreviewResizing(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const handleMarkdownResizeKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Home') {
+      event.preventDefault();
+      setMarkdownPreviewWidth(MARKDOWN_PREVIEW_DEFAULT_WIDTH);
+      return;
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+
+    event.preventDefault();
+    const bounds = containerRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const currentDividerX = bounds.right - bounds.width * (markdownPreviewWidth / 100);
+    const step = event.shiftKey ? 48 : 16;
+    setMarkdownPreviewWidthFromClientX(
+      event.key === 'ArrowLeft' ? currentDividerX - step : currentDividerX + step,
+    );
+  }, [markdownPreviewWidth, setMarkdownPreviewWidthFromClientX]);
+
+  const handleMarkdownPreviewScroll = useCallback((line: number) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+
+    const sourceLine = Math.max(0, Math.min(line, model.getLineCount() - 1));
+    const lineNumber = Math.floor(sourceLine) + 1;
+    const lineProgress = sourceLine - Math.floor(sourceLine);
+    const startColumn = Math.min(
+      model.getLineMaxColumn(lineNumber),
+      Math.floor(lineProgress * model.getLineLength(lineNumber)) + 1,
+    );
+    const endLineNumber = Math.min(lineNumber + 1, model.getLineCount());
+    previewDrivingEditorUntilRef.current = performance.now() + 200;
+    editor.revealRangeAtTop({
+      startLineNumber: lineNumber,
+      startColumn,
+      endLineNumber,
+      endColumn: 1,
+    }, MonacoEditor.ScrollType.Immediate);
+  }, []);
+
   const handleEditorMount: OnMount = useCallback((editor) => {
     editorRef.current = editor;
     editor.updateOptions({ contextmenu: false });
+
+    const updateMarkdownPreviewTogglePosition = (layoutInfo: MonacoEditor.EditorLayoutInfo) => {
+      const editorChromeWidth = layoutInfo.minimap.minimapWidth > 0
+        ? layoutInfo.width - layoutInfo.minimap.minimapLeft
+        : layoutInfo.verticalScrollbarWidth;
+      const nextRight = Math.max(12, Math.round(editorChromeWidth + 8));
+      setMarkdownPreviewToggleRight(current => current === nextRight ? current : nextRight);
+    };
+    updateMarkdownPreviewTogglePosition(editor.getLayoutInfo());
+    editor.onDidLayoutChange(updateMarkdownPreviewTogglePosition);
+
+    editor.onDidScrollChange((event) => {
+      if (!event.scrollTopChanged) return;
+      if (performance.now() < previewDrivingEditorUntilRef.current) return;
+      pendingEditorSourceLineRef.current = getEditorSourceLineAtTop(editor);
+      if (editorScrollTimerRef.current) return;
+      editorScrollTimerRef.current = setTimeout(() => {
+        editorScrollTimerRef.current = null;
+        markdownPreviewRef.current?.scrollToSourceLine(pendingEditorSourceLineRef.current);
+      }, 50);
+    });
 
     const showSaveNotify = (type: 'saving' | 'success' | 'error', msg: string) => {
       if (saveNotifyTimerRef.current) clearTimeout(saveNotifyTimerRef.current);
@@ -284,6 +443,15 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       },
     });
 
+    if (isMarkdown) {
+      editor.addAction({
+        id: 'toggle-markdown-preview',
+        label: '切换 Markdown 侧边预览',
+        keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyV],
+        run: () => setIsMarkdownPreviewOpen(current => !current),
+      });
+    }
+
     editor.addAction({
       id: 'format-document',
       label: '格式化文档',
@@ -299,7 +467,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       }
       isInternalUpdateRef.current = false;
     });
-  }, [filePath, onDirtyChange]);
+  }, [filePath, isMarkdown, onDirtyChange]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -373,29 +541,77 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   }
 
   return (
-    <div className="text-editor-container" ref={containerRef} onContextMenu={handleContextMenu}>
-      <Editor
-        height="100%"
-        language={getMonacoLanguage(filePath)}
-        value={content}
-        onMount={handleEditorMount}
-        theme="vs-dark"
-        options={{
-          fontSize: 14,
-          minimap: { enabled: true },
-          automaticLayout: true,
-          scrollBeyondLastLine: false,
-          wordWrap: 'on',
-          tabSize: 4,
-          insertSpaces: true,
-          lineNumbers: 'on',
-          folding: true,
-          renderWhitespace: 'selection',
-        }}
-        onChange={(value) => {
-          if (value !== undefined) setContent(value);
-        }}
-      />
+    <div
+      className={`text-editor-container${isMarkdownPreviewOpen ? ' markdown-preview-open' : ''}${isMarkdownPreviewResizing ? ' markdown-preview-resizing' : ''}`}
+      ref={containerRef}
+      style={{ '--markdown-preview-width': `${markdownPreviewWidth}%` } as CSSProperties}
+    >
+      <div className="text-editor-source" onContextMenu={handleContextMenu}>
+        <Editor
+          height="100%"
+          language={getMonacoLanguage(filePath)}
+          value={content}
+          onMount={handleEditorMount}
+          theme="vs-dark"
+          options={{
+            fontSize: 14,
+            minimap: { enabled: true },
+            automaticLayout: true,
+            scrollBeyondLastLine: false,
+            wordWrap: 'on',
+            tabSize: 4,
+            insertSpaces: true,
+            lineNumbers: 'on',
+            folding: true,
+            renderWhitespace: 'selection',
+          }}
+          onChange={(value) => {
+            if (value !== undefined) setContent(value);
+          }}
+        />
+        {isMarkdown && (
+          <button
+            type="button"
+            className={`markdown-preview-toggle${isMarkdownPreviewOpen ? ' active' : ''}`}
+            style={{ right: markdownPreviewToggleRight }}
+            onClick={() => setIsMarkdownPreviewOpen(current => !current)}
+            aria-label={isMarkdownPreviewOpen ? '关闭 Markdown 预览' : '打开 Markdown 侧边预览'}
+            aria-pressed={isMarkdownPreviewOpen}
+            title={isMarkdownPreviewOpen ? '关闭 Markdown 预览' : '打开 Markdown 侧边预览'}
+          >
+            <BookOpen aria-hidden="true" />
+          </button>
+        )}
+      </div>
+      {isMarkdownPreviewOpen && (
+        <>
+          <div
+            className="markdown-preview-resizer"
+            role="separator"
+            aria-label="调整编辑区和预览区宽度"
+            aria-orientation="vertical"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(100 - markdownPreviewWidth)}
+            tabIndex={0}
+            title="拖动调整宽度，双击恢复等宽"
+            onPointerDown={handleMarkdownResizeStart}
+            onPointerMove={handleMarkdownResizeMove}
+            onPointerUp={handleMarkdownResizeEnd}
+            onPointerCancel={handleMarkdownResizeEnd}
+            onKeyDown={handleMarkdownResizeKeyDown}
+            onDoubleClick={() => setMarkdownPreviewWidth(MARKDOWN_PREVIEW_DEFAULT_WIDTH)}
+          />
+          <div className="markdown-preview-pane">
+            <MarkdownPreview
+              ref={markdownPreviewRef}
+              content={content}
+              filePath={filePath}
+              onScrollSourceLine={handleMarkdownPreviewScroll}
+            />
+          </div>
+        </>
+      )}
       {saveNotify && (
         <div className={`editor-save-notify editor-save-notify-${saveNotify.type}`}>
           {saveNotify.type === 'saving' && <span className="editor-save-spinner" />}

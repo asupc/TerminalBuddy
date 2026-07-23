@@ -4,7 +4,7 @@
   "identifier": "com.terminalbuddy.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1450",
     "beforeBuildCommand": "npm run prepare:vscode-terminal && npm run build && cd web && npm run build",
     "frontendDist": "../dist"
   },
@@ -26,7 +26,15 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/**",
+          "$APPDATA/**",
+          "$APPLOCALDATA/**"
+        ]
+      }
     }
   },
   "bundle": {
