@@ -660,6 +660,13 @@ function App() {
     setShowEditDialog(false);
   }, []);
 
+  const handlePromoteToUpdate = useCallback((info: UpdateInfo) => {
+    const dismissed = localStorage.getItem('appUpdate.dismissedVersion');
+    if (info.version === dismissed) return;
+    if (compareVersions(info.version, APP_VERSION) <= 0) return;
+    setUpdateInfo(info);
+  }, []);
+
   const handleSidebarPanel = useCallback((panel: SidebarPanel) => {
     if (panel === 'config' || panel === 'tabs') {
       useAppStore.getState().setLastClickRegion(panel === 'config' ? 'config' : 'tab');
@@ -692,6 +699,7 @@ function App() {
         onToggleFileTree={toggleFileTree}
         updateInfo={updateInfo}
         onUpdateDismiss={() => setUpdateInfo(null)}
+        onPromoteToUpdate={handlePromoteToUpdate}
       />
       <div className="main-content">
         {uiStyle === 'sidebar' && (
