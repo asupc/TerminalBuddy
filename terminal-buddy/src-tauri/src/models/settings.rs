@@ -53,6 +53,10 @@ fn default_single_instance() -> bool {
     true
 }
 
+fn default_update_check_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -72,6 +76,8 @@ pub struct AppSettings {
     pub file_nav_width: u32,
     #[serde(default = "default_enable_tab_navigation")]
     pub enable_tab_navigation: bool,
+    #[serde(default = "default_update_check_enabled")]
+    pub update_check_enabled: bool,
     #[serde(default = "default_single_instance")]
     pub single_instance: bool,
     #[serde(default = "default_web_api_enabled")]
@@ -105,6 +111,7 @@ impl Default for AppSettings {
             config_nav_width: 250,
             file_nav_width: 250,
             enable_tab_navigation: true,
+            update_check_enabled: true,
             single_instance: true,
             web_api_enabled: false,
             web_api_port: 9600,
