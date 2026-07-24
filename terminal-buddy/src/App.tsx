@@ -15,7 +15,9 @@ import { GlobalDialogHost } from './components/GlobalDialogHost';
 import { Toast } from './components/Toast';
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, closeTerminal, getClaudeSessionsForTerminals } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, closeTerminal, getClaudeSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
+import { compareVersions } from './utils/version';
+import { APP_VERSION } from './version';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
@@ -71,6 +73,22 @@ function App() {
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
   const closeConfirmedRef = useRef(false);
   const restoredRef = useRef(false);
+
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+
+  useEffect(() => {
+    const settings = getAppSettings();
+    if (!settings.updateCheckEnabled) return;
+    checkAppUpdate()
+      .then(info => {
+        if (!info) return;
+        const dismissed = localStorage.getItem('appUpdate.dismissedVersion');
+        if (info.version === dismissed) return;
+        if (compareVersions(info.version, APP_VERSION) <= 0) return;
+        setUpdateInfo(info);
+      })
+      .catch(() => {});
+  }, []);
 
   // 预加载终端组件 chunk（xterm.js + addons），让 restoreTabs 时不需等待网络/IO
   useEffect(() => {
@@ -672,6 +690,8 @@ function App() {
         fileTreeVisible={fileTreeVisible}
         onToggleConfigPanel={toggleConfigPanel}
         onToggleFileTree={toggleFileTree}
+        updateInfo={updateInfo}
+        onUpdateDismiss={() => setUpdateInfo(null)}
       />
       <div className="main-content">
         {uiStyle === 'sidebar' && (
