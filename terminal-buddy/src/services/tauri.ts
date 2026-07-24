@@ -884,3 +884,19 @@ export async function onTransferError(
     callback(event.payload as any);
   });
 }
+
+export interface UpdateInfo {
+  version: string;
+  releaseDate: string;
+  changelogMd: string;
+  downloadUrl: string;
+  mandatory: boolean;
+}
+
+export async function checkAppUpdate(): Promise<UpdateInfo | null> {
+  return invoke<UpdateInfo | null>('check_app_update');
+}
+
+export async function saveUpdateCheckEnabled(enabled: boolean): Promise<void> {
+  await invoke('save_update_check_enabled', { enabled });
+}

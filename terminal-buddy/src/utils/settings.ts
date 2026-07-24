@@ -16,6 +16,7 @@ export interface AppSettings {
   launchWindowMode: LaunchWindowMode;
   terminalLoadingMode: TerminalLoadingMode;
   enableTabNavigation: boolean;
+  updateCheckEnabled: boolean;
   singleInstance: boolean;
   rightClickPaste: boolean;
   doubleClickRunBat: boolean;
@@ -60,6 +61,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   launchWindowMode: 'windowed',
   terminalLoadingMode: 'default',
   enableTabNavigation: true,
+  updateCheckEnabled: true,
   singleInstance: true,
   rightClickPaste: false,
   doubleClickRunBat: false,
