@@ -1,6 +1,7 @@
 import { FC, useState, useRef, useEffect, useCallback } from 'react';
 import {
   BarChart3,
+  Bell,
   Columns2,
   Folder,
   Globe2,
@@ -15,9 +16,11 @@ import {
   X,
 } from 'lucide-react';
 import { windowMinimize, windowToggleMaximize, windowClose, getWebServerAddress } from '../services/tauri';
+import type { UpdateInfo } from '../services/tauri';
 import { AiUsagePanel } from './AiUsagePanel';
 import { AboutDialog } from './AboutDialog';
 import { WebManageDialog } from './WebManageDialog';
+import { UpdatePopover } from './UpdatePopover';
 import { APP_VERSION } from '../version';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
@@ -33,6 +36,8 @@ interface TitleBarProps {
   fileTreeVisible: boolean;
   onToggleConfigPanel: () => void;
   onToggleFileTree: () => void;
+  updateInfo: UpdateInfo | null;
+  onUpdateDismiss: () => void;
 }
 
 export const TitleBar: FC<TitleBarProps> = ({
@@ -42,12 +47,16 @@ export const TitleBar: FC<TitleBarProps> = ({
   fileTreeVisible,
   onToggleConfigPanel,
   onToggleFileTree,
+  updateInfo,
+  onUpdateDismiss,
 }) => {
   const [aiUsageHover, setAiUsageHover] = useState(false);
+  const [updateHover, setUpdateHover] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
   const [splitBusy, setSplitBusy] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const splitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const updateHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
@@ -56,6 +65,9 @@ export const TitleBar: FC<TitleBarProps> = ({
       }
       if (splitTimer.current) {
         clearTimeout(splitTimer.current);
+      }
+      if (updateHoverTimer.current) {
+        clearTimeout(updateHoverTimer.current);
       }
     };
   }, []);
@@ -104,6 +116,15 @@ export const TitleBar: FC<TitleBarProps> = ({
 
   const handleMouseLeave = () => {
     hoverTimer.current = setTimeout(() => setAiUsageHover(false), 200);
+  };
+
+  const handleUpdateEnter = () => {
+    if (updateHoverTimer.current) clearTimeout(updateHoverTimer.current);
+    setUpdateHover(true);
+  };
+
+  const handleUpdateLeave = () => {
+    updateHoverTimer.current = setTimeout(() => setUpdateHover(false), 200);
   };
 
   const handleSplitClick = () => {
@@ -165,6 +186,25 @@ export const TitleBar: FC<TitleBarProps> = ({
             </button>
             {aiUsageHover && <AiUsagePanel />}
           </div>
+          {updateInfo && (
+            <div
+              className="ai-usage-trigger"
+              onMouseEnter={handleUpdateEnter}
+              onMouseLeave={handleUpdateLeave}
+            >
+              <button
+                className="titlebar-nav-btn"
+                title={`发现新版本 v${updateInfo.version}`}
+                aria-label={`发现新版本 v${updateInfo.version}，点击查看更新说明`}
+              >
+                <Bell aria-hidden="true" />
+                <span className="titlebar-status-dot online" aria-hidden="true" />
+              </button>
+              {updateHover && (
+                <UpdatePopover info={updateInfo} onDismiss={onUpdateDismiss} />
+              )}
+            </div>
+          )}
         </div>
       </div>
       <div className="titlebar-right">
