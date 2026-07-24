@@ -60,7 +60,10 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
             <div className="links-grid">
               <a
                 href="https://gitee.com/updateme/terminal-buddy"
-                target="_blank"
+                onClick={(e) => {
+                  e.preventDefault();
+                  window.open('https://gitee.com/updateme/terminal-buddy', '_blank', 'noopener,noreferrer');
+                }}
                 rel="noopener noreferrer"
                 className="about-link"
               >
@@ -69,7 +72,10 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
               </a>
               <a
                 href="https://gitee.com/updateme/terminal-buddy/issues"
-                target="_blank"
+                onClick={(e) => {
+                  e.preventDefault();
+                  window.open('https://gitee.com/updateme/terminal-buddy/issues', '_blank', 'noopener,noreferrer');
+                }}
                 rel="noopener noreferrer"
                 className="about-link"
               >
@@ -78,7 +84,10 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
               </a>
               <a
                 href="https://gitee.com/updateme/terminal-buddy/blob/master/README.md"
-                target="_blank"
+                onClick={(e) => {
+                  e.preventDefault();
+                  window.open('https://gitee.com/updateme/terminal-buddy/blob/master/README.md', '_blank', 'noopener,noreferrer');
+                }}
                 rel="noopener noreferrer"
                 className="about-link"
               >
@@ -87,7 +96,10 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
               </a>
               <a
                 href="https://gitee.com/updateme/terminal-buddy/releases"
-                target="_blank"
+                onClick={(e) => {
+                  e.preventDefault();
+                  window.open('https://gitee.com/updateme/terminal-buddy/releases', '_blank', 'noopener,noreferrer');
+                }}
                 rel="noopener noreferrer"
                 className="about-link"
               >
