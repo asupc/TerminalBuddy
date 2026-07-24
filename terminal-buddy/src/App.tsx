@@ -70,6 +70,8 @@ function App() {
   const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
   const [enableTabNav, setEnableTabNav] = useState(true);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [updateCheckEnabled, setUpdateCheckEnabled] = useState(() => getAppSettings().updateCheckEnabled);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
   const closeConfirmedRef = useRef(false);
   const restoredRef = useRef(false);
@@ -77,8 +79,8 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   useEffect(() => {
-    const settings = getAppSettings();
-    if (!settings.updateCheckEnabled) return;
+    if (!settingsReady) return;
+    if (!updateCheckEnabled) return;
     checkAppUpdate()
       .then(info => {
         if (!info) return;
@@ -88,7 +90,7 @@ function App() {
         setUpdateInfo(info);
       })
       .catch(() => {});
-  }, []);
+  }, [updateCheckEnabled, settingsReady]);
 
   // 预加载终端组件 chunk（xterm.js + addons），让 restoreTabs 时不需等待网络/IO
   useEffect(() => {
@@ -233,6 +235,9 @@ function App() {
         await restoreTabs();
         await useAppStore.getState().restoreDraftTabs();
       }
+
+      setUpdateCheckEnabled(getAppSettings().updateCheckEnabled);
+      setSettingsReady(true);
     })();
   }, []);
 
@@ -294,6 +299,12 @@ function App() {
 
   useEffect(() => {
     const handler = () => setUiStyle(getAppSettings().uiStyle);
+    window.addEventListener('app-settings-changed', handler);
+    return () => window.removeEventListener('app-settings-changed', handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setUpdateCheckEnabled(getAppSettings().updateCheckEnabled);
     window.addEventListener('app-settings-changed', handler);
     return () => window.removeEventListener('app-settings-changed', handler);
   }, []);
