@@ -75,12 +75,16 @@ function App() {
   const restoredRef = useRef(false);
 
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(() => {
+    const v = localStorage.getItem('appUpdate.lastCheckedAt');
+    return v ? Number(v) : null;
+  });
 
   useEffect(() => {
     checkAppUpdate()
       .then(info => {
         const now = Date.now();
-        localStorage.setItem('appUpdate.lastCheckedAt', String(now));
+        setLastCheckedAt(now);
         if (!info) return;
         const dismissed = localStorage.getItem('appUpdate.dismissedVersion');
         if (info.version === dismissed) return;
@@ -700,6 +704,8 @@ function App() {
         updateInfo={updateInfo}
         onUpdateDismiss={() => setUpdateInfo(null)}
         onPromoteToUpdate={handlePromoteToUpdate}
+        lastCheckedAt={lastCheckedAt}
+        onUpdateLastChecked={setLastCheckedAt}
       />
       <div className="main-content">
         {uiStyle === 'sidebar' && (

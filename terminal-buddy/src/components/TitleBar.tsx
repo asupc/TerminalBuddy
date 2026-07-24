@@ -41,6 +41,8 @@ interface TitleBarProps {
   updateInfo: UpdateInfo | null;
   onUpdateDismiss: () => void;
   onPromoteToUpdate: (info: UpdateInfo) => void;
+  lastCheckedAt: number | null;
+  onUpdateLastChecked: (now: number) => void;
 }
 
 export const TitleBar: FC<TitleBarProps> = ({
@@ -53,6 +55,8 @@ export const TitleBar: FC<TitleBarProps> = ({
   updateInfo,
   onUpdateDismiss,
   onPromoteToUpdate,
+  lastCheckedAt,
+  onUpdateLastChecked,
 }) => {
   const [aiUsageHover, setAiUsageHover] = useState(false);
   const [updateHover, setUpdateHover] = useState(false);
@@ -60,10 +64,6 @@ export const TitleBar: FC<TitleBarProps> = ({
   const [splitBusy, setSplitBusy] = useState(false);
   const [refreshHover, setRefreshHover] = useState(false);
   const [checkStatus, setCheckStatus] = useState<UpdateCheckStatus>('idle');
-  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(() => {
-    const v = localStorage.getItem('appUpdate.lastCheckedAt');
-    return v ? Number(v) : null;
-  });
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const splitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const updateHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -155,8 +155,9 @@ export const TitleBar: FC<TitleBarProps> = ({
     try {
       const info = await checkAppUpdate();
       const now = Date.now();
+      // 保留 localStorage 写入，向后兼容可能读取它的代码（App state 为权威值）
       localStorage.setItem('appUpdate.lastCheckedAt', String(now));
-      setLastCheckedAt(now);
+      onUpdateLastChecked(now);
       if (info) {
         const dismissed = localStorage.getItem('appUpdate.dismissedVersion');
         if (info.version !== dismissed && compareVersions(info.version, APP_VERSION) > 0) {
@@ -234,6 +235,7 @@ export const TitleBar: FC<TitleBarProps> = ({
               title="检查更新"
               aria-label="检查更新"
               onClick={handleCheckNow}
+              disabled={checkStatus === 'checking'}
             >
               <RefreshCw aria-hidden="true" />
             </button>
