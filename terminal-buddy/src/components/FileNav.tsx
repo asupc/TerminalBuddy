@@ -1,5 +1,6 @@
 import { FC, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight, File, Folder, FolderOpen, FolderPlus, ListChevronsDownUp, Plus, RefreshCw } from 'lucide-react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
@@ -525,10 +526,14 @@ export const FileNav: FC = () => {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean; dir?: string; root?: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [customPathInput, setCustomPathInput] = useState('');
+  const [customPathError, setCustomPathError] = useState<string | null>(null);
+  const [customPathBusy, setCustomPathBusy] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
   const ctxMenuRef = useRef<HTMLDivElement>(null);
+  const customPathInputRef = useRef<HTMLInputElement>(null);
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
   const isSsh = activeSession?.terminalType === 'ssh';
@@ -726,6 +731,55 @@ export const FileNav: FC = () => {
     });
   }, [activateTreeDirectory, addFileRoot]);
 
+  const handleAddCustomPath = useCallback(async () => {
+    const trimmed = customPathInput.trim();
+    if (!trimmed || customPathBusy) return;
+    setCustomPathBusy(true);
+    setCustomPathError(null);
+    try {
+      const normalizedPath = normalizeConfiguredPath(trimmed);
+      if (!normalizedPath) {
+        setCustomPathError('路径无效');
+        return;
+      }
+      const normalizedKey = normalizedPath.toLowerCase();
+      if (rootDirectories.some(root => root.toLowerCase() === normalizedKey)) {
+        setCustomPathError('已在文件列表中');
+        return;
+      }
+      try {
+        await listDirectory(normalizedPath, []);
+      } catch (err) {
+        setCustomPathError('路径不存在或无法访问');
+        console.error('Failed to validate custom path:', err);
+        return;
+      }
+      handleAddRoot(normalizedPath);
+      setCustomPathInput('');
+      setCustomPathError(null);
+    } finally {
+      setCustomPathBusy(false);
+      customPathInputRef.current?.focus();
+    }
+  }, [customPathBusy, customPathInput, handleAddRoot, rootDirectories]);
+
+  const handleBrowseCustomPath = useCallback(async () => {
+    if (customPathBusy) return;
+    try {
+      const selected = await openDialog({
+        directory: true,
+        multiple: false,
+        title: '选择文件夹',
+      });
+      if (!selected || typeof selected !== 'string') return;
+      setCustomPathInput(selected);
+      setCustomPathError(null);
+      customPathInputRef.current?.focus();
+    } catch (err) {
+      console.error('Failed to open directory picker:', err);
+    }
+  }, [customPathBusy]);
+
   const handleRemoveRoot = useCallback((path: string) => {
     removeFileRoot(path);
     setFocusedRootPath(current => current?.toLowerCase() === path.toLowerCase() ? null : current);
@@ -894,8 +948,56 @@ export const FileNav: FC = () => {
           )}
           className="file-root-dialog"
           bodyClassName="file-root-dialog-body"
-          onClose={() => setShowRootPicker(false)}
+          onClose={() => {
+            setShowRootPicker(false);
+            setCustomPathInput('');
+            setCustomPathError(null);
+          }}
         >
+          <div className="file-root-custom-path">
+            <input
+              ref={customPathInputRef}
+              type="text"
+              className="file-root-custom-path-input"
+              placeholder="自定义路径，如 C:\projects\foo"
+              value={customPathInput}
+              onChange={(e) => {
+                setCustomPathInput(e.target.value);
+                if (customPathError) setCustomPathError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleAddCustomPath();
+                }
+              }}
+              aria-label="自定义路径"
+              spellCheck={false}
+              autoFocus
+            />
+            <button
+              type="button"
+              className="file-root-custom-path-browse"
+              onClick={() => void handleBrowseCustomPath()}
+              disabled={customPathBusy}
+              title="浏览选择文件夹"
+            >
+              浏览...
+            </button>
+            <button
+              type="button"
+              className="file-root-custom-path-add"
+              onClick={() => void handleAddCustomPath()}
+              disabled={!customPathInput.trim() || customPathBusy}
+            >
+              添加
+            </button>
+            {customPathError && (
+              <div className="file-root-custom-path-error" role="alert">
+                {customPathError}
+              </div>
+            )}
+          </div>
           <div className="file-root-picker-list">
             {availableDirectories.map(path => (
               <button
