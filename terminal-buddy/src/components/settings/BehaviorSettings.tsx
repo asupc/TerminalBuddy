@@ -1,5 +1,5 @@
 import { FC } from 'react';
-import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, type VsCodeTerminalSupport } from '../../services/tauri';
+import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, saveUpdateCheckEnabled, type VsCodeTerminalSupport } from '../../services/tauri';
 import { BREATHING_LIGHT_COLORS } from '../../types';
 import type { AppSettings, BreathingLightColorMode } from '../../utils/settings';
 
@@ -194,6 +194,23 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <span>纵向选项卡</span>
         </label>
         <p className="settings-desc">勾选时选项卡显示在左侧面板（纵向），未勾选时显示在终端上方（横向）</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.updateCheckEnabled}
+            onChange={(e) => {
+              const value = e.target.checked;
+              updateSetting('updateCheckEnabled', value);
+              saveUpdateCheckEnabled(value).catch(console.error);
+            }}
+          />
+          <span>启动时检查更新</span>
+        </label>
+        <p className="settings-desc">
+          启动时静默检查 Gitee 上的版本清单；发现新版本时在标题栏显示提示，不自动升级
+        </p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
