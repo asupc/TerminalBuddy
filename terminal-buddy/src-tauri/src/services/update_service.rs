@@ -39,11 +39,7 @@ pub async fn fetch_update_info() -> Option<UpdateInfo> {
         return None;
     }
     let body: UpdateInfo = resp.json().await.ok()?;
-    Some(UpdateInfo {
-        // 远端字段名 `changelog` 兼容映射成 `changelogMd`
-        changelog_md: body.changelog_md,
-        ..body
-    })
+    Some(body)
 }
 
 #[cfg(test)]
