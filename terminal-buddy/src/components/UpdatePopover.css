@@ -77,3 +77,21 @@
 .update-popover-actions button {
   flex: 1;
 }
+
+.update-popover-check {
+  color: var(--success);
+}
+
+.update-popover-checking {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.update-popover-spinner {
+  animation: update-popover-spin 1s linear infinite;
+}
+
+@keyframes update-popover-spin {
+  to { transform: rotate(360deg); }
+}
