@@ -10,17 +10,18 @@ import {
   Minus,
   Moon,
   PanelLeft,
+  RefreshCw,
   Settings,
   Square,
   Sun,
   X,
 } from 'lucide-react';
-import { windowMinimize, windowToggleMaximize, windowClose, getWebServerAddress } from '../services/tauri';
+import { windowMinimize, windowToggleMaximize, windowClose, getWebServerAddress, checkAppUpdate } from '../services/tauri';
 import type { UpdateInfo } from '../services/tauri';
 import { AiUsagePanel } from './AiUsagePanel';
 import { AboutDialog } from './AboutDialog';
 import { WebManageDialog } from './WebManageDialog';
-import { UpdatePopover } from './UpdatePopover';
+import { UpdatePopover, type UpdateCheckStatus } from './UpdatePopover';
 import { APP_VERSION } from '../version';
 import appIcon from '../assets/app-icon.png';
 import './TitleBar.css';
@@ -28,6 +29,7 @@ import { getEffectiveThemeMode, applyTheme, saveTheme } from '../utils/settings'
 import type { UiStyle } from '../utils/settings';
 import { useAppStore } from '../stores/appStore';
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from '../utils/terminalResizeEvent';
+import { compareVersions } from '../utils/version';
 
 interface TitleBarProps {
   uiStyle: UiStyle;
@@ -38,6 +40,7 @@ interface TitleBarProps {
   onToggleFileTree: () => void;
   updateInfo: UpdateInfo | null;
   onUpdateDismiss: () => void;
+  onPromoteToUpdate: (info: UpdateInfo) => void;
 }
 
 export const TitleBar: FC<TitleBarProps> = ({
@@ -49,14 +52,22 @@ export const TitleBar: FC<TitleBarProps> = ({
   onToggleFileTree,
   updateInfo,
   onUpdateDismiss,
+  onPromoteToUpdate,
 }) => {
   const [aiUsageHover, setAiUsageHover] = useState(false);
   const [updateHover, setUpdateHover] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
   const [splitBusy, setSplitBusy] = useState(false);
+  const [refreshHover, setRefreshHover] = useState(false);
+  const [checkStatus, setCheckStatus] = useState<UpdateCheckStatus>('idle');
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(() => {
+    const v = localStorage.getItem('appUpdate.lastCheckedAt');
+    return v ? Number(v) : null;
+  });
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const splitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const updateHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
@@ -68,6 +79,9 @@ export const TitleBar: FC<TitleBarProps> = ({
       }
       if (updateHoverTimer.current) {
         clearTimeout(updateHoverTimer.current);
+      }
+      if (refreshHoverTimer.current) {
+        clearTimeout(refreshHoverTimer.current);
       }
     };
   }, []);
@@ -127,6 +141,39 @@ export const TitleBar: FC<TitleBarProps> = ({
     updateHoverTimer.current = setTimeout(() => setUpdateHover(false), 200);
   };
 
+  const handleRefreshEnter = () => {
+    if (refreshHoverTimer.current) clearTimeout(refreshHoverTimer.current);
+    setRefreshHover(true);
+  };
+
+  const handleRefreshLeave = () => {
+    refreshHoverTimer.current = setTimeout(() => setRefreshHover(false), 200);
+  };
+
+  const handleCheckNow = async () => {
+    setCheckStatus('checking');
+    try {
+      const info = await checkAppUpdate();
+      const now = Date.now();
+      localStorage.setItem('appUpdate.lastCheckedAt', String(now));
+      setLastCheckedAt(now);
+      if (info) {
+        const dismissed = localStorage.getItem('appUpdate.dismissedVersion');
+        if (info.version !== dismissed && compareVersions(info.version, APP_VERSION) > 0) {
+          // 手动检查也驱动 Bell（同步状态）
+          onPromoteToUpdate(info);
+          setCheckStatus('has-update');
+        } else {
+          setCheckStatus('up-to-date');
+        }
+      } else {
+        setCheckStatus('up-to-date');
+      }
+    } catch {
+      setCheckStatus('up-to-date');
+    }
+  };
+
   const handleSplitClick = () => {
     if (splitBusy) return;
     setSplitBusy(true);
@@ -178,6 +225,32 @@ export const TitleBar: FC<TitleBarProps> = ({
           </button>
           <div
             className="ai-usage-trigger"
+            onMouseEnter={handleRefreshEnter}
+            onMouseLeave={handleRefreshLeave}
+          >
+            <button
+              type="button"
+              className="titlebar-nav-btn"
+              title="检查更新"
+              aria-label="检查更新"
+              onClick={handleCheckNow}
+            >
+              <RefreshCw aria-hidden="true" />
+            </button>
+            {refreshHover && (
+              <UpdatePopover
+                status={checkStatus}
+                info={updateInfo}
+                lastCheckedAt={lastCheckedAt}
+                currentVersion={APP_VERSION}
+                onCheckNow={handleCheckNow}
+                onDismiss={() => setRefreshHover(false)}
+                onIgnore={onUpdateDismiss}
+              />
+            )}
+          </div>
+          <div
+            className="ai-usage-trigger"
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
           >
@@ -201,7 +274,15 @@ export const TitleBar: FC<TitleBarProps> = ({
                 <span className="titlebar-status-dot update-available" aria-hidden="true" />
               </button>
               {updateHover && (
-                <UpdatePopover info={updateInfo} onDismiss={onUpdateDismiss} />
+                <UpdatePopover
+                  status="has-update"
+                  info={updateInfo}
+                  lastCheckedAt={lastCheckedAt}
+                  currentVersion={APP_VERSION}
+                  onCheckNow={handleCheckNow}
+                  onDismiss={() => setUpdateHover(false)}
+                  onIgnore={onUpdateDismiss}
+                />
               )}
             </div>
           )}
