@@ -175,7 +175,14 @@ pub struct UpdateInfo {
 }
 ```
 
-- [ ] **Step 2: 校验编译**
+- [ ] **Step 2: 把新模块挂到 `models/mod.rs`**
+
+修改 `terminal-buddy/src-tauri/src/models/mod.rs`：
+
+- 在 `pub mod ssh_types;` 之后追加 `pub mod update;`
+- 在 `pub use ssh_types::*;` 之后追加 `pub use update::*;`
+
+- [ ] **Step 3: 校验编译**
 
 ```bash
 cd "D:/gitee/TerminalBuddy/terminal-buddy/src-tauri" && cargo check
@@ -183,10 +190,10 @@ cd "D:/gitee/TerminalBuddy/terminal-buddy/src-tauri" && cargo check
 
 预期：`Finished ...` 无错误（仅 warnings）。
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 4: 提交**
 
 ```bash
-cd "D:/gitee/TerminalBuddy" && git add terminal-buddy/src-tauri/src/models/update.rs && git -c commit.gpgsign=false commit -m "新增 UpdateInfo 数据模型"
+cd "D:/gitee/TerminalBuddy" && git add terminal-buddy/src-tauri/src/models/update.rs terminal-buddy/src-tauri/src/models/mod.rs && git -c commit.gpgsign=false commit -m "新增 UpdateInfo 数据模型"
 ```
 
 ---
@@ -335,10 +342,17 @@ cd "D:/gitee/TerminalBuddy/terminal-buddy/src-tauri" && cargo test --lib service
 
 复读上面代码块，规则与设计 §4.3 一致（`v` 前缀、段数 ≠ 3 视为 Equal、字典序比较）。
 
-- [ ] **Step 4: 提交（仅骨架与测试）**
+- [ ] **Step 4: 把新模块挂到 `services/mod.rs`**
+
+修改 `terminal-buddy/src-tauri/src/services/mod.rs`：
+
+- 在 `pub mod workspace_service;` 之后追加 `pub mod update_service;`
+- 在 `pub use workspace_service::*;` 之后追加 `pub use update_service::*;`
+
+- [ ] **Step 5: 提交（仅骨架与测试）**
 
 ```bash
-cd "D:/gitee/TerminalBuddy" && git add terminal-buddy/src-tauri/src/services/update_service.rs && git -c commit.gpgsign=false commit -m "新增 update_service 骨架与 compare_versions 单测"
+cd "D:/gitee/TerminalBuddy" && git add terminal-buddy/src-tauri/src/services/update_service.rs terminal-buddy/src-tauri/src/services/mod.rs && git -c commit.gpgsign=false commit -m "新增 update_service 骨架与 compare_versions 单测"
 ```
 
 ---
