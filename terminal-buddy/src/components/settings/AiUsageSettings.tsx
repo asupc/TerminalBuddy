@@ -1,6 +1,7 @@
 import { FC, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import type { AppSettings } from '../../utils/settings';
+import { openUrl } from '../../services/tauri';
 
 interface AiUsageSettingsProps {
   settings: AppSettings;
@@ -13,6 +14,12 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
   const [deepseekApiKeyVisible, setDeepseekApiKeyVisible] = useState(false);
   const [minimaxApiKeyVisible, setMinimaxApiKeyVisible] = useState(false);
   const [arkCookieVisible, setArkCookieVisible] = useState(false);
+
+  // Tauri WebView 里 target="_blank" 不会拉起系统浏览器，统一走 openUrl 触发 ShellExecuteW。
+  const handleOpenLink = (url: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    void openUrl(url);
+  };
 
   return (
     <div className="settings-general">
@@ -35,7 +42,7 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
             {zhipuApiKeyVisible ? '隐藏' : '显示'}
           </button>
         </div>
-        <p className="settings-desc">填入智谱 GLM 的 API Key 用于查询 AI 用量信息。可在 <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>open.bigmodel.cn</a> 获取</p>
+        <p className="settings-desc">填入智谱 GLM 的 API Key 用于查询 AI 用量信息。可在 <a href="https://open.bigmodel.cn" onClick={handleOpenLink('https://open.bigmodel.cn')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>open.bigmodel.cn</a> 获取</p>
       </div>
 
       <div className="settings-section">
@@ -57,7 +64,7 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
             {qianfanCookieVisible ? '隐藏' : '显示'}
           </button>
         </div>
-        <p className="settings-desc">填入百度千帆控制台的 Cookie 用于查询 AI 用量。登录 <a href="https://console.bce.baidu.com/qianfan/resource/subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>百度千帆控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值</p>
+        <p className="settings-desc">填入百度千帆控制台的 Cookie 用于查询 AI 用量。登录 <a href="https://console.bce.baidu.com/qianfan/resource/subscribe" onClick={handleOpenLink('https://console.bce.baidu.com/qianfan/resource/subscribe')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>百度千帆控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值</p>
       </div>
 
       <div className="settings-section">
@@ -79,7 +86,7 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
             {deepseekApiKeyVisible ? '隐藏' : '显示'}
           </button>
         </div>
-        <p className="settings-desc">填入 DeepSeek 的 认证Token 用于查询 AI 用量。可在 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com/usage</a> 登录后打开浏览器开发者工具，查看网络请求获取 Authorization Bearer 值</p>
+        <p className="settings-desc">填入 DeepSeek 的 认证Token 用于查询 AI 用量。可在 <a href="https://platform.deepseek.com/usage" onClick={handleOpenLink('https://platform.deepseek.com/usage')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.deepseek.com/usage</a> 登录后打开浏览器开发者工具，查看网络请求获取 Authorization Bearer 值</p>
       </div>
 
       <div className="settings-section">
@@ -100,7 +107,7 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
             {minimaxApiKeyVisible ? '隐藏' : '显示'}
           </button>
         </div>
-        <p className="settings-desc">填入 MiniMax 的 API Key 用于查询 AI 用量。可在 <a href="https://platform.minimax.chat/api_keys" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.minimax.chat</a> 获取</p>
+        <p className="settings-desc">填入 MiniMax 的 API Key 用于查询 AI 用量。可在 <a href="https://platform.minimax.chat/api_keys" onClick={handleOpenLink('https://platform.minimax.chat/api_keys')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>platform.minimax.chat</a> 获取</p>
       </div>
 
       <div className="settings-section">
@@ -122,7 +129,7 @@ export const AiUsageSettings: FC<AiUsageSettingsProps> = ({ settings, updateSett
             {arkCookieVisible ? '隐藏' : '显示'}
           </button>
         </div>
-        <p className="settings-desc">填入火山方舟控制台的 Cookie 用于查询 Coding 套餐用量。登录 <a href="https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>火山方舟控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值（须包含 csrfToken）</p>
+        <p className="settings-desc">填入火山方舟控制台的 Cookie 用于查询 Coding 套餐用量。登录 <a href="https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe" onClick={handleOpenLink('https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe')} rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>火山方舟控制台</a> 后，从浏览器开发者工具中复制完整的 Cookie 值（须包含 csrfToken）</p>
       </div>
     </div>
   );

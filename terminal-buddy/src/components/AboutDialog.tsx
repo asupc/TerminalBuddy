@@ -3,6 +3,7 @@ import { BookOpen, Download, Globe2, MessageSquareWarning } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
 import { APP_VERSION } from '../version';
 import { Dialog } from './Dialog';
+import { openUrl } from '../services/tauri';
 import './AboutDialog.css';
 
 interface AboutDialogProps {
@@ -62,7 +63,7 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
                 href="https://gitee.com/updateme/terminal-buddy"
                 onClick={(e) => {
                   e.preventDefault();
-                  window.open('https://gitee.com/updateme/terminal-buddy', '_blank', 'noopener,noreferrer');
+                  void openUrl('https://gitee.com/updateme/terminal-buddy');
                 }}
                 rel="noopener noreferrer"
                 className="about-link"
@@ -74,7 +75,7 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
                 href="https://gitee.com/updateme/terminal-buddy/issues"
                 onClick={(e) => {
                   e.preventDefault();
-                  window.open('https://gitee.com/updateme/terminal-buddy/issues', '_blank', 'noopener,noreferrer');
+                  void openUrl('https://gitee.com/updateme/terminal-buddy/issues');
                 }}
                 rel="noopener noreferrer"
                 className="about-link"
@@ -86,7 +87,7 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
                 href="https://gitee.com/updateme/terminal-buddy/blob/master/README.md"
                 onClick={(e) => {
                   e.preventDefault();
-                  window.open('https://gitee.com/updateme/terminal-buddy/blob/master/README.md', '_blank', 'noopener,noreferrer');
+                  void openUrl('https://gitee.com/updateme/terminal-buddy/blob/master/README.md');
                 }}
                 rel="noopener noreferrer"
                 className="about-link"
@@ -98,7 +99,7 @@ export const AboutDialog: FC<AboutDialogProps> = ({ onClose }) => {
                 href="https://gitee.com/updateme/terminal-buddy/releases"
                 onClick={(e) => {
                   e.preventDefault();
-                  window.open('https://gitee.com/updateme/terminal-buddy/releases', '_blank', 'noopener,noreferrer');
+                  void openUrl('https://gitee.com/updateme/terminal-buddy/releases');
                 }}
                 rel="noopener noreferrer"
                 className="about-link"

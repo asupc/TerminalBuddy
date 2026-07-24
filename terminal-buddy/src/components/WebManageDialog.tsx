@@ -8,6 +8,7 @@ import {
   getWebQuickAccessUrl,
   readClientData,
   writeClientData,
+  openUrl,
 } from '../services/tauri';
 import { getAppSettings } from '../utils/settings';
 import { Dialog } from './Dialog';
@@ -384,7 +385,10 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
                     <a
                       className="web-link"
                       href={quickUrl}
-                      target="_blank"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        void openUrl(quickUrl);
+                      }}
                       rel="noopener noreferrer"
                       title={quickUrl}
                     >

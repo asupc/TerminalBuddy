@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify';
 import MarkdownIt from 'markdown-it';
 import { Check, Download, RefreshCw, X } from 'lucide-react';
 import type { UpdateInfo } from '../services/tauri';
+import { openUrl } from '../services/tauri';
 import { formatRelativeTime } from '../utils/format';
 import './UpdatePopover.css';
 
@@ -35,7 +36,7 @@ export const UpdatePopover: FC<UpdatePopoverProps> = ({
 
   const handleDownload = () => {
     if (!info) return;
-    window.open(info.downloadUrl, '_blank', 'noopener,noreferrer');
+    void openUrl(info.downloadUrl);
   };
 
   const handleIgnore = () => {

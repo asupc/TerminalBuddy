@@ -383,6 +383,13 @@ export async function openPath(path: string): Promise<void> {
   return invoke('open_path', { path });
 }
 
+// 在 Tauri WebView 中，window.open 与 target="_blank" 不会拉起系统浏览器。
+// 统一走 open_path，ShellExecuteW(..., "open", https_url, ...) 在 Windows 上
+// 会调用默认浏览器打开链接。
+export async function openUrl(url: string): Promise<void> {
+  return invoke('open_path', { path: url });
+}
+
 export async function openInExplorer(path: string): Promise<void> {
   return invoke('open_in_explorer', { path });
 }
