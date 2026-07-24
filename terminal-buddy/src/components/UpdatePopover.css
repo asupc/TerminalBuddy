@@ -1,4 +1,11 @@
 .update-popover {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 20px;
+  z-index: 1000;
+  pointer-events: auto;
   width: 320px;
   max-height: 360px;
   overflow: auto;
