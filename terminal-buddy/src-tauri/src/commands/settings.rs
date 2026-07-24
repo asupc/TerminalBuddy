@@ -209,11 +209,6 @@ pub fn save_single_instance(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn save_update_check_enabled(enabled: bool) -> Result<(), String> {
-    SettingsService::mutate_settings(|s| s.update_check_enabled = enabled)
-}
-
-#[tauri::command]
 pub fn get_downloads_directory() -> Result<String, String> {
     dirs::download_dir()
         .map(|p| p.to_string_lossy().to_string())
