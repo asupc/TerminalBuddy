@@ -896,7 +896,3 @@ export interface UpdateInfo {
 export async function checkAppUpdate(): Promise<UpdateInfo | null> {
   return invoke<UpdateInfo | null>('check_app_update');
 }
-
-export async function saveUpdateCheckEnabled(enabled: boolean): Promise<void> {
-  await invoke('save_update_check_enabled', { enabled });
-}
