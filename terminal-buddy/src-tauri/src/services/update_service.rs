@@ -30,9 +30,20 @@ pub fn compare_versions(a: &str, b: &str) -> Ordering {
 /// 拉取并解析远端 version.json；任何错误静默返回 None。
 /// 调用方负责决定要不要提示用户（不在此比较版本）。
 pub async fn fetch_update_info() -> Option<UpdateInfo> {
-    // 此任务先放空，仅写测试用 compare_versions。
-    // 实现见下一个任务（Task 6）。
-    unimplemented!("see Task 6")
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let resp = client.get(MANIFEST_URL).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: UpdateInfo = resp.json().await.ok()?;
+    Some(UpdateInfo {
+        // 远端字段名 `changelog` 兼容映射成 `changelogMd`
+        changelog_md: body.changelog_md,
+        ..body
+    })
 }
 
 #[cfg(test)]
