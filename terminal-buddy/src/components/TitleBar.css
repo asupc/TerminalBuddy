@@ -175,6 +175,10 @@
   background: var(--success);
 }
 
+.titlebar-status-dot.update-available {
+  background: var(--warning);
+}
+
 .titlebar-close-btn:hover {
   background: #c42b1c;
   color: #fff;

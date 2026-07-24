@@ -198,7 +198,7 @@ export const TitleBar: FC<TitleBarProps> = ({
                 aria-label={`发现新版本 v${updateInfo.version}，点击查看更新说明`}
               >
                 <Bell aria-hidden="true" />
-                <span className="titlebar-status-dot online" aria-hidden="true" />
+                <span className="titlebar-status-dot update-available" aria-hidden="true" />
               </button>
               {updateHover && (
                 <UpdatePopover info={updateInfo} onDismiss={onUpdateDismiss} />

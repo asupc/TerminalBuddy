@@ -62,9 +62,9 @@ export const UpdatePopover: FC<UpdatePopoverProps> = ({ info, onDismiss }) => {
           type="button"
           className="btn-secondary"
           onClick={handleIgnore}
-          title="本次启动不再提示此版本"
+          title="忽略此版本，下次发布新版前不再提示"
         >
-          忽略本次
+          忽略此版本
         </button>
       </div>
     </div>
