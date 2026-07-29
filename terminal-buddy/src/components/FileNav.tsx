@@ -617,7 +617,15 @@ export const FileNav: FC = () => {
     if (!fileTreeVisible) setShowRootPicker(false);
   }, [fileTreeVisible]);
 
-  useEffect(() => startGitStatusPolling(rootDirectories), [rootDirectories]);
+  // Git 状态只服务于当前打开的目录。文件导航隐藏时同时卸载状态栏并停止轮询，
+  // 避免为所有已配置目录持续创建 git.exe 进程。
+  const gitPollingPaths = useMemo(() => (
+    fileTreeVisible && rootDirectories.length > 0 && gitTargetDirectory
+      ? [gitTargetDirectory]
+      : []
+  ), [fileTreeVisible, gitTargetDirectory, rootDirectories.length]);
+
+  useEffect(() => startGitStatusPolling(gitPollingPaths), [gitPollingPaths]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {
@@ -1023,7 +1031,7 @@ export const FileNav: FC = () => {
           </div>
         </Dialog>
       )}
-      {rootDirectories.length > 0 && (
+      {fileTreeVisible && rootDirectories.length > 0 && (
         <GitNavBar
           key={gitTargetDirectory.toLowerCase() || 'none'}
           currentDirectory={gitTargetDirectory}
