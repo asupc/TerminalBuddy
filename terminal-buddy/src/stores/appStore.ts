@@ -5,6 +5,28 @@ import { getAppSettings, saveAppSettings } from '../utils/settings';
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from '../utils/terminalResizeEvent';
 
 let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
+const TRANSFER_STORAGE_KEY = 'terminalbuddy_transfers';
+let _transferSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let _pendingTransfersForSave: TransferItem[] | null = null;
+
+function persistTransfers(transfers: TransferItem[], immediately = false) {
+  _pendingTransfersForSave = transfers;
+  if (immediately) {
+    if (_transferSaveTimer) clearTimeout(_transferSaveTimer);
+    _transferSaveTimer = null;
+    localStorage.setItem(TRANSFER_STORAGE_KEY, JSON.stringify(transfers));
+    _pendingTransfersForSave = null;
+    return;
+  }
+  if (_transferSaveTimer) return;
+  _transferSaveTimer = setTimeout(() => {
+    const pending = _pendingTransfersForSave;
+    _transferSaveTimer = null;
+    _pendingTransfersForSave = null;
+    if (pending) localStorage.setItem(TRANSFER_STORAGE_KEY, JSON.stringify(pending));
+  }, 500);
+}
+
 function debouncedSaveTabs(sessions: any[], activeSessionId: string | null) {
   if (_saveTabsTimer) clearTimeout(_saveTabsTimer);
   _saveTabsTimer = setTimeout(() => {
@@ -1076,7 +1098,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Transfer state
   transfers: (() => {
     try {
-      const saved = localStorage.getItem('terminalbuddy_transfers');
+      const saved = localStorage.getItem(TRANSFER_STORAGE_KEY);
       if (!saved) return [];
       const items: TransferItem[] = JSON.parse(saved);
       return items.map((t) =>
@@ -1087,7 +1109,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   showTransferPanel: {},
   addTransfer: (item) => set((state) => {
     const transfers = [...state.transfers, item];
-    localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+    persistTransfers(transfers, true);
     return { transfers };
   }),
   updateTransferProgress: (id, transferred, total, percent) =>
@@ -1095,7 +1117,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const transfers = state.transfers.map((t) =>
         t.id === id ? { ...t, transferred, total, percent } : t
       );
-      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      persistTransfers(transfers);
       return { transfers };
     }),
   completeTransfer: (id) =>
@@ -1103,7 +1125,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const transfers = state.transfers.map((t) =>
         t.id === id ? { ...t, status: 'completed' as const, percent: 100 } : t
       );
-      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      persistTransfers(transfers, true);
       return { transfers };
     }),
   failTransfer: (id, error) =>
@@ -1111,13 +1133,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       const transfers = state.transfers.map((t) =>
         t.id === id ? { ...t, status: 'failed' as const, error } : t
       );
-      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      persistTransfers(transfers, true);
       return { transfers };
     }),
   removeTransfer: (id) =>
     set((state) => {
       const transfers = state.transfers.filter((t) => t.id !== id);
-      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      persistTransfers(transfers, true);
       return { transfers };
     }),
   clearCompletedTransfers: (terminalId) =>
@@ -1125,7 +1147,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const transfers = state.transfers.filter(
         (t) => t.terminalId !== terminalId || t.status !== 'completed'
       );
-      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      persistTransfers(transfers, true);
       return { transfers };
     }),
   clearCompletedTransfersByProfile: (profileId) =>
@@ -1133,7 +1155,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const transfers = state.transfers.filter(
         (t) => t.profileId !== profileId || t.status !== 'completed'
       );
-      localStorage.setItem('terminalbuddy_transfers', JSON.stringify(transfers));
+      persistTransfers(transfers, true);
       return { transfers };
     }),
   setShowTransferPanel: (terminalId, show) =>

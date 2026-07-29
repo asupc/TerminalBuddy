@@ -3,7 +3,6 @@ import {
   type GitRepositoryStatus,
 } from './tauri';
 
-export const GIT_STATUS_REFRESH_INTERVAL_MS = 5_000;
 const MAX_CACHE_ENTRIES = 100;
 
 export interface CachedGitRepositoryStatus {
@@ -18,11 +17,6 @@ interface LoadGitRepositoryStatusOptions {
 const statusCache = new Map<string, CachedGitRepositoryStatus>();
 const pendingRequests = new Map<string, Promise<GitRepositoryStatus | null>>();
 const statusListeners = new Set<() => void>();
-let pollingOwner = 0;
-let pollingPaths: string[] = [];
-let pollingTimer: ReturnType<typeof setInterval> | null = null;
-let pollInFlight = false;
-let pollAgainAfterCurrentRun = false;
 
 function normalizePath(path: string): string {
   const normalized = path.trim().replace(/\//g, '\\');
@@ -69,15 +63,6 @@ function notifyStatusListeners(): void {
   for (const listener of statusListeners) {
     listener();
   }
-}
-
-function uniquePaths(paths: string[]): string[] {
-  const unique = new Map<string, string>();
-  for (const path of paths) {
-    const key = normalizePath(path);
-    if (key && !unique.has(key)) unique.set(key, path.trim());
-  }
-  return [...unique.values()];
 }
 
 export function getCachedGitRepositoryStatus(path: string): CachedGitRepositoryStatus | undefined {
@@ -146,54 +131,4 @@ export async function loadGitRepositoryStatus(
 
   pendingRequests.set(requestKey, request);
   return request;
-}
-
-async function refreshAllPollingPaths(queueIfBusy: boolean): Promise<void> {
-  if (pollInFlight) {
-    if (queueIfBusy) pollAgainAfterCurrentRun = true;
-    return;
-  }
-
-  const paths = pollingPaths;
-  if (paths.length === 0) return;
-
-  pollInFlight = true;
-  try {
-    await Promise.allSettled(
-      paths.map(path => loadGitRepositoryStatus(path, { force: true })),
-    );
-  } finally {
-    pollInFlight = false;
-    if (pollAgainAfterCurrentRun) {
-      pollAgainAfterCurrentRun = false;
-      void refreshAllPollingPaths(false);
-    }
-  }
-}
-
-function stopGitStatusPolling(): void {
-  pollingPaths = [];
-  pollAgainAfterCurrentRun = false;
-  if (pollingTimer !== null) {
-    clearInterval(pollingTimer);
-    pollingTimer = null;
-  }
-}
-
-export function startGitStatusPolling(paths: string[]): () => void {
-  const owner = ++pollingOwner;
-  stopGitStatusPolling();
-  pollingPaths = uniquePaths(paths);
-
-  if (pollingPaths.length > 0) {
-    void refreshAllPollingPaths(true);
-    pollingTimer = setInterval(() => {
-      void refreshAllPollingPaths(false);
-    }, GIT_STATUS_REFRESH_INTERVAL_MS);
-  }
-
-  return () => {
-    if (pollingOwner !== owner) return;
-    stopGitStatusPolling();
-  };
 }

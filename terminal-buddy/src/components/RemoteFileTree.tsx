@@ -605,10 +605,10 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     };
   }, [isResizing]);
 
-  const sortedFiles = [...files].sort((a, b) => {
+  const sortedFiles = useMemo(() => [...files].sort((a, b) => {
     if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
     return a.name.localeCompare(b.name);
-  });
+  }), [files]);
 
   const activeTransferCount = useAppStore((s) =>
     s.transfers.filter(t => t.terminalId === terminalId && t.status === 'active').length

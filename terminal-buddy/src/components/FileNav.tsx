@@ -8,7 +8,6 @@ import { getAppSettings } from '../utils/settings';
 import { openTerminalInDir } from '../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../utils/contextMenu';
 import { showAlert } from '../services/dialog';
-import { startGitStatusPolling } from '../services/gitStatusCache';
 import { GitNavBar } from './GitNavBar';
 import { RemoteFileTree } from './RemoteFileTree';
 import { ConfirmDialog, Dialog } from './Dialog';
@@ -27,6 +26,8 @@ interface TreeNodeProps {
   renamingPath: string | null;
   setRenamingPath: (path: string | null) => void;
 }
+
+const DIRECTORY_RENDER_PAGE_SIZE = 200;
 
 function scrollFileTreeItemToTop(item: HTMLElement | null): void {
   if (!item) return;
@@ -51,6 +52,7 @@ function scrollFileTreeItemToTop(item: HTMLElement | null): void {
 const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, onActivate, onSelect, onNavigate, onContextMenu, onRename, renamingPath, setRenamingPath }) => {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<FileNode[]>([]);
+  const [visibleChildCount, setVisibleChildCount] = useState(DIRECTORY_RENDER_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const itemRef = useRef<HTMLDivElement>(null);
@@ -75,6 +77,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, on
       setLoading(true);
       listDirectory(node.path, exclusionPatterns).then((entries) => {
         setChildren(entries);
+        setVisibleChildCount(DIRECTORY_RENDER_PAGE_SIZE);
         setLoading(false);
       }).catch((err) => {
         console.error('Failed to load directory:', err);
@@ -93,6 +96,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, on
         setLoading(true);
         listDirectory(node.path, exclusionPatterns).then((entries) => {
           setChildren(entries);
+          setVisibleChildCount(DIRECTORY_RENDER_PAGE_SIZE);
           setLoading(false);
         }).catch((err) => {
           console.error('Failed to load directory:', err);
@@ -244,7 +248,7 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, on
       )}
       {expanded && children.length > 0 && (
         <div className="tree-children">
-          {children.map((child) => (
+          {children.slice(0, visibleChildCount).map((child) => (
             <TreeNode
               key={child.path}
               node={child}
@@ -260,6 +264,15 @@ const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedPath, on
               setRenamingPath={setRenamingPath}
             />
           ))}
+          {visibleChildCount < children.length && (
+            <button
+              type="button"
+              className="tree-load-more"
+              onClick={() => setVisibleChildCount(count => count + DIRECTORY_RENDER_PAGE_SIZE)}
+            >
+              显示更多（剩余 {children.length - visibleChildCount} 项）
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -362,6 +375,7 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
   const [expanded, setExpanded] = useState(false);
   const [nodes, setNodes] = useState<FileNode[]>([]);
+  const [visibleNodeCount, setVisibleNodeCount] = useState(DIRECTORY_RENDER_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const [pathError, setPathError] = useState(false);
   const itemRef = useRef<HTMLDivElement>(null);
@@ -379,11 +393,13 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
     }
     let cancelled = false;
     setLoading(true);
+    setVisibleNodeCount(DIRECTORY_RENDER_PAGE_SIZE);
 
     listDirectory(path, exclusionPatterns)
       .then((entries) => {
         if (cancelled) return;
         setNodes(entries);
+        setVisibleNodeCount(DIRECTORY_RENDER_PAGE_SIZE);
         setPathError(false);
       })
       .catch((err) => {
@@ -478,7 +494,7 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
           {!loading && !pathError && sortedNodes.length === 0 && (
             <div className="empty-hint file-nav-root-empty">目录为空</div>
           )}
-          {!loading && sortedNodes.map((node) => (
+          {!loading && sortedNodes.slice(0, visibleNodeCount).map((node) => (
             <TreeNode
               key={node.path}
               node={node}
@@ -494,6 +510,15 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
               setRenamingPath={setRenamingPath}
             />
           ))}
+          {!loading && visibleNodeCount < sortedNodes.length && (
+            <button
+              type="button"
+              className="tree-load-more"
+              onClick={() => setVisibleNodeCount(count => count + DIRECTORY_RENDER_PAGE_SIZE)}
+            >
+              显示更多（剩余 {sortedNodes.length - visibleNodeCount} 项）
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -616,16 +641,6 @@ export const FileNav: FC = () => {
   useEffect(() => {
     if (!fileTreeVisible) setShowRootPicker(false);
   }, [fileTreeVisible]);
-
-  // Git 状态只服务于当前打开的目录。文件导航隐藏时同时卸载状态栏并停止轮询，
-  // 避免为所有已配置目录持续创建 git.exe 进程。
-  const gitPollingPaths = useMemo(() => (
-    fileTreeVisible && rootDirectories.length > 0 && gitTargetDirectory
-      ? [gitTargetDirectory]
-      : []
-  ), [fileTreeVisible, gitTargetDirectory, rootDirectories.length]);
-
-  useEffect(() => startGitStatusPolling(gitPollingPaths), [gitPollingPaths]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {

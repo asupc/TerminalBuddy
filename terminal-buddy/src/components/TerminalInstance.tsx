@@ -2240,7 +2240,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           </div>
         </div>
       )}
-      <ServerMonitor terminalId={terminalId} isSsh={isSsh} />
+      <ServerMonitor terminalId={terminalId} isSsh={isSsh} isActive={Boolean(isActive)} />
     </div>
   );
 };

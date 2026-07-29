@@ -2,10 +2,12 @@ import { FC, useEffect, useRef, useState, useCallback } from 'react';
 import { getServerStats, connectSshSession } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import type { ServerStats } from '../types';
+import { getAppSettings } from '../utils/settings';
 
 interface ServerMonitorProps {
   terminalId: string;
   isSsh: boolean;
+  isActive: boolean;
 }
 
 function formatBytes(bytes: number): string {
@@ -21,13 +23,12 @@ function formatSpeed(bytesPerSec: number): string {
   return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s';
 }
 
-export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => {
+export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh, isActive }) => {
   const [expanded, setExpanded] = useState(false);
   const [stats, setStats] = useState<ServerStats | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [interval, setInterval_] = useState(3);
+  const [interval, setInterval] = useState(() => getAppSettings().serverMonitorInterval);
   const consecutiveErrorsRef = useRef(0);
-  const timerRef = useRef<number | null>(null);
   const connectedRef = useRef(false);
   const session = useAppStore(s => s.sessions.find(s => s.id === terminalId));
 
@@ -55,24 +56,32 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
   }, [terminalId, session?.profileId]);
 
   useEffect(() => {
-    if (!isSsh || interval <= 0) {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      return;
-    }
+    const syncInterval = () => setInterval(getAppSettings().serverMonitorInterval);
+    window.addEventListener('app-settings-changed', syncInterval);
+    return () => window.removeEventListener('app-settings-changed', syncInterval);
+  }, []);
 
-    fetchStats();
-    timerRef.current = window.setInterval(fetchStats, interval * 1000);
+  useEffect(() => {
+    if (!isSsh || !isActive || interval <= 0) return;
 
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      timer = setTimeout(run, interval * 1000);
     };
-  }, [isSsh, interval, fetchStats]);
+    const run = async () => {
+      await fetchStats();
+      scheduleNext();
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [isActive, isSsh, interval, fetchStats]);
 
   if (!isSsh) return null;
 
@@ -102,31 +111,7 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh }) => 
           <span style={{ color: error ? '#f44747' : '#4ec9b0', marginRight: 4 }}>●</span>
           {!expanded && <span>{summary}</span>}
         </span>
-        {expanded && (
-          <span style={{ color: '#808080', fontSize: '11px' }}>
-            刷新间隔:
-            <select
-              value={interval}
-              onClick={e => e.stopPropagation()}
-              onChange={e => setInterval_(Number(e.target.value))}
-              style={{
-                background: '#3c3c3c',
-                color: '#cccccc',
-                border: '1px solid #555',
-                borderRadius: 3,
-                padding: '1px 4px',
-                fontSize: '11px',
-                marginLeft: 4,
-              }}
-            >
-              <option value={1}>1s</option>
-              <option value={3}>3s</option>
-              <option value={5}>5s</option>
-              <option value={10}>10s</option>
-              <option value={0}>关闭</option>
-            </select>
-          </span>
-        )}
+        {expanded && <span style={{ color: '#808080', fontSize: '11px' }}>刷新间隔: {interval > 0 ? `${interval} 秒` : '关闭'}</span>}
       </div>
       {expanded && stats && (
         <div style={{ padding: '4px 12px 8px' }}>

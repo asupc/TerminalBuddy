@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, Command, Stdio};
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use tauri::AppHandle;
@@ -21,6 +21,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 static EMBEDDED_VSCODE_TERMINAL: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/resources/vscode-terminal");
 static EXTRACTED_VSCODE_TERMINAL: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+static COMPATIBLE_NODE: OnceLock<Mutex<Option<Result<(PathBuf, NodeProbeResult), String>>>> = OnceLock::new();
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,7 +48,7 @@ pub struct VsCodeTerminalSupport {
     pub node_version: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NodeProbeResult {
     protocol: String,
@@ -65,7 +66,7 @@ impl VsCodeTerminalProcess {
         env_vars: &[(String, String)],
     ) -> Result<(Self, Box<dyn Read + Send>), String> {
         let host_path = resolve_plugin_host(app)?;
-        let (node_path, _) = resolve_compatible_node(&host_path)?;
+        let (node_path, _) = resolve_compatible_node_cached(&host_path)?;
         let env = env_vars
             .iter()
             .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -166,7 +167,7 @@ impl VsCodeTerminalProcess {
                 };
             }
         };
-        match resolve_compatible_node(&host_path) {
+        match resolve_compatible_node_cached(&host_path) {
             Ok((node_path, probe)) => VsCodeTerminalSupport {
                 available: true,
                 reason: format!(
@@ -384,6 +385,20 @@ fn resolve_compatible_node(host_path: &Path) -> Result<(PathBuf, NodeProbeResult
         "检测到 Node.js，但无法加载 VS Code 终端插件。{}",
         failures.join("；")
     ))
+}
+
+fn resolve_compatible_node_cached(host_path: &Path) -> Result<(PathBuf, NodeProbeResult), String> {
+    let cache = COMPATIBLE_NODE.get_or_init(|| Mutex::new(None));
+    if let Some(result) = cache.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        return result.clone();
+    }
+
+    let result = resolve_compatible_node(host_path);
+    let mut cached = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if cached.is_none() {
+        *cached = Some(result.clone());
+    }
+    cached.as_ref().expect("node probe result must be cached").clone()
 }
 
 fn find_node_candidates() -> Vec<PathBuf> {

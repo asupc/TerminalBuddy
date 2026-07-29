@@ -597,6 +597,25 @@
   font-style: italic;
 }
 
+.tree-load-more {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 4px 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tree-load-more:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
 .resize-handle {
   position: absolute;
   top: 0;

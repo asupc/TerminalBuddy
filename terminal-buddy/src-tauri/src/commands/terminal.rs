@@ -28,6 +28,50 @@ const TERMINAL_DATA_IDLE_BUFFER_INTERVAL: Duration = Duration::from_millis(25);
 const TERMINAL_DATA_MAX_BUFFER_INTERVAL: Duration = Duration::from_millis(50);
 const VSCODE_TERMINAL_DATA_BUFFER_INTERVAL: Duration = Duration::from_millis(5);
 const TERMINAL_DATA_CHANNEL_CAPACITY: usize = 32;
+const TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS: usize = 1000;
+const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+struct TerminalOutputBuffer {
+    chunks: VecDeque<Arc<str>>,
+    bytes: usize,
+}
+
+impl TerminalOutputBuffer {
+    fn new() -> Self {
+        Self {
+            chunks: VecDeque::new(),
+            bytes: 0,
+        }
+    }
+
+    fn push(&mut self, output: Arc<str>) {
+        self.bytes += output.len();
+        self.chunks.push_back(output);
+        while self.chunks.len() > TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS
+            || self.bytes > TERMINAL_OUTPUT_BUFFER_MAX_BYTES
+        {
+            let Some(removed) = self.chunks.pop_front() else {
+                break;
+            };
+            self.bytes -= removed.len();
+        }
+    }
+
+    fn collect(&self) -> String {
+        let mut output = String::with_capacity(self.bytes);
+        for chunk in &self.chunks {
+            output.push_str(chunk);
+        }
+        output
+    }
+
+    fn drain(&mut self) -> String {
+        let output = self.collect();
+        self.chunks.clear();
+        self.bytes = 0;
+        output
+    }
+}
 
 /// 转义 shell 特殊字符，防止命令注入
 fn shell_escape(s: &str) -> String {
@@ -68,7 +112,7 @@ pub struct TerminalInstance {
     pub extra_param_tag: Option<String>,
     pub extra_param_tag_color: Option<String>,
     backend: TerminalBackend,
-    pub output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
+    output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
     current_rows: u16,
     current_cols: u16,
     /// PTY 读取线程检测到 EOF 后置位；用于从 sessions 列表中剔除已退出的终端。
@@ -254,7 +298,7 @@ fn spawn_output_forwarder(
     reader: Box<dyn Read + Send>,
     terminal_id: String,
     app: AppHandle,
-    output_buffer: Arc<Mutex<VecDeque<Arc<str>>>>,
+    output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
     buffer_mode: TerminalOutputBufferMode,
 ) {
     thread::spawn(move || {
@@ -329,10 +373,7 @@ fn spawn_output_forwarder(
             if !output.is_empty() {
                 {
                     let mut buffer = output_buffer.lock().unwrap_or_else(|e| e.into_inner());
-                    buffer.push_back(output.clone());
-                    if buffer.len() > 1000 {
-                        buffer.drain(0..500);
-                    }
+                    buffer.push(output.clone());
                 }
                 let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
                 let web_state = app.state::<crate::services::WebServiceState>();
@@ -508,7 +549,7 @@ impl TerminalService {
         })?;
         crate::boot_log(format!("[terminal] backend ready mode={:?}", loading_mode));
 
-        let output_buffer: Arc<Mutex<VecDeque<Arc<str>>>> = Arc::new(Mutex::new(VecDeque::new()));
+        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),
@@ -706,9 +747,7 @@ impl TerminalService {
                 .ok_or("Terminal not found".to_string())?
         };
         let mut buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
-        let result: String = buffer.iter().map(|s| s.as_ref()).collect();
-        buffer.clear();
-        Ok(result)
+        Ok(buffer.drain())
     }
 
     pub fn peek_terminal_output(&self, id: &str) -> Result<String, String> {
@@ -719,7 +758,7 @@ impl TerminalService {
                 .ok_or("Terminal not found".to_string())?
         };
         let buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
-        Ok(buffer.iter().map(|s| s.as_ref()).collect())
+        Ok(buffer.collect())
     }
 
     /// 检查 PC 端是否有权限操作指定终端
@@ -836,7 +875,7 @@ impl TerminalService {
         })?;
         crate::boot_log(format!("[terminal] backend ready mode={:?}", loading_mode));
 
-        let output_buffer: Arc<Mutex<VecDeque<Arc<str>>>> = Arc::new(Mutex::new(VecDeque::new()));
+        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
 
         let instance = TerminalInstance {
             id: terminal_id.clone(),

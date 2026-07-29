@@ -66,7 +66,8 @@ pub fn list_directory(path: String, exclusions: Option<Vec<String>>) -> Result<V
                 Some(FileNode {
                     name,
                     path: file_path.to_string_lossy().to_string(),
-                    is_directory: file_path.is_dir(),
+                    // 复用界面所需的元数据，避免 Path::is_dir 再次查询文件系统。
+                    is_directory: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
                     size,
                     last_modified,
                 })
@@ -76,13 +77,7 @@ pub fn list_directory(path: String, exclusions: Option<Vec<String>>) -> Result<V
         .collect();
 
     // Sort: directories first, then files, both alphabetically
-    nodes.sort_by(|a, b| {
-        match (a.is_directory, b.is_directory) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
-    });
+    nodes.sort_by_cached_key(|node| (!node.is_directory, node.name.to_lowercase()));
 
     Ok(nodes)
 }
