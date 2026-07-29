@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 use tauri::{command, Emitter};
@@ -15,6 +16,23 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const EMPTY_TREE_REVISION: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+static GIT_COMMANDS_STOPPED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn stop_git_commands() {
+    GIT_COMMANDS_STOPPED.store(true, Ordering::Release);
+}
+
+pub(crate) fn resume_git_commands() {
+    GIT_COMMANDS_STOPPED.store(false, Ordering::Release);
+}
+
+fn ensure_git_commands_allowed() -> Result<(), String> {
+    if GIT_COMMANDS_STOPPED.load(Ordering::Acquire) {
+        Err("系统正在退出，已取消 Git 操作".to_string())
+    } else {
+        Ok(())
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -212,6 +230,7 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<GitCommandOutput, String> {
+    ensure_git_commands_allowed()?;
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(cwd)
@@ -246,6 +265,7 @@ fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<GitCommandOutput, String
 }
 
 fn run_git_stdout_raw(cwd: &Path, args: &[&str]) -> Result<String, String> {
+    ensure_git_commands_allowed()?;
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(cwd)
@@ -342,6 +362,7 @@ fn run_git_streaming(
     app: &tauri::AppHandle,
     operation_id: Option<&str>,
 ) -> Result<String, String> {
+    ensure_git_commands_allowed()?;
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(cwd)

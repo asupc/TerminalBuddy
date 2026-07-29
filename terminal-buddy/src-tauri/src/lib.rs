@@ -21,11 +21,21 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use crate::web::handlers::claude_hook_handler::{answer_claude_hook_decision, continue_claude_hook_in_terminal, get_pending_claude_hook_decisions, send_claude_hook_decision_notification};
 
+#[cfg(windows)]
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallWindowProcW, DefWindowProcW, GetWindowLongPtrW, SetWindowLongPtrW, GWLP_WNDPROC,
+    WM_ENDSESSION, WM_QUERYENDSESSION, WNDPROC,
+};
+
 pub use hook_client::{is_claude_hook_client_process, run_claude_hook_client};
 
 /// 进程启动时间锚点；全链路启动日志统一以此为 0 点。
 static BOOT_START: OnceLock<Instant> = OnceLock::new();
 static MAIN_WINDOW_REVEALED: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+static MAIN_WINDOW_PROC: OnceLock<WNDPROC> = OnceLock::new();
 
 fn boot_ms() -> u128 {
     BOOT_START.get().map(|b| b.elapsed().as_millis()).unwrap_or(0)
@@ -101,6 +111,63 @@ fn reveal_main_window(webview: &tauri::Webview) {
     boot_log("main window revealed after page load");
 }
 
+#[cfg(windows)]
+unsafe extern "system" fn main_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_QUERYENDSESSION {
+        commands::git::stop_git_commands();
+    } else if message == WM_ENDSESSION {
+        if wparam.0 == 0 {
+            commands::git::resume_git_commands();
+        } else {
+            commands::git::stop_git_commands();
+        }
+    }
+
+    if let Some(window_proc) = MAIN_WINDOW_PROC.get().and_then(|proc| *proc) {
+        unsafe { CallWindowProcW(Some(window_proc), hwnd, message, wparam, lparam) }
+    } else {
+        unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+    }
+}
+
+#[cfg(windows)]
+fn install_system_shutdown_handler(app: &tauri::App) {
+    let Some(window) = app.get_webview_window("main") else {
+        boot_log("main window not found while installing shutdown handler");
+        return;
+    };
+    let Ok(hwnd) = window.hwnd() else {
+        boot_log("main window handle unavailable while installing shutdown handler");
+        return;
+    };
+
+    let previous_proc = unsafe { GetWindowLongPtrW(hwnd, GWLP_WNDPROC) };
+    if previous_proc == 0 {
+        boot_log("main window procedure unavailable while installing shutdown handler");
+        return;
+    }
+
+    let previous_proc: WNDPROC = unsafe { std::mem::transmute(previous_proc) };
+    if MAIN_WINDOW_PROC.set(previous_proc).is_err() {
+        boot_log("shutdown handler was already installed");
+        return;
+    }
+
+    unsafe {
+        SetWindowLongPtrW(
+            hwnd,
+            GWLP_WNDPROC,
+            main_window_proc as *const () as usize as isize,
+        );
+    }
+    boot_log("system shutdown handler installed");
+}
+
 pub fn run() {
     let _ = BOOT_START.set(Instant::now());
     boot_log("=== TerminalBuddy process start ===");
@@ -138,6 +205,8 @@ pub fn run() {
         })
         .setup(|app| {
             boot_log("setup enter");
+            #[cfg(windows)]
+            install_system_shutdown_handler(app);
             let show_item = MenuItemBuilder::with_id("show", "打开窗口").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let menu = MenuBuilder::new(app)
