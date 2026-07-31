@@ -5,6 +5,7 @@ import { useVisualViewport } from './hooks/useVisualViewport';
 import Login from './screens/Login';
 import Nav from './screens/Nav';
 import Terminal from './screens/Terminal';
+import AiDelivery from './screens/AiDelivery';
 
 // 解码 JWT payload 取 sub（用户名），失败返回 null。
 function decodeJwtSub(token: string): string | null {
@@ -47,6 +48,7 @@ export default function App() {
   }, [dualPane, view.screen, navCollapsed, setNavCollapsed]);
 
   if (!token) return <Login />;
+  if (window.location.pathname === '/ai-delivery') return <AiDelivery />;
 
   // ≥960px：侧边栏（Nav）+ 主区（Terminal 或占位）并排；navCollapsed 控制 sidebar 折叠
   if (dualPane) {

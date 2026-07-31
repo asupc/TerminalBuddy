@@ -5,6 +5,7 @@ import {
   MessageSquareMore,
   Database,
   FileX2,
+  Globe2,
   Plug,
   Server,
   Settings,
@@ -34,6 +35,7 @@ const AiUsageSettings = lazy(() => import('./settings/AiUsageSettings').then(mod
 const SshSettings = lazy(() => import('./settings/SshSettings').then(module => ({ default: module.SshSettings })));
 const BotNotificationSettings = lazy(() => import('./settings/BotNotificationSettings').then(module => ({ default: module.BotNotificationSettings })));
 const HookSettings = lazy(() => import('./settings/HookSettings').then(module => ({ default: module.HookSettings })));
+const WebManageSettings = lazy(() => import('./WebManageDialog').then(module => ({ default: module.WebManageSettings })));
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -48,6 +50,7 @@ type SettingsSectionId =
   | 'ai-usage'
   | 'ssh'
   | 'hooks'
+  | 'web-management'
   | 'bot-notifications';
 
 interface SettingsSection {
@@ -65,6 +68,7 @@ const SECTIONS: ReadonlyArray<SettingsSection> = [
   { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit },
   { id: 'ssh', label: 'SSH 设置', icon: Server },
   { id: 'hooks', label: 'Hook 设置', icon: Webhook },
+  { id: 'web-management', label: 'Web 管理', icon: Globe2 },
   { id: 'bot-notifications', label: '机器人通知', icon: MessageSquareMore },
 ];
 
@@ -193,6 +197,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         return <SshSettings settings={settings} updateSetting={updateSetting} />;
       case 'hooks':
         return <HookSettings settings={settings} updateSetting={updateSetting} />;
+      case 'web-management':
+        return <WebManageSettings />;
       case 'bot-notifications':
         return <BotNotificationSettings />;
     }

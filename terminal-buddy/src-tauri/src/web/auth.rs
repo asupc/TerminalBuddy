@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,  // username
-    pub exp: usize,   // expiry
-    pub iat: usize,   // issued at
+    pub sub: String, // username
+    pub exp: usize,  // expiry
+    pub iat: usize,  // issued at
 }
 
 /// Trait for state types that can provide a JWT secret.

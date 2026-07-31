@@ -1,3 +1,8 @@
+use crate::commands::TerminalService;
+use crate::models::web_api::{MetaServerMessage, WsClientMessage, WsServerMessage};
+use crate::services::WebServiceState;
+use crate::web::auth::verify_token;
+use crate::web::server::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
@@ -5,11 +10,6 @@ use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use crate::commands::TerminalService;
-use crate::models::web_api::{MetaServerMessage, WsClientMessage, WsServerMessage};
-use crate::services::WebServiceState;
-use crate::web::auth::verify_token;
-use crate::web::server::AppState;
 use tauri::{Emitter, Manager};
 use tokio::time::{self, Instant, MissedTickBehavior};
 
@@ -28,7 +28,9 @@ pub async fn terminal_ws_handler(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, axum::http::StatusCode> {
-    let token = params.get("token").ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
+    let token = params
+        .get("token")
+        .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
     let _claims = verify_token(token, &state.jwt_secret)?;
 
     // 终端存在即可接入：Web（手机自己的）直接继续；PC 端的接入即"接管"，
@@ -49,7 +51,10 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
     let current_count = WS_CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
     if current_count >= MAX_GLOBAL_WS_CONNECTIONS {
         WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
-        eprintln!("[WS] Global connection limit reached: {}", MAX_GLOBAL_WS_CONNECTIONS);
+        eprintln!(
+            "[WS] Global connection limit reached: {}",
+            MAX_GLOBAL_WS_CONNECTIONS
+        );
         return;
     }
 
@@ -61,7 +66,10 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
     let sub_count = web_state.get_subscriber_count(&terminal_id);
     if sub_count >= MAX_PER_TERMINAL_WS_CONNECTIONS {
         WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
-        eprintln!("[WS] Per-terminal connection limit reached for {}", terminal_id);
+        eprintln!(
+            "[WS] Per-terminal connection limit reached for {}",
+            terminal_id
+        );
         return;
     }
 
@@ -155,10 +163,15 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
             match msg {
                 Message::Text(text) => {
                     if text.len() > MAX_WS_MESSAGE_SIZE {
-                        eprintln!("[WS] Message too large: {} bytes, max: {}", text.len(), MAX_WS_MESSAGE_SIZE);
+                        eprintln!(
+                            "[WS] Message too large: {} bytes, max: {}",
+                            text.len(),
+                            MAX_WS_MESSAGE_SIZE
+                        );
                         let err_msg = serde_json::to_string(&WsServerMessage::Error {
                             message: "消息过大".to_string(),
-                        }).unwrap_or_default();
+                        })
+                        .unwrap_or_default();
                         let _ = error_tx.send(err_msg);
                         continue;
                     }
@@ -177,11 +190,14 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
                                 // 多端同看一终端时桌面视图会随之变化，属可接受折中。
                                 let ts = app.state::<TerminalService>();
                                 if ts.resize_terminal(&tid, rows, cols, true).is_ok() {
-                                    let _ = app.emit("terminal-web-resize", serde_json::json!({
-                                        "terminalId": tid,
-                                        "rows": rows,
-                                        "cols": cols,
-                                    }));
+                                    let _ = app.emit(
+                                        "terminal-web-resize",
+                                        serde_json::json!({
+                                            "terminalId": tid,
+                                            "rows": rows,
+                                            "cols": cols,
+                                        }),
+                                    );
                                 }
 
                                 // 首个 resize 到达 → 通知 send_task 可以回放历史输出了。
@@ -234,7 +250,10 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
             let _ = send_task.await;
         }
         SocketExit::HeartbeatTimeout => {
-            eprintln!("[WS] Heartbeat timeout for terminal {}", heartbeat_terminal_id);
+            eprintln!(
+                "[WS] Heartbeat timeout for terminal {}",
+                heartbeat_terminal_id
+            );
             send_task.abort();
             recv_task.abort();
             let _ = send_task.await;
@@ -243,7 +262,9 @@ async fn handle_terminal_socket(socket: WebSocket, terminal_id: String, state: A
     }
 
     web_state.unsubscribe_and_notify_if_last(&terminal_id, &sub_id, || {
-        let _ = state.app_handle.emit("terminal-web-takeover-ended", &terminal_id);
+        let _ = state
+            .app_handle
+            .emit("terminal-web-takeover-ended", &terminal_id);
     });
     WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
 }
@@ -255,7 +276,9 @@ pub async fn meta_ws_handler(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, axum::http::StatusCode> {
-    let token = params.get("token").ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
+    let token = params
+        .get("token")
+        .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
     let _claims = verify_token(token, &state.jwt_secret)?;
 
     Ok(ws.on_upgrade(move |socket| handle_meta_socket(socket, state)))
@@ -267,9 +290,15 @@ async fn handle_meta_socket(socket: WebSocket, state: AppState) {
     let mut change_rx = ts.session_change_tx.subscribe();
 
     // 连上立即推一次当前会话列表（含 Web 自己的 + PC 端可接管的）。
-    let initial = MetaServerMessage::Sessions { terminals: ts.list_terminals_info() };
+    let initial = MetaServerMessage::Sessions {
+        terminals: ts.list_terminals_info(),
+    };
     let initial_msg = serde_json::to_string(&initial).unwrap_or_default();
-    if ws_sender.send(Message::Text(initial_msg.into())).await.is_err() {
+    if ws_sender
+        .send(Message::Text(initial_msg.into()))
+        .await
+        .is_err()
+    {
         return;
     }
 

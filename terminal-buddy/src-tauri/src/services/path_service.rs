@@ -2,6 +2,14 @@ use crate::services::SettingsService;
 use std::fs;
 use std::path::PathBuf;
 
+#[cfg(test)]
+use std::cell::RefCell;
+
+#[cfg(test)]
+thread_local! {
+    static TEST_DATA_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
 pub struct PathService;
 
 impl PathService {
@@ -12,6 +20,10 @@ impl PathService {
     }
 
     pub fn get_data_dir() -> PathBuf {
+        #[cfg(test)]
+        if let Some(path) = TEST_DATA_DIR.with(|data_dir| data_dir.borrow().clone()) {
+            return path;
+        }
         let settings = SettingsService::get_settings();
         if let Some(ref custom) = settings.data_path {
             let path = PathBuf::from(custom);
@@ -20,6 +32,11 @@ impl PathService {
             }
         }
         Self::get_default_base_dir()
+    }
+
+    #[cfg(test)]
+    pub fn set_test_data_dir(path: Option<PathBuf>) {
+        TEST_DATA_DIR.with(|data_dir| *data_dir.borrow_mut() = path);
     }
 
     pub fn get_profiles_dir() -> PathBuf {
@@ -53,8 +70,7 @@ impl PathService {
             return Err("路径必须是一个目录".to_string());
         }
         if !p.exists() {
-            fs::create_dir_all(&p)
-                .map_err(|e| format!("无法创建目录: {}", e))?;
+            fs::create_dir_all(&p).map_err(|e| format!("无法创建目录: {}", e))?;
         }
         let test_file = p.join(".terminalbuddy_write_test");
         fs::write(&test_file, "test").map_err(|e| format!("目录不可写: {}", e))?;
@@ -72,8 +88,7 @@ pub fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
-            fs::copy(&src_path, &dst_path)
-                .map_err(|e| format!("复制文件失败: {}", e))?;
+            fs::copy(&src_path, &dst_path).map_err(|e| format!("复制文件失败: {}", e))?;
         }
     }
     Ok(())

@@ -1,6 +1,6 @@
-use tauri::command;
 use crate::models::workspace::Workspace;
 use crate::services::WorkspaceService;
+use tauri::command;
 
 #[command]
 pub fn get_all_workspaces() -> Result<Vec<Workspace>, String> {

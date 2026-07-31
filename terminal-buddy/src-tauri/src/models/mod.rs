@@ -1,3 +1,4 @@
+pub mod ai_delivery;
 pub mod bot;
 pub mod profile;
 pub mod settings;
@@ -6,6 +7,7 @@ pub mod terminal_owner;
 pub mod update;
 pub mod web_api;
 pub mod workspace;
+pub use ai_delivery::*;
 pub use bot::*;
 pub use profile::*;
 pub use settings::*;

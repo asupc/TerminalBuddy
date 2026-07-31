@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Profile, Workspace, RemoteFileEntry, ServerStats } from '../types';
+import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiQualityGate, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput } from '../types/aiDelivery';
 
 // Profile Commands
 export async function getAllProfiles(): Promise<Profile[]> {
@@ -586,6 +587,102 @@ export const gitGetHistoryFileDiff = (
     statusCode,
     binary,
   });
+
+// AI Delivery Commands
+export const getAiProjects = () => invoke<AiProject[]>('get_ai_projects');
+export const createAiProject = (input: CreateAiProjectInput) =>
+  invoke<AiProject>('create_ai_project', { input });
+export const refreshAiProjectRepositories = (id: string) =>
+  invoke<AiProject>('refresh_ai_project_repositories', { id });
+export const updateAiProject = (project: AiProject) =>
+  invoke<AiProject>('update_ai_project', { project });
+export const generateAiQualityGateCommands = (
+  workspaceRoot: string,
+  runtimeId?: string,
+  agentId?: string,
+) =>
+  invoke<AiQualityGate>('generate_ai_quality_gate_commands', {
+    workspaceRoot,
+    runtimeId: runtimeId ?? null,
+    agentId: agentId ?? null,
+  });
+export const deleteAiProject = (id: string) => invoke<void>('delete_ai_project', { id });
+export const detectAiRuntimes = () => invoke<AiRuntimeProbe[]>('detect_ai_runtimes');
+export const getAiRuntimes = () => invoke<AiAgentRuntime[]>('get_ai_runtimes');
+export const saveAiRuntime = (runtime: AiAgentRuntime) =>
+  invoke<AiAgentRuntime>('save_ai_runtime', { runtime });
+export const deleteAiRuntime = (id: string) => invoke<void>('delete_ai_runtime', { id });
+export const getAiAgents = () => invoke<AiAgent[]>('get_ai_agents');
+export const saveAiAgent = (agent: AiAgent) => invoke<AiAgent>('save_ai_agent', { agent });
+export const deleteAiAgent = (id: string) => invoke<void>('delete_ai_agent', { id });
+export const getAiRoles = () => invoke<AiRole[]>('get_ai_roles');
+export const saveAiRole = (role: AiRole) => invoke<AiRole>('save_ai_role', { role });
+export const deleteAiRole = (id: string) => invoke<void>('delete_ai_role', { id });
+export const getAiWorkflows = () => invoke<AiWorkflow[]>('get_ai_workflows');
+export const saveAiWorkflow = (workflow: AiWorkflow) =>
+  invoke<AiWorkflow>('save_ai_workflow', { workflow });
+export const deleteAiWorkflow = (id: string) => invoke<void>('delete_ai_workflow', { id });
+export const getAiTaskContracts = (projectId?: string) =>
+  invoke<AiTaskContract[]>('get_ai_task_contracts', { projectId: projectId ?? null });
+export const createAiTaskContract = (input: CreateTaskContractInput) =>
+  invoke<AiTaskContract>('create_ai_task_contract', { input });
+export const allocateAiTaskWorktree = (id: string) =>
+  invoke<AiTaskContract>('allocate_ai_task_worktree', { id });
+export const getAiDeliveries = (projectId?: string) =>
+  invoke<AiDelivery[]>('get_ai_deliveries', { projectId: projectId ?? null });
+export const createAiDelivery = (input: CreateAiDeliveryInput) =>
+  invoke<AiDelivery>('create_ai_delivery', { input });
+export const updateAiDelivery = (input: UpdateAiDeliveryInput) =>
+  invoke<AiDelivery>('update_ai_delivery', { input });
+export const planAiDeliveryWithManager = (id: string) =>
+  invoke<AiTaskNode[]>('plan_ai_delivery_with_manager', { id });
+export const replanLegacyAiDelivery = (id: string) =>
+  invoke<AiDelivery>('replan_legacy_ai_delivery', { id });
+export const deleteAiDelivery = (id: string) =>
+  invoke<void>('delete_ai_delivery', { id });
+export const getAiTaskNodes = (deliveryId: string) =>
+  invoke<AiTaskNode[]>('get_ai_task_nodes', { deliveryId });
+export const createAiTaskNode = (input: CreateAiTaskNodeInput) =>
+  invoke<AiTaskNode>('create_ai_task_node', { input });
+export const approveAiDelivery = (id: string) => invoke<AiDelivery>('approve_ai_delivery', { id });
+export const pauseAiDelivery = (id: string) => invoke<AiDelivery>('pause_ai_delivery', { id });
+export const resumeAiDelivery = (id: string) => invoke<AiDelivery>('resume_ai_delivery', { id });
+export const cancelAiDelivery = (id: string) => invoke<AiDelivery>('cancel_ai_delivery', { id });
+export const refreshAiReadyTaskNodes = (deliveryId: string) =>
+  invoke<AiTaskNode[]>('refresh_ai_ready_task_nodes', { deliveryId });
+export const getAiDeliveryEvents = (deliveryId: string) =>
+  invoke<AiDeliveryEvent[]>('get_ai_delivery_events', { deliveryId });
+export const onAiDeliveryEvent = (callback: (event: AiDeliveryEvent) => void) =>
+  listen('ai-delivery-event', (event) => callback(event.payload as AiDeliveryEvent));
+export const getAiAttempts = (deliveryId?: string) =>
+  invoke<AiAttempt[]>('get_ai_attempts', { deliveryId: deliveryId ?? null });
+export const dispatchAiTaskNode = (taskNodeId: string, agentId?: string) =>
+  invoke<AiAttempt>('dispatch_ai_task_node', { taskNodeId, agentId: agentId ?? null });
+export const dispatchAiReadyTasks = (deliveryId: string) =>
+  invoke<AiAttempt[]>('dispatch_ai_ready_tasks', { deliveryId });
+export const retryAiTaskNode = (taskNodeId: string) =>
+  invoke<AiTaskNode>('retry_ai_task_node', { taskNodeId });
+export const startAiAttempt = (id: string) => invoke<AiAttempt>('start_ai_attempt', { id });
+export const cancelAiAttempt = (id: string) => invoke<AiAttempt>('cancel_ai_attempt', { id });
+export const completeAiAttempt = (id: string) => invoke<AiAttempt>('complete_ai_attempt', { id });
+export const getAiReviewGates = (deliveryId?: string) =>
+  invoke<AiReviewGate[]>('get_ai_review_gates', { deliveryId: deliveryId ?? null });
+export const runAiQualityGate = (taskNodeId: string, reviewerAgentId?: string) =>
+  invoke<AiReviewGate>('run_ai_quality_gate', { taskNodeId, reviewerAgentId: reviewerAgentId ?? null });
+export const resolveAiReviewGate = (id: string, approved: boolean, comments = '') =>
+  invoke<AiReviewGate>('resolve_ai_review_gate', { id, approved, comments });
+export const getAiMergeRecords = (deliveryId?: string) =>
+  invoke<AiMergeRecord[]>('get_ai_merge_records', { deliveryId: deliveryId ?? null });
+export const mergeAiDeliveryLocally = (deliveryId: string) =>
+  invoke<AiMergeRecord>('merge_ai_delivery_locally', { deliveryId });
+export const cleanupAiDeliveryIntegration = (deliveryId: string) =>
+  invoke<void>('cleanup_ai_delivery_integration', { deliveryId });
+export const getAiDecisionRequests = (deliveryId?: string) =>
+  invoke<AiDecisionRequest[]>('get_ai_decision_requests', { deliveryId: deliveryId ?? null });
+export const createAiDecisionRequest = (input: CreateAiDecisionRequestInput) =>
+  invoke<AiDecisionRequest>('create_ai_decision_request', { input });
+export const answerAiDecisionRequest = (id: string, answer: string) =>
+  invoke<AiDecisionRequest>('answer_ai_decision_request', { id, answer });
 
 // Workspace Commands
 export async function getAllWorkspaces(): Promise<Workspace[]> {

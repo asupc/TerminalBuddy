@@ -19,6 +19,7 @@ const PINNED_GROUP_ID = '__pinned__';
 
 interface ConfigPanelProps {
   isActive: boolean;
+  isSidebarMode: boolean;
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
@@ -28,6 +29,7 @@ interface ConfigPanelProps {
 
 export const ConfigNav: FC<ConfigPanelProps> = ({
   isActive,
+  isSidebarMode,
   onStartTerminal,
   onEditProfile,
   onCopyProfile,
@@ -60,7 +62,20 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       setWidth(w);
       widthRef.current = w;
     }).catch(() => {});
-  }, []);
+  }, [isSidebarMode]);
+
+  useEffect(() => {
+    if (!isSidebarMode) return;
+    const syncWidth = (event: Event) => {
+      const width = (event as CustomEvent<number>).detail;
+      if (Number.isFinite(width)) {
+        setWidth(width);
+        widthRef.current = width;
+      }
+    };
+    window.addEventListener('navigation-width-changed', syncWidth);
+    return () => window.removeEventListener('navigation-width-changed', syncWidth);
+  }, [isSidebarMode]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set([PINNED_GROUP_ID]));
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; profileId: string;
@@ -325,19 +340,22 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         const newWidth = e.clientX - rect.left;
-        if (newWidth >= 150 && newWidth <= 500) {
+        if (newWidth >= 150 && newWidth <= (isSidebarMode ? 400 : 500)) {
           setWidth(newWidth);
           widthRef.current = newWidth;
         }
       }
     });
-  }, [isResizing]);
+  }, [isResizing, isSidebarMode]);
 
   const handleResizeMouseUp = useCallback(() => {
     setIsResizing(false);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     saveConfigNavWidth(widthRef.current).catch(() => {});
-  }, []);
+    if (isSidebarMode) {
+      window.dispatchEvent(new CustomEvent('navigation-width-changed', { detail: widthRef.current }));
+    }
+  }, [isSidebarMode]);
 
   useEffect(() => {
     if (isResizing) {
@@ -391,7 +409,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`config-nav ${!configPanelVisible ? 'collapsed' : ''}`}
+      className={`config-nav${isSidebarMode ? ' sidebar-mode' : ''} ${!configPanelVisible ? 'collapsed' : ''}`}
       style={{ width }}
       onMouseDown={() => { useAppStore.getState().setLastClickRegion('config'); }}
       onClick={closeContextMenu}

@@ -41,6 +41,7 @@ interface SavedTab {
   colorTheme: { background: string; foreground: string };
   tabColor: string | null;
   groupId: string;
+  groupName?: string;
   sessionType?: 'terminal' | 'editor';
   isDirty?: boolean;
   owner?: 'pc' | 'web';
@@ -86,6 +87,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
       colorTheme: s.colorTheme,
       tabColor: s.tabColor,
       groupId: s.groupId,
+      groupName: s.groupName,
       sessionType: s.sessionType,
       isDirty: s.sessionType === 'editor' ? false : undefined,
       owner: s.owner,
@@ -488,12 +490,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     return {
       groups: state.groups.filter((g) => g.id !== id),
       sessions: state.sessions.map((s) =>
-        s.groupId === id ? { ...s, groupId: 'default' } : s
+        s.groupId === id ? { ...s, groupId: 'default', groupName: undefined } : s
       ),
     };
   }),
   renameGroup: (id, name) => set((state) => ({
     groups: state.groups.map((g) => g.id === id ? { ...g, name } : g),
+    sessions: state.sessions.map((session) =>
+      session.groupId === id ? { ...session, groupName: name } : session
+    ),
   })),
   setGroupColor: (id, color) => set((state) => ({
     groups: state.groups.map((g) => g.id === id ? { ...g, color } : g),
@@ -503,7 +508,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   })),
   moveSessionToGroup: (sessionId, groupId) => set((state) => ({
     sessions: state.sessions.map((s) =>
-      s.id === sessionId ? { ...s, groupId } : s
+      s.id === sessionId
+        ? { ...s, groupId, groupName: state.groups.find((group) => group.id === groupId)?.name }
+        : s
     ),
   })),
 

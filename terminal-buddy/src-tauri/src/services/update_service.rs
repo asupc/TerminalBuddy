@@ -3,8 +3,7 @@ use std::cmp::Ordering;
 use crate::models::UpdateInfo;
 
 /// 仓库根 version.json 的 Gitee Raw 地址。
-pub const MANIFEST_URL: &str =
-    "https://gitee.com/updateme/terminal-buddy/raw/main/version.json";
+pub const MANIFEST_URL: &str = "https://gitee.com/updateme/terminal-buddy/raw/main/version.json";
 
 /// 比较两个 semver 字符串（点分三段）。
 ///
@@ -16,10 +15,7 @@ pub fn compare_versions(a: &str, b: &str) -> Ordering {
         if parts.len() != 3 {
             return None;
         }
-        parts
-            .iter()
-            .map(|p| p.parse::<u32>().ok())
-            .collect()
+        parts.iter().map(|p| p.parse::<u32>().ok()).collect()
     };
     match (parse(a), parse(b)) {
         (Some(va), Some(vb)) => va.cmp(&vb),

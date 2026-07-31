@@ -13,6 +13,10 @@
   container-type: inline-size;
 }
 
+.file-nav.sidebar-mode {
+  max-width: 400px;
+}
+
 .file-nav > .panel-titlebar {
   min-height: 42px;
   padding: 0 10px 0 14px;

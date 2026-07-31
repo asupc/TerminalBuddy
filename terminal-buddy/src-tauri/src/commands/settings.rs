@@ -1,23 +1,25 @@
+use crate::models::{AppSettings, CloseBehavior, LaunchWindowMode, TerminalLoadingMode};
+use crate::services::{
+    copy_dir_recursive, PathService, SettingsService, VsCodeTerminalProcess, VsCodeTerminalSupport,
+};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use crate::models::{AppSettings, CloseBehavior, LaunchWindowMode, TerminalLoadingMode};
-use crate::services::{
-    copy_dir_recursive, PathService, SettingsService, VsCodeTerminalProcess,
-    VsCodeTerminalSupport,
-};
-use serde_json::{json, Value};
 use tauri::AppHandle;
 
 fn to_wide(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 fn set_autostart_registry(enabled: bool) -> Result<(), String> {
-    use windows::Win32::System::Registry::*;
     use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::*;
 
     let key_wide = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
     let name_wide = to_wide("TerminalBuddy");
@@ -36,8 +38,8 @@ fn set_autostart_registry(enabled: bool) -> Result<(), String> {
         }
 
         if enabled {
-            let exe_path = std::env::current_exe()
-                .map_err(|e| format!("获取程序路径失败: {}", e))?;
+            let exe_path =
+                std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
             let path_str = format!("\"{}\"", exe_path.to_string_lossy());
             let wide = to_wide(&path_str);
             let bytes: Vec<u8> = wide.iter().flat_map(|w| w.to_le_bytes()).collect();
@@ -64,8 +66,8 @@ fn set_autostart_registry(enabled: bool) -> Result<(), String> {
 }
 
 fn read_autostart_registry() -> bool {
-    use windows::Win32::System::Registry::*;
     use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::*;
 
     let key_wide = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
     let name_wide = to_wide("TerminalBuddy");
@@ -192,7 +194,7 @@ pub fn save_tab_sidebar_width(width: u32) -> Result<(), String> {
 #[tauri::command]
 pub fn save_config_nav_width(width: u32) -> Result<(), String> {
     let mut settings = SettingsService::get_settings();
-    settings.config_nav_width = width.clamp(150, 500);
+    settings.config_nav_width = width.clamp(150, 400);
     SettingsService::save_settings(&settings)
 }
 
@@ -258,7 +260,8 @@ fn read_json_files(dir: &PathBuf) -> Result<HashMap<String, Value>, String> {
         if path.extension().map(|e| e == "json").unwrap_or(false) {
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
             let content = fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
-            let value: Value = serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
+            let value: Value =
+                serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
             map.insert(name, value);
         }
     }
@@ -270,7 +273,8 @@ fn read_json_file(path: &PathBuf) -> Result<Option<Value>, String> {
         return Ok(None);
     }
     let content = fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
+    let value: Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
     Ok(Some(value))
 }
 
@@ -297,20 +301,25 @@ pub fn export_all_data(file_path: String) -> Result<(), String> {
     }
 
     // Collect single-file data
-    for filename in &["command_history.json", "command_templates.json", "settings.json"] {
+    for filename in &[
+        "command_history.json",
+        "command_templates.json",
+        "settings.json",
+    ] {
         let path = data_dir.join(filename);
         let stem = filename.trim_end_matches(".json");
         match read_json_file(&path) {
-            Ok(Some(value)) => { export[stem] = value; }
+            Ok(Some(value)) => {
+                export[stem] = value;
+            }
             Ok(None) => {}
             Err(e) => return Err(e),
         }
     }
 
-    let json_str = serde_json::to_string_pretty(&export)
-        .map_err(|e| format!("序列化JSON失败: {}", e))?;
-    fs::write(&file_path, json_str)
-        .map_err(|e| format!("写入文件失败: {}", e))?;
+    let json_str =
+        serde_json::to_string_pretty(&export).map_err(|e| format!("序列化JSON失败: {}", e))?;
+    fs::write(&file_path, json_str).map_err(|e| format!("写入文件失败: {}", e))?;
 
     Ok(())
 }
@@ -319,10 +328,9 @@ fn write_json_files(dir: &PathBuf, map: &HashMap<String, Value>) -> Result<(), S
     fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {}", e))?;
     for (name, value) in map {
         let path = dir.join(format!("{}.json", name));
-        let content = serde_json::to_string_pretty(value)
-            .map_err(|e| format!("序列化JSON失败: {}", e))?;
-        fs::write(&path, content)
-            .map_err(|e| format!("写入文件失败: {}", e))?;
+        let content =
+            serde_json::to_string_pretty(value).map_err(|e| format!("序列化JSON失败: {}", e))?;
+        fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))?;
     }
     Ok(())
 }
@@ -334,10 +342,8 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
         return Err("导入文件不存在".to_string());
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("读取文件失败: {}", e))?;
-    let data: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("解析JSON失败: {}", e))?;
+    let content = fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+    let data: Value = serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
 
     // 验证顶层结构必须是 Object
     if !data.is_object() {
@@ -346,8 +352,16 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
 
     // 验证可识别的 key
     // Themes is accepted for backward compatibility with older backups, but is no longer restored.
-    let valid_keys: &[&str] = &["Profiles", "Themes", "Workspaces", "ClientData", "Bots",
-                                 "command_history", "command_templates", "settings"];
+    let valid_keys: &[&str] = &[
+        "Profiles",
+        "Themes",
+        "Workspaces",
+        "ClientData",
+        "Bots",
+        "command_history",
+        "command_templates",
+        "settings",
+    ];
     for key in data.as_object().unwrap().keys() {
         if !valid_keys.contains(&key.as_str()) {
             return Err(format!("导入文件包含未知数据类型: {}", key));
@@ -374,8 +388,7 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
             let path = data_dir.join(format!("{}.json", filename));
             let content = serde_json::to_string_pretty(value)
                 .map_err(|e| format!("序列化JSON失败: {}", e))?;
-            fs::write(&path, content)
-                .map_err(|e| format!("写入文件失败: {}", e))?;
+            fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))?;
         }
     }
 

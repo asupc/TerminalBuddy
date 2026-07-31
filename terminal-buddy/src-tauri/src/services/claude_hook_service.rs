@@ -233,9 +233,7 @@ impl ClaudeHookService {
             let removed = current
                 .iter()
                 .filter(|(_, decision)| decision.terminal_id == terminal_id)
-                .map(|(decision_id, decision)| {
-                    (decision_id.clone(), decision.questions.len())
-                })
+                .map(|(decision_id, decision)| (decision_id.clone(), decision.questions.len()))
                 .collect::<Vec<_>>();
             for (decision_id, _) in &removed {
                 current.remove(decision_id);
@@ -320,9 +318,7 @@ impl ClaudeHookService {
         decisions
     }
 
-    pub fn begin_notification(
-        decision_id: &str,
-    ) -> Option<ClaudeHookNotificationLease> {
+    pub fn begin_notification(decision_id: &str) -> Option<ClaudeHookNotificationLease> {
         let mut current = pending().lock().unwrap_or_else(|value| value.into_inner());
         let decision = current.get_mut(decision_id)?;
         if decision.notification_state != DecisionNotificationState::Pending {
@@ -539,7 +535,10 @@ pub fn normalize_claude_config_dir(selected_dir: &str) -> Result<String, String>
 }
 
 fn resolve_claude_config_dir(selected_dir: Option<&str>) -> Result<PathBuf, String> {
-    if let Some(selected) = selected_dir.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(selected) = selected_dir
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         return normalize_claude_config_dir(selected).map(PathBuf::from);
     }
     if let Some(configured) = SettingsService::get_settings()
@@ -566,8 +565,8 @@ fn read_settings(path: &Path) -> Result<serde_json::Value, String> {
     if !path.exists() {
         return Ok(serde_json::json!({}));
     }
-    let content = fs::read_to_string(path)
-        .map_err(|error| format!("读取 Claude 设置失败: {}", error))?;
+    let content =
+        fs::read_to_string(path).map_err(|error| format!("读取 Claude 设置失败: {}", error))?;
     let root = serde_json::from_str::<serde_json::Value>(&content)
         .map_err(|error| format!("解析 Claude 设置失败: {}", error))?;
     if !root.is_object() {
@@ -585,8 +584,8 @@ fn backup_and_write_settings(path: &Path, root: &serde_json::Value) -> Result<()
     if path.exists() {
         let backup = config_dir.join("settings.json.terminalbuddy.bak");
         if !backup.exists() {
-            let original = fs::read(path)
-                .map_err(|error| format!("读取 Claude 设置备份源失败: {}", error))?;
+            let original =
+                fs::read(path).map_err(|error| format!("读取 Claude 设置备份源失败: {}", error))?;
             atomic_write(&backup, &original)
                 .map_err(|error| format!("备份 Claude 设置失败: {}", error))?;
         }
@@ -613,7 +612,9 @@ fn hook_handler(definition: HookDefinition) -> serde_json::Value {
 
 fn matcher_matches(group: &serde_json::Value, matcher: Option<&str>) -> bool {
     match matcher {
-        Some(expected) => group.get("matcher").and_then(serde_json::Value::as_str) == Some(expected),
+        Some(expected) => {
+            group.get("matcher").and_then(serde_json::Value::as_str) == Some(expected)
+        }
         None => group.get("matcher").is_none(),
     }
 }
@@ -679,7 +680,10 @@ pub fn get_claude_hook_settings_status(
         return Ok(base(
             "notInstalled",
             Vec::new(),
-            HOOK_DEFINITIONS.iter().map(|item| item.key.to_string()).collect(),
+            HOOK_DEFINITIONS
+                .iter()
+                .map(|item| item.key.to_string())
+                .collect(),
             None,
         ));
     }
@@ -689,7 +693,10 @@ pub fn get_claude_hook_settings_status(
             return Ok(base(
                 "invalid",
                 Vec::new(),
-                HOOK_DEFINITIONS.iter().map(|item| item.key.to_string()).collect(),
+                HOOK_DEFINITIONS
+                    .iter()
+                    .map(|item| item.key.to_string())
+                    .collect(),
                 Some(error),
             ));
         }
@@ -872,9 +879,9 @@ fn remove_managed_hooks(root: &mut serde_json::Value) -> Result<bool, String> {
 mod tests {
     use super::{
         card_decision_id, ensure_hook, hook_handler, normalize_claude_config_dir,
-        parse_card_decision_id, remove_managed_hooks,
-        ClaudeHookOption, ClaudeHookQuestion, ClaudeHookResolution, ClaudeHookService,
-        HookDefinition, CLAUDE_HOOK_CLIENT_ARG, CLAUDE_HOOK_URL, HOOK_DEFINITIONS,
+        parse_card_decision_id, remove_managed_hooks, ClaudeHookOption, ClaudeHookQuestion,
+        ClaudeHookResolution, ClaudeHookService, HookDefinition, CLAUDE_HOOK_CLIENT_ARG,
+        CLAUDE_HOOK_URL, HOOK_DEFINITIONS,
     };
     use serde_json::json;
     use std::path::PathBuf;
@@ -1134,7 +1141,10 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("existing")
         );
-        assert_eq!(root.get("theme").and_then(|value| value.as_str()), Some("dark"));
+        assert_eq!(
+            root.get("theme").and_then(|value| value.as_str()),
+            Some("dark")
+        );
     }
 
     #[tokio::test]

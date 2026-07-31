@@ -1,6 +1,8 @@
-use std::path::PathBuf;
 use clipboard_win::raw;
-use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard};
+use std::path::PathBuf;
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+};
 
 const CF_DIB: u32 = 8;
 
@@ -11,7 +13,10 @@ pub fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
         let mut paths: Vec<PathBuf> = Vec::new();
         raw::get_file_list_path(&mut paths)
             .map_err(|e| format!("Failed to read clipboard file list: {}", e))?;
-        Ok(paths.iter().filter_map(|p| p.to_str().map(String::from)).collect())
+        Ok(paths
+            .iter()
+            .filter_map(|p| p.to_str().map(String::from))
+            .collect())
     })();
     let _ = raw::close();
     result
@@ -50,7 +55,11 @@ pub fn read_clipboard_image_as_file() -> Result<String, String> {
             let abs_height = bi_height.abs() as u32;
 
             // Calculate palette size
-            let palette_colors = if bi_bit_count <= 8 { 1u32 << bi_bit_count } else { 0u32 };
+            let palette_colors = if bi_bit_count <= 8 {
+                1u32 << bi_bit_count
+            } else {
+                0u32
+            };
             let palette_offset = (40 + palette_colors * 4) as usize;
 
             // Calculate row stride (DWORD-aligned)
@@ -67,21 +76,33 @@ pub fn read_clipboard_image_as_file() -> Result<String, String> {
                 32 => {
                     // BGRA -> RGBA
                     for y in 0..abs_height as usize {
-                        let src_row = if top_down { y } else { abs_height as usize - 1 - y };
+                        let src_row = if top_down {
+                            y
+                        } else {
+                            abs_height as usize - 1 - y
+                        };
                         for x in 0..bi_width as usize {
                             let si = src_row * row_stride + x * 4;
                             let di = (y * bi_width as usize + x) * 4;
-                            rgba[di] = pixel_data[si + 2];     // R
+                            rgba[di] = pixel_data[si + 2]; // R
                             rgba[di + 1] = pixel_data[si + 1]; // G
-                            rgba[di + 2] = pixel_data[si];     // B
-                            rgba[di + 3] = if pixel_data[si + 3] == 0 { 255 } else { pixel_data[si + 3] };
+                            rgba[di + 2] = pixel_data[si]; // B
+                            rgba[di + 3] = if pixel_data[si + 3] == 0 {
+                                255
+                            } else {
+                                pixel_data[si + 3]
+                            };
                         }
                     }
                 }
                 24 => {
                     // BGR -> RGBA
                     for y in 0..abs_height as usize {
-                        let src_row = if top_down { y } else { abs_height as usize - 1 - y };
+                        let src_row = if top_down {
+                            y
+                        } else {
+                            abs_height as usize - 1 - y
+                        };
                         for x in 0..bi_width as usize {
                             let si = src_row * row_stride + x * 3;
                             let di = (y * bi_width as usize + x) * 4;
@@ -115,7 +136,10 @@ pub fn read_clipboard_image_as_file() -> Result<String, String> {
             img.save(&file_path)
                 .map_err(|e| format!("Failed to save PNG: {}", e))?;
 
-            file_path.to_str().map(String::from).ok_or_else(|| "Invalid path".to_string())
+            file_path
+                .to_str()
+                .map(String::from)
+                .ok_or_else(|| "Invalid path".to_string())
         })();
 
         let _ = CloseClipboard();

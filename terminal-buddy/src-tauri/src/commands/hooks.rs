@@ -1,8 +1,7 @@
 use crate::services::{
     get_claude_hook_settings_status as read_status, install_claude_http_hooks_at,
     normalize_claude_config_dir, repair_claude_http_hooks_if_managed,
-    uninstall_claude_http_hooks_at,
-    ClaudeHookSettingsStatus, SettingsService,
+    uninstall_claude_http_hooks_at, ClaudeHookSettingsStatus, SettingsService,
 };
 
 fn persist_config_dir(config_dir: &str) -> Result<String, String> {

@@ -1,10 +1,9 @@
-import { FC, useState, useRef, useEffect, useCallback } from 'react';
+import { FC, useState, useRef, useEffect } from 'react';
 import {
   BarChart3,
   Bell,
   Columns2,
   Folder,
-  Globe2,
   Grid2X2,
   Info,
   Minus,
@@ -16,11 +15,10 @@ import {
   Sun,
   X,
 } from 'lucide-react';
-import { windowMinimize, windowToggleMaximize, windowClose, getWebServerAddress, checkAppUpdate } from '../services/tauri';
+import { windowMinimize, windowToggleMaximize, windowClose, checkAppUpdate } from '../services/tauri';
 import type { UpdateInfo } from '../services/tauri';
 import { AiUsagePanel } from './AiUsagePanel';
 import { AboutDialog } from './AboutDialog';
-import { WebManageDialog } from './WebManageDialog';
 import { UpdatePopover, type UpdateCheckStatus } from './UpdatePopover';
 import { APP_VERSION } from '../version';
 import appIcon from '../assets/app-icon.png';
@@ -85,8 +83,6 @@ export const TitleBar: FC<TitleBarProps> = ({
       }
     };
   }, []);
-  const [webRunning, setWebRunning] = useState(false);
-  const [showWebDialog, setShowWebDialog] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(getEffectiveThemeMode);
   const splitMode = useAppStore(s => s.splitMode);
 
@@ -109,19 +105,6 @@ export const TitleBar: FC<TitleBarProps> = ({
     saveTheme(next);
     applyTheme(next);
   };
-
-  const checkWebStatus = useCallback(async () => {
-    try {
-      const addr = await getWebServerAddress();
-      setWebRunning(addr.startsWith('http'));
-    } catch { setWebRunning(false); }
-  }, []);
-
-  useEffect(() => {
-    checkWebStatus();
-    const interval = setInterval(checkWebStatus, 30000);
-    return () => clearInterval(interval);
-  }, [checkWebStatus]);
 
   const handleMouseEnter = () => {
     clearTimeout(hoverTimer.current);
@@ -215,15 +198,10 @@ export const TitleBar: FC<TitleBarProps> = ({
               </button>
             </>
           )}
-          <button
-            className="titlebar-nav-btn"
-            onClick={() => setShowWebDialog(true)}
-            title={webRunning ? 'Web管理已启动 - 点击打开' : 'Web管理已停止 - 点击打开'}
-            aria-label={webRunning ? '打开 Web 管理，服务运行中' : '打开 Web 管理，服务已停止'}
-          >
-            <Globe2 aria-hidden="true" />
-            <span className={`titlebar-status-dot${webRunning ? ' online' : ''}`} aria-hidden="true" />
-          </button>
+        </div>
+      </div>
+      <div className="titlebar-right">
+        <div className="titlebar-action-group">
           <div
             className="ai-usage-trigger"
             onMouseEnter={handleRefreshEnter}
@@ -231,7 +209,7 @@ export const TitleBar: FC<TitleBarProps> = ({
           >
             <button
               type="button"
-              className="titlebar-nav-btn"
+              className="titlebar-btn titlebar-action-btn"
               title="检查更新"
               aria-label="检查更新"
               onClick={handleCheckNow}
@@ -256,7 +234,7 @@ export const TitleBar: FC<TitleBarProps> = ({
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
           >
-            <button className="titlebar-nav-btn" title="查看 AI 用量" aria-label="查看 AI 用量">
+            <button className="titlebar-btn titlebar-action-btn" title="查看 AI 用量" aria-label="查看 AI 用量">
               <BarChart3 aria-hidden="true" />
             </button>
             {aiUsageHover && <AiUsagePanel />}
@@ -268,7 +246,7 @@ export const TitleBar: FC<TitleBarProps> = ({
               onMouseLeave={handleUpdateLeave}
             >
               <button
-                className="titlebar-nav-btn"
+                className="titlebar-btn titlebar-action-btn titlebar-status-btn"
                 title={`发现新版本 v${updateInfo.version}`}
                 aria-label={`发现新版本 v${updateInfo.version}，点击查看更新说明`}
               >
@@ -288,10 +266,6 @@ export const TitleBar: FC<TitleBarProps> = ({
               )}
             </div>
           )}
-        </div>
-      </div>
-      <div className="titlebar-right">
-        <div className="titlebar-action-group">
           <button
             type="button"
             className={`titlebar-btn titlebar-action-btn titlebar-split-btn ${splitMode !== 'off' ? 'split-active' : ''}`}
@@ -365,15 +339,6 @@ export const TitleBar: FC<TitleBarProps> = ({
 
       {showAboutDialog && (
         <AboutDialog onClose={() => setShowAboutDialog(false)} />
-      )}
-
-      {showWebDialog && (
-        <WebManageDialog
-          onClose={() => {
-            setShowWebDialog(false);
-            checkWebStatus();
-          }}
-        />
       )}
     </div>
   );

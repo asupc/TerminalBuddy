@@ -97,6 +97,7 @@ export interface TerminalSession {
   colorTheme: { background: string; foreground: string };
   tabColor: string | null;
   groupId: string;
+  groupName?: string;
   sessionType?: 'terminal' | 'editor';
   isDirty?: boolean;
   sshRemotePath?: string;

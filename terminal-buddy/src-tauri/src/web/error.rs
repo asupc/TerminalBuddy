@@ -21,7 +21,11 @@ impl IntoResponse for ApiError {
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", msg),
             ApiError::Internal(msg) => {
                 eprintln!("[WebAPI] Internal error: {}", msg);
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "服务器内部错误".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "服务器内部错误".to_string(),
+                )
             }
         };
         (status, Json(json!({ "error": error, "message": message }))).into_response()

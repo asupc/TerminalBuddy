@@ -1,5 +1,5 @@
-use std::fs;
 use serde::Serialize;
+use std::fs;
 use tauri::command;
 
 #[derive(Serialize)]
@@ -14,7 +14,8 @@ fn should_exclude(name: &str, patterns: Option<&Vec<String>>) -> bool {
             if pattern.starts_with("**/*.") {
                 // **/*.ext -> match files ending with .ext
                 let suffix = &pattern[3..]; // "*.ext"
-                if name.ends_with(&suffix[1..]) { // ".ext"
+                if name.ends_with(&suffix[1..]) {
+                    // ".ext"
                     return true;
                 }
             } else if pattern.starts_with('*') {
@@ -44,7 +45,10 @@ pub struct FileNode {
 }
 
 #[command]
-pub fn list_directory(path: String, exclusions: Option<Vec<String>>) -> Result<Vec<FileNode>, String> {
+pub fn list_directory(
+    path: String,
+    exclusions: Option<Vec<String>>,
+) -> Result<Vec<FileNode>, String> {
     let entries = fs::read_dir(&path).map_err(|e| format!("Failed to read directory: {}", e))?;
 
     let mut nodes: Vec<FileNode> = entries
@@ -209,8 +213,10 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
 
     // ShellExecuteW returns a value > 32 on success
     if result as isize <= 32 {
-        return Err(format!("Failed to open explorer (code {}): {}",
-            result as isize, params));
+        return Err(format!(
+            "Failed to open explorer (code {}): {}",
+            result as isize, params
+        ));
     }
 
     Ok(())
@@ -229,9 +235,7 @@ pub fn delete_path(path: String) -> Result<(), String> {
 
 #[command]
 pub fn rename_path(path: String, new_name: String) -> Result<(), String> {
-    let parent = std::path::Path::new(&path)
-        .parent()
-        .ok_or("Invalid path")?;
+    let parent = std::path::Path::new(&path).parent().ok_or("Invalid path")?;
     let new_path = parent.join(&new_name);
     fs::rename(&path, &new_path).map_err(|e| format!("Failed to rename: {}", e))?;
     Ok(())
@@ -241,10 +245,13 @@ const MAX_READ_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 #[command]
 pub fn read_file_content(path: String) -> Result<String, String> {
-    let metadata = fs::metadata(&path)
-        .map_err(|e| format!("Failed to read file metadata: {}", e))?;
+    let metadata =
+        fs::metadata(&path).map_err(|e| format!("Failed to read file metadata: {}", e))?;
     if metadata.len() > MAX_READ_FILE_SIZE {
-        return Err(format!("文件过大 ({}MB)，最大支持 10MB", metadata.len() / 1024 / 1024));
+        return Err(format!(
+            "文件过大 ({}MB)，最大支持 10MB",
+            metadata.len() / 1024 / 1024
+        ));
     }
     fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
 }

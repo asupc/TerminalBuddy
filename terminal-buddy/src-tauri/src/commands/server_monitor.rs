@@ -84,12 +84,15 @@ fn parse_memory(output: &str) -> MemoryStats {
             total = fields.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
             used = fields.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
             // free command: available is at index 6 if present
-            available = fields.get(6).and_then(|v| v.parse().ok()).unwrap_or_else(|| {
-                // fallback: available = free + buff/cache
-                let free: u64 = fields.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
-                let buff: u64 = fields.get(5).and_then(|v| v.parse().ok()).unwrap_or(0);
-                free + buff
-            });
+            available = fields
+                .get(6)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(|| {
+                    // fallback: available = free + buff/cache
+                    let free: u64 = fields.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
+                    let buff: u64 = fields.get(5).and_then(|v| v.parse().ok()).unwrap_or(0);
+                    free + buff
+                });
         } else if fields[0] == "Swap:" {
             swap_total = fields.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
             swap_used = fields.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -119,10 +122,7 @@ fn parse_cpu(output: &str, terminal_id: &str, cache: &MonitorCache) -> f64 {
     if fields.len() < 5 {
         return 0.0;
     }
-    let values: Vec<u64> = fields[1..]
-        .iter()
-        .filter_map(|v| v.parse().ok())
-        .collect();
+    let values: Vec<u64> = fields[1..].iter().filter_map(|v| v.parse().ok()).collect();
     if values.len() < 4 {
         return 0.0;
     }

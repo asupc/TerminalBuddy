@@ -13,7 +13,11 @@ pub fn get_profile(id: String) -> Result<Profile, String> {
 }
 
 #[command]
-pub fn create_profile(name: String, group: String, terminal_type: String) -> Result<Profile, String> {
+pub fn create_profile(
+    name: String,
+    group: String,
+    terminal_type: String,
+) -> Result<Profile, String> {
     ProfileService::create_profile(&name, &group, &terminal_type)
 }
 

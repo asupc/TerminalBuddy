@@ -1,8 +1,6 @@
 use crate::models::DecisionBinding;
-use crate::services::{atomic_write, PathService};
+use crate::services::DatabaseService;
 use chrono::Utc;
-use std::fs;
-use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 const DECISION_BATCH_WINDOW_MS: u64 = 10_000;
@@ -57,23 +55,12 @@ fn select_reply_binding_index(
 pub struct BotBindingService;
 
 impl BotBindingService {
-    fn path() -> PathBuf {
-        PathService::get_bots_dir().join("decision_bindings.json")
-    }
-
     fn read() -> Vec<DecisionBinding> {
-        let Ok(content) = fs::read_to_string(Self::path()) else {
-            return Vec::new();
-        };
-        serde_json::from_str(&content).unwrap_or_default()
+        DatabaseService::list_decision_bindings().unwrap_or_default()
     }
 
     fn write(bindings: &[DecisionBinding]) -> Result<(), String> {
-        let content = serde_json::to_string_pretty(bindings)
-            .map_err(|error| format!("序列化决策绑定失败: {}", error))?;
-        let path = Self::path();
-        atomic_write(&path, content.as_bytes())
-            .map_err(|error| format!("保存决策绑定失败: {}", error))
+        DatabaseService::save_decision_bindings(bindings)
     }
 
     fn prune(bindings: &mut Vec<DecisionBinding>) {

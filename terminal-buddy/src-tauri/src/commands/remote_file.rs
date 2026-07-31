@@ -1,7 +1,7 @@
-use tauri::{command, AppHandle, State};
 use crate::models::ssh_types::RemoteFileEntry;
 use crate::services::profile_service::ProfileService;
 use crate::services::ssh_session_service::SshSessionService;
+use tauri::{command, AppHandle, State};
 
 /// Escape a path for safe use in shell commands (single-quote wrapping).
 fn shell_escape(path: &str) -> String {
@@ -115,7 +115,14 @@ pub fn remote_download(
         return Err("profileId is empty".to_string());
     }
     let profile = ProfileService::get_profile(&profile_id)?;
-    ssh_service.download_async(&transfer_id, &terminal_id, &remote_path, &local_path, profile, app)
+    ssh_service.download_async(
+        &transfer_id,
+        &terminal_id,
+        &remote_path,
+        &local_path,
+        profile,
+        app,
+    )
 }
 
 #[command]
@@ -132,7 +139,14 @@ pub fn remote_download_dir(
         return Err("profileId is empty".to_string());
     }
     let profile = ProfileService::get_profile(&profile_id)?;
-    ssh_service.download_dir_async(&transfer_id, &terminal_id, &remote_path, &local_path, profile, app)
+    ssh_service.download_dir_async(
+        &transfer_id,
+        &terminal_id,
+        &remote_path,
+        &local_path,
+        profile,
+        app,
+    )
 }
 
 #[command]
@@ -149,7 +163,14 @@ pub fn remote_upload(
         return Err("profileId is empty".to_string());
     }
     let profile = ProfileService::get_profile(&profile_id)?;
-    ssh_service.upload_async(&transfer_id, &terminal_id, &local_path, &remote_path, profile, app)
+    ssh_service.upload_async(
+        &transfer_id,
+        &terminal_id,
+        &local_path,
+        &remote_path,
+        profile,
+        app,
+    )
 }
 
 #[command]

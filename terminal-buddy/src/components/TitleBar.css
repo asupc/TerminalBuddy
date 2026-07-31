@@ -171,8 +171,8 @@
   background: var(--text-tertiary);
 }
 
-.titlebar-status-dot.online {
-  background: var(--success);
+.titlebar-status-btn {
+  position: relative;
 }
 
 .titlebar-status-dot.update-available {
@@ -215,4 +215,11 @@
   position: relative;
   display: flex;
   align-items: center;
+}
+
+.titlebar-action-group .ai-usage-tooltip,
+.titlebar-action-group .update-popover {
+  left: auto;
+  right: 0;
+  transform: none;
 }

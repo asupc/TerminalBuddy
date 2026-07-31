@@ -20,14 +20,11 @@ import './TerminalPanel.css';
 // 现仅在用户真正打开终端/编辑器/设置页时才按需加载对应 chunk。
 const TerminalInstance = lazy(() => import('./TerminalInstance').then(m => ({ default: m.TerminalInstance })));
 const TextEditor = lazy(() => import('./TextEditor').then(m => ({ default: m.TextEditor })));
-const SettingsPage = lazy(() => import('./SettingsPage').then(m => ({ default: m.SettingsPage })));
 const GitHistoryPage = lazy(() => import('./GitHistoryPage').then(m => ({ default: m.GitHistoryPage })));
 
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
-  const settingsDialogOpen = useAppStore(s => s.settingsDialogOpen);
-  const closeSettingsDialog = useAppStore(s => s.closeSettingsDialog);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
@@ -274,11 +271,6 @@ export const TerminalPanel: FC = () => {
           </div>
         )}
       </div>
-      {settingsDialogOpen && (
-        <Suspense fallback={<div className="settings-dialog-loading">加载设置…</div>}>
-          <SettingsPage onClose={closeSettingsDialog} />
-        </Suspense>
-      )}
     </div>
   );
 };

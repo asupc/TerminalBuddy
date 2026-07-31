@@ -123,9 +123,7 @@ fn task_content(
                 .and_then(|prompt| compact_hook_text(Some(&prompt), 72)),
             compact_hook_text(request.reason.as_deref(), 220)
                 .or_else(|| compact_hook_text(request.message.as_deref(), 220))
-                .or_else(|| {
-                    compact_hook_text(request.last_assistant_message.as_deref(), 220)
-                }),
+                .or_else(|| compact_hook_text(request.last_assistant_message.as_deref(), 220)),
         ),
         _ => (None, None),
     }
@@ -262,12 +260,15 @@ pub(crate) async fn claude_hook(
     .await
     {
         Ok(Ok(ClaudeHookResolution::Answers(answers))) => {
-            let _ = app.emit("claude-hook-decision-resolved", json!({
-                "decisionId": decision_id,
-                "terminalId": terminal_id,
-                "occurredAt": next_hook_timestamp(),
-                "resolution": "answered",
-            }));
+            let _ = app.emit(
+                "claude-hook-decision-resolved",
+                json!({
+                    "decisionId": decision_id,
+                    "terminalId": terminal_id,
+                    "occurredAt": next_hook_timestamp(),
+                    "resolution": "answered",
+                }),
+            );
             Json(json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
@@ -282,21 +283,27 @@ pub(crate) async fn claude_hook(
             .into_response()
         }
         Ok(Ok(ClaudeHookResolution::ContinueInTerminal)) => {
-            let _ = app.emit("claude-hook-decision-resolved", json!({
-                "decisionId": decision_id,
-                "terminalId": terminal_id,
-                "occurredAt": next_hook_timestamp(),
-                "resolution": "continueInTerminal",
-            }));
+            let _ = app.emit(
+                "claude-hook-decision-resolved",
+                json!({
+                    "decisionId": decision_id,
+                    "terminalId": terminal_id,
+                    "occurredAt": next_hook_timestamp(),
+                    "resolution": "continueInTerminal",
+                }),
+            );
             StatusCode::NO_CONTENT.into_response()
         }
         _ => {
             ClaudeHookService::expire_decision(&decision_id);
-            let _ = app.emit("claude-hook-decision-expired", json!({
-                "decisionId": decision_id,
-                "terminalId": terminal_id,
-                "occurredAt": next_hook_timestamp(),
-            }));
+            let _ = app.emit(
+                "claude-hook-decision-expired",
+                json!({
+                    "decisionId": decision_id,
+                    "terminalId": terminal_id,
+                    "occurredAt": next_hook_timestamp(),
+                }),
+            );
             StatusCode::NO_CONTENT.into_response()
         }
     }
@@ -376,7 +383,11 @@ pub async fn send_claude_hook_decision_notification(
             return Ok(());
         }
         for report in reports.into_iter().filter(|report| !report.success) {
-            eprintln!("[ClaudeHook] 通道“{}”发送失败: {}", report.channel_name, report.error.unwrap_or_default());
+            eprintln!(
+                "[ClaudeHook] 通道“{}”发送失败: {}",
+                report.channel_name,
+                report.error.unwrap_or_default()
+            );
         }
     }
     ClaudeHookService::finish_notification(&decision_id, generation, true);

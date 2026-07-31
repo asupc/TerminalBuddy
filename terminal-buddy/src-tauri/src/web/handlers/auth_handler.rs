@@ -1,8 +1,8 @@
-use axum::{extract::State, Json};
 use crate::models::web_api::{ApiStatusResponse, LoginRequest, LoginResponse};
 use crate::services::SettingsService;
 use crate::web::auth::generate_jwt;
 use crate::web::error::ApiError;
+use axum::{extract::State, Json};
 use bcrypt::verify;
 
 pub async fn login(
@@ -23,17 +23,16 @@ pub async fn login(
         return Err(ApiError::Unauthorized("用户名或密码错误".into()));
     }
 
-    let valid = verify(&req.password, &settings.web_api_password_hash)
-        .map_err(|e| {
-            eprintln!("[WebAPI] bcrypt verify error: {}", e);
-            ApiError::Unauthorized("用户名或密码错误".to_string())
-        })?;
+    let valid = verify(&req.password, &settings.web_api_password_hash).map_err(|e| {
+        eprintln!("[WebAPI] bcrypt verify error: {}", e);
+        ApiError::Unauthorized("用户名或密码错误".to_string())
+    })?;
     if !valid {
         return Err(ApiError::Unauthorized("用户名或密码错误".into()));
     }
 
-    let token = generate_jwt(&req.username, &state.jwt_secret)
-        .map_err(|e| ApiError::Internal(e))?;
+    let token =
+        generate_jwt(&req.username, &state.jwt_secret).map_err(|e| ApiError::Internal(e))?;
 
     Ok(Json(LoginResponse {
         token,

@@ -67,7 +67,8 @@ impl ProfileService {
 
     pub fn get_profile(id: &str) -> Result<Profile, String> {
         let profiles = Self::get_all_profiles()?;
-        profiles.into_iter()
+        profiles
+            .into_iter()
             .find(|p| p.id == id)
             .ok_or_else(|| format!("Profile not found: {}", id))
     }
@@ -76,7 +77,11 @@ impl ProfileService {
         let normalized_group = if group.is_empty() { "默认" } else { group };
         Self::get_all_profiles().ok().and_then(|profiles| {
             profiles.into_iter().find(|p| {
-                let p_group = if p.group.is_empty() { "默认" } else { &p.group };
+                let p_group = if p.group.is_empty() {
+                    "默认"
+                } else {
+                    &p.group
+                };
                 p.name == name && p_group == normalized_group
             })
         })
@@ -123,25 +128,32 @@ impl ProfileService {
         let path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
         let content = serde_json::to_string_pretty(&profile)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        fs::write(&path, content)
-            .map_err(|e| format!("Failed to write file: {}", e))?;
+        fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))?;
         Self::invalidate_cache();
         Ok(profile)
     }
 
     pub fn update_profile(profile: &Profile) -> Result<(), String> {
         // Check for duplicate name within the same group (exclude self)
-        let profile_group = if profile.group.is_empty() { "默认" } else { &profile.group };
+        let profile_group = if profile.group.is_empty() {
+            "默认"
+        } else {
+            &profile.group
+        };
         if let Some(existing) = Self::find_profile_by_name_in_group(&profile.name, profile_group) {
             if existing.id != profile.id {
-                return Err(format!("该分组下名称 '{}' 已存在，请使用其他名称", profile.name));
+                return Err(format!(
+                    "该分组下名称 '{}' 已存在，请使用其他名称",
+                    profile.name
+                ));
             }
         }
 
         // Delete old name-based file if it exists (migration from name-based naming)
         if let Ok(old_profile) = Self::get_profile(&profile.id) {
             if old_profile.name != profile.name {
-                let old_name_path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&old_profile.name)));
+                let old_name_path = Self::get_profiles_dir()
+                    .join(format!("{}.json", sanitize_filename(&old_profile.name)));
                 if old_name_path.exists() {
                     fs::remove_file(&old_name_path).ok();
                 }
@@ -155,8 +167,7 @@ impl ProfileService {
         let path = Self::get_profiles_dir().join(format!("{}.json", to_save.id));
         let content = serde_json::to_string_pretty(&to_save)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        fs::write(&path, content)
-            .map_err(|e| format!("Failed to write file: {}", e))?;
+        fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))?;
         Self::invalidate_cache();
         Ok(())
     }
@@ -165,10 +176,10 @@ impl ProfileService {
         let profile = Self::get_profile(id)?;
         // Try id-based file first, then fall back to name-based file (migration)
         let id_path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
-        let name_path = Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&profile.name)));
+        let name_path =
+            Self::get_profiles_dir().join(format!("{}.json", sanitize_filename(&profile.name)));
         let path = if id_path.exists() { id_path } else { name_path };
-        fs::remove_file(&path)
-            .map_err(|e| format!("Failed to delete profile: {}", e))?;
+        fs::remove_file(&path).map_err(|e| format!("Failed to delete profile: {}", e))?;
         Self::invalidate_cache();
         Ok(())
     }
@@ -183,13 +194,12 @@ impl ProfileService {
         let profiles = Self::get_all_profiles()?;
         let content = serde_json::to_string_pretty(&profiles)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        fs::write(path, content)
-            .map_err(|e| format!("Failed to write file: {}", e))
+        fs::write(path, content).map_err(|e| format!("Failed to write file: {}", e))
     }
 
     pub fn import_profiles(path: &str) -> Result<Vec<Profile>, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
         let profiles: Vec<Profile> = serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse profiles: {}", e))?;
         let mut imported = Vec::new();
@@ -201,8 +211,7 @@ impl ProfileService {
             let save_path = Self::get_profiles_dir().join(format!("{}.json", profile.id));
             let json = serde_json::to_string_pretty(&profile)
                 .map_err(|e| format!("Failed to serialize: {}", e))?;
-            fs::write(&save_path, json)
-                .map_err(|e| format!("Failed to write file: {}", e))?;
+            fs::write(&save_path, json).map_err(|e| format!("Failed to write file: {}", e))?;
             // Decrypt for return value (frontend needs plaintext)
             profile.decrypt_sensitive_fields();
             imported.push(profile);

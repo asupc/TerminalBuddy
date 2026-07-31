@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use tauri::Manager;
 
 use crate::commands::{
-    process_bot_card_selection, process_bot_multi_selection, process_bot_reply,
-    send_feishu_reply, TerminalService,
+    process_bot_card_selection, process_bot_multi_selection, process_bot_reply, send_feishu_reply,
+    TerminalService,
 };
 use crate::models::BridgeInboundMessage;
 use crate::services::BotSettingsService;
@@ -130,8 +130,7 @@ pub async fn feishu_events(State(state): State<AppState>, Json(payload): Json<Va
                 && channel.platform == "feishu"
                 && !channel.callback_token.is_empty()
                 && channel.callback_token == token
-                && (channel.receive_id_type != "chat_id"
-                    || channel.target_id == conversation_id)
+                && (channel.receive_id_type != "chat_id" || channel.target_id == conversation_id)
         }) else {
             return feishu_card_result(false, "卡片不属于已配置通道");
         };

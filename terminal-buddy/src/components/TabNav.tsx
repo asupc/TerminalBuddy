@@ -1,7 +1,7 @@
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { ChevronRight, FileText, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore } from '../stores/appStore';
-import { closeTerminal as closeTerminalCmd, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent, openInExplorer } from '../services/tauri';
+import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent, openInExplorer } from '../services/tauri';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { getAppSettings, saveAppSettings } from '../utils/settings';
 import { formatDuration } from '../utils/formatDuration';
@@ -15,14 +15,16 @@ import './TabNav.css';
 
 interface TabSidebarProps {
   isActive: boolean;
+  isSidebarMode: boolean;
   profiles: Profile[];
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => void;
   onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd') => void;
   onStartTextEditor: () => void;
 }
 
-export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
+export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
   const sessions = useAppStore(s => s.sessions);
+  const tabGroups = useAppStore(s => s.groups);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
@@ -119,22 +121,43 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
   }, [sessions.length]);
 
   const { width, setWidth, isResizing, resizeHandleProps } = useResizablePanel({
-    defaultWidth: 200,
+    defaultWidth: isSidebarMode ? 250 : 200,
     minWidth: 150,
     maxWidth: 400,
-    onResizeEnd: (w) => { saveTabSidebarWidth(w).catch(console.error); },
+    onResizeEnd: (w) => {
+      const saveWidth = isSidebarMode ? saveConfigNavWidth : saveTabSidebarWidth;
+      saveWidth(w).catch(console.error);
+      if (isSidebarMode) {
+        window.dispatchEvent(new CustomEvent('navigation-width-changed', { detail: w }));
+      }
+    },
   });
 
   useEffect(() => {
-    getBackendAppSettings().then(s => setWidth(s.tabSidebarWidth || 200)).catch(() => {});
-  }, []);
+    getBackendAppSettings().then(s => setWidth(isSidebarMode ? s.configNavWidth || 250 : s.tabSidebarWidth || 200)).catch(() => {});
+  }, [isSidebarMode, setWidth]);
 
-  // Build tree for active sessions grouped by profile group (hierarchical)
+  useEffect(() => {
+    if (!isSidebarMode) return;
+    const syncWidth = (event: Event) => {
+      const width = (event as CustomEvent<number>).detail;
+      if (Number.isFinite(width)) setWidth(width);
+    };
+    window.addEventListener('navigation-width-changed', syncWidth);
+    return () => window.removeEventListener('navigation-width-changed', syncWidth);
+  }, [isSidebarMode, setWidth]);
+
+  // 会话显式标签分组优先；普通终端继续沿用 Profile 分组。
   const sessionTree = useMemo(() => {
     const editorSessions = sessions.filter(s => s.sessionType === 'editor');
     const terminalSessions = sessions.filter(s => s.sessionType !== 'editor');
 
     const tree = buildGroupTree(terminalSessions, s => {
+      const explicitGroup = s.groupId && s.groupId !== 'default'
+        ? tabGroups.find(group => group.id === s.groupId)
+        : undefined;
+      if (explicitGroup) return explicitGroup.name;
+      if (s.groupName) return s.groupName;
       const profile = profiles.find(p => p.id === s.profileId);
       return profile?.group || '默认';
     });
@@ -217,7 +240,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
     }
 
     return items;
-  }, [sessions, profiles, terminalActivities, settingsVersion]);
+  }, [sessions, profiles, tabGroups, terminalActivities, settingsVersion]);
 
   // Build submenu tree: PowerShell/CMD always visible, then groups collapsed (hierarchical)
   const submenuTree = useMemo(() => {
@@ -639,7 +662,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, profiles, onStartTermina
   };
 
   return (
-    <div className="tab-nav" style={{ width }} ref={containerRef}>
+    <div className={`tab-nav${isSidebarMode ? ' sidebar-mode' : ''}`} style={{ width }} ref={containerRef}>
       <div className="panel-titlebar">
         <span className="panel-title">选项卡</span>
         <span className="panel-title-count">{sessions.length}</span>

@@ -11,12 +11,7 @@ import {
   openUrl,
 } from '../services/tauri';
 import { getAppSettings } from '../utils/settings';
-import { Dialog } from './Dialog';
 import './WebManageDialog.css';
-
-interface WebManageDialogProps {
-  onClose: () => void;
-}
 
 interface CustomEndpoint {
   host: string;
@@ -119,7 +114,7 @@ const replaceUrlEndpoint = (url: string, customEndpoint: CustomEndpoint | null):
   }
 };
 
-export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
+export const WebManageSettings: FC = () => {
   const [customEndpoint, setCustomEndpoint] = useState<CustomEndpoint | null>(null);
   const [customEndpointDraft, setCustomEndpointDraft] = useState('');
   const [customEndpointError, setCustomEndpointError] = useState('');
@@ -282,13 +277,7 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
     : '已停止';
 
   return (
-    <>
-    <Dialog
-      title="Web 远程管理"
-      className="web-dialog"
-      bodyClassName="web-dialog-body"
-      onClose={onClose}
-    >
+    <div className="web-manage-settings">
           <div className="web-dialog-intro">
             <p className="web-dialog-desc">启用后可通过浏览器远程访问终端</p>
           </div>
@@ -402,7 +391,6 @@ export const WebManageDialog: FC<WebManageDialogProps> = ({ onClose }) => {
               </div>
             </>
           )}
-    </Dialog>
-    </>
+    </div>
   );
 };

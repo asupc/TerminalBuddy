@@ -1,6 +1,6 @@
+use chrono::Datelike;
 use serde::Serialize;
 use std::sync::OnceLock;
-use chrono::Datelike;
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -80,7 +80,10 @@ pub async fn fetch_qianfan_usage(cookie: String) -> QianfanResult {
         .get("https://console.bce.baidu.com/api/qianfan/charge/codingPlan/resourceList")
         .header("Accept", "application/json;charset=UTF-8")
         .header("Content-Type", "application/json")
-        .header("Referer", "https://console.bce.baidu.com/qianfan/resource/subscribe")
+        .header(
+            "Referer",
+            "https://console.bce.baidu.com/qianfan/resource/subscribe",
+        )
         .header("X-Requested-With", "XMLHttpRequest")
         .header("Cookie", &cookie)
         .send()
@@ -116,7 +119,10 @@ pub async fn fetch_qianfan_usage(cookie: String) -> QianfanResult {
         }
     };
 
-    let success = body.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = body
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !success {
         let msg = body
             .get("message")
@@ -158,8 +164,15 @@ pub async fn fetch_qianfan_usage(cookie: String) -> QianfanResult {
             if let Some(q) = quota.get(key).and_then(|v| v.as_object()) {
                 let used = q.get("used").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let limit = q.get("limit").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let utilization = if limit > 0.0 { (used / limit * 100.0).min(100.0) } else { 0.0 };
-                let resets_at = q.get("resetAt").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let utilization = if limit > 0.0 {
+                    (used / limit * 100.0).min(100.0)
+                } else {
+                    0.0
+                };
+                let resets_at = q
+                    .get("resetAt")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
                 tiers.push(QianfanTier {
                     name: label.to_string(),
@@ -340,10 +353,7 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
         }
         if let Some(ws) = sd.get("bonus_wallets").and_then(|v| v.as_array()) {
             for w in ws {
-                let bal = parse_f64(
-                    w.get("balance")
-                        .unwrap_or(&serde_json::Value::Null),
-                );
+                let bal = parse_f64(w.get("balance").unwrap_or(&serde_json::Value::Null));
                 if bal > 0.0 {
                     bonus_wallets.push(DeepseekBalanceWallet {
                         balance: format!("{:.2}", bal),
@@ -457,12 +467,8 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
 
     // Monthly
     let month_usage = if let Some(total_models) = amount_total {
-        let (_req, _hit, _miss, _resp, total) = sum_usage(
-            &total_models
-                .as_array()
-                .cloned()
-                .unwrap_or_default(),
-        );
+        let (_req, _hit, _miss, _resp, total) =
+            sum_usage(&total_models.as_array().cloned().unwrap_or_default());
         let cost_total = cost_data
             .as_ref()
             .and_then(|b| b.get("data"))
@@ -576,15 +582,16 @@ pub async fn fetch_ark_usage(cookie: String) -> ArkUsageResult {
     }
 
     // 从 cookie 字符串里提取 csrfToken
-    let csrf_token = cookie
-        .split(';')
-        .map(|s| s.trim())
-        .find_map(|kv| {
-            let mut it = kv.splitn(2, '=');
-            let k = it.next()?.trim();
-            let v = it.next()?.trim();
-            if k.eq_ignore_ascii_case("csrfToken") { Some(v.to_string()) } else { None }
-        });
+    let csrf_token = cookie.split(';').map(|s| s.trim()).find_map(|kv| {
+        let mut it = kv.splitn(2, '=');
+        let k = it.next()?.trim();
+        let v = it.next()?.trim();
+        if k.eq_ignore_ascii_case("csrfToken") {
+            Some(v.to_string())
+        } else {
+            None
+        }
+    });
 
     let csrf_token = match csrf_token {
         Some(t) if !t.is_empty() => t,
@@ -642,10 +649,7 @@ pub async fn fetch_ark_usage(cookie: String) -> ArkUsageResult {
     };
 
     // 错误形态:{"ResponseMetadata":{...,"Error":{"Code":"...","Message":"..."}}}
-    if let Some(err) = body
-        .get("ResponseMetadata")
-        .and_then(|m| m.get("Error"))
-    {
+    if let Some(err) = body.get("ResponseMetadata").and_then(|m| m.get("Error")) {
         let msg = err
             .get("Message")
             .or_else(|| err.get("CodeN"))
@@ -677,7 +681,10 @@ pub async fn fetch_ark_usage(cookie: String) -> ArkUsageResult {
     for item in quota_usage {
         let level = item.get("Level").and_then(|v| v.as_str()).unwrap_or("");
         let percent = item.get("Percent").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let reset_ts = item.get("ResetTimestamp").and_then(|v| v.as_i64()).unwrap_or(0);
+        let reset_ts = item
+            .get("ResetTimestamp")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
         let name = match level {
             "session" => "5小时",
             "weekly" => "每周",
@@ -780,8 +787,14 @@ pub async fn fetch_minimax_usage(api_key: String) -> MinimaxUsageResult {
         }
     };
 
-    let status_code = base_resp.get("status_code").and_then(|v| v.as_i64()).unwrap_or(-1);
-    let status_msg = base_resp.get("status_msg").and_then(|v| v.as_str()).unwrap_or("未知错误");
+    let status_code = base_resp
+        .get("status_code")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(-1);
+    let status_msg = base_resp
+        .get("status_msg")
+        .and_then(|v| v.as_str())
+        .unwrap_or("未知错误");
 
     if status_code != 0 {
         return MinimaxUsageResult {
@@ -829,7 +842,10 @@ pub async fn fetch_minimax_usage(api_key: String) -> MinimaxUsageResult {
                     .get("current_weekly_remaining_percent")
                     .and_then(|v| v.as_f64())
                 {
-                    let weekly_reset_ts = item.get("weekly_end_time").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let weekly_reset_ts = item
+                        .get("weekly_end_time")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
                     let resets_at = if weekly_reset_ts > 0 {
                         chrono::DateTime::from_timestamp(weekly_reset_ts / 1000, 0)
                             .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())

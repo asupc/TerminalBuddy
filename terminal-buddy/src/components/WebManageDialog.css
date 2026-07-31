@@ -1,10 +1,5 @@
-.web-dialog {
-  width: 480px;
-}
-
-.web-dialog-body {
-  padding: 18px;
-  overflow-y: auto;
+.web-manage-settings {
+  max-width: 480px;
 }
 
 .web-dialog-desc {
@@ -284,17 +279,4 @@
   background: var(--accent-color);
   color: #fff;
   border-color: var(--accent-color);
-}
-
-.web-dialog-body::-webkit-scrollbar {
-  width: 6px;
-}
-
-.web-dialog-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.web-dialog-body::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 3px;
 }

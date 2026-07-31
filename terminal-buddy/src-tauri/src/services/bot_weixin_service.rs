@@ -1,5 +1,5 @@
 use crate::models::BotChannelConfig;
-use crate::services::{atomic_write, PathService};
+use crate::services::DatabaseService;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use rand::random;
@@ -7,8 +7,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -38,24 +36,18 @@ fn state_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn state_path(account_id: &str) -> PathBuf {
-    let directory = PathService::get_bots_dir().join("weixin");
-    let _ = fs::create_dir_all(&directory);
-    directory.join(format!("{}.json", hex::encode(account_id.as_bytes())))
-}
-
 fn read_state_unlocked(account_id: &str) -> WeixinRuntimeState {
-    let Ok(content) = fs::read_to_string(state_path(account_id)) else {
-        return WeixinRuntimeState::default();
-    };
-    serde_json::from_str(&content).unwrap_or_default()
+    DatabaseService::read_weixin_state(account_id)
+        .ok()
+        .flatten()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default()
 }
 
 fn write_state_unlocked(account_id: &str, state: &WeixinRuntimeState) -> Result<(), String> {
-    let content = serde_json::to_vec_pretty(state)
+    let content = serde_json::to_string(state)
         .map_err(|error| format!("序列化微信连接状态失败: {}", error))?;
-    atomic_write(&state_path(account_id), &content)
-        .map_err(|error| format!("保存微信连接状态失败: {}", error))
+    DatabaseService::save_weixin_state(account_id, &content)
 }
 
 pub fn load_weixin_state(account_id: &str) -> WeixinRuntimeState {

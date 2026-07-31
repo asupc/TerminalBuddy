@@ -1,3 +1,4 @@
+pub mod ai_delivery_handler;
 pub mod auth_handler;
 pub mod bot_handler;
 pub mod claude_hook_handler;

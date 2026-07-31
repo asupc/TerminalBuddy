@@ -1,12 +1,15 @@
-use axum::{Json, extract::{State, Path}};
 use crate::commands::TerminalService;
+use crate::models::web_api::{StartTerminalRequest, TerminalInfo};
 use crate::models::TerminalOwner;
-use crate::models::web_api::{TerminalInfo, StartTerminalRequest};
 use crate::services::{ProfileService, WebServiceState};
 use crate::web::auth::ClaimsFromRequest;
 use crate::web::error::ApiError;
 use crate::web::server::AppState;
-use tauri::{Manager, Emitter};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
+use tauri::{Emitter, Manager};
 
 /// 列出全部存活终端：Web（手机自己的）+ PC 端的。前端按 owner 区分
 /// 「继续」（Web，直接接入）和「接管」（PC，接入时 PTY 切到手机尺寸）。
@@ -25,18 +28,20 @@ pub async fn start(
     Json(req): Json<StartTerminalRequest>,
 ) -> Result<Json<TerminalInfo>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
-    let terminal_id = ts.create_terminal(
-        &req.profile_id,
-        None,
-        req.extra_startup_params.as_deref(),
-        req.rows.unwrap_or(0),
-        req.cols.unwrap_or(0),
-        None,
-        req.extra_param_tag.as_deref(),
-        req.extra_param_tag_color.as_deref(),
-        state.app_handle.clone(),
-        TerminalOwner::Web,
-    ).map_err(ApiError::Internal)?;
+    let terminal_id = ts
+        .create_terminal(
+            &req.profile_id,
+            None,
+            req.extra_startup_params.as_deref(),
+            req.rows.unwrap_or(0),
+            req.cols.unwrap_or(0),
+            None,
+            req.extra_param_tag.as_deref(),
+            req.extra_param_tag_color.as_deref(),
+            state.app_handle.clone(),
+            TerminalOwner::Web,
+        )
+        .map_err(ApiError::Internal)?;
 
     let profile = ProfileService::get_profile(&req.profile_id).map_err(ApiError::Internal)?;
     let loading_mode = ts

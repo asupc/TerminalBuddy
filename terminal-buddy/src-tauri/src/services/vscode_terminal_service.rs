@@ -1,8 +1,8 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use include_dir::{include_dir, Dir, DirEntry};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -87,11 +87,7 @@ impl VsCodeTerminalProcess {
         command
             .arg(&host_path)
             .arg(encoded_config)
-            .current_dir(
-                host_path
-                    .parent()
-                    .ok_or("无法定位 VS Code 终端插件目录")?,
-            )
+            .current_dir(host_path.parent().ok_or("无法定位 VS Code 终端插件目录")?)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -109,7 +105,10 @@ impl VsCodeTerminalProcess {
             )
         })?;
         let stdin = child.stdin.take().ok_or("VS Code 终端插件 stdin 不可用")?;
-        let stdout = child.stdout.take().ok_or("VS Code 终端插件 stdout 不可用")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("VS Code 终端插件 stdout 不可用")?;
         let mut stderr = child.stderr.take();
 
         let (handshake_tx, handshake_rx) = mpsc::sync_channel(1);
@@ -232,10 +231,7 @@ impl VsCodeTerminalProcess {
     }
 }
 
-fn terminate_and_collect_plugin_error(
-    child: &mut Child,
-    stderr: Option<ChildStderr>,
-) -> String {
+fn terminate_and_collect_plugin_error(child: &mut Child, stderr: Option<ChildStderr>) -> String {
     let _ = child.kill();
     let status = child.wait().ok();
     let mut message = String::new();
@@ -257,7 +253,10 @@ fn resolve_plugin_host(_app: &AppHandle) -> Result<PathBuf, String> {
             .parent()
             .ok_or("无法定位项目目录")?
             .to_path_buf();
-        let host = root.join("plugins").join("vscode-terminal").join("host.cjs");
+        let host = root
+            .join("plugins")
+            .join("vscode-terminal")
+            .join("host.cjs");
         if !host.exists() {
             return Err(format!("VS Code 终端插件不存在: {}", host.display()));
         }
@@ -281,8 +280,7 @@ fn extracted_vscode_terminal_dir() -> Result<PathBuf, String> {
 fn extract_embedded_vscode_terminal() -> Result<PathBuf, String> {
     if EMBEDDED_VSCODE_TERMINAL.get_file("host.cjs").is_none() {
         return Err(
-            "应用未内嵌 VS Code 终端插件，请使用 build-fast.bat 或 build.bat 重新构建"
-                .to_string(),
+            "应用未内嵌 VS Code 终端插件，请使用 build-fast.bat 或 build.bat 重新构建".to_string(),
         );
     }
 
@@ -305,11 +303,7 @@ fn extract_embedded_vscode_terminal() -> Result<PathBuf, String> {
             .map_err(|error| format!("清理不完整的 VS Code 终端插件失败: {}", error))?;
     }
 
-    let temp_dir = runtime_root.join(format!(
-        ".extract-{}-{}",
-        version,
-        std::process::id()
-    ));
+    let temp_dir = runtime_root.join(format!(".extract-{}-{}", version, std::process::id()));
     if temp_dir.exists() {
         std::fs::remove_dir_all(&temp_dir)
             .map_err(|error| format!("清理 VS Code 终端临时目录失败: {}", error))?;
@@ -369,8 +363,7 @@ fn resolve_compatible_node(host_path: &Path) -> Result<(PathBuf, NodeProbeResult
     let candidates = find_node_candidates();
     if candidates.is_empty() {
         return Err(
-            "未检测到 Node.js。请安装 64 位 Node.js 18 或更高版本，并重新打开设置页。"
-                .to_string(),
+            "未检测到 Node.js。请安装 64 位 Node.js 18 或更高版本，并重新打开设置页。".to_string(),
         );
     }
 
@@ -433,11 +426,7 @@ fn probe_node(node_path: &Path, host_path: &Path) -> Result<NodeProbeResult, Str
     command
         .arg(host_path)
         .arg("--probe")
-        .current_dir(
-            host_path
-                .parent()
-                .ok_or("无法定位 VS Code 终端插件目录")?,
-        )
+        .current_dir(host_path.parent().ok_or("无法定位 VS Code 终端插件目录")?)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

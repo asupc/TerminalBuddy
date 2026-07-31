@@ -61,10 +61,9 @@ impl SettingsService {
 
     pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
         let path = Self::get_settings_path();
-        let content = serde_json::to_string_pretty(settings)
-            .map_err(|e| format!("序列化设置失败: {}", e))?;
-        fs::write(&path, content)
-            .map_err(|e| format!("写入设置文件失败: {}", e))?;
+        let content =
+            serde_json::to_string_pretty(settings).map_err(|e| format!("序列化设置失败: {}", e))?;
+        fs::write(&path, content).map_err(|e| format!("写入设置文件失败: {}", e))?;
         // Update memory cache
         if let Ok(mut cache) = CACHED_SETTINGS.write() {
             *cache = Some(settings.clone());

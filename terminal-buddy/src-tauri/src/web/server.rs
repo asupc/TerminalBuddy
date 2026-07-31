@@ -1,9 +1,9 @@
+﻿use axum::routing::{delete, get, post};
 use axum::Router;
-use axum::routing::{get, post, delete};
-use tower_http::cors::CorsLayer;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
+use tower_http::cors::CorsLayer;
 
 #[cfg(not(debug_assertions))]
 use axum::response::IntoResponse;
@@ -26,28 +26,96 @@ impl HasJwtSecret for AppState {
 
 // Embed web frontend files for release mode
 #[cfg(not(debug_assertions))]
-static WEB_DIST: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
+static WEB_DIST: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
 
 pub fn build_router(state: AppState) -> Router {
     let router = Router::new()
-        // 认证
+        // 璁よ瘉
         .route("/api/auth/login", post(handlers::auth_handler::login))
         .route("/api/auth/status", get(handlers::auth_handler::status))
-        // 机器人平台回调使用各自签名/Token，不走 Web API JWT。
-        .route("/api/bot/feishu/events", post(handlers::bot_handler::feishu_events))
-        .route("/api/bot/inbound/{channel_id}", post(handlers::bot_handler::bridge_inbound))
-        // 连接（profile）只读列表 —— 手机端不管理 profile，照搬电脑端已配置的导航
+        // 鏈哄櫒浜哄钩鍙板洖璋冧娇鐢ㄥ悇鑷鍚?Token锛屼笉璧?Web API JWT銆?
+        .route(
+            "/api/bot/feishu/events",
+            post(handlers::bot_handler::feishu_events),
+        )
+        .route(
+            "/api/bot/inbound/{channel_id}",
+            post(handlers::bot_handler::bridge_inbound),
+        )
+        // 杩炴帴锛坧rofile锛夊彧璇诲垪琛?鈥斺€?鎵嬫満绔笉绠＄悊 profile锛岀収鎼數鑴戠宸查厤缃殑瀵艰埅
         .route("/api/profiles", get(handlers::profile_handler::list))
-        // 启动参数预设（与 PC 端共享 ClientData/extra_param_presets.json）
-        .route("/api/extra-param-presets", get(handlers::preset_handler::list).put(handlers::preset_handler::replace))
-        // 命令历史（与 PC 端共享 ClientData/command_history.json）
-        .route("/api/command-history", get(handlers::history_handler::list).put(handlers::history_handler::replace))
-        // 终端会话：列表 / 新建 / 关闭
-        .route("/api/terminals", get(handlers::terminal_handler::list).post(handlers::terminal_handler::start))
-        .route("/api/terminals/{id}", delete(handlers::terminal_handler::close))
-        // 会话列表实时同步（meta WS，App 级单连接）
+        // AI 浜や粯锛氳繙绔粎瑙傚療銆佹壒鍑嗕换鍔″浘涓庡洖绛斿緟鍐崇瓥椤癸紝涓嶈Е鍙戞湰鏈?CLI銆?
+        .route(
+            "/api/ai-delivery/projects",
+            get(handlers::ai_delivery_handler::projects),
+        )
+        .route(
+            "/api/ai-delivery/projects/{project_id}/deliveries",
+            get(handlers::ai_delivery_handler::deliveries),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}",
+            get(handlers::ai_delivery_handler::snapshot),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/approve",
+            post(handlers::ai_delivery_handler::approve),
+        )
+        .route(
+            "/api/ai-delivery/decisions/{id}/answer",
+            post(handlers::ai_delivery_handler::answer_decision),
+        )
+        .route(
+            "/api/ai-delivery/deliveries",
+            post(handlers::ai_delivery_handler::create_delivery),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/plan",
+            post(handlers::ai_delivery_handler::plan),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/dispatch",
+            post(handlers::ai_delivery_handler::dispatch),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/complete",
+            post(handlers::ai_delivery_handler::complete_attempt),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/merge",
+            post(handlers::ai_delivery_handler::merge),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/cleanup-integration",
+            post(handlers::ai_delivery_handler::cleanup_integration),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/retry",
+            post(handlers::ai_delivery_handler::retry_task),
+        )
+        // 鍚姩鍙傛暟棰勮锛堜笌 PC 绔叡浜?ClientData/extra_param_presets.json锛?
+        .route(
+            "/api/extra-param-presets",
+            get(handlers::preset_handler::list).put(handlers::preset_handler::replace),
+        )
+        // 鍛戒护鍘嗗彶锛堜笌 PC 绔叡浜?ClientData/command_history.json锛?
+        .route(
+            "/api/command-history",
+            get(handlers::history_handler::list).put(handlers::history_handler::replace),
+        )
+        // 缁堢浼氳瘽锛氬垪琛?/ 鏂板缓 / 鍏抽棴
+        .route(
+            "/api/terminals",
+            get(handlers::terminal_handler::list).post(handlers::terminal_handler::start),
+        )
+        .route(
+            "/api/terminals/{id}",
+            delete(handlers::terminal_handler::close),
+        )
+        // 浼氳瘽鍒楄〃瀹炴椂鍚屾锛坢eta WS锛孉pp 绾у崟杩炴帴锛?
         .route("/ws/meta", get(ws::meta_ws_handler))
-        // 终端 I/O（per-terminal WS）
+        // 缁堢 I/O锛坧er-terminal WS锛?
         .route("/ws/terminal/{id}", get(ws::terminal_ws_handler));
 
     #[cfg(debug_assertions)]
@@ -56,18 +124,16 @@ pub fn build_router(state: AppState) -> Router {
         const WEB_DIST_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../web/dist");
         const INDEX_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../web/dist/index.html");
         router.fallback_service(
-            ServeDir::new(WEB_DIST_PATH).not_found_service(ServeFile::new(INDEX_PATH))
+            ServeDir::new(WEB_DIST_PATH).not_found_service(ServeFile::new(INDEX_PATH)),
         )
     };
 
     #[cfg(not(debug_assertions))]
     let router = router.fallback(serve_embedded_file);
 
-    // 鉴权用 JWT（非 cookie），CSRF 无忧；放行任意 origin/method/header 方便手机端
-    // 从任意局域网 IP 同源或跨源访问（dev 时 vite :5173 → axum :9600 也走这里）。
-    router
-        .with_state(state)
-        .layer(CorsLayer::very_permissive())
+    // 閴存潈鐢?JWT锛堥潪 cookie锛夛紝CSRF 鏃犲咖锛涙斁琛屼换鎰?origin/method/header 鏂逛究鎵嬫満绔?
+    // 浠庝换鎰忓眬鍩熺綉 IP 鍚屾簮鎴栬法婧愯闂紙dev 鏃?vite :5173 鈫?axum :9600 涔熻蛋杩欓噷锛夈€?
+    router.with_state(state).layer(CorsLayer::very_permissive())
 }
 
 #[cfg(not(debug_assertions))]
@@ -78,14 +144,20 @@ async fn serve_embedded_file(req: axum::extract::Request) -> axum::response::Res
     match WEB_DIST.get_file(path) {
         Some(file) => {
             let content_type = guess_content_type(path);
-            ([(axum::http::header::CONTENT_TYPE, content_type)], file.contents()).into_response()
+            (
+                [(axum::http::header::CONTENT_TYPE, content_type)],
+                file.contents(),
+            )
+                .into_response()
         }
         None => {
             // SPA fallback: serve index.html for unknown paths
             match WEB_DIST.get_file("index.html") {
-                Some(index) => {
-                    ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], index.contents()).into_response()
-                }
+                Some(index) => (
+                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    index.contents(),
+                )
+                    .into_response(),
                 None => axum::http::StatusCode::NOT_FOUND.into_response(),
             }
         }
@@ -109,21 +181,29 @@ fn guess_content_type(path: &str) -> &'static str {
     }
 }
 
-pub async fn run_server(port: u16, jwt_secret: String, app_handle: tauri::AppHandle, mut shutdown_rx: watch::Receiver<bool>) {
-    let state = AppState { jwt_secret, app_handle };
+pub async fn run_server(
+    port: u16,
+    jwt_secret: String,
+    app_handle: tauri::AppHandle,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    let state = AppState {
+        jwt_secret,
+        app_handle,
+    };
     let app = build_router(state);
 
-    // 绑定 0.0.0.0：让同一局域网的手机端可访问（旧实现绑定 127.0.0.1 仅本机可达）。
+    // 缁戝畾 0.0.0.0锛氳鍚屼竴灞€鍩熺綉鐨勬墜鏈虹鍙闂紙鏃у疄鐜扮粦瀹?127.0.0.1 浠呮湰鏈哄彲杈撅級銆?
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[WebAPI] 端口 {} 绑定失败: {}", port, e);
+            eprintln!("[WebAPI] 绔彛 {} 缁戝畾澶辫触: {}", port, e);
             return;
         }
     };
 
-    eprintln!("[WebAPI] 服务器启动成功 http://{}", addr);
+    eprintln!("[WebAPI] 鏈嶅姟鍣ㄥ惎鍔ㄦ垚鍔?http://{}", addr);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             loop {

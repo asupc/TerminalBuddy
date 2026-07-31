@@ -1700,6 +1700,32 @@ textarea:focus-visible {
   font-size: 13px;
 }
 
+.nav-ai-link { color: var(--accent); font-size: 12px; text-decoration: none; white-space: nowrap; }
+.ai-web-screen { background: var(--canvas-soft); }
+.ai-web-body { width: min(100%, 840px); margin: 0 auto; padding: 16px; overflow-y: auto; }
+.ai-web-note { margin: 0 0 14px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.ai-web-field { display: grid; gap: 6px; color: var(--text-soft); font-size: 12px; }
+.ai-web-field select { min-height: 42px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text); }
+.ai-web-deliveries { display: grid; gap: 5px; margin: 14px 0; }
+.ai-web-deliveries button, .ai-web-task { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); color: var(--text); text-align: left; }
+.ai-web-deliveries button.active { border-color: var(--accent); }
+.ai-web-deliveries small, .ai-web-task small { margin-left: auto; color: var(--text-muted); }
+.ai-web-detail { display: grid; gap: 10px; }
+.ai-web-title { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.ai-web-title h1, .ai-web-detail h2 { margin: 0; font-size: 17px; }
+.ai-web-title p, .ai-web-decision p { margin: 5px 0 0; color: var(--text-soft); white-space: pre-wrap; line-height: 1.5; }
+.ai-web-title > span, .ai-web-task span { padding: 3px 6px; border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--accent); font-size: 11px; white-space: nowrap; }
+.ai-web-task { flex-wrap: wrap; }
+.ai-web-task strong { flex: 1; }
+.ai-web-task small { width: 100%; margin-left: 0; }
+.ai-web-decision { display: grid; gap: 8px; padding: 12px; border: 1px solid rgba(233, 184, 107, .55); border-radius: var(--radius-md); background: var(--surface); }
+.ai-web-decision small { color: var(--text-muted); }
+.ai-web-decision div { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-web-decision button { min-height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); }
+.ai-web-events { display: grid; gap: 6px; }
+.ai-web-events div { display: grid; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); }
+.ai-web-events small { color: var(--text-muted); font-size: 10px; }
+
 /* ===== 连接列表（profile-row） ===== */
 .profile-list {
   display: flex;

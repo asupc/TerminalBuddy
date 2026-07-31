@@ -1,7 +1,7 @@
 import { FC, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight, File, Folder, FolderOpen, FolderPlus, ListChevronsDownUp, Plus, RefreshCw } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
+import { listDirectory, openPath, openInExplorer, deletePath, renamePath, getFileSize, saveConfigNavWidth, saveFileNavWidth, getBackendAppSettings, type FileNode } from '../services/tauri';
 import { useAppStore } from '../stores/appStore';
 import { isTextFile } from '../utils/fileExtensions';
 import { getAppSettings } from '../utils/settings';
@@ -525,7 +525,11 @@ const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   );
 };
 
-export const FileNav: FC = () => {
+interface FileNavProps {
+  isSidebarMode: boolean;
+}
+
+export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const currentDirectory = useAppStore(s => s.currentDirectory);
   const fileSortBy = useAppStore(s => s.fileSortBy);
   const fileSortDir = useAppStore(s => s.fileSortDir);
@@ -645,11 +649,24 @@ export const FileNav: FC = () => {
   // 启动时从后端恢复宽度
   useEffect(() => {
     getBackendAppSettings().then(s => {
-      const w = s.fileNavWidth || 250;
+      const w = isSidebarMode ? s.configNavWidth || 250 : s.fileNavWidth || 250;
       setWidth(w);
       widthRef.current = w;
     }).catch(() => {});
-  }, []);
+  }, [isSidebarMode]);
+
+  useEffect(() => {
+    if (!isSidebarMode) return;
+    const syncWidth = (event: Event) => {
+      const width = (event as CustomEvent<number>).detail;
+      if (Number.isFinite(width)) {
+        setWidth(width);
+        widthRef.current = width;
+      }
+    };
+    window.addEventListener('navigation-width-changed', syncWidth);
+    return () => window.removeEventListener('navigation-width-changed', syncWidth);
+  }, [isSidebarMode]);
 
   const activateTreeDirectory = useCallback((path: string) => {
     setGitTargetOverride(path);
@@ -691,21 +708,25 @@ export const FileNav: FC = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         const newWidth = e.clientX - rect.left;
-        if (newWidth >= 150 && newWidth <= 500) {
+        if (newWidth >= 150 && newWidth <= (isSidebarMode ? 400 : 500)) {
           setWidth(newWidth);
           widthRef.current = newWidth;
         }
       }
     });
-  }, [isResizing]);
+  }, [isResizing, isSidebarMode]);
 
   const handleMouseUp = useCallback(() => {
     setIsResizing(false);
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
     }
-    saveFileNavWidth(widthRef.current).catch(() => {});
-  }, []);
+    const saveWidth = isSidebarMode ? saveConfigNavWidth : saveFileNavWidth;
+    saveWidth(widthRef.current).catch(() => {});
+    if (isSidebarMode) {
+      window.dispatchEvent(new CustomEvent('navigation-width-changed', { detail: widthRef.current }));
+    }
+  }, [isSidebarMode]);
 
   useEffect(() => {
     if (isResizing) {
@@ -932,7 +953,7 @@ export const FileNav: FC = () => {
   }
 
   return (
-    <div ref={containerRef} className={`file-nav ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
+    <div ref={containerRef} className={`file-nav${isSidebarMode ? ' sidebar-mode' : ''} ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
       <div className="panel-titlebar">
         <span className="panel-title">文件</span>
         <div className="file-nav-actions">
@@ -1046,6 +1067,8 @@ export const FileNav: FC = () => {
           </div>
         </Dialog>
       )}
+      {/* Git 状态只服务于当前打开的目录。文件导航隐藏时一并卸载状态栏并停止轮询，
+          避免为所有已配置目录持续创建 git.exe 进程。 */}
       {fileTreeVisible && rootDirectories.length > 0 && (
         <GitNavBar
           key={gitTargetDirectory.toLowerCase() || 'none'}

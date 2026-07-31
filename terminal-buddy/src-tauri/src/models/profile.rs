@@ -43,10 +43,16 @@ impl Profile {
     /// Decrypt password fields after loading from disk (transparent decryption).
     pub fn decrypt_sensitive_fields(&mut self) {
         self.ssh_password = self.ssh_password.as_ref().and_then(|p| {
-            decrypt_password(p).ok().filter(|d| !d.is_empty()).or_else(|| Some(p.clone()))
+            decrypt_password(p)
+                .ok()
+                .filter(|d| !d.is_empty())
+                .or_else(|| Some(p.clone()))
         });
         self.mstsc_password = self.mstsc_password.as_ref().and_then(|p| {
-            decrypt_password(p).ok().filter(|d| !d.is_empty()).or_else(|| Some(p.clone()))
+            decrypt_password(p)
+                .ok()
+                .filter(|d| !d.is_empty())
+                .or_else(|| Some(p.clone()))
         });
     }
 

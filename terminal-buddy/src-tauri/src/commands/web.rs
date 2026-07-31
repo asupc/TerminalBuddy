@@ -1,9 +1,9 @@
-use tauri::AppHandle;
-use crate::services::SettingsService;
 use crate::services::BotSettingsService;
+use crate::services::SettingsService;
 use crate::web::auth::generate_jwt_secret;
-use tokio::sync::watch;
 use std::sync::Mutex;
+use tauri::AppHandle;
+use tokio::sync::watch;
 
 /// Stores the shutdown signal sender so we can stop/restart the server
 pub(crate) static SHUTDOWN_TX: Mutex<Option<watch::Sender<bool>>> = Mutex::new(None);

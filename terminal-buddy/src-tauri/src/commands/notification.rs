@@ -24,7 +24,12 @@ fn notification_content(
         "question" => ("Claude Code 等待回答", "有一个问题需要你回答"),
         "completed" => ("Claude Code 任务已完成", "已完成当前任务"),
         "failed" => ("Claude Code 任务执行失败", "未能完成当前任务"),
-        _ => return Err(format!("无效的 Claude Code 通知类型: {}", notification_kind)),
+        _ => {
+            return Err(format!(
+                "无效的 Claude Code 通知类型: {}",
+                notification_kind
+            ))
+        }
     };
     let title = custom_title
         .map(str::trim)
@@ -81,6 +86,33 @@ pub fn show_claude_code_notification(
         })
         .show()
         .map_err(|error| format!("发送 Claude Code 通知失败: {}", error))
+}
+
+pub fn show_ai_delivery_notification(
+    app: AppHandle,
+    delivery_id: String,
+    question: String,
+) -> Result<(), String> {
+    let app_id = app.config().identifier.clone();
+    ensure_portable_app_id(&app_id)?;
+    let activated_app = app.clone();
+    Toast::new(&app_id)
+        .title("AI 交付等待决策")
+        .text1(question.trim())
+        .sound(Some(Sound::Default))
+        .duration(Duration::Short)
+        .add_button("打开交付", "open-ai-delivery")
+        .on_activated(move |_| {
+            if let Some(window) = activated_app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            let _ = activated_app.emit("ai-delivery-notification-activated", delivery_id.clone());
+            Ok(())
+        })
+        .show()
+        .map_err(|error| format!("发送 AI 交付通知失败: {}", error))
 }
 
 #[cfg(test)]

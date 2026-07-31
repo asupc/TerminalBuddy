@@ -1,4 +1,4 @@
-use crate::services::PathService;
+use crate::services::{DatabaseService, PathService};
 use std::fs;
 use std::path::PathBuf;
 
@@ -13,12 +13,14 @@ impl ClientDataService {
 
     pub fn read(key: &str) -> Result<Option<String>, String> {
         Self::validate_key(key)?;
+        if key == "command_history" {
+            return DatabaseService::read_command_history();
+        }
         let path = Self::get_client_data_dir().join(format!("{}.json", key));
         if !path.exists() {
             return Ok(None);
         }
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("读取文件失败: {}", e))?;
+        let content = fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
         Ok(Some(content))
     }
 
@@ -27,11 +29,15 @@ impl ClientDataService {
         // Validate JSON
         serde_json::from_str::<serde_json::Value>(content)
             .map_err(|e| format!("无效的JSON: {}", e))?;
-        let pretty = serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(content).unwrap())
-            .map_err(|e| format!("格式化JSON失败: {}", e))?;
+        let pretty = serde_json::to_string_pretty(
+            &serde_json::from_str::<serde_json::Value>(content).unwrap(),
+        )
+        .map_err(|e| format!("格式化JSON失败: {}", e))?;
+        if key == "command_history" {
+            return DatabaseService::save_command_history(&pretty);
+        }
         let path = Self::get_client_data_dir().join(format!("{}.json", key));
-        fs::write(&path, pretty)
-            .map_err(|e| format!("写入文件失败: {}", e))?;
+        fs::write(&path, pretty).map_err(|e| format!("写入文件失败: {}", e))?;
         Ok(())
     }
 
@@ -39,7 +45,10 @@ impl ClientDataService {
         if key.is_empty() {
             return Err("key 不能为空".to_string());
         }
-        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        if !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
             return Err("key 只能包含字母、数字、下划线和连字符".to_string());
         }
         Ok(())

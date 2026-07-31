@@ -9,6 +9,10 @@
   position: relative;
 }
 
+.config-nav.sidebar-mode {
+  max-width: 400px;
+}
+
 .config-nav.collapsed {
   width: 0 !important;
   min-width: 0 !important;

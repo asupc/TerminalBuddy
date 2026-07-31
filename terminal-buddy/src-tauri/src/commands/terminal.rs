@@ -1,28 +1,28 @@
-use tauri::{command, AppHandle, State, Emitter, Manager};
-use std::sync::{mpsc, Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::models::web_api::TerminalInfo;
+use crate::models::TerminalLoadingMode;
+use crate::models::TerminalOwner;
+use crate::services::ssh_session_service::SshSessionService;
+use crate::services::ClaudeHookService;
+use crate::services::PathService;
+use crate::services::ProfileService;
+use crate::services::SettingsService;
+use crate::services::VsCodeTerminalProcess;
+use crate::services::WebServiceState;
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use serde::Deserialize;
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::collections::HashSet;
+use std::collections::VecDeque;
+use std::fs;
 use std::io::{Read, Write};
-use uuid::Uuid;
-use portable_pty::{native_pty_system, CommandBuilder, PtySize, Child, MasterPty};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use std::fs;
-use std::path::PathBuf;
-use serde::Deserialize;
+use tauri::{command, AppHandle, Emitter, Manager, State};
 use tokio::sync::broadcast;
-use crate::models::TerminalOwner;
-use crate::models::TerminalLoadingMode;
-use crate::models::web_api::TerminalInfo;
-use crate::services::ProfileService;
-use crate::services::PathService;
-use crate::services::SettingsService;
-use crate::services::WebServiceState;
-use crate::services::VsCodeTerminalProcess;
-use crate::services::ClaudeHookService;
-use crate::services::ssh_session_service::SshSessionService;
+use uuid::Uuid;
 
 const TERMINAL_DATA_IDLE_BUFFER_INTERVAL: Duration = Duration::from_millis(25);
 const TERMINAL_DATA_MAX_BUFFER_INTERVAL: Duration = Duration::from_millis(50);
@@ -75,7 +75,16 @@ impl TerminalOutputBuffer {
 
 /// 转义 shell 特殊字符，防止命令注入
 fn shell_escape(s: &str) -> String {
-    if s.contains(|c: char| c == ' ' || c == '"' || c == '\'' || c == '&' || c == '|' || c == '>' || c == '<' || c == '^') {
+    if s.contains(|c: char| {
+        c == ' '
+            || c == '"'
+            || c == '\''
+            || c == '&'
+            || c == '|'
+            || c == '>'
+            || c == '<'
+            || c == '^'
+    }) {
         format!("\"{}\"", s.replace('"', "\\\""))
     } else {
         s.to_string()
@@ -108,6 +117,7 @@ pub struct TerminalInstance {
     pub id: String,
     pub profile_id: String,
     pub display_name: String,
+    pub group_override: Option<String>,
     pub owner: TerminalOwner,
     pub extra_param_tag: Option<String>,
     pub extra_param_tag_color: Option<String>,
@@ -237,13 +247,8 @@ fn spawn_terminal_backend(
     String,
 > {
     if *mode == TerminalLoadingMode::VsCode {
-        let (process, reader) = VsCodeTerminalProcess::spawn(
-            app,
-            rows,
-            cols,
-            startup_path,
-            env_vars,
-        )?;
+        let (process, reader) =
+            VsCodeTerminalProcess::spawn(app, rows, cols, startup_path, env_vars)?;
         return Ok((
             TerminalBackend::VsCode(process),
             reader,
@@ -390,7 +395,12 @@ fn spawn_output_forwarder(
         // 2. Mark the instance exited so it drops out of the mobile sessions list.
         {
             let ts = app.state::<TerminalService>();
-            if let Some(inst) = ts.instances.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&terminal_id) {
+            if let Some(inst) = ts
+                .instances
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&terminal_id)
+            {
                 inst.exited.store(true, Ordering::SeqCst);
             }
             // 3. Drop all output subscribers for this terminal → their recv() returns None →
@@ -434,48 +444,82 @@ impl TerminalService {
             TerminalOwner,
             Option<String>,
             Option<String>,
+            Option<String>,
         )> = {
             let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            instances.values()
+            instances
+                .values()
                 .filter(|inst| !inst.exited.load(Ordering::SeqCst))
-                .map(|inst| (
-                    inst.id.clone(),
-                    inst.profile_id.clone(),
-                    inst.display_name.clone(),
-                    inst.backend.loading_mode().to_string(),
-                    inst.owner.clone(),
-                    inst.extra_param_tag.clone(),
-                    inst.extra_param_tag_color.clone(),
-                ))
+                .map(|inst| {
+                    (
+                        inst.id.clone(),
+                        inst.profile_id.clone(),
+                        inst.display_name.clone(),
+                        inst.backend.loading_mode().to_string(),
+                        inst.owner.clone(),
+                        inst.group_override.clone(),
+                        inst.extra_param_tag.clone(),
+                        inst.extra_param_tag_color.clone(),
+                    )
+                })
                 .collect()
         };
-        entries.into_iter().map(|(
-            id,
-            profile_id,
-            display_name,
-            loading_mode,
-            owner,
-            extra_param_tag,
-            extra_param_tag_color,
-        )| {
-            let profile = ProfileService::get_profile(&profile_id).ok();
-            TerminalInfo {
-                id,
-                group: profile.as_ref().map(|p| p.group.clone()).unwrap_or_default(),
-                profile_name: display_name,
-                terminal_type: profile.as_ref().map(|p| p.terminal_type.clone()).unwrap_or_default(),
-                loading_mode,
-                profile_id,
-                owner,
-                extra_param_tag,
-                extra_param_tag_color,
-            }
-        }).collect()
+        entries
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    profile_id,
+                    display_name,
+                    loading_mode,
+                    owner,
+                    group_override,
+                    extra_param_tag,
+                    extra_param_tag_color,
+                )| {
+                    let profile = ProfileService::get_profile(&profile_id).ok();
+                    TerminalInfo {
+                        id,
+                        group: group_override.unwrap_or_else(|| {
+                            profile
+                                .as_ref()
+                                .map(|p| p.group.clone())
+                                .unwrap_or_default()
+                        }),
+                        profile_name: display_name,
+                        terminal_type: profile
+                            .as_ref()
+                            .map(|p| p.terminal_type.clone())
+                            .unwrap_or_default(),
+                        loading_mode,
+                        profile_id,
+                        owner,
+                        extra_param_tag,
+                        extra_param_tag_color,
+                    }
+                },
+            )
+            .collect()
     }
 
-    pub fn create_terminal(&self, profile_id: &str, display_name: Option<&str>, extra_startup_params: Option<&str>, initial_rows: u16, initial_cols: u16, startup_path_override: Option<&str>, extra_param_tag: Option<&str>, extra_param_tag_color: Option<&str>, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
+    pub fn create_terminal(
+        &self,
+        profile_id: &str,
+        display_name: Option<&str>,
+        extra_startup_params: Option<&str>,
+        initial_rows: u16,
+        initial_cols: u16,
+        startup_path_override: Option<&str>,
+        extra_param_tag: Option<&str>,
+        extra_param_tag_color: Option<&str>,
+        app: AppHandle,
+        owner: TerminalOwner,
+    ) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
-        log_debug(&format!("[create] start, id={}, profile_id={}", terminal_id, profile_id));
+        log_debug(&format!(
+            "[create] start, id={}, profile_id={}",
+            terminal_id, profile_id
+        ));
 
         // Load profile settings
         let profile = ProfileService::get_profile(profile_id).ok();
@@ -484,9 +528,15 @@ impl TerminalService {
             .map(str::to_string)
             .or_else(|| profile.as_ref().map(|p| p.name.clone()))
             .unwrap_or_default();
-        let terminal_type = profile.as_ref().map_or("powershell", |p| p.terminal_type.as_str());
+        let terminal_type = profile
+            .as_ref()
+            .map_or("powershell", |p| p.terminal_type.as_str());
         let profile_startup_path = profile.as_ref().and_then(|p| {
-            if p.startup_path.is_empty() { None } else { Some(p.startup_path.clone()) }
+            if p.startup_path.is_empty() {
+                None
+            } else {
+                Some(p.startup_path.clone())
+            }
         });
         let startup_path_override = startup_path_override
             .map(str::trim)
@@ -494,12 +544,14 @@ impl TerminalService {
             .filter(|path| std::path::Path::new(path).is_dir())
             .map(str::to_string);
         let startup_path = startup_path_override.or(profile_startup_path);
-        let startup_commands: Vec<String> = profile.as_ref()
+        let startup_commands: Vec<String> = profile
+            .as_ref()
             .map(|p| p.startup_commands.clone())
             .unwrap_or_default();
         let startup_commands: Vec<String> = if let Some(extra) = extra_startup_params {
             if !extra.is_empty() {
-                startup_commands.into_iter()
+                startup_commands
+                    .into_iter()
                     .map(|cmd| format!("{} {}", cmd, extra))
                     .collect()
             } else {
@@ -508,8 +560,14 @@ impl TerminalService {
         } else {
             startup_commands
         };
-        let mut env_vars: Vec<(String, String)> = profile.as_ref()
-            .map(|p| p.environment_variables.iter().map(|(k,v)| (k.clone(), v.clone())).collect())
+        let mut env_vars: Vec<(String, String)> = profile
+            .as_ref()
+            .map(|p| {
+                p.environment_variables
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
             .unwrap_or_default();
         if !env_vars
             .iter()
@@ -520,16 +578,27 @@ impl TerminalService {
             }
         }
         let hook_token = ClaudeHookService::register_terminal(&terminal_id);
-        env_vars.push(("TERMINAL_BUDDY_TERMINAL_ID".to_string(), terminal_id.clone()));
+        env_vars.push((
+            "TERMINAL_BUDDY_TERMINAL_ID".to_string(),
+            terminal_id.clone(),
+        ));
         env_vars.push(("TERMINAL_BUDDY_HOOK_TOKEN".to_string(), hook_token));
         env_vars.push((
             "TERMINAL_BUDDY_HOOK_PORT".to_string(),
             ClaudeHookService::server_port().to_string(),
         ));
 
-        log_debug(&format!("[create] type={}, path={:?}, commands={}, envs={}",
-            terminal_type, startup_path, startup_commands.len(), env_vars.len()));
-        crate::boot_log(format!("[create_terminal] start type={} profile={}", terminal_type, profile_id));
+        log_debug(&format!(
+            "[create] type={}, path={:?}, commands={}, envs={}",
+            terminal_type,
+            startup_path,
+            startup_commands.len(),
+            env_vars.len()
+        ));
+        crate::boot_log(format!(
+            "[create_terminal] start type={} profile={}",
+            terminal_type, profile_id
+        ));
 
         let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
         let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
@@ -555,6 +624,7 @@ impl TerminalService {
             id: terminal_id.clone(),
             profile_id: profile_id.to_string(),
             display_name,
+            group_override: None,
             owner,
             extra_param_tag: extra_param_tag.map(str::to_string),
             extra_param_tag_color: extra_param_tag_color.map(str::to_string),
@@ -589,30 +659,57 @@ impl TerminalService {
                 let host = p.and_then(|p| p.ssh_host.clone()).unwrap_or_default();
                 let port = p.and_then(|p| p.ssh_port).unwrap_or(22);
                 let user = p.and_then(|p| p.ssh_user.clone()).unwrap_or_default();
-                let auth_type = p.and_then(|p| p.ssh_auth_type.clone()).unwrap_or_else(|| "key".to_string());
+                let auth_type = p
+                    .and_then(|p| p.ssh_auth_type.clone())
+                    .unwrap_or_else(|| "key".to_string());
                 let key_path = p.and_then(|p| p.ssh_key_path.clone()).unwrap_or_default();
                 let ssh_cmd = if auth_type == "key" && !key_path.is_empty() {
-                    format!("ssh -i {} -p {} {}@{}",
-                        shell_escape(&key_path), port,
-                        shell_escape(&user), shell_escape(&host))
+                    format!(
+                        "ssh -i {} -p {} {}@{}",
+                        shell_escape(&key_path),
+                        port,
+                        shell_escape(&user),
+                        shell_escape(&host)
+                    )
                 } else {
-                    format!("ssh -p {} {}@{}",
-                        port, shell_escape(&user), shell_escape(&host))
+                    format!(
+                        "ssh -p {} {}@{}",
+                        port,
+                        shell_escape(&user),
+                        shell_escape(&host)
+                    )
                 };
                 vec![ssh_cmd]
             }
             "docker" => {
-                let container = profile.as_ref()
+                let container = profile
+                    .as_ref()
                     .and_then(|p| p.docker_container_name.clone())
                     .or_else(|| profile.as_ref().and_then(|p| p.docker_container_id.clone()))
                     .unwrap_or_default();
-                vec![format!("docker exec -it {} cmd.exe", shell_escape(&container))]
+                vec![format!(
+                    "docker exec -it {} cmd.exe",
+                    shell_escape(&container)
+                )]
             }
             "k8s" => {
-                let ns = profile.as_ref().and_then(|p| p.k8s_namespace.clone()).unwrap_or_default();
-                let pod = profile.as_ref().and_then(|p| p.k8s_pod_name.clone()).unwrap_or_default();
-                let container = profile.as_ref().and_then(|p| p.k8s_container_name.clone()).unwrap_or_default();
-                let mut cmd = format!("kubectl exec -it -n {} {}", shell_escape(&ns), shell_escape(&pod));
+                let ns = profile
+                    .as_ref()
+                    .and_then(|p| p.k8s_namespace.clone())
+                    .unwrap_or_default();
+                let pod = profile
+                    .as_ref()
+                    .and_then(|p| p.k8s_pod_name.clone())
+                    .unwrap_or_default();
+                let container = profile
+                    .as_ref()
+                    .and_then(|p| p.k8s_container_name.clone())
+                    .unwrap_or_default();
+                let mut cmd = format!(
+                    "kubectl exec -it -n {} {}",
+                    shell_escape(&ns),
+                    shell_escape(&pod)
+                );
                 if !container.is_empty() {
                     cmd = format!("{} -c {} -- cmd.exe", cmd, shell_escape(&container));
                 } else {
@@ -635,7 +732,11 @@ impl TerminalService {
             thread::spawn(move || {
                 // Wait for cmd.exe to initialize
                 thread::sleep(std::time::Duration::from_millis(300));
-                log_debug(&format!("[init-cmds] sending {} commands for {}", commands.len(), tid));
+                log_debug(&format!(
+                    "[init-cmds] sending {} commands for {}",
+                    commands.len(),
+                    tid
+                ));
 
                 let mut instances_lock = instances.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(instance) = instances_lock.get_mut(&tid) {
@@ -683,7 +784,9 @@ impl TerminalService {
 
         let changed = {
             let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            let instance = instances.get_mut(id).ok_or("Terminal not found".to_string())?;
+            let instance = instances
+                .get_mut(id)
+                .ok_or("Terminal not found".to_string())?;
             if instance.display_name == display_name {
                 false
             } else {
@@ -697,7 +800,13 @@ impl TerminalService {
         Ok(())
     }
 
-    pub fn resize_terminal(&self, id: &str, rows: u16, cols: u16, allow_shrink: bool) -> Result<(), String> {
+    pub fn resize_terminal(
+        &self,
+        id: &str,
+        rows: u16,
+        cols: u16,
+        allow_shrink: bool,
+    ) -> Result<(), String> {
         // 与 web/ws.rs 的 Resize 处理对齐：clamp 到 1..=500，避免 0 或异常尺寸
         // 传入 ConPTY 触发底层异常（前端在布局过渡帧可能短暂算出 0）。
         let rows = rows.clamp(1, 500);
@@ -718,7 +827,10 @@ impl TerminalService {
                 instance.backend.resize(new_rows, new_cols)?;
                 instance.current_rows = new_rows;
                 instance.current_cols = new_cols;
-                log_debug(&format!("[resize] id={} rows={} cols={} allow_shrink={}", id, new_rows, new_cols, allow_shrink));
+                log_debug(&format!(
+                    "[resize] id={} rows={} cols={} allow_shrink={}",
+                    id, new_rows, new_cols, allow_shrink
+                ));
             }
             Ok(())
         } else {
@@ -728,7 +840,9 @@ impl TerminalService {
 
     pub fn acknowledge_terminal_output(&self, id: &str, char_count: u32) -> Result<(), String> {
         let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-        let instance = instances.get_mut(id).ok_or("Terminal not found".to_string())?;
+        let instance = instances
+            .get_mut(id)
+            .ok_or("Terminal not found".to_string())?;
         instance.backend.acknowledge_output(char_count)
     }
 
@@ -742,7 +856,8 @@ impl TerminalService {
         // Get buffer reference while holding instances lock briefly
         let buf_arc = {
             let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            instances.get(id)
+            instances
+                .get(id)
                 .map(|inst| inst.output_buffer.clone())
                 .ok_or("Terminal not found".to_string())?
         };
@@ -753,7 +868,8 @@ impl TerminalService {
     pub fn peek_terminal_output(&self, id: &str) -> Result<String, String> {
         let buf_arc = {
             let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            instances.get(id)
+            instances
+                .get(id)
                 .map(|inst| inst.output_buffer.clone())
                 .ok_or("Terminal not found".to_string())?
         };
@@ -779,13 +895,19 @@ impl TerminalService {
     pub fn close_terminal(&self, id: &str) -> Result<(), String> {
         let instance = {
             let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            instances.remove(id).ok_or("Terminal not found".to_string())?
+            instances
+                .remove(id)
+                .ok_or("Terminal not found".to_string())?
         };
         self.schedule_terminal_cleanup(id, instance);
         Ok(())
     }
 
-    pub fn close_terminal_with_check(&self, id: &str, required_owner: Option<TerminalOwner>) -> Result<(), String> {
+    pub fn close_terminal_with_check(
+        &self,
+        id: &str,
+        required_owner: Option<TerminalOwner>,
+    ) -> Result<(), String> {
         let instance = {
             let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             let instance = instances.get(id).ok_or("Terminal not found".to_string())?;
@@ -794,7 +916,9 @@ impl TerminalService {
                     return Err("无权限关闭此终端".to_string());
                 }
             }
-            instances.remove(id).ok_or("Terminal not found".to_string())?
+            instances
+                .remove(id)
+                .ok_or("Terminal not found".to_string())?
         };
         self.schedule_terminal_cleanup(id, instance);
         Ok(())
@@ -817,10 +941,26 @@ impl TerminalService {
         });
     }
 
-    pub fn create_blank_terminal(&self, terminal_type: &str, display_name: Option<&str>, initial_rows: u16, initial_cols: u16, startup_path: Option<&str>, app: AppHandle, owner: TerminalOwner) -> Result<String, String> {
+    pub fn create_blank_terminal(
+        &self,
+        terminal_type: &str,
+        display_name: Option<&str>,
+        group_override: Option<&str>,
+        initial_rows: u16,
+        initial_cols: u16,
+        startup_path: Option<&str>,
+        app: AppHandle,
+        owner: TerminalOwner,
+    ) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
-        log_debug(&format!("[create-blank] start, id={}, type={}", terminal_id, terminal_type));
-        crate::boot_log(format!("[create_blank_terminal] start type={}", terminal_type));
+        log_debug(&format!(
+            "[create-blank] start, id={}, type={}",
+            terminal_id, terminal_type
+        ));
+        crate::boot_log(format!(
+            "[create_blank_terminal] start type={}",
+            terminal_type
+        ));
         let startup_path = startup_path
             .map(str::trim)
             .filter(|path| !path.is_empty())
@@ -838,19 +978,20 @@ impl TerminalService {
         let display_name = display_name
             .filter(|name| !name.trim().is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| {
-                match effective_type {
-                    "cmd" => "CMD".to_string(),
-                    "pwsh" => "PowerShell 7".to_string(),
-                    _ => "PowerShell".to_string(),
-                }
+            .unwrap_or_else(|| match effective_type {
+                "cmd" => "CMD".to_string(),
+                "pwsh" => "PowerShell 7".to_string(),
+                _ => "PowerShell".to_string(),
             });
         let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
         let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
         let loading_mode = SettingsService::get_settings().terminal_loading_mode;
         let hook_token = ClaudeHookService::register_terminal(&terminal_id);
         let mut env_vars = vec![
-            ("TERMINAL_BUDDY_TERMINAL_ID".to_string(), terminal_id.clone()),
+            (
+                "TERMINAL_BUDDY_TERMINAL_ID".to_string(),
+                terminal_id.clone(),
+            ),
             ("TERMINAL_BUDDY_HOOK_TOKEN".to_string(), hook_token),
             (
                 "TERMINAL_BUDDY_HOOK_PORT".to_string(),
@@ -881,6 +1022,10 @@ impl TerminalService {
             id: terminal_id.clone(),
             profile_id: String::new(),
             display_name,
+            group_override: group_override
+                .map(str::trim)
+                .filter(|group| !group.is_empty())
+                .map(str::to_string),
             owner,
             backend,
             output_buffer: output_buffer.clone(),
@@ -1019,7 +1164,9 @@ pub fn get_terminal_loading_mode(
     id: String,
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.terminal_loading_mode(&id).map(str::to_string)
+    terminal_service
+        .terminal_loading_mode(&id)
+        .map(str::to_string)
 }
 
 #[command]
@@ -1072,6 +1219,7 @@ pub async fn start_blank_terminal(
         terminal_service.create_blank_terminal(
             &terminal_type,
             display_name.as_deref(),
+            None,
             initial_rows,
             initial_cols,
             startup_path.as_deref(),
@@ -1092,14 +1240,16 @@ fn mstsc_processes() -> &'static Mutex<HashMap<String, u32>> {
 
 /// 检查进程是否仍在运行
 fn is_process_running(pid: u32) -> bool {
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
     use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
 
     unsafe {
         if let Ok(handle) = OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) {
             let mut exit_code: u32 = 0;
-            let running = windows::Win32::System::Threading::GetExitCodeProcess(handle, &mut exit_code).is_ok()
-                && exit_code == 259; // STILL_ACTIVE
+            let running =
+                windows::Win32::System::Threading::GetExitCodeProcess(handle, &mut exit_code)
+                    .is_ok()
+                    && exit_code == 259; // STILL_ACTIVE
             let _ = CloseHandle(handle);
             running
         } else {
@@ -1110,10 +1260,10 @@ fn is_process_running(pid: u32) -> bool {
 
 /// 将指定 PID 的窗口提到前台
 fn bring_window_to_front(pid: u32) -> bool {
+    use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow,
     };
-    use windows::Win32::Foundation::{HWND, LPARAM};
 
     struct EnumCtx {
         target_pid: u32,
@@ -1131,7 +1281,10 @@ fn bring_window_to_front(pid: u32) -> bool {
         windows::core::BOOL(1) // continue
     }
 
-    let mut ctx = EnumCtx { target_pid: pid, found_hwnd: None };
+    let mut ctx = EnumCtx {
+        target_pid: pid,
+        found_hwnd: None,
+    };
     unsafe {
         let _ = EnumWindows(Some(enum_callback), LPARAM(&mut ctx as *mut _ as isize));
         if let Some(hwnd) = ctx.found_hwnd {
@@ -1170,10 +1323,12 @@ fn store_mstsc_credential(host: &str, user: &str, password: &str) -> windows::co
 
 #[command]
 pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
-    let profile = ProfileService::get_profile(&profile_id)
-        .map_err(|e| format!("配置不存在: {}", e))?;
+    let profile =
+        ProfileService::get_profile(&profile_id).map_err(|e| format!("配置不存在: {}", e))?;
 
-    let host = profile.mstsc_host.as_ref()
+    let host = profile
+        .mstsc_host
+        .as_ref()
         .filter(|h| !h.is_empty())
         .ok_or_else(|| "请先配置远程主机地址".to_string())?;
 
@@ -1248,7 +1403,10 @@ struct ClaudeSessionFile {
 
 /// 获取终端进程的 PID
 #[command]
-pub fn get_terminal_process_id(terminal_id: String, service: State<'_, TerminalService>) -> Result<Option<u32>, String> {
+pub fn get_terminal_process_id(
+    terminal_id: String,
+    service: State<'_, TerminalService>,
+) -> Result<Option<u32>, String> {
     let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(instance) = instances.get(&terminal_id) {
         Ok(instance.backend.process_id())
@@ -1260,10 +1418,11 @@ pub fn get_terminal_process_id(terminal_id: String, service: State<'_, TerminalS
 /// 一次性获取所有进程的父子关系，返回 (pid, parent_pid, name)
 /// 使用 Windows API CreateToolhelp32Snapshot（几十毫秒），远快于 PowerShell/WMIC
 fn get_all_processes() -> Vec<(u32, u32, String)> {
-    use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
-    };
     use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
 
     let mut result = Vec::new();
     unsafe {
@@ -1277,7 +1436,11 @@ fn get_all_processes() -> Vec<(u32, u32, String)> {
             loop {
                 let pid = entry.th32ProcessID;
                 let ppid = entry.th32ParentProcessID;
-                let name_end = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+                let name_end = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
                 let name = String::from_utf16_lossy(&entry.szExeFile[..name_end]).to_lowercase();
                 result.push((pid, ppid, name));
                 if Process32NextW(snapshot, &mut entry).is_err() {
@@ -1292,7 +1455,11 @@ fn get_all_processes() -> Vec<(u32, u32, String)> {
 
 /// 在进程树中查找 Claude Code 进程（基于预加载的进程列表）
 /// 只匹配进程名包含 "claude" 的进程，排除 node（避免 IDE/codegraph 误报）
-fn find_claude_pids_in_tree(parent_pid: u32, all_processes: &[(u32, u32, String)], visited: &mut HashSet<u32>) -> Vec<u32> {
+fn find_claude_pids_in_tree(
+    parent_pid: u32,
+    all_processes: &[(u32, u32, String)],
+    visited: &mut HashSet<u32>,
+) -> Vec<u32> {
     let mut result = Vec::new();
     if visited.contains(&parent_pid) {
         return result;
@@ -1304,7 +1471,10 @@ fn find_claude_pids_in_tree(parent_pid: u32, all_processes: &[(u32, u32, String)
             if name.contains("claude") {
                 // 检查这个进程是否有对应的 session 文件
                 let home = dirs::home_dir().unwrap_or_default();
-                let session_file = home.join(".claude").join("sessions").join(format!("{}.json", pid));
+                let session_file = home
+                    .join(".claude")
+                    .join("sessions")
+                    .join(format!("{}.json", pid));
                 if session_file.exists() {
                     result.push(pid);
                 }
@@ -1320,11 +1490,15 @@ fn find_claude_pids_in_tree(parent_pid: u32, all_processes: &[(u32, u32, String)
 /// 通过终端进程树查找 Claude Code 会话 ID
 /// 不限制 status，返回 updatedAt 最大的会话（最近活跃的）
 #[command]
-pub fn get_claude_session_for_terminal(terminal_id: String, service: State<'_, TerminalService>) -> Result<Option<String>, String> {
+pub fn get_claude_session_for_terminal(
+    terminal_id: String,
+    service: State<'_, TerminalService>,
+) -> Result<Option<String>, String> {
     // 获取终端进程的 PID
     let terminal_pid = {
         let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
-        instances.get(&terminal_id)
+        instances
+            .get(&terminal_id)
             .and_then(|instance| instance.backend.process_id())
     };
 
@@ -1371,9 +1545,11 @@ pub fn get_claude_sessions_for_terminals(
     // 1. 一次性获取所有终端的 PID
     let terminal_pids: Vec<(String, u32)> = {
         let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
-        terminal_ids.iter()
+        terminal_ids
+            .iter()
             .filter_map(|id| {
-                instances.get(id)
+                instances
+                    .get(id)
                     .and_then(|instance| instance.backend.process_id())
                     .map(|pid| (id.clone(), pid))
             })
@@ -1432,16 +1608,20 @@ pub fn get_claude_session_for_cwd(cwd: String) -> Result<Option<String>, String>
     let cwd_normalized = cwd.replace('/', "\\").to_lowercase();
     let mut best: Option<(String, u64)> = None;
 
-    let entries = fs::read_dir(&sessions_dir)
-        .map_err(|e| format!("读取 Claude sessions 目录失败: {}", e))?;
+    let entries =
+        fs::read_dir(&sessions_dir).map_err(|e| format!("读取 Claude sessions 目录失败: {}", e))?;
 
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().map_or(true, |ext| ext != "json") {
             continue;
         }
-        let Ok(content) = fs::read_to_string(&path) else { continue };
-        let Ok(session) = serde_json::from_str::<ClaudeSessionFile>(&content) else { continue };
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(session) = serde_json::from_str::<ClaudeSessionFile>(&content) else {
+            continue;
+        };
 
         // 只考虑 cwd 匹配的会话（不限制 status，返回最近活跃的）
         let session_cwd = session.cwd.replace('/', "\\").to_lowercase();

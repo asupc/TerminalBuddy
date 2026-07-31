@@ -203,7 +203,10 @@ struct GitCommandOutput {
 
 fn git_cwd(path: &str) -> PathBuf {
     let path = PathBuf::from(path);
-    if fs::metadata(&path).map(|meta| meta.is_file()).unwrap_or(false) {
+    if fs::metadata(&path)
+        .map(|meta| meta.is_file())
+        .unwrap_or(false)
+    {
         path.parent().map(Path::to_path_buf).unwrap_or(path)
     } else {
         path
@@ -242,9 +245,7 @@ fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<GitCommandOutput, String
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("无法运行 git：{}", e))?;
+    let output = cmd.output().map_err(|e| format!("无法运行 git：{}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -277,9 +278,7 @@ fn run_git_stdout_raw(cwd: &Path, args: &[&str]) -> Result<String, String> {
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("无法运行 git：{}", e))?;
+    let output = cmd.output().map_err(|e| format!("无法运行 git：{}", e))?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -346,8 +345,7 @@ where
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(size) => {
-                    let chunk = String::from_utf8_lossy(&buffer[..size])
-                        .replace('\r', "\n");
+                    let chunk = String::from_utf8_lossy(&buffer[..size]).replace('\r', "\n");
                     let _ = tx.send(chunk);
                 }
                 Err(_) => break,
@@ -376,9 +374,7 @@ fn run_git_streaming(
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("无法运行 git：{}", e))?;
+    let mut child = cmd.spawn().map_err(|e| format!("无法运行 git：{}", e))?;
 
     let (tx, rx) = mpsc::channel::<String>();
     let mut readers = Vec::new();
@@ -581,7 +577,8 @@ fn parse_history_refs(
             let name = parts.next()?.trim();
             let object_name = parts.next()?.trim();
             let peeled_object_name = parts.next().unwrap_or("").trim();
-            let revision = if full_name.starts_with("refs/tags/") && !peeled_object_name.is_empty() {
+            let revision = if full_name.starts_with("refs/tags/") && !peeled_object_name.is_empty()
+            {
                 peeled_object_name
             } else {
                 object_name
@@ -691,7 +688,11 @@ fn history_log_revisions(
     let mut revisions = vec![head.to_string()];
 
     for git_ref in [upstream_ref, base_ref].into_iter().flatten() {
-        if !git_ref.revision.is_empty() && !revisions.iter().any(|revision| revision == &git_ref.revision) {
+        if !git_ref.revision.is_empty()
+            && !revisions
+                .iter()
+                .any(|revision| revision == &git_ref.revision)
+        {
             revisions.push(git_ref.revision.clone());
         }
     }
@@ -712,9 +713,12 @@ fn mark_configured_history_base_ref(
     let configured_ref = run_git(root, &["config", "--get", &config_key])
         .ok()
         .filter(|value| !value.is_empty())?;
-    let full_name = run_git(root, &["rev-parse", "--symbolic-full-name", &configured_ref])
-        .ok()
-        .filter(|value| value.starts_with("refs/remotes/"))?;
+    let full_name = run_git(
+        root,
+        &["rev-parse", "--symbolic-full-name", &configured_ref],
+    )
+    .ok()
+    .filter(|value| value.starts_with("refs/remotes/"))?;
 
     if upstream_ref.is_some_and(|upstream| upstream.full_name == full_name) {
         return None;
@@ -723,9 +727,9 @@ fn mark_configured_history_base_ref(
     let revision = run_git(root, &["rev-parse", "--verify", &configured_ref])
         .ok()
         .filter(|value| !value.is_empty())?;
-    let base_ref = refs.iter_mut().find(|git_ref| {
-        git_ref.full_name == full_name && git_ref.revision == revision
-    })?;
+    let base_ref = refs
+        .iter_mut()
+        .find(|git_ref| git_ref.full_name == full_name && git_ref.revision == revision)?;
 
     base_ref.kind = "base".to_string();
     base_ref.is_base = true;
@@ -889,8 +893,7 @@ fn make_history_file(
     status_code: String,
     stats: &[GitHistoryNumstat],
 ) -> GitHistoryFile {
-    let (additions, deletions, binary) =
-        lookup_history_numstat(stats, &path, old_path.as_deref());
+    let (additions, deletions, binary) = lookup_history_numstat(stats, &path, old_path.as_deref());
 
     GitHistoryFile {
         extension: file_extension(&path),
@@ -904,7 +907,10 @@ fn make_history_file(
     }
 }
 
-fn parse_history_files(name_status_output: &str, stats: &[GitHistoryNumstat]) -> Vec<GitHistoryFile> {
+fn parse_history_files(
+    name_status_output: &str,
+    stats: &[GitHistoryNumstat],
+) -> Vec<GitHistoryFile> {
     let tokens = name_status_output
         .split('\0')
         .filter(|token| !token.is_empty())
@@ -944,7 +950,11 @@ fn parse_history_files(name_status_output: &str, stats: &[GitHistoryNumstat]) ->
     files
 }
 
-fn git_show_revision_file(root: &Path, revision: &str, path: &str) -> Result<Option<String>, String> {
+fn git_show_revision_file(
+    root: &Path,
+    revision: &str,
+    path: &str,
+) -> Result<Option<String>, String> {
     if revision == EMPTY_TREE_REVISION {
         return Ok(None);
     }
@@ -1077,11 +1087,7 @@ fn normalize_commit_pathspec(root: &Path, base: &Path, raw_path: &str) -> Result
 
     if input_path.is_absolute() {
         if let Ok(stripped) = input_path.strip_prefix(root) {
-            push_pathspec_candidate(
-                &mut candidates,
-                &mut seen,
-                path_to_git_pathspec(stripped),
-            );
+            push_pathspec_candidate(&mut candidates, &mut seen, path_to_git_pathspec(stripped));
         }
         push_pathspec_candidate(
             &mut candidates,
@@ -1090,13 +1096,7 @@ fn normalize_commit_pathspec(root: &Path, base: &Path, raw_path: &str) -> Result
         );
     } else {
         push_pathspec_candidate(&mut candidates, &mut seen, trimmed.to_string());
-        push_base_relative_pathspec_candidate(
-            &mut candidates,
-            &mut seen,
-            root,
-            base,
-            trimmed,
-        );
+        push_base_relative_pathspec_candidate(&mut candidates, &mut seen, root, base, trimmed);
     }
 
     if let Some(root_name) = root.file_name().and_then(|value| value.to_str()) {
@@ -1130,8 +1130,8 @@ fn normalize_commit_pathspec(root: &Path, base: &Path, raw_path: &str) -> Result
 mod tests {
     use super::{history_log_revisions, normalize_commit_pathspec, GitHistoryRef};
     use std::path::{Path, PathBuf};
-    use std::{env, fs, process};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{env, fs, process};
 
     struct TempRepo {
         root: PathBuf,
@@ -1263,8 +1263,11 @@ fn parse_ahead_behind(root: &Path, upstream: Option<&str>) -> (u32, u32) {
         return (0, 0);
     }
 
-    let counts = run_git(root, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
-        .unwrap_or_default();
+    let counts = run_git(
+        root,
+        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    )
+    .unwrap_or_default();
     let mut parts = counts.split_whitespace();
     let ahead = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
     let behind = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -1297,7 +1300,9 @@ fn parse_status_counts(porcelain: &str) -> (u32, u32, u32, u32) {
 }
 
 #[command]
-pub async fn get_git_repository_status(path: String) -> Result<Option<GitRepositoryStatus>, String> {
+pub async fn get_git_repository_status(
+    path: String,
+) -> Result<Option<GitRepositoryStatus>, String> {
     git_task(move || get_git_repository_status_impl(path)).await
 }
 
@@ -1307,9 +1312,17 @@ fn get_git_repository_status_impl(path: String) -> Result<Option<GitRepositorySt
     };
 
     let branch = current_branch(&root);
-    let upstream = run_git(&root, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
-        .ok()
-        .filter(|value| !value.is_empty());
+    let upstream = run_git(
+        &root,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
+    )
+    .ok()
+    .filter(|value| !value.is_empty());
     let (ahead, behind) = parse_ahead_behind(&root, upstream.as_deref());
     let porcelain = run_git(&root, &["status", "--porcelain=v1"]).unwrap_or_default();
     let (changed_count, staged_count, unstaged_count, untracked_count) =
@@ -1341,7 +1354,10 @@ fn git_list_branches_impl(path: String) -> Result<Vec<GitBranch>, String> {
     let root = require_repo_root(&path)?;
     let local_output = run_git(
         &root,
-        &["branch", "--format=%(HEAD)\t%(refname:short)\t%(upstream:short)"],
+        &[
+            "branch",
+            "--format=%(HEAD)\t%(refname:short)\t%(upstream:short)",
+        ],
     )?;
     let remote_output =
         run_git(&root, &["branch", "-r", "--format=%(refname:short)"]).unwrap_or_default();
@@ -1649,12 +1665,7 @@ fn git_push_with_options_impl(
     );
     let command = push_command_preview(&args);
     let arg_refs: Vec<&str> = args.iter().map(|value| value.as_str()).collect();
-    let output = run_git_streaming(
-        &root,
-        &arg_refs,
-        &app,
-        options.operation_id.as_deref(),
-    )?;
+    let output = run_git_streaming(&root, &arg_refs, &app, options.operation_id.as_deref())?;
 
     Ok(GitPushResult {
         command,
@@ -1842,8 +1853,7 @@ fn git_get_history_file_diff_impl(
     let new_content = if status_code == "D" {
         String::new()
     } else {
-        git_show_revision_file(&root, to_revision.as_str(), file_path.as_str())?
-            .unwrap_or_default()
+        git_show_revision_file(&root, to_revision.as_str(), file_path.as_str())?.unwrap_or_default()
     };
 
     Ok(GitHistoryFileDiff {
@@ -1920,7 +1930,12 @@ fn git_get_history_impl(
         .filter(|value| !value.is_empty());
     let upstream_short = run_git(
         &root,
-        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
     )
     .ok()
     .filter(|value| !value.is_empty());
