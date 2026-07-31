@@ -67,7 +67,11 @@ use commands::{
     save_claude_hook_config_dir, uninstall_claude_hooks,
 };
 use commands::{MonitorCache, TerminalService};
-use models::{ai_delivery::AiAgent, CloseBehavior, LaunchWindowMode};
+// AiAgent 仅用于 debug 构建下的测试派发入口（见 setup 中的
+// TERMINAL_BUDDY_TEST_DISPATCH_TASK_ID 分支），release 构建会编译掉该块。
+#[cfg(debug_assertions)]
+use models::ai_delivery::AiAgent;
+use models::{CloseBehavior, LaunchWindowMode};
 use services::{AiDeliveryService, SettingsService, SshSessionService, WebServiceState};
 use std::fs::OpenOptions;
 use std::io::Write;
