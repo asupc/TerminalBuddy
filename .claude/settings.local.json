@@ -24,7 +24,10 @@
       "mcp__codegraph__codegraph_context",
       "WebSearch",
       "WebFetch(domain:github.com)",
-      "Bash(echo \"=== exit: $? ===\")"
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(git status *)",
+      "Bash(git commit *)",
+      "Bash(sed 's/^[* ]*//')"
     ]
   }
 }

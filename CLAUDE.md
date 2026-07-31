@@ -67,31 +67,6 @@ Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (b
 
 **Data layer**: `data/commandTemplates.ts` — 10 categories of command templates, overrides (localStorage), custom commands, history cache (`HistoryEntry[]`), autocomplete suggestions. Templates are persisted to backend via `initPersistedTemplates()`.
 
-**Key components**:
-- `App.tsx` — Root: profile loading, terminal lifecycle, file tree, tab restoration, close confirmation
-- `TitleBar.tsx` — Custom frameless title bar: nav buttons, Web API toggle, AI usage hover panel, window controls
-- `ConfigPanel.tsx` — Left panel: profile list grouped by group field, search, sort, context menus, rename groups
-- `ConfigEditDialog.tsx` — Profile create/edit modal with terminal type-specific fields, SSH/Docker/K8s/MSTSC fields, fuzzy command matching
-- `FileTree.tsx` — Local file browser: tree view, bookmarks, path editing, exclusion patterns, drag-and-drop to terminal
-- `RemoteFileTree.tsx` — SSH remote file browser: breadcrumb navigation, upload/download, context menu with rename/copy/move/chmod/delete, transfer progress
-- `ServerMonitor.tsx` — Real-time SSH server monitoring: CPU, memory, swap, disk, network, uptime, configurable refresh interval
-- `ChmodDialog.tsx` — Remote file permission editor (chmod dialog)
-- `ExtraParamsDialog.tsx` — SSH parameter presets dialog
-- `TerminalPanel.tsx` — Routes to SettingsPage or renders terminal instances with split layout support
-- `TerminalInstance.tsx` — xterm.js instance with fit/weblinks/clipboard/search/unicode addons, IME position lock, prompt detection, autocomplete popup, paste file path support, drag-drop
-- `TabSidebar.tsx` — Vertical tab navigation panel (resizable, grouped, context menus)
-- `TabGroup.tsx` — Tab group component for grouped tab display
-- `TerminalTab.tsx` — Individual tab component with color label and breathing light effect
-- `TerminalTabBar.tsx` — Horizontal tab bar (shown when Tab Navigation is disabled)
-- `Toolbar.tsx` — Terminal toolbar
-- `TreeView.tsx` — Reusable tree view component
-- `SettingsPage.tsx` — Full settings overlay with 8 sections (general, profiles, commands, themes, history, exclusions, AI usage, web management)
-- `TextEditor.tsx` — Monaco Editor integration for editing files, double-click files in FileTree to open editor tabs
-- `GroupCascader.tsx` — Multi-level group cascade selector for profile grouping
-- `AiUsagePanel.tsx` — Hover panel showing AI usage bars for Zhipu GLM, Baidu Qianfan, and Minimax
-
-**Types** (`types/index.ts`): `Profile`, `TerminalSession`, `TabGroup`, `SplitNode`, `Workspace`, `RemoteFileEntry`, `ServerStats`, `ExtraParamPreset`, plus `PRESET_THEMES` (8 themes) and `TAB_COLORS` (26 entries: null + 25 named colors).
-
 ### Web Frontend — `web/`
 
 Separate React SPA in `web/src/` for browser-based remote terminal access:
