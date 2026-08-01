@@ -1,5 +1,5 @@
 ﻿use tauri::Manager;
-use tauri::{AppHandle, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, WebviewWindow};
 
 /// Direct ntdll call — pure in-memory, no process spawn, takes microseconds.
 #[allow(non_snake_case)]
@@ -64,28 +64,12 @@ pub fn window_exit_app(app: AppHandle) -> Result<(), String> {
 /// 再次调用此命令会重新打开窗口。
 #[tauri::command]
 pub fn open_ai_delivery_window(app: AppHandle) -> Result<(), String> {
-    // 窗口已存在时仅显示并聚焦
+    // AI 交付窗口在启动时由配置创建（hidden），此处仅显示/聚焦，避免运行时 build() 挂起
     if let Some(window) = app.get_webview_window("ai-delivery") {
-        window.show().map_err(|e| e.to_string())?;
+        let _ = window.show();
         let _ = window.unminimize();
-        window.set_focus().map_err(|e| e.to_string())?;
+        let _ = window.set_focus();
         return Ok(());
     }
-
-    WebviewWindowBuilder::new(
-        &app,
-        "ai-delivery",
-        WebviewUrl::App("index.html".into()),
-    )
-    .title("AI 交付")
-    .inner_size(1200.0, 800.0)
-    .min_inner_size(900.0, 520.0)
-    .center()
-    .visible(false) // 页面加载完成后由 on_page_load 回调显示
-    .decorations(false)
-    .build()
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
+    Err("AI 交付窗口未初始化".to_string())
 }
-

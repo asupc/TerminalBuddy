@@ -5,7 +5,7 @@ import App from './App';
 import { AiDeliveryApp } from "./components/ai-delivery/AiDeliveryApp";
 import './styles/global.css';
 
-// Disable default context menu (back, refresh, save as, etc.)
+// 禁用默认右键菜单（后退、刷新、另存为等）
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // 根据当前窗口 label 决定渲染主应用还是 AI 交付独立窗口

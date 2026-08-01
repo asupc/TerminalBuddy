@@ -270,10 +270,7 @@ pub fn run() {
                         reveal_main_window(webview);
                     }
                     "ai-delivery" => {
-                        // AI 交付窗口页面加载完成后才显示，避免白屏闪烁
-                        let window = webview.window();
-                        let _ = window.show();
-                        let _ = window.set_focus();
+                        boot_log("ai-delivery page load finished (hidden, shown on demand)");
                     }
                     _ => {}
                 }
@@ -469,19 +466,23 @@ pub fn run() {
             boot_log("setup done — waiting for WebView page load before showing window");
             Ok(())
         })
-        .on_window_event(|window, event| {
+                .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // 仅对主窗口应用"关闭到托盘"行为；
-                // AI 交付窗口始终正常关闭，后台任务不受影响。
+                // 主窗口：根据设置决定"关闭到托盘"或真正退出
                 if window.label() == "main" {
                     let settings = SettingsService::get_settings();
                     if settings.close_behavior == CloseBehavior::Tray {
                         api.prevent_close();
                         window.hide().ok();
                     }
+                } else if window.label() == "ai-delivery" {
+                    // AI 交付窗口关闭时仅隐藏，保留窗口以便再次打开；后台任务不受影响
+                    api.prevent_close();
+                    let _ = window.hide();
                 }
             }
         })
+
         .invoke_handler(tauri::generate_handler![
             get_ai_projects,
             create_ai_project,
