@@ -189,6 +189,13 @@ impl TerminalBackend {
         }
     }
 
+    fn is_running(&mut self) -> bool {
+        match self {
+            Self::Default { child, .. } => matches!(child.try_wait(), Ok(None)),
+            Self::VsCode(process) => process.is_running(),
+        }
+    }
+
     fn acknowledge_output(&mut self, char_count: u32) -> Result<(), String> {
         match self {
             Self::Default { .. } => Ok(()),
@@ -875,6 +882,22 @@ impl TerminalService {
         };
         let buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
         Ok(buffer.collect())
+    }
+
+    /// 检查终端后端进程是否仍在运行。仅能读取输出并不代表 PTY 进程仍然存活。
+    pub fn is_terminal_running(&self, id: &str) -> bool {
+        let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(instance) = instances.get_mut(id) else {
+            return false;
+        };
+        if instance.exited.load(Ordering::SeqCst) {
+            return false;
+        }
+        let running = instance.backend.is_running();
+        if !running {
+            instance.exited.store(true, Ordering::SeqCst);
+        }
+        running
     }
 
     /// 检查 PC 端是否有权限操作指定终端

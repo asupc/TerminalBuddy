@@ -222,6 +222,27 @@ export interface AiAttempt {
   updatedAt: string;
 }
 
+export interface AiAttemptReview {
+  approved: boolean;
+  comments: string;
+}
+
+export interface AiAttemptDecision {
+  question: string;
+  impact: string;
+  options: AiDecisionOption[];
+}
+
+ export interface AiAttemptOutput {
+   attemptId: string;
+   transcriptTail: string;
+   finalMessage?: string | null;
+   review?: AiAttemptReview | null;
+   decision?: AiAttemptDecision | null;
+   promptExcerpt?: string | null;
+   planJson?: string | null;
+ }
+
 export interface AiCommandResult {
   command: string;
   exitCode: number;

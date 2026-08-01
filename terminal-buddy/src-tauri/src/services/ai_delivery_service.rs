@@ -2,8 +2,8 @@ use crate::commands::terminal::TerminalService;
 use crate::models::{
     AiAgent, AiAgentRuntime, AiAttempt, AiCommandResult, AiDecisionOption, AiDecisionRequest,
     AiDelivery, AiDeliveryEvent, AiMergeRecord, AiMergeRepositoryRecord, AiProject, AiQualityGate,
-    AiRepository, AiRepositoryStatusBaseline, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract,
-    AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput,
+    AiAttemptOutput, AiRepository, AiRepositoryStatusBaseline, AiReviewGate, AiRole, AiRuntimeProbe,
+    AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput,
     CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, TerminalOwner,
     UpdateAiDeliveryInput,
 };
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use tauri::Emitter;
 use uuid::Uuid;
 
@@ -42,7 +42,10 @@ const REVIEW_GATES_DIR: &str = "ReviewGates";
 const MERGE_RECORDS_DIR: &str = "MergeRecords";
 const PLANS_DIR: &str = "Plans";
 const TERMINAL_RUNS_DIR: &str = "TerminalRuns";
-const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+// 首次检查不应等待 Agent 自己退出；成果文件可能已经写完而 CLI 仍停留在终端中。
+const ATTEMPT_WATCHDOG_DELAY: Duration = Duration::from_secs(30);
+const ATTEMPT_WATCHDOG_INTERVAL: Duration = Duration::from_secs(60);
 const EXECUTION_CONTEXT_WORKSPACE_ROOT: &str = "workspaceRoot";
 const EXECUTION_CONTEXT_TASK_WORKTREE: &str = "taskWorktree";
 
@@ -157,6 +160,16 @@ const QUALITY_GATE_SCHEMA: &str = r#"{
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 }
     }
+  },
+  "additionalProperties": false
+}"#;
+
+const WORKFLOW_REVIEW_SCHEMA: &str = r#"{
+  "type": "object",
+  "required": ["approved", "comments"],
+  "properties": {
+    "approved": { "type": "boolean" },
+    "comments": { "type": "string", "minLength": 1 }
   },
   "additionalProperties": false
 }"#;
@@ -1368,7 +1381,9 @@ impl AiDeliveryService {
         let tasks = Self::get_task_nodes(delivery_id)?;
         let succeeded = tasks
             .iter()
-            .filter(|task| task.state == "succeeded")
+            // succeeded 和 cancelled 的任务都视为已完成依赖。
+            // cancelled 的任务（如交付终止后恢复的场景）不应永久阻塞下游。
+            .filter(|task| matches!(task.state.as_str(), "succeeded" | "cancelled"))
             .map(|task| task.id.clone())
             .collect::<HashSet<_>>();
         let mut changed = Vec::new();
@@ -1520,6 +1535,76 @@ impl AiDeliveryService {
         attempts
             .sort_by(|left: &AiAttempt, right: &AiAttempt| right.created_at.cmp(&left.created_at));
         Ok(attempts)
+    }
+
+    /// 读取单次执行的产出物（transcript、final-message、review.json、decision.json、prompt）。
+    pub fn read_attempt_output(attempt_id: &str) -> Result<AiAttemptOutput, String> {
+        use crate::models::{AiAttemptDecision, AiAttemptOutput, AiAttemptReview};
+        let run_dir = Self::entity_dir(TERMINAL_RUNS_DIR).join(safe_path_segment(attempt_id));
+
+        // 读取文件辅助函数：自动去除 BOM，处理非 UTF-8 文件
+        let read_file = |name: &str| -> Option<String> {
+            let bytes = fs::read(run_dir.join(name)).ok()?;
+            // 去除 UTF-8 BOM
+            let content = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                String::from_utf8_lossy(&bytes[3..]).to_string()
+            } else {
+                String::from_utf8_lossy(&bytes).to_string()
+            };
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        };
+
+        // transcript.log — 取最后 8000 字符
+        let transcript_tail = read_file("transcript.log")
+            .map(|content| {
+                if content.len() > 8000 {
+                    let cut = content.len() - 8000;
+                    let safe_cut = content.ceil_char_boundary(cut);
+                    format!("...{}", &content[safe_cut..])
+                } else {
+                    content
+                }
+            })
+            .unwrap_or_default();
+
+        // final-message.txt
+        let final_message = read_file("final-message.txt");
+
+        // review.json
+        let review = read_file("review.json")
+            .and_then(|s| serde_json::from_str::<AiAttemptReview>(&s).ok());
+
+        // decision.json
+        let decision = read_file("decision.json")
+            .and_then(|s| serde_json::from_str::<AiAttemptDecision>(&s).ok());
+
+        // plan.json
+        let plan_json = read_file("plan.json")
+            .and_then(|s| {
+                // 尝试格式化 JSON
+                serde_json::from_str::<serde_json::Value>(&s)
+                    .ok()
+                    .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                    .or(Some(s))
+            });
+
+        // prompt.txt — 完整内容
+        let prompt_excerpt = read_file("prompt.txt");
+
+        Ok(AiAttemptOutput {
+            attempt_id: attempt_id.to_string(),
+            transcript_tail,
+            final_message,
+            review,
+            decision,
+            prompt_excerpt,
+            plan_json,
+        })
     }
 
     /// 应用进程已退出时，内存中的终端无法恢复；保留现场并允许用户重新派发。
@@ -2355,10 +2440,14 @@ impl AiDeliveryService {
             "\n\n需要用户决策时，不要猜测或继续修改。请将以下 JSON 写入文件 {}，然后退出当前 CLI：\n{{\"question\":\"需要用户回答的问题\",\"impact\":\"不决策会如何影响任务\",\"options\":[{{\"label\":\"方案名称\",\"description\":\"方案说明\"}}]}}\n只有确实需要用户决定时才创建该文件。",
             control.decision_path.display(),
         ));
-            let workflow_review_path = if requires_workflow_review(&task) {
+            let workflow_review_required = requires_workflow_review(&task);
+            let workflow_review_path = if workflow_review_required {
+                fs::write(&control.review_schema_path, WORKFLOW_REVIEW_SCHEMA)
+                    .map_err(|error| format!("写入 Reviewer 输出 Schema 失败: {}", error))?;
                 prompt.push_str(&format!(
-                    "\n\n这是编排中的独立审查步骤。完成审查后，必须将以下 JSON 写入 {}，再退出当前 CLI：\n{{\"approved\":true,\"comments\":\"中文审查结论和剩余风险\"}}\n若发现需要返工的问题，将 approved 设为 false，并在 comments 中说明问题和修复方向。未写入或格式无效将视为审查失败。",
+                    "\n\n这是编排中的独立审查步骤。完成审查后，必须将严格符合 Schema 的 JSON 写入 {}，再退出当前 CLI。Schema 文件：{}\n只允许以下两个字段，禁止输出 acceptedArtifacts 或任何其他字段：\n{{\"approved\":true,\"comments\":\"中文审查结论和剩余风险\"}}\n写入后必须重新读取 review.json，自检 JSON 格式、字段名、字段类型和 comments 非空。若发现需要返工的问题，将 approved 设为 false，并在 comments 中说明问题和修复方向。未写入或格式无效将视为审查失败。",
                     control.review_path.display(),
+                    control.review_schema_path.display(),
                 ));
                 prompt.push_str(&format!(
                     "\n若 approved 为 false，必须再将所有需要用户选择的阻塞项汇总成一个 JSON 写入 {}：\n{{\"question\":\"需要用户决定的阻塞事项\",\"impact\":\"不决策会如何影响后续实现\",\"options\":[{{\"label\":\"选项名称\",\"description\":\"选项说明\"}}]}}\n拒绝评审时缺少该文件也视为审查失败。",
@@ -2370,7 +2459,29 @@ impl AiDeliveryService {
             };
             fs::write(&control.prompt_path, &prompt)
                 .map_err(|error| format!("更新 Agent 决策协议失败: {}", error))?;
-            let terminal_command = build_interactive_terminal_command(&runtime, &agent, &control)?;
+            let mut codex_writable_directories = vec![control
+                .decision_path
+                .parent()
+                .ok_or_else(|| "Agent 终端控制目录不可用".to_string())?
+                .to_path_buf()];
+            // Codex 需要访问任务目录和交接目录；只读任务的变更仍由完成校验拦截。
+            codex_writable_directories.push(working_directory.clone());
+            if let Some(directory) = contract.input_artifact_directory.as_deref() {
+                codex_writable_directories.push(PathBuf::from(directory));
+            }
+            if let Some(directory) = contract.output_artifact_directory.as_deref() {
+                codex_writable_directories.push(PathBuf::from(directory));
+            }
+            let terminal_command = build_interactive_terminal_command_with_codex_output(
+                &runtime,
+                &agent,
+                &control,
+                (workflow_review_required && runtime_is_codex(&runtime))
+                    .then_some(control.review_schema_path.as_path()),
+                (workflow_review_required && runtime_is_codex(&runtime))
+                    .then_some(control.review_path.as_path()),
+                &codex_writable_directories,
+            )?;
             let terminal_id = create_ai_terminal(
                 &terminal_service,
                 &app,
@@ -2416,70 +2527,150 @@ impl AiDeliveryService {
                 }
             });
 
+            let monitor_terminal_service = terminal_service.clone();
+            let monitor_delivery_id = delivery_id.clone();
+            let monitor_task_node_id = task_node_id.clone();
+            let monitor_runtime = runtime.clone();
+            let monitor_agent = agent.clone();
+            let monitor_working_directory = agent_start_directory.clone();
             thread::spawn(move || {
-                let exit_code = loop {
-                    if let Some(code) = read_terminal_exit_code(&control.exit_marker) {
-                        break Some(code);
+                let mut review_repair_attempted = false;
+                let (exit_code, output, transcript) = loop {
+                    let exit_code = loop {
+                        if let Some(code) = read_terminal_exit_code(&control.exit_marker) {
+                            break Some(code);
+                        }
+                        if monitor_terminal_service.peek_terminal_output(&terminal_id).is_err() {
+                            break None;
+                        }
+                        thread::sleep(Duration::from_millis(300));
+                    };
+                    let output = monitor_terminal_service
+                        .peek_terminal_output(&terminal_id)
+                        .unwrap_or_else(|_| "Agent 终端已关闭".to_string());
+                    let transcript = fs::read_to_string(&control.transcript_path)
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| output.clone());
+
+                    if exit_code.is_some() {
+                        if let Some(review_path) = workflow_review_path.as_deref() {
+                            if let Err(validation_error) = read_workflow_review(review_path) {
+                                if !review_repair_attempted {
+                                    review_repair_attempted = true;
+                                    match repair_workflow_review(
+                                        &control,
+                                        &monitor_runtime,
+                                        &monitor_agent,
+                                        &monitor_terminal_service,
+                                        &terminal_id,
+                                        &monitor_working_directory,
+                                        &validation_error,
+                                    ) {
+                                        Ok(()) => continue,
+                                        Err(repair_error) => {
+                                            let failure = format!(
+                                                "{}\nReviewer 协议修复启动失败: {}",
+                                                transcript, repair_error
+                                            );
+                                            break (Some(1), failure.clone(), failure);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    if terminal_service.peek_terminal_output(&terminal_id).is_err() {
-                        break None;
-                    }
-                    thread::sleep(Duration::from_millis(300));
+                    break (exit_code, output, transcript);
                 };
-                let output = terminal_service
-                    .peek_terminal_output(&terminal_id)
-                    .unwrap_or_else(|_| "Agent 终端已关闭".to_string());
-                // 单次运行 Runtime 的标准输出已独立落盘；不要将 xterm 屏幕缓冲及控制序列写入交付摘要。
-                let transcript = fs::read_to_string(&control.transcript_path)
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| output.clone());
                 if exit_code.is_none() {
-                    let _ = Self::interrupt_attempt(
+                    if let Ok(current_attempt) = Self::get::<AiAttempt>(
+                        ATTEMPTS_DIR,
                         &attempt_id,
-                        "Agent 终端已关闭，任务未判定为失败；可检查 worktree 后重新派发，或在关闭前使用“确认完成”。",
-                        app_handle,
-                    );
+                        "终端关闭后的执行尝试",
+                    ) {
+                        if let Err(error) = reconcile_running_attempt(
+                            &current_attempt,
+                            app_handle.clone(),
+                            monitor_terminal_service.clone(),
+                        ) {
+                            let _ = fail_attempt_from_watchdog(
+                                &current_attempt,
+                                &format!("Agent 终端已关闭，任务状态检查失败：{}", error),
+                                app_handle.clone(),
+                                monitor_terminal_service.clone(),
+                            );
+                        }
+                    }
                     return;
                 }
                 match read_agent_decision(&control.decision_path) {
                     Ok(Some(decision)) => {
-                        let _ = Self::pause_attempt_for_decision(
+                        if let Err(e) = Self::pause_attempt_for_decision(
                             &attempt_id,
-                            &delivery_id,
-                            &task_node_id,
+                            &monitor_delivery_id,
+                            &monitor_task_node_id,
                             decision,
                             app_handle.clone(),
-                        );
+                        ) {
+                            eprintln!("[AI Delivery] pause_attempt_for_decision 失败: {}", e);
+                            // 决策暂停失败时回退到正常完成流程，避免任务卡死
+                            let _ = Self::finish_attempt(
+                                &attempt_id,
+                                &monitor_delivery_id,
+                                &monitor_task_node_id,
+                                exit_code,
+                                &transcript,
+                                &transcript,
+                                workflow_review_path.as_deref(),
+                                app_handle.clone(),
+                                monitor_terminal_service.clone(),
+                            );
+                        }
                     }
                     Ok(None) => {
-                        let _ = Self::finish_attempt(
+                        if let Err(e) = Self::finish_attempt(
                             &attempt_id,
-                            &delivery_id,
-                            &task_node_id,
+                            &monitor_delivery_id,
+                            &monitor_task_node_id,
                             exit_code,
                             &transcript,
                             &transcript,
                             workflow_review_path.as_deref(),
                             app_handle.clone(),
-                            terminal_service.clone(),
-                        );
+                            monitor_terminal_service.clone(),
+                        ) {
+                            eprintln!("[AI Delivery] finish_attempt 失败: {}", e);
+                        }
                     }
                     Err(error) => {
                         let failure = format!("{}\n决策协议文件无效: {}", transcript, error);
                         let _ = Self::finish_attempt(
                             &attempt_id,
-                            &delivery_id,
-                            &task_node_id,
+                            &monitor_delivery_id,
+                            &monitor_task_node_id,
                             Some(1),
                             &transcript,
                             &failure,
                             workflow_review_path.as_deref(),
                             app_handle.clone(),
-                            terminal_service.clone(),
+                            monitor_terminal_service.clone(),
                         );
                     }
                 }
+            });
+            let watchdog_attempt_id = attempt.id.clone();
+            let watchdog_delivery_id = delivery_id.clone();
+            let watchdog_task_node_id = task_node_id.clone();
+            let watchdog_app = app.clone();
+            let watchdog_terminal_service = terminal_service.clone();
+            thread::spawn(move || {
+                run_attempt_watchdog(
+                    &watchdog_attempt_id,
+                    &watchdog_delivery_id,
+                    &watchdog_task_node_id,
+                    watchdog_app,
+                    watchdog_terminal_service,
+                );
             });
             Ok(attempt)
         })();
@@ -2518,6 +2709,17 @@ impl AiDeliveryService {
             "用户已取消 Agent 执行",
         )?;
         Ok(attempt)
+    }
+
+    pub fn ensure_manual_completion_allowed(attempt_id: &str) -> Result<(), String> {
+        let attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "manual completion check")?;
+        let delivery = Self::get_delivery(&attempt.delivery_id)?;
+        let task = Self::get_task_node(&attempt.task_node_id)?;
+        if is_last_workflow_stage(&delivery, &task) {
+            Ok(())
+        } else {
+            Err("仅任务编排的最后一个阶段允许手动确认完成".to_string())
+        }
     }
 
     pub fn complete_attempt(
@@ -2676,7 +2878,10 @@ impl AiDeliveryService {
         let workflow_managed = task.workflow_step_id.is_some();
         let mut completion_error = None;
         let mut workflow_review = None;
-        if exit_code == Some(0) && policy_violation.is_none() && workflow_managed {
+        if exit_code == Some(0)
+            && policy_violation.is_none()
+            && (workflow_managed || !task.expected_artifacts.is_empty())
+        {
             let worktree = PathBuf::from(&contract.working_directory);
             let validation = if task.execution_mode == "readonly" {
                 ensure_readonly_execution_unchanged(&project, &contract, &worktree)
@@ -2863,7 +3068,10 @@ impl AiDeliveryService {
         let mut returned = 0;
         for dependency_id in &reviewer_task.dependency_ids {
             let mut dependency = Self::get_task_node(dependency_id)?;
-            if dependency.execution_mode != "write" || dependency.state != "succeeded" {
+            // 允许 readonly 和 write 模式的已完成任务返工。
+            // 之前仅允许 write 模式，导致 readonly 分析任务无法被标记返工，
+            // 审查拒绝后系统陷入循环。
+            if dependency.state != "succeeded" {
                 continue;
             }
             dependency.state = "rework".to_string();
@@ -3451,20 +3659,82 @@ fn unavailable_runtime_probe(kind: &str, command: &str) -> AiRuntimeProbe {
     }
 }
 
-fn probe_local_runtime(kind: &str, command: &str) -> AiRuntimeProbe {
+/// 检查可执行文件是否在 PATH 中存在（不实际运行）。
+/// 作为 --version 探测失败时的兜底，避免冷启动慢导致误判为不可用。
+fn executable_exists_in_path(executable: &str) -> bool {
+    // 如果已经是绝对/相对路径，直接检查文件
+    let path = Path::new(executable);
+    if path.is_absolute() || path.components().count() > 1 {
+        #[cfg(windows)]
+        {
+            // 无扩展名时尝试 .exe / .cmd / .bat
+            if path.extension().is_none() {
+                for ext in &["exe", "cmd", "bat"] {
+                    if path.with_extension(ext).is_file() {
+                        return true;
+                    }
+                }
+            }
+            return path.is_file();
+        }
+        #[cfg(not(windows))]
+        return path.is_file();
+    }
+    // 裸命令名，在 PATH 中搜索
     #[cfg(windows)]
-    let mut process = if Path::new(command).extension().is_some_and(|extension| {
+    {
+        let path_var = match std::env::var_os("PATH") {
+            Some(p) => p,
+            None => return false,
+        };
+        for dir in std::env::split_paths(&path_var) {
+            for ext in &["exe", "cmd", "bat", "ps1"] {
+                if dir.join(executable).with_extension(ext).is_file() {
+                    return true;
+                }
+            }
+            // 也检查无扩展名的精确匹配
+            if dir.join(executable).is_file() {
+                return true;
+            }
+        }
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        which::which(executable).is_ok()
+    }
+}
+
+fn probe_local_runtime(kind: &str, command: &str) -> AiRuntimeProbe {
+    // command 可能包含参数（如 "claude --dangerously-skip-permissions"），
+    // 但探测版本时只需要可执行文件名，不应传额外参数。
+    let probe_executable = if let Ok(parts) = split_runtime_command(command) {
+        parts.into_iter().next().unwrap_or_else(|| command.to_string())
+    } else {
+        command.to_string()
+    };
+    #[cfg(windows)]
+    let mut process = if Path::new(&probe_executable).extension().is_some_and(|extension| {
         extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
     }) {
-        npm_command_probe(Path::new(command))
-    } else {
-        let mut process = Command::new(command);
+        npm_command_probe(Path::new(&probe_executable))
+    } else if Path::new(&probe_executable).is_absolute() {
+        // 绝对路径（如 .exe）可以直接执行
+        let mut process = Command::new(&probe_executable);
         process.arg("--version");
+        process
+    } else {
+        // 裸命令名（如 "codex"、"claude"）需通过 cmd /C 执行，
+        // Rust 的 Command::new 不会自动解析 PATHEXT (.exe/.cmd/.bat)
+        let mut process = Command::new("cmd");
+        process.args(["/D", "/S", "/C"]);
+        process.raw_arg(format!("\"{}\" --version", probe_executable));
         process
     };
     #[cfg(not(windows))]
     let mut process = {
-        let mut process = Command::new(command);
+        let mut process = Command::new(&probe_executable);
         process.arg("--version");
         process
     };
@@ -3477,7 +3747,7 @@ fn probe_local_runtime(kind: &str, command: &str) -> AiRuntimeProbe {
     }
 
     #[cfg(windows)]
-    if let Some(npm_command) = npm_global_command(command) {
+    if let Some(npm_command) = npm_global_command(&probe_executable) {
         let mut process = npm_command_probe(&npm_command);
         if let Ok(output) =
             run_command_with_timeout(&mut process, RUNTIME_PROBE_TIMEOUT, "Runtime 探测")
@@ -3490,6 +3760,17 @@ fn probe_local_runtime(kind: &str, command: &str) -> AiRuntimeProbe {
                 );
             }
         }
+    }
+
+    // 兜底：如果以上探测都失败，用 where/which 检查可执行文件是否存在于 PATH 中。
+    // 很多 CLI 在应用启动时冷启动慢，--version 可能超时，但文件确实可用。
+    if executable_exists_in_path(&probe_executable) {
+        return AiRuntimeProbe {
+            kind: kind.to_string(),
+            command: command.to_string(),
+            available: true,
+            version: None,
+        };
     }
 
     unavailable_runtime_probe(kind, command)
@@ -3870,8 +4151,20 @@ fn build_quality_gate_prompt(
     workspace_root: &Path,
     result_path: &Path,
     schema_path: &Path,
+    cli_captures_output: bool,
 ) -> String {
     let contexts_json = serde_json::to_string_pretty(contexts).unwrap_or_default();
+    let output_instruction = if cli_captures_output {
+        format!(
+            "最终响应必须只包含 JSON，不要包含 Markdown 代码块，也不要使用文件工具写入结果文件；平台会将最终响应保存到：{}",
+            result_path.display(),
+        )
+    } else {
+        format!(
+            "必须使用文件工具把最终 JSON 原样写入：{}",
+            result_path.display(),
+        )
+    };
     format!(
         "你是 AI 交付项目的质量门禁配置专家。\n\
 当前工作目录：{}\n\
@@ -3882,12 +4175,12 @@ fn build_quality_gate_prompt(
 2. 命令必须是可在当前工作区根目录执行的 PowerShell 命令；优先从各仓库的构建脚本、包管理器和配置文件推导。\n\
 3. 只允许类型检查、静态检查、构建、单元测试、集成测试等非破坏性验证；禁止 git push、git reset、git clean、rm -rf、Remove-Item、部署、发布、修改配置、迁移或删除数据。\n\
 4. 每条命令单独一个字符串，建议 4-12 条，必须至少包含一次构建或类型检查和一次测试或检查类命令。\n\
-5. 必须使用文件工具把最终 JSON 原样写入：{}\n\
+5. {}\n\
 6. JSON 必须符合 Schema：{}\n\
 7. 只输出 JSON 文件内容，不输出额外解释；若某个模块没有可执行的检查命令，不要编造，改为列出该模块的构建命令。",
         workspace_root.display(),
         contexts_json,
-        result_path.display(),
+        output_instruction,
         schema_path.display(),
     )
 }
@@ -4429,6 +4722,7 @@ struct TerminalControl {
     transcript_path: PathBuf,
     decision_path: PathBuf,
     review_path: PathBuf,
+    review_schema_path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -4459,6 +4753,7 @@ fn prepare_terminal_control(run_id: &str, prompt: &str) -> Result<TerminalContro
     let transcript_path = directory.join("transcript.log");
     let decision_path = directory.join("decision.json");
     let review_path = directory.join("review.json");
+    let review_schema_path = directory.join("review-schema.json");
     fs::write(&prompt_path, prompt)
         .map_err(|error| format!("写入 Agent 任务说明失败: {}", error))?;
     for stale_path in [
@@ -4468,6 +4763,7 @@ fn prepare_terminal_control(run_id: &str, prompt: &str) -> Result<TerminalContro
         &transcript_path,
         &decision_path,
         &review_path,
+        &review_schema_path,
     ] {
         if stale_path.exists() {
             fs::remove_file(stale_path)
@@ -4482,6 +4778,7 @@ fn prepare_terminal_control(run_id: &str, prompt: &str) -> Result<TerminalContro
         transcript_path,
         decision_path,
         review_path,
+        review_schema_path,
     })
 }
 
@@ -4634,10 +4931,21 @@ mod agent_decision_tests {
             Path::new(r"D:\project"),
             Path::new(r"D:\result.json"),
             Path::new(r"D:\schema.json"),
+            false,
         );
         assert!(prompt.contains("web/package.json"));
         assert!(prompt.contains("git push"));
         assert!(prompt.contains("D:\\result.json"));
+
+        let codex_prompt = build_quality_gate_prompt(
+            &contexts,
+            Path::new(r"D:\project"),
+            Path::new(r"D:\result.json"),
+            Path::new(r"D:\schema.json"),
+            true,
+        );
+        assert!(codex_prompt.contains("最终响应必须只包含 JSON"));
+        assert!(!codex_prompt.contains("必须使用文件工具把最终 JSON 原样写入"));
     }
 
     #[cfg(windows)]
@@ -5190,6 +5498,20 @@ fn split_runtime_command(command: &str) -> Result<Vec<String>, String> {
     Ok(parts)
 }
 
+fn runtime_kind_matches(runtime: &AiAgentRuntime, executable: &str, kind: &str) -> bool {
+    runtime.kind.trim().eq_ignore_ascii_case(kind)
+        || Path::new(executable)
+            .file_stem()
+            .is_some_and(|name| name.eq_ignore_ascii_case(kind))
+}
+
+fn runtime_is_codex(runtime: &AiAgentRuntime) -> bool {
+    split_runtime_command(&runtime.command)
+        .ok()
+        .and_then(|parts| parts.first().cloned())
+        .is_some_and(|executable| runtime_kind_matches(runtime, &executable, "codex"))
+}
+
 fn wrap_terminal_command(
     invocation: &str,
     control: &TerminalControl,
@@ -5219,36 +5541,33 @@ fn build_interactive_terminal_command(
     agent: &AiAgent,
     control: &TerminalControl,
 ) -> Result<String, String> {
+    build_interactive_terminal_command_with_codex_output(
+        runtime,
+        agent,
+        control,
+        None,
+        None,
+        &[],
+    )
+}
+
+fn build_interactive_terminal_command_with_codex_output(
+    runtime: &AiAgentRuntime,
+    agent: &AiAgent,
+    control: &TerminalControl,
+    codex_output_schema: Option<&Path>,
+    codex_output_path: Option<&Path>,
+    codex_writable_directories: &[PathBuf],
+) -> Result<String, String> {
     let mut command_parts = split_runtime_command(&runtime.command)?;
     let executable = command_parts.remove(0);
-    let is_codex = runtime.kind.trim().eq_ignore_ascii_case("codex")
-        || Path::new(&executable)
-            .file_stem()
-            .is_some_and(|name| name.eq_ignore_ascii_case("codex"));
-    let is_claude = runtime.kind.trim().eq_ignore_ascii_case("claude")
-        || Path::new(&executable)
-            .file_stem()
-            .is_some_and(|name| name.eq_ignore_ascii_case("claude"));
-    let is_opencode = runtime.kind.trim().eq_ignore_ascii_case("opencode")
-        || Path::new(&executable)
-            .file_stem()
-            .is_some_and(|name| name.eq_ignore_ascii_case("opencode"));
-    let is_hermes = runtime.kind.trim().eq_ignore_ascii_case("hermes")
-        || Path::new(&executable)
-            .file_stem()
-            .is_some_and(|name| name.eq_ignore_ascii_case("hermes"));
-    let is_pi = runtime.kind.trim().eq_ignore_ascii_case("pi")
-        || Path::new(&executable)
-            .file_stem()
-            .is_some_and(|name| name.eq_ignore_ascii_case("pi"));
-    let is_mimo = runtime.kind.trim().eq_ignore_ascii_case("mimo")
-        || Path::new(&executable)
-            .file_stem()
-            .is_some_and(|name| name.eq_ignore_ascii_case("mimo"));
-    let is_kimi = runtime.kind.trim().eq_ignore_ascii_case("kimi")
-        || Path::new(&executable)
-            .file_stem()
-            .is_some_and(|name| name.eq_ignore_ascii_case("kimi"));
+    let is_codex = runtime_kind_matches(runtime, &executable, "codex");
+    let is_claude = runtime_kind_matches(runtime, &executable, "claude");
+    let is_opencode = runtime_kind_matches(runtime, &executable, "opencode");
+    let is_hermes = runtime_kind_matches(runtime, &executable, "hermes");
+    let is_pi = runtime_kind_matches(runtime, &executable, "pi");
+    let is_mimo = runtime_kind_matches(runtime, &executable, "mimo");
+    let is_kimi = runtime_kind_matches(runtime, &executable, "kimi");
     if is_codex && !command_parts.iter().any(|argument| argument == "exec") {
         command_parts.push("exec".to_string());
     }
@@ -5290,10 +5609,41 @@ fn build_interactive_terminal_command(
         invocation.push_str(&powershell_literal(argument));
     }
     let captures_one_shot_output = is_codex || is_claude || is_opencode || is_hermes || is_pi || is_mimo || is_kimi;
+    let codex_final_message_path =
+        codex_output_path.unwrap_or(control.final_message_path.as_path());
     if is_codex {
+        let has_sandbox_mode = command_parts
+            .iter()
+            .chain(agent.runtime_args.iter())
+            .any(|argument| {
+                argument == "--sandbox"
+                    || argument == "-s"
+                    || argument.starts_with("--sandbox=")
+                    || argument == "--full-auto"
+            });
+        if !codex_writable_directories.is_empty() && !has_sandbox_mode {
+            invocation.push_str(" '--sandbox' 'workspace-write'");
+        }
+        for (index, directory) in codex_writable_directories.iter().enumerate() {
+            if codex_writable_directories[..index].contains(directory) {
+                continue;
+            }
+            invocation.push_str(" '--add-dir' ");
+            invocation.push_str(&powershell_literal(
+                normalize_path_for_external_process(directory)
+                    .to_string_lossy()
+                    .as_ref(),
+            ));
+        }
+        if let Some(schema_path) = codex_output_schema {
+            invocation.push_str(" '--output-schema' ");
+            invocation.push_str(&powershell_literal(
+                schema_path.to_string_lossy().as_ref(),
+            ));
+        }
         invocation.push_str(" '--output-last-message' ");
         invocation.push_str(&powershell_literal(
-            control.final_message_path.to_string_lossy().as_ref(),
+            codex_final_message_path.to_string_lossy().as_ref(),
         ));
         invocation.push_str(" '-' 2>&1 | Out-File -LiteralPath ");
         invocation.push_str(&powershell_literal(
@@ -5332,7 +5682,7 @@ fn build_interactive_terminal_command(
         &invocation,
         control,
         if is_codex {
-            Some(control.final_message_path.as_path())
+            Some(codex_final_message_path)
         } else if captures_one_shot_output {
             Some(control.transcript_path.as_path())
         } else {
@@ -5381,6 +5731,7 @@ mod terminal_command_tests {
             transcript_path: PathBuf::from(r"C:\TerminalBuddy\transcript.log"),
             decision_path: PathBuf::from(r"C:\TerminalBuddy\decision.json"),
             review_path: PathBuf::from(r"C:\TerminalBuddy\review.json"),
+            review_schema_path: PathBuf::from(r"C:\TerminalBuddy\review-schema.json"),
         }
     }
 
@@ -5397,9 +5748,55 @@ mod terminal_command_tests {
         assert!(command.contains("$OutputEncoding = [System.Text.UTF8Encoding]::new($false)"));
         assert!(command.contains("'--skip-git-repo-check'"));
         assert!(command.contains("$tbPrompt | & 'codex' 'exec' '--skip-git-repo-check' '--model' 'test-model'"));
+        assert!(!command.contains("'--sandbox' 'workspace-write'"));
         assert!(command.contains("'--output-last-message' 'C:\\TerminalBuddy\\final-message.txt' '-' 2>&1 | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
         assert!(command.contains("Get-Content -LiteralPath 'C:\\TerminalBuddy\\final-message.txt' -Raw -Encoding UTF8"));
         assert!(!command.contains("'--' $tbPrompt"));
+    }
+
+    #[test]
+    fn codex_structured_output_is_written_by_cli() {
+        let control = test_control();
+        let schema_path = PathBuf::from(r"C:\TerminalBuddy\schema.json");
+        let command = build_interactive_terminal_command_with_codex_output(
+            &test_runtime("codex", "codex"),
+            &test_agent(),
+            &control,
+            Some(&schema_path),
+            Some(&control.result_path),
+            &[],
+        )
+        .unwrap();
+
+        assert!(command.contains(
+            "'--output-schema' 'C:\\TerminalBuddy\\schema.json' '--output-last-message' 'C:\\TerminalBuddy\\result.txt'"
+        ));
+        assert!(command.contains(
+            "Get-Content -LiteralPath 'C:\\TerminalBuddy\\result.txt' -Raw -Encoding UTF8"
+        ));
+        assert!(!command.contains("'--output-last-message' 'C:\\TerminalBuddy\\final-message.txt'"));
+    }
+
+    #[test]
+    fn codex_task_receives_only_scoped_writable_directories() {
+        let command = build_interactive_terminal_command_with_codex_output(
+            &test_runtime("codex", "codex"),
+            &test_agent(),
+            &test_control(),
+            None,
+            None,
+            &[
+                PathBuf::from(r"D:\project\task-worktree"),
+                PathBuf::from(r"C:\TerminalBuddy\run"),
+            ],
+        )
+        .unwrap();
+
+        assert!(command.contains("'--sandbox' 'workspace-write'"));
+        assert!(command.contains("'--add-dir' 'D:\\project\\task-worktree'"));
+        assert!(command.contains("'--add-dir' 'C:\\TerminalBuddy\\run'"));
+        assert!(!command.contains("danger-full-access"));
+        assert!(!command.contains("dangerously-bypass-approvals-and-sandbox"));
     }
 
     #[test]
@@ -5469,6 +5866,49 @@ mod terminal_command_tests {
             "结论\n完成"
         );
     }
+
+    #[test]
+    fn watchdog_detects_new_expected_artifacts() {
+        let root = std::env::temp_dir().join(format!(
+            "terminal-buddy-watchdog-artifacts-{}",
+            Uuid::new_v4()
+        ));
+        let output_directory = root.join("outputs");
+        fs::create_dir_all(&output_directory).unwrap();
+        let started_at = chrono::Utc::now().to_rfc3339();
+        let artifact = output_directory.join("analysis/result.md");
+        fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+        fs::write(&artifact, "result").unwrap();
+        let contract = AiTaskContract {
+            id: "contract".to_string(),
+            project_id: "project".to_string(),
+            delivery_id: "delivery".to_string(),
+            task_id: "task".to_string(),
+            title: "task".to_string(),
+            target_repository_id: "repository".to_string(),
+            target_repository_name: "repository".to_string(),
+            allowed_write_paths: vec![".".to_string()],
+            execution_context: EXECUTION_CONTEXT_WORKSPACE_ROOT.to_string(),
+            forbidden_repository_ids: Vec::new(),
+            repository_status_baselines: Vec::new(),
+            input_artifacts: Vec::new(),
+            input_artifact_directory: None,
+            output_artifact_directory: Some(output_directory.to_string_lossy().to_string()),
+            expected_artifacts: vec!["analysis/result.md".to_string()],
+            acceptance_commands: Vec::new(),
+            retry_count: 0,
+            state: "allocated".to_string(),
+            working_directory: root.to_string_lossy().to_string(),
+            branch_name: None,
+            worktree_path: None,
+            base_commit: None,
+            created_at: started_at.clone(),
+            updated_at: started_at.clone(),
+        };
+
+        assert!(expected_artifacts_written(&contract, &started_at).unwrap());
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 fn create_ai_terminal(
@@ -5518,6 +5958,231 @@ fn read_terminal_exit_code(path: &Path) -> Option<i32> {
         .ok()
 }
 
+fn run_attempt_watchdog(
+    attempt_id: &str,
+    delivery_id: &str,
+    task_node_id: &str,
+    app: tauri::AppHandle,
+    terminal_service: TerminalService,
+) {
+    thread::sleep(ATTEMPT_WATCHDOG_DELAY);
+    loop {
+        let attempt = match AiDeliveryService::get::<AiAttempt>(
+            ATTEMPTS_DIR,
+            attempt_id,
+            "执行尝试 watchdog",
+        ) {
+            Ok(attempt) => attempt,
+            Err(_) => return,
+        };
+        if attempt.state != "running" {
+            return;
+        }
+
+        if let Err(error) = reconcile_running_attempt(
+            &attempt,
+            app.clone(),
+            terminal_service.clone(),
+        ) {
+            if !attempt_terminal_running(&attempt, &terminal_service) {
+                let _ = fail_attempt_from_watchdog(
+                    &attempt,
+                    &format!("Agent 终端已结束，任务状态检查失败：{}", error),
+                    app.clone(),
+                    terminal_service.clone(),
+                );
+                return;
+            }
+            let _ = record_watchdog_observation(
+                delivery_id,
+                task_node_id,
+                attempt_id,
+                &format!("watchdog 检查失败，任务暂保持运行：{}", error),
+            );
+        }
+
+        thread::sleep(ATTEMPT_WATCHDOG_INTERVAL);
+    }
+}
+
+fn terminal_exit_marker_path(attempt_id: &str) -> PathBuf {
+    AiDeliveryService::entity_dir(TERMINAL_RUNS_DIR)
+        .join(safe_path_segment(attempt_id))
+        .join("exit-code.txt")
+}
+
+fn attempt_terminal_running(attempt: &AiAttempt, terminal_service: &TerminalService) -> bool {
+    // exit-code.txt 是 Agent 命令的完成信号。外层 cmd.exe 仍存活时，不能把它误判为 Agent 仍在执行。
+    if read_terminal_exit_code(&terminal_exit_marker_path(&attempt.id)).is_some() {
+        return false;
+    }
+    attempt
+        .terminal_id
+        .as_deref()
+        .is_some_and(|terminal_id| terminal_service.is_terminal_running(terminal_id))
+}
+
+fn reconcile_running_attempt(
+    attempt: &AiAttempt,
+    app: tauri::AppHandle,
+    terminal_service: TerminalService,
+) -> Result<(), String> {
+    let contract = AiDeliveryService::get::<AiTaskContract>(
+        CONTRACTS_DIR,
+        &attempt.contract_id,
+        "任务契约 watchdog",
+    )?;
+    let artifacts_written = expected_artifacts_written(&contract, &attempt.started_at)?;
+    let terminal_running = attempt_terminal_running(attempt, &terminal_service);
+
+    // 成果文件优先于终端状态：Agent 可能已经写完成果，但还没有退出 CLI。
+    if artifacts_written {
+        match AiDeliveryService::complete_attempt(
+            &attempt.id,
+            app.clone(),
+            terminal_service.clone(),
+        ) {
+            Ok(_) => return Ok(()),
+            Err(error) if terminal_running => {
+                return Err(format!("已发现完整成果文件，但完成校验尚未通过：{}", error));
+            }
+            Err(error) => {
+                fail_attempt_from_watchdog(
+                    attempt,
+                    &format!("Agent 终端已结束；已发现成果文件，但自动完成校验失败：{}", error),
+                    app,
+                    terminal_service,
+                )?;
+                return Ok(());
+            }
+        }
+    }
+
+    if !terminal_running {
+        fail_attempt_from_watchdog(
+            attempt,
+            "Agent 终端已结束，且尚未检测到本次执行写入的完整成果文件",
+            app,
+            terminal_service,
+        )?;
+    }
+    Ok(())
+}
+
+fn fail_attempt_from_watchdog(
+    attempt: &AiAttempt,
+    message: &str,
+    app: tauri::AppHandle,
+    terminal_service: TerminalService,
+) -> Result<(), String> {
+    let mut current = AiDeliveryService::get::<AiAttempt>(
+        ATTEMPTS_DIR,
+        &attempt.id,
+        "watchdog 异常任务",
+    )?;
+    if current.state != "running" {
+        return Ok(());
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    current.state = "failed".to_string();
+    current.finished_at = Some(now.clone());
+    current.updated_at = now.clone();
+    current.summary = Some(message.to_string());
+    AiDeliveryService::save(ATTEMPTS_DIR, &current.id, &current)?;
+
+    let mut task = AiDeliveryService::get_task_node(&current.task_node_id)?;
+    if matches!(task.state.as_str(), "queued" | "running") {
+        task.state = "failed".to_string();
+        task.updated_at = now;
+        AiDeliveryService::save(TASK_NODES_DIR, &task.id, &task)?;
+    }
+    let event = AiDeliveryService::append_event(
+        &current.delivery_id,
+        Some(&current.task_node_id),
+        Some(&current.id),
+        "attemptFailed",
+        message,
+    )?;
+    let _ = app.emit("ai-delivery-event", event);
+    if let Some(terminal_id) = current.terminal_id.as_deref() {
+        let _ = terminal_service.close_terminal(terminal_id);
+    }
+    Ok(())
+}
+
+fn expected_artifacts_written(
+    contract: &AiTaskContract,
+    started_at: &str,
+) -> Result<bool, String> {
+    validate_artifact_paths(&contract.expected_artifacts, "交付物")?;
+    if contract.expected_artifacts.is_empty() {
+        return Ok(false);
+    }
+    let artifact_directory = contract
+        .output_artifact_directory
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(&contract.working_directory));
+    let started_seconds = chrono::DateTime::parse_from_rfc3339(started_at)
+        .map_err(|error| format!("执行开始时间无效：{}", error))?
+        .timestamp();
+
+    for artifact in &contract.expected_artifacts {
+        let path = artifact_directory.join(artifact.trim());
+        if !path.starts_with(&artifact_directory) || !path.exists() {
+            return Ok(false);
+        }
+        let modified_seconds = fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs() as i64);
+        if modified_seconds.is_none_or(|modified| modified < started_seconds - 5) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn is_last_workflow_stage(delivery: &AiDelivery, task: &AiTaskNode) -> bool {
+    delivery
+        .workflow_steps
+        .last()
+        .is_some_and(|step| task.workflow_step_id.as_deref() == Some(step.id.as_str()))
+}
+
+fn record_watchdog_observation(
+    delivery_id: &str,
+    task_node_id: &str,
+    attempt_id: &str,
+    message: &str,
+) -> Result<(), String> {
+    let mut attempt = AiDeliveryService::get::<AiAttempt>(
+        ATTEMPTS_DIR,
+        attempt_id,
+        "更新 watchdog 状态",
+    )?;
+    if attempt.state != "running" {
+        return Ok(());
+    }
+    attempt.updated_at = chrono::Utc::now().to_rfc3339();
+    attempt.summary = Some(message.to_string());
+    AiDeliveryService::save(ATTEMPTS_DIR, attempt_id, &attempt)?;
+    let mut task = AiDeliveryService::get_task_node(task_node_id)?;
+    if task.state == "running" {
+        task.updated_at = attempt.updated_at.clone();
+        AiDeliveryService::save(TASK_NODES_DIR, task_node_id, &task)?;
+    }
+    let _ = AiDeliveryService::append_event(
+        delivery_id,
+        Some(task_node_id),
+        Some(attempt_id),
+        "attemptWatchdogCheck",
+        message,
+    )?;
+    Ok(())
+}
+
 fn start_interactive_terminal_command(
     terminal_service: &TerminalService,
     terminal_id: &str,
@@ -5555,6 +6220,41 @@ fn wait_for_terminal_exit(
         }
         thread::sleep(Duration::from_millis(300));
     }
+}
+
+fn repair_workflow_review(
+    control: &TerminalControl,
+    runtime: &AiAgentRuntime,
+    agent: &AiAgent,
+    terminal_service: &TerminalService,
+    terminal_id: &str,
+    working_directory: &Path,
+    validation_error: &str,
+) -> Result<(), String> {
+    let repair_prompt = format!(
+        "上一轮 Reviewer 输出未通过平台协议校验：{}\n\n请不要继续解释审查过程。请重新检查当前审查结论，并覆盖写入 {}。JSON 必须严格符合 {}，只能包含 approved（布尔值）和 comments（非空字符串）两个字段，禁止 acceptedArtifacts 或任何其他字段。写入后请重新读取该文件并自行校验 JSON，再退出当前 CLI。",
+        validation_error,
+        control.review_path.display(),
+        control.review_schema_path.display(),
+    );
+    fs::write(&control.prompt_path, repair_prompt)
+        .map_err(|error| format!("写入 Reviewer 修复提示失败: {}", error))?;
+    let _ = fs::remove_file(&control.exit_marker);
+    let _ = fs::remove_file(&control.review_path);
+    let terminal_command = build_interactive_terminal_command_with_codex_output(
+        runtime,
+        agent,
+        control,
+        runtime_is_codex(runtime).then_some(control.review_schema_path.as_path()),
+        runtime_is_codex(runtime).then_some(control.review_path.as_path()),
+        &[],
+    )?;
+    start_interactive_terminal_command(
+        terminal_service,
+        terminal_id,
+        working_directory,
+        &terminal_command,
+    )
 }
 
 fn wait_for_manager_plan(
@@ -6025,15 +6725,36 @@ fn run_manager_planner(
     if !working_directory.is_dir() {
         return Err("项目工作区目录不存在或不可用".to_string());
     }
+    let manager_command_parts = split_runtime_command(&runtime.command)?;
+    let manager_is_codex = runtime_kind_matches(runtime, &manager_command_parts[0], "codex");
+    let output_protocol = if manager_is_codex {
+        format!(
+            "9. 完成规划后，最终响应必须只包含符合 Schema 的 JSON，不要包含 Markdown 代码块，也不要使用文件工具写入 plan.json。平台会将最终响应直接保存到：{}\n10. 输出必须符合 Schema：{}\n11. 最终 JSON 是任务图完成信号；平台读取后会自动更新交付状态。",
+            control.result_path.display(),
+            schema_path.display(),
+        )
+    } else {
+        format!(
+            "9. 完成规划后，必须使用文件工具将最终 JSON 写入：{}\n10. 输出必须符合 Schema：{}\n11. plan.json 是任务图完成信号。最终版本写入后，平台会自动读取并更新交付状态，无需关闭 CLI；需要继续与用户沟通时可以保留终端。",
+            control.result_path.display(),
+            schema_path.display(),
+        )
+    };
     let manager_prompt = format!(
-        "{}\n8. 你的当前工作目录是用户为本次 AI 交付选择的项目工作区，只能分析项目结构，不得修改项目源码。\n9. 完成规划后，必须使用文件工具将最终 JSON 写入：{}\n10. 输出必须符合 Schema：{}\n11. plan.json 是任务图完成信号。最终版本写入后，平台会自动读取并更新交付状态，无需关闭 CLI；需要继续与用户沟通时可以保留终端。",
+        "{}\n8. 你的当前工作目录是用户为本次 AI 交付选择的项目工作区，只能分析项目结构，不得修改项目源码。\n{}",
         prompt,
-        control.result_path.display(),
-        schema_path.display(),
+        output_protocol,
     );
     fs::write(&control.prompt_path, &manager_prompt)
         .map_err(|error| format!("写入管理者任务说明失败: {}", error))?;
-    let terminal_command = build_interactive_terminal_command(runtime, manager, &control)?;
+    let terminal_command = build_interactive_terminal_command_with_codex_output(
+        runtime,
+        manager,
+        &control,
+        manager_is_codex.then_some(schema_path.as_path()),
+        manager_is_codex.then_some(control.result_path.as_path()),
+        &[],
+    )?;
     let terminal_id = create_ai_terminal(
         &terminal_service,
         &app,
@@ -6083,11 +6804,14 @@ fn generate_quality_gate_with_runtime(
     let schema_path = control_dir.join("quality-gate-schema.json");
     fs::write(&schema_path, QUALITY_GATE_SCHEMA)
         .map_err(|error| format!("写入质量门禁 Schema 失败: {}", error))?;
+    let runtime_command_parts = split_runtime_command(&runtime.command)?;
+    let is_codex = runtime_kind_matches(runtime, &runtime_command_parts[0], "codex");
     let prompt = build_quality_gate_prompt(
         contexts,
         workspace_root,
         &control.result_path,
         &schema_path,
+        is_codex,
     );
     fs::write(&control.prompt_path, prompt)
         .map_err(|error| format!("写入质量门禁生成任务失败: {}", error))?;
@@ -6103,7 +6827,14 @@ fn generate_quality_gate_with_runtime(
         created_at: now.clone(),
         updated_at: now,
     };
-    let terminal_command = build_interactive_terminal_command(runtime, &agent, &control)?;
+    let terminal_command = build_interactive_terminal_command_with_codex_output(
+        runtime,
+        &agent,
+        &control,
+        is_codex.then_some(schema_path.as_path()),
+        is_codex.then_some(control.result_path.as_path()),
+        &[],
+    )?;
     let result = run_shell_command(workspace_root, &terminal_command)?;
     if result.exit_code != 0 {
         return Err(format!(

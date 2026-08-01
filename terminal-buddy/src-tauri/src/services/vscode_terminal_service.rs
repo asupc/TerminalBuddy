@@ -216,6 +216,10 @@ impl VsCodeTerminalProcess {
             .map_err(|error| format!("等待 VS Code 终端插件退出失败: {}", error))
     }
 
+    pub fn is_running(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
     pub fn process_id(&self) -> Option<u32> {
         Some(self.shell_pid)
     }

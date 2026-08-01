@@ -1,9 +1,9 @@
 use crate::commands::terminal::TerminalService;
 use crate::models::{
     AiAgent, AiAgentRuntime, AiAttempt, AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject,
-    AiQualityGate, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow,
-    CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiProjectInput,
-    CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput,
+    AiAttemptOutput, AiQualityGate, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract,
+    AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput,
+    CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput,
 };
 use crate::services::AiDeliveryService;
 use tauri::{command, Emitter};
@@ -322,6 +322,7 @@ pub fn complete_ai_attempt(
     app: tauri::AppHandle,
     terminal_service: tauri::State<TerminalService>,
 ) -> Result<AiAttempt, String> {
+    AiDeliveryService::ensure_manual_completion_allowed(&id)?;
     AiDeliveryService::complete_attempt(&id, app, terminal_service.inner().clone())
 }
 
@@ -380,4 +381,9 @@ pub async fn cleanup_ai_delivery_integration(delivery_id: String) -> Result<(), 
     })
     .await
     .map_err(|error| format!("清理集成工作区线程失败: {}", error))?
+}
+
+#[command]
+pub fn read_ai_attempt_output(attempt_id: String) -> Result<AiAttemptOutput, String> {
+    AiDeliveryService::read_attempt_output(&attempt_id)
 }

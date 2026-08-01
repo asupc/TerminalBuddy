@@ -50,7 +50,7 @@ use commands::{
     complete_ai_attempt,
     cleanup_ai_delivery_integration, create_ai_decision_request, create_ai_delivery,
     create_ai_task_node, delete_ai_delivery, dispatch_ai_ready_tasks, dispatch_ai_task_node,
-    get_ai_attempts, get_ai_decision_requests, get_ai_deliveries, get_ai_delivery_events,
+    get_ai_attempts, read_ai_attempt_output, get_ai_decision_requests, get_ai_deliveries, get_ai_delivery_events,
     get_ai_merge_records, get_ai_review_gates, get_ai_task_nodes, merge_ai_delivery_locally,
     pause_ai_delivery, plan_ai_delivery_with_manager, refresh_ai_ready_task_nodes,
     replan_legacy_ai_delivery,

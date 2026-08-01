@@ -404,6 +404,46 @@ pub struct AiDecisionOption {
     pub label: String,
     pub description: String,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAttemptReview {
+    pub approved: bool,
+    pub comments: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAttemptDecision {
+    pub question: String,
+    pub impact: String,
+    #[serde(default)]
+    pub options: Vec<AiDecisionOption>,
+}
+
+/// 单次执行的产出物快照，供前端"查看成果"面板使用。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAttemptOutput {
+    pub attempt_id: String,
+    /// transcript.log 的尾部（最多 8000 字符），用于快速预览
+    #[serde(default)]
+    pub transcript_tail: String,
+    /// final-message.txt 的完整内容（如果存在）
+    #[serde(default)]
+    pub final_message: Option<String>,
+    /// review.json 解析结果（如果存在）
+    #[serde(default)]
+    pub review: Option<AiAttemptReview>,
+    /// decision.json 解析结果（如果存在）
+    #[serde(default)]
+    pub decision: Option<AiAttemptDecision>,
+    /// prompt.txt 的前 500 字符摘要
+    #[serde(default)]
+    pub prompt_excerpt: Option<String>,
+    /// plan.json 原始内容（如果存在），用于查看成果
+    #[serde(default)]
+    pub plan_json: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

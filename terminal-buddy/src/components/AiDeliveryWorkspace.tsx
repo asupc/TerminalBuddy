@@ -33,6 +33,7 @@ import type {
   AiAgent,
   AiAgentRuntime,
   AiAttempt,
+  AiAttemptOutput,
   AiDecisionRequest,
   AiDelivery,
   AiDeliveryEvent,
@@ -86,6 +87,7 @@ import {
   replanLegacyAiDelivery,
   refreshAiProjectRepositories,
   resumeAiDelivery,
+  readAiAttemptOutput,
   resolveAiReviewGate,
   retryAiTaskNode,
   runAiQualityGate,
@@ -98,7 +100,8 @@ import {
   updateAiProject,
 } from "../services/tauri";
 import { Dialog } from "./Dialog";
-import { showConfirm } from "../services/dialog";
+ import { showConfirm } from "../services/dialog";
+ import { AttemptOutputDialog } from "./AttemptOutputDialog";
 import { getAppSettings, saveAppSettings } from "../utils/settings";
 import "./AiDeliveryWorkspace.css";
 
@@ -297,6 +300,7 @@ const eventTypeNames: Record<string, string> = {
   attemptStarted: "Agent 已启动",
   attemptCompleted: "任务执行完成",
   attemptFailed: "任务执行失败",
+  attemptWatchdogCheck: "成果状态检查",
   workflowStepCompleted: "编排步骤完成",
   policyViolation: "策略违规",
   attemptStartFailed: "启动失败",
@@ -321,6 +325,14 @@ const eventTypeNames: Record<string, string> = {
 
 const eventTypeName = (eventType: string) => eventTypeNames[eventType] ?? eventType;
 
+// 失败类事件类型集合（用于筛选）
+const failedEventTypeSet = new Set(Object.keys(eventTypeNames).filter(
+  (key) => key.endsWith("Failed") || key.endsWith("Cancelled") || key.endsWith("TimedOut") || key.endsWith("Interrupted") || key === "policyViolation",
+));
+const isFailedEventType = (eventType: string) => failedEventTypeSet.has(eventType);
+// 执行记录失败状态集合（用于筛选和红色标记）
+const failedAttemptStateSet = new Set(["failed", "cancelled", "policyViolation"]);
+const isFailedAttemptState = (state: string) => failedAttemptStateSet.has(state);
 const formatEventTime = (value: string) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
@@ -373,6 +385,13 @@ export function AiDeliveryWorkspace({
   const [selectedTaskId, setSelectedTaskId] = useState("");
  const [activeTaskTab, setActiveTaskTab] = useState<DeliveryTabId>("planned");
  const [projectId, setProjectId] = useState("");
+  const [showSuccessAttempts, setShowSuccessAttempts] = useState(true);
+const [showFailedAttempts, setShowFailedAttempts] = useState(true);
+const [expandedOutputId, setExpandedOutputId] = useState<string | null>(null);
+const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemptOutput>>({});
+ const [loadingOutputId, setLoadingOutputId] = useState<string | null>(null);
+  const [showSuccessEvents, setShowSuccessEvents] = useState(true);
+  const [showFailedEvents, setShowFailedEvents] = useState(true);
   const [selectedDeliveryStateFilters, setSelectedDeliveryStateFilters] = useState<string[]>(() => {
     const saved = getAppSettings().aiDeliveryStateFilters;
     return saved === null
@@ -883,14 +902,18 @@ export function AiDeliveryWorkspace({
       await refresh(project.id, deliveryId);
     });
 
-  const removeProject = () =>
-    execute("delete-project", async () => {
-      if (!project) return;
-      if (!window.confirm(`确定删除项目“${project.name}”吗？这会删除 AI 交付记录，不会删除本地源码、worktree 或 Git 分支。`)) return;
-      await deleteAiProject(project.id);
-      setShowProjectSettings(false);
-      await refresh("", "");
-    });
+ const removeProject = () =>
+   execute("delete-project", async () => {
+     if (!project) return;
+      if (!await showConfirm(`确定删除项目"${project.name}"吗？这会删除 AI 交付记录，不会删除本地源码、worktree 或 Git 分支。`, {
+        title: "确认删除项目",
+        confirmText: "删除",
+        danger: true,
+      })) return;
+     await deleteAiProject(project.id);
+     setShowProjectSettings(false);
+     await refresh("", "");
+   });
 
   const createDelivery = () =>
     execute("delivery", async () => {
@@ -996,11 +1019,15 @@ export function AiDeliveryWorkspace({
       await refresh(projectId, delivery.id);
     });
 
-  const replanLegacyDelivery = () =>
-    execute("replan", async () => {
-      if (!delivery || !legacyTaskGraph) return;
-      if (!window.confirm("旧任务图的状态和运行记录会保留为历史，并重新生成一份可校验的任务图。是否继续？")) return;
-      const replacement = await replanLegacyAiDelivery(delivery.id);
+ const replanLegacyDelivery = () =>
+   execute("replan", async () => {
+     if (!delivery || !legacyTaskGraph) return;
+      if (!await showConfirm("旧任务图的状态和运行记录会保留为历史，并重新生成一份可校验的任务图。是否继续？", {
+        title: "确认重新规划",
+        confirmText: "重新规划",
+        danger: true,
+      })) return;
+     const replacement = await replanLegacyAiDelivery(delivery.id);
       setActiveTaskTab("planned");
       try {
         await planAiDeliveryWithManager(replacement.id);
@@ -1009,11 +1036,15 @@ export function AiDeliveryWorkspace({
       }
     });
 
-  const removeDelivery = () =>
-    execute("delete-delivery", async () => {
-      if (!delivery || delivery.state !== "drafting") return;
-      if (!window.confirm(`确定删除草稿“${delivery.title}”吗？`)) return;
-      const nextDeliveryId = deliveries.find((item) => item.id !== delivery.id)?.id ?? "";
+ const removeDelivery = () =>
+   execute("delete-delivery", async () => {
+     if (!delivery || delivery.state !== "drafting") return;
+      if (!await showConfirm(`确定删除草稿"${delivery.title}"吗？`, {
+        title: "确认删除草稿",
+        confirmText: "删除",
+        danger: true,
+      })) return;
+     const nextDeliveryId = deliveries.find((item) => item.id !== delivery.id)?.id ?? "";
       await deleteAiDelivery(delivery.id);
       await refresh(projectId, nextDeliveryId);
     });
@@ -1055,25 +1086,39 @@ export function AiDeliveryWorkspace({
       await refresh(projectId, deliveryId);
     });
 
-  const mergeDelivery = () =>
-    execute("merge", async () => {
-      if (!delivery) return;
-      await mergeAiDeliveryLocally(delivery.id);
+ const mergeDelivery = () =>
+   execute("merge", async () => {
+     if (!delivery) return;
+      if (!await showConfirm(`确定在本地合并"${delivery.title}"的交付成果吗？这会执行 Git 合并操作。`, {
+        title: "确认合并交付",
+        confirmText: "合并",
+        danger: true,
+      })) return;
+     await mergeAiDeliveryLocally(delivery.id);
       await refresh(projectId, delivery.id);
     });
 
-  const cleanupDeliveryIntegration = () =>
-    execute("cleanup-integration", async () => {
-      if (!delivery) return;
-      await cleanupAiDeliveryIntegration(delivery.id);
+ const cleanupDeliveryIntegration = () =>
+   execute("cleanup-integration", async () => {
+     if (!delivery) return;
+      if (!await showConfirm(`确定清理"${delivery.title}"的集成产物吗？这会删除 worktree 并尝试删除临时分支。`, {
+        title: "确认清理集成",
+        confirmText: "清理",
+        danger: true,
+      })) return;
+     await cleanupAiDeliveryIntegration(delivery.id);
       await refresh(projectId, delivery.id);
     });
 
-  const cancelDelivery = () =>
-    execute("cancel-delivery", async () => {
-      if (!delivery || !project) return;
-      if (!window.confirm(`确定终止交付“${delivery.title}”吗？运行中的 Agent 将被关闭，worktree 会保留供检查。`)) return;
-      await cancelAiDelivery(delivery.id);
+ const cancelDelivery = () =>
+   execute("cancel-delivery", async () => {
+     if (!delivery || !project) return;
+      if (!await showConfirm(`确定终止交付"${delivery.title}"吗？运行中的 Agent 将被关闭，worktree 会保留供检查。`, {
+        title: "确认终止交付",
+        confirmText: "终止",
+        danger: true,
+      })) return;
+     await cancelAiDelivery(delivery.id);
       await refresh(project.id, delivery.id);
     });
 
@@ -1150,20 +1195,66 @@ export function AiDeliveryWorkspace({
     () => [...deliveryEvents].slice(-20).reverse(),
     [deliveryEvents],
   );
-  const openAttemptTerminal = (terminalId: string) => {
-    window.dispatchEvent(
-      new CustomEvent("open-ai-attempt-terminal", { detail: { terminalId } }),
-    );
-  };
-  const cancelAttempt = (attempt: AiAttempt) =>
-    execute(`cancel-attempt-${attempt.id}`, async () => {
-      await cancelAiAttempt(attempt.id);
-      await refresh(projectId, deliveryId);
-    });
+  const filteredAttempts = useMemo(
+    () => {
+      if (showSuccessAttempts && showFailedAttempts) return attempts;
+      return attempts.filter((attempt) => {
+        const failed = isFailedAttemptState(attempt.state);
+        return (failed && showFailedAttempts) || (!failed && showSuccessAttempts);
+      });
+    },
+    [attempts, showSuccessAttempts, showFailedAttempts],
+  );
+  const filteredRecentDeliveryEvents = useMemo(
+    () => {
+      if (showSuccessEvents && showFailedEvents) return recentDeliveryEvents;
+      return recentDeliveryEvents.filter((event) => {
+        const failed = isFailedEventType(event.eventType);
+        return (failed && showFailedEvents) || (!failed && showSuccessEvents);
+      });
+    },
+    [recentDeliveryEvents, showSuccessEvents, showFailedEvents],
+  );
 
-  const completeAttempt = (attempt: AiAttempt) =>
-    execute(`complete-attempt-${attempt.id}`, async () => {
-      await completeAiAttempt(attempt.id);
+ const openAttemptTerminal = (terminalId: string) => {
+   window.dispatchEvent(
+     new CustomEvent("open-ai-attempt-terminal", { detail: { terminalId } }),
+   );
+ };
+
+ const toggleAttemptOutput = async (attemptId: string) => {
+    setExpandedOutputId(attemptId);
+   if (!attemptOutputMap[attemptId]) {
+     setLoadingOutputId(attemptId);
+     try {
+       const output = await readAiAttemptOutput(attemptId);
+       setAttemptOutputMap((prev) => ({ ...prev, [attemptId]: output }));
+     } catch (err) {
+       console.error("加载执行产出失败:", err);
+     } finally {
+       setLoadingOutputId(null);
+     }
+   }
+ };
+ const cancelAttempt = (attempt: AiAttempt) =>
+   execute(`cancel-attempt-${attempt.id}`, async () => {
+      if (!await showConfirm("确定取消该任务吗？运行中的 Agent 进程将被终止。", {
+        title: "确认取消任务",
+        confirmText: "取消任务",
+        danger: true,
+      })) return;
+     await cancelAiAttempt(attempt.id);
+     await refresh(projectId, deliveryId);
+   });
+
+ const completeAttempt = (attempt: AiAttempt) =>
+   execute(`complete-attempt-${attempt.id}`, async () => {
+      if (!await showConfirm("确定手动标记该任务为已完成吗？这会跳过自动审查流程。", {
+        title: "确认完成任务",
+        confirmText: "标记完成",
+        danger: true,
+      })) return;
+     await completeAiAttempt(attempt.id);
       await refresh(projectId, deliveryId);
     });
 
@@ -1205,11 +1296,16 @@ export function AiDeliveryWorkspace({
       await refresh();
     });
 
-  const removeRole = (role: AiRole) =>
-    execute(`delete-role-${role.id}`, async () => {
-      await deleteAiRole(role.id);
-      await refresh();
-    });
+ const removeRole = (role: AiRole) =>
+   execute(`delete-role-${role.id}`, async () => {
+      if (!await showConfirm(`确定删除角色"${role.name}"吗？`, {
+        title: "确认删除角色",
+        confirmText: "删除",
+        danger: true,
+      })) return;
+     await deleteAiRole(role.id);
+     await refresh();
+   });
 
   const saveWorkflowConfig = (
     workflow: AiWorkflow,
@@ -1326,12 +1422,17 @@ export function AiDeliveryWorkspace({
     void saveWorkflowConfig(workflow, { steps });
   };
 
-  const removeWorkflowStep = (workflow: AiWorkflow, stepId: string) => {
-    if (workflow.steps.length === 1) {
-      setError("编排方案至少需要一个步骤。");
-      return;
-    }
-    void saveWorkflowConfig(workflow, {
+  const removeWorkflowStep = async (workflow: AiWorkflow, stepId: string) => {
+   if (workflow.steps.length === 1) {
+     setError("编排方案至少需要一个步骤。");
+     return;
+   }
+    if (!await showConfirm("确定删除该编排步骤吗？", {
+      title: "确认删除步骤",
+      confirmText: "删除",
+      danger: true,
+    })) return;
+   void saveWorkflowConfig(workflow, {
       steps: workflow.steps.filter((step) => step.id !== stepId),
     });
   };
@@ -1406,10 +1507,14 @@ export function AiDeliveryWorkspace({
       await refresh();
     });
 
-  const removeRuntime = (runtime: AiAgentRuntime) =>
-    execute(`delete-runtime-${runtime.id}`, async () => {
-      if (!window.confirm(`确定删除 Runtime“${runtime.name}”吗？`)) return;
-      await deleteAiRuntime(runtime.id);
+ const removeRuntime = (runtime: AiAgentRuntime) =>
+   execute(`delete-runtime-${runtime.id}`, async () => {
+      if (!await showConfirm(`确定删除 Runtime"${runtime.name}"吗？`, {
+        title: "确认删除 Runtime",
+        confirmText: "删除",
+        danger: true,
+      })) return;
+     await deleteAiRuntime(runtime.id);
       await refresh();
     });
 
@@ -1432,11 +1537,16 @@ export function AiDeliveryWorkspace({
       await refresh();
     });
 
-  const removeAgent = (agent: AiAgent) =>
-    execute(`delete-agent-${agent.id}`, async () => {
-      await deleteAiAgent(agent.id);
-      await refresh();
-    });
+ const removeAgent = (agent: AiAgent) =>
+   execute(`delete-agent-${agent.id}`, async () => {
+      if (!await showConfirm(`确定删除执行 Agent"${agent.name}"吗？`, {
+        title: "确认删除 Agent",
+        confirmText: "删除",
+        danger: true,
+      })) return;
+     await deleteAiAgent(agent.id);
+     await refresh();
+   });
 
   return (
     <main className="ai-workspace" aria-label="AI 交付工作区">
@@ -3044,14 +3154,39 @@ export function AiDeliveryWorkspace({
                         <h3>Agent 运行记录</h3>
                         <p>原生终端会话与交付状态保持关联。</p>
                       </div>
-                      <small>{attempts.length} 条</small>
+                      <small>{filteredAttempts.length} / {attempts.length} 条</small>
                     </div>
-                    {attempts.length === 0 ? (
+                    <div className="ai-delivery-filter-bar" role="group" aria-label="运行记录筛选">
+                      <span className="ai-delivery-filter-label">筛选</span>
+                      <button
+                        type="button"
+                        className={`ai-delivery-filter-chip${showSuccessAttempts ? " active" : ""}`}
+                        aria-pressed={showSuccessAttempts}
+                        onClick={() => setShowSuccessAttempts((v) => !v)}
+                      >
+                        成功
+                      </button>
+                      <button
+                        type="button"
+                        className={`ai-delivery-filter-chip${showFailedAttempts ? " active" : ""}`}
+                        aria-pressed={showFailedAttempts}
+                        onClick={() => setShowFailedAttempts((v) => !v)}
+                      >
+                        失败
+                      </button>
+                    </div>
+                    {filteredAttempts.length === 0 ? (
                       <p className="ai-delivery-events-empty">任务开始后将在此创建执行记录。</p>
                     ) : (
                       <ol>
-                        {attempts.map((attempt) => {
+                        {filteredAttempts.map((attempt) => {
                           const task = tasks.find((item) => item.id === attempt.taskNodeId);
+                          const lastWorkflowStep = delivery.workflowSteps[delivery.workflowSteps.length - 1];
+                          const canManuallyComplete = Boolean(
+                            task?.workflowStepId &&
+                            lastWorkflowStep &&
+                            task.workflowStepId === lastWorkflowStep.id,
+                          );
                           const attemptTitle = task?.title ??
                             (attempt.taskNodeId
                               ? "未命名任务"
@@ -3062,7 +3197,7 @@ export function AiDeliveryWorkspace({
                           const attemptEvents = deliveryEvents
                             .filter((event) => event.attemptId === attempt.id)
                             .slice(-160);
-                          const isFailed = attempt.state === "failed";
+                          const isFailed = isFailedAttemptState(attempt.state);
                           return (
                             <li
                               key={attempt.id}
@@ -3079,8 +3214,18 @@ export function AiDeliveryWorkspace({
                                     ? " · 退出码 " + attempt.exitCode
                                     : ""}
                                 </small>
-                                {attempt.summary && <p>{attempt.summary}</p>}
-                                {attemptEvents.length > 0 && (
+                               {attempt.summary && <p>{attempt.summary}</p>}
+                               {/* 仅对非运行中的任务显示查看成果按钮 */}
+                               {!["queued", "starting", "running"].includes(attempt.state) && (
+                                <button
+                                  type="button"
+                                  className="btn-secondary ai-attempt-output-toggle"
+                                  onClick={() => void toggleAttemptOutput(attempt.id)}
+                                >
+                                  {loadingOutputId === attempt.id ? "加载中..." : "查看成果"}
+                                </button>
+                               )}
+                               {attemptEvents.length > 0 && (
                                   <pre className="ai-attempt-log">
                                     {attemptEvents.map((event) => "[" + event.occurredAt + "] " + event.message).join("\n")}
                                   </pre>
@@ -3100,7 +3245,7 @@ export function AiDeliveryWorkspace({
                                   )}
                                   {attempt.taskNodeId && (
                                     <>
-                                      <button
+                                      {canManuallyComplete && <button
                                         type="button"
                                         className="btn-primary"
                                         title="确认 Agent 已完成，并执行任务校验"
@@ -3109,7 +3254,7 @@ export function AiDeliveryWorkspace({
                                       >
                                         <Check size={14} />
                                         确认完成
-                                      </button>
+                                      </button>}
                                       <button
                                         type="button"
                                         className="btn-secondary"
@@ -3124,11 +3269,11 @@ export function AiDeliveryWorkspace({
                                   )}
                                 </div>
                                 )}
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ol>
+                             </div>
+                           </li>
+                         );
+                       })}
+                     </ol>
                     )}
                   </section>
                     </div>
@@ -3141,18 +3286,37 @@ export function AiDeliveryWorkspace({
                         <h3>交付事件</h3>
                         <p>保留规划、派发、审查、门禁和本地合并的最近 20 条记录。</p>
                       </div>
-                      <small>{deliveryEvents.length} 条</small>
+                      <small>{filteredRecentDeliveryEvents.length} / {deliveryEvents.length} 条</small>
                     </div>
-                    {recentDeliveryEvents.length === 0 ? (
+                    <div className="ai-delivery-filter-bar" role="group" aria-label="事件筛选">
+                      <span className="ai-delivery-filter-label">筛选</span>
+                      <button
+                        type="button"
+                        className={`ai-delivery-filter-chip${showSuccessEvents ? " active" : ""}`}
+                        aria-pressed={showSuccessEvents}
+                        onClick={() => setShowSuccessEvents((v) => !v)}
+                      >
+                        成功
+                      </button>
+                      <button
+                        type="button"
+                        className={`ai-delivery-filter-chip${showFailedEvents ? " active" : ""}`}
+                        aria-pressed={showFailedEvents}
+                        onClick={() => setShowFailedEvents((v) => !v)}
+                      >
+                        失败
+                      </button>
+                    </div>
+                    {filteredRecentDeliveryEvents.length === 0 ? (
                       <p className="ai-delivery-events-empty">尚未产生交付事件。</p>
                     ) : (
                       <ol>
-                        {recentDeliveryEvents.map((event) => {
+                        {filteredRecentDeliveryEvents.map((event) => {
                           const eventTask = event.taskNodeId
                             ? tasks.find((item) => item.id === event.taskNodeId)
                             : null;
                           return (
-                            <li key={event.id}>
+                            <li key={event.id} className={isFailedEventType(event.eventType) ? "ai-event-failed" : undefined}>
                               <time dateTime={event.occurredAt}>
                                 {formatEventTime(event.occurredAt)}
                               </time>
@@ -3486,8 +3650,19 @@ export function AiDeliveryWorkspace({
               管理编排
             </button>
           </div>
-        </Dialog>
+       </Dialog>
+     )}
+      {expandedOutputId && attemptOutputMap[expandedOutputId] && (
+        <AttemptOutputDialog
+          output={attemptOutputMap[expandedOutputId]}
+          attemptLabel={(() => {
+            const att = attempts.find((a) => a.id === expandedOutputId);
+            const agent = agents.find((ag) => ag.id === att?.agentId);
+            return agent?.name ?? att?.id ?? "";
+          })()}
+          onClose={() => setExpandedOutputId(null)}
+        />
       )}
-    </main>
+   </main>
   );
 }

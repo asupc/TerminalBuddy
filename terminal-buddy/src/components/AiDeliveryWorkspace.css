@@ -1391,6 +1391,13 @@
 .ai-state-failed {
   color: var(--danger);
 }
+.ai-event-failed {
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+.ai-event-failed time,
+.ai-event-failed strong {
+  color: var(--danger);
+}
 .ai-attempt-log {
   width: 100%;
   max-height: 200px;
@@ -1522,4 +1529,119 @@
   .ai-delivery-events li { grid-template-columns: 1fr; gap: 3px; }
   .ai-task-contract-summary, .ai-task-contract-artifacts { grid-template-columns: 1fr; }
   .ai-task-create-grid, .ai-task-create-artifacts { grid-template-columns: 1fr; }
+}
+
+/* 执行产出物面板 */
+.ai-attempt-output-toggle {
+  margin: 4px 0;
+  font-size: 12px;
+  padding: 2px 10px;
+}
+.ai-attempt-output-panel {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle, #333);
+  border-radius: 6px;
+  background: var(--bg-elevated, #1a1a2e);
+  max-height: 500px;
+  overflow-y: auto;
+}
+.ai-output-section { margin-bottom: 12px; }
+.ai-output-section:last-child { margin-bottom: 0; }
+.ai-output-section h4 {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-output-review-comments,
+.ai-output-final-message,
+.ai-output-prompt,
+.ai-output-transcript {
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--bg-code, #0d1117);
+  border-radius: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.ai-output-impact { font-size: 12px; opacity: 0.8; margin: 2px 0; }
+.ai-output-decision-option {
+  font-size: 12px;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ai-output-decision-option strong { font-size: 12px; }
+.ai-output-decision-option span { opacity: 0.8; }
+.ai-output-transcript-toggle {
+  font-size: 11px;
+  background: none;
+  border: 1px solid var(--border-subtle, #444);
+ border-radius: 3px;
+ padding: 1px 6px;
+ cursor: pointer;
+ color: inherit;
+}
+
+/* ===== 查看成果弹窗 ===== */
+.attempt-output-dialog .tb-dialog-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+.attempt-output-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 6px 0;
+  border-bottom: 1px solid var(--border-subtle, #333);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+.attempt-output-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+.attempt-output-tab:hover {
+  color: var(--text-primary, #eee);
+}
+.attempt-output-tab.active {
+  color: var(--accent, #4fc3f7);
+  border-bottom-color: var(--accent, #4fc3f7);
+}
+.attempt-output-editor {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.attempt-output-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary, #888);
+  gap: 8px;
+  padding: 40px;
+  text-align: center;
+}
+.attempt-output-empty-hint {
+  font-size: 12px;
+  color: var(--text-tertiary, #666);
 }

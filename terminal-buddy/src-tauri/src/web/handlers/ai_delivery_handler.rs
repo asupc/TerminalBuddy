@@ -180,6 +180,10 @@ pub async fn complete_attempt(
     for task in &tasks {
         if task.state == "running" {
             if let Some(att_id) = task.attempt_ids.last() {
+                if let Err(error) = AiDeliveryService::ensure_manual_completion_allowed(att_id) {
+                    eprintln!("[WebAPI] manual complete skipped {}: {}", att_id, error);
+                    continue;
+                }
                 match AiDeliveryService::complete_attempt(att_id, app.clone(), terminal_service.clone()) {
                     Ok(a) => completed.push(a),
                     Err(e) => eprintln!("[WebAPI] complete_attempt failed {}: {}", att_id, e),
