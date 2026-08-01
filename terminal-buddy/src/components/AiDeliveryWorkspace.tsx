@@ -88,6 +88,7 @@ import {
   refreshAiProjectRepositories,
   resumeAiDelivery,
   readAiAttemptOutput,
+  openInExplorer,
   resolveAiReviewGate,
   retryAiTaskNode,
   runAiQualityGate,
@@ -3370,8 +3371,18 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
             <div><dt>目标仓库</dt><dd>{project?.repositories.find((repo) => repo.id === selectedTask.targetRepositoryId)?.name ?? "未识别仓库"}</dd></div>
             <div><dt>执行 Agent</dt><dd>{agents.find((agent) => agent.id === selectedTask.assignedAgentId || agent.id === selectedTask.preferredAgentId)?.name ?? "待调度"}</dd></div>
             <div><dt>分支</dt><dd>{selectedTaskContract?.branchName ?? "派发后创建"}</dd></div>
-            <div><dt>worktree</dt><dd title={selectedTaskContract?.worktreePath ?? ""}>{selectedTaskContract?.worktreePath ?? "派发后创建"}</dd></div>
-            <div><dt>成果目录</dt><dd title={selectedTaskContract?.outputArtifactDirectory ?? ""}>{selectedTaskContract?.outputArtifactDirectory ?? "任务 worktree"}</dd></div>
+            <div>
+              <dt>worktree</dt>
+              <dd title={selectedTaskContract?.worktreePath ?? ""}>{selectedTaskContract?.worktreePath ?? "派发后创建"}
+                {selectedTaskContract?.worktreePath && (<button type="button" className="ai-contract-open-btn" onClick={() => void openInExplorer(selectedTaskContract.worktreePath!)}>打开</button>)}
+              </dd>
+            </div>
+            <div>
+              <dt>成果目录</dt>
+              <dd title={selectedTaskContract?.outputArtifactDirectory ?? ""}>{selectedTaskContract?.outputArtifactDirectory ?? "任务 worktree"}
+                {selectedTaskContract?.outputArtifactDirectory && (<button type="button" className="ai-contract-open-btn" onClick={() => void openInExplorer(selectedTaskContract.outputArtifactDirectory!)}>打开</button>)}
+              </dd>
+            </div>
             <div><dt>审计基线</dt><dd title={selectedTaskContract?.baseCommit ?? ""}>{selectedTaskContract?.baseCommit ?? "派发后记录"}</dd></div>
           </dl>
           <section className="ai-task-contract-section">
@@ -3383,8 +3394,8 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
             {selectedTask.dependencyIds.length === 0 ? <p>无前置任务</p> : <ul>{selectedTask.dependencyIds.map((id) => <li key={id}>{tasks.find((task) => task.id === id)?.title ?? id}</li>)}</ul>}
           </section>
           <section className="ai-task-contract-section ai-task-contract-artifacts">
-            <div><h4>输入成果</h4>{selectedTask.inputArtifacts.length === 0 ? <p>无</p> : <ul>{selectedTask.inputArtifacts.map((path) => <li key={path}><code>{path}</code></li>)}</ul>}</div>
-            <div><h4>预期成果</h4>{selectedTask.expectedArtifacts.length === 0 ? <p>无</p> : <ul>{selectedTask.expectedArtifacts.map((path) => <li key={path}><code>{path}</code></li>)}</ul>}</div>
+            <div><h4>输入成果</h4>{selectedTask.inputArtifacts.length === 0 ? <p>无</p> : <ul>{selectedTask.inputArtifacts.map((path) => <li key={path}><code>{path}</code></li>)}</ul>}{selectedTaskContract?.inputArtifactDirectory && (<button type="button" className="ai-contract-open-btn" onClick={() => void openInExplorer(selectedTaskContract.inputArtifactDirectory!)}>打开输入目录</button>)}</div>
+            <div><h4>预期成果</h4>{selectedTask.expectedArtifacts.length === 0 ? <p>无</p> : <ul>{selectedTask.expectedArtifacts.map((path) => <li key={path}><code>{path}</code></li>)}</ul>}{selectedTaskContract?.outputArtifactDirectory && (<button type="button" className="ai-contract-open-btn" onClick={() => void openInExplorer(selectedTaskContract.outputArtifactDirectory!)}>打开成果目录</button>)}</div>
           </section>
           <section className="ai-task-contract-section">
             <h4>验收命令</h4>

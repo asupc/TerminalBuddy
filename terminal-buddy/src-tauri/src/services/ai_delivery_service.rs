@@ -2367,7 +2367,7 @@ impl AiDeliveryService {
             None,
             "taskRetryReady",
             if dependencies_ready {
-                "任务已重新进入待执行队列，将复用原 worktree 和任务分支"
+                "任务已重新进入待执行队列，将在已有 worktree 基础上续接执行"
             } else {
                 "任务等待前置依赖重新完成后再进入执行队列"
             },
@@ -2435,7 +2435,14 @@ impl AiDeliveryService {
                 return Err("项目工作区根目录不可用，无法启动 Agent".to_string());
             }
             let mut prompt = build_agent_prompt(&task, &contract, &project)?;
-            let control = prepare_terminal_control(&attempt.id, &prompt)?;
+            if let Some(continuation) = build_continuation_context(&task, &contract, &attempt.id) {
+                prompt = format!("{}\n\n---\n\n{}", continuation, prompt);
+            }
+            let control = prepare_terminal_control(
+                &attempt.id,
+                Some(&format!("{} · {}", agent.name, task.title)),
+                &prompt,
+            )?;
             prompt.push_str(&format!(
             "\n\n需要用户决策时，不要猜测或继续修改。请将以下 JSON 写入文件 {}，然后退出当前 CLI：\n{{\"question\":\"需要用户回答的问题\",\"impact\":\"不决策会如何影响任务\",\"options\":[{{\"label\":\"方案名称\",\"description\":\"方案说明\"}}]}}\n只有确实需要用户决定时才创建该文件。",
             control.decision_path.display(),
@@ -4520,6 +4527,60 @@ fn cleanup_delivery_integration_workspace(
     Ok(())
 }
 
+/// 将显示标签中的不安全字符替换为下划线，用于构造可读的终端运行目录名。
+fn safe_display_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            let code = c as u32;
+            if code < 32 || matches!(code, 34 | 42 | 47 | 58 | 60 | 62 | 63 | 92 | 124) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .trim_matches(|ch: char| ch == '.' || ch.is_whitespace())
+        .to_string()
+}
+
+/// 生成终端运行目录名：{可读标签}__{UUID}，无标签时退回纯 UUID。
+fn make_terminal_run_dir_name(run_id: &str, display_label: Option<&str>) -> String {
+    let id_seg = safe_path_segment(run_id);
+    let label = display_label
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| safe_display_segment(s));
+    match label {
+        Some(slug) if !slug.is_empty() => {
+            let truncated: String = slug.chars().take(50).collect();
+            format!("{}__{}", truncated, id_seg)
+        }
+        _ => id_seg,
+    }
+}
+
+/// 按尝试 ID 查找终端运行目录，兼容旧格式（纯 UUID）和新格式（标签__UUID）。
+fn terminal_run_dir_by_id(run_id: &str) -> PathBuf {
+    let base = AiDeliveryService::entity_dir(TERMINAL_RUNS_DIR);
+    let id_seg = safe_path_segment(run_id);
+    if let Ok(entries) = fs::read_dir(&base) {
+        let suffix = format!("__{}", id_seg);
+        for entry in entries.flatten() {
+            if let Ok(file_type) = entry.file_type() {
+                if file_type.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name == id_seg || name.ends_with(&suffix) {
+                        return entry.path();
+                    }
+                }
+            }
+        }
+    }
+    base.join(id_seg)
+}
+
 fn safe_path_segment(value: &str) -> String {
     let result = value
         .chars()
@@ -4741,9 +4802,13 @@ struct WorkflowReviewFile {
     comments: String,
 }
 
-fn prepare_terminal_control(run_id: &str, prompt: &str) -> Result<TerminalControl, String> {
-    let directory =
-        AiDeliveryService::entity_dir(TERMINAL_RUNS_DIR).join(safe_path_segment(run_id));
+fn prepare_terminal_control(
+    run_id: &str,
+    display_label: Option<&str>,
+    prompt: &str,
+) -> Result<TerminalControl, String> {
+    let directory = AiDeliveryService::entity_dir(TERMINAL_RUNS_DIR)
+        .join(make_terminal_run_dir_name(run_id, display_label));
     fs::create_dir_all(&directory)
         .map_err(|error| format!("创建 Agent 终端控制目录失败: {}", error))?;
     let prompt_path = directory.join("prompt.txt");
@@ -6183,6 +6248,27 @@ fn record_watchdog_observation(
     Ok(())
 }
 
+/// 轮询终端输出检测 PowerShell 提示符，替代固定时长等待。
+fn wait_for_shell_ready(
+    terminal_service: &TerminalService,
+    terminal_id: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if std::time::Instant::now() > deadline {
+            return Err("等待 PowerShell 启动超时".to_string());
+        }
+        let output = terminal_service
+            .peek_terminal_output(terminal_id)
+            .unwrap_or_default();
+        if output.contains("PS ") || output.contains("PS>") {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+}
+
 fn start_interactive_terminal_command(
     terminal_service: &TerminalService,
     terminal_id: &str,
@@ -6190,7 +6276,7 @@ fn start_interactive_terminal_command(
     terminal_command: &str,
 ) -> Result<(), String> {
     let terminal_working_directory = normalize_path_for_external_process(working_directory);
-    thread::sleep(Duration::from_millis(850));
+    let _ = wait_for_shell_ready(terminal_service, terminal_id, Duration::from_millis(8500));
     terminal_service.write_to_terminal(
         terminal_id,
         &format!(
@@ -6198,7 +6284,7 @@ fn start_interactive_terminal_command(
             powershell_literal(terminal_working_directory.to_string_lossy().as_ref())
         ),
     )?;
-    thread::sleep(Duration::from_millis(250));
+    thread::sleep(Duration::from_millis(500));
     terminal_service.write_to_terminal(terminal_id, &format!("{}\r", terminal_command))?;
     Ok(())
 }
@@ -6332,7 +6418,7 @@ fn run_reviewer_agent(
         contract.allowed_write_paths.join(", "),
         contract.expected_artifacts.join("；"),
     );
-    let control = prepare_terminal_control(attempt_id, &prompt)?;
+    let control = prepare_terminal_control(attempt_id, Some(&format!("审查 · {}", task.title)), &prompt)?;
     let terminal_command = build_interactive_terminal_command(runtime, reviewer, &control)?;
     let terminal_id = create_ai_terminal(
         &terminal_service,
@@ -6416,6 +6502,121 @@ fn strip_terminal_control_sequences(value: &str) -> String {
         }
     }
     output
+}
+
+/// 检查任务的 worktree 是否已有之前执行的进展，如果有则返回续接上下文供 Agent 理解已有工作并续接完成。
+fn build_continuation_context(
+    task: &AiTaskNode,
+    contract: &AiTaskContract,
+    current_attempt_id: &str,
+) -> Option<String> {
+    let prior_notes: Vec<String> = task
+        .attempt_ids
+        .iter()
+        .rev()
+        .filter(|id| *id != current_attempt_id)
+        .filter_map(|id| {
+            let attempt = AiDeliveryService::get::<AiAttempt>(ATTEMPTS_DIR, id, "").ok()?;
+            if !matches!(
+                attempt.state.as_str(),
+                "failed" | "policyViolation" | "cancelled"
+            ) {
+                return None;
+            }
+            let summary = attempt.summary.unwrap_or_default();
+            let run_dir = terminal_run_dir_by_id(id);
+            let final_msg = fs::read_to_string(run_dir.join("final-message.txt"))
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(|m| {
+                    let truncated = if m.len() > 800 {
+                        format!("{}...", &m[..800])
+                    } else {
+                        m
+                    };
+                    format!("\n{}\n{}", "上次最终消息", truncated)
+                })
+                .unwrap_or_default();
+            if summary.is_empty() && final_msg.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "上次执行（{}）：{}{}",
+                    attempt.state, summary, final_msg
+                ))
+            }
+        })
+        .take(3)
+        .collect();
+
+    let (mut uncommitted, mut committed) = (String::new(), String::new());
+    if task.execution_mode != "readonly" {
+        if let Some(worktree_path) = contract.worktree_path.as_deref() {
+            let worktree = PathBuf::from(worktree_path);
+            if worktree.is_dir() {
+                uncommitted = run_git(
+                    &worktree,
+                    &["status".to_string(), "--porcelain=v1".to_string()],
+                )
+                .unwrap_or_default();
+                if let Some(base) = contract.base_commit.as_deref() {
+                    let log_args = vec![
+                        "log".to_string(),
+                        "--oneline".to_string(),
+                        format!("{}..HEAD", base),
+                    ];
+                    committed = run_git(&worktree, &log_args).unwrap_or_default();
+                }
+            }
+        }
+    }
+
+    let mut partial_outputs = String::new();
+    if task.execution_mode == "readonly" {
+        if let Some(dir) = contract.output_artifact_directory.as_deref() {
+            let output_dir = PathBuf::from(dir);
+            let existing: Vec<String> = contract
+                .expected_artifacts
+                .iter()
+                .filter(|a| output_dir.join(a).exists())
+                .map(|a| format!("  - {}", a))
+                .collect();
+            if !existing.is_empty() {
+                partial_outputs = existing.join("\n");
+            }
+        }
+    }
+
+    if prior_notes.is_empty()
+        && uncommitted.is_empty()
+        && committed.is_empty()
+        && partial_outputs.is_empty()
+    {
+        return None;
+    }
+
+    let mut sections = vec![
+        "这是续接执行的任务。之前的执行在当前任务 worktree 中已产生部分工作，请在此基础上续接完成，不要从头重做。".to_string(),
+    ];
+
+    if !committed.is_empty() {
+        sections.push(format!("已提交的改动：\n{}", committed));
+    }
+    if !uncommitted.is_empty() {
+        sections.push(format!("未提交的改动（需要你完成提交）：\n{}", uncommitted));
+    }
+    if !partial_outputs.is_empty() {
+        sections.push(format!("成果目录中已有的产物：\n{}", partial_outputs));
+    }
+    if !prior_notes.is_empty() {
+        sections.push(format!("之前执行未完成的原因：\n{}", prior_notes.join("\n")));
+    }
+
+    sections.push(
+        "请先用 git status、git log、git diff 检查当前进展，理解已完成的部分，然后完成剩余工作。不要撤销已有的合理改动。完成后确保所有改动已在当前任务分支提交。".to_string(),
+    );
+
+    Some(sections.join("\n\n"))
 }
 
 fn ensure_expected_artifacts(contract: &AiTaskContract, working_directory: &Path) -> Result<(), String> {
@@ -6720,7 +6921,7 @@ fn run_manager_planner(
     let schema_path = plan_dir.join("schema.json");
     fs::write(&schema_path, manager_plan_schema())
         .map_err(|error| format!("写入管理者计划 Schema 失败: {}", error))?;
-    let control = prepare_terminal_control(manager_attempt_id, "")?;
+    let control = prepare_terminal_control(manager_attempt_id, Some("管理器规划"), "")?;
     let working_directory = PathBuf::from(&project.workspace_root);
     if !working_directory.is_dir() {
         return Err("项目工作区目录不存在或不可用".to_string());
@@ -6796,7 +6997,7 @@ fn generate_quality_gate_with_runtime(
     contexts: &[RepositoryQualityContext],
 ) -> Result<AiQualityGate, String> {
     let run_id = Uuid::new_v4().to_string();
-    let control = prepare_terminal_control(&run_id, "")?;
+    let control = prepare_terminal_control(&run_id, Some("质量门禁生成"), "")?;
     let control_dir = control
         .result_path
         .parent()
