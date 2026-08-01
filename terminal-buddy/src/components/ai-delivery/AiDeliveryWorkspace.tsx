@@ -88,6 +88,8 @@ import { ConfigDialog } from "./ConfigDialog";
 import { TaskContractDialog, TaskCreateDialog, DeliveryCreateDialog, DeliveryEditDialog } from "./TaskDeliveryDialogs";
 import { DeliveryDetail } from "./DeliveryDetail";
 
+import "./AiDeliveryWorkspace.css";
+
 interface AiDeliveryWorkspaceProps {
   runtimes: AiRuntimeProbe[];
   isRuntimeDetecting: boolean;
@@ -1520,9 +1522,9 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
       ) : (
         <DeliveryDetail
           tasks={tasks} agents={agents}
-          reviewGateByTask={reviewGateByTask}
-          project={project} delivery={delivery} deliveries={filteredDeliveries}
-          attempts={attempts} deliveryEvents={deliveryEvents}
+         reviewGateByTask={reviewGateByTask}
+         project={project} delivery={delivery} deliveries={deliveries}
+         attempts={attempts} deliveryEvents={deliveryEvents}
           filteredDeliveries={filteredDeliveries}
           filteredAttempts={filteredAttempts}
           filteredRecentDeliveryEvents={filteredRecentDeliveryEvents}
