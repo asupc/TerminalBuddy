@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, useRef, useCallback } from 'react';
+﻿import { lazy, Suspense, useEffect, useState, useRef, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from './components/TitleBar';
@@ -7,8 +7,6 @@ import { TerminalPanel } from './components/TerminalPanel';
 import { FileNav } from './components/FileNav';
 import { TabNav } from './components/TabNav';
 import { ActivityBar, type SidebarPanel } from './components/ActivityBar';
-import { AiDeliveryNav } from './components/AiDeliveryNav';
-import { AiDeliveryWorkspace, type AiDeliveryConfigView } from './components/AiDeliveryWorkspace';
 import { AiDeliveryFloatingButton } from './components/AiDeliveryFloatingButton';
 import { ConfigEditDialog } from './components/ConfigEditDialog';
 import { ExtraParamsDialog } from './components/ExtraParamsDialog';
@@ -18,7 +16,7 @@ import { GlobalDialogHost } from './components/GlobalDialogHost';
 import { Toast } from './components/Toast';
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, closeTerminal, getClaudeSessionsForTerminals, checkAppUpdate, detectAiRuntimes, type UpdateInfo } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, closeTerminal, getClaudeSessionsForTerminals, checkAppUpdate, openAiDeliveryWindow, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
 import { APP_VERSION } from './version';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
@@ -26,7 +24,6 @@ import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
 import { initializeClaudeNotificationActions } from './services/claudeNotification';
 import { showAlert } from './services/dialog';
-import type { AiRuntimeProbe } from './types/aiDelivery';
 
 const SettingsPage = lazy(() => import('./components/SettingsPage').then(module => ({ default: module.SettingsPage })));
 
@@ -48,15 +45,6 @@ function isLocalShellTerminal(terminalType: string): boolean {
 }
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
-
-// 启动探测在模块级缓存，避免 React Strict Mode 重挂载时重复执行。
-let startupAiRuntimeProbe: Promise<AiRuntimeProbe[]> | null = null;
-
-function getStartupAiRuntimeProbe(): Promise<AiRuntimeProbe[]> {
-  if (!startupAiRuntimeProbe) startupAiRuntimeProbe = detectAiRuntimes();
-  return startupAiRuntimeProbe;
-}
-
 function waitForNextFrame(): Promise<void> {
   return new Promise(resolve => requestAnimationFrame(() => resolve()));
 }
@@ -87,60 +75,8 @@ function App() {
   const [enableTabNav, setEnableTabNav] = useState(true);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
-  const [aiDeliveryConfigView, setAiDeliveryConfigView] = useState<AiDeliveryConfigView | null>(null);
-  const [aiDeliveryNotificationTargetId, setAiDeliveryNotificationTargetId] = useState('');
-  const [aiRuntimeProbes, setAiRuntimeProbes] = useState<AiRuntimeProbe[]>([]);
-  const [isAiRuntimeDetecting, setIsAiRuntimeDetecting] = useState(true);
-  const [aiRuntimeDetectionError, setAiRuntimeDetectionError] = useState('');
   const closeConfirmedRef = useRef(false);
   const restoredRef = useRef(false);
-  const applyAiRuntimeProbe = useCallback(async (probe: Promise<AiRuntimeProbe[]>) => {
-    setIsAiRuntimeDetecting(true);
-    try {
-      setAiRuntimeDetectionError('');
-      setAiRuntimeProbes(await probe);
-    } catch (reason) {
-      setAiRuntimeProbes([]);
-      setAiRuntimeDetectionError(String(reason));
-    } finally {
-      setIsAiRuntimeDetecting(false);
-    }
-  }, []);
-
-  const detectLocalAiRuntimes = useCallback(
-    async () => applyAiRuntimeProbe(detectAiRuntimes()),
-    [applyAiRuntimeProbe],
-  );
-
-  useEffect(() => {
-    void applyAiRuntimeProbe(getStartupAiRuntimeProbe());
-  }, [applyAiRuntimeProbe]);
-
-  useEffect(() => {
-    if (sidebarPanel !== 'aiDelivery') setAiDeliveryConfigView(null);
-  }, [sidebarPanel]);
-
-  useEffect(() => {
-    if (sidebarPanel !== 'aiDelivery') return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
-      setSidebarPanel('config');
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [sidebarPanel]);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listen<string>('ai-delivery-notification-activated', (event) => {
-      setAiDeliveryNotificationTargetId(event.payload);
-      setSidebarPanel('aiDelivery');
-    }).then((cleanup) => {
-      unlisten = cleanup;
-    });
-    return () => unlisten?.();
-  }, []);
-
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(() => {
     const v = localStorage.getItem('appUpdate.lastCheckedAt');
@@ -381,6 +317,18 @@ function App() {
     window.addEventListener('open-ai-attempt-terminal', handler);
     return () => window.removeEventListener('open-ai-attempt-terminal', handler);
   }, [enableTabNav, uiStyle]);
+
+  // 收到 AI 交付通知时，存储目标 ID 并打开独立窗口
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<string>('ai-delivery-notification-activated', (event) => {
+      localStorage.setItem('aiDelivery.pendingNotificationId', event.payload);
+      void openAiDeliveryWindow();
+    }).then((cleanup) => {
+      unlisten = cleanup;
+    });
+    return () => unlisten?.();
+  }, []);
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
@@ -799,8 +747,7 @@ function App() {
   }, []);
 
   const handleToggleAiDelivery = useCallback(() => {
-    useAppStore.getState().setLastClickRegion(null);
-    setSidebarPanel(current => current === 'aiDelivery' ? 'config' : 'aiDelivery');
+    void openAiDeliveryWindow();
   }, []);
 
   return (
@@ -827,8 +774,7 @@ function App() {
             onSettings={handleSettings}
           />
         )}
-        {sidebarPanel !== 'aiDelivery' && (
-          <div className={`nav-panel-slot nav-panel-config${sidebarPanel === 'config' ? ' active' : ''}`}>
+        <div className={`nav-panel-slot nav-panel-config${sidebarPanel === 'config' ? ' active' : ''}`}>
             <ConfigNav
               isActive={windowMode !== 'panels-hidden' && (uiStyle !== 'sidebar' || sidebarPanel === 'config')}
               isSidebarMode={uiStyle === 'sidebar'}
@@ -838,23 +784,11 @@ function App() {
               onAddProfile={handleAddProfile}
               onManageExtraParams={() => setShowExtraParamsDialog(true)}
             />
-          </div>
-        )}
-        {sidebarPanel === 'aiDelivery' && (
-          <div className={`nav-panel-slot nav-panel-ai-delivery${sidebarPanel === 'aiDelivery' ? ' active' : ''}`}>
-            <AiDeliveryNav
-              runtimes={aiRuntimeProbes}
-              isDetecting={isAiRuntimeDetecting}
-              error={aiRuntimeDetectionError}
-              onDetect={detectLocalAiRuntimes}
-              onOpenConfiguration={setAiDeliveryConfigView}
-            />
-          </div>
-        )}
-        {sidebarPanel !== 'aiDelivery' && <div className={`nav-panel-slot nav-panel-files${sidebarPanel === 'files' ? ' active' : ''}`}>
+        </div>
+        <div className={`nav-panel-slot nav-panel-files${sidebarPanel === 'files' ? ' active' : ''}`}>
           <FileNav isSidebarMode={uiStyle === 'sidebar'} />
-        </div>}
-        {sidebarPanel !== 'aiDelivery' && enableTabNav && (
+        </div>
+        {enableTabNav && (
           <div className={`nav-panel-slot nav-panel-tabs${sidebarPanel === 'tabs' ? ' active' : ''}`}>
             <TabNav
               isActive={windowMode !== 'panels-hidden' && (uiStyle !== 'sidebar' || sidebarPanel === 'tabs')}
@@ -866,19 +800,10 @@ function App() {
             />
           </div>
         )}
-        {sidebarPanel === 'aiDelivery' ? (
-          <AiDeliveryWorkspace
-            runtimes={aiRuntimeProbes}
-            isRuntimeDetecting={isAiRuntimeDetecting}
-            notificationTargetDeliveryId={aiDeliveryNotificationTargetId}
-            onNotificationTargetHandled={() => setAiDeliveryNotificationTargetId('')}
-            configDialogView={aiDeliveryConfigView}
-            onConfigDialogViewChange={setAiDeliveryConfigView}
-          />
-        ) : <TerminalPanel />}
+        <TerminalPanel />
       </div>
       <AiDeliveryFloatingButton
-        active={sidebarPanel === 'aiDelivery'}
+        active={false}
         onToggle={handleToggleAiDelivery}
       />
       {showEditDialog && (

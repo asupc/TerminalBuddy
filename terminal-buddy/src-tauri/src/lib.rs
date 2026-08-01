@@ -35,7 +35,7 @@ use commands::{
     save_web_api_share_sessions, set_data_path, show_claude_code_notification,
     start_blank_terminal, start_mstsc, start_terminal, sync_launch_at_login, update_profile,
     update_profile_last_used, update_terminal_display_name, update_workspace, window_close,
-    window_exit_app, window_minimize, window_toggle_maximize, write_client_data,
+    window_exit_app, window_minimize, window_toggle_maximize, open_ai_delivery_window, write_client_data,
     write_file_content, write_to_terminal,
 };
 use commands::{
@@ -263,11 +263,20 @@ pub fn run() {
 
     builder
         .on_page_load(|webview, payload| {
-            if webview.label() == "main"
-                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
-            {
-                boot_log(format!("main page load finished: {}", payload.url()));
-                reveal_main_window(webview);
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                match webview.label() {
+                    "main" => {
+                        boot_log(format!("main page load finished: {}", payload.url()));
+                        reveal_main_window(webview);
+                    }
+                    "ai-delivery" => {
+                        // AI 交付窗口页面加载完成后才显示，避免白屏闪烁
+                        let window = webview.window();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    _ => {}
+                }
             }
         })
         .setup(|app| {
@@ -462,10 +471,14 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let settings = SettingsService::get_settings();
-                if settings.close_behavior == CloseBehavior::Tray {
-                    api.prevent_close();
-                    window.hide().ok();
+                // 仅对主窗口应用"关闭到托盘"行为；
+                // AI 交付窗口始终正常关闭，后台任务不受影响。
+                if window.label() == "main" {
+                    let settings = SettingsService::get_settings();
+                    if settings.close_behavior == CloseBehavior::Tray {
+                        api.prevent_close();
+                        window.hide().ok();
+                    }
                 }
             }
         })
@@ -630,6 +643,7 @@ pub fn run() {
             window_toggle_maximize,
             window_close,
             window_exit_app,
+            open_ai_delivery_window,
             fetch_qianfan_usage,
             fetch_deepseek_usage,
             fetch_minimax_usage,

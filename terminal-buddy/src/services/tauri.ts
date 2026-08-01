@@ -843,6 +843,11 @@ export async function windowExitApp(): Promise<void> {
   return invoke('window_exit_app');
 }
 
+/** 打开或聚焦 AI 交付独立窗口。窗口关闭后后台任务继续运行。 */
+export async function openAiDeliveryWindow(): Promise<void> {
+  return invoke('open_ai_delivery_window');
+}
+
 // Full Data Import/Export
 export async function exportAllData(filePath: string): Promise<void> {
   return invoke('export_all_data', { filePath });

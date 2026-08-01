@@ -2,7 +2,7 @@ import type { FC } from 'react';
 import { Files, ListTree, Server, Settings } from 'lucide-react';
 import './ActivityBar.css';
 
-export type SidebarPanel = 'config' | 'files' | 'tabs' | 'aiDelivery';
+export type SidebarPanel = 'config' | 'files' | 'tabs';
 
 interface ActivityBarProps {
   activePanel: SidebarPanel | null;
