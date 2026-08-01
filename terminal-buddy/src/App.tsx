@@ -1,19 +1,19 @@
 ﻿import { lazy, Suspense, useEffect, useState, useRef, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
-import { TitleBar } from './components/TitleBar';
-import { ConfigNav } from './components/ConfigNav';
-import { TerminalPanel } from './components/TerminalPanel';
-import { FileNav } from './components/FileNav';
-import { TabNav } from './components/TabNav';
-import { ActivityBar, type SidebarPanel } from './components/ActivityBar';
-import { AiDeliveryFloatingButton } from './components/AiDeliveryFloatingButton';
-import { ConfigEditDialog } from './components/ConfigEditDialog';
-import { ExtraParamsDialog } from './components/ExtraParamsDialog';
-import { ClaudeDecisionDialog } from './components/ClaudeDecisionDialog';
-import { ConfirmDialog } from './components/Dialog';
-import { GlobalDialogHost } from './components/GlobalDialogHost';
-import { Toast } from './components/Toast';
+import { TitleBar } from "./components/shell/TitleBar";
+import { ConfigNav } from "./components/profile-config/ConfigNav";
+import { TerminalPanel } from "./components/terminal/TerminalPanel";
+import { FileNav } from "./components/file-explorer/FileNav";
+import { TabNav } from "./components/shell/TabNav";
+import { ActivityBar, type SidebarPanel } from "./components/shell/ActivityBar";
+import { AiDeliveryFloatingButton } from "./components/ai-delivery/AiDeliveryFloatingButton";
+import { ConfigEditDialog } from "./components/profile-config/ConfigEditDialog";
+import { ExtraParamsDialog } from "./components/profile-config/ExtraParamsDialog";
+import { ClaudeDecisionDialog } from "./components/shared/ClaudeDecisionDialog";
+import { ConfirmDialog } from "./components/shared/Dialog";
+import { GlobalDialogHost } from "./components/shared/GlobalDialogHost";
+import { Toast } from "./components/shared/Toast";
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, closeTerminal, getClaudeSessionsForTerminals, checkAppUpdate, openAiDeliveryWindow, type UpdateInfo } from './services/tauri';
@@ -25,7 +25,7 @@ import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/termin
 import { initializeClaudeNotificationActions } from './services/claudeNotification';
 import { showAlert } from './services/dialog';
 
-const SettingsPage = lazy(() => import('./components/SettingsPage').then(module => ({ default: module.SettingsPage })));
+const SettingsPage = lazy(() => import('./components/settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
 
 /** Estimate terminal rows/cols from the .terminal-content container size. */
 function estimateTerminalSize(): { rows: number; cols: number } {
@@ -99,7 +99,7 @@ function App() {
 
   // 预加载终端组件 chunk（xterm.js + addons），让 restoreTabs 时不需等待网络/IO
   useEffect(() => {
-    void import('./components/TerminalInstance');
+    void import('./components/terminal/TerminalInstance');
   }, []);
 
   useEffect(() => {

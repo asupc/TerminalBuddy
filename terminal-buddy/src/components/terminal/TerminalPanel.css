@@ -1,0 +1,354 @@
+.terminal-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+/* Vertical orientation */
+.terminal-panel[data-tab-orientation="vertical"] {
+  flex-direction: row;
+}
+
+.terminal-tabs {
+  display: flex;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.terminal-panel[data-tab-orientation="vertical"] .terminal-tabs {
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-bottom: none;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tab-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.tab-resize-handle:hover {
+  background: var(--accent);
+}
+
+.terminal-content {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.git-history-tab-content {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-secondary);
+}
+
+.settings-dialog-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.56);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.terminal-tab-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-tab-content.active {
+  visibility: visible;
+  pointer-events: auto;
+  z-index: 1;
+}
+
+.terminal-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  color: var(--text-secondary);
+  gap: 10px;
+  background: var(--bg-primary);
+}
+
+.empty-icon {
+  width: 34px;
+  height: 34px;
+  color: var(--text-tertiary);
+  stroke-width: 1.35;
+}
+
+.empty-text {
+  font-size: 13px;
+}
+
+.context-submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: calc(100vh - var(--submenu-top, 0)px - 8px);
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  padding: 4px 0;
+  z-index: 260;
+}
+
+.context-submenu::-webkit-scrollbar {
+  width: 5px;
+}
+
+.context-submenu::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.context-menu-item.has-submenu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.context-menu-item.has-submenu:hover .context-submenu {
+  display: block;
+}
+
+.submenu-arrow {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.context-menu-item.highlighted {
+  background: var(--accent);
+  color: #fff;
+}
+
+.context-menu-item.submenu-group-header {
+  font-weight: 600;
+  pointer-events: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+/* 懒加载组件（Monaco 编辑器 / 设置页）按需加载时的占位 */
+.lazy-panel-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.terminal-starting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.terminal-starting svg {
+  width: 17px;
+  height: 17px;
+  color: var(--accent);
+  animation: terminal-starting-spin 0.8s linear infinite;
+}
+
+@keyframes terminal-starting-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-starting svg { animation: none; }
+}
+
+/* ===== Split Screen ===== */
+/* Container becomes a CSS grid; the 2px gap renders as divider lines. */
+.terminal-content.split-grid {
+  display: grid;
+  gap: 2px;
+  background: var(--border-subtle);
+}
+.terminal-content.split-2x1 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+}
+.terminal-content.split-2x2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+/* A split cell is always visible regardless of .active (which only marks focus).
+   Overrides .terminal-tab-content's absolute/hidden positioning. */
+.terminal-content.split-grid .split-cell {
+  position: relative;
+  visibility: visible;
+  pointer-events: auto;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+.terminal-content.split-grid .split-cell.active {
+  z-index: 1;
+}
+/* Focus frame: drawn via ::after with a high z-index so it sits ABOVE the xterm
+   WebGL canvas (which otherwise covers a plain outline on the left/right/bottom
+   edges, leaving only the header area visible at the top). */
+.terminal-content.split-grid .split-cell.active::after,
+.terminal-content.split-grid .split-cell.drag-over::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-sizing: border-box;
+  z-index: 5;
+}
+.terminal-content.split-grid .split-cell.active::after {
+  border: 1px solid var(--accent);
+}
+.terminal-content.split-grid .split-cell.drag-over::after {
+  border: 2px dashed var(--accent);
+  z-index: 6;
+}
+
+/* Non-slot background sessions in split mode: keep mounted, hide completely. */
+.terminal-content.split-grid .split-hidden {
+  display: none !important;
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0 6px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: grab;
+  user-select: none;
+  font-size: 12px;
+}
+.pane-header:active {
+  cursor: grabbing;
+}
+.pane-name {
+  flex: 1;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pane-working-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.pane-working-dot.on {
+  animation: pane-working-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pane-working-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-working-dot.on {
+    animation: none;
+  }
+}
+.pane-close {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+.pane-close svg {
+  width: 13px;
+  height: 13px;
+}
+.pane-close:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+/* xterm measures .pane-body; min-height:0 lets it shrink inside the flex column. */
+.pane-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.split-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  background: var(--bg-primary);
+  border: 1px dashed var(--border);
+}

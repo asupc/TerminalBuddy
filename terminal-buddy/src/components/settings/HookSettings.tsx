@@ -21,7 +21,7 @@ import {
 } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { getAppSettings, saveAppSettings, type AppSettings } from '../../utils/settings';
-import { ConfirmDialog } from '../Dialog';
+import { ConfirmDialog } from '../shared/Dialog';
 import './HookSettings.css';
 
 interface HookSettingsProps {

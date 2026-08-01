@@ -8,7 +8,7 @@ import {
   type ScanCredentials,
   type ScanPollResult,
 } from '../../services/tauri';
-import { Dialog } from '../Dialog';
+import { Dialog } from '../shared/Dialog';
 
 type Phase = 'loading' | 'waiting' | 'success' | 'failed' | 'expired';
 

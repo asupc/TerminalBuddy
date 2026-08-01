@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import App from './App';
-import { AiDeliveryApp } from './components/AiDeliveryApp';
+import { AiDeliveryApp } from "./components/ai-delivery/AiDeliveryApp";
 import './styles/global.css';
 
 // Disable default context menu (back, refresh, save as, etc.)

@@ -8,7 +8,7 @@ import {
 } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import type { Profile } from '../../types';
-import { ConfigEditDialog } from '../ConfigEditDialog';
+import { ConfigEditDialog } from '../profile-config/ConfigEditDialog';
 import { showAlert } from '../../services/dialog';
 
 interface ProfilesSettingsProps {

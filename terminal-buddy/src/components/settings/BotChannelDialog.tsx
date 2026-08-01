@@ -5,7 +5,7 @@ import {
   type BotChannelConfig,
   type ScanCredentials,
 } from '../../services/tauri';
-import { Dialog } from '../Dialog';
+import { Dialog } from '../shared/Dialog';
 import { BotScanDialog } from './BotScanDialog';
 
 export const BOT_PLATFORM_OPTIONS: ReadonlyArray<{
