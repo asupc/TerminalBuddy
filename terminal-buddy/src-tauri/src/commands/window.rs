@@ -1,4 +1,4 @@
-use tauri::Manager;
+﻿use tauri::Manager;
 use tauri::{AppHandle, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 /// Direct ntdll call — pure in-memory, no process spawn, takes microseconds.
@@ -75,7 +75,7 @@ pub fn open_ai_delivery_window(app: AppHandle) -> Result<(), String> {
     WebviewWindowBuilder::new(
         &app,
         "ai-delivery",
-        WebviewUrl::App("index.html#ai-delivery".into()),
+        WebviewUrl::App("index.html".into()),
     )
     .title("AI 交付")
     .inner_size(1200.0, 800.0)
@@ -88,3 +88,4 @@ pub fn open_ai_delivery_window(app: AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
