@@ -2657,24 +2657,62 @@ impl AiDeliveryService {
             let monitor_agent = agent.clone();
             let monitor_working_directory = agent_start_directory.clone();
             thread::spawn(move || {
+                // 运行目录：transcript.log 与 live-output.log 同目录
+                let run_dir = control
+                    .transcript_path
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_default();
                 let mut review_repair_attempted = false;
                 let (exit_code, _output, transcript) = loop {
                     let exit_code = loop {
                         if let Some(code) = read_terminal_exit_code(&control.exit_marker) {
                             break Some(code);
                         }
-                        if monitor_terminal_service.peek_terminal_output(&terminal_id).is_err() {
-                            break None;
+                        // drain 独占消费：缓冲被消费后无 last_len 竞态、无内存增长
+                        // 注意：Err 表示终端已关闭，必须 break None（unwrap_or_default 会吞错成空串且不 break → 死循环）
+                        let output = match monitor_terminal_service
+                            .drain_terminal_output(&terminal_id)
+                        {
+                            Ok(output) => output,
+                            Err(_) => break None,
+                        };
+                        if !output.is_empty() {
+                            // 追加写 live-output.log（写入侧截断：>5MB 保留尾部一半再续写）
+                            let log_path = run_dir.join("live-output.log");
+                            if let Ok(meta) = fs::metadata(&log_path) {
+                                if meta.len() > 5 * 1024 * 1024 {
+                                    let content = fs::read_to_string(&log_path).unwrap_or_default();
+                                    // 截断必须落在字符边界：多字节 UTF-8 中点 slice 会 panic 并杀死 monitor 线程
+                                    let boundary =
+                                        content.ceil_char_boundary(content.len() - content.len() / 2);
+                                    let _ = fs::write(&log_path, &content[boundary..]);
+                                }
+                            }
+                            if let Ok(mut f) = fs::OpenOptions::new().append(true).open(&log_path) {
+                                let _ = f.write_all(output.as_bytes());
+                            }
                         }
                         thread::sleep(Duration::from_millis(300));
                     };
-                    let output = monitor_terminal_service
-                        .peek_terminal_output(&terminal_id)
-                        .unwrap_or_else(|_| "Agent 终端已关闭".to_string());
+                    // 结束时 transcript 兜底：transcript.log 为空则以 live-output.log 尾部 20k 字符兜底
+                    // （Out-File 缓冲写入，进程退出前文件基本为空；兜底只取尾部，MB 级文本不得进入 finish_attempt 链）
                     let transcript = fs::read_to_string(&control.transcript_path)
                         .ok()
                         .filter(|value| !value.trim().is_empty())
-                        .unwrap_or_else(|| output.clone());
+                        .unwrap_or_else(|| {
+                            fs::read_to_string(run_dir.join("live-output.log"))
+                                .map(|s| {
+                                    s.chars()
+                                        .rev()
+                                        .take(20_000)
+                                        .collect::<String>()
+                                        .chars()
+                                        .rev()
+                                        .collect::<String>()
+                                })
+                                .unwrap_or_default()
+                        });
 
                     if exit_code.is_some() {
                         if let Some(review_path) = workflow_review_path.as_deref() {
@@ -2703,7 +2741,7 @@ impl AiDeliveryService {
                             }
                         }
                     }
-                    break (exit_code, output, transcript);
+                    break (exit_code, String::new(), transcript);
                 };
                 if exit_code.is_none() {
                     if let Ok(current_attempt) = Self::get::<AiAttempt>(
