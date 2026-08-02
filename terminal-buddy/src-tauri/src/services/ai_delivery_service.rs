@@ -2736,6 +2736,40 @@ impl AiDeliveryService {
                 Self::allocate_task_worktree(&contract.id)?
             }
         };
+        // 依赖基线校验：依赖任务验收时记录的 validated_commit 必须与分支当前 HEAD 一致，
+        // 防止下游基于过期基线执行（readonly 依赖无分支/无基线，跳过）。
+        if task.execution_mode == "write" && !task.dependency_ids.is_empty() {
+            let source = project_repository_path(&project, repository)?;
+            for dependency_id in &task.dependency_ids {
+                let dependency = Self::get_task_node(dependency_id)?;
+                if dependency.execution_mode != "write" {
+                    continue;
+                }
+                let Some(contract_id) = dependency.contract_id.as_deref() else {
+                    continue;
+                };
+                let Ok(dependency_contract) =
+                    Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "依赖任务契约")
+                else {
+                    continue;
+                };
+                let Some(baseline) = dependency_contract.validated_commit.as_deref() else {
+                    continue;
+                };
+                let Some(branch) = dependency_contract.branch_name.as_deref() else {
+                    continue;
+                };
+                let current = run_git(&source, &["rev-parse".to_string(), branch.to_string()])?;
+                if current != baseline {
+                    return Err(format!(
+                        "依赖任务「{}」的基线 commit 已过期（{} → {}），请先重跑上游任务",
+                        dependency.title,
+                        baseline.get(..8).unwrap_or(baseline),
+                        current.get(..8).unwrap_or(&current),
+                    ));
+                }
+            }
+        }
         let now = chrono::Utc::now().to_rfc3339();
         let attempt = AiAttempt {
             id: Uuid::new_v4().to_string(),
