@@ -4088,7 +4088,18 @@ impl AiDeliveryService {
             if !agent.enabled {
                 return Err("指定 Agent 已禁用".to_string());
             }
-            Self::check_capacity(project, repository, &agent, task)?;
+            if let Err(error) = Self::check_capacity(project, repository, &agent, task) {
+                // 指定 Agent 无容量：任务保持 ready（dispatch_task_node 置 queued 前即返回），
+                // 由既有轮询/手动派发兜底
+                let _ = Self::append_event(
+                    &task.delivery_id,
+                    Some(&task.id),
+                    None,
+                    "dispatchDeferred",
+                    &format!("指定 Agent 当前无容量，任务保持待执行: {}", error),
+                );
+                return Err(error);
+            }
             return Ok(agent);
         }
         let role_id = task
@@ -4125,12 +4136,35 @@ impl AiDeliveryService {
         candidates.sort_by_key(|agent| {
             Self::active_attempt_count_for_agent(&agent.id).unwrap_or(usize::MAX)
         });
+        // 逐个试候选：跳过容量不足者继续补派；写入范围冲突是硬冲突（重试无解），单独保留
+        let mut conflict_error = None;
+        let mut capacity_blocked_count = 0usize;
         for agent in candidates {
-            if Self::check_capacity(project, repository, &agent, task).is_ok() {
-                return Ok(agent);
+            match Self::check_capacity(project, repository, &agent, task) {
+                Ok(()) => return Ok(agent),
+                Err(error) => {
+                    if error.contains("重叠写入范围") {
+                        conflict_error = Some(error);
+                    } else {
+                        capacity_blocked_count += 1;
+                    }
+                }
             }
         }
-        Err("角色候选 Agent 当前均无可用容量或存在写入范围冲突".to_string())
+        if capacity_blocked_count > 0 && conflict_error.is_none() {
+            // 全部候选无容量：专用错误 + 事件（任务保持 ready，依赖既有轮询自动补派）
+            let _ = Self::append_event(
+                &task.delivery_id,
+                Some(&task.id),
+                None,
+                "dispatchDeferred",
+                "全部候选 Agent 无容量，稍后自动重试",
+            );
+            return Err("全部候选 Agent 无容量，稍后自动重试".to_string());
+        }
+        Err(conflict_error.unwrap_or_else(|| {
+            "角色候选 Agent 当前均无可用容量或存在写入范围冲突".to_string()
+        }))
     }
 
     fn active_attempt_count_for_agent(agent_id: &str) -> Result<usize, String> {
