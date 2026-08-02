@@ -370,9 +370,37 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                     </div>
                   </div>
                   {lastMergeRecord && (
-                    <p className="ai-merge-status">
-                      最近本地合并：{mergeStateName(lastMergeRecord.state)}
-                    </p>
+                    <>
+                      <p className="ai-merge-status">
+                        最近本地合并：{mergeStateName(lastMergeRecord.state)}
+                      </p>
+                      {lastMergeRecord.repositories.length > 0 && (
+                        <div className="ai-merge-repos">
+                          {lastMergeRecord.repositories.map((repo) => (
+                            <div
+                              key={repo.repositoryId}
+                              className={`ai-merge-repo ${
+                                repo.state === "failed" ? "ai-merge-repo-failed" : ""
+                              }`}
+                            >
+                              <span className="ai-merge-repo-state">{repo.state}</span>
+                              <code>{repo.branchName}</code>
+                              <span className="ai-merge-repo-hash">
+                                前 {repo.preMergeHead.slice(0, 8)}
+                              </span>
+                              {repo.mergedHead && (
+                                <span className="ai-merge-repo-hash">
+                                  后 {repo.mergedHead.slice(0, 8)}
+                                </span>
+                              )}
+                              {repo.error && (
+                                <pre className="ai-merge-repo-error">{repo.error}</pre>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                   {pendingDecisions.length > 0 && (
                     <section className="ai-decision-panel" aria-label="待处理决策">
