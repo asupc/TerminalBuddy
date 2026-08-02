@@ -1841,3 +1841,50 @@
   font-size: 12px;
   padding: 2px 0;
 }
+
+/* 质量门禁命令结果 */
+.ai-gate-commands {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai-gate-command {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.ai-gate-command-pass {
+  border-left: 3px solid #22c55e;
+}
+.ai-gate-command-fail {
+  border-left: 3px solid #ef4444;
+}
+.ai-gate-command-status {
+  font-weight: 600;
+}
+.ai-gate-command-cmd {
+  flex: 1;
+  word-break: break-all;
+  font-family: var(--font-mono, monospace);
+}
+.ai-gate-command-code {
+  color: var(--text-secondary, #888);
+  white-space: nowrap;
+}
+.ai-gate-command-output {
+  width: 100%;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow: auto;
+  margin: 4px 0 0;
+  padding: 6px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}

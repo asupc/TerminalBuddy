@@ -535,6 +535,48 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                       审核：{gate.comments}
                                     </small>
                                   )}
+                                  {gate && gate.commandResults.length > 0 && (
+                                    <div className="ai-gate-commands">
+                                      {gate.commandResults.map((result, index) => (
+                                        <div
+                                          key={index}
+                                          className={`ai-gate-command ${
+                                            result.exitCode === 0
+                                              ? "ai-gate-command-pass"
+                                              : "ai-gate-command-fail"
+                                          }`}
+                                        >
+                                          <span className="ai-gate-command-status">
+                                            {result.exitCode === 0 ? "✓ 通过" : "✗ 失败"}
+                                          </span>
+                                          <code className="ai-gate-command-cmd">
+                                            {result.command}
+                                          </code>
+                                          <span className="ai-gate-command-code">
+                                            退出码 {result.exitCode}
+                                          </span>
+                                          {result.output && (
+                                            <pre className="ai-gate-command-output">
+                                              {result.output}
+                                            </pre>
+                                          )}
+                                          {result.exitCode !== 0 && (
+                                            <button
+                                              type="button"
+                                              className="btn-secondary"
+                                              onClick={() =>
+                                                void navigator.clipboard
+                                                  .writeText(result.command)
+                                                  .catch(() => {})
+                                              }
+                                            >
+                                              复制命令
+                                            </button>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                                 <div className="ai-task-controls">
                                 {task.state === "awaitingReview" && !gate && (
