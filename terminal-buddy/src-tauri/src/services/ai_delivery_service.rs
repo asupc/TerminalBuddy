@@ -2339,6 +2339,20 @@ impl AiDeliveryService {
        if result.is_err() {
            // 合并失败时清理临时集成工作区，避免遗留资源阻断后续重试
            let _ = cleanup_delivery_integration_workspace(project, delivery);
+           // 统一失败出口：合并失败置 delivery 终态 mergeFailed。
+           // 覆盖手动/自动/REST 全部入口及 merge_delivery_locally_locked_impl 内全部失败出口。
+           if let Ok(mut failed_delivery) = Self::get_delivery(&delivery.id) {
+               failed_delivery.state = "mergeFailed".to_string();
+               failed_delivery.updated_at = chrono::Utc::now().to_rfc3339();
+               let _ = Self::save(DELIVERIES_DIR, &failed_delivery.id, &failed_delivery);
+               let _ = Self::append_event(
+                   &failed_delivery.id,
+                   None,
+                   None,
+                   "mergeFailed",
+                   "本地合并失败，交付已置为合并失败终态",
+               );
+           }
        }
        result
    }

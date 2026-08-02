@@ -88,6 +88,7 @@ export const deliveryStateNames: Record<string, string> = {
   paused: "已暂停",
   completed: "已完成",
   failed: "失败",
+  mergeFailed: "合并失败",
   blocked: "已阻塞",
   succeeded: "已成功",
   cancelled: "已取消",
@@ -119,6 +120,7 @@ export const deliveryStateFilterGroups = [
   { id: "completed", title: "已完成" },
   { id: "succeeded", title: "已成功" },
   { id: "failed", title: "失败" },
+  { id: "mergeFailed", title: "合并失败" },
   { id: "blocked", title: "已阻塞" },
   { id: "cancelled", title: "已取消" },
 ] as const;
