@@ -45,12 +45,10 @@ const TERMINAL_RUNS_DIR: &str = "TerminalRuns";
 const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 const QUALITY_GATE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
-/// 单次 Agent 执行的最大持续时间，超过后由 watchdog 终止并标记失败。
-const ATTEMPT_MAX_DURATION: Duration = Duration::from_secs(60 * 60);
 // 首次检查不应等待 Agent 自己退出；成果文件可能已经写完而 CLI 仍停留在终端中。
 const ATTEMPT_WATCHDOG_DELAY: Duration = Duration::from_secs(30);
 const ATTEMPT_WATCHDOG_INTERVAL: Duration = Duration::from_secs(60);
-/// 任务级超时兜底（秒），与 ATTEMPT_MAX_DURATION 对齐。
+/// 任务级超时兜底（秒），与旧固定超时 ATTEMPT_MAX_DURATION（60 分钟）对齐。
 pub const DEFAULT_ATTEMPT_TIMEOUT_SECONDS: u32 = 60 * 60;
 /// 耗时达到超时的该比例时提前告警。
 pub const TIMEOUT_WARNING_RATIO: f32 = 0.8;
@@ -2769,6 +2767,16 @@ impl AiDeliveryService {
                     }
                 }
             });
+            // watchdog 超时值快照：任务级 → Agent 默认 → 全局兜底（attempt running 期间任务不可编辑，快照与运行态一致）
+            let watchdog_timeout = Self::get_task_node(&attempt.task_node_id)
+                .ok()
+                .and_then(|task| task.timeout_seconds)
+                .or_else(|| {
+                    Self::get::<AiAgent>(AGENTS_DIR, &attempt.agent_id, "Agent 超时默认")
+                        .ok()
+                        .and_then(|agent| agent.default_timeout_seconds)
+                })
+                .unwrap_or(DEFAULT_ATTEMPT_TIMEOUT_SECONDS) as u64;
             let watchdog_attempt_id = attempt.id.clone();
             let watchdog_delivery_id = delivery_id.clone();
             let watchdog_task_node_id = task_node_id.clone();
@@ -2781,6 +2789,7 @@ impl AiDeliveryService {
                     &watchdog_task_node_id,
                     watchdog_app,
                     watchdog_terminal_service,
+                    watchdog_timeout,
                 );
             });
             Ok(attempt)
@@ -6268,7 +6277,11 @@ fn run_attempt_watchdog(
     task_node_id: &str,
     app: tauri::AppHandle,
     terminal_service: TerminalService,
+    timeout_seconds: u64,
 ) {
+    // 用秒数 i64 比较：循环内 elapsed 是 chrono::TimeDelta，不能与 std::time::Duration 直接比较
+    let warning_at_secs = (timeout_seconds as f64 * TIMEOUT_WARNING_RATIO as f64).round() as i64;
+    let mut warning_emitted = false;
     thread::sleep(ATTEMPT_WATCHDOG_DELAY);
     loop {
         let attempt = match AiDeliveryService::get::<AiAttempt>(
@@ -6286,12 +6299,27 @@ fn run_attempt_watchdog(
        // 检查 Agent 执行是否超过最大持续时间
        if let Ok(started) = chrono::DateTime::parse_from_rfc3339(&attempt.started_at) {
            let elapsed = chrono::Utc::now().signed_duration_since(started.with_timezone(&chrono::Utc));
-           if elapsed.num_seconds() > ATTEMPT_MAX_DURATION.as_secs() as i64 {
+           // 80% 耗时一次性提前告警
+           if elapsed.num_seconds() >= warning_at_secs && !warning_emitted {
+               let _ = AiDeliveryService::append_event(
+                   delivery_id,
+                   Some(task_node_id),
+                   Some(attempt_id),
+                   "approachingTimeout",
+                   &format!(
+                       "已耗时 {}s，预计 {}s 后超时",
+                       elapsed.num_seconds(),
+                       timeout_seconds
+                   ),
+               );
+               warning_emitted = true;
+           }
+           if elapsed.num_seconds() > timeout_seconds as i64 {
                let _ = fail_attempt_from_watchdog(
                    &attempt,
                    &format!(
                        "Agent 执行已超时（超过 {} 分钟），已自动终止",
-                       ATTEMPT_MAX_DURATION.as_secs() / 60
+                       timeout_seconds / 60
                    ),
                    app.clone(),
                    terminal_service.clone(),
