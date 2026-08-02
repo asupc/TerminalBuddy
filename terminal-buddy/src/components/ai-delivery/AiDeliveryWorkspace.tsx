@@ -34,6 +34,7 @@ import {
   answerAiDecisionRequest,
   cancelAiAttempt,
   cancelAiDelivery,
+  cancelAiTaskNode,
   completeAiAttempt,
   cleanupAiDeliveryIntegration,
   createAiDelivery,
@@ -46,6 +47,7 @@ import {
   deleteAiRuntime,
   deleteAiWorkflow,
   dispatchAiReadyTasks,
+  dispatchAiTaskNode,
   generateAiQualityGateCommands,
   getAiAgents,
   getAiAttempts,
@@ -139,6 +141,10 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
       : saved.filter((id) => (id in deliveryStateFilterById));
   });
   const [deliveryId, setDeliveryId] = useState("");
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const lastSelectedTaskIdRef = useRef("");
+  const [phaseFilter, setPhaseFilter] = useState("");
+  const [batchResult, setBatchResult] = useState("");
   const [showProjectForm, setShowProjectForm] = useState(false);
  const [showProjectSettings, setShowProjectSettings] = useState(false);
   const [showProjectOverview, setShowProjectOverview] = useState(false);
@@ -426,6 +432,100 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
     await Promise.all(attempts.map((item) => startAiAttempt(item.id)));
     return attempts.length;
   };
+  const toggleTask = (id: string, shift: boolean) => {
+    if (shift && lastSelectedTaskIdRef.current && id !== lastSelectedTaskIdRef.current) {
+      const start = visibleTasks.findIndex((t) => t.id === lastSelectedTaskIdRef.current);
+      const end = visibleTasks.findIndex((t) => t.id === id);
+      if (start >= 0 && end >= 0) {
+        const range = visibleTasks
+          .slice(Math.min(start, end), Math.max(start, end) + 1)
+          .map((t) => t.id);
+        setSelectedTaskIds((current) => {
+          const next = new Set(current);
+          range.forEach((item) => next.add(item));
+          return next;
+        });
+      }
+    } else {
+      setSelectedTaskIds((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    }
+    lastSelectedTaskIdRef.current = id;
+  };
+  const batchRun = (label: string, op: (ids: string[]) => Promise<void>) =>
+    execute(`batch-${label}`, async () => {
+      const ids = [...selectedTaskIds];
+      if (!ids.length) throw new Error("请先勾选任务。");
+      await op(ids);
+      await refresh(projectId, deliveryId);
+    });
+  const batchDispatch = () =>
+    batchRun("dispatch", async (ids) => {
+      const targets = tasks.filter((t) => ids.includes(t.id) && t.state === "ready");
+      if (!targets.length) throw new Error("选中任务中没有就绪（ready）的任务。");
+      const results = await Promise.allSettled(
+        targets.map(async (t) => {
+          const attempt = await dispatchAiTaskNode(t.id);
+          await startAiAttempt(attempt.id);
+        }),
+      );
+      const ok = results.filter((r) => r.status === "fulfilled").length;
+      setBatchResult(`批量派发成功 ${ok}，失败 ${results.length - ok}`);
+    });
+  const batchRetry = () =>
+    batchRun("retry", async (ids) => {
+      const targets = tasks.filter(
+        (t) => ids.includes(t.id) && ["failed", "rework", "policyViolation"].includes(t.state),
+      );
+      if (!targets.length) throw new Error("选中任务中没有可重试的（failed/rework/policyViolation）。");
+      await Promise.allSettled(targets.map((t) => retryAiTaskNode(t.id)));
+      if (deliveryId) {
+        const attempts = await dispatchAiReadyTasks(deliveryId);
+        await Promise.allSettled(attempts.map((a) => startAiAttempt(a.id)));
+      }
+      setBatchResult(`批量重试 ${targets.length} 项并重新派发`);
+    });
+  const batchCancel = () =>
+    batchRun("cancel", async (ids) => {
+      const targets = tasks.filter(
+        (t) => ids.includes(t.id) && ["queued", "ready", "planned"].includes(t.state),
+      );
+      if (!targets.length) throw new Error("选中任务中没有可取消的（queued/ready/planned）。");
+      const results = await Promise.allSettled(targets.map((t) => cancelAiTaskNode(t.id)));
+      const ok = results.filter((r) => r.status === "fulfilled").length;
+      setBatchResult(`批量取消成功 ${ok}，失败 ${results.length - ok}`);
+    });
+  const retryAllFailed = () =>
+    batchRun("retry-all", async () => {
+      const targets = tasks.filter((t) => t.state === "failed" || t.state === "rework");
+      if (!targets.length) throw new Error("当前没有失败或返工的任务。");
+      await Promise.allSettled(targets.map((t) => retryAiTaskNode(t.id)));
+      if (deliveryId) {
+        const attempts = await dispatchAiReadyTasks(deliveryId);
+        await Promise.allSettled(attempts.map((a) => startAiAttempt(a.id)));
+      }
+      setBatchResult(`重试所有失败 ${targets.length} 项`);
+    });
+  const dispatchPhase = () =>
+    batchRun("phase", async () => {
+      if (!phaseFilter) throw new Error("请先选择阶段。");
+      const targets = tasks.filter(
+        (t) => t.workflowStepId === phaseFilter && t.state === "ready",
+      );
+      if (!targets.length) throw new Error("所选阶段没有就绪任务。");
+      const results = await Promise.allSettled(
+        targets.map(async (t) => {
+          const attempt = await dispatchAiTaskNode(t.id);
+          await startAiAttempt(attempt.id);
+        }),
+      );
+      const ok = results.filter((r) => r.status === "fulfilled").length;
+      setBatchResult(`阶段派发成功 ${ok}，失败 ${results.length - ok}`);
+    });
   const initializeTeam = () =>
     execute("team", async () => {
       const available = runtimes.filter((item) => item.available);
@@ -1578,6 +1678,16 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           cleanupDeliveryIntegration={cleanupDeliveryIntegration}
           planAiDeliveryWithManager={planAiDeliveryWithManager}
           refresh={refresh}
+          selectedTaskIds={selectedTaskIds}
+          toggleTask={toggleTask}
+          batchDispatch={batchDispatch}
+          batchRetry={batchRetry}
+          batchCancel={batchCancel}
+          retryAllFailed={retryAllFailed}
+          dispatchPhase={dispatchPhase}
+          phaseFilter={phaseFilter}
+          setPhaseFilter={setPhaseFilter}
+          batchResult={batchResult}
         />
       )}
       {selectedTask && (

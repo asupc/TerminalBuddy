@@ -47,7 +47,7 @@ use commands::{
 };
 use commands::{
     answer_ai_decision_request, approve_ai_delivery, cancel_ai_attempt, cancel_ai_delivery,
-    complete_ai_attempt,
+    cancel_ai_task_node, complete_ai_attempt,
     cleanup_ai_delivery_integration, create_ai_decision_request, create_ai_delivery,
     create_ai_task_node, delete_ai_delivery, dispatch_ai_ready_tasks, dispatch_ai_task_node,
     delete_ai_task_node, update_ai_task_node,
@@ -536,6 +536,7 @@ pub fn run() {
             retry_ai_task_node,
             start_ai_attempt,
             cancel_ai_attempt,
+            cancel_ai_task_node,
             complete_ai_attempt,
             get_ai_review_gates,
             run_ai_quality_gate,

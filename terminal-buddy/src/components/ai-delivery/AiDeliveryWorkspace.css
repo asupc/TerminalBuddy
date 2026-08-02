@@ -1173,7 +1173,7 @@
 .ai-task-list article {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 28px;
+  grid-template-columns: auto minmax(0, 1fr) auto 28px;
   align-items: center;
   gap: 16px;
   min-height: 68px;
@@ -1933,4 +1933,44 @@
   padding: 6px;
   background: rgba(239, 68, 68, 0.08);
   border-radius: 4px;
+}
+
+/* 批量操作条与任务多选 */
+.ai-batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary, transparent);
+  font-size: 12px;
+}
+.ai-batch-bar > span {
+  color: var(--text-secondary, #888);
+}
+.ai-batch-bar select {
+  min-height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.ai-batch-result {
+  color: var(--accent, #4d7db9);
+}
+.ai-task-select {
+  align-self: start;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+}
+.ai-task-select input {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--accent, #4d7db9);
 }

@@ -3232,6 +3232,46 @@ impl AiDeliveryService {
         Ok(attempt)
     }
 
+    /// 批量取消任务节点：queued/ready/planned/rework/needsInput 置 cancelled，
+    /// 并级联终止其仍在运行中的 attempt（关闭对应终端）。
+    pub fn cancel_task_node(
+        task_node_id: &str,
+        terminal_service: TerminalService,
+    ) -> Result<AiTaskNode, String> {
+        let mut task = Self::get_task_node(task_node_id)?;
+        if !matches!(
+            task.state.as_str(),
+            "queued" | "ready" | "planned" | "rework" | "needsInput"
+        ) {
+            return Err(format!("任务状态 {} 不可取消", task.state));
+        }
+        for attempt_id in &task.attempt_ids {
+            if let Ok(attempt) = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试") {
+                if attempt.state == "running" {
+                    if let Some(terminal_id) = attempt.terminal_id.as_deref() {
+                        let _ = terminal_service.close_terminal(terminal_id);
+                    }
+                    let mut updated = attempt;
+                    updated.state = "cancelled".to_string();
+                    updated.finished_at = Some(chrono::Utc::now().to_rfc3339());
+                    updated.updated_at = updated.finished_at.clone().unwrap_or_default();
+                    let _ = Self::save(ATTEMPTS_DIR, &updated.id, &updated);
+                }
+            }
+        }
+        task.state = "cancelled".to_string();
+        task.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(TASK_NODES_DIR, &task.id, &task)?;
+        Self::append_event(
+            &task.delivery_id,
+            Some(&task.id),
+            None,
+            "taskCancelled",
+            &format!("任务 {} 已取消", task.title),
+        )?;
+        Ok(task)
+    }
+
     pub fn ensure_manual_completion_allowed(attempt_id: &str) -> Result<(), String> {
         let attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "manual completion check")?;
         let delivery = Self::get_delivery(&attempt.delivery_id)?;

@@ -78,6 +78,17 @@ export interface DeliveryDetailProps {
   cleanupDeliveryIntegration: () => Promise<void>;
   planAiDeliveryWithManager: (deliveryId: string) => Promise<unknown>;
   refresh: (projectId?: string, deliveryId?: string) => Promise<void>;
+  // 批量操作
+  selectedTaskIds: Set<string>;
+  toggleTask: (id: string, shift: boolean) => void;
+  batchDispatch: () => Promise<void>;
+  batchRetry: () => Promise<void>;
+  batchCancel: () => Promise<void>;
+  retryAllFailed: () => Promise<void>;
+  dispatchPhase: () => Promise<void>;
+  phaseFilter: string;
+  setPhaseFilter: React.Dispatch<React.SetStateAction<string>>;
+  batchResult: string;
 }
 
 /** 交付看板详情：当项目已选择且存在交付时的看板视图。 */
@@ -105,6 +116,9 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
     cancelAttempt, completeAttempt,
     removeDelivery, replanLegacyDelivery, cancelDelivery, mergeDelivery, cleanupDeliveryIntegration,
     planAiDeliveryWithManager, refresh,
+    selectedTaskIds, toggleTask,
+    batchDispatch, batchRetry, batchCancel, retryAllFailed, dispatchPhase,
+    phaseFilter, setPhaseFilter, batchResult,
   } = props;
 
   const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
@@ -525,6 +539,35 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                       <>
                     {boardColumns.some((column) => column.id === activeTaskTab) && (
                     <div className="ai-task-list" role="tabpanel">
+                      <div className="ai-batch-bar">
+                        <span>已选 {selectedTaskIds.size} 项</span>
+                        <button type="button" className="btn-secondary" onClick={() => void batchDispatch()}>
+                          批量派发
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={() => void batchRetry()}>
+                          批量重试
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={() => void batchCancel()}>
+                          批量取消
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={() => void retryAllFailed()}>
+                          重试所有失败
+                        </button>
+                        <select
+                          value={phaseFilter}
+                          onChange={(event) => setPhaseFilter(event.target.value)}
+                          title="按编排阶段筛选后派发"
+                        >
+                          <option value="">全部阶段</option>
+                          {delivery?.workflowSteps.map((step) => (
+                            <option key={step.id} value={step.id}>{step.name}</option>
+                          ))}
+                        </select>
+                        <button type="button" className="btn-secondary" onClick={() => void dispatchPhase()}>
+                          派发所选阶段
+                        </button>
+                        {batchResult && <span className="ai-batch-result">{batchResult}</span>}
+                      </div>
                       {visibleTasks.length === 0 && (
                         <p className="ai-task-list-empty">当前状态暂无任务</p>
                       )}
@@ -538,6 +581,15 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                             );
                             return (
                               <article key={task.id}>
+                                <label className="ai-task-select" title="多选任务（Shift 点击连选）">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedTaskIds.has(task.id)}
+                                    onChange={(event) =>
+                                      toggleTask(task.id, (event.nativeEvent as MouseEvent).shiftKey)
+                                    }
+                                  />
+                                </label>
                                 <div className="ai-task-summary">
                                   <div className="ai-task-title-row">
                                     <strong>{task.title}</strong>

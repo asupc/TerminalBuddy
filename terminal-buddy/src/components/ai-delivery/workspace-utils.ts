@@ -215,6 +215,7 @@ export const eventTypeNames: Record<string, string> = {
   approachingTimeout: "即将超时",
   taskNodeEdited: "任务已编辑",
   taskNodeDeleted: "任务已删除",
+  taskCancelled: "任务已取消",
 };
 export const eventTypeName = (eventType: string) => eventTypeNames[eventType] ?? eventType;
 export const failedEventTypeSet = new Set(Object.keys(eventTypeNames).filter(

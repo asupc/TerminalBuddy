@@ -343,6 +343,14 @@ pub fn cancel_ai_attempt(
 }
 
 #[command]
+pub fn cancel_ai_task_node(
+    task_node_id: String,
+    terminal_service: tauri::State<TerminalService>,
+) -> Result<AiTaskNode, String> {
+    AiDeliveryService::cancel_task_node(&task_node_id, terminal_service.inner().clone())
+}
+
+#[command]
 pub fn complete_ai_attempt(
     id: String,
     app: tauri::AppHandle,
