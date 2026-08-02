@@ -18,8 +18,11 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
-use tauri::Emitter;
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
+
+/// 全局 AppHandle：append_event 统一从这里推送 ai-delivery-event，由 lib.rs setup 注入。
+pub static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -1854,14 +1857,13 @@ impl AiDeliveryService {
                     &finished_reviewer_attempt.id,
                     &finished_reviewer_attempt,
                 )?;
-                let event = Self::append_event(
+                let _ = Self::append_event(
                     &delivery.id,
                     Some(&task.id),
                     Some(&reviewer_attempt_id),
                     "reviewerFailed",
                     &error,
                 )?;
-                let _ = app.emit("ai-delivery-event", event);
                 return Err(error);
             }
         };
@@ -1870,14 +1872,13 @@ impl AiDeliveryService {
             &finished_reviewer_attempt.id,
             &finished_reviewer_attempt,
         )?;
-        let reviewer_event = Self::append_event(
+        let _ = Self::append_event(
             &delivery.id,
             Some(&task.id),
             Some(&reviewer_attempt_id),
             "reviewerCompleted",
             "Reviewer Agent 已完成独立审查",
         )?;
-        let _ = app.emit("ai-delivery-event", reviewer_event);
         let now = chrono::Utc::now().to_rfc3339();
         let gate = Self::save_review_gate(AiReviewGate {
             id: Uuid::new_v4().to_string(),
@@ -2607,15 +2608,13 @@ impl AiDeliveryService {
            running_task.updated_at = chrono::Utc::now().to_rfc3339();
            // task 状态保存失败不阻止 Agent 启动，watchdog 会确保最终一致性
            let _ = Self::save(TASK_NODES_DIR, &running_task.id, &running_task);
-           if let Ok(event) = Self::append_event(
+           let _ = Self::append_event(
                &delivery_id,
                Some(&task_node_id),
                Some(&attempt_id),
                "attemptStarted",
                "Agent 已在原生终端中启动，可打开终端查看并继续沟通",
-           ) {
-               let _ = app.emit("ai-delivery-event", event);
-           }
+           );
 
             let input_terminal_service = terminal_service.clone();
             let input_terminal_id = terminal_id.clone();
@@ -2881,7 +2880,7 @@ impl AiDeliveryService {
     fn interrupt_attempt(
         attempt_id: &str,
         message: &str,
-        app: tauri::AppHandle,
+        _app: tauri::AppHandle,
     ) -> Result<(), String> {
         let mut attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")?;
         if attempt.state != "running" {
@@ -2897,14 +2896,13 @@ impl AiDeliveryService {
         task.updated_at = now;
         Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
         Self::save(TASK_NODES_DIR, &task.id, &task)?;
-        let event = Self::append_event(
+        let _ = Self::append_event(
             &attempt.delivery_id,
             Some(&task.id),
             Some(&attempt.id),
             "attemptCancelled",
             message,
         )?;
-        let _ = app.emit("ai-delivery-event", event);
         Ok(())
     }
 
@@ -2912,7 +2910,7 @@ impl AiDeliveryService {
     fn fail_queued_attempt(
         attempt_id: &str,
         reason: &str,
-        app: &tauri::AppHandle,
+        _app: &tauri::AppHandle,
     ) -> Result<(), String> {
         let mut attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")?;
         if attempt.state != "queued" {
@@ -2928,14 +2926,13 @@ impl AiDeliveryService {
         task.updated_at = now;
         Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
         Self::save(TASK_NODES_DIR, &task.id, &task)?;
-        let event = Self::append_event(
+        let _ = Self::append_event(
             &attempt.delivery_id,
             Some(&task.id),
             Some(&attempt.id),
             "attemptStartFailed",
             &format!("Agent 启动失败，任务可重新派发: {}", reason),
         )?;
-        let _ = app.emit("ai-delivery-event", event);
         Ok(())
     }
 
@@ -2969,14 +2966,13 @@ impl AiDeliveryService {
             task.updated_at = chrono::Utc::now().to_rfc3339();
             Self::save(TASK_NODES_DIR, &task.id, &task)?;
         }
-       let event = Self::append_event(
+       let _ = Self::append_event(
             delivery_id,
             Some(task_node_id),
             Some(attempt_id),
             "attemptAwaitingDecision",
             "Agent 已请求用户决策，任务已暂停。",
         )?;
-        let _ = app.emit("ai-delivery-event", event);
         let _ = crate::commands::notification::show_ai_delivery_notification(
             app,
             delivery_id.to_string(),
@@ -3129,14 +3125,13 @@ impl AiDeliveryService {
         } else {
             ("attemptFailed", "Agent 执行失败".to_string())
         };
-        let event = Self::append_event(
+        let _ = Self::append_event(
             delivery_id,
             Some(task_node_id),
             Some(attempt_id),
             event_type,
             &message,
         )?;
-        let _ = app.emit("ai-delivery-event", event);
         if workflow_step_completed {
             let _ = Self::refresh_ready_task_nodes(delivery_id)?;
             if Self::get_delivery(delivery_id)?.state == "running" {
@@ -3144,14 +3139,13 @@ impl AiDeliveryService {
                     if let Err(error) =
                         Self::start_attempt(&next_attempt.id, app.clone(), terminal_service.clone())
                     {
-                        let event = Self::append_event(
+                        let _ = Self::append_event(
                             delivery_id,
                             Some(&next_attempt.task_node_id),
                             Some(&next_attempt.id),
                             "dispatchFailed",
                             &format!("后续编排任务启动失败: {}", error),
                         )?;
-                   let _ = app.emit("ai-delivery-event", event);
                    }
                }
            }
@@ -3168,14 +3162,13 @@ impl AiDeliveryService {
                     let now = chrono::Utc::now();
                     delivery.updated_at = now.to_rfc3339();
                     Self::save(DELIVERIES_DIR, &delivery.id, &delivery)?;
-                    let event = Self::append_event(
+                    let _ = Self::append_event(
                         delivery_id,
                         None,
                         None,
                         "deliverySucceeded",
                         "全部任务已完成，交付成功",
                     )?;
-                    let _ = app.emit("ai-delivery-event", event);
                     // 自动合并到目标分支
                     let merge_delivery_id = delivery.id.clone();
                     let merge_result = Self::merge_delivery_locally(&merge_delivery_id);
@@ -3429,6 +3422,10 @@ impl AiDeliveryService {
             occurred_at: chrono::Utc::now().to_rfc3339(),
         };
         Self::save(EVENTS_DIR, &event.id, &event)?;
+        // 统一实时推送：所有 append_event 写入的事件自动送达前端，调用点不再各自 emit
+        if let Some(app) = APP_HANDLE.get() {
+            let _ = app.emit("ai-delivery-event", &event);
+        }
         Ok(event)
     }
 
@@ -6419,7 +6416,7 @@ fn reconcile_running_attempt(
 fn fail_attempt_from_watchdog(
     attempt: &AiAttempt,
     message: &str,
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     terminal_service: TerminalService,
 ) -> Result<(), String> {
     let mut current = AiDeliveryService::get::<AiAttempt>(
@@ -6443,14 +6440,13 @@ fn fail_attempt_from_watchdog(
         task.updated_at = now;
         AiDeliveryService::save(TASK_NODES_DIR, &task.id, &task)?;
     }
-    let event = AiDeliveryService::append_event(
+    let _ = AiDeliveryService::append_event(
         &current.delivery_id,
         Some(&current.task_node_id),
         Some(&current.id),
         "attemptFailed",
         message,
     )?;
-    let _ = app.emit("ai-delivery-event", event);
     if let Some(terminal_id) = current.terminal_id.as_deref() {
         let _ = terminal_service.close_terminal(terminal_id);
     }
@@ -6725,14 +6721,13 @@ fn run_reviewer_agent(
     attempt.terminal_id = Some(terminal_id.clone());
     attempt.updated_at = chrono::Utc::now().to_rfc3339();
     AiDeliveryService::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
-    let event = AiDeliveryService::append_event(
+    let _ = AiDeliveryService::append_event(
         &attempt.delivery_id,
         Some(&attempt.task_node_id),
         Some(attempt_id),
         "reviewerTerminalStarted",
         "Reviewer CLI 已在原生终端中启动",
     )?;
-    let _ = app.emit("ai-delivery-event", event);
     start_interactive_terminal_command(
         &terminal_service,
         &terminal_id,
@@ -7290,14 +7285,13 @@ fn run_manager_planner(
     manager_attempt.summary = Some("管理者已在原生终端中启动".to_string());
     manager_attempt.updated_at = chrono::Utc::now().to_rfc3339();
     AiDeliveryService::save(ATTEMPTS_DIR, &manager_attempt.id, &manager_attempt)?;
-    let event = AiDeliveryService::append_event(
+    let _ = AiDeliveryService::append_event(
         delivery_id,
         None,
         Some(manager_attempt_id),
         "managerTerminalStarted",
         "管理者 CLI 已在原生终端中启动",
     )?;
-    let _ = app.emit("ai-delivery-event", event);
     start_interactive_terminal_command(
         &terminal_service,
         &terminal_id,

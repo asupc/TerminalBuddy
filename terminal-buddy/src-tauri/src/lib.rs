@@ -278,6 +278,8 @@ pub fn run() {
         })
         .setup(|app| {
             boot_log("setup enter");
+            // 注入全局 AppHandle：append_event 统一实时推送 ai-delivery-event
+            let _ = services::ai_delivery_service::APP_HANDLE.set(app.handle().clone());
             #[cfg(windows)]
             install_system_shutdown_handler(app);
             let show_item = MenuItemBuilder::with_id("show", "打开窗口").build(app)?;
