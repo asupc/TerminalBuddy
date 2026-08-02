@@ -88,6 +88,9 @@ export const deliveryStateNames: Record<string, string> = {
   completed: "已完成",
   failed: "失败",
   blocked: "已阻塞",
+  succeeded: "已成功",
+  cancelled: "已取消",
+  merging: "合并中",
 };
 export const deliveryStateName = (state: string) => deliveryStateNames[state] ?? state;
 export const ongoingDeliveryStates = new Set([
@@ -205,6 +208,10 @@ export const eventTypeNames: Record<string, string> = {
   integrationWorkspaceCleaned: "集成工作区已清理",
   mergeFailed: "本地合并失败",
   mergedLocally: "已本地合并",
+  autoMerged: "自动合并成功",
+  autoMergeFailed: "自动合并失败",
+  deliverySucceeded: "交付成功",
+  deliveryReplanned: "已重新规划",
 };
 export const eventTypeName = (eventType: string) => eventTypeNames[eventType] ?? eventType;
 export const failedEventTypeSet = new Set(Object.keys(eventTypeNames).filter(

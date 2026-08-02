@@ -2542,7 +2542,7 @@ impl AiDeliveryService {
             let monitor_working_directory = agent_start_directory.clone();
             thread::spawn(move || {
                 let mut review_repair_attempted = false;
-                let (exit_code, output, transcript) = loop {
+                let (exit_code, _output, transcript) = loop {
                     let exit_code = loop {
                         if let Some(code) = read_terminal_exit_code(&control.exit_marker) {
                             break Some(code);
@@ -2766,6 +2766,7 @@ impl AiDeliveryService {
         Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")
     }
 
+    #[allow(dead_code)]
     fn interrupt_attempt(
         attempt_id: &str,
         message: &str,
@@ -2858,6 +2859,11 @@ impl AiDeliveryService {
             "Agent 已请求用户决策，任务已暂停。",
         )?;
         let _ = app.emit("ai-delivery-event", event);
+        let _ = crate::commands::notification::show_ai_delivery_notification(
+            app,
+            delivery_id.to_string(),
+            request.question.clone(),
+        );
         Ok(())
     }
 

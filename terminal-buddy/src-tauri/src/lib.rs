@@ -524,6 +524,7 @@ pub fn run() {
             create_ai_decision_request,
             answer_ai_decision_request,
             get_ai_attempts,
+            read_ai_attempt_output,
             dispatch_ai_task_node,
             dispatch_ai_ready_tasks,
             retry_ai_task_node,

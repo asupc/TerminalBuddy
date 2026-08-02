@@ -192,7 +192,6 @@ pub async fn complete_attempt(
         }
     }
     // 完成后自动派发后续任务
-    let _ = AiDeliveryService::dispatch_ready_tasks(&id);
     for attempt in AiDeliveryService::dispatch_ready_tasks(&id).unwrap_or_default() {
         let _ = AiDeliveryService::start_attempt(&attempt.id, app.clone(), terminal_service.clone());
     }
