@@ -155,6 +155,7 @@ export const attemptStateNames: Record<string, string> = {
   failed: "失败",
   cancelled: "已取消",
   needsInput: "等待决策",
+  interrupted: "已中断",
   policyViolation: "策略违规",
 };
 export const attemptStateName = (state: string) => attemptStateNames[state] ?? state;

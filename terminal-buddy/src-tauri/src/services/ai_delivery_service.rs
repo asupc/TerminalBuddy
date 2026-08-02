@@ -1856,6 +1856,30 @@ impl AiDeliveryService {
         request.updated_at = chrono::Utc::now().to_rfc3339();
         Self::save(DECISIONS_DIR, &request.id, &request)?;
         if let Some(task_id) = request.task_node_id.as_deref() {
+            // 归档该任务上 needsInput/interrupted 的旧 attempt（应用重启中断或已暂停的），
+            // 避免回答决策后正常派发时旧记录残留。
+            for stale in Self::get_all_attempts(Some(&request.delivery_id))? {
+                if stale.task_node_id != task_id
+                    || !matches!(stale.state.as_str(), "needsInput" | "interrupted")
+                {
+                    continue;
+                }
+                let mut archived = stale;
+                archived.state = "cancelled".to_string();
+                archived.finished_at = Some(chrono::Utc::now().to_rfc3339());
+                archived.updated_at = archived.finished_at.clone().unwrap_or_default();
+                archived.summary = Some("已由用户回答决策，旧执行记录归档".to_string());
+                Self::save(ATTEMPTS_DIR, &archived.id, &archived)?;
+                Self::append_event(
+                    &archived.delivery_id,
+                    Some(&archived.task_node_id),
+                    Some(&archived.id),
+                    "attemptCancelled",
+                    "旧执行记录已归档（用户已回答决策）",
+                )?;
+            }
+        }
+        if let Some(task_id) = request.task_node_id.as_deref() {
             let mut task = Self::get_task_node(task_id)?;
             if task.state == "needsInput" {
                 task.state = "ready".to_string();
@@ -1995,10 +2019,36 @@ impl AiDeliveryService {
     pub fn recover_interrupted_attempts() -> Result<usize, String> {
         let interrupted = Self::get_all_attempts(None)?
             .into_iter()
-            .filter(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
+            .filter(|attempt| {
+                matches!(
+                    attempt.state.as_str(),
+                    "queued" | "starting" | "running" | "needsInput"
+                )
+            })
             .collect::<Vec<_>>();
         let mut recovered = 0;
         for mut attempt in interrupted {
+            if attempt.state == "needsInput" {
+                // 等待决策时应用重启：清理死终端引用（重启后 terminal_id 无效），
+                // 标记 interrupted 供前端展示。任务 state 保持 needsInput，
+                // 回答决策时（answer_decision_request 按 task.state 判断）可正常恢复派发。
+                attempt.terminal_id = None;
+                attempt.state = "interrupted".to_string();
+                Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+                Self::append_event(
+                    &attempt.delivery_id,
+                    if attempt.task_node_id.is_empty() {
+                        None
+                    } else {
+                        Some(&attempt.task_node_id)
+                    },
+                    Some(&attempt.id),
+                    "attemptInterrupted",
+                    "等待决策时应用重启，attempt 已中断",
+                )?;
+                recovered += 1;
+                continue;
+            }
             let message =
                 "TerminalBuddy 已重启，原 Agent 终端无法恢复；任务已取消，请检查现场后重新派发。";
             if attempt.task_node_id.is_empty() {
