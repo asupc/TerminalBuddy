@@ -38,6 +38,9 @@ pub struct BotChannelConfig {
     pub has_secret: bool,
     #[serde(default)]
     pub has_callback_token: bool,
+    /// 该通道是否同时用于 AI 交付事件推送（微信/飞书）。
+    #[serde(default)]
+    pub ai_delivery_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -35,6 +35,7 @@ function normalizeSettings(settings: BotSettings): BotSettings {
       secret: channel.secret || '',
       callbackToken: channel.callbackToken || '',
       allowedUserIds: channel.allowedUserIds || [],
+      aiDeliveryEnabled: !!channel.aiDeliveryEnabled,
     })),
   };
 }
@@ -353,6 +354,15 @@ export function BotNotificationSettings() {
                 <label className="bot-channel-toggle" title="启用通道">
                   <input type="checkbox" checked={channel.enabled} onChange={event => updateChannel(channel.id, 'enabled', event.target.checked)} />
                 </label>
+                {(channel.platform === 'weixin' || channel.platform === 'feishu') && (
+                  <label className="bot-channel-toggle" title="AI 交付事件推送（决策请求/任务失败/合并完成/交付成功）">
+                    <input
+                      type="checkbox"
+                      checked={!!channel.aiDeliveryEnabled}
+                      onChange={event => updateChannel(channel.id, 'aiDeliveryEnabled', event.target.checked)}
+                    />
+                  </label>
+                )}
                 <div className="bot-channel-identity">
                   <span>{channel.name || platform.label}</span>
                   <small>{platform.label}</small>

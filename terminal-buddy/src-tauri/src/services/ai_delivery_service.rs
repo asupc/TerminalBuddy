@@ -7,10 +7,10 @@ use crate::models::{
     CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, TerminalOwner,
     UpdateAiDeliveryInput, UpdateAiTaskNodeInput,
 };
-use crate::services::{DatabaseService, PathService};
+use crate::services::{BotSettingsService, DatabaseService, PathService};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -1815,6 +1815,24 @@ impl AiDeliveryService {
             "decisionRequested",
             "Agent 请求用户决策，交付已暂停",
         )?;
+        // 推送决策请求到微信/飞书（含问题、影响与选项摘要；附决策 ID 供引用回复回答）
+        Self::push_delivery_notice(
+            &delivery.id,
+            "决策请求",
+            &format!(
+                "交付「{}」需要决策：{}\n影响：{}\n选项：{}",
+                delivery.title,
+                request.question,
+                request.impact,
+                request
+                    .options
+                    .iter()
+                    .map(|option| option.label.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            ),
+            Some(&request.id),
+        );
         Ok(request)
     }
 
@@ -1856,6 +1874,17 @@ impl AiDeliveryService {
             "decisionAnswered",
             "用户已回答决策请求，任务可继续调度",
         )?;
+        // 推送决策已答（含回答内容），便于在聊天侧确认处理结果
+        Self::push_delivery_notice(
+            &request.delivery_id,
+            "决策已答",
+            &format!(
+                "决策「{}」已回答：{}",
+                request.question,
+                answer.trim()
+            ),
+            None,
+        );
         Ok(request)
     }
 
@@ -2548,6 +2577,13 @@ impl AiDeliveryService {
         record.state = "completed".to_string();
         record.updated_at = chrono::Utc::now().to_rfc3339();
         Self::save(MERGE_RECORDS_DIR, &record.id, &record)?;
+        // 推送合并完成（交付级事件）
+        Self::push_delivery_notice(
+            &delivery.id,
+            "合并完成",
+            &format!("交付「{}」已合并到本地目标分支", delivery.title),
+            None,
+        );
         Self::complete_delivery_contracts(&delivery.id)?;
         let mut completed_delivery = delivery.clone();
         completed_delivery.state = "completed".to_string();
@@ -3499,6 +3535,15 @@ impl AiDeliveryService {
             event_type,
             &message,
         )?;
+        // 任务失败/违规时推送微信/飞书（含任务标题与失败摘要）
+        if matches!(event_type, "attemptFailed" | "policyViolation") {
+            Self::push_delivery_notice(
+                delivery_id,
+                "任务失败",
+                &format!("任务「{}」{}：{}", task.title, event_type, message),
+                None,
+            );
+        }
         if workflow_step_completed {
             let _ = Self::refresh_ready_task_nodes(delivery_id)?;
             if Self::get_delivery(delivery_id)?.state == "running" {
@@ -3536,6 +3581,13 @@ impl AiDeliveryService {
                         "deliverySucceeded",
                         "全部任务已完成，交付成功",
                     )?;
+                    // 推送交付成功到微信/飞书
+                    Self::push_delivery_notice(
+                        delivery_id,
+                        "交付成功",
+                        &format!("交付「{}」全部任务已完成，交付成功", delivery.title),
+                        None,
+                    );
                     // 系统托盘通知：交付整体收尾
                     if let Some(app) = APP_HANDLE.get() {
                         let _ = crate::commands::notification::show_ai_delivery_notification(
@@ -3757,6 +3809,13 @@ impl AiDeliveryService {
             "deliverySucceeded",
             "全部任务已完成，交付成功",
         )?;
+        // 推送交付成功到微信/飞书
+        Self::push_delivery_notice(
+            delivery_id,
+            "交付成功",
+            &format!("交付「{}」全部任务已完成，交付成功", delivery.title),
+            None,
+        );
         let merge_result = Self::merge_delivery_locally(&delivery.id);
         match &merge_result {
             Ok(_) => {
@@ -3803,6 +3862,137 @@ impl AiDeliveryService {
             let _ = app.emit("ai-delivery-event", &event);
         }
         Ok(event)
+    }
+
+    // ---------- AI 交付事件推送（微信/飞书） ----------
+
+    /// 外部消息 ID → AI 交付决策 ID 映射（推送决策请求时登记，聊天引用回复时解析）。
+    /// 进程内映射即可：决策请求推送后通常立即被引用回复回答。
+    fn delivery_decision_bindings() -> &'static Mutex<HashMap<String, String>> {
+        static BINDINGS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+        BINDINGS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// 登记「外部消息 ID → 决策 ID」，供聊天引用回复驱动 answer_decision_request。
+    pub fn register_delivery_decision_binding(external_message_id: &str, decision_id: &str) {
+        Self::delivery_decision_bindings()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(external_message_id.to_string(), decision_id.to_string());
+    }
+
+    /// 解析引用回复指向的 AI 交付决策 ID。
+    pub fn resolve_delivery_decision_binding(external_message_id: &str) -> Option<String> {
+        Self::delivery_decision_bindings()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(external_message_id)
+            .cloned()
+    }
+
+    /// 从回复文本提取兜底标识「决策ID: <id>」（映射丢失时用户手动复制）。
+    pub fn extract_delivery_decision_id(text: &str) -> Option<String> {
+        const MARKER: &str = "决策ID:";
+        let index = text.rfind(MARKER)?;
+        text[index + MARKER.len()..]
+            .split_whitespace()
+            .next()
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    }
+
+    fn delivery_push_client() -> reqwest::Client {
+        static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+        CLIENT
+            .get_or_init(|| {
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(20))
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new())
+            })
+            .clone()
+    }
+
+    /// 推送 AI 交付事件到标记了「AI 交付推送」的微信/飞书通道。
+    /// 尽力而为：任何失败仅记日志，不阻断交付流程（调用点全部为同步函数，故异步发送用 spawn 包装）。
+    pub fn push_delivery_notice(
+        delivery_id: &str,
+        event_type: &str,
+        message: &str,
+        decision_id: Option<&str>,
+    ) {
+        let Ok(bot_settings) = BotSettingsService::get_runtime() else {
+            return;
+        };
+        let channels = bot_settings
+            .channels
+            .iter()
+            .filter(|channel| channel.enabled && channel.ai_delivery_enabled)
+            .cloned()
+            .collect::<Vec<_>>();
+        if channels.is_empty() {
+            return;
+        }
+        let text = match decision_id {
+            Some(id) => format!("[AI 交付] {}\n{}\n\n决策ID: {}", event_type, message, id),
+            None => format!("[AI 交付] {}\n{}", event_type, message),
+        };
+        for channel in channels {
+            let text = text.clone();
+            let decision_id = decision_id.map(str::to_string);
+            let delivery_id = delivery_id.to_string();
+            match channel.platform.as_str() {
+                "weixin" => {
+                    // 预生成 message_id 并登记引用映射（决策类推送支持引用回复回答）
+                    let message_id =
+                        crate::services::bot_weixin_service::new_weixin_message_id();
+                    if let Some(decision_id) = decision_id.as_deref() {
+                        Self::register_delivery_decision_binding(&message_id, decision_id);
+                    }
+                    let text = crate::services::bot_weixin_service::append_weixin_reply_marker(
+                        &text,
+                        &message_id,
+                    );
+                    tauri::async_runtime::spawn(async move {
+                        let client = Self::delivery_push_client();
+                        if let Err(error) = crate::services::bot_weixin_service::
+                            send_weixin_text_with_id(
+                                &client,
+                                &channel,
+                                &channel.target_id,
+                                &text,
+                                &message_id,
+                            )
+                            .await
+                        {
+                            eprintln!(
+                                "[AI交付] 微信推送失败 (delivery {}): {}",
+                                delivery_id, error
+                            );
+                        }
+                    });
+                }
+                "feishu" => {
+                    tauri::async_runtime::spawn(async move {
+                        match crate::commands::bot::send_feishu_text(&channel, &text).await {
+                            Ok(message_id) => {
+                                if let Some(decision_id) = decision_id.as_deref() {
+                                    Self::register_delivery_decision_binding(
+                                        &message_id,
+                                        decision_id,
+                                    );
+                                }
+                            }
+                            Err(error) => eprintln!(
+                                "[AI交付] 飞书推送失败 (delivery {}): {}",
+                                delivery_id, error
+                            ),
+                        }
+                    });
+                }
+                _ => {}
+            }
+        }
     }
 
     pub fn create_task_contract(input: CreateTaskContractInput) -> Result<AiTaskContract, String> {

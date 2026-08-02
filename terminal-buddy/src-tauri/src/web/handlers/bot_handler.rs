@@ -10,7 +10,7 @@ use crate::commands::{
     TerminalService,
 };
 use crate::models::BridgeInboundMessage;
-use crate::services::BotSettingsService;
+use crate::services::{AiDeliveryService, BotSettingsService};
 use crate::web::server::AppState;
 
 fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
@@ -265,6 +265,22 @@ pub async fn feishu_events(State(state): State<AppState>, Json(payload): Json<Va
             .map(str::to_string),
         text,
     };
+    // AI 交付决策：引用回复命中 AI 交付推送映射时优先回答（与 claude_hook 卡片决策绑定共存）
+    if let Some(reply_to) = inbound.reply_to_message_id.as_deref() {
+        if let Some(decision_id) = AiDeliveryService::resolve_delivery_decision_binding(reply_to) {
+            let response = match AiDeliveryService::answer_decision_request(
+                &decision_id,
+                &inbound.text,
+            ) {
+                Ok(_) => "已回答 AI 交付决策".to_string(),
+                Err(error) => format!("回答 AI 交付决策失败: {}", error),
+            };
+            if let Err(error) = send_feishu_reply(channel, &inbound.message_id, &response).await {
+                eprintln!("[Bot/Feishu] 发送 AI 交付决策回执失败: {}", error);
+            }
+            return Json(json!({ "code": 0 })).into_response();
+        }
+    }
     let terminal_service = state.app_handle.state::<TerminalService>();
     match process_bot_reply(&state.app_handle, &terminal_service, channel, &inbound) {
         Ok(message) => {

@@ -104,6 +104,7 @@ export interface BotChannelConfig {
   allowedUserIds: string[];
   hasSecret: boolean;
   hasCallbackToken: boolean;
+  aiDeliveryEnabled: boolean;
 }
 
 export interface BotSettings {

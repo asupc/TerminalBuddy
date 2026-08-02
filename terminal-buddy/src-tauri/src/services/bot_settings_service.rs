@@ -22,6 +22,8 @@ struct StoredBotChannel {
     encrypted_callback_token: String,
     #[serde(default)]
     allowed_user_ids: Vec<String>,
+    #[serde(default)]
+    ai_delivery_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +99,7 @@ impl BotSettingsService {
                     allowed_user_ids: channel.allowed_user_ids,
                     has_secret: !channel.encrypted_secret.is_empty(),
                     has_callback_token: !channel.encrypted_callback_token.is_empty(),
+                    ai_delivery_enabled: channel.ai_delivery_enabled,
                 })
                 .collect(),
         }
@@ -128,6 +131,7 @@ impl BotSettingsService {
                     allowed_user_ids: channel.allowed_user_ids,
                     has_secret: !channel.encrypted_secret.is_empty(),
                     has_callback_token: !channel.encrypted_callback_token.is_empty(),
+                    ai_delivery_enabled: channel.ai_delivery_enabled,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -188,6 +192,7 @@ impl BotSettingsService {
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
                         .collect(),
+                    ai_delivery_enabled: channel.ai_delivery_enabled,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
