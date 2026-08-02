@@ -855,6 +855,33 @@ impl AiDeliveryService {
         Ok(replacement)
     }
 
+    /// 规划中断「以当前状态重跑」：校验交付可重新规划并记录采纳事件。
+    /// 基线是规划前的内存快照（非持久化），仓库被改动阻断后无需手动清理——
+    /// 直接复用既有 plan 路径（commands 层 begin_delivery_planning + spawn_blocking）重新规划。
+    pub fn replan_delivery_accepting_current_state(delivery_id: &str) -> Result<(), String> {
+        let delivery = Self::get_delivery(delivery_id)?;
+        if !matches!(delivery.state.as_str(), "drafting" | "planning" | "needsInput") {
+            return Err(format!(
+                "交付状态 {} 不可重新规划（仅草稿/规划中/等待决策可采纳当前状态重跑）",
+                delivery.state
+            ));
+        }
+        if Self::get_all_attempts(Some(delivery_id))?
+            .iter()
+            .any(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
+        {
+            return Err("仍有运行中的 Agent，不能重新规划".to_string());
+        }
+        Self::append_event(
+            delivery_id,
+            None,
+            None,
+            "deliveryReplanned",
+            "已采纳当前仓库状态并重新规划",
+        )?;
+        Ok(())
+    }
+
     pub fn delete_workflow(id: &str) -> Result<(), String> {
         Self::delete(WORKFLOWS_DIR, id, "编排方案")
     }

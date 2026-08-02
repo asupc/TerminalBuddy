@@ -250,6 +250,37 @@ pub fn replan_legacy_ai_delivery(
     AiDeliveryService::replan_legacy_delivery(&id, terminal_service.inner().clone())
 }
 
+/// 规划中断「以当前状态重跑」：校验可重跑后直接复用既有规划路径重新生成任务图。
+#[command]
+pub async fn replan_ai_delivery_accepting_current_state(
+    id: String,
+    app: tauri::AppHandle,
+    terminal_service: tauri::State<'_, TerminalService>,
+) -> Result<Vec<AiTaskNode>, String> {
+    AiDeliveryService::replan_delivery_accepting_current_state(&id)?;
+    let manager_attempt = AiDeliveryService::begin_delivery_planning(&id)?;
+    let planning_id = id.clone();
+    let manager_attempt_id = manager_attempt.id;
+    let terminal_service = terminal_service.inner().clone();
+    match tauri::async_runtime::spawn_blocking(move || {
+        AiDeliveryService::plan_delivery_with_manager(
+            &planning_id,
+            &manager_attempt_id,
+            app,
+            terminal_service,
+        )
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            let message = format!("管理者任务图生成线程失败: {}", error);
+            let _ = AiDeliveryService::fail_delivery_planning(&id, &message);
+            Err(message)
+        }
+    }
+}
+
 #[command]
 pub fn delete_ai_delivery(id: String) -> Result<(), String> {
     AiDeliveryService::delete_delivery(&id)

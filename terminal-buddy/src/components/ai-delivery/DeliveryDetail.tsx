@@ -83,6 +83,7 @@ export interface DeliveryDetailProps {
   completeAttempt: (attempt: AiAttempt) => Promise<void>;
   removeDelivery: () => Promise<void>;
   replanLegacyDelivery: () => void;
+  replanAcceptingCurrentState: () => void;
   cancelDelivery: () => Promise<void>;
   mergeDelivery: () => Promise<void>;
   cleanupDeliveryIntegration: () => Promise<void>;
@@ -125,7 +126,8 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
     answerDecision, retryTask, runReview, resolveReview,
     toggleAttemptOutput, openAttemptTerminal,
     cancelAttempt, completeAttempt,
-    removeDelivery, replanLegacyDelivery, cancelDelivery, mergeDelivery, cleanupDeliveryIntegration,
+    removeDelivery, replanLegacyDelivery, replanAcceptingCurrentState,
+    cancelDelivery, mergeDelivery, cleanupDeliveryIntegration,
     planAiDeliveryWithManager, refresh,
     selectedTaskIds, toggleTask,
     batchDispatch, batchRetry, batchCancel, retryAllFailed, dispatchPhase,
@@ -393,6 +395,19 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                         >
                           <RotateCcw size={15} />
                           重新规划
+                        </button>
+                      )}
+                      {delivery.state === "drafting"
+                        && deliveryEvents.some((event) => event.eventType === "managerPlanFailed") && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          title="仓库状态与规划基线不一致导致任务图生成失败时，采纳当前状态直接重新规划"
+                          disabled={busy === "replan-current-state"}
+                          onClick={replanAcceptingCurrentState}
+                        >
+                          <RotateCcw size={15} />
+                          采纳当前状态重跑
                         </button>
                       )}
                       {delivery.state === "running" && (

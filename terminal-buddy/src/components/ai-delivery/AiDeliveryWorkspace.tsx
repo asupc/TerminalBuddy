@@ -72,6 +72,7 @@ import {
   onAiDeliveryEvent,
   planAiDeliveryWithManager,
   readClientData,
+  replanDeliveryAcceptingCurrentState,
   replanLegacyAiDelivery,
   refreshAiProjectRepositories,
   readAiAttemptOutput,
@@ -893,6 +894,16 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         await refresh(projectId, replacement.id);
       }
     });
+ const replanAcceptingCurrentState = () =>
+   execute("replan-current-state", async () => {
+     if (!delivery) return;
+      if (!await showConfirm("将采纳当前仓库状态为基线并重新生成任务图（无需手动清理）。是否继续？", {
+        title: "确认以当前状态重跑",
+        confirmText: "重新规划",
+      })) return;
+     await replanDeliveryAcceptingCurrentState(delivery.id);
+     await refresh(projectId, delivery.id);
+   });
  const removeDelivery = () =>
    execute("delete-delivery", async () => {
      if (!delivery || !["drafting", "cancelled", "failed", "succeeded", "completed"].includes(delivery.state)) return;
@@ -1726,6 +1737,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           cancelAttempt={cancelAttempt} completeAttempt={completeAttempt}
           removeDelivery={removeDelivery}
           replanLegacyDelivery={replanLegacyDelivery}
+          replanAcceptingCurrentState={replanAcceptingCurrentState}
           cancelDelivery={cancelDelivery}
           mergeDelivery={mergeDelivery}
           cleanupDeliveryIntegration={cleanupDeliveryIntegration}

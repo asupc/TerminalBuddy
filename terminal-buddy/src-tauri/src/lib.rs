@@ -61,7 +61,7 @@ use commands::{
     resolve_ai_review_gate, resume_ai_delivery, retry_ai_task_node, run_ai_quality_gate,
     start_ai_attempt, update_ai_delivery, get_ai_review_diff, add_ai_review_line_comment,
     list_ai_startup_presets, create_ai_startup_preset, update_ai_startup_preset,
-    delete_ai_startup_preset, test_ai_workflow_step,
+    delete_ai_startup_preset, test_ai_workflow_step, replan_ai_delivery_accepting_current_state,
 };
 use commands::{
     bot_scan_begin, bot_scan_poll, cancel_bot_decision, get_bot_callback_base_url,
@@ -520,6 +520,7 @@ pub fn run() {
             update_ai_delivery,
             plan_ai_delivery_with_manager,
             replan_legacy_ai_delivery,
+            replan_ai_delivery_accepting_current_state,
             delete_ai_delivery,
             get_ai_task_nodes,
             create_ai_task_node,

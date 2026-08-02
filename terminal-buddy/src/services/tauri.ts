@@ -695,6 +695,8 @@ export const deleteAiStartupPreset = (id: string) =>
   invoke<void>('delete_ai_startup_preset', { id });
 export const testWorkflowStep = (workflowStepId: string, featureName: string) =>
   invoke<string>('test_ai_workflow_step', { workflowStepId, featureName });
+export const replanDeliveryAcceptingCurrentState = (deliveryId: string) =>
+  invoke<AiTaskNode[]>('replan_ai_delivery_accepting_current_state', { id: deliveryId });
 export const getAiReviewDiff = (deliveryId: string, taskNodeId: string) =>
   invoke<AiReviewDiffResult>('get_ai_review_diff', { deliveryId, taskNodeId });
 export const addAiReviewLineComment = (gateId: string, path: string, line: number, text: string) =>
