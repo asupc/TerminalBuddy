@@ -1067,6 +1067,7 @@ impl AiDeliveryService {
                     expected_artifacts: plan_task.expected_artifacts,
                     acceptance_commands: plan_task.acceptance_commands,
                     retry_count: plan_task.retry_count,
+            timeout_seconds: None,
                 })?;
                 created.push(task);
             }
@@ -1251,7 +1252,7 @@ impl AiDeliveryService {
             expected_artifacts: input.expected_artifacts,
             acceptance_commands: input.acceptance_commands,
             retry_count: input.retry_count.min(10),
-            timeout_seconds: None,
+            timeout_seconds: input.timeout_seconds,
             state: "planned".to_string(),
             assigned_agent_id: None,
             contract_id: None,
@@ -5625,6 +5626,7 @@ mod agent_decision_tests {
             expected_artifacts: Vec::new(),
             acceptance_commands: Vec::new(),
             retry_count: 0,
+            timeout_seconds: None,
         })
         .unwrap();
         AiDeliveryService::approve_delivery(&delivery.id).unwrap();
@@ -5693,6 +5695,7 @@ mod agent_decision_tests {
             expected_artifacts: vec!["analysis/service-a.md".to_string()],
             acceptance_commands: Vec::new(),
             retry_count: 0,
+            timeout_seconds: None,
         })
         .unwrap();
         AiDeliveryService::approve_delivery(&analysis_delivery.id).unwrap();
@@ -5758,6 +5761,7 @@ mod agent_decision_tests {
             expected_artifacts: Vec::new(),
             acceptance_commands: Vec::new(),
             retry_count: 0,
+            timeout_seconds: None,
         })
         .unwrap();
         editable_delivery.state = "running".to_string();
@@ -5797,6 +5801,7 @@ mod agent_decision_tests {
             expected_artifacts: Vec::new(),
             acceptance_commands: Vec::new(),
             retry_count: 0,
+            timeout_seconds: None,
         })
         .unwrap();
         AiDeliveryService::approve_delivery(&cancelled_delivery.id).unwrap();

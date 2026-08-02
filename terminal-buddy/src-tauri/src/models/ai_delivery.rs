@@ -319,6 +319,9 @@ pub struct CreateAiTaskNodeInput {
     pub acceptance_commands: Vec<String>,
     #[serde(default)]
     pub retry_count: u32,
+    /// 超时（秒），None 时使用 Agent 默认值
+    #[serde(default)]
+    pub timeout_seconds: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -771,6 +771,9 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                               <div>
                                 <strong>{eventTypeName(event.eventType)}</strong>
                                 {eventTask && <small>{eventTask.title}</small>}
+                                {event.eventType === "approachingTimeout" && (
+                                  <span className="ai-event-warning">即将超时</span>
+                                )}
                                 <p>{event.message}</p>
                               </div>
                             </li>

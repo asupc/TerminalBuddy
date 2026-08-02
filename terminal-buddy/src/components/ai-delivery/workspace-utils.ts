@@ -212,6 +212,7 @@ export const eventTypeNames: Record<string, string> = {
   autoMergeFailed: "自动合并失败",
   deliverySucceeded: "交付成功",
   deliveryReplanned: "已重新规划",
+  approachingTimeout: "即将超时",
 };
 export const eventTypeName = (eventType: string) => eventTypeNames[eventType] ?? eventType;
 export const failedEventTypeSet = new Set(Object.keys(eventTypeNames).filter(

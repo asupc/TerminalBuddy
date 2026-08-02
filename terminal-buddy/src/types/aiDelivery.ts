@@ -143,6 +143,8 @@ export interface CreateAiTaskNodeInput {
   expectedArtifacts?: string[];
   acceptanceCommands?: string[];
   retryCount?: number;
+  /** 超时（秒），留空使用 Agent 默认 */
+  timeoutSeconds?: number | null;
 }
 
 export interface AiTaskContract {

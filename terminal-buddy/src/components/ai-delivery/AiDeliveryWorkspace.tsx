@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
+import {
   Bot,
   CircleHelp,
-  CircleAlert,
+  CircleAlert,
   FolderGit2,
   Layers3,
   Pencil,
   Plus,
   RefreshCw,
-  WandSparkles,
+  WandSparkles,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type {
@@ -66,7 +66,7 @@ import {
   readClientData,
   replanLegacyAiDelivery,
   refreshAiProjectRepositories,
-  readAiAttemptOutput,
+  readAiAttemptOutput,
   resolveAiReviewGate,
   retryAiTaskNode,
   runAiQualityGate,
@@ -177,6 +177,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
   const [manualTaskAgentId, setManualTaskAgentId] = useState("");
   const [manualTaskDependencyIds, setManualTaskDependencyIds] = useState<string[]>([]);
   const [manualTaskRetryCount, setManualTaskRetryCount] = useState("0");
+  const [manualTaskTimeoutMinutes, setManualTaskTimeoutMinutes] = useState("");
   const [busy, setBusy] = useState<string | null>(null);  const [error, setError] = useState("");
   const liveRefreshInProgress = useRef(false);
   const runtimeSyncInProgress = useRef(false);
@@ -663,9 +664,14 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
     setManualTaskAgentId("");
     setManualTaskDependencyIds([]);
     setManualTaskRetryCount("0");
+    setManualTaskTimeoutMinutes("");
     setManualTaskExecutionContext("taskWorktree");
     setShowTaskDialog(true);
   };
+  const defaultAgentTimeoutText = (() => {
+    const seconds = agents.find((a) => a.defaultTimeoutSeconds)?.defaultTimeoutSeconds ?? 3600;
+    return `${Math.round(seconds / 60)} 分钟`;
+  })();
   const createManualTask = () =>
     execute("create-task", async () => {
       if (!delivery || !manualTaskTitle.trim() || !manualTaskDescription.trim())
@@ -676,6 +682,11 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
       const retryCount = Number(manualTaskRetryCount);
       if (!Number.isInteger(retryCount) || retryCount < 0 || retryCount > 10)
         throw new Error("重试次数必须是 0 到 10 的整数。");
+      const timeoutSeconds = manualTaskTimeoutMinutes
+        ? Number(manualTaskTimeoutMinutes) * 60
+        : null;
+      if (manualTaskTimeoutMinutes && (!Number.isInteger(timeoutSeconds) || timeoutSeconds! < 300 || timeoutSeconds! > 28800))
+        throw new Error("超时时间必须是 5 到 480 分钟的整数。");
       await createAiTaskNode({
         deliveryId: delivery.id,
         title: manualTaskTitle.trim(),
@@ -692,6 +703,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         expectedArtifacts: parseTaskLines(manualTaskExpectedArtifacts),
         acceptanceCommands: parseTaskLines(manualTaskAcceptanceCommands),
         retryCount,
+        timeoutSeconds,
       });
       setShowTaskDialog(false);
       await refresh(projectId, delivery.id);
@@ -1066,7 +1078,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         updatedAt: stamp,
       });
       setWorkflowId(created.id);
-      setEditWorkflowId(created.id);
+      setEditWorkflowId(created.id);
       await refresh();
     });
   const addWorkflowStep = (workflow: AiWorkflow) => {
@@ -1075,7 +1087,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
       setError("请先创建一个已绑定执行 Agent 的角色。");
       return;
     }
-    const stepId = crypto.randomUUID();
+    const stepId = crypto.randomUUID();
     void saveWorkflowConfig(workflow, {
       steps: [
         ...workflow.steps,
@@ -1592,6 +1604,8 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           manualTaskInputArtifacts={manualTaskInputArtifacts} setManualTaskInputArtifacts={setManualTaskInputArtifacts}
           manualTaskExpectedArtifacts={manualTaskExpectedArtifacts} setManualTaskExpectedArtifacts={setManualTaskExpectedArtifacts}
           manualTaskAcceptanceCommands={manualTaskAcceptanceCommands} setManualTaskAcceptanceCommands={setManualTaskAcceptanceCommands}
+          manualTaskTimeoutMinutes={manualTaskTimeoutMinutes} setManualTaskTimeoutMinutes={setManualTaskTimeoutMinutes}
+          defaultAgentTimeoutText={defaultAgentTimeoutText}
           onClose={() => setShowTaskDialog(false)}
           onSubmit={() => void createManualTask()}
         />

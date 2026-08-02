@@ -718,6 +718,22 @@ export function ConfigDialog({
                 ))}
               </select>
             </label>
+            <label>
+              默认超时（分钟）
+              <input
+                type="number"
+                min="5"
+                max="480"
+                value={agent.defaultTimeoutSeconds ? String(Math.round(agent.defaultTimeoutSeconds / 60)) : ""}
+                placeholder="留空使用 60 分钟"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  void saveAgentConfig(agent, {
+                    defaultTimeoutSeconds: value ? Number(value) * 60 : null,
+                  });
+                }}
+              />
+            </label>
             <button
               type="button"
               className="ai-icon-button danger"
