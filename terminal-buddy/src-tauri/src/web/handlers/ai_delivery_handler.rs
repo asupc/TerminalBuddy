@@ -35,6 +35,14 @@ pub struct AnswerDecisionBody {
     pub answer: String,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryTaskBody {
+    /// 为空时保持整批重试语义（重试全部 failed/rework 任务）。
+    #[serde(default)]
+    pub task_node_id: Option<String>,
+}
+
 pub async fn projects(
     State(_state): State<AppState>,
     _claims: ClaimsFromRequest,
@@ -230,21 +238,36 @@ pub async fn cleanup_integration(
     .map_err(ApiError::BadRequest)
 }
 
-/// 重试失败的任务节点
+/// 重试失败的任务节点（可携带 taskNodeId 仅重试指定任务；为空时重试全部失败任务）
 pub async fn retry_task(
     State(state): State<AppState>,
     _claims: ClaimsFromRequest,
     Path(id): Path<String>,
+    body: Option<Json<RetryTaskBody>>,
 ) -> Result<Json<Vec<AiAttempt>>, ApiError> {
     let app = state.app_handle.clone();
     let terminal_service = app
         .state::<TerminalService>()
         .inner()
         .clone();
-    // 重试所有失败的任务
+    let task_node_id = body.and_then(|body| body.task_node_id.clone());
     let tasks = AiDeliveryService::get_task_nodes(&id).map_err(ApiError::Internal)?;
+    let targets = match task_node_id.as_deref() {
+        Some(task_id) => {
+            let task = tasks
+                .iter()
+                .find(|t| t.id == task_id)
+                .ok_or_else(|| ApiError::NotFound(format!("任务节点不存在: {}", task_id)))?;
+            vec![task.clone()]
+        }
+        None => tasks
+            .iter()
+            .filter(|t| t.state == "failed" || t.state == "rework")
+            .cloned()
+            .collect(),
+    };
     let mut retried = Vec::new();
-    for task in tasks.iter().filter(|t| t.state == "failed" || t.state == "rework") {
+    for task in &targets {
         match AiDeliveryService::retry_task_node(&task.id) {
             Ok(_) => {
                 let attempts = AiDeliveryService::dispatch_ready_tasks(&id)

@@ -2,7 +2,8 @@ import { useStore } from './store';
 import type { ExtraParamPreset, Profile, TerminalInfo } from './types';
 
 export interface AiDeliveryProject { id: string; name: string; workspaceRoot: string; }
-export interface AiDeliveryItem { id: string; projectId: string; title: string; requirement: string; state: string; }
+export interface AiDeliveryItem { id: string; projectId: string; title: string; requirement: string; state: string; taskNodeIds: string[]; }
+export interface AiDeliveryCreateInput { projectId: string; title: string; requirement: string; }
 export interface AiDeliveryTask { id: string; title: string; state: string; targetRepositoryId: string; allowedWritePaths: string[]; }
 export interface AiDecision { id: string; question: string; impact: string; state: string; answer?: string | null; options: { label: string; description: string }[]; }
 export interface AiDeliverySnapshot { delivery: AiDeliveryItem; tasks: AiDeliveryTask[]; decisions: AiDecision[]; events: { id: string; eventType: string; message: string; occurredAt: string }[]; }
@@ -93,6 +94,23 @@ export const api = {
   getAiDeliveryProjects: () => req<AiDeliveryProject[]>('/ai-delivery/projects'),
   getAiDeliveries: (projectId: string) => req<AiDeliveryItem[]>(`/ai-delivery/projects/${projectId}/deliveries`),
   getAiDeliverySnapshot: (id: string) => req<AiDeliverySnapshot>(`/ai-delivery/deliveries/${id}`),
-  approveAiDelivery: (id: string) => req<AiDeliveryItem>(`/ai-delivery/deliveries/${id}/approve`, { method: 'POST' }),
+  approveAiDelivery: (id: string) => req<AiDeliveryItem>(`/ai-delivery/deliveries/${id}/approve`, { method: 'POST', body: '{}' }),
   answerAiDecision: (id: string, answer: string) => req<AiDecision>(`/ai-delivery/decisions/${id}/answer`, { method: 'POST', body: JSON.stringify({ answer }) }),
+  createAiDelivery: (input: AiDeliveryCreateInput) =>
+    req<AiDeliveryItem>('/ai-delivery/deliveries', { method: 'POST', body: JSON.stringify(input) }),
+  planAiDelivery: (deliveryId: string) =>
+    req<AiDeliveryItem>(`/ai-delivery/deliveries/${deliveryId}/plan`, { method: 'POST', body: '{}' }),
+  dispatchAiDelivery: (deliveryId: string) =>
+    req<AiDeliveryItem>(`/ai-delivery/deliveries/${deliveryId}/dispatch`, { method: 'POST', body: '{}' }),
+  completeAiDeliveryAttempt: (deliveryId: string) =>
+    req<AiDeliveryItem>(`/ai-delivery/deliveries/${deliveryId}/complete`, { method: 'POST', body: '{}' }),
+  mergeAiDelivery: (deliveryId: string) =>
+    req<AiDeliveryItem>(`/ai-delivery/deliveries/${deliveryId}/merge`, { method: 'POST', body: '{}' }),
+  cleanupIntegration: (deliveryId: string) =>
+    req<AiDeliveryItem>(`/ai-delivery/deliveries/${deliveryId}/cleanup-integration`, { method: 'POST', body: '{}' }),
+  retryAiDeliveryTask: (deliveryId: string, taskNodeId?: string) =>
+    req<AiDeliveryItem>(`/ai-delivery/deliveries/${deliveryId}/retry`, {
+      method: 'POST',
+      body: JSON.stringify(taskNodeId ? { taskNodeId } : {}),
+    }),
 };

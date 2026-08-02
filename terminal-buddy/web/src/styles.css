@@ -1722,6 +1722,14 @@ textarea:focus-visible {
 .ai-web-decision small { color: var(--text-muted); }
 .ai-web-decision div { display: flex; flex-wrap: wrap; gap: 6px; }
 .ai-web-decision button { min-height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); }
+.ai-web-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-web-actions .btn { min-height: 34px; padding: 0 12px; }
+.ai-web-create { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); }
+.ai-web-create input, .ai-web-create textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); }
+.ai-web-create textarea { min-height: 72px; resize: vertical; }
+.ai-web-create .btn { justify-self: start; }
+.ai-web-decision-free { display: flex; gap: 6px; align-items: start; }
+.ai-web-decision-free textarea { flex: 1; min-height: 56px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); resize: vertical; }
 .ai-web-events { display: grid; gap: 6px; }
 .ai-web-events div { display: grid; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); }
 .ai-web-events small { color: var(--text-muted); font-size: 10px; }
