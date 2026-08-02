@@ -1,4 +1,4 @@
-﻿use axum::routing::{delete, get, post};
+﻿use axum::routing::{delete, get, post, put};
 use axum::Router;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -97,6 +97,22 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/ai-delivery/attempts/{attempt_id}/output",
             get(handlers::ai_delivery_handler::attempt_output),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}",
+            put(handlers::ai_delivery_handler::update_delivery),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/tasks",
+            post(handlers::ai_delivery_handler::create_task),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/tasks/{task_id}",
+            put(handlers::ai_delivery_handler::update_task),
+        )
+        .route(
+            "/api/ai-delivery/deliveries/{id}/tasks/{task_id}",
+            delete(handlers::ai_delivery_handler::delete_task),
         )
         // 鍚姩鍙傛暟棰勮锛堜笌 PC 绔叡浜?ClientData/extra_param_presets.json锛?
         .route(

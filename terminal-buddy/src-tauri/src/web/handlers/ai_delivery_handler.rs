@@ -10,7 +10,8 @@ use tauri::Manager;
 
 use crate::models::{
     AiAttempt, AiAttemptOutput, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiProject,
-    AiReviewGate, AiTaskNode, AiMergeRecord,
+    AiReviewGate, AiTaskNode, AiMergeRecord, CreateAiTaskNodeInput, UpdateAiDeliveryInput,
+    UpdateAiTaskNodeInput,
 };
 use crate::services::AiDeliveryService;
 use crate::web::auth::ClaimsFromRequest;
@@ -330,6 +331,56 @@ pub async fn attempt_output(
     Path(attempt_id): Path<String>,
 ) -> Result<Json<AiAttemptOutput>, ApiError> {
     AiDeliveryService::read_attempt_output(&attempt_id)
+        .map(Json)
+        .map_err(ApiError::BadRequest)
+}
+
+/// 编辑交付（PUT /api/ai-delivery/deliveries/{id}）
+pub async fn update_delivery(
+    State(_state): State<AppState>,
+    _claims: ClaimsFromRequest,
+    Path(id): Path<String>,
+    Json(mut input): Json<UpdateAiDeliveryInput>,
+) -> Result<Json<AiDelivery>, ApiError> {
+    input.id = id;
+    AiDeliveryService::update_delivery(input)
+        .map(Json)
+        .map_err(ApiError::BadRequest)
+}
+
+/// 添加任务（POST /api/ai-delivery/deliveries/{id}/tasks）
+pub async fn create_task(
+    State(_state): State<AppState>,
+    _claims: ClaimsFromRequest,
+    Path(id): Path<String>,
+    Json(mut input): Json<CreateAiTaskNodeInput>,
+) -> Result<Json<AiTaskNode>, ApiError> {
+    input.delivery_id = id;
+    AiDeliveryService::create_task_node(input)
+        .map(Json)
+        .map_err(ApiError::BadRequest)
+}
+
+/// 编辑任务（PUT /api/ai-delivery/deliveries/{id}/tasks/{task_id}）
+pub async fn update_task(
+    State(_state): State<AppState>,
+    _claims: ClaimsFromRequest,
+    Path((_id, task_id)): Path<(String, String)>,
+    Json(mut input): Json<UpdateAiTaskNodeInput>,
+) -> Result<Json<AiTaskNode>, ApiError> {
+    input.id = task_id;
+    AiDeliveryService::update_task_node(input)
+        .map(Json)
+        .map_err(ApiError::BadRequest)
+}
+
+/// 删除任务（DELETE /api/ai-delivery/deliveries/{id}/tasks/{task_id}）
+pub async fn delete_task(
+    State(_state): State<AppState>,
+    _claims: ClaimsFromRequest,
+    Path((_id, task_id)): Path<(String, String)>,
+) -> Result<Json<()>, ApiError> {
+    AiDeliveryService::delete_task_node(&task_id)
         .map(Json)
         .map_err(ApiError::BadRequest)
 }
