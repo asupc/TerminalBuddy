@@ -42,6 +42,7 @@ export interface DeliveryDetailProps {
   legacyTaskGraph: boolean;
   allTasksApproved: boolean;
   pendingDecisions: AiDecisionRequest[];
+  answeredRequests: AiDecisionRequest[];
   lastMergeRecord: AiMergeRecord | undefined;
   // 状态
   deliveryId: string;
@@ -106,7 +107,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
     attempts, deliveryEvents,
     filteredDeliveries, filteredAttempts, filteredRecentDeliveryEvents,
     visibleTasks, taskCountsByColumn, legacyTaskGraph, allTasksApproved,
-    pendingDecisions, lastMergeRecord,
+    pendingDecisions, answeredRequests, lastMergeRecord,
     deliveryId, activeTaskTab, busy,
     showSuccessAttempts, showFailedAttempts, showSuccessEvents, showFailedEvents,
     loadingOutputId, decisionAnswers,
@@ -553,6 +554,43 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                   <Check size={14} />
                                   提交决定
                                 </button>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+                  {answeredRequests.length > 0 && (
+                    <section className="ai-decision-history" aria-label="已答决策历史">
+                      <div className="ai-decision-heading">
+                        <Sparkles size={17} />
+                        <div>
+                          <h3>已答决策历史</h3>
+                          <p>用户已回答的决策请求，含选项与答复时间。</p>
+                        </div>
+                      </div>
+                      <div className="ai-decision-list">
+                        {answeredRequests.map((request) => {
+                          const task = request.taskNodeId
+                            ? tasks.find((item) => item.id === request.taskNodeId)
+                            : null;
+                          return (
+                            <article key={request.id}>
+                              <div>
+                                <strong>{request.question}</strong>
+                                {task && <small>关联任务：{task.title}</small>}
+                              </div>
+                              <p className="ai-decision-history-options">
+                                选项：{request.options.map((option) => option.label).join(" / ")}
+                              </p>
+                              <div className="ai-decision-answer">
+                                <span className="ai-decision-history-answer">
+                                  回答：{request.answer ?? "（无）"}
+                                </span>
+                                <time dateTime={request.updatedAt}>
+                                  {formatEventTime(request.updatedAt)}
+                                </time>
                               </div>
                             </article>
                           );

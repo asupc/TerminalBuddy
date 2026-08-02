@@ -995,6 +995,9 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
   const pendingDecisions = decisionRequests.filter(
     (request) => request.state === "pending",
   );
+  const answeredRequests = decisionRequests.filter(
+    (request) => request.state === "answered",
+  );
   const lastMergeRecord = mergeRecords[0];
   const allDeliveryStatesSelected = defaultDeliveryStateFilterIds.every((id) =>
     selectedDeliveryStateFilters.includes(id),
@@ -1685,7 +1688,8 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           filteredRecentDeliveryEvents={filteredRecentDeliveryEvents}
           visibleTasks={visibleTasks} taskCountsByColumn={taskCountsByColumn}
           legacyTaskGraph={legacyTaskGraph} allTasksApproved={allTasksApproved}
-          pendingDecisions={pendingDecisions} lastMergeRecord={lastMergeRecord}
+          pendingDecisions={pendingDecisions} answeredRequests={answeredRequests}
+          lastMergeRecord={lastMergeRecord}
           deliveryId={deliveryId} activeTaskTab={activeTaskTab} busy={busy}
           showSuccessAttempts={showSuccessAttempts} showFailedAttempts={showFailedAttempts}
           showSuccessEvents={showSuccessEvents} showFailedEvents={showFailedEvents}
