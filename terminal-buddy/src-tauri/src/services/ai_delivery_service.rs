@@ -16,6 +16,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
@@ -47,6 +48,10 @@ const MERGE_RECORDS_DIR: &str = "MergeRecords";
 const PLANS_DIR: &str = "Plans";
 const TERMINAL_RUNS_DIR: &str = "TerminalRuns";
 const TEMPLATES_DIR: &str = "Templates";
+/// 每交付保留事件条数上限（append_event 滚动清理，超出删最旧）。
+pub const MAX_EVENTS_PER_DELIVERY: usize = 1000;
+/// 每交付事件目录体积上限（字节），达到后继续删最旧直到达标。
+pub const MAX_EVENTS_DIR_SIZE: u64 = 5 * 1024 * 1024;
 const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 const QUALITY_GATE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
@@ -3406,6 +3411,7 @@ impl AiDeliveryService {
         attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
         attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
         Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        Self::cleanup_attempt_run_dir(&attempt.id);
         let _ = terminal_service.close_terminal(&terminal_id);
         let mut task = Self::get_task_node(&attempt.task_node_id)?;
         task.state = "cancelled".to_string();
@@ -3445,6 +3451,7 @@ impl AiDeliveryService {
                     updated.finished_at = Some(chrono::Utc::now().to_rfc3339());
                     updated.updated_at = updated.finished_at.clone().unwrap_or_default();
                     let _ = Self::save(ATTEMPTS_DIR, &updated.id, &updated);
+                    Self::cleanup_attempt_run_dir(&updated.id);
                 }
             }
         }
@@ -3677,6 +3684,7 @@ impl AiDeliveryService {
         task.state = "cancelled".to_string();
         task.updated_at = now;
         Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        Self::cleanup_attempt_run_dir(&attempt.id);
         Self::save(TASK_NODES_DIR, &task.id, &task)?;
         let _ = Self::append_event(
             &attempt.delivery_id,
@@ -3707,6 +3715,7 @@ impl AiDeliveryService {
         task.state = "failed".to_string();
         task.updated_at = now;
         Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        Self::cleanup_attempt_run_dir(&attempt.id);
         Self::save(TASK_NODES_DIR, &task.id, &task)?;
         let _ = Self::append_event(
             &attempt.delivery_id,
@@ -3881,6 +3890,9 @@ impl AiDeliveryService {
             None => compact_output(if successful { stdout } else { stderr }),
         });
        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        // attempt 达到终态（completed/failed/policyViolation）后清理运行目录；
+        // 验收所用 review.json / transcript 已在 run_acceptance_validation 中消费完毕。
+        Self::cleanup_attempt_run_dir(&attempt.id);
         // 验收通过时记录当前分支 HEAD 作为 validated_commit，合并前须再次确认一致
         if successful && task.execution_mode == "write" {
             if let Some(worktree) = contract.worktree_path.as_deref() {
@@ -4288,6 +4300,37 @@ impl AiDeliveryService {
         Ok(true)
     }
 
+    /// 滚动清理指定交付的事件文件：先按条数上限删最旧，再按体积上限删最旧。
+    /// 只删除事件文件，绝不触碰 attempt 运行目录——运行目录按 attempt 终态
+    /// （cancel_attempt / finish_attempt 等）单独清理，避免误删运行中 Agent 的控制文件。
+    fn prune_delivery_events(delivery_id: &str) {
+        let Ok(events) = Self::get_delivery_events(delivery_id) else {
+            return;
+        };
+        let file_size = |event_id: &str| -> u64 {
+            let path = Self::entity_dir(EVENTS_DIR).join(safe_path_segment(event_id));
+            fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0)
+        };
+        let mut size: u64 = events.iter().map(|event| file_size(&event.id)).sum();
+        let mut index = 0;
+        while index < events.len()
+            && (events.len() - index > MAX_EVENTS_PER_DELIVERY || size > MAX_EVENTS_DIR_SIZE)
+        {
+            let event = &events[index];
+            size = size.saturating_sub(file_size(&event.id));
+            let _ = Self::delete(EVENTS_DIR, &event.id, "交付事件");
+            index += 1;
+        }
+    }
+
+    /// attempt 达到终态（cancelled/failed/completed/policyViolation）时清理其终端运行目录。
+    /// 与事件 prune 解耦：prune 只删事件文件；运行目录只在 attempt 终态后删除，
+    /// 避免 attempt 记录仍在、卡片仍展示时「查看成果」读到被误删的目录。
+    /// （取消交付等「保留供人工检查」的路径不调用本函数。）
+    fn cleanup_attempt_run_dir(attempt_id: &str) {
+        let _ = fs::remove_dir_all(terminal_run_dir_by_id(attempt_id));
+    }
+
     pub fn append_event(
         delivery_id: &str,
         task_node_id: Option<&str>,
@@ -4308,6 +4351,11 @@ impl AiDeliveryService {
         // 统一实时推送：所有 append_event 写入的事件自动送达前端，调用点不再各自 emit
         if let Some(app) = APP_HANDLE.get() {
             let _ = app.emit("ai-delivery-event", &event);
+        }
+        // 滚动清理：每 50 次写入 prune 一次（prune 全量扫描 EVENTS_DIR，降频避免每次 O(N)）
+        static EVENT_APPEND_COUNTER: AtomicUsize = AtomicUsize::new(0);
+        if EVENT_APPEND_COUNTER.fetch_add(1, Ordering::Relaxed) % 50 == 49 {
+            Self::prune_delivery_events(delivery_id);
         }
         Ok(event)
     }
