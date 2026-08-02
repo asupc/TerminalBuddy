@@ -1179,6 +1179,46 @@ impl AiDeliveryService {
         Self::get(TASK_NODES_DIR, id, "任务节点")
     }
 
+    /// 环依赖检测（自环、间接环），供 create/update task_node 共用。
+    pub fn has_cycle(delivery_tasks: &[AiTaskNode]) -> bool {
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut stack: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        fn dfs(
+            by_id: &std::collections::HashMap<String, &AiTaskNode>,
+            id: &str,
+            visited: &mut std::collections::HashSet<String>,
+            stack: &mut std::collections::HashSet<String>,
+        ) -> bool {
+            if stack.contains(id) {
+                return true;
+            }
+            if visited.contains(id) {
+                return false;
+            }
+            visited.insert(id.to_string());
+            stack.insert(id.to_string());
+            if let Some(task) = by_id.get(id) {
+                for dep in &task.dependency_ids {
+                    if dfs(by_id, dep, visited, stack) {
+                        return true;
+                    }
+                }
+            }
+            stack.remove(id);
+            false
+        }
+
+        let by_id: std::collections::HashMap<String, &AiTaskNode> =
+            delivery_tasks.iter().map(|t| (t.id.clone(), t)).collect();
+        for task in delivery_tasks {
+            if dfs(&by_id, &task.id, &mut visited, &mut stack) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn create_task_node(input: CreateAiTaskNodeInput) -> Result<AiTaskNode, String> {
         if input.title.trim().is_empty() || input.description.trim().is_empty() {
             return Err("任务标题和说明不能为空".to_string());
@@ -1260,6 +1300,12 @@ impl AiDeliveryService {
             created_at: now.clone(),
             updated_at: now,
         };
+        // 环依赖校验：先建 A 依赖 B、再建 B 依赖 A 可绕过成员校验直接成环，必须整体检测
+        let mut all_tasks = existing_tasks.clone();
+        all_tasks.push(task.clone());
+        if Self::has_cycle(&all_tasks) {
+            return Err("依赖关系形成环，任务无法派发".to_string());
+        }
         Self::save(TASK_NODES_DIR, &task.id, &task)?;
         delivery.task_node_ids.push(task.id.clone());
         delivery.state = "awaitingApproval".to_string();
@@ -6085,6 +6131,78 @@ fn build_interactive_terminal_command_with_codex_output(
         },
         captures_one_shot_output.then_some(control.transcript_path.as_path()),
     ))
+}
+
+#[cfg(test)]
+mod cycle_detection_tests {
+    use super::*;
+
+    fn node(id: &str, dependency_ids: Vec<String>) -> AiTaskNode {
+        AiTaskNode {
+            id: id.to_string(),
+            delivery_id: "delivery".to_string(),
+            title: id.to_string(),
+            description: String::new(),
+            role_id: None,
+            workflow_step_id: None,
+            preferred_agent_id: None,
+            task_prompt: String::new(),
+            execution_mode: "write".to_string(),
+            execution_context: "taskWorktree".to_string(),
+            target_repository_id: String::new(),
+            allowed_write_paths: Vec::new(),
+            dependency_ids,
+            input_artifacts: Vec::new(),
+            expected_artifacts: Vec::new(),
+            acceptance_commands: Vec::new(),
+            retry_count: 0,
+            timeout_seconds: None,
+            state: "planned".to_string(),
+            assigned_agent_id: None,
+            contract_id: None,
+            attempt_ids: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn cycle_detection_self_loop() {
+        let tasks = vec![node("a", vec!["a".to_string()])]; // 自环
+        assert!(AiDeliveryService::has_cycle(&tasks));
+    }
+
+    #[test]
+    fn cycle_detection_indirect_loop() {
+        let tasks = vec![
+            node("a", vec!["b".to_string()]),
+            node("b", vec!["a".to_string()]), // 间接环
+        ];
+        assert!(AiDeliveryService::has_cycle(&tasks));
+    }
+
+    #[test]
+    fn cycle_detection_complex() {
+        // V 形分叉 + 汇合后的环：a->b, a->c, b->d, c->d, d->a
+        let tasks = vec![
+            node("a", vec!["b".to_string(), "c".to_string()]),
+            node("b", vec!["d".to_string()]),
+            node("c", vec!["d".to_string()]),
+            node("d", vec!["a".to_string()]),
+        ];
+        assert!(AiDeliveryService::has_cycle(&tasks));
+    }
+
+    #[test]
+    fn cycle_detection_acyclic() {
+        let tasks = vec![
+            node("a", vec!["b".to_string()]),
+            node("b", vec!["d".to_string()]),
+            node("c", vec!["d".to_string()]),
+            node("d", vec![]),
+        ];
+        assert!(!AiDeliveryService::has_cycle(&tasks));
+    }
 }
 
 #[cfg(test)]
