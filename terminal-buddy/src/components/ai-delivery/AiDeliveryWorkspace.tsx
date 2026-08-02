@@ -19,6 +19,7 @@ import type {
   AiDecisionRequest,
   AiDelivery,
   AiDeliveryEvent,
+  AiDeliveryTemplate,
   AiMergeRecord,
   AiProject,
   AiRepository,
@@ -42,10 +43,14 @@ import {
   createAiTaskNode,
   deleteAiAgent,
   deleteAiDelivery,
+  deleteAiDeliveryTemplate,
   deleteAiProject,
   deleteAiRole,
   deleteAiRuntime,
   deleteAiWorkflow,
+  listAiDeliveryTemplates,
+  saveDeliveryAsTemplate,
+  updateAiDeliveryTemplate,
   dispatchAiReadyTasks,
   dispatchAiTaskNode,
   generateAiQualityGateCommands,
@@ -87,7 +92,7 @@ import { runtimeName, timestamp, displayLocalPath, parseTaskLines, boardColumns,
 
 import { ProjectOverviewDialog, ProjectSettingsDialog, ProjectFormDialog } from "./ProjectDialogs";
 import { ConfigDialog } from "./ConfigDialog";
-import { TaskContractDialog, TaskCreateDialog, DeliveryCreateDialog, DeliveryEditDialog } from "./TaskDeliveryDialogs";
+import { TaskContractDialog, TaskCreateDialog, DeliveryCreateDialog, DeliveryEditDialog, AiTemplatesDialog } from "./TaskDeliveryDialogs";
 import { DeliveryDetail } from "./DeliveryDetail";
 
 import "./AiDeliveryWorkspace.css";
@@ -165,6 +170,12 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
   const [requirement, setRequirement] = useState("");
   const [managerId, setManagerId] = useState("");
   const [workflowId, setWorkflowId] = useState("");
+  const [templates, setTemplates] = useState<AiDeliveryTemplate[]>([]);
+  const [templateId, setTemplateId] = useState("");
+  const [featureName, setFeatureName] = useState("");
+  const [moduleName, setModuleName] = useState("");
+  const [showTemplatesDialog, setShowTemplatesDialog] = useState(false);
+  const [saveTemplateName, setSaveTemplateName] = useState("");
   const [editDeliveryTitle, setEditDeliveryTitle] = useState("");
   const [editRequirement, setEditRequirement] = useState("");
   const [editManagerId, setEditManagerId] = useState("");
@@ -526,6 +537,32 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
       const ok = results.filter((r) => r.status === "fulfilled").length;
       setBatchResult(`阶段派发成功 ${ok}，失败 ${results.length - ok}`);
     });
+  const refreshTemplates = async () => {
+    setTemplates(await listAiDeliveryTemplates().catch(() => []));
+  };
+  const handleSaveDeliveryAsTemplate = () =>
+    execute("save-template", async () => {
+      if (!delivery) return;
+      await saveDeliveryAsTemplate(delivery.id, saveTemplateName.trim());
+      setSaveTemplateName("");
+      await refreshTemplates();
+    });
+  const renameTemplate = (id: string, name: string) =>
+    execute("rename-template", async () => {
+      const template = templates.find((item) => item.id === id);
+      if (!template) return;
+      await updateAiDeliveryTemplate({ ...template, name });
+      await refreshTemplates();
+    });
+  const deleteTemplate = (id: string) =>
+    execute("delete-template", async () => {
+      await deleteAiDeliveryTemplate(id);
+      await refreshTemplates();
+    });
+  const openTemplatesDialog = () => {
+    void refreshTemplates();
+    setShowTemplatesDialog(true);
+  };
   const initializeTeam = () =>
     execute("team", async () => {
       const available = runtimes.filter((item) => item.available);
@@ -1688,6 +1725,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           phaseFilter={phaseFilter}
           setPhaseFilter={setPhaseFilter}
           batchResult={batchResult}
+          openTemplatesDialog={openTemplatesDialog}
         />
       )}
       {selectedTask && (
@@ -1728,9 +1766,24 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           managerId={managerId} setManagerId={setManagerId}
           workflowId={workflowId} setWorkflowId={setWorkflowId}
           agents={agents} workflows={workflows}
+          templates={templates} templateId={templateId} setTemplateId={setTemplateId}
+          featureName={featureName} setFeatureName={setFeatureName}
+          moduleName={moduleName} setModuleName={setModuleName}
           onClose={() => setShowDeliveryDialog(false)}
           onSubmit={() => void createDelivery()}
           onOpenConfiguration={openConfiguration}
+          onManageTemplates={openTemplatesDialog}
+        />
+      )}
+      {showTemplatesDialog && (
+        <AiTemplatesDialog
+          templates={templates} busy={busy}
+          saveTemplateName={saveTemplateName} setSaveTemplateName={setSaveTemplateName}
+          deliveryLabel={delivery?.title ?? ""}
+          onSaveDelivery={handleSaveDeliveryAsTemplate}
+          onRename={renameTemplate}
+          onDelete={deleteTemplate}
+          onClose={() => setShowTemplatesDialog(false)}
         />
       )}
       {showDeliveryEditDialog && delivery && (

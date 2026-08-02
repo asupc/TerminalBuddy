@@ -1,9 +1,10 @@
 import { Check, Plus, Sparkles, Workflow } from "lucide-react";
+import { useState } from "react";
 import type React from "react";
 import { Dialog } from "../shared/Dialog";
 import { deliveryStateName, type AiDeliveryConfigView } from "./workspace-utils";
 import type {
-  AiAgent, AiDelivery, AiProject,
+  AiAgent, AiDelivery, AiDeliveryTemplate, AiProject,
   AiTaskContract, AiTaskNode, AiWorkflow,
 } from "../../types/aiDelivery";
 import { openInExplorer } from "../../services/tauri";
@@ -135,15 +136,25 @@ interface DeliveryCreateDialogProps {
   setWorkflowId: React.Dispatch<React.SetStateAction<string>>;
   agents: AiAgent[];
   workflows: AiWorkflow[];
+  templates: AiDeliveryTemplate[];
+  templateId: string;
+  setTemplateId: React.Dispatch<React.SetStateAction<string>>;
+  featureName: string;
+  setFeatureName: React.Dispatch<React.SetStateAction<string>>;
+  moduleName: string;
+  setModuleName: React.Dispatch<React.SetStateAction<string>>;
   onClose: () => void;
   onSubmit: () => void;
   onOpenConfiguration: (view: AiDeliveryConfigView, returnTarget: "create" | "edit" | null) => void;
+  onManageTemplates: () => void;
 }
 
 export function DeliveryCreateDialog({
   busy, deliveryTitle, setDeliveryTitle, requirement, setRequirement,
   managerId, setManagerId, workflowId, setWorkflowId,
-  agents, workflows, onClose, onSubmit, onOpenConfiguration,
+  agents, workflows, templates, templateId, setTemplateId,
+  featureName, setFeatureName, moduleName, setModuleName,
+  onClose, onSubmit, onOpenConfiguration, onManageTemplates,
 }: DeliveryCreateDialogProps) {
   return (
     <Dialog
@@ -194,6 +205,65 @@ export function DeliveryCreateDialog({
           placeholder="描述目标、约束和验收标准"
         />
       </label>
+      <div className="ai-template-picker">
+        <label>
+          交付模板
+          <select
+            value={templateId}
+            onChange={(event) => {
+              const next = event.target.value;
+              setTemplateId(next);
+              const template = templates.find((item) => item.id === next);
+              if (template) {
+                const feature = featureName.trim() || "{featureName}";
+                const module = moduleName.trim() || "{moduleName}";
+                setRequirement(
+                  template.description
+                    .replace(/\{featureName\}/g, feature)
+                    .replace(/\{moduleName\}/g, module),
+                );
+                setWorkflowId(template.workflowId);
+              }
+            }}
+          >
+            <option value="">不使用模板</option>
+            {templates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => onManageTemplates()}
+        >
+          <Workflow size={14} />
+          管理模板
+        </button>
+      </div>
+      {templateId && (
+        <div className="ai-template-params">
+          <label>
+            功能名称（{`{featureName}`}）
+            <input
+              value={featureName}
+              onChange={(event) => setFeatureName(event.target.value)}
+              placeholder="例如：用户批量导入"
+            />
+          </label>
+          <label>
+            模块名称（{`{moduleName}`}）
+            <input
+              value={moduleName}
+              onChange={(event) => setModuleName(event.target.value)}
+              placeholder="例如：用户管理"
+            />
+          </label>
+          <p className="ai-template-hint">选中模板后，需求说明会按模板填充并替换占位符。</p>
+        </div>
+      )}
       <label>
         管理者 Agent
         <select
@@ -306,5 +376,115 @@ export function DeliveryEditDialog({
         </button>
       </div>
    </Dialog>
+  );
+}
+interface AiTemplatesDialogProps {
+  templates: AiDeliveryTemplate[];
+  busy: string | null;
+  saveTemplateName: string;
+  setSaveTemplateName: React.Dispatch<React.SetStateAction<string>>;
+  deliveryLabel: string;
+  onSaveDelivery: () => Promise<void>;
+  onRename: (id: string, name: string) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onClose: () => void;
+}
+
+export function AiTemplatesDialog({
+  templates, busy, saveTemplateName, setSaveTemplateName,
+  deliveryLabel, onSaveDelivery, onRename, onDelete, onClose,
+}: AiTemplatesDialogProps) {
+  const [editingId, setEditingId] = useState("");
+  const [editName, setEditName] = useState("");
+  const startRename = (template: AiDeliveryTemplate) => {
+    setEditingId(template.id);
+    setEditName(template.name);
+  };
+  const commitRename = () => {
+    if (editingId && editName.trim()) {
+      void onRename(editingId, editName.trim());
+    }
+    setEditingId("");
+  };
+  return (
+    <Dialog
+      title="交付模板"
+      ariaLabel="交付模板管理"
+      className="ai-templates-dialog"
+      bodyClassName="ai-templates-body"
+      onClose={() => onClose()}
+      footer={
+        <button type="button" className="btn-secondary" onClick={() => onClose()}>
+          关闭
+        </button>
+      }
+    >
+      {deliveryLabel && (
+        <div className="ai-template-save-row">
+          <input
+            value={saveTemplateName}
+            onChange={(event) => setSaveTemplateName(event.target.value)}
+            placeholder={`将「${deliveryLabel}」保存为模板的名称`}
+          />
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={busy === "save-template" || !saveTemplateName.trim()}
+            onClick={() => void onSaveDelivery()}
+          >
+            保存为模板
+          </button>
+        </div>
+      )}
+      {templates.length === 0 && (
+        <p className="ai-template-empty">暂无模板。可从交付详情「保存为模板」创建。</p>
+      )}
+      {templates.map((template) => (
+        <div className="ai-template-item" key={template.id}>
+          {editingId === template.id ? (
+            <>
+              <input
+                value={editName}
+                onChange={(event) => setEditName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") commitRename();
+                  if (event.key === "Escape") setEditingId("");
+                }}
+                autoFocus
+              />
+              <button type="button" className="btn-secondary" onClick={commitRename}>
+                保存
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => setEditingId("")}>
+                取消
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="ai-template-item-info">
+                <strong>{template.name}</strong>
+                <small>{template.description.slice(0, 80)}</small>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={busy !== null}
+                onClick={() => startRename(template)}
+              >
+                重命名
+              </button>
+              <button
+                type="button"
+                className="btn-secondary danger"
+                disabled={busy !== null}
+                onClick={() => void onDelete(template.id)}
+              >
+                删除
+              </button>
+            </>
+          )}
+        </div>
+      ))}
+    </Dialog>
   );
 }

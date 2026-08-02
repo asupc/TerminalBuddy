@@ -1,10 +1,11 @@
 use crate::commands::terminal::TerminalService;
 use crate::models::{
-    AiAgent, AiAgentRuntime, AiAttempt, AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject,
-    AiAttemptOutput, AiQualityGate, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract,
-    AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput,
-    CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput,
-    UpdateAiTaskNodeInput,
+    AiAgent, AiAgentRuntime, AiAttempt, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate,
+    AiMergeRecord, AiProject, AiAttemptOutput, AiQualityGate, AiReviewGate, AiRole,
+    AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput,
+    CreateAiDeliveryInput, CreateAiDeliveryTemplateInput, CreateAiProjectInput,
+    CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiTaskNodeInput,
+    UpdateAiDeliveryTemplateInput,
 };
 use crate::services::AiDeliveryService;
 use tauri::{command, Emitter};
@@ -56,6 +57,38 @@ pub async fn detect_ai_runtimes() -> Vec<AiRuntimeProbe> {
     tauri::async_runtime::spawn_blocking(AiDeliveryService::detect_local_runtimes)
         .await
         .unwrap_or_default()
+}
+
+#[command]
+pub fn list_ai_delivery_templates() -> Result<Vec<AiDeliveryTemplate>, String> {
+    AiDeliveryService::list_ai_delivery_templates()
+}
+
+#[command]
+pub fn create_ai_delivery_template(
+    input: CreateAiDeliveryTemplateInput,
+) -> Result<AiDeliveryTemplate, String> {
+    AiDeliveryService::create_ai_delivery_template(input)
+}
+
+#[command]
+pub fn update_ai_delivery_template(
+    input: UpdateAiDeliveryTemplateInput,
+) -> Result<AiDeliveryTemplate, String> {
+    AiDeliveryService::update_ai_delivery_template(input)
+}
+
+#[command]
+pub fn delete_ai_delivery_template(id: String) -> Result<(), String> {
+    AiDeliveryService::delete_ai_delivery_template(&id)
+}
+
+#[command]
+pub fn save_ai_delivery_as_template(
+    delivery_id: String,
+    name: String,
+) -> Result<AiDeliveryTemplate, String> {
+    AiDeliveryService::save_delivery_as_template(&delivery_id, &name)
 }
 
 #[command]

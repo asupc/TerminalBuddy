@@ -558,3 +558,48 @@ pub struct AiMergeRecord {
     pub created_at: String,
     pub updated_at: String,
 }
+
+// ---------- 交付模板 ----------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiDeliveryTemplate {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub workflow_id: String,
+    #[serde(default)]
+    pub quality_gate: Option<String>,
+    #[serde(default)]
+    pub role_mappings: Vec<serde_json::Value>,
+    pub common_prompt: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAiDeliveryTemplateInput {
+    pub name: String,
+    pub description: String,
+    pub workflow_id: String,
+    #[serde(default)]
+    pub quality_gate: Option<String>,
+    #[serde(default)]
+    pub role_mappings: Vec<serde_json::Value>,
+    pub common_prompt: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAiDeliveryTemplateInput {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub workflow_id: String,
+    #[serde(default)]
+    pub quality_gate: Option<String>,
+    #[serde(default)]
+    pub role_mappings: Vec<serde_json::Value>,
+    pub common_prompt: String,
+}

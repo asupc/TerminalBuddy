@@ -89,6 +89,7 @@ export interface DeliveryDetailProps {
   phaseFilter: string;
   setPhaseFilter: React.Dispatch<React.SetStateAction<string>>;
   batchResult: string;
+  openTemplatesDialog: () => void;
 }
 
 /** 交付看板详情：当项目已选择且存在交付时的看板视图。 */
@@ -118,7 +119,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
     planAiDeliveryWithManager, refresh,
     selectedTaskIds, toggleTask,
     batchDispatch, batchRetry, batchCancel, retryAllFailed, dispatchPhase,
-    phaseFilter, setPhaseFilter, batchResult,
+    phaseFilter, setPhaseFilter, batchResult, openTemplatesDialog,
   } = props;
 
   const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
@@ -230,6 +231,18 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                         >
                           <Trash2 size={15} />
                           {delivery.state === "drafting" ? "删除草稿" : "删除交付"}
+                        </button>
+                      )}
+                      {!["cancelled"].includes(delivery.state) && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={busy !== null}
+                          onClick={() => openTemplatesDialog()}
+                          title="将当前交付保存为模板，或管理已有模板"
+                        >
+                          <FileText size={15} />
+                          保存为模板
                         </button>
                       )}
                       {delivery.state === "drafting" &&

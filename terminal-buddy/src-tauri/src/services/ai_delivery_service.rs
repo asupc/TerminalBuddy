@@ -1,11 +1,12 @@
 ﻿use crate::commands::terminal::TerminalService;
 use crate::models::{
     AiAgent, AiAgentRuntime, AiAttempt, AiCommandResult, AiDecisionOption, AiDecisionRequest,
-    AiDelivery, AiDeliveryEvent, AiMergeRecord, AiMergeRepositoryRecord, AiProject, AiQualityGate,
-    AiAttemptOutput, AiRepository, AiRepositoryStatusBaseline, AiReviewGate, AiRole, AiRuntimeProbe,
-    AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput,
+    AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord, AiMergeRepositoryRecord,
+    AiProject, AiQualityGate, AiAttemptOutput, AiRepository, AiRepositoryStatusBaseline,
+    AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow,
+    CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput,
     CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, TerminalOwner,
-    UpdateAiDeliveryInput, UpdateAiTaskNodeInput,
+    UpdateAiDeliveryInput, UpdateAiTaskNodeInput, UpdateAiDeliveryTemplateInput,
 };
 use crate::services::{BotSettingsService, DatabaseService, PathService};
 use serde::de::DeserializeOwned;
@@ -45,6 +46,7 @@ const REVIEW_GATES_DIR: &str = "ReviewGates";
 const MERGE_RECORDS_DIR: &str = "MergeRecords";
 const PLANS_DIR: &str = "Plans";
 const TERMINAL_RUNS_DIR: &str = "TerminalRuns";
+const TEMPLATES_DIR: &str = "Templates";
 const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 const QUALITY_GATE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
@@ -4033,6 +4035,96 @@ impl AiDeliveryService {
                 _ => {}
             }
         }
+    }
+
+    // ---------- 交付模板 ----------
+
+    pub fn list_ai_delivery_templates() -> Result<Vec<AiDeliveryTemplate>, String> {
+        let mut templates = Self::list(TEMPLATES_DIR)?;
+        templates.sort_by(|left: &AiDeliveryTemplate, right: &AiDeliveryTemplate| {
+            right.updated_at.cmp(&left.updated_at)
+        });
+        Ok(templates)
+    }
+
+    pub fn create_ai_delivery_template(
+        input: CreateAiDeliveryTemplateInput,
+    ) -> Result<AiDeliveryTemplate, String> {
+        if input.name.trim().is_empty() {
+            return Err("模板名称不能为空".to_string());
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        let template = AiDeliveryTemplate {
+            id: Uuid::new_v4().to_string(),
+            name: input.name.trim().to_string(),
+            description: input.description.trim().to_string(),
+            workflow_id: input.workflow_id,
+            quality_gate: input.quality_gate,
+            role_mappings: input.role_mappings,
+            common_prompt: input.common_prompt,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        Self::save(TEMPLATES_DIR, &template.id, &template)?;
+        Ok(template)
+    }
+
+    pub fn update_ai_delivery_template(
+        input: UpdateAiDeliveryTemplateInput,
+    ) -> Result<AiDeliveryTemplate, String> {
+        if input.name.trim().is_empty() {
+            return Err("模板名称不能为空".to_string());
+        }
+        let mut template =
+            Self::get::<AiDeliveryTemplate>(TEMPLATES_DIR, &input.id, "交付模板")?;
+        template.name = input.name.trim().to_string();
+        template.description = input.description.trim().to_string();
+        template.workflow_id = input.workflow_id;
+        template.quality_gate = input.quality_gate;
+        template.role_mappings = input.role_mappings;
+        template.common_prompt = input.common_prompt;
+        template.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(TEMPLATES_DIR, &template.id, &template)?;
+        Ok(template)
+    }
+
+    pub fn delete_ai_delivery_template(id: &str) -> Result<(), String> {
+        Self::delete(TEMPLATES_DIR, id, "交付模板")
+    }
+
+    /// 占位符替换：返回 (requirement, common_prompt)——`{featureName}`/`{moduleName}`。
+    pub fn expand_template(
+        template: &AiDeliveryTemplate,
+        feature: &str,
+        module: &str,
+    ) -> (String, String) {
+        let requirement = template
+            .description
+            .replace("{featureName}", feature)
+            .replace("{moduleName}", module);
+        let prompt = template
+            .common_prompt
+            .replace("{featureName}", feature)
+            .replace("{moduleName}", module);
+        (requirement, prompt)
+    }
+
+    /// 从已完成交付提取模板：workflowId + 需求文本；质量门禁来自项目配置。
+    pub fn save_delivery_as_template(
+        delivery_id: &str,
+        name: &str,
+    ) -> Result<AiDeliveryTemplate, String> {
+        let delivery = Self::get_delivery(delivery_id)?;
+        let project = Self::get_project(&delivery.project_id)?;
+        let quality_gate = serde_json::to_string(&project.quality_gate).ok();
+        Self::create_ai_delivery_template(CreateAiDeliveryTemplateInput {
+            name: name.trim().to_string(),
+            description: delivery.requirement.clone(),
+            workflow_id: delivery.workflow_id.clone().unwrap_or_default(),
+            quality_gate,
+            role_mappings: Vec::new(),
+            common_prompt: delivery.requirement.clone(),
+        })
     }
 
     pub fn create_task_contract(input: CreateTaskContractInput) -> Result<AiTaskContract, String> {

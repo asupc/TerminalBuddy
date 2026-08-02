@@ -348,3 +348,34 @@ export interface AiMergeRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface AiDeliveryTemplate {
+  id: string;
+  name: string;
+  description: string;
+  workflowId: string;
+  qualityGate?: string | null;
+  roleMappings: unknown[];
+  commonPrompt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAiDeliveryTemplateInput {
+  name: string;
+  description: string;
+  workflowId: string;
+  qualityGate?: string | null;
+  roleMappings: unknown[];
+  commonPrompt: string;
+}
+
+export interface UpdateAiDeliveryTemplateInput {
+  id: string;
+  name: string;
+  description: string;
+  workflowId: string;
+  qualityGate?: string | null;
+  roleMappings: unknown[];
+  commonPrompt: string;
+}
