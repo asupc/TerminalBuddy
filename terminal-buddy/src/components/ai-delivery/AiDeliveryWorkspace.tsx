@@ -11,6 +11,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { DeliveryStatsPanel } from "./DeliveryStatsPanel";
 import type {
   AiAgent,
   AiAgentRuntime,
@@ -150,6 +151,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
   const lastSelectedTaskIdRef = useRef("");
   const [phaseFilter, setPhaseFilter] = useState("");
   const [batchResult, setBatchResult] = useState("");
+  const [showStats, setShowStats] = useState(false);
   const [showProjectForm, setShowProjectForm] = useState(false);
  const [showProjectSettings, setShowProjectSettings] = useState(false);
   const [showProjectOverview, setShowProjectOverview] = useState(false);
@@ -1382,6 +1384,14 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           <h1>AI 交付</h1>
           <p>从需求到本地合并，由可审计的任务图驱动。</p>
         </div>
+        <button
+          type="button"
+          className={`ai-workspace-stats-toggle${showStats ? " active" : ""}`}
+          onClick={() => setShowStats((v) => !v)}
+        >
+          <RefreshCw size={13} />
+          {showStats ? "返回工作区" : "统计"}
+        </button>
       </header>
       {error && (
         <div className="ai-workspace-error">
@@ -1666,7 +1676,9 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           onGenerateQualityGate={() => void generateCreateProjectQualityGate()}
         />
       )}
-      {!project ? (
+      {showStats ? (
+        <DeliveryStatsPanel deliveries={deliveries} agents={agents} />
+      ) : !project ? (
         <section className="ai-workspace-empty">
           <div className="ai-empty-icon">
             <Layers3 size={24} />

@@ -2134,3 +2134,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- 交付统计面板 ---- */
+.ai-workspace-stats-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }.ai-workspace-stats-toggle:hover { border-color: var(--accent); color: var(--text-primary); }.ai-workspace-stats-toggle.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--bg-tertiary)); color: var(--accent); }
+.ai-stats-panel { max-width: 1460px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.ai-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.ai-stat-card { padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary); display: flex; flex-direction: column; gap: 4px; }.ai-stat-card span { color: var(--text-secondary); font-size: 12px; }.ai-stat-card strong { font-size: 24px; line-height: 1.2; color: var(--text-primary); }.ai-stat-card small { color: var(--text-tertiary); font-size: 11px; }
+.ai-stats-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+.ai-stats-section { padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary); }.ai-stats-section h4 { margin: 0 0 10px; font-size: 13px; color: var(--text-primary); }
+.ai-stats-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }.ai-stats-list li { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--text-secondary); }.ai-stats-list li span { min-width: 0; overflow-wrap: anywhere; }.ai-stats-list li strong { flex: 0 0 auto; color: var(--text-primary); }
+.ai-stats-table { width: 100%; border-collapse: collapse; font-size: 12px; }.ai-stats-table th, .ai-stats-table td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--border-subtle); }.ai-stats-table th { color: var(--text-tertiary); font-weight: 500; }.ai-stats-table td { color: var(--text-secondary); }.ai-stats-table td:first-child { color: var(--text-primary); }
+.ai-stats-muted { color: var(--text-tertiary); font-size: 12px; margin: 0; }
