@@ -218,6 +218,7 @@ export const eventTypeNames: Record<string, string> = {
   taskNodeDeleted: "任务已删除",
   taskCancelled: "任务已取消",
   taskSkipped: "已标记忽略",
+  policyViolationAccepted: "现场已确认",
 };
 export const eventTypeName = (eventType: string) => eventTypeNames[eventType] ?? eventType;
 export const failedEventTypeSet = new Set(Object.keys(eventTypeNames).filter(

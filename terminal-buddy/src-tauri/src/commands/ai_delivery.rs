@@ -389,6 +389,11 @@ pub fn mark_ai_task_skipped(task_node_id: String) -> Result<(), String> {
 }
 
 #[command]
+pub fn confirm_ai_policy_violation_site(task_node_id: String) -> Result<(), String> {
+    AiDeliveryService::confirm_policy_violation_site(&task_node_id)
+}
+
+#[command]
 pub fn complete_ai_attempt(
     id: String,
     app: tauri::AppHandle,

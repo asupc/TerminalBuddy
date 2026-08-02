@@ -5,7 +5,8 @@ import {
 import { useMemo, useState } from "react";
 import type React from "react";
 import {
-  approveAiDelivery, markAiTaskSkipped, pauseAiDelivery, resumeAiDelivery,
+  approveAiDelivery, confirmPolicyViolationSite, markAiTaskSkipped,
+  pauseAiDelivery, resumeAiDelivery,
 } from "../../services/tauri";
 import { displayLocalPath, boardColumns, taskStateName, deliveryStateName,
   attemptStateName, mergeStateName, eventTypeName, isFailedEventType, isFailedAttemptState,
@@ -142,6 +143,11 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
   const markSkipped = (task: AiTaskNode) =>
     void execute(`skip-${task.id}`, async () => {
       await markAiTaskSkipped(task.id);
+      await refresh(project.id, deliveryId);
+    });
+  const confirmPvSite = (task: AiTaskNode) =>
+    void execute(`confirm-pv-${task.id}`, async () => {
+      await confirmPolicyViolationSite(task.id);
       await refresh(project.id, deliveryId);
     });
 
@@ -762,6 +768,20 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                     >
                                       <Pencil size={13} />
                                       带参重试
+                                    </button>
+                                  </div>
+                                )}
+                                {task.state === "policyViolation" && (
+                                  <div className="ai-task-actions">
+                                    <button
+                                      type="button"
+                                      className="btn-secondary"
+                                      disabled={busy === `confirm-pv-${task.id}`}
+                                      title="人工确认越权现场可接受后，跳过静态审计重跑验收"
+                                      onClick={() => confirmPvSite(task)}
+                                    >
+                                      <ShieldCheck size={13} />
+                                      确认现场，继续验收
                                     </button>
                                   </div>
                                 )}

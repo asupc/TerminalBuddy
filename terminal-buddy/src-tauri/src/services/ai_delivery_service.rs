@@ -3151,6 +3151,7 @@ impl AiDeliveryService {
                               workflow_review_path.as_deref(),
                               app_handle.clone(),
                               monitor_terminal_service.clone(),
+                              false,
                           );
                         } else {
                             // 决策暂停成功后关闭终端，Agent CLI 已退出
@@ -3168,6 +3169,7 @@ impl AiDeliveryService {
                             workflow_review_path.as_deref(),
                             app_handle.clone(),
                             monitor_terminal_service.clone(),
+                            false,
                         ) {
                             eprintln!("[AI Delivery] finish_attempt 失败: {}", e);
                         }
@@ -3184,6 +3186,7 @@ impl AiDeliveryService {
                             workflow_review_path.as_deref(),
                             app_handle.clone(),
                             monitor_terminal_service.clone(),
+                            false,
                         );
                     }
                 }
@@ -3315,6 +3318,133 @@ impl AiDeliveryService {
         Ok(())
     }
 
+    /// 确认 policyViolation 现场可接受：跳过静态越权审计重跑验收（skip_audit 防死循环），
+    /// 按既有规则置 completed/failed/awaitingReview 并落事件。
+    pub fn confirm_policy_violation_site(task_node_id: &str) -> Result<(), String> {
+        let mut task = Self::get_task_node(task_node_id)?;
+        if task.state != "policyViolation" {
+            return Err(format!("任务状态 {} 不是 policyViolation", task.state));
+        }
+        let attempt_id = task
+            .attempt_ids
+            .last()
+            .ok_or_else(|| "无 attempt 可复核".to_string())?;
+        let mut attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")?;
+        if attempt.state != "policyViolation" {
+            return Err(format!("执行尝试状态 {} 不是 policyViolation", attempt.state));
+        }
+        let contract =
+            Self::get::<AiTaskContract>(CONTRACTS_DIR, &attempt.contract_id, "任务契约")?;
+        let project = Self::get_project(&Self::get_delivery(&attempt.delivery_id)?.project_id)?;
+        let workflow_managed = task.workflow_step_id.is_some();
+        let mut workflow_review = None;
+        attempt.state = "running".to_string();
+        attempt.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        // 重跑验收（skip_audit=true：现场已人工确认，不再重复静态越权判定）
+        let completion_error = Self::run_acceptance_validation(
+            &task,
+            &contract,
+            &project,
+            Some(0),
+            &None,
+            workflow_managed,
+            None,
+            &mut workflow_review,
+        );
+        let successful = completion_error.is_none();
+        let reviewer_rejected = workflow_review
+            .as_ref()
+            .is_some_and(|review| !review.approved);
+        let workflow_step_completed = successful && workflow_managed && !reviewer_rejected;
+        attempt.state = if successful {
+            "completed"
+        } else {
+            "failed"
+        }
+        .to_string();
+        attempt.exit_code = Some(0);
+        attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
+        attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
+        attempt.summary = Some(match completion_error.as_deref() {
+            Some(error) => format!("现场确认后重跑验收失败：{}", error),
+            None if let Some(review) = workflow_review.as_ref() => review.comments.clone(),
+            None => "现场已确认，重跑验收通过".to_string(),
+        });
+        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        // 验收通过时记录当前分支 HEAD 作为 validated_commit，合并前须再次确认一致
+        if successful && task.execution_mode == "write" {
+            if let Some(worktree) = contract.worktree_path.as_deref() {
+                if let Ok(head) = run_git(
+                    &PathBuf::from(worktree),
+                    &["rev-parse".to_string(), "HEAD".to_string()],
+                ) {
+                    let mut updated_contract = contract.clone();
+                    updated_contract.validated_commit = Some(head);
+                    updated_contract.updated_at = chrono::Utc::now().to_rfc3339();
+                    let _ = Self::save(CONTRACTS_DIR, &updated_contract.id, &updated_contract);
+                }
+            }
+        }
+        task.state = if reviewer_rejected {
+            "planned"
+        } else if workflow_step_completed {
+            "succeeded"
+        } else if successful {
+            "awaitingReview"
+        } else {
+            "failed"
+        }
+        .to_string();
+        task.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(TASK_NODES_DIR, &task.id, &task)?;
+        if reviewer_rejected {
+            Self::return_review_dependencies_for_rework(
+                &task,
+                workflow_review
+                    .as_ref()
+                    .map(|review| review.comments.as_str())
+                    .unwrap_or("Reviewer 要求返工"),
+            )?;
+        }
+        if workflow_step_completed {
+            let _ = Self::refresh_ready_task_nodes(&task.delivery_id)?;
+        }
+        let (event_type, message) = if successful {
+            (
+                "attemptCompleted",
+                if workflow_managed {
+                    "现场已确认，重跑验收通过，编排步骤完成".to_string()
+                } else {
+                    "现场已确认，重跑验收通过，等待审核".to_string()
+                },
+            )
+        } else {
+            (
+                "attemptFailed",
+                format!(
+                    "现场确认后重跑验收失败：{}",
+                    completion_error.unwrap_or_default()
+                ),
+            )
+        };
+        Self::append_event(
+            &task.delivery_id,
+            Some(&task.id),
+            Some(&attempt.id),
+            "policyViolationAccepted",
+            &format!("任务 {} 现场已确认，重跑验收", task.title),
+        )?;
+        Self::append_event(
+            &task.delivery_id,
+            Some(&task.id),
+            Some(&attempt.id),
+            event_type,
+            &message,
+        )?;
+        Ok(())
+    }
+
     pub fn ensure_manual_completion_allowed(attempt_id: &str) -> Result<(), String> {
         let attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "manual completion check")?;
         let delivery = Self::get_delivery(&attempt.delivery_id)?;
@@ -3354,6 +3484,7 @@ impl AiDeliveryService {
             workflow_review_path.as_deref(),
             app,
             terminal_service.clone(),
+            false,
         )?;
         if let Some(terminal_id) = attempt.terminal_id.as_deref() {
             let _ = terminal_service.close_terminal(terminal_id);
@@ -3467,6 +3598,61 @@ impl AiDeliveryService {
         Ok(())
     }
 
+    /// 验收执行：成果检查 + 验收命令（质量门禁）+ 工作流评审。
+    /// 返回验收失败原因（None 表示通过）；workflow_review 为评审结论。
+    /// 与 finish_attempt / confirm_policy_violation_site 共用。
+    fn run_acceptance_validation(
+        task: &AiTaskNode,
+        contract: &AiTaskContract,
+        project: &AiProject,
+        exit_code: Option<i32>,
+        policy_violation: &Option<String>,
+        workflow_managed: bool,
+        workflow_review_path: Option<&Path>,
+        workflow_review: &mut Option<WorkflowReviewFile>,
+    ) -> Option<String> {
+        if exit_code != Some(0)
+            || policy_violation.is_some()
+            || (!workflow_managed && task.expected_artifacts.is_empty())
+        {
+            return None;
+        }
+        let worktree = PathBuf::from(&contract.working_directory);
+        let validation = if task.execution_mode == "readonly" {
+            ensure_readonly_execution_unchanged(project, contract, &worktree)
+                .and_then(|_| ensure_expected_artifacts(contract, &worktree))
+                .and_then(|_| {
+                    if !requires_workflow_review(task) {
+                        return Ok(());
+                    }
+                    let review_path = workflow_review_path
+                        .ok_or_else(|| "评审步骤缺少 Reviewer 结论文件路径".to_string())?;
+                    let review = read_workflow_review(review_path)?;
+                    *workflow_review = Some(review);
+                    Ok(())
+                })
+        } else {
+            ensure_expected_artifacts(contract, &worktree)
+                .and_then(|_| ensure_task_branch_clean(&worktree))
+                .and_then(|_| {
+                    for command in &contract.acceptance_commands {
+                        let result = run_shell_command(&worktree, command)?;
+                        if result.exit_code != 0 {
+                            return Err(format!(
+                                "验收命令执行失败：{}（退出码 {}）",
+                                command, result.exit_code
+                            ));
+                        }
+                    }
+                    Ok(())
+                })
+        };
+        match validation {
+            Ok(()) => None,
+            Err(error) => Some(error),
+        }
+    }
+
     fn finish_attempt(
         attempt_id: &str,
         delivery_id: &str,
@@ -3477,6 +3663,7 @@ impl AiDeliveryService {
         workflow_review_path: Option<&Path>,
         app: tauri::AppHandle,
         terminal_service: TerminalService,
+        skip_audit: bool,
     ) -> Result<(), String> {
         let mut attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")?;
         if attempt.state != "running" {
@@ -3486,49 +3673,25 @@ impl AiDeliveryService {
             Self::get::<AiTaskContract>(CONTRACTS_DIR, &attempt.contract_id, "任务契约")?;
         let project_id = Self::get_delivery(delivery_id)?.project_id;
         let project = Self::get_project(&project_id)?;
-        let policy_violation = audit_contract_scope(&project, &contract)?;
+        // skip_audit：确认现场后重跑验收时跳过静态越权审计，防止现场未改导致死循环
+        let policy_violation = if skip_audit {
+            None
+        } else {
+            audit_contract_scope(&project, &contract)?
+        };
         let mut task = Self::get_task_node(task_node_id)?;
         let workflow_managed = task.workflow_step_id.is_some();
-        let mut completion_error = None;
         let mut workflow_review = None;
-        if exit_code == Some(0)
-            && policy_violation.is_none()
-            && (workflow_managed || !task.expected_artifacts.is_empty())
-        {
-            let worktree = PathBuf::from(&contract.working_directory);
-            let validation = if task.execution_mode == "readonly" {
-                ensure_readonly_execution_unchanged(&project, &contract, &worktree)
-                    .and_then(|_| ensure_expected_artifacts(&contract, &worktree))
-                    .and_then(|_| {
-                        if !requires_workflow_review(&task) {
-                            return Ok(());
-                        }
-                        let review_path = workflow_review_path
-                            .ok_or_else(|| "评审步骤缺少 Reviewer 结论文件路径".to_string())?;
-                        let review = read_workflow_review(review_path)?;
-                        workflow_review = Some(review);
-                        Ok(())
-                    })
-            } else {
-                ensure_expected_artifacts(&contract, &worktree)
-                    .and_then(|_| ensure_task_branch_clean(&worktree))
-                    .and_then(|_| {
-                        for command in &contract.acceptance_commands {
-                            let result = run_shell_command(&worktree, command)?;
-                            if result.exit_code != 0 {
-                                return Err(format!(
-                                    "验收命令执行失败：{}（退出码 {}）",
-                                    command, result.exit_code
-                                ));
-                            }
-                        }
-                        Ok(())
-                    })
-            };
-            if let Err(error) = validation {
-                completion_error = Some(error);
-            }
-        }
+        let completion_error = Self::run_acceptance_validation(
+            &task,
+            &contract,
+            &project,
+            exit_code,
+            &policy_violation,
+            workflow_managed,
+            workflow_review_path,
+            &mut workflow_review,
+        );
         let successful =
             exit_code == Some(0) && policy_violation.is_none() && completion_error.is_none();
         let reviewer_rejected = workflow_review
