@@ -5,7 +5,7 @@ use crate::models::{
     AiAttemptOutput, AiRepository, AiRepositoryStatusBaseline, AiReviewGate, AiRole, AiRuntimeProbe,
     AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput,
     CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, TerminalOwner,
-    UpdateAiDeliveryInput,
+    UpdateAiDeliveryInput, UpdateAiTaskNodeInput,
 };
 use crate::services::{DatabaseService, PathService};
 use serde::de::DeserializeOwned;
@@ -1219,31 +1219,87 @@ impl AiDeliveryService {
         false
     }
 
-    pub fn create_task_node(input: CreateAiTaskNodeInput) -> Result<AiTaskNode, String> {
-        if input.title.trim().is_empty() || input.description.trim().is_empty() {
+    /// create/update 共用的任务字段约束校验（不含 delivery 状态校验——create 侧单独保留）。
+    fn validate_task_fields(task: &AiTaskNode, delivery: &AiDelivery) -> Result<(), String> {
+        if task.title.trim().is_empty() || task.description.trim().is_empty() {
             return Err("任务标题和说明不能为空".to_string());
         }
-        if !matches!(input.execution_mode.as_str(), "write" | "readonly") {
+        if !matches!(task.execution_mode.as_str(), "write" | "readonly") {
             return Err("任务执行模式无效".to_string());
         }
-        let execution_context =
-            resolve_execution_context(&input.execution_mode, &input.execution_context)?;
-        if input.execution_mode == "write" && execution_context != EXECUTION_CONTEXT_TASK_WORKTREE {
+        if task.execution_mode == "write"
+            && task.execution_context != EXECUTION_CONTEXT_TASK_WORKTREE
+        {
             return Err("写入任务必须在任务 worktree 中执行".to_string());
         }
-        if input.workflow_step_id.is_some()
-            && !input
+        if task.workflow_step_id.is_some()
+            && !task
                 .expected_artifacts
                 .iter()
                 .any(|artifact| !artifact.trim().is_empty())
         {
             return Err("每个编排阶段必须至少声明一个交付物".to_string());
         }
-        validate_artifact_paths(&input.expected_artifacts, "交付物")?;
-        validate_artifact_paths(&input.input_artifacts, "输入成果")?;
-        if input.role_id.is_none() && input.preferred_agent_id.is_none() {
+        validate_artifact_paths(&task.expected_artifacts, "交付物")?;
+        validate_artifact_paths(&task.input_artifacts, "输入成果")?;
+        if task.role_id.is_none() && task.preferred_agent_id.is_none() {
             return Err("任务必须指定角色或优先 Agent，才能由调度器派发".to_string());
         }
+        let project = Self::get_project(&delivery.project_id)?;
+        let repository = project
+            .repositories
+            .iter()
+            .find(|repository| repository.id == task.target_repository_id)
+            .ok_or_else(|| "任务目标仓库不属于交付项目".to_string())?;
+        if !repository.write_enabled {
+            return Err("任务目标仓库已禁止写入".to_string());
+        }
+        validate_write_paths(&task.allowed_write_paths)?;
+        if let Some(role_id) = task.role_id.as_deref() {
+            Self::get::<AiRole>(ROLES_DIR, role_id, "角色")?;
+        }
+        if let Some(agent_id) = task.preferred_agent_id.as_deref() {
+            Self::get::<AiAgent>(AGENTS_DIR, agent_id, "指定 Agent")?;
+        }
+        for dependency_id in &task.dependency_ids {
+            if !delivery
+                .task_node_ids
+                .iter()
+                .any(|id| id == dependency_id)
+            {
+                return Err(format!("依赖任务不属于当前交付: {}", dependency_id));
+            }
+        }
+        Ok(())
+    }
+
+    /// 清理任务下的未决 review gate 与 decision request（已完成的记录保留留痕）。
+    /// needsInput 任务保留未决 decision request——它是 answer_decision 恢复任务的入口，删除后任务永久卡死。
+    fn cleanup_pending_gates_and_decisions(
+        delivery_id: &str,
+        task_node_id: &str,
+        task_state: &str,
+    ) -> Result<(), String> {
+        for gate in Self::get_review_gates(Some(delivery_id))? {
+            if gate.task_node_id == task_node_id && gate.state == "awaitingReviewer" {
+                Self::delete(REVIEW_GATES_DIR, &gate.id, "审核门禁")?;
+            }
+        }
+        if task_state != "needsInput" {
+            for request in Self::get_decision_requests(Some(delivery_id))? {
+                if request.task_node_id.as_deref() == Some(task_node_id)
+                    && request.state == "pending"
+                {
+                    Self::delete(DECISIONS_DIR, &request.id, "决策请求")?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn create_task_node(input: CreateAiTaskNodeInput) -> Result<AiTaskNode, String> {
+        let execution_context =
+            resolve_execution_context(&input.execution_mode, &input.execution_context)?;
         let mut delivery = Self::get_delivery(&input.delivery_id)?;
         if !matches!(
             delivery.state.as_str(),
@@ -1251,28 +1307,7 @@ impl AiDeliveryService {
         ) {
             return Err("只有草案或待批准交付可以新增任务".to_string());
         }
-        let project = Self::get_project(&delivery.project_id)?;
-        let repository = project
-            .repositories
-            .iter()
-            .find(|repository| repository.id == input.target_repository_id)
-            .ok_or_else(|| "任务目标仓库不属于交付项目".to_string())?;
-        if !repository.write_enabled {
-            return Err("任务目标仓库已禁止写入".to_string());
-        }
-        validate_write_paths(&input.allowed_write_paths)?;
-        if let Some(role_id) = input.role_id.as_deref() {
-            Self::get::<AiRole>(ROLES_DIR, role_id, "角色")?;
-        }
-        if let Some(agent_id) = input.preferred_agent_id.as_deref() {
-            Self::get::<AiAgent>(AGENTS_DIR, agent_id, "指定 Agent")?;
-        }
         let existing_tasks = Self::get_task_nodes(&delivery.id)?;
-        for dependency_id in &input.dependency_ids {
-            if !existing_tasks.iter().any(|task| task.id == *dependency_id) {
-                return Err(format!("依赖任务不属于当前交付: {}", dependency_id));
-            }
-        }
         let now = chrono::Utc::now().to_rfc3339();
         let task = AiTaskNode {
             id: Uuid::new_v4().to_string(),
@@ -1300,6 +1335,8 @@ impl AiDeliveryService {
             created_at: now.clone(),
             updated_at: now,
         };
+        // 统一字段约束（create 与 update 共用；delivery 状态校验已在上面单独执行）
+        Self::validate_task_fields(&task, &delivery)?;
         // 环依赖校验：先建 A 依赖 B、再建 B 依赖 A 可绕过成员校验直接成环，必须整体检测
         let mut all_tasks = existing_tasks.clone();
         all_tasks.push(task.clone());
@@ -1317,6 +1354,139 @@ impl AiDeliveryService {
             None,
             "taskPlanned",
             "管理者已添加任务节点",
+        )?;
+        Ok(task)
+    }
+
+    /// 编辑任务节点：状态约束 → 字段应用 → 共用校验 → 标脏 contract → 未决清理 → 状态重算 → diff 事件。
+    pub fn update_task_node(input: UpdateAiTaskNodeInput) -> Result<AiTaskNode, String> {
+        let mut task = Self::get_task_node(&input.id)?;
+        let delivery = Self::get_delivery(&task.delivery_id)?;
+
+        // 1) 状态校验（task 状态，非 delivery 状态）
+        let editable = match task.state.as_str() {
+            "planned" => true,
+            "failed" | "rework" | "cancelled" | "needsInput" | "policyViolation" => matches!(
+                delivery.state.as_str(),
+                "running" | "paused" | "needsInput"
+            ),
+            _ => false, // queued/running/succeeded/awaitingReview 拒绝
+        };
+        if !editable {
+            return Err(format!(
+                "任务状态 {} 不可编辑（仅 planned 或失败/返工/取消/待输入/策略违规且交付运行中可编辑）",
+                task.state
+            ));
+        }
+
+        let original = task.clone();
+
+        // 2) 字段应用前快照变更标志（字段随后被移动，不能事后借用 input）
+        let exec_fields_changed = [
+            input.execution_mode.is_some(),
+            input.execution_context.is_some(),
+            input.target_repository_id.is_some(),
+            input.task_prompt.is_some(),
+            input.allowed_write_paths.is_some(),
+            input.expected_artifacts.is_some(),
+            input.acceptance_commands.is_some(),
+            input.timeout_seconds.is_some(),
+        ]
+        .iter()
+        .any(|changed| *changed);
+        let dependency_ids_changed = input.dependency_ids.is_some();
+
+        // 3) 字段应用（Option 语义：None 不改，Some(Some(v)) 赋值，Some(None) 置空）
+        if let Some(v) = input.title {
+            task.title = v;
+        }
+        if let Some(v) = input.description {
+            task.description = v;
+        }
+        if let Some(v) = input.role_id {
+            task.role_id = v;
+        }
+        if let Some(v) = input.preferred_agent_id {
+            task.preferred_agent_id = v;
+        }
+        if let Some(v) = input.task_prompt {
+            task.task_prompt = v;
+        }
+        if let Some(v) = input.execution_mode {
+            task.execution_mode = v;
+        }
+        if let Some(v) = input.execution_context {
+            task.execution_context = v;
+        }
+        if let Some(v) = input.target_repository_id {
+            task.target_repository_id = v;
+        }
+        if let Some(v) = input.allowed_write_paths {
+            task.allowed_write_paths = v;
+        }
+        if let Some(v) = input.dependency_ids {
+            task.dependency_ids = v;
+        }
+        if let Some(v) = input.expected_artifacts {
+            task.expected_artifacts = v;
+        }
+        if let Some(v) = input.acceptance_commands {
+            task.acceptance_commands = v;
+        }
+        if let Some(v) = input.timeout_seconds {
+            task.timeout_seconds = v;
+        }
+        if let Some(v) = input.retry_count {
+            task.retry_count = v;
+        }
+
+        // 4) 复用 create_task_node 的既有约束（排除其 delivery 状态校验，由第 1 条负责）
+        Self::validate_task_fields(&task, &delivery)?;
+
+        // 5) 环依赖校验（本任务与同交付其余任务）
+        let mut all_tasks = delivery
+            .task_node_ids
+            .iter()
+            .filter(|id| *id != &task.id)
+            .map(|id| Self::get_task_node(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        all_tasks.push(task.clone());
+        if Self::has_cycle(&all_tasks) {
+            return Err("依赖关系形成环，任务无法保存".to_string());
+        }
+
+        // 6) 执行相关字段变更 → 标脏 contract（重试派发时重新审计/重建，避免旧 worktree 审计结果被复用）
+        if exec_fields_changed {
+            if let Some(contract_id) = &task.contract_id {
+                if let Ok(mut contract) =
+                    Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "任务契约")
+                {
+                    contract.dirty = true;
+                    contract.updated_at = chrono::Utc::now().to_rfc3339();
+                    Self::save(CONTRACTS_DIR, contract_id, &contract)?;
+                }
+            }
+        }
+
+        // 6) 未决 gate/decision 清理（needsInput 保留未决 decision request）
+        Self::cleanup_pending_gates_and_decisions(&task.delivery_id, &task.id, task.state.as_str())?;
+
+        // 8) 依赖变更 → 状态重算（refresh_ready_task_nodes 含 promote；demote 由 T4-3 扩展）
+        if dependency_ids_changed {
+            Self::refresh_ready_task_nodes(&task.delivery_id)?;
+        }
+
+        task.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(TASK_NODES_DIR, &task.id, &task)?;
+
+        // 8) diff 审计事件
+        let diff = build_task_diff(&original, &task);
+        Self::append_event(
+            &task.delivery_id,
+            Some(&task.id),
+            None,
+            "taskNodeEdited",
+            &diff,
         )?;
         Ok(task)
     }
@@ -3617,13 +3787,14 @@ impl AiDeliveryService {
             output_artifact_directory: None,
             expected_artifacts: input.expected_artifacts,
             acceptance_commands: input.acceptance_commands,
-            retry_count: input.retry_count.min(10),
+            retry_count: input.retry_count,
             state: "planned".to_string(),
             working_directory: working_directory.to_string_lossy().to_string(),
             branch_name: None,
             worktree_path: None,
             base_commit: None,
             validated_commit: None,
+            dirty: false,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3809,6 +3980,79 @@ impl AiDeliveryService {
         contract.updated_at = chrono::Utc::now().to_rfc3339();
         Self::save(CONTRACTS_DIR, &contract.id, &contract)?;
         Ok(contract)
+    }
+}
+
+/// 构造任务字段 diff 审计文本：只列变更字段，格式 `field: '旧值' → '新值'`。
+fn build_task_diff(original: &AiTaskNode, updated: &AiTaskNode) -> String {
+    let mut parts = Vec::new();
+    if original.title != updated.title {
+        parts.push(format!("title: '{}' → '{}'", original.title, updated.title));
+    }
+    if original.description != updated.description {
+        parts.push(format!(
+            "description: '{}' → '{}'",
+            original.description, updated.description
+        ));
+    }
+    if original.role_id != updated.role_id {
+        parts.push(format!(
+            "roleId: '{:?}' → '{:?}'",
+            original.role_id, updated.role_id
+        ));
+    }
+    if original.preferred_agent_id != updated.preferred_agent_id {
+        parts.push(format!(
+            "preferredAgentId: '{:?}' → '{:?}'",
+            original.preferred_agent_id, updated.preferred_agent_id
+        ));
+    }
+    if original.execution_mode != updated.execution_mode {
+        parts.push(format!(
+            "executionMode: '{}' → '{}'",
+            original.execution_mode, updated.execution_mode
+        ));
+    }
+    if original.execution_context != updated.execution_context {
+        parts.push(format!(
+            "executionContext: '{:?}' → '{:?}'",
+            original.execution_context, updated.execution_context
+        ));
+    }
+    if original.task_prompt != updated.task_prompt {
+        parts.push("taskPrompt: 已变更".to_string());
+    }
+    if original.timeout_seconds != updated.timeout_seconds {
+        parts.push(format!(
+            "timeoutSeconds: '{:?}' → '{:?}'",
+            original.timeout_seconds, updated.timeout_seconds
+        ));
+    }
+    if original.retry_count != updated.retry_count {
+        parts.push(format!(
+            "retryCount: '{}' → '{}'",
+            original.retry_count, updated.retry_count
+        ));
+    }
+    for (label, original_items, updated_items) in [
+        ("allowedWritePaths", &original.allowed_write_paths, &updated.allowed_write_paths),
+        ("expectedArtifacts", &original.expected_artifacts, &updated.expected_artifacts),
+        ("acceptanceCommands", &original.acceptance_commands, &updated.acceptance_commands),
+        ("dependencyIds", &original.dependency_ids, &updated.dependency_ids),
+    ] {
+        if original_items != updated_items {
+            parts.push(format!(
+                "{}: 已变更（{} 项 → {} 项）",
+                label,
+                original_items.len(),
+                updated_items.len()
+            ));
+        }
+    }
+    if parts.is_empty() {
+        "无字段变更".to_string()
+    } else {
+        parts.join("；")
     }
 }
 
@@ -6416,6 +6660,7 @@ mod terminal_command_tests {
             worktree_path: None,
             base_commit: None,
             validated_commit: None,
+            dirty: false,
             created_at: started_at.clone(),
             updated_at: started_at.clone(),
         };

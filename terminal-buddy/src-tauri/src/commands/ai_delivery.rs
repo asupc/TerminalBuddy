@@ -4,6 +4,7 @@ use crate::models::{
     AiAttemptOutput, AiQualityGate, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract,
     AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput,
     CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput,
+    UpdateAiTaskNodeInput,
 };
 use crate::services::AiDeliveryService;
 use tauri::{command, Emitter};
@@ -197,6 +198,11 @@ pub fn get_ai_task_nodes(delivery_id: String) -> Result<Vec<AiTaskNode>, String>
 #[command]
 pub fn create_ai_task_node(input: CreateAiTaskNodeInput) -> Result<AiTaskNode, String> {
     AiDeliveryService::create_task_node(input)
+}
+
+#[command]
+pub fn update_ai_task_node(input: UpdateAiTaskNodeInput) -> Result<AiTaskNode, String> {
+    AiDeliveryService::update_task_node(input)
 }
 
 #[command]

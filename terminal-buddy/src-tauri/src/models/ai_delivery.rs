@@ -219,6 +219,9 @@ pub struct AiTaskContract {
     pub acceptance_commands: Vec<String>,
     #[serde(default)]
     pub retry_count: u32,
+    /// 编辑执行相关字段后置位，重试派发时重新审计/重建
+    #[serde(default)]
+    pub dirty: bool,
     pub state: String,
     pub working_directory: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -463,6 +466,28 @@ pub struct AiAttemptOutput {
     /// live-output.log 尾部（最多 8000 字符），Web 端轮询用
     #[serde(default)]
     pub live_output_tail: String,
+}
+
+/// 任务节点编辑输入：所有字段均为 Option（None 表示不修改；双 Option 区分「未提供」与「设为空」）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAiTaskNodeInput {
+    pub id: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub role_id: Option<Option<String>>,
+    pub preferred_agent_id: Option<Option<String>>,
+    pub task_prompt: Option<String>,
+    pub execution_mode: Option<String>,
+    pub execution_context: Option<String>,
+    pub target_repository_id: Option<String>,
+    pub allowed_write_paths: Option<Vec<String>>,
+    pub dependency_ids: Option<Vec<String>>,
+    pub expected_artifacts: Option<Vec<String>>,
+    pub acceptance_commands: Option<Vec<String>>,
+    pub timeout_seconds: Option<Option<u32>>,
+    /// 0 = 不限；允许 >10
+    pub retry_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
