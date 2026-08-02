@@ -184,10 +184,25 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
             path
         } else if fs::metadata(&path).is_ok() {
             format!("/select,\"{}\"", path)
-        } else if let Some(parent) = std::path::Path::new(&path).parent() {
-            parent.to_string_lossy().into_owned()
         } else {
-            return Err(format!("Path not found: {}", path));
+            // 路径不存在时逐级向上查找最近的存在的父目录，
+            // 避免传入不存在的路径让 Explorer 打开到无关的默认位置（如文档目录）。
+            let mut current = std::path::Path::new(&path).parent();
+            let mut found = None;
+            while let Some(candidate) = current {
+                if candidate.as_os_str().is_empty() {
+                    break;
+                }
+                if fs::metadata(candidate).map_or(false, |m| m.is_dir()) {
+                    found = Some(candidate.to_string_lossy().into_owned());
+                    break;
+                }
+                current = candidate.parent();
+            }
+            match found {
+                Some(dir) => dir,
+                None => return Err(format!("Path not found: {}", path)),
+            }
         }
     };
 
