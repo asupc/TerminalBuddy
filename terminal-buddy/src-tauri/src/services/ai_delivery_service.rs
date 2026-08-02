@@ -688,6 +688,62 @@ impl AiDeliveryService {
         Ok(workflows)
     }
 
+    /// 单步模拟测试（实验性）：用 {featureName} 占位替换后的步骤提示词，
+    /// 走一次 claude --print 调用并返回输出前 2000 字符。
+    /// 只调用不落盘、不建 attempt；失败仅前端展示错误，不影响既有功能。
+    pub fn test_workflow_step(workflow_step_id: &str, feature_name: &str) -> Result<String, String> {
+        let workflow = Self::get_all_workflows()?
+            .into_iter()
+            .find(|workflow| workflow.steps.iter().any(|step| step.id == workflow_step_id))
+            .ok_or_else(|| "工作流步骤不存在".to_string())?;
+        let step = workflow
+            .steps
+            .iter()
+            .find(|step| step.id == workflow_step_id)
+            .ok_or_else(|| "工作流步骤不存在".to_string())?;
+        let prompt = if step.prompt.contains("{featureName}") {
+            step.prompt.replace("{featureName}", feature_name)
+        } else {
+            format!("功能描述：{}\n\n{}", feature_name, step.prompt)
+        };
+        let runtime = Self::get_all_runtimes()?
+            .into_iter()
+            .filter(|runtime| runtime.enabled)
+            .find(|runtime| runtime.kind == "claude")
+            .ok_or_else(|| "未找到可用的 claude 运行时，无法模拟测试".to_string())?;
+        let mut command_parts = split_runtime_command(&runtime.command)?;
+        let executable = command_parts.remove(0);
+        let mut command = Command::new(&executable);
+        command.args(&command_parts);
+        command.args(["--print".to_string()]);
+        // 模拟测试用的提示词不落盘，直接作为参数传入（限制长度避免命令行超限）
+        let clipped = if prompt.len() > 4000 {
+            format!("{}…", &prompt[..prompt.ceil_char_boundary(4000)])
+        } else {
+            prompt
+        };
+        command.arg(clipped);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let output = run_command_with_timeout(
+            &mut command,
+            Duration::from_secs(60),
+            "工作流步骤模拟测试",
+        )?;
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(format!(
+                "Agent 未输出内容：{}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(if text.len() > 2000 {
+            format!("{}…", &text[..text.ceil_char_boundary(2000)])
+        } else {
+            text.to_string()
+        })
+    }
+
     pub fn save_workflow(mut workflow: AiWorkflow) -> Result<AiWorkflow, String> {
         if workflow.name.trim().is_empty() {
             return Err("编排方案名称不能为空".to_string());

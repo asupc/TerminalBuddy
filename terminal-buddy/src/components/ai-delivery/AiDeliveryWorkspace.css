@@ -2160,3 +2160,8 @@
 .ai-preset-list { display: flex; flex-direction: column; gap: 8px; max-height: 440px; overflow: auto; }.ai-preset-list h4, .ai-preset-form h4 { margin: 0 0 8px; font-size: 13px; color: var(--text-primary); }
 .ai-preset-list-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-secondary); }.ai-preset-list-item strong { font-size: 12px; }.ai-preset-list-item small { grid-column: 1 / -1; color: var(--text-tertiary); font-size: 10px; }
 .ai-preset-form { display: flex; flex-direction: column; gap: 10px; }.ai-preset-form label { display: flex; flex-direction: column; gap: 4px; color: var(--text-secondary); font-size: 11px; }.ai-preset-form textarea { font-family: var(--font-mono); font-size: 11px; }.ai-preset-form-actions { display: flex; gap: 8px; }
+
+/* ---- 工作流预览与模拟测试 ---- */
+.ai-workflow-preview-dialog { display: flex; flex-direction: column; }.ai-workflow-preview-dialog > div { flex: 1; min-height: 0; }.ai-workflow-preview-hint { margin: 0 0 10px; color: var(--text-tertiary); font-size: 11px; }
+.ai-workflow-step.dragging { opacity: 0.5; border-color: var(--accent); }
+.ai-workflow-step-test-result { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }

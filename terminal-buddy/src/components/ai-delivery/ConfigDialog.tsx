@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import {
   ArrowDown, ArrowUp, Bot, Check,
-  ChevronDown, ChevronRight, Pencil,
+  ChevronDown, ChevronRight, Eye, Pencil,
   Plus, SquareTerminal, Trash2, Users, Workflow,
 } from "lucide-react";
 import { Dialog } from "../shared/Dialog";
+import { TaskDagView } from "./TaskDagView";
 import {
   type AiDeliveryConfigView,
   parseRuntimeArgs,
   presetMatchesRuntime,
 } from "./workspace-utils";
 import type {
-  AiAgent, AiAgentRuntime, AiRole, AiRuntimeProbe, AiStartupPreset, AiWorkflow, AiWorkflowStep,
+  AiAgent, AiAgentRuntime, AiRole, AiRuntimeProbe, AiStartupPreset, AiTaskNode, AiWorkflow,
+  AiWorkflowStep,
 } from "../../types/aiDelivery";
 import type { ExtraParamPreset } from "../../types";
 import {
@@ -19,6 +21,7 @@ import {
   createAiStartupPreset,
   updateAiStartupPreset,
   deleteAiStartupPreset,
+  testWorkflowStep,
 } from "../../services/tauri";
 
 interface ConfigDialogProps {
@@ -71,6 +74,10 @@ export function ConfigDialog({
   const [newRuntimeCommand, setNewRuntimeCommand] = useState("");
   const [backendPresets, setBackendPresets] = useState<AiStartupPreset[]>([]);
   const [showPresetManager, setShowPresetManager] = useState(false);
+  const [previewWorkflow, setPreviewWorkflow] = useState<AiWorkflow | null>(null);
+  const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
+  const [testingStepId, setTestingStepId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, string>>({});
   const [editingPreset, setEditingPreset] = useState<AiStartupPreset | null>(null);
   const [presetDraft, setPresetDraft] = useState<{
     name: string;
@@ -124,6 +131,65 @@ export function ConfigDialog({
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
+  };
+
+  // 工作流拓扑预览：把 steps 映射为模拟任务节点（依赖 = 前一 step），只读渲染
+  const previewTasks = (workflow: AiWorkflow): AiTaskNode[] =>
+    workflow.steps.map((step, index) => ({
+      id: `preview-step-${step.id}`,
+      deliveryId: "preview",
+      title: step.name,
+      description: step.prompt || "（未填写步骤提示词）",
+      roleId: step.roleId,
+      workflowStepId: step.id,
+      preferredAgentId: null,
+      taskPrompt: step.prompt,
+      executionMode: step.executionMode,
+      executionContext: step.executionContext ?? (step.executionMode === "readonly" ? "workspaceRoot" : "taskWorktree"),
+      targetRepositoryId: "",
+      allowedWritePaths: [],
+      dependencyIds: index > 0 ? [`preview-step-${workflow.steps[index - 1].id}`] : [],
+      inputArtifacts: [],
+      expectedArtifacts: [],
+      acceptanceCommands: [],
+      retryCount: 0,
+      state: "planned",
+      attemptIds: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+
+  // HTML5 拖拽重排 steps
+  const dropWorkflowStep = (workflow: AiWorkflow, targetStepId: string) => {
+    if (!draggedStepId || draggedStepId === targetStepId) return;
+    const from = workflow.steps.findIndex((step) => step.id === draggedStepId);
+    const to = workflow.steps.findIndex((step) => step.id === targetStepId);
+    if (from === -1 || to === -1) return;
+    const steps = [...workflow.steps];
+    const [moved] = steps.splice(from, 1);
+    steps.splice(to, 0, moved);
+    setDraggedStepId(null);
+    void saveWorkflowConfig(workflow, { steps });
+  };
+
+  const runStepTest = (workflow: AiWorkflow, step: AiWorkflowStep) => {
+    setTestingStepId(step.id);
+    setTestResults((results) => {
+      const next = { ...results };
+      delete next[step.id];
+      return next;
+    });
+    void testWorkflowStep(step.id, workflow.name)
+      .then((output) => {
+        setTestResults((results) => ({ ...results, [step.id]: output }));
+      })
+      .catch((reason) => {
+        setTestResults((results) => ({
+          ...results,
+          [step.id]: `模拟失败：${reason instanceof Error ? reason.message : String(reason)}`,
+        }));
+      })
+      .finally(() => setTestingStepId(null));
   };
 
   const removePreset = async (preset: AiStartupPreset) => {
@@ -300,12 +366,28 @@ export function ConfigDialog({
                         <Plus size={14} />
                         添加步骤
                       </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => setPreviewWorkflow(workflow)}
+                      >
+                        <Eye size={14} />
+                        预览拓扑
+                      </button>
                     </div>
                   </div>
                   <div className="ai-workflow-steps">
                     {workflow.steps.map((step, stepIndex) => {
                       return (
-                      <div className="ai-workflow-step" key={step.id}>
+                      <div
+                        className={`ai-workflow-step${draggedStepId === step.id ? " dragging" : ""}`}
+                        key={step.id}
+                        draggable
+                        onDragStart={() => setDraggedStepId(step.id)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => dropWorkflowStep(workflow, step.id)}
+                        onDragEnd={() => setDraggedStepId(null)}
+                      >
                         <div className="ai-workflow-step-editor">
                         <span className="ai-workflow-step-index">{stepIndex + 1}</span>
                         <label className="ai-workflow-step-name">
@@ -388,6 +470,16 @@ export function ConfigDialog({
                         <div className="ai-workflow-step-actions">
                           <button
                             type="button"
+                            className="btn-secondary"
+                            title="用当前默认 Claude 运行时模拟执行一次该步骤提示词（实验性）"
+                            disabled={testingStepId !== null || busy === `workflow-${workflow.id}`}
+                            onClick={() => runStepTest(workflow, step)}
+                          >
+                            <SquareTerminal size={13} />
+                            {testingStepId === step.id ? "模拟中..." : "模拟测试"}
+                          </button>
+                          <button
+                            type="button"
                             className="ai-icon-button"
                             title="上移步骤"
                             aria-label={`上移步骤 ${step.name}`}
@@ -417,6 +509,11 @@ export function ConfigDialog({
                             <Trash2 size={14} />
                           </button>
                         </div>
+                        {testResults[step.id] && (
+                          <pre className="ai-workflow-step-test-result">
+                            {testResults[step.id]}
+                          </pre>
+                        )}
                         </div>
                       </div>
                       );
@@ -956,6 +1053,19 @@ export function ConfigDialog({
               </div>
             </div>
           </div>
+        </Dialog>
+      )}
+      {previewWorkflow && (
+        <Dialog
+          title={`任务拓扑预览 — ${previewWorkflow.name}`}
+          onClose={() => setPreviewWorkflow(null)}
+          className="ai-workflow-preview-dialog"
+          style={{ width: 'min(860px, 94vw)', height: 'min(560px, 82vh)' }}
+        >
+          <p className="ai-workflow-preview-hint">
+            将按步骤顺序生成串行任务（每个步骤一个节点，依赖前一步骤）。实际派发时同一步骤可拆分为多个并行任务。
+          </p>
+          <TaskDagView tasks={previewTasks(previewWorkflow)} onNodeClick={() => undefined} />
         </Dialog>
       )}
     </Dialog>

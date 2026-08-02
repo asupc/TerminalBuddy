@@ -127,6 +127,18 @@ pub fn get_ai_roles() -> Result<Vec<AiRole>, String> {
 }
 
 #[command]
+pub async fn test_ai_workflow_step(
+    workflow_step_id: String,
+    feature_name: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        AiDeliveryService::test_workflow_step(&workflow_step_id, &feature_name)
+    })
+    .await
+    .map_err(|error| format!("工作流步骤模拟测试线程失败: {}", error))?
+}
+
+#[command]
 pub fn list_ai_startup_presets() -> Result<Vec<AiStartupPreset>, String> {
     AiDeliveryService::get_all_startup_presets()
 }
