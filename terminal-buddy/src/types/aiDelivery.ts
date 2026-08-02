@@ -58,6 +58,8 @@ export interface AiAgent {
   runtimeId: string;
   runtimeArgs: string[];
   startupPresetName?: string | null;
+  /** 兜底默认超时（秒），None 时使用全局默认。 */
+  defaultTimeoutSeconds?: number | null;
   maxConcurrency: number;
   enabled: boolean;
   createdAt: string;
@@ -202,6 +204,8 @@ export interface AiTaskNode {
   expectedArtifacts: string[];
   acceptanceCommands: string[];
   retryCount: number;
+  /** 单次执行超时（秒），留空使用 Agent 默认值。 */
+  timeoutSeconds?: number | null;
   state: string;
   assignedAgentId?: string | null;
   contractId?: string | null;

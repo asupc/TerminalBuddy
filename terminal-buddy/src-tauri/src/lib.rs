@@ -364,6 +364,7 @@ pub fn run() {
                                         startup_preset_name: Some("AI 交付自动批准".to_string()),
                                         max_concurrency: 1,
                                         enabled: true,
+                                        default_timeout_seconds: None,
                                         created_at: String::new(),
                                         updated_at: String::new(),
                                     })

@@ -50,6 +50,10 @@ const ATTEMPT_MAX_DURATION: Duration = Duration::from_secs(60 * 60);
 // 首次检查不应等待 Agent 自己退出；成果文件可能已经写完而 CLI 仍停留在终端中。
 const ATTEMPT_WATCHDOG_DELAY: Duration = Duration::from_secs(30);
 const ATTEMPT_WATCHDOG_INTERVAL: Duration = Duration::from_secs(60);
+/// 任务级超时兜底（秒），与 ATTEMPT_MAX_DURATION 对齐。
+pub const DEFAULT_ATTEMPT_TIMEOUT_SECONDS: u32 = 60 * 60;
+/// 耗时达到超时的该比例时提前告警。
+pub const TIMEOUT_WARNING_RATIO: f32 = 0.8;
 const EXECUTION_CONTEXT_WORKSPACE_ROOT: &str = "workspaceRoot";
 const EXECUTION_CONTEXT_TASK_WORKTREE: &str = "taskWorktree";
 
@@ -1246,6 +1250,7 @@ impl AiDeliveryService {
             expected_artifacts: input.expected_artifacts,
             acceptance_commands: input.acceptance_commands,
             retry_count: input.retry_count.min(10),
+            timeout_seconds: None,
             state: "planned".to_string(),
             assigned_agent_id: None,
             contract_id: None,
@@ -5407,6 +5412,7 @@ mod agent_decision_tests {
             expected_artifacts: vec!["任务分析结论：风险与验收标准".to_string()],
             acceptance_commands: Vec::new(),
             retry_count: 0,
+            timeout_seconds: None,
             state: "failed".to_string(),
             assigned_agent_id: None,
             contract_id: None,
@@ -5484,6 +5490,7 @@ mod agent_decision_tests {
             startup_preset_name: None,
             max_concurrency: 1,
             enabled: true,
+            default_timeout_seconds: None,
             created_at: now.clone(),
             updated_at: now.clone(),
         })
@@ -6013,6 +6020,7 @@ mod terminal_command_tests {
             startup_preset_name: None,
             max_concurrency: 1,
             enabled: true,
+            default_timeout_seconds: None,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -7313,6 +7321,7 @@ fn generate_quality_gate_with_runtime(
         startup_preset_name: None,
         max_concurrency: 1,
         enabled: true,
+        default_timeout_seconds: None,
         created_at: now.clone(),
         updated_at: now,
     };

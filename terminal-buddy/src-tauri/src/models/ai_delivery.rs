@@ -120,6 +120,9 @@ pub struct AiAgent {
     pub max_concurrency: u32,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// 该 Agent 执行任务的兜底超时（秒），None 时使用全局默认。
+    #[serde(default)]
+    pub default_timeout_seconds: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -344,6 +347,9 @@ pub struct AiTaskNode {
     pub expected_artifacts: Vec<String>,
     pub acceptance_commands: Vec<String>,
     pub retry_count: u32,
+    /// 单次执行超时（秒），None 时使用 Agent/AiAgent 默认值。
+    #[serde(default)]
+    pub timeout_seconds: Option<u32>,
     pub state: String,
     #[serde(default)]
     pub assigned_agent_id: Option<String>,
