@@ -290,8 +290,29 @@ export interface AiReviewGate {
   state: string;
   comments?: string | null;
   commandResults: AiCommandResult[];
+  lineComments?: Array<{ path: string; line: number; text: string; createdAt: string }>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AiReviewDiffFile {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface AiReviewDiffContent {
+  path: string;
+  original: string;
+  modified: string;
+}
+
+export interface AiReviewDiffResult {
+  baseCommit: string;
+  headCommit: string;
+  files: AiReviewDiffFile[];
+  diffs: AiReviewDiffContent[];
 }
 
 export interface AiDecisionOption {

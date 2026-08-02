@@ -2099,6 +2099,145 @@ impl AiDeliveryService {
         Ok(gates)
     }
 
+    /// 审查用增量 Diff：取任务契约的基线提交与任务分支 HEAD，返回文件清单与双侧文本。
+    /// 返回 { baseCommit, headCommit, files: [{path,status,additions,deletions}], diffs: [{path,original,modified}] }。
+    pub fn get_review_diff(
+        delivery_id: &str,
+        task_node_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        let task = Self::get_task_node(task_node_id)?;
+        if task.delivery_id != delivery_id {
+            return Err("任务不属于该交付".to_string());
+        }
+        let contract_id = task
+            .contract_id
+            .as_deref()
+            .ok_or_else(|| "任务缺少任务契约，无法查看代码变更".to_string())?;
+        let contract =
+            Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "任务契约")?;
+        let base_commit = contract
+            .base_commit
+            .as_deref()
+            .ok_or_else(|| "任务契约缺少基线提交，无法查看代码变更".to_string())?;
+        let worktree = contract
+            .worktree_path
+            .as_deref()
+            .ok_or_else(|| "任务缺少工作目录，无法查看代码变更".to_string())?;
+        let repository = PathBuf::from(worktree);
+        let range = format!("{}...HEAD", base_commit);
+        let head_commit = run_git(&repository, &["rev-parse".to_string(), "HEAD".to_string()])?;
+
+        let name_status = run_git(
+            &repository,
+            &["diff".to_string(), range.clone(), "--name-status".to_string()],
+        )?;
+        let numstat = run_git(
+            &repository,
+            &["diff".to_string(), range, "--numstat".to_string()],
+        )?;
+
+        let name_lines: Vec<&str> = name_status.lines().collect();
+        let num_lines: Vec<&str> = numstat.lines().collect();
+        let mut files: Vec<serde_json::Value> = Vec::new();
+        for (index, line) in name_lines.iter().enumerate() {
+            // 行格式：状态符 + TAB + 路径（重命名时含两个路径，取新路径）
+            let mut parts = line.split('\t');
+            let status = parts
+                .next()
+                .unwrap_or("?")
+                .chars()
+                .next()
+                .unwrap_or('?')
+                .to_string();
+            let path = parts.last().unwrap_or("").trim().to_string();
+            if path.is_empty() {
+                continue;
+            }
+            let (additions, deletions) = num_lines
+                .get(index)
+                .map(|line| {
+                    let mut parts = line.split('\t');
+                    let added = parts
+                        .next()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    let removed = parts
+                        .next()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    (added, removed)
+                })
+                .unwrap_or((0, 0));
+            files.push(serde_json::json!({
+                "path": path,
+                "status": status,
+                "additions": additions,
+                "deletions": deletions,
+            }));
+        }
+
+        let mut diffs: Vec<serde_json::Value> = Vec::new();
+        for file in &files {
+            let path = file["path"].as_str().unwrap_or("");
+            let status = file["status"].as_str().unwrap_or("M");
+            let original = if status == "A" {
+                String::new()
+            } else {
+                run_git(
+                    &repository,
+                    &[
+                        "show".to_string(),
+                        format!("{}:{}", base_commit, path),
+                    ],
+                )
+                .unwrap_or_default()
+            };
+            let modified = if status == "D" {
+                String::new()
+            } else {
+                run_git(
+                    &repository,
+                    &["show".to_string(), format!("HEAD:{}", path)],
+                )
+                .unwrap_or_default()
+            };
+            diffs.push(serde_json::json!({
+                "path": path,
+                "original": original,
+                "modified": modified,
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "baseCommit": base_commit,
+            "headCommit": head_commit,
+            "files": files,
+            "diffs": diffs,
+        }))
+    }
+
+    /// 添加审查行评论到 reviewGate.lineComments 并持久化。
+    pub fn add_review_line_comment(
+        gate_id: &str,
+        path: &str,
+        line: i64,
+        text: &str,
+    ) -> Result<AiReviewGate, String> {
+        let mut gate = Self::get::<AiReviewGate>(REVIEW_GATES_DIR, gate_id, "审核门禁")?;
+        if text.trim().is_empty() {
+            return Err("评论内容不能为空".to_string());
+        }
+        gate.line_comments.push(serde_json::json!({
+            "path": path,
+            "line": line,
+            "text": text.trim(),
+            "createdAt": chrono::Utc::now().to_rfc3339(),
+        }));
+        gate.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(REVIEW_GATES_DIR, &gate.id, &gate)?;
+        Ok(gate)
+    }
+
     pub fn run_quality_gate(
         task_node_id: &str,
         reviewer_agent_id: Option<&str>,
@@ -2173,6 +2312,7 @@ impl AiDeliveryService {
                     state: "failed".to_string(),
                     comments: Some("质量门禁失败，任务已退回返工".to_string()),
                     command_results: results,
+                    line_comments: Vec::new(),
                     created_at: chrono::Utc::now().to_rfc3339(),
                     updated_at: chrono::Utc::now().to_rfc3339(),
                 })?;
@@ -2281,6 +2421,7 @@ impl AiDeliveryService {
             state: "awaitingReviewer".to_string(),
             comments: Some(review_comments),
             command_results: results,
+            line_comments: Vec::new(),
             created_at: now.clone(),
             updated_at: now,
         })?;

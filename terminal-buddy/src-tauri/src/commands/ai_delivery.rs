@@ -443,6 +443,28 @@ pub fn resolve_ai_review_gate(
 }
 
 #[command]
+pub async fn get_ai_review_diff(
+    delivery_id: String,
+    task_node_id: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        AiDeliveryService::get_review_diff(&delivery_id, &task_node_id)
+    })
+    .await
+    .map_err(|error| format!("Diff 读取线程失败: {}", error))?
+}
+
+#[command]
+pub fn add_ai_review_line_comment(
+    gate_id: String,
+    path: String,
+    line: i64,
+    text: String,
+) -> Result<AiReviewGate, String> {
+    AiDeliveryService::add_review_line_comment(&gate_id, &path, line, &text)
+}
+
+#[command]
 pub fn get_ai_merge_records(delivery_id: Option<String>) -> Result<Vec<AiMergeRecord>, String> {
     AiDeliveryService::get_merge_records(delivery_id.as_deref())
 }

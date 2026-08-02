@@ -16,7 +16,10 @@ import { EventListView } from "./EventListView";
 import { TaskDagView } from "./TaskDagView";
 import { TaskNodeEditor } from "./TaskNodeEditor";
 import { Dialog } from "../shared/Dialog";
-import { getAiDeliveryEvents } from "../../services/tauri";
+import { getAiDeliveryEvents, getAiReviewDiff, addAiReviewLineComment } from "../../services/tauri";
+import { ReviewDiffView } from "./ReviewDiffView";
+import type { ReviewComment } from "./ReviewDiffView";
+import type { AiReviewDiffResult } from "../../types/aiDelivery";
 import type {
   AiAgent, AiAttempt, AiDecisionRequest,
   AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiReviewGate, AiRole,
@@ -136,6 +139,46 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
   const [allEvents, setAllEvents] = useState<AiDeliveryEvent[] | null>(null);
   const [loadingAllEvents, setLoadingAllEvents] = useState(false);
   const [allEventsError, setAllEventsError] = useState<string | null>(null);
+  const [reviewDiffState, setReviewDiffState] = useState<{
+    task: AiTaskNode;
+    data: AiReviewDiffResult;
+    comments: Record<string, ReviewComment[]>;
+  } | null>(null);
+  const [reviewDiffLoading, setReviewDiffLoading] = useState(false);
+  const [reviewDiffError, setReviewDiffError] = useState<string | null>(null);
+  const openReviewDiff = (task: AiTaskNode) => {
+    setReviewDiffLoading(true);
+    setReviewDiffError(null);
+    void getAiReviewDiff(deliveryId, task.id)
+      .then((data) => {
+        const gate = reviewGateByTask.get(task.id);
+        const comments: Record<string, ReviewComment[]> = {};
+        for (const item of gate?.lineComments ?? []) {
+          (comments[item.path] ??= []).push({ line: item.line, text: item.text });
+        }
+        setReviewDiffState({ task, data, comments });
+      })
+      .catch((reason) => setReviewDiffError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setReviewDiffLoading(false));
+  };
+  const addDiffComment = (path: string, line: number, text: string) => {
+    if (!reviewDiffState) return;
+    const gate = reviewGateByTask.get(reviewDiffState.task.id);
+    if (!gate) return;
+    void addAiReviewLineComment(gate.id, path, line, text)
+      .then(() => {
+        setReviewDiffState((prev) => prev
+          ? {
+              ...prev,
+              comments: {
+                ...prev.comments,
+                [path]: [...(prev.comments[path] ?? []), { line, text }],
+              },
+            }
+          : prev);
+      })
+      .catch((reason) => setReviewDiffError(reason instanceof Error ? reason.message : String(reason)));
+  };
   const openAllEventsDialog = () => {
     setShowAllEventsDialog(true);
     if (allEvents === null && !loadingAllEvents) {
@@ -801,6 +844,15 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                     <div className="ai-task-actions">
                                       <button
                                         type="button"
+                                        className="btn-secondary"
+                                        disabled={reviewDiffLoading}
+                                        onClick={() => openReviewDiff(task)}
+                                      >
+                                        <FileText size={13} />
+                                        查看代码变更
+                                      </button>
+                                      <button
+                                        type="button"
                                         className="btn-primary"
                                         disabled={busy === `resolve-review-${gate.id}`}
                                         onClick={() => void resolveReview(gate, true)}
@@ -1162,6 +1214,36 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                 <p className="ai-delivery-events-empty">加载失败：{allEventsError}</p>
               ) : allEvents ? (
                 <EventListView events={allEvents} />
+              ) : null}
+            </Dialog>
+          )}
+          {(reviewDiffState || reviewDiffLoading || reviewDiffError) && (
+            <Dialog
+              title={`代码变更 — ${reviewDiffState?.task.title ?? "审查"}`}
+              onClose={() => {
+                setReviewDiffState(null);
+                setReviewDiffError(null);
+              }}
+              className="ai-review-diff-dialog"
+              style={{ width: 'min(1080px, 94vw)', height: 'min(720px, 90vh)' }}
+            >
+              {reviewDiffLoading ? (
+                <p className="ai-delivery-events-empty">正在读取代码变更...</p>
+              ) : reviewDiffError && !reviewDiffState ? (
+                <p className="ai-delivery-events-empty">读取失败：{reviewDiffError}</p>
+              ) : reviewDiffState ? (
+                <>
+                  <div className="ai-review-diff-meta">
+                    <small>基线 {reviewDiffState.data.baseCommit.slice(0, 10)} → HEAD {reviewDiffState.data.headCommit.slice(0, 10)}</small>
+                    {reviewDiffError && <small className="ai-review-diff-error">{reviewDiffError}</small>}
+                  </div>
+                  <ReviewDiffView
+                    files={reviewDiffState.data.files}
+                    diffs={reviewDiffState.data.diffs}
+                    comments={reviewDiffState.comments}
+                    onComment={addDiffComment}
+                  />
+                </>
               ) : null}
             </Dialog>
           )}

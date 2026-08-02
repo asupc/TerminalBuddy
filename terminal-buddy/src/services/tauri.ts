@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Profile, Workspace, RemoteFileEntry, ServerStats } from '../types';
-import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord, AiProject, AiQualityGate, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiDeliveryTemplateInput, UpdateAiTaskNodeInput } from '../types/aiDelivery';
+import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord, AiProject, AiQualityGate, AiReviewDiffResult, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiDeliveryTemplateInput, UpdateAiTaskNodeInput } from '../types/aiDelivery';
 import type { AiAttemptOutput } from '../types/aiDelivery';
 
 // Profile Commands
@@ -685,6 +685,10 @@ export const runAiQualityGate = (taskNodeId: string, reviewerAgentId?: string) =
   invoke<AiReviewGate>('run_ai_quality_gate', { taskNodeId, reviewerAgentId: reviewerAgentId ?? null });
 export const resolveAiReviewGate = (id: string, approved: boolean, comments = '') =>
   invoke<AiReviewGate>('resolve_ai_review_gate', { id, approved, comments });
+export const getAiReviewDiff = (deliveryId: string, taskNodeId: string) =>
+  invoke<AiReviewDiffResult>('get_ai_review_diff', { deliveryId, taskNodeId });
+export const addAiReviewLineComment = (gateId: string, path: string, line: number, text: string) =>
+  invoke<AiReviewGate>('add_ai_review_line_comment', { gateId, path, line, text });
 export const getAiMergeRecords = (deliveryId?: string) =>
   invoke<AiMergeRecord[]>('get_ai_merge_records', { deliveryId: deliveryId ?? null });
 export const mergeAiDeliveryLocally = (deliveryId: string) =>

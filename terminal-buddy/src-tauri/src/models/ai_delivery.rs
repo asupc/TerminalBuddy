@@ -403,6 +403,9 @@ pub struct AiReviewGate {
     pub comments: Option<String>,
     #[serde(default)]
     pub command_results: Vec<AiCommandResult>,
+    /// 审查者在代码 Diff 上的行评论 [{path, line, text, created_at}]，随 reviewGate 持久化。
+    #[serde(default)]
+    pub line_comments: Vec<serde_json::Value>,
     pub created_at: String,
     pub updated_at: String,
 }
