@@ -9,6 +9,7 @@ import { displayLocalPath, boardColumns, taskStateName, deliveryStateName,
   attemptStateName, mergeStateName, eventTypeName, isFailedEventType, isFailedAttemptState,
   formatEventTime, DeliveryTabId } from "./workspace-utils";
 import { AttemptLiveTerminalDialog } from "./AttemptLiveTerminalDialog";
+import { TaskDagView } from "./TaskDagView";
 import type {
   AiAgent, AiAttempt, AiDecisionRequest,
   AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiReviewGate,
@@ -105,6 +106,9 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
   } = props;
 
   const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "dag">("list");
+  // 编辑抽屉入口（T4-4 接入 TaskNodeEditor 时改回完整解构）
+  const [, setEditingTaskId] = useState<string | null>(null);
 
   return (
         <>
@@ -479,6 +483,17 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                         <small>{deliveryEvents.length}</small>
                       </button>
                     </div>
+                    <div className="ai-detail-tabs">
+                      <button className={viewMode === "list" ? "active" : ""} onClick={() => setViewMode("list")}>列表视图</button>
+                      <button className={viewMode === "dag" ? "active" : ""} onClick={() => setViewMode("dag")}>DAG 视图</button>
+                      {tasks.length > 5 && viewMode === "list" && (
+                        <span className="ai-dag-hint">任务较多，建议切换 DAG 视图</span>
+                      )}
+                    </div>
+                    {viewMode === "dag" ? (
+                      <TaskDagView tasks={tasks} onNodeClick={(id) => setEditingTaskId(id)} />
+                    ) : (
+                      <>
                     {boardColumns.some((column) => column.id === activeTaskTab) && (
                     <div className="ai-task-list" role="tabpanel">
                       {visibleTasks.length === 0 && (
@@ -784,6 +799,8 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                   </section>
                     </div>
                   )}
+                      </>
+                    )}
                   </section>
                 </>
               ) : (
