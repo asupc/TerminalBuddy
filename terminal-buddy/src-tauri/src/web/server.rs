@@ -94,6 +94,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/ai-delivery/deliveries/{id}/retry",
             post(handlers::ai_delivery_handler::retry_task),
         )
+        .route(
+            "/api/ai-delivery/attempts/{attempt_id}/output",
+            get(handlers::ai_delivery_handler::attempt_output),
+        )
         // 鍚姩鍙傛暟棰勮锛堜笌 PC 绔叡浜?ClientData/extra_param_presets.json锛?
         .route(
             "/api/extra-param-presets",

@@ -1637,6 +1637,19 @@ impl AiDeliveryService {
         // prompt.txt — 完整内容
         let prompt_excerpt = read_file("prompt.txt");
 
+        // 实时状态与 live 输出尾部（PC 端事件流零延迟；Web 端轮询此字段全量渲染）
+        let is_live = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")
+            .map(|a| a.state == "running")
+            .unwrap_or(false);
+        let live_output_tail = fs::read_to_string(run_dir.join("live-output.log")).unwrap_or_default();
+        let live_output_tail = if live_output_tail.len() > 8000 {
+            let cut = live_output_tail.len() - 8000;
+            let safe_cut = live_output_tail.ceil_char_boundary(cut);
+            format!("...{}", &live_output_tail[safe_cut..])
+        } else {
+            live_output_tail
+        };
+
         Ok(AiAttemptOutput {
             attempt_id: attempt_id.to_string(),
             transcript_tail,
@@ -1645,6 +1658,8 @@ impl AiDeliveryService {
             decision,
             prompt_excerpt,
             plan_json,
+            is_live,
+            live_output_tail,
         })
     }
 

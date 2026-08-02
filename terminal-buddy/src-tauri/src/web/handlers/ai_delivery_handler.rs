@@ -9,7 +9,7 @@ use crate::models::CreateAiDeliveryInput;
 use tauri::Manager;
 
 use crate::models::{
-    AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiProject,
+    AiAttempt, AiAttemptOutput, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiProject,
     AiReviewGate, AiTaskNode, AiMergeRecord,
 };
 use crate::services::AiDeliveryService;
@@ -298,4 +298,15 @@ pub async fn dispatch(
         }
     }
     Ok(Json(started))
+}
+
+/// 读取 attempt 输出（含实时状态 is_live 与 live-output.log 尾部），Web 端轮询用
+pub async fn attempt_output(
+    State(_state): State<AppState>,
+    _claims: ClaimsFromRequest,
+    Path(attempt_id): Path<String>,
+) -> Result<Json<AiAttemptOutput>, ApiError> {
+    AiDeliveryService::read_attempt_output(&attempt_id)
+        .map(Json)
+        .map_err(ApiError::BadRequest)
 }

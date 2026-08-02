@@ -454,6 +454,12 @@ pub struct AiAttemptOutput {
     /// plan.json 原始内容（如果存在），用于查看成果
     #[serde(default)]
     pub plan_json: Option<String>,
+    /// attempt 是否仍在运行（Web 端轮询实时状态用）
+    #[serde(default)]
+    pub is_live: bool,
+    /// live-output.log 尾部（最多 8000 字符），Web 端轮询用
+    #[serde(default)]
+    pub live_output_tail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
