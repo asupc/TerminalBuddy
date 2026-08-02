@@ -242,15 +242,19 @@ export interface AiAttemptDecision {
   options: AiDecisionOption[];
 }
 
- export interface AiAttemptOutput {
-   attemptId: string;
-   transcriptTail: string;
-   finalMessage?: string | null;
-   review?: AiAttemptReview | null;
-   decision?: AiAttemptDecision | null;
-   promptExcerpt?: string | null;
-   planJson?: string | null;
- }
+export interface AiAttemptOutput {
+  attemptId: string;
+  transcriptTail: string;
+  finalMessage?: string | null;
+  review?: AiAttemptReview | null;
+  decision?: AiAttemptDecision | null;
+  promptExcerpt?: string | null;
+  planJson?: string | null;
+  /** attempt 是否仍在运行（Web 端轮询实时状态用） */
+  isLive: boolean;
+  /** live-output.log 尾部（最多 8000 字符），Web 端轮询用 */
+  liveOutputTail: string;
+}
 
 export interface AiCommandResult {
   command: string;

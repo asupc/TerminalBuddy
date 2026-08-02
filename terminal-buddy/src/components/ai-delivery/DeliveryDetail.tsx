@@ -2,11 +2,13 @@ import {
   Check, CircleHelp, CircleStop, FileText, GitMerge, Layers3, Pause, Pencil, Play,
   Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, SquareTerminal, Trash2
 } from "lucide-react";
+import { useState } from "react";
 import type React from "react";
 import { approveAiDelivery, pauseAiDelivery, resumeAiDelivery } from "../../services/tauri";
 import { displayLocalPath, boardColumns, taskStateName, deliveryStateName,
   attemptStateName, mergeStateName, eventTypeName, isFailedEventType, isFailedAttemptState,
   formatEventTime, DeliveryTabId } from "./workspace-utils";
+import { AttemptLiveTerminalDialog } from "./AttemptLiveTerminalDialog";
 import type {
   AiAgent, AiAttempt, AiDecisionRequest,
   AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiReviewGate,
@@ -101,6 +103,8 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
     removeDelivery, replanLegacyDelivery, cancelDelivery, mergeDelivery, cleanupDeliveryIntegration,
     planAiDeliveryWithManager, refresh,
   } = props;
+
+  const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
 
   return (
         <>
@@ -678,6 +682,15 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                       打开终端
                                     </button>
                                   )}
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    title="实时查看终端输出"
+                                    onClick={() => setLiveAttemptId(attempt.id)}
+                                  >
+                                    <SquareTerminal size={14} />
+                                    实时终端
+                                  </button>
                                   {attempt.taskNodeId && (
                                     <>
                                       {canManuallyComplete && <button
@@ -778,6 +791,12 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
               )}
             </section>
           </section>
+          {liveAttemptId && attempts.find((a) => a.id === liveAttemptId) && (
+            <AttemptLiveTerminalDialog
+              attempt={attempts.find((a) => a.id === liveAttemptId)!}
+              onClose={() => setLiveAttemptId(null)}
+            />
+          )}
         </>
   );
 }
