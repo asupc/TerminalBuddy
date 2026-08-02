@@ -92,6 +92,24 @@ pub struct AiRuntimeProbe {
     pub version: Option<String>,
 }
 
+/// Agent 启动预设：派发时按 startup_preset_name 展开 promptPrefix / modelArgs / contextStrategy。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiStartupPreset {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub prompt_prefix: String,
+    /// 模型参数对象，如 {"temperature": 0.2, "maxTokens": 8192}，派发时转为 --key=value 注入命令。
+    #[serde(default)]
+    pub model_args: Option<serde_json::Value>,
+    /// 上下文策略说明（自由文本），拼入任务提示词。
+    #[serde(default)]
+    pub context_strategy: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiAgentRuntime {

@@ -3,7 +3,7 @@ use crate::models::{
     AiAgent, AiAgentRuntime, AiAttempt, AiCommandResult, AiDecisionOption, AiDecisionRequest,
     AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord, AiMergeRepositoryRecord,
     AiProject, AiQualityGate, AiAttemptOutput, AiRepository, AiRepositoryStatusBaseline,
-    AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow,
+    AiReviewGate, AiRole, AiRuntimeProbe, AiStartupPreset, AiTaskContract, AiTaskNode, AiWorkflow,
     CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput,
     CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, TerminalOwner,
     UpdateAiDeliveryInput, UpdateAiTaskNodeInput, UpdateAiDeliveryTemplateInput,
@@ -48,6 +48,7 @@ const MERGE_RECORDS_DIR: &str = "MergeRecords";
 const PLANS_DIR: &str = "Plans";
 const TERMINAL_RUNS_DIR: &str = "TerminalRuns";
 const TEMPLATES_DIR: &str = "Templates";
+const STARTUP_PRESETS_DIR: &str = "StartupPresets";
 /// 每交付保留事件条数上限（append_event 滚动清理，超出删最旧）。
 pub const MAX_EVENTS_PER_DELIVERY: usize = 1000;
 /// 每交付事件目录体积上限（字节），达到后继续删最旧直到达标。
@@ -576,6 +577,56 @@ impl AiDeliveryService {
             return Err("仍有编排步骤引用该 Agent，无法删除".to_string());
         }
         Self::delete(AGENTS_DIR, id, "Agent")
+    }
+
+    pub fn get_all_startup_presets() -> Result<Vec<AiStartupPreset>, String> {
+        let mut presets = Self::list(STARTUP_PRESETS_DIR)?;
+        presets.sort_by(|left: &AiStartupPreset, right: &AiStartupPreset| {
+            right.updated_at.cmp(&left.updated_at)
+        });
+        Ok(presets)
+    }
+
+    pub fn get_startup_preset_by_name(name: &str) -> Result<AiStartupPreset, String> {
+        Self::get_all_startup_presets()?
+            .into_iter()
+            .find(|preset| preset.name == name)
+            .ok_or_else(|| format!("启动预设不存在: {}", name))
+    }
+
+    pub fn save_startup_preset(mut preset: AiStartupPreset) -> Result<AiStartupPreset, String> {
+        let name = preset.name.trim();
+        if name.is_empty() {
+            return Err("预设名称不能为空".to_string());
+        }
+        preset.name = name.to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut existing_created_at = None;
+        if preset.id.trim().is_empty() {
+            preset.id = Uuid::new_v4().to_string();
+        } else {
+            existing_created_at = Self::get::<AiStartupPreset>(
+                STARTUP_PRESETS_DIR,
+                &preset.id,
+                "启动预设",
+            )
+            .ok()
+            .map(|existing| existing.created_at);
+        }
+        if Self::get_all_startup_presets()?
+            .iter()
+            .any(|other| other.id != preset.id && other.name == preset.name)
+        {
+            return Err(format!("启动预设名称已存在: {}", preset.name));
+        }
+        preset.created_at = existing_created_at.unwrap_or_else(|| now.clone());
+        preset.updated_at = now;
+        Self::save(STARTUP_PRESETS_DIR, &preset.id, &preset)?;
+        Ok(preset)
+    }
+
+    pub fn delete_startup_preset(id: &str) -> Result<(), String> {
+        Self::delete(STARTUP_PRESETS_DIR, id, "启动预设")
     }
 
     pub fn get_all_roles() -> Result<Vec<AiRole>, String> {
@@ -3293,6 +3344,23 @@ impl AiDeliveryService {
                 return Err("任务契约工作目录不可用，无法启动 Agent".to_string());
             }
             let mut prompt = build_agent_prompt(&task, &contract, &project)?;
+            // 启动预设展开：prompt_prefix / context_strategy 拼入提示词，model_args 注入启动命令
+            let mut preset_model_args: Vec<String> = Vec::new();
+            if let Some(preset_name) = agent.startup_preset_name.as_deref() {
+                if let Ok(preset) = Self::get_startup_preset_by_name(preset_name) {
+                    if !preset.prompt_prefix.trim().is_empty() {
+                        prompt = format!("{}\n\n{}", preset.prompt_prefix.trim(), prompt);
+                    }
+                    if let Some(strategy) = preset
+                        .context_strategy
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                    {
+                        prompt = format!("上下文策略：{}\n\n{}", strategy.trim(), prompt);
+                    }
+                    preset_model_args = preset_model_args_from_value(&preset.model_args);
+                }
+            }
             if let Some(continuation) = build_continuation_context(&task, &contract, &attempt.id) {
                 prompt = format!("{}\n\n---\n\n{}", continuation, prompt);
             }
@@ -3346,6 +3414,7 @@ impl AiDeliveryService {
                 (workflow_review_required && runtime_is_codex(&runtime))
                     .then_some(control.review_path.as_path()),
                 &codex_writable_directories,
+                &preset_model_args,
             )?;
             let terminal_id = create_ai_terminal(
                 &terminal_service,
@@ -7292,7 +7361,28 @@ fn build_interactive_terminal_command(
         None,
         None,
         &[],
+        &[],
     )
+}
+
+/// 将预设 model_args（JSON 对象）转为命令行参数：{"temperature": 0.2} → "--temperature=0.2"。
+fn preset_model_args_from_value(model_args: &Option<serde_json::Value>) -> Vec<String> {
+    let Some(serde_json::Value::Object(object)) = model_args else {
+        return Vec::new();
+    };
+    let mut arguments = Vec::new();
+    for (key, value) in object {
+        let rendered = match value {
+            serde_json::Value::String(text) => Some(text.clone()),
+            serde_json::Value::Number(number) => Some(number.to_string()),
+            serde_json::Value::Bool(flag) => Some(flag.to_string()),
+            _ => None,
+        };
+        if let Some(rendered) = rendered {
+            arguments.push(format!("--{}={}", key, rendered));
+        }
+    }
+    arguments
 }
 
 fn build_interactive_terminal_command_with_codex_output(
@@ -7302,6 +7392,7 @@ fn build_interactive_terminal_command_with_codex_output(
     codex_output_schema: Option<&Path>,
     codex_output_path: Option<&Path>,
     codex_writable_directories: &[PathBuf],
+    preset_model_args: &[String],
 ) -> Result<String, String> {
     let mut command_parts = split_runtime_command(&runtime.command)?;
     let executable = command_parts.remove(0);
@@ -7349,6 +7440,11 @@ fn build_interactive_terminal_command_with_codex_output(
         invocation.push_str(&powershell_literal(argument));
     }
     for argument in &agent.runtime_args {
+        invocation.push(' ');
+        invocation.push_str(&powershell_literal(argument));
+    }
+    // 启动预设的 model_args 以 --key=value 形式注入（在 runtime_args 之后）
+    for argument in preset_model_args {
         invocation.push(' ');
         invocation.push_str(&powershell_literal(argument));
     }
@@ -7582,6 +7678,7 @@ mod terminal_command_tests {
             Some(&schema_path),
             Some(&control.result_path),
             &[],
+            &[],
         )
         .unwrap();
 
@@ -7606,6 +7703,7 @@ mod terminal_command_tests {
                 PathBuf::from(r"D:\project\task-worktree"),
                 PathBuf::from(r"C:\TerminalBuddy\run"),
             ],
+            &[],
         )
         .unwrap();
 
@@ -8137,6 +8235,7 @@ fn repair_workflow_review(
         control,
         runtime_is_codex(runtime).then_some(control.review_schema_path.as_path()),
         runtime_is_codex(runtime).then_some(control.review_path.as_path()),
+        &[],
         &[],
     )?;
     start_interactive_terminal_command(
@@ -8792,6 +8891,7 @@ fn run_manager_planner(
         manager_is_codex.then_some(schema_path.as_path()),
         manager_is_codex.then_some(control.result_path.as_path()),
         &[],
+        &[],
     )?;
     let terminal_id = create_ai_terminal(
         &terminal_service,
@@ -8874,6 +8974,7 @@ fn generate_quality_gate_with_runtime(
         &control,
         is_codex.then_some(schema_path.as_path()),
         is_codex.then_some(control.result_path.as_path()),
+        &[],
         &[],
     )?;
     let result = run_shell_command(workspace_root, &terminal_command)?;

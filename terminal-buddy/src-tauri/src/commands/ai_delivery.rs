@@ -2,10 +2,10 @@ use crate::commands::terminal::TerminalService;
 use crate::models::{
     AiAgent, AiAgentRuntime, AiAttempt, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate,
     AiMergeRecord, AiProject, AiAttemptOutput, AiQualityGate, AiReviewGate, AiRole,
-    AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput,
-    CreateAiDeliveryInput, CreateAiDeliveryTemplateInput, CreateAiProjectInput,
-    CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiTaskNodeInput,
-    UpdateAiDeliveryTemplateInput,
+    AiRuntimeProbe, AiStartupPreset, AiTaskContract, AiTaskNode, AiWorkflow,
+    CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput,
+    CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput,
+    UpdateAiTaskNodeInput, UpdateAiDeliveryTemplateInput,
 };
 use crate::services::AiDeliveryService;
 use tauri::{command, Emitter};
@@ -124,6 +124,26 @@ pub fn delete_ai_agent(id: String) -> Result<(), String> {
 #[command]
 pub fn get_ai_roles() -> Result<Vec<AiRole>, String> {
     AiDeliveryService::get_all_roles()
+}
+
+#[command]
+pub fn list_ai_startup_presets() -> Result<Vec<AiStartupPreset>, String> {
+    AiDeliveryService::get_all_startup_presets()
+}
+
+#[command]
+pub fn create_ai_startup_preset(preset: AiStartupPreset) -> Result<AiStartupPreset, String> {
+    AiDeliveryService::save_startup_preset(preset)
+}
+
+#[command]
+pub fn update_ai_startup_preset(preset: AiStartupPreset) -> Result<AiStartupPreset, String> {
+    AiDeliveryService::save_startup_preset(preset)
+}
+
+#[command]
+pub fn delete_ai_startup_preset(id: String) -> Result<(), String> {
+    AiDeliveryService::delete_startup_preset(&id)
 }
 
 #[command]

@@ -42,6 +42,16 @@ export interface AiRuntimeProbe {
   version?: string | null;
 }
 
+export interface AiStartupPreset {
+  id: string;
+  name: string;
+  promptPrefix: string;
+  modelArgs?: Record<string, unknown> | null;
+  contextStrategy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AiAgentRuntime {
   id: string;
   name: string;

@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Profile, Workspace, RemoteFileEntry, ServerStats } from '../types';
-import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord, AiProject, AiQualityGate, AiReviewDiffResult, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiDeliveryTemplateInput, UpdateAiTaskNodeInput } from '../types/aiDelivery';
+import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord, AiProject, AiQualityGate, AiReviewDiffResult, AiReviewGate, AiRole, AiRuntimeProbe, AiStartupPreset, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiDeliveryTemplateInput, UpdateAiTaskNodeInput } from '../types/aiDelivery';
 import type { AiAttemptOutput } from '../types/aiDelivery';
 
 // Profile Commands
@@ -685,6 +685,14 @@ export const runAiQualityGate = (taskNodeId: string, reviewerAgentId?: string) =
   invoke<AiReviewGate>('run_ai_quality_gate', { taskNodeId, reviewerAgentId: reviewerAgentId ?? null });
 export const resolveAiReviewGate = (id: string, approved: boolean, comments = '') =>
   invoke<AiReviewGate>('resolve_ai_review_gate', { id, approved, comments });
+export const listAiStartupPresets = () =>
+  invoke<AiStartupPreset[]>('list_ai_startup_presets');
+export const createAiStartupPreset = (preset: AiStartupPreset) =>
+  invoke<AiStartupPreset>('create_ai_startup_preset', { preset });
+export const updateAiStartupPreset = (preset: AiStartupPreset) =>
+  invoke<AiStartupPreset>('update_ai_startup_preset', { preset });
+export const deleteAiStartupPreset = (id: string) =>
+  invoke<void>('delete_ai_startup_preset', { id });
 export const getAiReviewDiff = (deliveryId: string, taskNodeId: string) =>
   invoke<AiReviewDiffResult>('get_ai_review_diff', { deliveryId, taskNodeId });
 export const addAiReviewLineComment = (gateId: string, path: string, line: number, text: string) =>
