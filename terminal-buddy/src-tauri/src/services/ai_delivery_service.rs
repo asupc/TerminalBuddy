@@ -2529,20 +2529,8 @@ impl AiDeliveryService {
                 .iter()
                 .find(|repository| repository.id == repository_id)
                 .ok_or_else(|| "合并记录仓库不存在".to_string())?;
-            let source = project_repository_path(project, repository)?;
-            match run_git(
-                &source,
-                &vec![
-                    "merge".to_string(),
-                    "--no-ff".to_string(),
-                    "-m".to_string(),
-                    format!("TerminalBuddy: {}", branch_name),
-                    branch_name,
-                ],
-            ) {
-                Ok(_) => {
-                    let merged_head =
-                        run_git(&source, &vec!["rev-parse".to_string(), "HEAD".to_string()])?;
+            match Self::merge_single_repository(project, repository, &branch_name, None) {
+                Ok(merged_head) => {
                     record.repositories[index].state = "merged".to_string();
                     record.repositories[index].merged_head = Some(merged_head);
                     record.updated_at = chrono::Utc::now().to_rfc3339();
@@ -2615,6 +2603,150 @@ impl AiDeliveryService {
         let _ = cleanup_delivery_integration_workspace(project, delivery);
         cleanup_delivery_task_worktrees(project, delivery);
          Ok(record)
+     }
+
+     /// 单仓库合并：仓库干净（含冲突中间态检查）+ 目标分支确认 + validated_commit TOCTOU 校验
+     /// + merge --no-ff。返回合并后的 HEAD。merge_delivery_locally_locked_impl 与
+     /// continue_merge_after_conflict 共用。
+     fn merge_single_repository(
+         project: &AiProject,
+         repository: &AiRepository,
+         branch_name: &str,
+         validated_commit: Option<&str>,
+     ) -> Result<String, String> {
+         let source = project_repository_path(project, repository)?;
+         // porcelain status 非空即拦截：未提交改动、未完成的 merge 中间态（MERGE_HEAD 冲突未解决）都会命中
+         ensure_clean_repository(&source)?;
+         if current_branch(&source).as_deref() != Some(repository.default_branch.as_str()) {
+             return Err(format!(
+                 "原始仓库未位于目标分支 {}: {}",
+                 repository.default_branch,
+                 source.display()
+             ));
+         }
+         if let Some(validated) = validated_commit {
+             let branch_head = run_git(
+                 &source,
+                 &["rev-parse".to_string(), branch_name.to_string()],
+             )?;
+             if branch_head != validated {
+                 return Err(format!(
+                     "任务分支 {} 在验收后发生了变化，已阻断合并（验收时: {}，当前: {}）",
+                     branch_name,
+                     validated.get(..8).unwrap_or(validated),
+                     branch_head.get(..8).unwrap_or(&branch_head),
+                 ));
+             }
+         }
+         run_git(
+             &source,
+             &vec![
+                 "merge".to_string(),
+                 "--no-ff".to_string(),
+                 "-m".to_string(),
+                 format!("TerminalBuddy: {}", branch_name),
+                 branch_name.to_string(),
+             ],
+         )?;
+         run_git(&source, &vec!["rev-parse".to_string(), "HEAD".to_string()])
+     }
+
+     /// 冲突已解决后继续合并：仅重跑 state == "failed" 的仓库子记录
+     /// （TOCTOU 校验 + 干净状态检查由 merge_single_repository 保证），
+     /// 全部成功则走既有收尾（契约完成/交付 completed/清理集成与任务 worktree）。
+     pub fn continue_merge_after_conflict(delivery_id: &str) -> Result<(), String> {
+         let delivery = Self::get_delivery(delivery_id)?;
+         let project = Self::get_project(&delivery.project_id)?;
+         let _guard = acquire_integration_lock(&project.id, "集成或合并")?;
+         let mut records = Self::get_merge_records(Some(delivery_id))?;
+         let record = records
+             .first_mut()
+             .ok_or_else(|| "该交付没有合并记录".to_string())?;
+         if record.state != "blocked" {
+             return Err(format!(
+                 "merge 记录状态 {} 不可续接（仅 blocked）",
+                 record.state
+             ));
+         }
+         // 按分支名从契约解析 validated_commit（验收时记录），续接时做 TOCTOU 校验
+         let contracts = Self::list::<AiTaskContract>(CONTRACTS_DIR)?;
+         let mut all_ok = true;
+         for index in 0..record.repositories.len() {
+             if record.repositories[index].state != "failed" {
+                 continue;
+             }
+             let repository_id = record.repositories[index].repository_id.clone();
+             let branch_name = record.repositories[index].branch_name.clone();
+             let Some(repository) = project
+                 .repositories
+                 .iter()
+                 .find(|repository| repository.id == repository_id)
+             else {
+                 record.repositories[index].error = Some("目标仓库不存在".to_string());
+                 all_ok = false;
+                 continue;
+             };
+             let validated_commit = contracts
+                 .iter()
+                 .find(|contract| {
+                     contract.delivery_id == delivery_id
+                         && contract.branch_name.as_deref() == Some(branch_name.as_str())
+                 })
+                 .and_then(|contract| contract.validated_commit.as_deref());
+             match Self::merge_single_repository(
+                 &project,
+                 repository,
+                 &branch_name,
+                 validated_commit,
+             ) {
+                 Ok(merged_head) => {
+                     record.repositories[index].state = "merged".to_string();
+                     record.repositories[index].merged_head = Some(merged_head);
+                     record.repositories[index].error = None;
+                     record.updated_at = chrono::Utc::now().to_rfc3339();
+                     Self::save(MERGE_RECORDS_DIR, &record.id, &record)?;
+                 }
+                 Err(error) => {
+                     record.repositories[index].error = Some(error);
+                     all_ok = false;
+                 }
+             }
+         }
+         record.updated_at = chrono::Utc::now().to_rfc3339();
+         Self::save(MERGE_RECORDS_DIR, &record.id, &record)?;
+         if all_ok {
+             record.state = "completed".to_string();
+             Self::save(MERGE_RECORDS_DIR, &record.id, &record)?;
+             Self::append_event(
+                 delivery_id,
+                 None,
+                 None,
+                 "mergedLocally",
+                 "冲突已解决，合并完成",
+             )?;
+             Self::push_delivery_notice(
+                 delivery_id,
+                 "合并完成",
+                 &format!("交付「{}」冲突已解决，合并完成", delivery.title),
+                 None,
+             );
+             Self::complete_delivery_contracts(delivery_id)?;
+             let mut completed_delivery = Self::get_delivery(delivery_id)?;
+             completed_delivery.state = "completed".to_string();
+             completed_delivery.updated_at = chrono::Utc::now().to_rfc3339();
+             Self::save(DELIVERIES_DIR, &completed_delivery.id, &completed_delivery)?;
+             let _ = cleanup_delivery_integration_workspace(&project, &delivery);
+             cleanup_delivery_task_worktrees(&project, &delivery);
+         } else {
+             Self::append_event(
+                 delivery_id,
+                 None,
+                 None,
+                 "mergeFailed",
+                 "仍有仓库合并失败，请解决冲突后再次续接",
+             )?;
+         }
+         Ok(())
      }
 
      fn complete_delivery_contracts(delivery_id: &str) -> Result<(), String> {

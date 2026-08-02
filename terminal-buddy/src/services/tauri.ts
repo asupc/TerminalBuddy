@@ -689,6 +689,8 @@ export const getAiMergeRecords = (deliveryId?: string) =>
   invoke<AiMergeRecord[]>('get_ai_merge_records', { deliveryId: deliveryId ?? null });
 export const mergeAiDeliveryLocally = (deliveryId: string) =>
   invoke<AiMergeRecord>('merge_ai_delivery_locally', { deliveryId });
+export const continueMergeAfterConflict = (deliveryId: string) =>
+  invoke<void>('continue_ai_merge_after_conflict', { deliveryId });
 export const cleanupAiDeliveryIntegration = (deliveryId: string) =>
   invoke<void>('cleanup_ai_delivery_integration', { deliveryId });
 export const listAiDeliveryTemplates = () =>

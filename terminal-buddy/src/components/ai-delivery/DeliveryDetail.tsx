@@ -5,8 +5,8 @@ import {
 import { useMemo, useState } from "react";
 import type React from "react";
 import {
-  approveAiDelivery, confirmPolicyViolationSite, markAiTaskSkipped,
-  pauseAiDelivery, resumeAiDelivery,
+  approveAiDelivery, confirmPolicyViolationSite, continueMergeAfterConflict,
+  markAiTaskSkipped, pauseAiDelivery, resumeAiDelivery,
 } from "../../services/tauri";
 import { displayLocalPath, boardColumns, taskStateName, deliveryStateName,
   attemptStateName, mergeStateName, eventTypeName, isFailedEventType, isFailedAttemptState,
@@ -426,6 +426,24 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                       <p className="ai-merge-status">
                         最近本地合并：{mergeStateName(lastMergeRecord.state)}
                       </p>
+                      {lastMergeRecord.state === "blocked" &&
+                        lastMergeRecord.repositories.some((repo) => repo.state === "failed") && (
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            disabled={busy === "continue-merge"}
+                            title="在冲突仓库中解决冲突并完成 merge 提交后，点击继续合并剩余仓库"
+                            onClick={() =>
+                              void execute("continue-merge", async () => {
+                                await continueMergeAfterConflict(delivery.id);
+                                await refresh(project.id, delivery.id);
+                              })
+                            }
+                          >
+                            <GitMerge size={15} />
+                            冲突已解决，继续合并
+                          </button>
+                        )}
                       {lastMergeRecord.repositories.length > 0 && (
                         <div className="ai-merge-repos">
                           {lastMergeRecord.repositories.map((repo) => (

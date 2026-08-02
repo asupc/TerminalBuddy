@@ -394,6 +394,11 @@ pub fn confirm_ai_policy_violation_site(task_node_id: String) -> Result<(), Stri
 }
 
 #[command]
+pub fn continue_ai_merge_after_conflict(delivery_id: String) -> Result<(), String> {
+    AiDeliveryService::continue_merge_after_conflict(&delivery_id)
+}
+
+#[command]
 pub fn complete_ai_attempt(
     id: String,
     app: tauri::AppHandle,
