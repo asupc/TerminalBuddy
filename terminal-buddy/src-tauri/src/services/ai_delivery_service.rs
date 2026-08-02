@@ -44,6 +44,9 @@ const PLANS_DIR: &str = "Plans";
 const TERMINAL_RUNS_DIR: &str = "TerminalRuns";
 const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 const QUALITY_GATE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
+/// 单次 Agent 执行的最大持续时间，超过后由 watchdog 终止并标记失败。
+const ATTEMPT_MAX_DURATION: Duration = Duration::from_secs(60 * 60);
 // 首次检查不应等待 Agent 自己退出；成果文件可能已经写完而 CLI 仍停留在终端中。
 const ATTEMPT_WATCHDOG_DELAY: Duration = Duration::from_secs(30);
 const ATTEMPT_WATCHDOG_INTERVAL: Duration = Duration::from_secs(60);
@@ -353,8 +356,8 @@ impl AiDeliveryService {
         generate_quality_gate_with_runtime(&runtime, &workspace_root, &contexts)
     }
 
-    pub fn delete_project(id: &str) -> Result<(), String> {
-        Self::get_project(id)?;
+   pub fn delete_project(id: &str) -> Result<(), String> {
+       let project = Self::get_project(id)?;
         let contracts = Self::get_all_task_contracts(Some(id))?;
         if contracts
             .iter()
@@ -379,9 +382,11 @@ impl AiDeliveryService {
             return Err("项目仍有正在运行的 Agent，无法删除".to_string());
         }
 
-        // 项目删除只清理本应用持久化的交付元数据，不删除用户仓库、worktree 或 Git 分支。
-        for delivery in &deliveries {
-            for task in Self::get_task_nodes(&delivery.id)? {
+       // 项目删除时清理本应用创建的 worktree、Git 分支和产出物目录，避免资源泄漏。
+       for delivery in &deliveries {
+           cleanup_delivery_task_worktrees(&project, delivery);
+           let _ = cleanup_delivery_integration_workspace(&project, delivery);
+           for task in Self::get_task_nodes(&delivery.id)? {
                 Self::delete(TASK_NODES_DIR, &task.id, "任务节点")?;
             }
             for attempt in attempts
@@ -2006,11 +2011,23 @@ impl AiDeliveryService {
         Ok(())
     }
 
-    fn merge_delivery_locally_locked(
-        delivery: &AiDelivery,
-        project: &AiProject,
-    ) -> Result<AiMergeRecord, String> {
-        let tasks = Self::get_task_nodes(&delivery.id)?;
+   fn merge_delivery_locally_locked(
+       delivery: &AiDelivery,
+       project: &AiProject,
+   ) -> Result<AiMergeRecord, String> {
+       let result = Self::merge_delivery_locally_locked_impl(delivery, project);
+       if result.is_err() {
+           // 合并失败时清理临时集成工作区，避免遗留资源阻断后续重试
+           let _ = cleanup_delivery_integration_workspace(project, delivery);
+       }
+       result
+   }
+
+   fn merge_delivery_locally_locked_impl(
+       delivery: &AiDelivery,
+       project: &AiProject,
+   ) -> Result<AiMergeRecord, String> {
+       let tasks = Self::get_task_nodes(&delivery.id)?;
         if tasks.is_empty() || tasks.iter().any(|task| task.state != "succeeded") {
             return Err("仅当交付中的全部任务均已审核通过时才能本地合并".to_string());
         }
@@ -2579,19 +2596,21 @@ impl AiDeliveryService {
             attempt.state = "running".to_string();
             attempt.started_at = chrono::Utc::now().to_rfc3339();
             attempt.updated_at = attempt.started_at.clone();
-            Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
-            let mut running_task = task;
-            running_task.state = "running".to_string();
-            running_task.updated_at = chrono::Utc::now().to_rfc3339();
-            Self::save(TASK_NODES_DIR, &running_task.id, &running_task)?;
-            let event = Self::append_event(
-                &delivery_id,
-                Some(&task_node_id),
-                Some(&attempt_id),
-                "attemptStarted",
-                "Agent 已在原生终端中启动，可打开终端查看并继续沟通",
-            )?;
-            let _ = app.emit("ai-delivery-event", event);
+           Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+           let mut running_task = task;
+           running_task.state = "running".to_string();
+           running_task.updated_at = chrono::Utc::now().to_rfc3339();
+           // task 状态保存失败不阻止 Agent 启动，watchdog 会确保最终一致性
+           let _ = Self::save(TASK_NODES_DIR, &running_task.id, &running_task);
+           if let Ok(event) = Self::append_event(
+               &delivery_id,
+               Some(&task_node_id),
+               Some(&attempt_id),
+               "attemptStarted",
+               "Agent 已在原生终端中启动，可打开终端查看并继续沟通",
+           ) {
+               let _ = app.emit("ai-delivery-event", event);
+           }
 
             let input_terminal_service = terminal_service.clone();
             let input_terminal_id = terminal_id.clone();
@@ -4832,11 +4851,7 @@ fn run_git(path: &Path, arguments: &[String]) -> Result<String, String> {
     cmd.arg("-C")
         .arg(normalize_path_for_external_process(path))
         .args(arguments);
-    #[cfg(windows)]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    let output = cmd
-        .output()
-        .map_err(|error| format!("执行 Git 失败: {}", error))?;
+    let output = run_command_with_timeout(&mut cmd, GIT_COMMAND_TIMEOUT, "Git 命令")?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if message.is_empty() {
@@ -6254,11 +6269,28 @@ fn run_attempt_watchdog(
             Ok(attempt) => attempt,
             Err(_) => return,
         };
-        if attempt.state != "running" {
-            return;
-        }
+       if attempt.state != "running" {
+           return;
+       }
 
-        if let Err(error) = reconcile_running_attempt(
+       // 检查 Agent 执行是否超过最大持续时间
+       if let Ok(started) = chrono::DateTime::parse_from_rfc3339(&attempt.started_at) {
+           let elapsed = chrono::Utc::now().signed_duration_since(started.with_timezone(&chrono::Utc));
+           if elapsed.num_seconds() > ATTEMPT_MAX_DURATION.as_secs() as i64 {
+               let _ = fail_attempt_from_watchdog(
+                   &attempt,
+                   &format!(
+                       "Agent 执行已超时（超过 {} 分钟），已自动终止",
+                       ATTEMPT_MAX_DURATION.as_secs() / 60
+                   ),
+                   app.clone(),
+                   terminal_service.clone(),
+               );
+               return;
+           }
+       }
+
+       if let Err(error) = reconcile_running_attempt(
             &attempt,
             app.clone(),
             terminal_service.clone(),
