@@ -126,6 +126,24 @@ export interface UpdateAiDeliveryInput {
   workflowId?: string | null;
 }
 
+export interface UpdateAiTaskNodeInput {
+  id: string;
+  title?: string;
+  description?: string;
+  roleId?: string | null;
+  preferredAgentId?: string | null;
+  taskPrompt?: string;
+  executionMode?: 'write' | 'readonly';
+  executionContext?: 'workspaceRoot' | 'taskWorktree';
+  targetRepositoryId?: string;
+  allowedWritePaths?: string[];
+  dependencyIds?: string[];
+  expectedArtifacts?: string[];
+  acceptanceCommands?: string[];
+  timeoutSeconds?: number | null;
+  retryCount?: number;
+}
+
 export interface CreateAiTaskNodeInput {
   deliveryId: string;
   title: string;

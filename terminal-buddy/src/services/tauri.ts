@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Profile, Workspace, RemoteFileEntry, ServerStats } from '../types';
-import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiQualityGate, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput } from '../types/aiDelivery';
+import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiQualityGate, AiReviewGate, AiRole, AiRuntimeProbe, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiTaskNodeInput } from '../types/aiDelivery';
 import type { AiAttemptOutput } from '../types/aiDelivery';
 
 // Profile Commands
@@ -645,6 +645,10 @@ export const getAiTaskNodes = (deliveryId: string) =>
   invoke<AiTaskNode[]>('get_ai_task_nodes', { deliveryId });
 export const createAiTaskNode = (input: CreateAiTaskNodeInput) =>
   invoke<AiTaskNode>('create_ai_task_node', { input });
+export const updateAiTaskNode = (input: UpdateAiTaskNodeInput) =>
+  invoke<AiTaskNode>('update_ai_task_node', { input });
+export const deleteAiTaskNode = (taskNodeId: string) =>
+  invoke<void>('delete_ai_task_node', { taskNodeId });
 export const approveAiDelivery = (id: string) => invoke<AiDelivery>('approve_ai_delivery', { id });
 export const pauseAiDelivery = (id: string) => invoke<AiDelivery>('pause_ai_delivery', { id });
 export const resumeAiDelivery = (id: string) => invoke<AiDelivery>('resume_ai_delivery', { id });

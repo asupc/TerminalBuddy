@@ -10,9 +10,10 @@ import { displayLocalPath, boardColumns, taskStateName, deliveryStateName,
   formatEventTime, DeliveryTabId } from "./workspace-utils";
 import { AttemptLiveTerminalDialog } from "./AttemptLiveTerminalDialog";
 import { TaskDagView } from "./TaskDagView";
+import { TaskNodeEditor } from "./TaskNodeEditor";
 import type {
   AiAgent, AiAttempt, AiDecisionRequest,
-  AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiReviewGate,
+  AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiReviewGate, AiRole,
   AiTaskNode,
 } from "../../types/aiDelivery";
 
@@ -24,6 +25,7 @@ export interface DeliveryDetailProps {
   deliveries: AiDelivery[];
   tasks: AiTaskNode[];
   agents: AiAgent[];
+  roles: AiRole[];
   attempts: AiAttempt[];
   deliveryEvents: AiDeliveryEvent[];
   filteredDeliveries: AiDelivery[];
@@ -82,7 +84,7 @@ export interface DeliveryDetailProps {
 export function DeliveryDetail(props: DeliveryDetailProps) {
   // 解构所有 props，使 JSX 中的变量名保持不变
   const {
-    project, delivery, deliveries, tasks, agents,
+    project, delivery, deliveries, tasks, agents, roles,
     attempts, deliveryEvents,
     filteredDeliveries, filteredAttempts, filteredRecentDeliveryEvents,
     visibleTasks, taskCountsByColumn, legacyTaskGraph, allTasksApproved,
@@ -107,8 +109,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
 
   const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "dag">("list");
-  // 编辑抽屉入口（T4-4 接入 TaskNodeEditor 时改回完整解构）
-  const [, setEditingTaskId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
   return (
         <>
@@ -595,6 +596,15 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                 >
                                   <FileText size={14} />
                                 </button>
+                                <button
+                                  type="button"
+                                  className="ai-task-inspect"
+                                  title="编辑任务"
+                                  aria-label={`编辑任务 ${task.title}`}
+                                  onClick={() => setEditingTaskId(task.id)}
+                                >
+                                  <Pencil size={14} />
+                                </button>
                               </article>
                             );
                           })}
@@ -789,6 +799,12 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                 {event.eventType === "approachingTimeout" && (
                                   <span className="ai-event-warning">即将超时</span>
                                 )}
+                                {event.eventType === "taskNodeEdited" && (
+                                  <span className="ai-event-diff">{event.message}</span>
+                                )}
+                                {event.eventType === "taskNodeDeleted" && (
+                                  <span className="ai-event-deleted">{event.message}</span>
+                                )}
                                 <p>{event.message}</p>
                               </div>
                             </li>
@@ -815,6 +831,17 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
             <AttemptLiveTerminalDialog
               attempt={attempts.find((a) => a.id === liveAttemptId)!}
               onClose={() => setLiveAttemptId(null)}
+            />
+          )}
+          {editingTaskId && tasks.find((t) => t.id === editingTaskId) && (
+            <TaskNodeEditor
+              task={tasks.find((t) => t.id === editingTaskId)!}
+              agents={agents}
+              roles={roles}
+              project={project}
+              deliveryTasks={tasks}
+              onClose={() => setEditingTaskId(null)}
+              onSaved={() => void refresh(project.id, deliveryId)}
             />
           )}
         </>

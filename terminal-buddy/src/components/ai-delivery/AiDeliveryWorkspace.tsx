@@ -1539,7 +1539,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         </section>
       ) : (
         <DeliveryDetail
-          tasks={tasks} agents={agents}
+          tasks={tasks} agents={agents} roles={roles}
          reviewGateByTask={reviewGateByTask}
          project={project} delivery={delivery} deliveries={deliveries}
          attempts={attempts} deliveryEvents={deliveryEvents}
