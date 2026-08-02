@@ -2343,8 +2343,12 @@ impl AiDeliveryService {
        project: &AiProject,
    ) -> Result<AiMergeRecord, String> {
        let tasks = Self::get_task_nodes(&delivery.id)?;
-        if tasks.is_empty() || tasks.iter().any(|task| task.state != "succeeded") {
-            return Err("仅当交付中的全部任务均已审核通过时才能本地合并".to_string());
+        if tasks.is_empty()
+            || tasks
+                .iter()
+                .any(|task| !matches!(task.state.as_str(), "succeeded" | "skipped"))
+        {
+            return Err("仅当交付中的全部任务均已审核通过（或标记忽略）时才能本地合并".to_string());
         }
         let gates = Self::get_review_gates(Some(&delivery.id))?;
         for task in tasks.iter().filter(|task| task.workflow_step_id.is_none()) {
@@ -2774,7 +2778,7 @@ impl AiDeliveryService {
         ) {
             return Err(format!("当前任务不能重新派发: {}", task.state));
         }
-        // 检查重试次数上限。retry_count=0 表示不限制，>0 时已用尽则拒绝。
+        // 检查重试次数上限。retry_count=0 表示不限制，>0 时已用尽则暂停交付。
         let effective_retry_limit = task.retry_count;
         if effective_retry_limit > 0 {
             let attempted = task.attempt_ids.len() as u32;
@@ -2795,8 +2799,22 @@ impl AiDeliveryService {
                     }
                     Ok(())
                 })();
+                // 触顶：暂停交付并通知（不直接静默拒绝），人工检查后可继续
+                let mut delivery = Self::get_delivery(&task.delivery_id)?;
+                if delivery.state == "running" {
+                    delivery.state = "paused".to_string();
+                    delivery.updated_at = chrono::Utc::now().to_rfc3339();
+                    Self::save(DELIVERIES_DIR, &delivery.id, &delivery)?;
+                }
+                Self::append_event(
+                    &delivery.id,
+                    Some(&task.id),
+                    None,
+                    "deliveryPaused",
+                    &format!("任务 {} 重试触顶，交付已暂停", task.title),
+                )?;
                 return Err(format!(
-                    "任务已达到最大重试次数（{} / {}），请检查现场后通过编辑任务提高上限再重试",
+                    "任务已达到最大重试次数（{} / {}），交付已暂停，请检查现场后调整",
                     attempted, effective_retry_limit
                 ));
             }
@@ -3274,6 +3292,29 @@ impl AiDeliveryService {
         Ok(task)
     }
 
+    /// 标记任务忽略（skipped）：failed/policyViolation/rework/needsInput 可标记，
+    /// 收尾判定将 skipped 视为可完成状态（不阻塞后续合并）。
+    pub fn mark_task_skipped(task_node_id: &str) -> Result<(), String> {
+        let mut task = Self::get_task_node(task_node_id)?;
+        if !matches!(
+            task.state.as_str(),
+            "failed" | "policyViolation" | "rework" | "needsInput"
+        ) {
+            return Err(format!("任务状态 {} 不可标记忽略", task.state));
+        }
+        task.state = "skipped".to_string();
+        task.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(TASK_NODES_DIR, &task.id, &task)?;
+        Self::append_event(
+            &task.delivery_id,
+            Some(&task.id),
+            None,
+            "taskSkipped",
+            &format!("任务 {} 已标记忽略（不阻塞后续合并）", task.title),
+        )?;
+        Ok(())
+    }
+
     pub fn ensure_manual_completion_allowed(attempt_id: &str) -> Result<(), String> {
         let attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "manual completion check")?;
         let delivery = Self::get_delivery(&attempt.delivery_id)?;
@@ -3608,7 +3649,7 @@ impl AiDeliveryService {
         if workflow_step_completed {
             let tasks = Self::get_task_nodes(delivery_id)?;
             if !tasks.is_empty()
-                && tasks.iter().all(|t| t.state == "succeeded")
+                && tasks.iter().all(|t| matches!(t.state.as_str(), "succeeded" | "skipped"))
             {
                 let mut delivery = Self::get_delivery(delivery_id)?;
                 if delivery.state == "running" {
@@ -3834,7 +3875,9 @@ impl AiDeliveryService {
     /// 用于恢复暂停后或审核通过后等 finish_attempt 未覆盖的场景。
     pub fn try_complete_workflow_delivery(delivery_id: &str) -> Result<bool, String> {
         let tasks = Self::get_task_nodes(delivery_id)?;
-        if tasks.is_empty() || !tasks.iter().all(|t| t.state == "succeeded") {
+        if tasks.is_empty()
+            || !tasks.iter().all(|t| matches!(t.state.as_str(), "succeeded" | "skipped"))
+        {
             return Ok(false);
         }
         let mut delivery = Self::get_delivery(delivery_id)?;

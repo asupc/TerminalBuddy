@@ -50,7 +50,7 @@ export const boardColumns = [
 ] as const;
 export type DeliveryTabId = (typeof boardColumns)[number]["id"] | "attempts" | "events";
 export function taskColumn(task: AiTaskNode) {
-  if (task.state === "succeeded") return "done";
+  if (task.state === "succeeded" || task.state === "skipped") return "done";
   if (task.state === "awaitingReview") return "awaitingReview";
   if (["running", "queued"].includes(task.state)) return "running";
   if (task.state === "needsInput") return "needsInput";
@@ -72,6 +72,7 @@ export const taskStateNames: Record<string, string> = {
   needsInput: "等待决策",
   awaitingReview: "验收中",
   succeeded: "已完成",
+  skipped: "已忽略",
   failed: "失败",
   cancelled: "已取消",
   rework: "待返工",
@@ -216,6 +217,7 @@ export const eventTypeNames: Record<string, string> = {
   taskNodeEdited: "任务已编辑",
   taskNodeDeleted: "任务已删除",
   taskCancelled: "任务已取消",
+  taskSkipped: "已标记忽略",
 };
 export const eventTypeName = (eventType: string) => eventTypeNames[eventType] ?? eventType;
 export const failedEventTypeSet = new Set(Object.keys(eventTypeNames).filter(

@@ -1,12 +1,12 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { AiTaskNode } from "../../types/aiDelivery";
 
-// 任务实际状态全集（11 种）——无 "completed"（成功态为 "succeeded"）
+// 任务实际状态全集（12 种）——无 "completed"（成功态为 "succeeded"）；skipped 为标记忽略
 export const STATE_COLORS: Record<string, string> = {
   planned: "#94a3b8", ready: "#3b82f6", queued: "#60a5fa",
   running: "#eab308", succeeded: "#22c55e", failed: "#ef4444",
   policyViolation: "#dc2626", rework: "#f97316", cancelled: "#64748b",
-  awaitingReview: "#06b6d4", needsInput: "#a855f7",
+  awaitingReview: "#06b6d4", needsInput: "#a855f7", skipped: "#94a3b8",
 };
 
 export function TaskNodeCard({ data, compact }: NodeProps & { compact?: boolean }) {

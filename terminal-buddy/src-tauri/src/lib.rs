@@ -48,8 +48,8 @@ use commands::{
 use commands::{
     answer_ai_decision_request, approve_ai_delivery, cancel_ai_attempt, cancel_ai_delivery,
     cancel_ai_task_node, complete_ai_attempt, create_ai_delivery_template,
-    delete_ai_delivery_template, list_ai_delivery_templates, save_ai_delivery_as_template,
-    update_ai_delivery_template,
+    delete_ai_delivery_template, list_ai_delivery_templates, mark_ai_task_skipped,
+    save_ai_delivery_as_template, update_ai_delivery_template,
     cleanup_ai_delivery_integration, create_ai_decision_request, create_ai_delivery,
     create_ai_task_node, delete_ai_delivery, dispatch_ai_ready_tasks, dispatch_ai_task_node,
     delete_ai_task_node, update_ai_task_node,
@@ -539,6 +539,7 @@ pub fn run() {
             start_ai_attempt,
             cancel_ai_attempt,
             cancel_ai_task_node,
+            mark_ai_task_skipped,
             complete_ai_attempt,
             get_ai_review_gates,
             run_ai_quality_gate,

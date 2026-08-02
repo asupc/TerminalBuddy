@@ -674,6 +674,8 @@ export const startAiAttempt = (id: string) => invoke<AiAttempt>('start_ai_attemp
 export const cancelAiAttempt = (id: string) => invoke<AiAttempt>('cancel_ai_attempt', { id });
 export const cancelAiTaskNode = (taskNodeId: string) =>
   invoke<AiTaskNode>('cancel_ai_task_node', { taskNodeId });
+export const markAiTaskSkipped = (taskNodeId: string) =>
+  invoke<void>('mark_ai_task_skipped', { taskNodeId });
 export const completeAiAttempt = (id: string) => invoke<AiAttempt>('complete_ai_attempt', { id });
 export const getAiReviewGates = (deliveryId?: string) =>
   invoke<AiReviewGate[]>('get_ai_review_gates', { deliveryId: deliveryId ?? null });

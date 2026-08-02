@@ -11,10 +11,12 @@ interface Props {
   deliveryTasks: AiTaskNode[];
   onClose: () => void;
   onSaved: () => void;
+  /** 保存成功后的额外动作（如带参重试：保存后自动重新派发）。 */
+  onAfterSaved?: () => Promise<void>;
 }
 
 /** 任务节点编辑抽屉：左侧字段表单 + 右侧实时预览；环依赖即时检测阻止保存；删除带级联清理确认。 */
-export function TaskNodeEditor({ task, agents, roles, project, deliveryTasks, onClose, onSaved }: Props) {
+export function TaskNodeEditor({ task, agents, roles, project, deliveryTasks, onClose, onSaved, onAfterSaved }: Props) {
   const [form, setForm] = useState({ ...task, dependencyIds: [...task.dependencyIds] });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +59,7 @@ export function TaskNodeEditor({ task, agents, roles, project, deliveryTasks, on
         retryCount: form.retryCount,
       });
       onSaved();
+      if (onAfterSaved) await onAfterSaved();
       onClose();
     } catch (e) {
       setError(String(e));

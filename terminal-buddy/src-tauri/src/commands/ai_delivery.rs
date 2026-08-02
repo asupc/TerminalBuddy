@@ -384,6 +384,11 @@ pub fn cancel_ai_task_node(
 }
 
 #[command]
+pub fn mark_ai_task_skipped(task_node_id: String) -> Result<(), String> {
+    AiDeliveryService::mark_task_skipped(&task_node_id)
+}
+
+#[command]
 pub fn complete_ai_attempt(
     id: String,
     app: tauri::AppHandle,

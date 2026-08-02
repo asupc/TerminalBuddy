@@ -2,9 +2,11 @@ import {
   Check, CircleHelp, CircleStop, FileText, GitMerge, Layers3, Pause, Pencil, Play,
   Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, SquareTerminal, Trash2
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type React from "react";
-import { approveAiDelivery, pauseAiDelivery, resumeAiDelivery } from "../../services/tauri";
+import {
+  approveAiDelivery, markAiTaskSkipped, pauseAiDelivery, resumeAiDelivery,
+} from "../../services/tauri";
 import { displayLocalPath, boardColumns, taskStateName, deliveryStateName,
   attemptStateName, mergeStateName, eventTypeName, isFailedEventType, isFailedAttemptState,
   formatEventTime, DeliveryTabId } from "./workspace-utils";
@@ -125,6 +127,23 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
   const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "dag">("list");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  // 带参重试：从任务卡片进入编辑抽屉，保存后自动重新派发
+  const [paramRetryTaskId, setParamRetryTaskId] = useState<string | null>(null);
+  // 失败聚合：按 attempt.summary 首行聚类，取最高频 5 类
+  const failureBuckets = useMemo(() => {
+    const failed = attempts.filter((a) => a.state === "failed" && a.summary);
+    const buckets = new Map<string, number>();
+    failed.forEach((a) => {
+      const key = (a.summary ?? "").split("\n")[0].slice(0, 40) || "未知原因";
+      buckets.set(key, (buckets.get(key) ?? 0) + 1);
+    });
+    return [...buckets.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [attempts]);
+  const markSkipped = (task: AiTaskNode) =>
+    void execute(`skip-${task.id}`, async () => {
+      await markAiTaskSkipped(task.id);
+      await refresh(project.id, deliveryId);
+    });
 
   return (
         <>
@@ -552,6 +571,18 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                       <>
                     {boardColumns.some((column) => column.id === activeTaskTab) && (
                     <div className="ai-task-list" role="tabpanel">
+                      {failureBuckets.length > 0 && (
+                        <div className="ai-failure-aggregate">
+                          <strong>
+                            失败聚合（{failureBuckets.reduce((sum, [, count]) => sum + count, 0)} 次失败）
+                          </strong>
+                          {failureBuckets.map(([reason, count]) => (
+                            <span key={reason} title={reason}>
+                              {count} × {reason}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <div className="ai-batch-bar">
                         <span>已选 {selectedTaskIds.size} 项</span>
                         <button type="button" className="btn-secondary" onClick={() => void batchDispatch()}>
@@ -593,7 +624,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                               (agent) => agent.id === task.preferredAgentId,
                             );
                             return (
-                              <article key={task.id}>
+                              <article key={task.id} className={task.state === "skipped" ? "ai-task-skipped" : undefined}>
                                 <label className="ai-task-select" title="多选任务（Shift 点击连选）">
                                   <input
                                     type="checkbox"
@@ -708,7 +739,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                       </button>
                                     </div>
                                   )}
-                                {["failed", "rework", "cancelled"].includes(task.state) && (
+                                {["failed", "rework", "cancelled", "policyViolation"].includes(task.state) && (
                                   <div className="ai-task-actions">
                                     <button
                                       type="button"
@@ -718,6 +749,33 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                     >
                                       <RotateCcw size={13} />
                                       重新派发
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary"
+                                      disabled={busy !== null}
+                                      title="调整任务提示/优先 Agent/重试上限后自动重新派发"
+                                      onClick={() => {
+                                        setParamRetryTaskId(task.id);
+                                        setEditingTaskId(task.id);
+                                      }}
+                                    >
+                                      <Pencil size={13} />
+                                      带参重试
+                                    </button>
+                                  </div>
+                                )}
+                                {["failed", "policyViolation", "rework", "needsInput"].includes(task.state) && (
+                                  <div className="ai-task-actions">
+                                    <button
+                                      type="button"
+                                      className="btn-secondary"
+                                      disabled={busy === `skip-${task.id}`}
+                                      title="标记忽略后不再阻塞合并与交付收尾"
+                                      onClick={() => markSkipped(task)}
+                                    >
+                                      <CircleStop size={13} />
+                                      标记忽略
                                     </button>
                                   </div>
                                 )}
@@ -975,8 +1033,20 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
               roles={roles}
               project={project}
               deliveryTasks={tasks}
-              onClose={() => setEditingTaskId(null)}
+              onClose={() => {
+                setEditingTaskId(null);
+                setParamRetryTaskId(null);
+              }}
               onSaved={() => void refresh(project.id, deliveryId)}
+              onAfterSaved={
+                paramRetryTaskId
+                  ? async () => {
+                      const target = tasks.find((item) => item.id === paramRetryTaskId);
+                      setParamRetryTaskId(null);
+                      if (target) await retryTask(target);
+                    }
+                  : undefined
+              }
             />
           )}
         </>

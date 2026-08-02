@@ -2046,3 +2046,38 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* 任务标记忽略（skipped）与失败聚合 */
+.ai-task-list article.ai-task-skipped {
+  opacity: 0.62;
+}
+.ai-task-list article.ai-task-skipped .ai-task-title-row strong {
+  text-decoration: line-through;
+  color: var(--text-secondary, #888);
+}
+.ai-failure-aggregate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-left: 3px solid #ef4444;
+  border-radius: 6px;
+  font-size: 12px;
+  background: rgba(239, 68, 68, 0.05);
+}
+.ai-failure-aggregate strong {
+  font-weight: 600;
+}
+.ai-failure-aggregate span {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
