@@ -210,8 +210,22 @@ pub fn pause_ai_delivery(id: String) -> Result<AiDelivery, String> {
 }
 
 #[command]
-pub fn resume_ai_delivery(id: String) -> Result<AiDelivery, String> {
-    AiDeliveryService::resume_delivery(&id)
+pub fn resume_ai_delivery(
+    id: String,
+    app: tauri::AppHandle,
+    terminal_service: tauri::State<TerminalService>,
+) -> Result<AiDelivery, String> {
+    let delivery = AiDeliveryService::resume_delivery(&id)?;
+    // 恢复后自动派发所有就绪任务
+    let terminal_service = terminal_service.inner().clone();
+    for attempt in AiDeliveryService::dispatch_ready_tasks(&id)? {
+        let _ = AiDeliveryService::start_attempt(
+            &attempt.id,
+            app.clone(),
+            terminal_service.clone(),
+        );
+    }
+    Ok(delivery)
 }
 
 #[command]

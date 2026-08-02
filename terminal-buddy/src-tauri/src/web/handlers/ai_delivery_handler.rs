@@ -279,7 +279,7 @@ pub async fn dispatch(
         .clone();
     // 先批准（如果尚未批准）
     let delivery = AiDeliveryService::get_delivery(&id).map_err(ApiError::NotFound)?;
-    if delivery.state == "draft" || delivery.state == "drafting" {
+    if delivery.state == "drafting" || delivery.state == "awaitingApproval" {
         AiDeliveryService::approve_delivery(&id).map_err(ApiError::BadRequest)?;
     }
     let attempts =

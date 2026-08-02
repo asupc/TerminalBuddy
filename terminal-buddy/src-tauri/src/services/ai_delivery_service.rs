@@ -43,6 +43,7 @@ const MERGE_RECORDS_DIR: &str = "MergeRecords";
 const PLANS_DIR: &str = "Plans";
 const TERMINAL_RUNS_DIR: &str = "TerminalRuns";
 const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+const QUALITY_GATE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 // 首次检查不应等待 Agent 自己退出；成果文件可能已经写完而 CLI 仍停留在终端中。
 const ATTEMPT_WATCHDOG_DELAY: Duration = Duration::from_secs(30);
 const ATTEMPT_WATCHDOG_INTERVAL: Duration = Duration::from_secs(60);
@@ -67,6 +68,11 @@ fn resolve_execution_context(execution_mode: &str, configured: &str) -> Result<S
 }
 
 fn integration_locks() -> &'static Mutex<HashSet<String>> {
+    static LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+/// 防止同一任务的质量门禁被并发重复触发。
+fn quality_gate_locks() -> &'static Mutex<HashSet<String>> {
     static LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     LOCKS.get_or_init(|| Mutex::new(HashSet::new()))
 }
@@ -383,8 +389,7 @@ impl AiDeliveryService {
                 .filter(|attempt| attempt.delivery_id == delivery.id)
             {
                 Self::delete(ATTEMPTS_DIR, &attempt.id, "执行尝试")?;
-                let terminal_run_dir =
-                    Self::entity_dir(TERMINAL_RUNS_DIR).join(safe_path_segment(&attempt.id));
+                let terminal_run_dir = terminal_run_dir_by_id(&attempt.id);
                 let _ = fs::remove_dir_all(terminal_run_dir);
             }
             for gate in Self::get_review_gates(Some(&delivery.id))? {
@@ -1080,33 +1085,50 @@ impl AiDeliveryService {
     }
 
     pub fn delete_delivery(id: &str) -> Result<(), String> {
-        let delivery = Self::get_delivery(id)?;
+         let delivery = Self::get_delivery(id)?;
+        if !matches!(
+            delivery.state.as_str(),
+            "drafting" | "cancelled" | "failed" | "succeeded" | "completed"
+        ) {
+            return Err("仅草稿或已结束（取消/失败/成功/完成）的交付可以删除；请先暂停或处理当前交付流程".to_string());
+        }
         if delivery.state != "drafting" {
-            return Err("仅草稿交付可以删除；请先完成、暂停或处理当前交付流程".to_string());
+            // 非草稿状态：清理 worktree、分支和产出物目录后再删除
+            if let Ok(project) = Self::get_project(&delivery.project_id) {
+                cleanup_delivery_task_worktrees(&project, &delivery);
+                let _ = cleanup_delivery_integration_workspace(&project, &delivery);
+            }
+        } else {
+            let contracts = Self::get_all_task_contracts(Some(&delivery.project_id))?;
+            if contracts
+                .iter()
+                .any(|contract| contract.delivery_id == delivery.id)
+            {
+                return Err("草稿已存在任务契约或 worktree，不能直接删除".to_string());
+            }
         }
-        let contracts = Self::get_all_task_contracts(Some(&delivery.project_id))?;
-        if contracts
-            .iter()
-            .any(|contract| contract.delivery_id == delivery.id)
-        {
-            return Err("草稿已存在任务契约或 worktree，不能直接删除".to_string());
-        }
-        let attempts = Self::get_all_attempts(Some(&delivery.id))?;
+         let attempts = Self::get_all_attempts(Some(&delivery.id))?;
         if attempts
             .iter()
             .any(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
         {
-            return Err("草稿仍有正在运行的 Agent，不能删除".to_string());
+            return Err("交付仍有正在运行的 Agent，不能删除".to_string());
         }
         let tasks = Self::get_task_nodes(&delivery.id)?;
         Self::delete(DELIVERIES_DIR, id, "交付")?;
         for task in tasks {
             let _ = Self::delete(TASK_NODES_DIR, &task.id, "任务节点");
         }
+        // 删除关联的任务契约
+        for contract in Self::get_all_task_contracts(Some(&delivery.project_id))?
+            .into_iter()
+            .filter(|contract| contract.delivery_id == delivery.id)
+        {
+            let _ = Self::delete(CONTRACTS_DIR, &contract.id, "任务契约");
+        }
         for attempt in attempts {
             let _ = Self::delete(ATTEMPTS_DIR, &attempt.id, "执行尝试");
-            let terminal_run_dir =
-                Self::entity_dir(TERMINAL_RUNS_DIR).join(safe_path_segment(&attempt.id));
+            let terminal_run_dir = terminal_run_dir_by_id(&attempt.id);
             let _ = fs::remove_dir_all(terminal_run_dir);
         }
         for event in Self::get_delivery_events(&delivery.id)? {
@@ -1306,8 +1328,9 @@ impl AiDeliveryService {
             None,
             None,
             "deliveryResumed",
-            "交付已恢复，可以继续派发就绪任务",
+        "交付已恢复，可以继续派发就绪任务",
         )?;
+        Self::try_complete_workflow_delivery(id)?;
         Ok(delivery)
     }
 
@@ -1381,9 +1404,8 @@ impl AiDeliveryService {
         let tasks = Self::get_task_nodes(delivery_id)?;
         let succeeded = tasks
             .iter()
-            // succeeded 和 cancelled 的任务都视为已完成依赖。
-            // cancelled 的任务（如交付终止后恢复的场景）不应永久阻塞下游。
-            .filter(|task| matches!(task.state.as_str(), "succeeded" | "cancelled"))
+            // 只有经过验收的成功任务才能解锁下游；取消和中断都不代表产物可用。
+            .filter(|task| task.state == "succeeded")
             .map(|task| task.id.clone())
             .collect::<HashSet<_>>();
         let mut changed = Vec::new();
@@ -1540,7 +1562,8 @@ impl AiDeliveryService {
     /// 读取单次执行的产出物（transcript、final-message、review.json、decision.json、prompt）。
     pub fn read_attempt_output(attempt_id: &str) -> Result<AiAttemptOutput, String> {
         use crate::models::{AiAttemptDecision, AiAttemptOutput, AiAttemptReview};
-        let run_dir = Self::entity_dir(TERMINAL_RUNS_DIR).join(safe_path_segment(attempt_id));
+        // 同时兼容旧的纯 UUID 目录和新的“可读标签__UUID”目录。
+        let run_dir = terminal_run_dir_by_id(attempt_id);
 
         // 读取文件辅助函数：自动去除 BOM，处理非 UTF-8 文件
         let read_file = |name: &str| -> Option<String> {
@@ -1666,6 +1689,33 @@ impl AiDeliveryService {
     }
 
     pub fn run_quality_gate(
+        task_node_id: &str,
+        reviewer_agent_id: Option<&str>,
+        app: tauri::AppHandle,
+        terminal_service: TerminalService,
+    ) -> Result<AiReviewGate, String> {
+        {
+            let mut locks = quality_gate_locks()
+                .lock()
+                .map_err(|_| "质量门禁锁异常".to_string())?;
+            if !locks.insert(task_node_id.to_string()) {
+                return Err("该任务的质量门禁正在执行中，请等待完成".to_string());
+            }
+        }
+        let result = Self::run_quality_gate_inner(
+            task_node_id,
+            reviewer_agent_id,
+            app,
+            terminal_service,
+        );
+        quality_gate_locks()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(task_node_id);
+        result
+    }
+
+    fn run_quality_gate_inner(
         task_node_id: &str,
         reviewer_agent_id: Option<&str>,
         app: tauri::AppHandle,
@@ -1885,6 +1935,7 @@ impl AiDeliveryService {
         )?;
         if approved {
             let _ = Self::refresh_ready_task_nodes(&gate.delivery_id)?;
+            let _ = Self::try_complete_workflow_delivery(&gate.delivery_id)?;
         }
         Ok(gate)
     }
@@ -2101,11 +2152,26 @@ impl AiDeliveryService {
                     source.display()
                 ));
             }
-            for (_, contract) in group {
-                let branch = contract
-                    .branch_name
-                    .clone()
-                    .ok_or_else(|| "任务分支不存在".to_string())?;
+           for (_, contract) in group {
+               let branch = contract
+                   .branch_name
+                   .clone()
+                   .ok_or_else(|| "任务分支不存在".to_string())?;
+                // 合并前验证分支 HEAD 未在验收后发生变化（TOCTOU 防护）
+                if let Some(validated) = contract.validated_commit.as_deref() {
+                    let branch_head = run_git(
+                        &source,
+                        &["rev-parse".to_string(), branch.clone()],
+                    )?;
+                    if branch_head != validated {
+                        return Err(format!(
+                            "任务分支 {} 在验收后发生了变化，已阻断合并（验收时: {}，当前: {}）",
+                            branch,
+                            validated.get(..8).unwrap_or(validated),
+                            branch_head.get(..8).unwrap_or(&branch_head),
+                        ));
+                    }
+                }
                 let pre_merge_head =
                     run_git(&source, &vec!["rev-parse".to_string(), "HEAD".to_string()])?;
                 record.repositories.push(AiMergeRepositoryRecord {
@@ -2184,10 +2250,13 @@ impl AiDeliveryService {
             "mergedLocally",
             "交付已合并到本地目标分支，未执行远端推送",
         )?;
-        Ok(record)
-    }
+        // 合并成功后清理临时集成 worktree、任务 worktree 和分支，避免资源累积
+        let _ = cleanup_delivery_integration_workspace(project, delivery);
+        cleanup_delivery_task_worktrees(project, delivery);
+         Ok(record)
+     }
 
-    fn complete_delivery_contracts(delivery_id: &str) -> Result<(), String> {
+     fn complete_delivery_contracts(delivery_id: &str) -> Result<(), String> {
         for mut contract in Self::list::<AiTaskContract>(CONTRACTS_DIR)?
             .into_iter()
             .filter(|contract| contract.delivery_id == delivery_id)
@@ -2239,6 +2308,9 @@ impl AiDeliveryService {
         task_node_id: &str,
         requested_agent_id: Option<&str>,
     ) -> Result<AiAttempt, String> {
+        let _dispatch_guard = dispatch_lock()
+            .lock()
+            .map_err(|_| "任务派发锁异常".to_string())?;
         let mut task = Self::get_task_node(task_node_id)?;
         if task.state != "ready" {
             return Err(format!("当前任务不能派发: {}", task.state));
@@ -2405,6 +2477,9 @@ impl AiDeliveryService {
         app: tauri::AppHandle,
         terminal_service: TerminalService,
     ) -> Result<AiAttempt, String> {
+        let _start_guard = attempt_start_lock()
+            .lock()
+            .map_err(|_| "Agent 启动锁异常".to_string())?;
         let mut attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")?;
         if attempt.state != "queued" {
             return Err(format!("当前执行尝试不能启动: {}", attempt.state));
@@ -2430,9 +2505,9 @@ impl AiDeliveryService {
             {
                 return Err("任务执行目录尚未分配或目录不可用".to_string());
             }
-            let agent_start_directory = PathBuf::from(&project.workspace_root);
+            let agent_start_directory = working_directory.clone();
             if !agent_start_directory.is_dir() {
-                return Err("项目工作区根目录不可用，无法启动 Agent".to_string());
+                return Err("任务契约工作目录不可用，无法启动 Agent".to_string());
             }
             let mut prompt = build_agent_prompt(&task, &contract, &project)?;
             if let Some(continuation) = build_continuation_context(&task, &contract, &attempt.id) {
@@ -2619,19 +2694,22 @@ impl AiDeliveryService {
                             decision,
                             app_handle.clone(),
                         ) {
-                            eprintln!("[AI Delivery] pause_attempt_for_decision 失败: {}", e);
-                            // 决策暂停失败时回退到正常完成流程，避免任务卡死
-                            let _ = Self::finish_attempt(
-                                &attempt_id,
-                                &monitor_delivery_id,
-                                &monitor_task_node_id,
-                                exit_code,
-                                &transcript,
-                                &transcript,
-                                workflow_review_path.as_deref(),
-                                app_handle.clone(),
-                                monitor_terminal_service.clone(),
-                            );
+                          eprintln!("[AI Delivery] pause_attempt_for_decision 失败: {}", e);
+                          // 决策暂停失败时回退到正常完成流程，避免任务卡死
+                          let _ = Self::finish_attempt(
+                              &attempt_id,
+                              &monitor_delivery_id,
+                              &monitor_task_node_id,
+                              exit_code,
+                              &transcript,
+                              &transcript,
+                              workflow_review_path.as_deref(),
+                              app_handle.clone(),
+                              monitor_terminal_service.clone(),
+                          );
+                        } else {
+                            // 决策暂停成功后关闭终端，Agent CLI 已退出
+                            let _ = monitor_terminal_service.close_terminal(&terminal_id);
                         }
                     }
                     Ok(None) => {
@@ -2722,7 +2800,8 @@ impl AiDeliveryService {
         let attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "manual completion check")?;
         let delivery = Self::get_delivery(&attempt.delivery_id)?;
         let task = Self::get_task_node(&attempt.task_node_id)?;
-        if is_last_workflow_stage(&delivery, &task) {
+        // 无编排方案的交付允许手动确认完成；有编排方案时仅最后阶段允许
+        if delivery.workflow_steps.is_empty() || is_last_workflow_stage(&delivery, &task) {
             Ok(())
         } else {
             Err("仅任务编排的最后一个阶段允许手动确认完成".to_string())
@@ -2744,11 +2823,8 @@ impl AiDeliveryService {
             .as_deref()
             .and_then(|terminal_id| terminal_service.peek_terminal_output(terminal_id).ok())
             .unwrap_or_else(|| "用户确认 Agent 已完成执行".to_string());
-        let workflow_review_path = requires_workflow_review(&task).then(|| {
-            Self::entity_dir(TERMINAL_RUNS_DIR)
-                .join(safe_path_segment(&attempt.id))
-                .join("review.json")
-        });
+        let workflow_review_path = requires_workflow_review(&task)
+            .then(|| terminal_run_dir_by_id(&attempt.id).join("review.json"));
         Self::finish_attempt(
             &attempt.id,
             &attempt.delivery_id,
@@ -2846,12 +2922,19 @@ impl AiDeliveryService {
             impact: decision.impact,
             options: decision.options,
         })?;
-        attempt.state = "needsInput".to_string();
-        attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
-        attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
-        attempt.summary = Some(format!("已请求用户决策：{}", request.question));
-        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
-        let event = Self::append_event(
+       attempt.state = "needsInput".to_string();
+       attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
+       attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
+       attempt.summary = Some(format!("已请求用户决策：{}", request.question));
+       Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        // 同步将任务状态设为 needsInput，使 answer_decision_request 能正确识别并转回 ready。
+        let mut task = Self::get_task_node(task_node_id)?;
+        if task.state == "running" {
+            task.state = "needsInput".to_string();
+            task.updated_at = chrono::Utc::now().to_rfc3339();
+            Self::save(TASK_NODES_DIR, &task.id, &task)?;
+        }
+       let event = Self::append_event(
             delivery_id,
             Some(task_node_id),
             Some(attempt_id),
@@ -2951,7 +3034,21 @@ impl AiDeliveryService {
             None if let Some(review) = workflow_review.as_ref() => review.comments.clone(),
             None => compact_output(if successful { stdout } else { stderr }),
         });
-        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+       Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        // 验收通过时记录当前分支 HEAD 作为 validated_commit，合并前须再次确认一致
+        if successful && task.execution_mode == "write" {
+            if let Some(worktree) = contract.worktree_path.as_deref() {
+                if let Ok(head) = run_git(
+                    &PathBuf::from(worktree),
+                    &["rev-parse".to_string(), "HEAD".to_string()],
+                ) {
+                    let mut updated_contract = contract.clone();
+                    updated_contract.validated_commit = Some(head);
+                    updated_contract.updated_at = chrono::Utc::now().to_rfc3339();
+                    let _ = Self::save(CONTRACTS_DIR, &updated_contract.id, &updated_contract);
+                }
+            }
+        }
         task.state = if policy_violation.is_some() {
             "policyViolation"
         } else if reviewer_rejected {
@@ -3235,6 +3332,51 @@ impl AiDeliveryService {
         Ok(())
     }
 
+    /// 检查交付是否所有任务均已完成，是则自动标记成功并合并。
+    /// 用于恢复暂停后或审核通过后等 finish_attempt 未覆盖的场景。
+    pub fn try_complete_workflow_delivery(delivery_id: &str) -> Result<bool, String> {
+        let tasks = Self::get_task_nodes(delivery_id)?;
+        if tasks.is_empty() || !tasks.iter().all(|t| t.state == "succeeded") {
+            return Ok(false);
+        }
+        let mut delivery = Self::get_delivery(delivery_id)?;
+        if delivery.state != "running" {
+            return Ok(false);
+        }
+        delivery.state = "succeeded".to_string();
+        delivery.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(DELIVERIES_DIR, &delivery.id, &delivery)?;
+        Self::append_event(
+            delivery_id,
+            None,
+            None,
+            "deliverySucceeded",
+            "全部任务已完成，交付成功",
+        )?;
+        let merge_result = Self::merge_delivery_locally(&delivery.id);
+        match &merge_result {
+            Ok(_) => {
+                let _ = Self::append_event(
+                    delivery_id,
+                    None,
+                    None,
+                    "autoMerged",
+                    "交付已自动合并到本地目标分支",
+                );
+            }
+            Err(error) => {
+                let _ = Self::append_event(
+                    delivery_id,
+                    None,
+                    None,
+                    "autoMergeFailed",
+                    &format!("自动合并失败（可在界面手动重试）: {}", error),
+                );
+            }
+        }
+        Ok(true)
+    }
+
     pub fn append_event(
         delivery_id: &str,
         task_node_id: Option<&str>,
@@ -3303,6 +3445,10 @@ impl AiDeliveryService {
                     Ok(AiRepositoryStatusBaseline {
                         repository_id: item.id.clone(),
                         status: repository_status(&path)?,
+                        head_commit: Some(run_git(
+                            &path,
+                            &["rev-parse".to_string(), "HEAD".to_string()],
+                        )?),
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?,
@@ -3317,6 +3463,7 @@ impl AiDeliveryService {
             branch_name: None,
             worktree_path: None,
             base_commit: None,
+            validated_commit: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -4319,7 +4466,11 @@ fn project_repository_statuses(project: &AiProject) -> Result<BTreeMap<String, S
         .iter()
         .map(|repository| {
             let path = project_repository_path(project, repository)?;
-            Ok((repository.id.clone(), repository_status(&path)?))
+            let head = run_git(&path, &["rev-parse".to_string(), "HEAD".to_string()])?;
+            Ok((
+                repository.id.clone(),
+                format!("{}\n{}", head, repository_status(&path)?),
+            ))
         })
         .collect()
 }
@@ -4364,7 +4515,13 @@ fn audit_contract_scope(
             .ok_or_else(|| "任务契约引用的禁止仓库不存在".to_string())?;
         let path = project_repository_path(project, repository)?;
         let current = repository_status(&path)?;
-        if current != baseline.status {
+        let current_head = run_git(&path, &["rev-parse".to_string(), "HEAD".to_string()])?;
+        if current != baseline.status
+            || baseline
+                .head_commit
+                .as_deref()
+                .is_some_and(|head| head != current_head)
+        {
             return Ok(Some(format!(
                 "检测到未授权仓库改动: {}，已阻断审核与合并",
                 repository.name
@@ -4534,6 +4691,49 @@ fn cleanup_delivery_integration_workspace(
 }
 
 /// 将显示标签中的不安全字符替换为下划线，用于构造可读的终端运行目录名。
+/// 清理交付关联的所有任务 worktree、分支和产出物交接目录。
+/// 用于交付删除或合并完成后的资源回收，全部以尽力方式执行，不阻断主流程。
+fn cleanup_delivery_task_worktrees(project: &AiProject, delivery: &AiDelivery) {
+    let contracts = match AiDeliveryService::get_all_task_contracts(Some(&project.id)) {
+        Ok(contracts) => contracts,
+        Err(_) => return,
+    };
+    for contract in contracts
+        .into_iter()
+        .filter(|contract| contract.delivery_id == delivery.id)
+    {
+        let Some(branch_name) = contract.branch_name.as_deref() else {
+            continue;
+        };
+        let Some(repository) = project
+            .repositories
+            .iter()
+            .find(|repository| repository.id == contract.target_repository_id)
+        else {
+            continue;
+        };
+        let Ok(source) = project_repository_path(project, repository) else {
+            continue;
+        };
+        if let Some(worktree_path) = contract.worktree_path.as_deref() {
+            cleanup_unallocated_task_worktree(&source, Path::new(worktree_path), branch_name);
+        } else {
+            let _ = run_git(
+                &source,
+                &[
+                    "branch".to_string(),
+                    "-D".to_string(),
+                    branch_name.to_string(),
+                ],
+            );
+        }
+    }
+    let handoff_root = project_artifact_base_path(project)
+        .join("handoff")
+        .join(compact_path_id(&delivery.id));
+    let _ = fs::remove_dir_all(&handoff_root);
+}
+
 fn safe_display_segment(value: &str) -> String {
     value
         .chars()
@@ -4549,6 +4749,16 @@ fn safe_display_segment(value: &str) -> String {
         .trim()
         .trim_matches(|ch: char| ch == '.' || ch.is_whitespace())
         .to_string()
+}
+
+fn dispatch_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn attempt_start_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 /// 生成终端运行目录名：{可读标签}__{UUID}，无标签时退回纯 UUID。
@@ -4686,9 +4896,7 @@ fn build_agent_prompt(
                     .transpose()?
                     .and_then(|attempt| {
                         fs::read_to_string(
-                            AiDeliveryService::entity_dir(TERMINAL_RUNS_DIR)
-                                .join(safe_path_segment(&attempt.id))
-                                .join("transcript.log"),
+                            terminal_run_dir_by_id(&attempt.id).join("transcript.log"),
                         )
                         .ok()
                         .filter(|output| !output.trim().is_empty())
@@ -4754,12 +4962,12 @@ fn build_agent_prompt(
             "任务 worktree"
         };
         format!(
-            "- Agent 从项目工作区根目录启动；本步骤的只读对象是{}：{}。\n- 项目文件只能读取，不得修改、创建或删除；不得创建 Git 提交。\n- 若需查看任务 worktree，请先切换到上方明确列出的本任务 worktree。\n- 若配置了外部成果目录，只能在该目录写入预期产物。若发现阻断问题，请在最终结论中明确说明。",
+            "- Agent 已从本任务契约目录启动；本步骤的只读对象是{}：{}。\n- 项目文件只能读取，不得修改、创建或删除；不得创建 Git 提交。\n- 若配置了外部成果目录，只能在该目录写入预期产物。若发现阻断问题，请在最终结论中明确说明。",
             context_name, contract.working_directory
         )
     } else {
         format!(
-            "- Agent 从项目工作区根目录启动；开始读取、修改、测试或提交前，必须先切换到本任务 worktree：{}。\n- 项目工作区根目录仅用于理解项目上下文，严禁在其中或其他目录修改项目文件。\n- 只能修改 worktree 中的这些相对路径：{}\n- 完成后必须只在当前任务分支创建本地 Git 提交；未提交改动不能进入下一步骤。",
+            "- Agent 已从本任务 worktree 启动：{}。\n- 项目工作区根目录仅用于理解项目上下文，严禁在其中或其他目录修改项目文件。\n- 只能修改 worktree 中的这些相对路径：{}\n- 完成后必须只在当前任务分支创建本地 Git 提交；未提交改动不能进入下一步骤。",
             contract.working_directory, allowed_paths
         )
     };
@@ -4767,7 +4975,7 @@ fn build_agent_prompt(
         "你正在执行一项由 TerminalBuddy 调度的用户项目任务。TerminalBuddy 只是调度平台，不是本任务要搜索、读取或修改的代码仓库；任务对象只限下方列出的项目工作区、任务 worktree 与成果目录。\n\n任务：{}\n说明：{}\n\n执行位置：\n- Agent 当前工作目录：{}\n- 项目工作区根目录：{}\n- 本任务 worktree：{}\n\n当前编排步骤的通用任务提示词：\n{}\n\n前置步骤结论：\n{}\n\n用户已做出的决策：\n{}\n\n不可变约束：\n{}\n- Windows 源码、任务说明和结果文件均使用 UTF-8。使用 PowerShell 读取或写入文件时，必须显式指定 `-Encoding UTF8`；不得使用默认编码读取包含中文的源码。\n- 终端输出只保留简短的进度、结论、执行过的验证及必要报错。禁止回显完整源码、配置、构建日志、JSON 或命令输出；检索时限制结果数量，读取文件时只读取所需片段，其余输出重定向或丢弃。\n- 禁止访问或修改其他服务仓库。\n- 禁止执行 git push、创建 Pull Request、部署、强制推送或破坏性操作。\n\n输入成果：{}\n预期产物：{}\n成果写入：{}\n验收命令：{}\n\n完成后简要说明结论、改动或发现、执行过的验证和仍存在的风险。确认任务与沟通均结束后，请退出当前 CLI；TerminalBuddy 会在 CLI 退出后推进下一编排步骤。",
         task.title,
         task.description,
-        project.workspace_root,
+        contract.working_directory,
         project.workspace_root,
         task_worktree,
         workflow_prompt,
@@ -5879,8 +6087,7 @@ mod terminal_command_tests {
         )
         .unwrap();
 
-        assert!(command.contains("& 'claude' '--model' 'test-model' '--print' $tbPrompt 2>&1 | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
-        assert!(!command.contains("$tbPrompt | & 'claude'"));
+        assert!(command.contains("$tbPrompt | & 'claude' '--model' 'test-model' '--print' 2>&1 | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
     }
 
     #[test]
@@ -5892,9 +6099,9 @@ mod terminal_command_tests {
                 "& 'opencode' 'run' '--model' 'test-model' '请完整阅读附件中的任务说明，并严格执行其中的所有约束。' '--file' 'C:\\TerminalBuddy\\prompt.txt'",
             ),
             ("hermes", "hermes", "& 'hermes' '--model' 'test-model' '--oneshot' $tbPrompt"),
-            ("pi", "pi", "& 'pi' '--model' 'test-model' '--print' $tbPrompt"),
-            ("mimo", "mimo", "& 'mimo' '--model' 'test-model' '--print' $tbPrompt"),
-            ("kimi", "kimi", "& 'kimi' '--model' 'test-model' '--print' $tbPrompt"),
+            ("pi", "pi", "$tbPrompt | & 'pi' '--model' 'test-model' '--print'"),
+            ("mimo", "mimo", "$tbPrompt | & 'mimo' '--model' 'test-model' '--print'"),
+            ("kimi", "kimi", "& 'kimi' '--model' 'test-model' '--prompt'"),
         ] {
             let command = build_interactive_terminal_command(
                 &test_runtime(kind, executable),
@@ -5973,6 +6180,7 @@ mod terminal_command_tests {
             branch_name: None,
             worktree_path: None,
             base_commit: None,
+            validated_commit: None,
             created_at: started_at.clone(),
             updated_at: started_at.clone(),
         };
@@ -6077,9 +6285,7 @@ fn run_attempt_watchdog(
 }
 
 fn terminal_exit_marker_path(attempt_id: &str) -> PathBuf {
-    AiDeliveryService::entity_dir(TERMINAL_RUNS_DIR)
-        .join(safe_path_segment(attempt_id))
-        .join("exit-code.txt")
+    terminal_run_dir_by_id(attempt_id).join("exit-code.txt")
 }
 
 fn attempt_terminal_running(attempt: &AiAttempt, terminal_service: &TerminalService) -> bool {
@@ -6300,6 +6506,7 @@ fn wait_for_terminal_exit(
     terminal_id: &str,
     exit_marker: &Path,
 ) -> Result<(i32, String), String> {
+    let started_at = Instant::now();
     loop {
         if let Some(exit_code) = read_terminal_exit_code(exit_marker) {
             let output = terminal_service
@@ -6309,6 +6516,10 @@ fn wait_for_terminal_exit(
         }
         if terminal_service.peek_terminal_output(terminal_id).is_err() {
             return Err("Agent 终端已在执行完成前关闭".to_string());
+        }
+        // 超时保护：防止 Reviewer Agent 挂起导致永久阻塞（上限 60 分钟）
+        if started_at.elapsed() > Duration::from_secs(3600) {
+            return Err("Reviewer Agent 执行超时（60 分钟），已自动中止".to_string());
         }
         thread::sleep(Duration::from_millis(300));
     }
@@ -6356,6 +6567,7 @@ fn wait_for_manager_plan(
     exit_marker: &Path,
 ) -> Result<ManagerPlan, String> {
     let mut last_result_error = None;
+    let started_at = Instant::now();
     loop {
         match fs::read_to_string(result_path) {
             Ok(content) if !content.trim().is_empty() => {
@@ -6395,6 +6607,11 @@ fn wait_for_manager_plan(
             return Err(last_result_error
                 .unwrap_or_else(|| "管理者终端已关闭，但尚未生成 plan.json".to_string()));
         }
+        // 超时保护：防止 Manager Agent 挂起导致永久阻塞（上限 30 分钟）
+        if started_at.elapsed() > Duration::from_secs(1800) {
+            return Err(last_result_error
+                .unwrap_or_else(|| "管理器规划超时（30 分钟），已自动中止".to_string()));
+        }
         thread::sleep(Duration::from_millis(300));
     }
 }
@@ -6410,12 +6627,12 @@ fn run_reviewer_agent(
     app: tauri::AppHandle,
     terminal_service: TerminalService,
 ) -> Result<(String, i32), String> {
-    let agent_start_directory = PathBuf::from(&project.workspace_root);
+    let agent_start_directory = worktree.to_path_buf();
     if !agent_start_directory.is_dir() {
-        return Err("项目工作区根目录不可用，无法启动 Reviewer Agent".to_string());
+        return Err("任务 worktree 不可用，无法启动 Reviewer Agent".to_string());
     }
     let prompt = format!(
-        "你是独立 Reviewer。请审查当前任务分支的本地提交和 git diff，确认是否覆盖需求、是否违反允许写入范围、是否有明显风险。\n\n任务：{}\n说明：{}\nAgent 起始目录：{}\n项目工作区根目录：{}\n本任务 worktree：{}\n允许写入范围：{}\n预期产物：{}\n\n只读审查：终端从项目工作区根目录启动。开始审查任务分支前，必须先切换到本任务 worktree；项目工作区根目录只用于了解上下文，不得修改文件、不得提交、不得推送、不得执行部署或破坏性操作。请输出中文审核意见，包括发现的问题与剩余风险。可以在终端中继续与用户沟通；确认审核完成后，退出当前 CLI，TerminalBuddy 将进入人工审核确认。",
+        "你是独立 Reviewer。请审查当前任务分支的本地提交和 git diff，确认是否覆盖需求、是否违反允许写入范围、是否有明显风险。\n\n任务：{}\n说明：{}\nAgent 起始目录：{}\n项目工作区根目录：{}\n本任务 worktree：{}\n允许写入范围：{}\n预期产物：{}\n\n只读审查：终端已从本任务 worktree 启动。项目工作区根目录只用于了解上下文，不得修改文件、不得提交、不得推送、不得执行部署或破坏性操作。请输出中文审核意见，包括发现的问题与剩余风险。确认审核完成后请退出当前 CLI，TerminalBuddy 将进入人工审核确认。",
         task.title,
         task.description,
         agent_start_directory.display(),
@@ -6523,20 +6740,20 @@ fn build_continuation_context(
         .filter(|id| *id != current_attempt_id)
         .filter_map(|id| {
             let attempt = AiDeliveryService::get::<AiAttempt>(ATTEMPTS_DIR, id, "").ok()?;
-            if !matches!(
-                attempt.state.as_str(),
-                "failed" | "policyViolation" | "cancelled"
-            ) {
-                return None;
-            }
-            let summary = attempt.summary.unwrap_or_default();
+           if !matches!(
+               attempt.state.as_str(),
+                "failed" | "policyViolation" | "cancelled" | "needsInput"
+           ) {
+               return None;
+           }
+           let summary = attempt.summary.unwrap_or_default();
             let run_dir = terminal_run_dir_by_id(id);
             let final_msg = fs::read_to_string(run_dir.join("final-message.txt"))
                 .ok()
                 .filter(|s| !s.trim().is_empty())
                 .map(|m| {
                     let truncated = if m.len() > 800 {
-                        format!("{}...", &m[..800])
+                        format!("{}...", &m[..m.floor_char_boundary(800)])
                     } else {
                         m
                     };
@@ -6593,10 +6810,28 @@ fn build_continuation_context(
         }
     }
 
+    // 查找已回答的决策请求，将其注入续接上下文供 Agent 参考
+    let answered_decisions: Vec<String> = AiDeliveryService::get_decision_requests(
+        Some(&contract.delivery_id),
+    )
+    .unwrap_or_default()
+    .into_iter()
+    .filter(|req| req.state == "answered")
+    .filter(|req| req.task_node_id.as_deref() == Some(&task.id))
+    .map(|req| {
+        format!(
+            "问题：{}\n回答：{}",
+            req.question,
+            req.answer.unwrap_or_default()
+        )
+    })
+    .collect();
+
     if prior_notes.is_empty()
         && uncommitted.is_empty()
         && committed.is_empty()
         && partial_outputs.is_empty()
+        && answered_decisions.is_empty()
     {
         return None;
     }
@@ -6616,6 +6851,9 @@ fn build_continuation_context(
     }
     if !prior_notes.is_empty() {
         sections.push(format!("之前执行未完成的原因：\n{}", prior_notes.join("\n")));
+    }
+    if !answered_decisions.is_empty() {
+        sections.push(format!("用户已做出的决策：\n{}", answered_decisions.join("\n\n")));
     }
 
     sections.push(
@@ -6706,7 +6944,14 @@ fn ensure_readonly_execution_unchanged(
                     .find(|repository| repository.id == baseline.repository_id)
                     .ok_or_else(|| "只读步骤引用的项目仓库不存在".to_string())?;
                 let path = project_repository_path(project, repository)?;
-                Ok((repository_status(&path)? != baseline.status).then_some(repository.name.as_str()))
+                let status_changed = repository_status(&path)? != baseline.status;
+                let head_changed = match baseline.head_commit.as_deref() {
+                    Some(head) => {
+                        run_git(&path, &["rev-parse".to_string(), "HEAD".to_string()])? != head
+                    }
+                    None => false,
+                };
+                Ok((status_changed || head_changed).then_some(repository.name.as_str()))
             })
             .collect::<Result<Vec<_>, String>>()?
             .into_iter()
@@ -6749,9 +6994,9 @@ fn run_shell_command(working_directory: &Path, command: &str) -> Result<AiComman
         .current_dir(working_directory);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
-    let output = cmd
-        .output()
-        .map_err(|error| format!("运行质量门禁命令失败: {}", error))?;
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let output = run_command_with_timeout(&mut cmd, QUALITY_GATE_COMMAND_TIMEOUT, "质量门禁命令")?;
     let mut combined = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.trim().is_empty() {
@@ -6942,7 +7187,7 @@ fn run_manager_planner(
         )
     } else {
         format!(
-            "9. 完成规划后，必须使用文件工具将最终 JSON 写入：{}\n10. 输出必须符合 Schema：{}\n11. plan.json 是任务图完成信号。最终版本写入后，平台会自动读取并更新交付状态，无需关闭 CLI；需要继续与用户沟通时可以保留终端。",
+            "9. 完成规划后，必须使用文件工具将最终 JSON 写入：{}\n10. 输出必须符合 Schema：{}\n11. plan.json 是任务图完成信号。最终版本写入并重新读取确认后，必须立即退出当前 CLI。",
             control.result_path.display(),
             schema_path.display(),
         )
@@ -6989,12 +7234,15 @@ fn run_manager_planner(
         &working_directory,
         &terminal_command,
     )?;
-    wait_for_manager_plan(
+    let result = wait_for_manager_plan(
         &terminal_service,
         &terminal_id,
         &control.result_path,
         &control.exit_marker,
-    )
+    );
+    // plan.json 已经冻结后不再允许管理者进程继续访问用户工作区。
+    let _ = terminal_service.close_terminal(&terminal_id);
+    result
 }
 
 fn generate_quality_gate_with_runtime(

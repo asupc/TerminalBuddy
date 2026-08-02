@@ -198,7 +198,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                           正在生成任务图
                         </button>
                       )}
-                      {delivery.state === "drafting" && (
+                      {["drafting", "cancelled", "failed", "succeeded", "completed"].includes(delivery.state) && (
                         <button
                           type="button"
                           className="btn-danger"
@@ -206,7 +206,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                           onClick={() => void removeDelivery()}
                         >
                           <Trash2 size={15} />
-                          删除草稿
+                          {delivery.state === "drafting" ? "删除草稿" : "删除交付"}
                         </button>
                       )}
                       {delivery.state === "drafting" &&

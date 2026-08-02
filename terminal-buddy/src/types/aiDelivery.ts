@@ -104,6 +104,8 @@ export interface CreateTaskContractInput {
   executionContext?: 'workspaceRoot' | 'taskWorktree';
   inputArtifacts?: string[];
   acceptanceCommands?: string[];
+  expectedArtifacts?: string[];
+  retryCount?: number;
 }
 
 export interface CreateAiDeliveryInput {
@@ -156,10 +158,13 @@ export interface AiTaskContract {
   inputArtifactDirectory?: string | null;
   outputArtifactDirectory?: string | null;
   acceptanceCommands: string[];
+  expectedArtifacts: string[];
+  retryCount: number;
   state: 'planned' | 'allocated' | string;
   branchName?: string | null;
   worktreePath?: string | null;
   baseCommit?: string | null;
+  validatedCommit?: string | null;
   createdAt: string;
   updatedAt: string;
 }

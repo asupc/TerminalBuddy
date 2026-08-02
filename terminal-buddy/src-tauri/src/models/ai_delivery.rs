@@ -224,6 +224,9 @@ pub struct AiTaskContract {
     pub worktree_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_commit: Option<String>,
+    /// 最近一次通过确定性验收的任务分支提交。合并前必须再次确认分支仍指向该提交。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validated_commit: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -233,6 +236,8 @@ pub struct AiTaskContract {
 pub struct AiRepositoryStatusBaseline {
     pub repository_id: String,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

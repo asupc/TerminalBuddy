@@ -744,12 +744,18 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
     });
  const removeDelivery = () =>
    execute("delete-delivery", async () => {
-     if (!delivery || delivery.state !== "drafting") return;
-      if (!await showConfirm(`确定删除草稿"${delivery.title}"吗？`, {
-        title: "确认删除草稿",
-        confirmText: "删除",
-        danger: true,
-      })) return;
+     if (!delivery || !["drafting", "cancelled", "failed", "succeeded", "completed"].includes(delivery.state)) return;
+      const isDraft = delivery.state === "drafting";
+      if (!await showConfirm(
+        isDraft
+          ? `确定删除草稿"${delivery.title}"吗？`
+          : `确定删除已结束的交付"${delivery.title}"吗？此操作将清理关联的 worktree、分支和数据，且不可恢复。`,
+        {
+          title: isDraft ? "确认删除草稿" : "确认删除交付",
+          confirmText: "删除",
+          danger: true,
+        }
+      )) return;
      const nextDeliveryId = deliveries.find((item) => item.id !== delivery.id)?.id ?? "";
       await deleteAiDelivery(delivery.id);
       await refresh(projectId, nextDeliveryId);
