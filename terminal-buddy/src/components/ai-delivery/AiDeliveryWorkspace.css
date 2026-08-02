@@ -1414,6 +1414,58 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+.ai-event-list-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ai-event-list-view {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 100%;
+}
+.ai-event-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ai-event-list-toolbar input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.ai-event-list-toolbar span {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.ai-event-list-view ol {
+  overflow: auto;
+  max-height: 100%;
+}
+.ai-event-list-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+.ai-event-list-pager span {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.ai-all-events-dialog .ai-event-list-view {
+  height: 100%;
+}
 .ai-attempt-actions {
   width: 100%;
   display: flex;

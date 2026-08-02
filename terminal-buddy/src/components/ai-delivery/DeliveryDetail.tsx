@@ -12,8 +12,11 @@ import { displayLocalPath, boardColumns, taskStateName, deliveryStateName,
   attemptStateName, mergeStateName, eventTypeName, isFailedEventType, isFailedAttemptState,
   formatEventTime, DeliveryTabId } from "./workspace-utils";
 import { AttemptLiveTerminalDialog } from "./AttemptLiveTerminalDialog";
+import { EventListView } from "./EventListView";
 import { TaskDagView } from "./TaskDagView";
 import { TaskNodeEditor } from "./TaskNodeEditor";
+import { Dialog } from "../shared/Dialog";
+import { getAiDeliveryEvents } from "../../services/tauri";
 import type {
   AiAgent, AiAttempt, AiDecisionRequest,
   AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiReviewGate, AiRole,
@@ -128,6 +131,21 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
   const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "dag">("list");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [showAllEventsDialog, setShowAllEventsDialog] = useState(false);
+  const [allEvents, setAllEvents] = useState<AiDeliveryEvent[] | null>(null);
+  const [loadingAllEvents, setLoadingAllEvents] = useState(false);
+  const [allEventsError, setAllEventsError] = useState<string | null>(null);
+  const openAllEventsDialog = () => {
+    setShowAllEventsDialog(true);
+    if (allEvents === null && !loadingAllEvents) {
+      setLoadingAllEvents(true);
+      setAllEventsError(null);
+      void getAiDeliveryEvents(deliveryId)
+        .then(setAllEvents)
+        .catch((reason) => setAllEventsError(reason instanceof Error ? reason.message : String(reason)))
+        .finally(() => setLoadingAllEvents(false));
+    }
+  };
   // 带参重试：从任务卡片进入编辑抽屉，保存后自动重新派发
   const [paramRetryTaskId, setParamRetryTaskId] = useState<string | null>(null);
   // 失败聚合：按 attempt.summary 首行聚类，取最高频 5 类
@@ -890,8 +908,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                             (agent) => agent.id === attempt.agentId,
                           );
                           const attemptEvents = deliveryEvents
-                            .filter((event) => event.attemptId === attempt.id)
-                            .slice(-160);
+                            .filter((event) => event.attemptId === attempt.id);
                           const isFailed = isFailedAttemptState(attempt.state);
                           return (
                             <li
@@ -921,9 +938,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                 </button>
                                )}
                                {attemptEvents.length > 0 && (
-                                  <pre className="ai-attempt-log">
-                                    {attemptEvents.map((event) => "[" + event.occurredAt + "] " + event.message).join("\n")}
-                                  </pre>
+                                  <EventListView events={attemptEvents} />
                                 )}
                                 {attempt.state === "running" && (
                                 <div className="ai-attempt-actions">
@@ -988,9 +1003,18 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                     <div className="ai-delivery-events-heading">
                       <div>
                         <h3>交付事件</h3>
-                        <p>保留规划、派发、审查、门禁和本地合并的最近 20 条记录。</p>
+                        <p>保留规划、派发、审查、门禁和本地合并的事件记录。</p>
                       </div>
-                      <small>{filteredRecentDeliveryEvents.length} / {deliveryEvents.length} 条</small>
+                      <div className="ai-event-list-heading-actions">
+                        <small>{filteredRecentDeliveryEvents.length} / {deliveryEvents.length} 条</small>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={openAllEventsDialog}
+                        >
+                          查看全部
+                        </button>
+                      </div>
                     </div>
                     <div className="ai-delivery-filter-bar" role="group" aria-label="事件筛选">
                       <span className="ai-delivery-filter-label">筛选</span>
@@ -1086,6 +1110,22 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                   : undefined
               }
             />
+          )}
+          {showAllEventsDialog && (
+            <Dialog
+              title={`全部交付事件（${allEvents?.length ?? "…"} 条）`}
+              onClose={() => setShowAllEventsDialog(false)}
+              className="ai-all-events-dialog"
+              style={{ width: 'min(760px, 92vw)', height: 'min(560px, 82vh)' }}
+            >
+              {loadingAllEvents ? (
+                <p className="ai-delivery-events-empty">正在加载全部事件...</p>
+              ) : allEventsError ? (
+                <p className="ai-delivery-events-empty">加载失败：{allEventsError}</p>
+              ) : allEvents ? (
+                <EventListView events={allEvents} />
+              ) : null}
+            </Dialog>
           )}
         </>
   );
