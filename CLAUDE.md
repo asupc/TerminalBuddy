@@ -113,4 +113,4 @@ Embedded in the Rust binary via `include_dir!` in release mode; served from `web
 - Session isolation: when `webApiShareSessions` is false (default), Web clients can only see/operate Web-created terminals; PC clients can see Web-created terminals but cannot write/resize/close them
 - Custom frameless window (`decorations: false` in tauri.conf.json), TitleBar.tsx provides window controls
 - `tauri-plugin-dialog` for native file/folder dialogs
-- No automated tests exist in the project
+- No CI or test framework exists, but `ai_delivery_service.rs` already contains `#[cfg(test)]` unit-test modules (`agent_decision_tests` at ~L5110, `terminal_command_tests` at ~L5991) runnable via `cargo test`; frontend has no tests

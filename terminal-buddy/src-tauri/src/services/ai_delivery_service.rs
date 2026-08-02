@@ -1,4 +1,4 @@
-use crate::commands::terminal::TerminalService;
+﻿use crate::commands::terminal::TerminalService;
 use crate::models::{
     AiAgent, AiAgentRuntime, AiAttempt, AiCommandResult, AiDecisionOption, AiDecisionRequest,
     AiDelivery, AiDeliveryEvent, AiMergeRecord, AiMergeRepositoryRecord, AiProject, AiQualityGate,
@@ -85,11 +85,21 @@ fn active_manager_plans() -> &'static Mutex<HashSet<String>> {
     PLANS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+
 fn runtime_save_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+struct IntegrationGuard { project_id: String }
+impl Drop for IntegrationGuard { fn drop(&mut self) { let _ = integration_locks().lock().map(|mut l| l.remove(&self.project_id)); } }
+fn acquire_integration_lock(pid: &str, op: &str) -> Result<IntegrationGuard,String> { let mut l=integration_locks().lock().unwrap_or_else(|e|e.into_inner()); if !l.insert(pid.to_string()) { return Err(format!("busy:{}",op)); } drop(l); Ok(IntegrationGuard{project_id:pid.to_string()}) }
+struct QualityGateGuard { task_node_id: String }
+impl Drop for QualityGateGuard { fn drop(&mut self) { let _ = quality_gate_locks().lock().map(|mut l| l.remove(&self.task_node_id)); } }
+fn acquire_quality_gate_lock(tid: &str) -> Result<QualityGateGuard,String> { let mut l=quality_gate_locks().lock().map_err(|_|"lock err".to_string())?; if !l.insert(tid.to_string()) { return Err("busy".to_string()); } drop(l); Ok(QualityGateGuard{task_node_id:tid.to_string()}) }
+
+struct ManagerPlanGuard { delivery_id: String }
+impl Drop for ManagerPlanGuard { fn drop(&mut self) { let _ = active_manager_plans().lock().map(|mut l| l.remove(&self.delivery_id)); } }
 #[cfg(windows)]
 fn same_runtime_command(left: &AiAgentRuntime, right: &AiAgentRuntime) -> bool {
     if !left.kind.trim().eq_ignore_ascii_case(right.kind.trim()) {
@@ -977,6 +987,7 @@ impl AiDeliveryService {
             return Err("交付未处于任务图生成状态".to_string());
         }
         let mut created = Vec::new();
+        let _plan_guard = ManagerPlanGuard { delivery_id: delivery.id.clone() };
         let result = (|| -> Result<(), String> {
             let manager_id = delivery
                 .manager_agent_id
@@ -1082,10 +1093,6 @@ impl AiDeliveryService {
                 Err(error)
             }
         })();
-        active_manager_plans()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(&delivery.id);
         final_result
     }
 
@@ -1699,25 +1706,13 @@ impl AiDeliveryService {
         app: tauri::AppHandle,
         terminal_service: TerminalService,
     ) -> Result<AiReviewGate, String> {
-        {
-            let mut locks = quality_gate_locks()
-                .lock()
-                .map_err(|_| "质量门禁锁异常".to_string())?;
-            if !locks.insert(task_node_id.to_string()) {
-                return Err("该任务的质量门禁正在执行中，请等待完成".to_string());
-            }
-        }
-        let result = Self::run_quality_gate_inner(
+        let _guard = acquire_quality_gate_lock(task_node_id)?;
+        Self::run_quality_gate_inner(
             task_node_id,
             reviewer_agent_id,
             app,
             terminal_service,
-        );
-        quality_gate_locks()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(task_node_id);
-        result
+        )
     }
 
     fn run_quality_gate_inner(
@@ -1970,37 +1965,15 @@ impl AiDeliveryService {
     pub fn merge_delivery_locally(delivery_id: &str) -> Result<AiMergeRecord, String> {
         let delivery = Self::get_delivery(delivery_id)?;
         let project = Self::get_project(&delivery.project_id)?;
-        let mut locks = integration_locks()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if !locks.insert(project.id.clone()) {
-            return Err("当前项目已有交付在进行集成或合并".to_string());
-        }
-        drop(locks);
-        let result = Self::merge_delivery_locally_locked(&delivery, &project);
-        integration_locks()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(&project.id);
-        result
+        let _guard = acquire_integration_lock(&project.id, "集成或合并")?;
+        Self::merge_delivery_locally_locked(&delivery, &project)
     }
 
     pub fn cleanup_delivery_integration(delivery_id: &str) -> Result<(), String> {
         let delivery = Self::get_delivery(delivery_id)?;
         let project = Self::get_project(&delivery.project_id)?;
-        let mut locks = integration_locks()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if !locks.insert(project.id.clone()) {
-            return Err("当前项目正在集成或合并，暂不能清理集成工作区".to_string());
-        }
-        drop(locks);
-        let result = cleanup_delivery_integration_workspace(&project, &delivery);
-        integration_locks()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(&project.id);
-        result?;
+        let _guard = acquire_integration_lock(&project.id, "集成或合并")?;
+        cleanup_delivery_integration_workspace(&project, &delivery)?;
         Self::append_event(
             &delivery.id,
             None,
@@ -2430,6 +2403,35 @@ impl AiDeliveryService {
         let mut task = Self::get_task_node(task_node_id)?;
         if !matches!(task.state.as_str(), "failed" | "rework" | "cancelled") {
             return Err(format!("当前任务不能重新派发: {}", task.state));
+        }
+        // 检查重试次数上限。retry_count=0 表示不限制，>0 时已用尽则拒绝。
+        let effective_retry_limit = task.retry_count.min(10);
+        if effective_retry_limit > 0 {
+            let attempted = task.attempt_ids.len() as u32;
+            if attempted >= effective_retry_limit {
+                // 清理重试耗尽的 worktree 和分支，避免资源泄漏
+                let _ = (|| -> Result<(), String> {
+                    let delivery = Self::get_delivery(&task.delivery_id)?;
+                    let project = Self::get_project(&delivery.project_id)?;
+                    if let Some(contract_id) = task.contract_id.as_deref() {
+                        let contract = Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "任务契约")?;
+                        if let (Some(worktree), Some(branch)) = (contract.worktree_path.as_deref(), contract.branch_name.as_deref()) {
+                            let repository = project.repositories.iter()
+                                .find(|r| r.id == contract.target_repository_id)
+                                .ok_or_else(|| "目标仓库不存在".to_string())?;
+                            let source = project_repository_path(&project, repository)?;
+                            cleanup_unallocated_task_worktree(&source, Path::new(worktree), branch);
+                        }
+                    }
+                    Ok(())
+                })();
+                return Err(format!(
+                    "任务已达到最大重试次数（{} / {}），请检查现场后通过编辑任务提高上限再重试",
+                    attempted, effective_retry_limit
+                ));
+            }
+            // 动态扩展容错：已有重试记录多于当前设置时自动提高上限
+            task.retry_count = effective_retry_limit.max(attempted.saturating_add(1));
         }
         let delivery = Self::get_delivery(&task.delivery_id)?;
         if delivery.state != "running" {
