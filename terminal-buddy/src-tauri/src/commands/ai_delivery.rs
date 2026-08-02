@@ -206,6 +206,11 @@ pub fn update_ai_task_node(input: UpdateAiTaskNodeInput) -> Result<AiTaskNode, S
 }
 
 #[command]
+pub fn delete_ai_task_node(task_node_id: String) -> Result<(), String> {
+    AiDeliveryService::delete_task_node(&task_node_id)
+}
+
+#[command]
 pub fn approve_ai_delivery(id: String) -> Result<AiDelivery, String> {
     AiDeliveryService::approve_delivery(&id)
 }

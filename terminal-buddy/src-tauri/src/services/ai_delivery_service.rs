@@ -1326,7 +1326,7 @@ impl AiDeliveryService {
             input_artifacts: input.input_artifacts,
             expected_artifacts: input.expected_artifacts,
             acceptance_commands: input.acceptance_commands,
-            retry_count: input.retry_count.min(10),
+            retry_count: input.retry_count,
             timeout_seconds: input.timeout_seconds,
             state: "planned".to_string(),
             assigned_agent_id: None,
@@ -1489,6 +1489,66 @@ impl AiDeliveryService {
             &diff,
         )?;
         Ok(task)
+    }
+
+    /// 删除任务节点：级联清理 contract/attempt 运行目录/审核记录/决策请求；
+    /// 引用它的 dependencyIds 自动移除并重算受影响任务状态。
+    pub fn delete_task_node(task_node_id: &str) -> Result<(), String> {
+        let task = Self::get_task_node(task_node_id)?;
+        let mut delivery = Self::get_delivery(&task.delivery_id)?;
+
+        // 状态约束：queued/running 执行中拒绝；其余（planned/failed/rework/cancelled/needsInput/policyViolation 等）可删
+        if matches!(task.state.as_str(), "queued" | "running") {
+            return Err(format!("任务状态 {} 不可删除", task.state));
+        }
+
+        // 1) contract
+        if let Some(contract_id) = &task.contract_id {
+            let _ = Self::delete(CONTRACTS_DIR, contract_id, "任务契约");
+        }
+        // 2) attempt 文件 + 运行目录（terminal_run_dir_by_id 兼容「纯 UUID」与「label__UUID」目录）
+        for attempt_id in &task.attempt_ids {
+            if let Ok(attempt) = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试") {
+                let run_dir = terminal_run_dir_by_id(&attempt.id);
+                let _ = fs::remove_dir_all(run_dir);
+            }
+            let _ = Self::delete(ATTEMPTS_DIR, attempt_id, "执行尝试");
+        }
+        // 3) review gate / decision request（按 task_node_id 引用全删，删除场景不做未决/已决区分）
+        for gate in Self::get_review_gates(Some(&delivery.id))? {
+            if gate.task_node_id == task.id {
+                let _ = Self::delete(REVIEW_GATES_DIR, &gate.id, "审核门禁");
+            }
+        }
+        for request in Self::get_decision_requests(Some(&delivery.id))? {
+            if request.task_node_id.as_deref() == Some(&task.id) {
+                let _ = Self::delete(DECISIONS_DIR, &request.id, "决策请求");
+            }
+        }
+        // 4) delivery.task_node_ids 移除
+        delivery.task_node_ids.retain(|id| id != task_node_id);
+        Self::save(DELIVERIES_DIR, &delivery.id, &delivery)?;
+        // 5) 删除任务文件
+        let _ = Self::delete(TASK_NODES_DIR, task_node_id, "任务节点");
+        // 6) 引用它的 dependencyIds 自动移除（不是直接报冲突）+ 状态重算
+        for other_id in delivery.task_node_ids.clone() {
+            if let Ok(mut other) = Self::get_task_node(&other_id) {
+                if other.dependency_ids.contains(&task.id) {
+                    other.dependency_ids.retain(|d| d != &task.id);
+                    other.updated_at = chrono::Utc::now().to_rfc3339();
+                    Self::save(TASK_NODES_DIR, &other.id, &other)?;
+                }
+            }
+        }
+        Self::refresh_ready_task_nodes(&task.delivery_id)?;
+        Self::append_event(
+            &task.delivery_id,
+            Some(&task.id),
+            None,
+            "taskNodeDeleted",
+            &format!("任务 {} 已删除", task.title),
+        )?;
+        Ok(())
     }
 
     pub fn approve_delivery(id: &str) -> Result<AiDelivery, String> {
@@ -1661,6 +1721,21 @@ impl AiDeliveryService {
                     "taskReady",
                     "依赖任务已完成，可以派发",
                 )?;
+                changed.push(task);
+            }
+        }
+        // demote：ready 且依赖不全部 succeeded（依赖已删除 / failed / rework / cancelled / planned）→ 回退 planned
+        for mut task in Self::get_task_nodes(delivery_id)? {
+            if task.state == "ready"
+                && !task.dependency_ids.is_empty()
+                && !task
+                    .dependency_ids
+                    .iter()
+                    .all(|dependency| succeeded.contains(dependency))
+            {
+                task.state = "planned".to_string();
+                task.updated_at = chrono::Utc::now().to_rfc3339();
+                Self::save(TASK_NODES_DIR, &task.id, &task)?;
                 changed.push(task);
             }
         }
@@ -2655,11 +2730,14 @@ impl AiDeliveryService {
 
     pub fn retry_task_node(task_node_id: &str) -> Result<AiTaskNode, String> {
         let mut task = Self::get_task_node(task_node_id)?;
-        if !matches!(task.state.as_str(), "failed" | "rework" | "cancelled") {
+        if !matches!(
+            task.state.as_str(),
+            "failed" | "rework" | "cancelled" | "policyViolation"
+        ) {
             return Err(format!("当前任务不能重新派发: {}", task.state));
         }
         // 检查重试次数上限。retry_count=0 表示不限制，>0 时已用尽则拒绝。
-        let effective_retry_limit = task.retry_count.min(10);
+        let effective_retry_limit = task.retry_count;
         if effective_retry_limit > 0 {
             let attempted = task.attempt_ids.len() as u32;
             if attempted >= effective_retry_limit {
@@ -2685,7 +2763,7 @@ impl AiDeliveryService {
                 ));
             }
             // 动态扩展容错：已有重试记录多于当前设置时自动提高上限
-            task.retry_count = effective_retry_limit.max(attempted.saturating_add(1));
+            task.retry_count = task.retry_count.max(attempted.saturating_add(1));
         }
         let delivery = Self::get_delivery(&task.delivery_id)?;
         if delivery.state != "running" {
