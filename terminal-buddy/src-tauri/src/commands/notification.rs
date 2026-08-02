@@ -90,15 +90,16 @@ pub fn show_claude_code_notification(
 
 pub fn show_ai_delivery_notification(
     app: AppHandle,
+    title: &str,
     delivery_id: String,
-    question: String,
+    message: String,
 ) -> Result<(), String> {
     let app_id = app.config().identifier.clone();
     ensure_portable_app_id(&app_id)?;
     let activated_app = app.clone();
     Toast::new(&app_id)
-        .title("AI 交付等待决策")
-        .text1(question.trim())
+        .title(title)
+        .text1(message.trim())
         .sound(Some(Sound::Default))
         .duration(Duration::Short)
         .add_button("打开交付", "open-ai-delivery")

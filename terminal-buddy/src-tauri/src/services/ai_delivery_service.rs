@@ -2225,6 +2225,15 @@ impl AiDeliveryService {
                         "mergeFailed",
                         "本地合并失败，已尝试恢复已合并仓库",
                     )?;
+                    // 系统托盘通知：合并冲突失败
+                    if let Some(app) = APP_HANDLE.get() {
+                        let _ = crate::commands::notification::show_ai_delivery_notification(
+                            app.clone(),
+                            "AI 交付合并冲突",
+                            delivery.id.clone(),
+                            format!("本地合并失败，已尝试恢复已合并仓库: {}", error),
+                        );
+                    }
                     return Err(format!("本地合并失败: {}", error));
                 }
             }
@@ -2244,6 +2253,15 @@ impl AiDeliveryService {
             "mergedLocally",
             "交付已合并到本地目标分支，未执行远端推送",
         )?;
+        // 系统托盘通知：合并成功
+        if let Some(app) = APP_HANDLE.get() {
+            let _ = crate::commands::notification::show_ai_delivery_notification(
+                app.clone(),
+                "AI 交付合并成功",
+                delivery.id.clone(),
+                format!("交付「{}」已合并到本地目标分支", completed_delivery.title),
+            );
+        }
         // 合并成功后清理临时集成 worktree、任务 worktree 和分支，避免资源累积
         let _ = cleanup_delivery_integration_workspace(project, delivery);
         cleanup_delivery_task_worktrees(project, delivery);
@@ -2975,6 +2993,7 @@ impl AiDeliveryService {
         )?;
         let _ = crate::commands::notification::show_ai_delivery_notification(
             app,
+            "AI 交付等待决策",
             delivery_id.to_string(),
             request.question.clone(),
         );
@@ -3169,6 +3188,15 @@ impl AiDeliveryService {
                         "deliverySucceeded",
                         "全部任务已完成，交付成功",
                     )?;
+                    // 系统托盘通知：交付整体收尾
+                    if let Some(app) = APP_HANDLE.get() {
+                        let _ = crate::commands::notification::show_ai_delivery_notification(
+                            app.clone(),
+                            "AI 交付完成",
+                            delivery_id.to_string(),
+                            format!("交付「{}」全部任务已完成，交付成功", delivery.title),
+                        );
+                    }
                     // 自动合并到目标分支
                     let merge_delivery_id = delivery.id.clone();
                     let merge_result = Self::merge_delivery_locally(&merge_delivery_id);
@@ -6312,6 +6340,17 @@ fn run_attempt_watchdog(
                warning_emitted = true;
            }
            if elapsed.num_seconds() > timeout_seconds as i64 {
+               // 系统托盘通知：任务超时终止（不放 fail_attempt_from_watchdog 内——它无法区分超时与终端结束）
+               let _ = crate::commands::notification::show_ai_delivery_notification(
+                   app.clone(),
+                   "AI 交付任务超时",
+                   delivery_id.to_string(),
+                   format!(
+                       "任务 {} 执行超时（超过 {} 分钟），已自动终止",
+                       task_node_id,
+                       timeout_seconds / 60
+                   ),
+               );
                let _ = fail_attempt_from_watchdog(
                    &attempt,
                    &format!(

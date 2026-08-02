@@ -262,6 +262,7 @@ pub fn create_ai_decision_request(
     let _ = app.emit("ai-delivery-decision", &request);
     let _ = crate::commands::notification::show_ai_delivery_notification(
         app,
+        "AI 交付等待决策",
         request.delivery_id.clone(),
         request.question.clone(),
     );
