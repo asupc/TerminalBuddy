@@ -6267,6 +6267,8 @@ fn create_ai_terminal(
         app.clone(),
         TerminalOwner::Pc,
     )?;
+    // 标记 AI 交付终端：drain_terminal_output 对其只读不消费，monitor 线程独占消费落盘
+    terminal_service.set_ai_delivery_flag(&terminal_id)?;
     if let Err(error) = app.emit(
         "terminal-created",
         serde_json::json!({
