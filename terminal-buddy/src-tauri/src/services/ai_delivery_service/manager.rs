@@ -430,3 +430,144 @@ pub(crate) fn wait_for_manager_plan(
         thread::sleep(Duration::from_millis(300));
     }
 }
+
+pub(crate) fn build_agent_prompt(
+    task: &AiTaskNode,
+    contract: &AiTaskContract,
+    project: &AiProject,
+) -> Result<String, String> {
+    let allowed_paths = contract.allowed_write_paths.join(", ");
+    let artifacts = if contract.expected_artifacts.is_empty() {
+        "无".to_string()
+    } else {
+        contract.expected_artifacts.join("；")
+    };
+    let checks = if contract.acceptance_commands.is_empty() {
+        "未配置".to_string()
+    } else {
+        contract.acceptance_commands.join("；")
+    };
+    let input_artifacts = match contract.input_artifact_directory.as_deref() {
+        Some(directory) => format!(
+            "前置任务成果位于交接目录 {}。可读取其中的文件作为输入，但不得修改该目录。",
+            directory
+        ),
+        None => "无前置任务成果目录。".to_string(),
+    };
+    let workflow_prompt = if task.task_prompt.trim().is_empty() {
+        "未配置额外步骤提示词。".to_string()
+    } else {
+        task.task_prompt.trim().to_string()
+    };
+    let dependency_summaries = if task.dependency_ids.is_empty() {
+        "无前置步骤结论。".to_string()
+    } else {
+        task.dependency_ids
+            .iter()
+            .map(|dependency_id| {
+                let dependency = AiDeliveryService::get_task_node(dependency_id)?;
+                let summary = dependency
+                    .attempt_ids
+                    .last()
+                    .map(|attempt_id| {
+                        AiDeliveryService::get::<AiAttempt>(
+                            ATTEMPTS_DIR,
+                            attempt_id,
+                            "前置步骤执行",
+                        )
+                    })
+                    .transpose()?
+                    .and_then(|attempt| {
+                        fs::read_to_string(
+                            terminal_run_dir_by_id(&attempt.id).join("transcript.log"),
+                        )
+                        .ok()
+                        .filter(|output| !output.trim().is_empty())
+                        .map(|output| compact_output(&output))
+                        .or(attempt.summary)
+                    })
+                    .unwrap_or_else(|| "未提供执行摘要".to_string());
+                Ok(format!("- {}：{}", dependency.title, summary))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+            .join("\n")
+    };
+    let resolved_decisions = AiDeliveryService::get_decision_requests(Some(&task.delivery_id))?
+        .into_iter()
+        .filter(|request| {
+            request.state == "answered"
+                && request
+                    .task_node_id
+                    .as_deref()
+                    .is_none_or(|task_id| task_id == task.id)
+        })
+        .filter_map(|request| {
+            request
+                .answer
+                .map(|answer| format!("- 问题：{}\n  用户决定：{}", request.question, answer))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let resolved_decisions = if resolved_decisions.is_empty() {
+        "无。".to_string()
+    } else {
+        resolved_decisions
+    };
+    let output_artifacts = match contract.output_artifact_directory.as_deref() {
+        Some(directory) => {
+            let expected_paths = contract
+                .expected_artifacts
+                .iter()
+                .map(|artifact| {
+                    format!(
+                        "- {}：{}",
+                        artifact,
+                        PathBuf::from(directory).join(artifact).display()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "预期产物只能写入成果目录 {}。必须严格按下列完整路径创建文件（包含相对目录层级）：\n{}\n该目录位于项目工作区之外，不属于项目源码；不得向其他位置写入。",
+                directory, expected_paths
+            )
+        }
+        None => "无需写入外部成果目录。".to_string(),
+    };
+    let task_worktree = contract
+        .worktree_path
+        .as_deref()
+        .unwrap_or("未创建；本步骤在项目工作区根目录只读执行");
+    let mode_constraints = if task.execution_mode == "readonly" {
+        let context_name = if contract.execution_context == EXECUTION_CONTEXT_WORKSPACE_ROOT {
+            "项目工作区根目录"
+        } else {
+            "任务 worktree"
+        };
+        format!(
+            "- Agent 已从本任务契约目录启动；本步骤的只读对象是{}：{}。\n- 项目文件只能读取，不得修改、创建或删除；不得创建 Git 提交。\n- 若配置了外部成果目录，只能在该目录写入预期产物。若发现阻断问题，请在最终结论中明确说明。",
+            context_name, contract.working_directory
+        )
+    } else {
+        format!(
+            "- Agent 已从本任务 worktree 启动：{}。\n- 项目工作区根目录仅用于理解项目上下文，严禁在其中或其他目录修改项目文件。\n- 只能修改 worktree 中的这些相对路径：{}\n- 完成后必须只在当前任务分支创建本地 Git 提交；未提交改动不能进入下一步骤。",
+            contract.working_directory, allowed_paths
+        )
+    };
+    Ok(format!(
+        "你正在执行一项由 TerminalBuddy 调度的用户项目任务。TerminalBuddy 只是调度平台，不是本任务要搜索、读取或修改的代码仓库；任务对象只限下方列出的项目工作区、任务 worktree 与成果目录。\n\n任务：{}\n说明：{}\n\n执行位置：\n- Agent 当前工作目录：{}\n- 项目工作区根目录：{}\n- 本任务 worktree：{}\n\n当前编排步骤的通用任务提示词：\n{}\n\n前置步骤结论：\n{}\n\n用户已做出的决策：\n{}\n\n不可变约束：\n{}\n- Windows 源码、任务说明和结果文件均使用 UTF-8。使用 PowerShell 读取或写入文件时，必须显式指定 `-Encoding UTF8`；不得使用默认编码读取包含中文的源码。\n- 终端输出只保留简短的进度、结论、执行过的验证及必要报错。禁止回显完整源码、配置、构建日志、JSON 或命令输出；检索时限制结果数量，读取文件时只读取所需片段，其余输出重定向或丢弃。\n- 禁止访问或修改其他服务仓库。\n- 禁止执行 git push、创建 Pull Request、部署、强制推送或破坏性操作。\n\n输入成果：{}\n预期产物：{}\n成果写入：{}\n验收命令：{}\n\n完成后简要说明结论、改动或发现、执行过的验证和仍存在的风险。确认任务与沟通均结束后，请退出当前 CLI；TerminalBuddy 会在 CLI 退出后推进下一编排步骤。",
+        task.title,
+        task.description,
+        contract.working_directory,
+        project.workspace_root,
+        task_worktree,
+        workflow_prompt,
+        dependency_summaries,
+        resolved_decisions,
+        mode_constraints,
+        input_artifacts,
+        artifacts,
+        output_artifacts,
+        checks,
+    ))
+}
