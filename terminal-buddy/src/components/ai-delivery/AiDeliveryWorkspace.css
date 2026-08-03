@@ -1312,6 +1312,121 @@
   flex: 0 0 auto;
   white-space: nowrap;
 }
+.ai-artifact-view {
+  min-width: 0;
+}
+.ai-artifact-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.ai-artifact-count {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.ai-artifact-error {
+  margin: 6px 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+.ai-artifact-empty {
+  margin: 18px 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.ai-artifact-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 12px;
+}
+.ai-artifact-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+.ai-artifact-list li + li {
+  border-top: 1px solid var(--border-subtle);
+}
+.ai-artifact-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.ai-artifact-list button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.ai-artifact-list button.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.ai-artifact-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.ai-artifact-list small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.ai-artifact-preview {
+  min-width: 0;
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+}
+.ai-artifact-pre {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-primary);
+}
+.ai-artifact-compare {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+.ai-artifact-compare-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.ai-artifact-compare-heading strong {
+  font-size: 13px;
+}
+.ai-artifact-compare-heading select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.ai-artifact-diff {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
 .ai-delivery-events ol {
   display: block;
   gap: 0;

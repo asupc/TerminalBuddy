@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Profile, Workspace, RemoteFileEntry, ServerStats } from '../types';
 import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord, AiProject, AiQualityGate, AiReviewDiffResult, AiReviewGate, AiRole, AiRuntimeProbe, AiStartupPreset, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiDeliveryTemplateInput, UpdateAiTaskNodeInput } from '../types/aiDelivery';
-import type { AiAttemptOutput } from '../types/aiDelivery';
+import type { AiArtifactMeta, AiAttemptOutput } from '../types/aiDelivery';
 
 // Profile Commands
 export async function getAllProfiles(): Promise<Profile[]> {
@@ -664,6 +664,12 @@ export const getAiAttempts = (deliveryId?: string) =>
   invoke<AiAttempt[]>('get_ai_attempts', { deliveryId: deliveryId ?? null });
 export const readAiAttemptOutput = (attemptId: string) =>
   invoke<AiAttemptOutput>('read_ai_attempt_output', { attemptId });
+export const listAiDeliveryArtifacts = (deliveryId: string) =>
+  invoke<AiArtifactMeta[]>('list_ai_delivery_artifacts', { deliveryId });
+export const readAiDeliveryArtifact = (deliveryId: string, path: string) =>
+  invoke<string>('read_ai_delivery_artifact', { deliveryId, path });
+export const exportAiDeliveryArtifactsZip = (deliveryId: string, targetPath: string) =>
+  invoke<string>('export_ai_delivery_artifacts_zip', { deliveryId, targetPath });
 export const dispatchAiTaskNode = (taskNodeId: string, agentId?: string) =>
   invoke<AiAttempt>('dispatch_ai_task_node', { taskNodeId, agentId: agentId ?? null });
 export const dispatchAiReadyTasks = (deliveryId: string) =>

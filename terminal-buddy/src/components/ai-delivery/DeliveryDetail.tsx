@@ -13,6 +13,7 @@ import { displayLocalPath, boardColumns, taskStateName, deliveryStateName,
   formatEventTime, DeliveryTabId } from "./workspace-utils";
 import { AttemptLiveTerminalDialog } from "./AttemptLiveTerminalDialog";
 import { EventListView } from "./EventListView";
+import { ArtifactView } from "./ArtifactView";
 import { TaskDagView } from "./TaskDagView";
 import { TaskNodeEditor } from "./TaskNodeEditor";
 import { Dialog } from "../shared/Dialog";
@@ -704,6 +705,15 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                         <span>事件</span>
                         <small>{deliveryEvents.length}</small>
                       </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        className={activeTaskTab === "artifacts" ? "active" : ""}
+                        aria-selected={activeTaskTab === "artifacts"}
+                        onClick={() => setActiveTaskTab("artifacts")}
+                      >
+                        <span>产物</span>
+                      </button>
                     </div>
                     <div className="ai-detail-tabs">
                       <button className={viewMode === "list" ? "active" : ""} onClick={() => setViewMode("list")}>列表视图</button>
@@ -1190,6 +1200,11 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                       </ol>
                     )}
                   </section>
+                    </div>
+                  )}
+                  {activeTaskTab === "artifacts" && (
+                    <div className="ai-delivery-tab-panel">
+                      <ArtifactView delivery={delivery} deliveries={deliveries} />
                     </div>
                   )}
                       </>

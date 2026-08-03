@@ -489,6 +489,18 @@ pub struct AiAttemptOutput {
     pub live_output_tail: String,
 }
 
+/// 交付产物文件元数据（归档浏览/对比/打包用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiArtifactMeta {
+    /// 相对交付运行目录的路径（如 `plan.json`、`attempts/xxx/transcript.log`）
+    pub path: String,
+    /// 文件大小（字节）
+    pub size: u64,
+    /// 修改时间（RFC3339 字符串）
+    pub modified_at: String,
+}
+
 /// 任务节点编辑输入：所有字段均为 Option（None 表示不修改；双 Option 区分「未提供」与「设为空」）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

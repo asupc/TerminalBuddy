@@ -286,6 +286,12 @@ export interface AiAttemptOutput {
   liveOutputTail: string;
 }
 
+export interface AiArtifactMeta {
+  path: string;
+  size: number;
+  modifiedAt: string;
+}
+
 export interface AiCommandResult {
   command: string;
   exitCode: number;

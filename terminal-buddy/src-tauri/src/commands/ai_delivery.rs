@@ -554,3 +554,27 @@ pub async fn cleanup_ai_delivery_integration(delivery_id: String) -> Result<(), 
 pub fn read_ai_attempt_output(attempt_id: String) -> Result<AiAttemptOutput, String> {
     AiDeliveryService::read_attempt_output(&attempt_id)
 }
+
+#[command]
+pub fn list_ai_delivery_artifacts(
+    delivery_id: String,
+) -> Result<Vec<crate::models::AiArtifactMeta>, String> {
+    AiDeliveryService::list_delivery_artifacts(&delivery_id)
+}
+
+#[command]
+pub fn read_ai_delivery_artifact(delivery_id: String, path: String) -> Result<String, String> {
+    AiDeliveryService::read_delivery_artifact(&delivery_id, &path)
+}
+
+#[command]
+pub async fn export_ai_delivery_artifacts_zip(
+    delivery_id: String,
+    target_path: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        AiDeliveryService::export_delivery_artifacts_zip(&delivery_id, &target_path)
+    })
+    .await
+    .map_err(|error| format!("产物 ZIP 导出线程失败: {}", error))?
+}

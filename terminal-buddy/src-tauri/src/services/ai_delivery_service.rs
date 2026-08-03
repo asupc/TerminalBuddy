@@ -1,12 +1,13 @@
 ﻿use crate::commands::terminal::TerminalService;
 use crate::models::{
-    AiAgent, AiAgentRuntime, AiAttempt, AiCommandResult, AiDecisionOption, AiDecisionRequest,
-    AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord, AiMergeRepositoryRecord,
-    AiProject, AiQualityGate, AiAttemptOutput, AiRepository, AiRepositoryStatusBaseline,
-    AiReviewGate, AiRole, AiRuntimeProbe, AiStartupPreset, AiTaskContract, AiTaskNode, AiWorkflow,
-    CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput,
-    CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, TerminalOwner,
-    UpdateAiDeliveryInput, UpdateAiTaskNodeInput, UpdateAiDeliveryTemplateInput,
+    AiAgent, AiAgentRuntime, AiArtifactMeta, AiAttempt, AiCommandResult, AiDecisionOption,
+    AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord,
+    AiMergeRepositoryRecord, AiProject, AiQualityGate, AiAttemptOutput, AiRepository,
+    AiRepositoryStatusBaseline, AiReviewGate, AiRole, AiRuntimeProbe, AiStartupPreset,
+    AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput,
+    CreateAiDeliveryTemplateInput, CreateAiProjectInput, CreateAiTaskNodeInput,
+    CreateTaskContractInput, TerminalOwner, UpdateAiDeliveryInput, UpdateAiTaskNodeInput,
+    UpdateAiDeliveryTemplateInput,
 };
 use crate::services::{BotSettingsService, DatabaseService, PathService};
 use serde::de::DeserializeOwned;
@@ -2147,6 +2148,168 @@ impl AiDeliveryService {
             is_live,
             live_output_tail,
         })
+    }
+
+    /// 交付产物文件白名单：manager 与各 attempt 运行目录下的已知产物。
+    const ARTIFACT_FILE_NAMES: &[&str] = &[
+        "plan.json",
+        "transcript.log",
+        "review.json",
+        "decision.json",
+        "prompt.txt",
+        "final-message.txt",
+        "live-output.log",
+        "review-schema.json",
+        "exit-code.txt",
+    ];
+
+    /// 列出交付的全部产物文件元数据（两级结构：manager run_dir 的 plan.json + 各 attempt run_dir 的 transcript/review 等）。
+    pub fn list_delivery_artifacts(delivery_id: &str) -> Result<Vec<AiArtifactMeta>, String> {
+        let mut metas = Vec::new();
+        let mut seen_dirs: HashSet<String> = HashSet::new();
+        let attempts = Self::get_all_attempts(Some(delivery_id))?;
+        for attempt in attempts {
+            let run_dir = terminal_run_dir_by_id(&attempt.id);
+            if !run_dir.is_dir() {
+                continue;
+            }
+            let dir_key = run_dir.to_string_lossy().to_string();
+            if !seen_dirs.insert(dir_key.clone()) {
+                continue;
+            }
+            let run_dir_name = run_dir
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            for file_name in Self::ARTIFACT_FILE_NAMES {
+                let file_path = run_dir.join(file_name);
+                if let Ok(metadata) = fs::metadata(&file_path) {
+                    if !metadata.is_file() {
+                        continue;
+                    }
+                    let modified_at = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                        .map(|duration| {
+                            let seconds = duration.as_secs() as i64;
+                            let nanos = duration.subsec_nanos();
+                            chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, nanos)
+                                .map(|time| time.to_rfc3339())
+                                .unwrap_or_default()
+                        })
+                        .unwrap_or_default();
+                    metas.push(AiArtifactMeta {
+                        path: format!("{}/{}", run_dir_name, file_name),
+                        size: metadata.len(),
+                        modified_at,
+                    });
+                }
+            }
+        }
+        metas.sort_by(|left, right| left.path.cmp(&right.path));
+        Ok(metas)
+    }
+
+    /// 按产物路径读取全文（BOM/非 UTF-8 容错，复用 read_attempt_output 的读取模式，不截断尾部）。
+    pub fn read_delivery_artifact(delivery_id: &str, path: &str) -> Result<String, String> {
+        // 路径必须是「run_dir 名/白名单文件名」两级，防止越权读取其他目录。
+        let (dir_name, file_name) = path
+            .split_once('/')
+            .ok_or_else(|| format!("产物路径无效: {}", path))?;
+        if !Self::ARTIFACT_FILE_NAMES.contains(&file_name) {
+            return Err(format!("不支持的产物文件: {}", file_name));
+        }
+        let attempts = Self::get_all_attempts(Some(delivery_id))?;
+        let run_dir = attempts
+            .iter()
+            .map(|attempt| terminal_run_dir_by_id(&attempt.id))
+            .find(|dir| {
+                dir.file_name()
+                    .map(|name| name.to_string_lossy().to_string() == dir_name)
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| format!("产物目录不存在: {}", dir_name))?;
+        let bytes = fs::read(run_dir.join(file_name))
+            .map_err(|error| format!("读取产物失败: {}", error))?;
+        // 去除 UTF-8 BOM，非 UTF-8 用 lossy 转换（与 read_attempt_output 容错模式一致）
+        let content = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            String::from_utf8_lossy(&bytes[3..]).to_string()
+        } else {
+            String::from_utf8_lossy(&bytes).to_string()
+        };
+        Ok(content)
+    }
+
+    /// 打包交付的全部产物（manager plan.json + 各 attempt 运行目录 + 交付 JSON）到 target_path。
+    pub fn export_delivery_artifacts_zip(
+        delivery_id: &str,
+        target_path: &str,
+    ) -> Result<String, String> {
+        use std::io::Write as _;
+        use zip::write::SimpleFileOptions;
+
+        let delivery: AiDelivery = Self::get(DELIVERIES_DIR, delivery_id, "交付")?;
+        let target = PathBuf::from(target_path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("创建导出目录失败: {}", error))?;
+        }
+        let file = fs::File::create(&target)
+            .map_err(|error| format!("创建 ZIP 文件失败: {}", error))?;
+        let mut zip_writer = zip::ZipWriter::new(file);
+        let options: SimpleFileOptions = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        // 1) 交付 JSON
+        let delivery_json = serde_json::to_string_pretty(&delivery)
+            .map_err(|error| format!("序列化交付失败: {}", error))?;
+        zip_writer
+            .start_file(format!("delivery-{}.json", delivery_id), options)
+            .map_err(|error| format!("写入 ZIP 失败: {}", error))?;
+        zip_writer
+            .write_all(delivery_json.as_bytes())
+            .map_err(|error| format!("写入 ZIP 失败: {}", error))?;
+
+        // 2) 各 attempt 运行目录下的白名单产物
+        let attempts = Self::get_all_attempts(Some(delivery_id))?;
+        let mut seen_dirs: HashSet<String> = HashSet::new();
+        for attempt in attempts {
+            let run_dir = terminal_run_dir_by_id(&attempt.id);
+            if !run_dir.is_dir() {
+                continue;
+            }
+            let dir_key = run_dir.to_string_lossy().to_string();
+            if !seen_dirs.insert(dir_key.clone()) {
+                continue;
+            }
+            let run_dir_name = run_dir
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            for file_name in Self::ARTIFACT_FILE_NAMES {
+                let file_path = run_dir.join(file_name);
+                if !file_path.is_file() {
+                    continue;
+                }
+                let bytes = fs::read(&file_path)
+                    .map_err(|error| format!("读取产物失败: {}", error))?;
+                zip_writer
+                    .start_file(
+                        format!("{}/{}", run_dir_name, file_name),
+                        options,
+                    )
+                    .map_err(|error| format!("写入 ZIP 失败: {}", error))?;
+                zip_writer
+                    .write_all(&bytes)
+                    .map_err(|error| format!("写入 ZIP 失败: {}", error))?;
+            }
+        }
+
+        zip_writer
+            .finish()
+            .map_err(|error| format!("完成 ZIP 失败: {}", error))?;
+        Ok(target.to_string_lossy().to_string())
     }
 
     /// 应用进程已退出时，内存中的终端无法恢复；保留现场并允许用户重新派发。
