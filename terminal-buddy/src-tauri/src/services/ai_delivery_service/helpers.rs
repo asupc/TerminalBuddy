@@ -473,6 +473,7 @@ pub(crate) fn requires_workflow_review(task: &AiTaskNode) -> bool {
         && !task.dependency_ids.is_empty()
 }
 
+/// 将显示标签中的不安全字符替换为下划线，用于构造可读的终端运行目录名。
 pub(crate) fn safe_display_segment(value: &str) -> String {
     value
         .chars()
@@ -929,7 +930,6 @@ pub(crate) fn cleanup_delivery_integration_workspace(
     Ok(())
 }
 
-/// 将显示标签中的不安全字符替换为下划线，用于构造可读的终端运行目录名。
 /// 清理交付关联的所有任务 worktree、分支和产出物交接目录。
 /// 用于交付删除或合并完成后的资源回收，全部以尽力方式执行，不阻断主流程。
 pub(crate) fn cleanup_delivery_task_worktrees(project: &AiProject, delivery: &AiDelivery) {

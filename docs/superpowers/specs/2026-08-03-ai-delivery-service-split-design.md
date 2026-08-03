@@ -56,7 +56,8 @@
 - `replan_legacy_delivery`、`replan_delivery_accepting_current_state`（L816-886）
 - `begin_delivery_planning`、`fail_delivery_planning`、`plan_delivery_with_manager`（L1020-1247）
 - `repair_workflow_review`（L9075-9110）、`run_reviewer_agent`（L9167-9234）
-- 规划自由函数：`build_manager_prompt`、`validate_manager_workflow_plan`、`requires_workflow_review`、`run_manager_planner`、`manager_plan_schema`、`generate_quality_gate_with_runtime`、`normalize_path_for_external_process`、`run_command_with_timeout`（L9562-9944）
+- 规划自由函数：`run_manager_planner`、`manager_plan_schema`、`generate_quality_gate_with_runtime`、`normalize_path_for_external_process`、`run_command_with_timeout`（L9562-9944）
+- `wait_for_manager_plan`（L8839，随 Task 2 归入本模块）
 - `build_agent_prompt`（L7092-7232）
 
 ### `quality.rs` — 质量域（~1100 行）
@@ -74,6 +75,7 @@
 - 校验/审计：`validate_runtime`、`validate_agent_configuration`、`validate_task_input`、`validate_write_paths`、`write_paths_overlap`、`audit_contract_scope`、`audit_allowed_write_paths`、`is_allowed_write_path`、`validate_artifact_paths`（L6593-6840、L9433-9450）
 - 路径/文本：`canonical_directory`、`normalize_optional_directory`（L6228-6247）、`safe_display_segment`、`make_terminal_run_dir_name`、`terminal_run_dir_by_id`、`safe_path_segment`、`compact_path_id`、`safe_ref_segment`、`run_git`（L6982-7090）
 - 执行工具：`compact_output`、`strip_terminal_control_sequences`、`build_continuation_context`、`ensure_expected_artifacts`、`is_legacy_delivery_plan`、`upgrade_legacy_workflow_steps`、`ensure_readonly_execution_unchanged`、`ensure_task_branch_clean`、`run_shell_command`（L9235-9561）
+- 规划提示词工具：`build_manager_prompt`、`validate_manager_workflow_plan`、`requires_workflow_review`（L9290-9429；原划入 manager.rs，执行时按行号区间归入本模块，用户已确认）
 - `dispatch_lock`、`attempt_start_lock`（L6999-7009）
 
 ### `tests.rs` — 跨域测试（~1000 行）
@@ -106,3 +108,9 @@
 - 不改变外部 API（命令层、lib.rs、前端）。
 - 不做行内重构（如提取重复代码、改名）。
 - 不改动 `.claude/settings.local.json` 等无关工作区文件。
+
+## 实现说明
+
+- 终端 `read_workflow_review` 中的 BOM 字面量在移动时改写为等价转义 `'\u{feff}'`（语义完全一致，属字符规范化）。
+- `RepositoryQualityContext` / `QualityManifest` 的字段加了 `pub(crate)`（tests.rs 构造需要）。
+- 用户工作区既有 WIP 随脚手架提交进入历史。

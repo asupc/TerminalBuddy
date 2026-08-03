@@ -132,7 +132,6 @@ impl AiDeliveryService {
         Ok(delivery)
     }
 
-
     pub fn delete_delivery(id: &str) -> Result<(), String> {
          let delivery = Self::get_delivery(id)?;
         if !matches!(

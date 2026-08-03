@@ -145,15 +145,11 @@ use helpers::*;
 mod terminal;
 use terminal::*;
 mod tests;
-use tests::*;
 mod quality;
 use quality::*;
 mod entity;
-use entity::*;
 mod dispatch;
-use dispatch::*;
 mod delivery;
-use delivery::*;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
