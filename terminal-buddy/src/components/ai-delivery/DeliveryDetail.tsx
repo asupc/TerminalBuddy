@@ -1,12 +1,14 @@
 import {
-  Check, CircleHelp, CircleStop, FileText, GitMerge, Layers3, Pause, Pencil, Play,
+  Check, CircleHelp, CircleStop, Download, FileText, GitMerge, Layers3, Pause, Pencil, Play,
   Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, SquareTerminal, Trash2
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type React from "react";
+import { save } from "@tauri-apps/plugin-dialog";
 import {
   approveAiDelivery, confirmPolicyViolationSite, continueMergeAfterConflict,
-  markAiTaskSkipped, pauseAiDelivery, resumeAiDelivery,
+  generateAiDeliveryReport, markAiTaskSkipped, pauseAiDelivery, resumeAiDelivery,
+  writeFileContent,
 } from "../../services/tauri";
 import { displayLocalPath, boardColumns, taskStateName, deliveryStateName,
   attemptStateName, mergeStateName, eventTypeName, isFailedEventType, isFailedAttemptState,
@@ -158,6 +160,39 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
   } | null>(null);
   const [reviewDiffLoading, setReviewDiffLoading] = useState(false);
   const [reviewDiffError, setReviewDiffError] = useState<string | null>(null);
+  const [reportContent, setReportContent] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const loadReport = useCallback(() => {
+    if (!deliveryId) return;
+    setReportBusy(true);
+    setReportError("");
+    void generateAiDeliveryReport(deliveryId)
+      .then(setReportContent)
+      .catch((reason) => setReportError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setReportBusy(false));
+  }, [deliveryId]);
+  const exportReport = async () => {
+    if (!reportContent) return;
+    setExportBusy(true);
+    setReportError("");
+    try {
+      const selected = await save({
+        title: "导出交付报告",
+        defaultPath: `delivery-report-${delivery?.title ?? deliveryId}.md`,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (selected) {
+        const ok = await writeFileContent(selected, reportContent);
+        if (!ok) setReportError("导出失败：文件写入未完成");
+      }
+    } catch (reason) {
+      setReportError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setExportBusy(false);
+    }
+  };
   const openReviewDiff = (task: AiTaskNode) => {
     setReviewDiffLoading(true);
     setReviewDiffError(null);
@@ -714,6 +749,15 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                       >
                         <span>产物</span>
                       </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        className={activeTaskTab === "report" ? "active" : ""}
+                        aria-selected={activeTaskTab === "report"}
+                        onClick={() => setActiveTaskTab("report")}
+                      >
+                        <span>报告</span>
+                      </button>
                     </div>
                     <div className="ai-detail-tabs">
                       <button className={viewMode === "list" ? "active" : ""} onClick={() => setViewMode("list")}>列表视图</button>
@@ -1205,6 +1249,42 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                   {activeTaskTab === "artifacts" && (
                     <div className="ai-delivery-tab-panel">
                       <ArtifactView delivery={delivery} deliveries={deliveries} />
+                    </div>
+                  )}
+                  {activeTaskTab === "report" && (
+                    <div className="ai-delivery-tab-panel">
+                      <section className="ai-delivery-report" aria-label="交付收尾报告">
+                        <div className="ai-report-toolbar">
+                          <div>
+                            <h3>交付收尾报告</h3>
+                            <p>成功率 / 重试链 / 耗时 / 合并信息汇总，可导出 Markdown。</p>
+                          </div>
+                          <div className="ai-report-actions">
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => void loadReport()}
+                              disabled={reportBusy}
+                            >
+                              <RefreshCw size={13} />
+                              {reportBusy ? "生成中..." : "生成 / 刷新"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              onClick={() => void exportReport()}
+                              disabled={!reportContent || exportBusy}
+                            >
+                              <Download size={13} />
+                              {exportBusy ? "导出中..." : "导出 .md"}
+                            </button>
+                          </div>
+                        </div>
+                        {reportError && <p className="ai-artifact-error">{reportError}</p>}
+                        {reportContent && (
+                          <pre className="ai-report-pre">{reportContent}</pre>
+                        )}
+                      </section>
                     </div>
                   )}
                       </>

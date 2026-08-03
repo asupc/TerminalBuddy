@@ -670,6 +670,8 @@ export const readAiDeliveryArtifact = (deliveryId: string, path: string) =>
   invoke<string>('read_ai_delivery_artifact', { deliveryId, path });
 export const exportAiDeliveryArtifactsZip = (deliveryId: string, targetPath: string) =>
   invoke<string>('export_ai_delivery_artifacts_zip', { deliveryId, targetPath });
+export const generateAiDeliveryReport = (deliveryId: string) =>
+  invoke<string>('generate_ai_delivery_report', { deliveryId });
 export const dispatchAiTaskNode = (taskNodeId: string, agentId?: string) =>
   invoke<AiAttempt>('dispatch_ai_task_node', { taskNodeId, agentId: agentId ?? null });
 export const dispatchAiReadyTasks = (deliveryId: string) =>

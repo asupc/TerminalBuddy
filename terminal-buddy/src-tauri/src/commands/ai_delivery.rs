@@ -568,3 +568,8 @@ pub async fn export_ai_delivery_artifacts_zip(
     .await
     .map_err(|error| format!("产物 ZIP 导出线程失败: {}", error))?
 }
+
+#[command]
+pub fn generate_ai_delivery_report(delivery_id: String) -> Result<String, String> {
+    AiDeliveryService::generate_delivery_report(&delivery_id)
+}

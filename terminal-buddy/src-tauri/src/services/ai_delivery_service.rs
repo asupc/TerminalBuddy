@@ -2325,6 +2325,210 @@ impl AiDeliveryService {
         Ok(target.to_string_lossy().to_string())
     }
 
+    /// 生成交付收尾报告（Markdown）：概览/任务结果表/重试与返工链/耗时统计/合并信息/事件摘要/遗留问题。
+    pub fn generate_delivery_report(delivery_id: &str) -> Result<String, String> {
+        let delivery = Self::get_delivery(delivery_id)?;
+        let project = Self::get_project(&delivery.project_id)?;
+        let tasks = Self::get_task_nodes(delivery_id)?;
+        let attempts = Self::get_all_attempts(Some(delivery_id))?;
+        let events = Self::get_delivery_events(delivery_id)?;
+        let merge_records = Self::get_merge_records(Some(delivery_id))?;
+        let decisions = Self::get_decision_requests(Some(delivery_id))?;
+
+        let task_count = tasks.len();
+        let succeeded_count = tasks
+            .iter()
+            .filter(|task| task.state == "succeeded")
+            .count();
+        let failed_count = tasks
+            .iter()
+            .filter(|task| {
+                matches!(
+                    task.state.as_str(),
+                    "failed" | "rework" | "policyViolation" | "cancelled"
+                )
+            })
+            .count();
+        let attempt_count = attempts.len();
+        let retried_attempt_count: usize = tasks.iter().map(|task| task.retry_count as usize).sum();
+        // 实际耗时：最早 started_at 到最晚 finished_at（运行中任务按至今计）
+        let earliest_start = attempts
+            .iter()
+            .map(|attempt| attempt.started_at.as_str())
+            .min();
+        let latest_end = attempts
+            .iter()
+            .filter_map(|attempt| attempt.finished_at.as_deref())
+            .max();
+        let started_epoch = earliest_start
+            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+            .map(|time| time.timestamp());
+        let ended_epoch = latest_end
+            .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+            .map(|time| time.timestamp())
+            .or_else(|| Some(chrono::Utc::now().timestamp()));
+        let elapsed = match (started_epoch, ended_epoch) {
+            (Some(start), Some(end)) => {
+                let seconds = (end - start).max(0);
+                if seconds >= 3600 {
+                    format!("{} 小时 {} 分钟", seconds / 3600, (seconds % 3600) / 60)
+                } else if seconds >= 60 {
+                    format!("{} 分钟", seconds / 60)
+                } else {
+                    format!("{} 秒", seconds)
+                }
+            }
+            _ => "—".to_string(),
+        };
+
+        let mut lines = Vec::new();
+        lines.push(format!("# 交付报告：{}", delivery.title));
+        lines.push(String::new());
+        lines.push("## 概览".to_string());
+        lines.push(String::new());
+        lines.push(format!("- 交付状态：{}", delivery.state));
+        lines.push(format!("- 需求：{}", delivery.requirement));
+        lines.push(format!("- 项目：{}", project.name));
+        lines.push(format!(
+            "- 任务图：{} 个任务，成功 {}，失败/取消 {}",
+            task_count, succeeded_count, failed_count
+        ));
+        lines.push(format!("- 执行记录：{} 条 attempt，含 {} 条重试", attempt_count, retried_attempt_count));
+        lines.push(format!("- 实际耗时：{}", elapsed));
+        lines.push(format!("- 创建于：{}", delivery.created_at));
+        lines.push(format!("- 更新于：{}", delivery.updated_at));
+        lines.push(String::new());
+
+        lines.push("## 任务结果".to_string());
+        lines.push(String::new());
+        if tasks.is_empty() {
+            lines.push("（无任务记录）".to_string());
+        } else {
+            lines.push("| 任务 | 状态 | 重试次数 | 派发尝试 |".to_string());
+            lines.push("| --- | --- | --- | --- |".to_string());
+            for task in &tasks {
+                let task_attempts = attempts
+                    .iter()
+                    .filter(|attempt| attempt.task_node_id == task.id)
+                    .collect::<Vec<_>>();
+                lines.push(format!(
+                    "| {} | {} | {} | {} |",
+                    task.title.replace('|', "\\|"),
+                    task.state,
+                    task.retry_count,
+                    task_attempts.len(),
+                ));
+            }
+        }
+        lines.push(String::new());
+
+        lines.push("## 重试与返工链".to_string());
+        lines.push(String::new());
+        let rework_events = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.event_type.as_str(),
+                    "attemptRetried" | "taskReworkRequested" | "policyViolationDetected"
+                )
+            })
+            .collect::<Vec<_>>();
+        if rework_events.is_empty() {
+            lines.push("（无重试/返工记录）".to_string());
+        } else {
+            lines.push("| 时间 | 类型 | 说明 |".to_string());
+            lines.push("| --- | --- | --- |".to_string());
+            for event in rework_events {
+                lines.push(format!(
+                    "| {} | {} | {} |",
+                    event.occurred_at,
+                    event.event_type,
+                    event.message.replace('|', "\\|")
+                ));
+            }
+        }
+        lines.push(String::new());
+
+        lines.push("## 合并信息".to_string());
+        lines.push(String::new());
+        if merge_records.is_empty() {
+            lines.push("（尚未合并）".to_string());
+        } else {
+            for record in &merge_records {
+                lines.push(format!("- 合并状态：{}（{}）", record.state, record.created_at));
+                for repository in &record.repositories {
+                    lines.push(format!(
+                        "- 仓库 {}：分支 {}，{} → {}（{}）",
+                        repository.repository_id,
+                        repository.branch_name,
+                        repository.pre_merge_head.get(..8).unwrap_or(&repository.pre_merge_head),
+                        repository
+                            .merged_head
+                            .as_deref()
+                            .map(|head| head.get(..8).unwrap_or(head).to_string())
+                            .unwrap_or_else(|| "—".to_string()),
+                        repository.state,
+                    ));
+                }
+            }
+        }
+        lines.push(String::new());
+
+        lines.push("## 决策请求".to_string());
+        lines.push(String::new());
+        if decisions.is_empty() {
+            lines.push("（无决策请求）".to_string());
+        } else {
+            for request in &decisions {
+                lines.push(format!(
+                    "- {}：{}（回答：{}）",
+                    request.created_at,
+                    request.question,
+                    request
+                        .answer
+                        .clone()
+                        .unwrap_or_else(|| "（未回答）".to_string()),
+                ));
+            }
+        }
+        lines.push(String::new());
+
+        lines.push("## 事件摘要（最近 20 条）".to_string());
+        lines.push(String::new());
+        let recent_events = events.iter().rev().take(20).collect::<Vec<_>>();
+        if recent_events.is_empty() {
+            lines.push("（无事件记录）".to_string());
+        } else {
+            lines.push("| 时间 | 类型 | 说明 |".to_string());
+            lines.push("| --- | --- | --- |".to_string());
+            for event in recent_events.iter().rev() {
+                lines.push(format!(
+                    "| {} | {} | {} |",
+                    event.occurred_at,
+                    event.event_type,
+                    event.message.replace('|', "\\|")
+                ));
+            }
+        }
+        lines.push(String::new());
+
+        lines.push("## 遗留问题（未完成任务）".to_string());
+        lines.push(String::new());
+        let open_tasks = tasks
+            .iter()
+            .filter(|task| task.state != "succeeded" && task.state != "skipped")
+            .collect::<Vec<_>>();
+        if open_tasks.is_empty() {
+            lines.push("（无遗留任务）".to_string());
+        } else {
+            for task in open_tasks {
+                lines.push(format!("- [ ] {}（{}）", task.title, task.state));
+            }
+        }
+
+        Ok(lines.join("\n"))
+    }
+
     /// 应用进程已退出时，内存中的终端无法恢复；保留现场并允许用户重新派发。
     pub fn recover_interrupted_attempts() -> Result<usize, String> {
         let interrupted = Self::get_all_attempts(None)?
