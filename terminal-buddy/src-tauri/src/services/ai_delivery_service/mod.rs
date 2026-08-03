@@ -1,4 +1,6 @@
-﻿use crate::commands::terminal::TerminalService;
+﻿//! AI 交付服务（服务入口，自 ai_delivery_service.rs 拆分）：常量/锁/结构体与模块汇总
+
+use crate::commands::terminal::TerminalService;
 use crate::models::{
     AiAgent, AiAgentRuntime, AiArtifactMeta, AiAttempt, AiCommandResult, AiDecisionOption,
     AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord,
