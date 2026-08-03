@@ -676,8 +676,8 @@ impl AiDeliveryService {
     }
 
     /// 单步模拟测试（实验性）：用 {featureName} 占位替换后的步骤提示词，
-    /// 走一次 claude --print 调用并返回输出前 2000 字符。
-    /// 只调用不落盘、不建 attempt；失败仅前端展示错误，不影响既有功能。
+    /// 按步骤关联角色解析 Agent → Runtime 后走一次对应 Runtime 的一次性调用，
+    /// 返回输出前 2000 字符。只调用不落盘、不建 attempt；失败仅前端展示错误，不影响既有功能。
     pub fn test_workflow_step(workflow_step_id: &str, feature_name: &str) -> Result<String, String> {
         let workflow = Self::get_all_workflows()?
             .into_iter()
@@ -693,24 +693,88 @@ impl AiDeliveryService {
         } else {
             format!("功能描述：{}\n\n{}", feature_name, step.prompt)
         };
+        // 步骤 → Agent：优先按角色（锁定 Agent 优先，其次候选）解析，否则取第一个启用的 Agent。
+        let agents = Self::get_all_agents()?;
+        let agent = if let Some(role_id) = step.role_id.as_deref() {
+            let role = Self::get_all_roles()?
+                .into_iter()
+                .find(|role| role.id == role_id)
+                .ok_or_else(|| "工作流步骤关联的角色不存在".to_string())?;
+            let locked = role
+                .locked_agent_id
+                .as_deref()
+                .and_then(|id| agents.iter().find(|agent| agent.id == id && agent.enabled));
+            locked
+                .or_else(|| {
+                    role.candidate_agent_ids
+                        .iter()
+                        .find_map(|id| {
+                            agents.iter().find(|agent| agent.id == *id && agent.enabled)
+                        })
+                })
+                .ok_or_else(|| "工作流步骤关联的角色未配置可用的 Agent".to_string())?
+        } else {
+            agents
+                .iter()
+                .find(|agent| agent.enabled)
+                .ok_or_else(|| {
+                    "未找到可用的 Agent（请先在 Agent 管理中启用至少一个）".to_string()
+                })?
+        };
+        // Agent → Runtime：按 Runtime kind 分支拼接一次性命令。
         let runtime = Self::get_all_runtimes()?
             .into_iter()
-            .filter(|runtime| runtime.enabled)
-            .find(|runtime| runtime.kind == "claude")
-            .ok_or_else(|| "未找到可用的 claude 运行时，无法模拟测试".to_string())?;
+            .find(|runtime| runtime.id == agent.runtime_id && runtime.enabled)
+            .ok_or_else(|| {
+                "未找到可用的 Runtime（请先在 Runtime 管理中启用至少一个）".to_string()
+            })?;
+        Self::run_runtime_one_shot(&runtime, &prompt)
+    }
+
+    /// 按 Runtime kind 构造一次性命令并执行（60s 超时），返回输出前 2000 字符。
+    fn run_runtime_one_shot(runtime: &AiAgentRuntime, prompt: &str) -> Result<String, String> {
         let mut command_parts = split_runtime_command(&runtime.command)?;
         let executable = command_parts.remove(0);
         let mut command = Command::new(&executable);
         command.args(&command_parts);
-        command.args(["--print".to_string()]);
         // 模拟测试用的提示词不落盘，直接作为参数传入（限制长度避免命令行超限）
         let clipped = if prompt.len() > 4000 {
             format!("{}…", &prompt[..prompt.ceil_char_boundary(4000)])
         } else {
-            prompt
+            prompt.to_string()
         };
-        command.arg(clipped);
-        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        match runtime.kind.trim().to_ascii_lowercase().as_str() {
+            // codex 需要 exec 子命令与 --skip-git-repo-check（AI 交付从非 Git 仓库根目录启动）
+            "codex" => {
+                if !command_parts.iter().any(|argument| argument == "exec") {
+                    command.arg("exec");
+                }
+                if !command_parts.iter().any(|argument| argument == "--skip-git-repo-check") {
+                    command.arg("--skip-git-repo-check");
+                }
+                command.arg("--print").arg(&clipped);
+            }
+            "opencode" => {
+                if !command_parts.iter().any(|argument| argument == "run") {
+                    command.arg("run");
+                }
+                command.arg("--print").arg(&clipped);
+            }
+            "kimi" => {
+                command.arg("--prompt").arg(&clipped);
+            }
+            "hermes" => {
+                command.arg("--oneshot").arg(&clipped);
+            }
+            // claude / pi / mimo 走 --print 非交互输出
+            "claude" | "pi" | "mimo" => {
+                command.arg("--print").arg(&clipped);
+            }
+            // 未知 kind 兜底：作为最后一个位置参数传入
+            _ => {
+                command.arg(&clipped);
+            }
+        }
         let output = run_command_with_timeout(
             &mut command,
             Duration::from_secs(60),

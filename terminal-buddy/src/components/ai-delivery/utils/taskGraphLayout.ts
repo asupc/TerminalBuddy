@@ -7,7 +7,7 @@ interface LayoutCache {
   edges: Edge[];
 }
 
-const CACHE_PREFIX = "ai-delivery-graph-layout:v1:";
+const CACHE_PREFIX = "ai-delivery-graph-layout:v2:";
 
 function simpleHash(input: string): string {
   let hash = 0;
@@ -74,7 +74,6 @@ export function computeTaskGraphLayout(tasks: AiTaskNode[]) {
         position: { x: Number(layerNum) * 240, y: index * 120 },
         data: { task },
         type: "taskNode",
-        draggable: false,
       });
       task.dependencyIds.forEach((depId) =>
         edges.push({ id: `${depId}->${task.id}`, source: depId, target: task.id } as Edge)

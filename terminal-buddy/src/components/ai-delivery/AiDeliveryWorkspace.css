@@ -432,7 +432,7 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 .ai-config-dialog {
-  width: min(1180px, calc(100vw - 48px));
+  width: min(1480px, calc(100vw - 32px));
 }
 .ai-config-dialog .btn-primary,
 .ai-config-dialog .btn-secondary,
@@ -454,7 +454,7 @@
 .ai-config-dialog-body {
   display: grid;
   grid-template-columns: 156px minmax(0, 1fr);
-  height: min(660px, calc(100vh - 156px));
+  height: min(720px, calc(100vh - 120px));
   padding: 0;
   overflow: hidden;
 }
@@ -776,7 +776,7 @@
 .ai-agent-config-row {
   display: grid;
   grid-template-columns: minmax(135px, 0.85fr) repeat(
-      4,
+      5,
       minmax(130px, 1fr)
     ) 32px;
   gap: 10px;
@@ -786,10 +786,46 @@
 }
 .ai-agent-config-row label {
   display: grid;
-  gap: 5px;
+  grid-template-rows: auto auto;
+  gap: 4px;
+  align-items: end;
   color: var(--text-tertiary);
   font-size: 10px;
   font-weight: 600;
+}
+.ai-agent-config-row input,
+.ai-agent-config-row select {
+  min-height: 32px;
+  box-sizing: border-box;
+}
+.ai-agent-config-row .ai-agent-preset {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.ai-agent-config-row .ai-agent-preset > span {
+  grid-column: 1 / -1;
+}
+.ai-agent-config-row > .ai-icon-button {
+  align-self: center;
+}
+.ai-preset-manage-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: end;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ai-preset-manage-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .ai-agent-name input {
   color: var(--text-primary);
@@ -1202,7 +1238,7 @@
 .ai-task-list article {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto 28px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 16px;
   min-height: 68px;
@@ -1262,8 +1298,10 @@
   display: flex;
   justify-content: flex-end;
 }
-.ai-task-list .ai-task-inspect {
-  position: static;
+.ai-task-actions-row {
+  display: flex;
+  gap: 4px;
+  align-self: center;
 }
 .ai-task-actions {
   display: flex;
@@ -1680,7 +1718,7 @@
 .ai-decision-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.ai-decision-options button { display: grid; gap: 2px; min-width: 128px; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-primary); color: var(--text-secondary); font: inherit; text-align: left; cursor: pointer; }.ai-decision-options button:hover, .ai-decision-options button.active { border-color: var(--accent); color: var(--text-primary); }.ai-decision-options button.active { background: color-mix(in srgb, var(--accent) 10%, var(--bg-primary)); }.ai-decision-options strong { font-size: 11px; }.ai-decision-options small { color: var(--text-tertiary); font-size: 10px; }
 .ai-decision-answer { display: flex; align-items: stretch; gap: 8px; margin-top: 10px; }.ai-decision-answer textarea { min-width: 0; min-height: 52px; flex: 1; resize: vertical; }.ai-decision-answer .btn-primary { align-self: flex-end; }
 .ai-decision-history { margin: 18px 0; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary); }.ai-decision-history .ai-decision-heading > svg { color: var(--accent); }.ai-decision-history-options { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; }.ai-decision-history .ai-decision-list article { border-color: var(--border-subtle); }.ai-decision-history-answer { flex: 1; align-self: center; font-size: 12px; color: var(--text-primary); }.ai-decision-history .ai-decision-answer time { align-self: center; color: var(--text-tertiary); font-size: 11px; white-space: nowrap; }
-.ai-task-inspect { position: absolute; top: 8px; right: 8px; display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-tertiary); cursor: pointer; }.ai-task-inspect:hover { background: var(--bg-tertiary); color: var(--accent); }
+.ai-task-inspect { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-tertiary); cursor: pointer; }.ai-task-inspect:hover { background: var(--bg-tertiary); color: var(--accent); }
 .ai-task-contract-dialog { width: min(760px, calc(100vw - 32px)); }.ai-task-contract-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }.ai-task-contract-heading h3 { margin: 8px 0 4px; font-size: 15px; }.ai-task-contract-heading p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }.ai-task-contract-heading > small { flex: 0 0 auto; color: var(--text-tertiary); font-size: 11px; }
 .ai-task-contract-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 16px 0; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--border-subtle); }.ai-task-contract-summary > div { min-width: 0; padding: 9px 10px; background: var(--bg-primary); }.ai-task-contract-summary dt { color: var(--text-tertiary); font-size: 10px; }.ai-task-contract-summary dd { overflow: hidden; margin: 3px 0 0; color: var(--text-primary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .ai-task-contract-section { margin-top: 14px; }.ai-task-contract-section h4 { margin: 0 0 6px; color: var(--text-secondary); font-size: 11px; }.ai-task-contract-section p { margin: 0; color: var(--text-tertiary); font-size: 11px; }.ai-task-contract-section ul { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; padding: 0; list-style: none; }.ai-task-contract-section li { color: var(--text-secondary); font-size: 11px; }.ai-task-contract-section code { padding: 2px 5px; border-radius: 3px; background: var(--bg-tertiary); color: var(--text-primary); }.ai-task-contract-section pre { max-height: 180px; margin: 0; overflow: auto; padding: 9px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-primary); color: var(--text-secondary); font: 11px/1.55 var(--font-mono); white-space: pre-wrap; }.ai-task-contract-artifacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -2033,19 +2071,47 @@
 }
 
 /* ---------- 任务编辑器抽屉（T4） ---------- */
-.ai-task-editor {
-  position: fixed;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 560px;
-  max-width: calc(100vw - 32px);
-  background: var(--surface, #1e1e1e);
-  border-left: 1px solid var(--border);
-  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.45);
-  padding: 16px;
+.ai-task-editor-dialog {
+  width: min(860px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 96px));
+}
+.ai-task-editor-dialog .tb-dialog-header {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  padding: 12px 10px 10px 18px;
+}
+.ai-task-editor-header {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.ai-task-editor-header small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+.ai-task-editor-header h3 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 14px;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-task-editor-header p {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-task-editor-dialog .tb-dialog-body {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
-  z-index: 999;
 }
 .ai-task-editor-grid {
   display: flex;
@@ -2060,7 +2126,7 @@
 .ai-task-editor-actions {
   display: flex;
   gap: 8px;
-  margin-top: 8px;
+  justify-content: flex-end;
 }
 .ai-task-editor-preview {
   border-top: 1px solid var(--border);
@@ -2351,7 +2417,12 @@
 .ai-preset-manager-dialog { width: min(860px, 94vw); }.ai-preset-manager-layout { display: grid; grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.1fr); gap: 16px; }
 .ai-preset-list { display: flex; flex-direction: column; gap: 8px; max-height: 440px; overflow: auto; }.ai-preset-list h4, .ai-preset-form h4 { margin: 0 0 8px; font-size: 13px; color: var(--text-primary); }
 .ai-preset-list-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-secondary); }.ai-preset-list-item strong { font-size: 12px; }.ai-preset-list-item small { grid-column: 1 / -1; color: var(--text-tertiary); font-size: 10px; }
-.ai-preset-form { display: flex; flex-direction: column; gap: 10px; }.ai-preset-form label { display: flex; flex-direction: column; gap: 4px; color: var(--text-secondary); font-size: 11px; }.ai-preset-form textarea { font-family: var(--font-mono); font-size: 11px; }.ai-preset-form-actions { display: flex; gap: 8px; }
+.ai-preset-form { display: grid; gap: 12px; }
+.ai-preset-form label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.ai-preset-form input, .ai-preset-form textarea { box-sizing: border-box; width: 100%; min-height: 32px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-primary); padding: 6px 9px; font: inherit; outline: none; }
+.ai-preset-form textarea { min-height: 68px; resize: vertical; font-family: var(--font-mono); font-size: 11px; }
+.ai-preset-form input:focus, .ai-preset-form textarea:focus { border-color: var(--accent); }
+.ai-preset-form-actions { display: flex; gap: 8px; }
 
 /* ---- 工作流预览与模拟测试 ---- */
 .ai-workflow-preview-dialog { display: flex; flex-direction: column; }.ai-workflow-preview-dialog > div { flex: 1; min-height: 0; }.ai-workflow-preview-hint { margin: 0 0 10px; color: var(--text-tertiary); font-size: 11px; }

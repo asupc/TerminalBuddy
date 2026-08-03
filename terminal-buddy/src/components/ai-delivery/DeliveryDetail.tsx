@@ -1008,24 +1008,26 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                   </div>
                                 )}
                                 </div>
-                                <button
-                                  type="button"
-                                  className="ai-task-inspect"
-                                  title="查看任务契约"
-                                  aria-label={`查看任务 ${task.title} 的契约`}
-                                  onClick={() => setSelectedTaskId(task.id)}
-                                >
-                                  <FileText size={14} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="ai-task-inspect"
-                                  title="编辑任务"
-                                  aria-label={`编辑任务 ${task.title}`}
-                                  onClick={() => setEditingTaskId(task.id)}
-                                >
-                                  <Pencil size={14} />
-                                </button>
+                                <div className="ai-task-actions-row">
+                                  <button
+                                    type="button"
+                                    className="ai-task-inspect"
+                                    title="查看任务契约"
+                                    aria-label={`查看任务 ${task.title} 的契约`}
+                                    onClick={() => setSelectedTaskId(task.id)}
+                                  >
+                                    <FileText size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ai-task-inspect"
+                                    title="编辑任务"
+                                    aria-label={`编辑任务 ${task.title}`}
+                                    onClick={() => setEditingTaskId(task.id)}
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+                                </div>
                               </article>
                             );
                           })}
