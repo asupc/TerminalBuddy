@@ -136,6 +136,23 @@ fn same_runtime_command(left: &AiAgentRuntime, right: &AiAgentRuntime) -> bool {
 
 pub struct AiDeliveryService;
 
+mod manager;
+use manager::*;
+mod helpers;
+use helpers::*;
+mod terminal;
+use terminal::*;
+mod tests;
+use tests::*;
+mod quality;
+use quality::*;
+mod entity;
+use entity::*;
+mod dispatch;
+use dispatch::*;
+mod delivery;
+use delivery::*;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ManagerPlan {
@@ -3062,11 +3079,13 @@ impl AiDeliveryService {
        result
    }
 
-   fn merge_delivery_locally_locked_impl(
-       delivery: &AiDelivery,
-       project: &AiProject,
-   ) -> Result<AiMergeRecord, String> {
-       let tasks = Self::get_task_nodes(&delivery.id)?;
+    /// 合并前置校验：全部任务须为 succeeded 或 skipped（skipped 含级联跳过、从未执行的
+    /// planned/ready 标记忽略），且非编排任务须有已通过的独立审核门禁。
+    /// 独立成函数供单测（合并主链路引用 comctl32 v6 专属 API，测试产物无 manifest 无法加载）。
+    fn validate_tasks_mergeable(
+        tasks: &[AiTaskNode],
+        gates: &[AiReviewGate],
+    ) -> Result<(), String> {
         if tasks.is_empty()
             || tasks
                 .iter()
@@ -3074,8 +3093,10 @@ impl AiDeliveryService {
         {
             return Err("仅当交付中的全部任务均已审核通过（或标记忽略）时才能本地合并".to_string());
         }
-        let gates = Self::get_review_gates(Some(&delivery.id))?;
-        for task in tasks.iter().filter(|task| task.workflow_step_id.is_none()) {
+        for task in tasks
+            .iter()
+            .filter(|task| task.workflow_step_id.is_none() && task.state != "skipped")
+        {
             if !gates
                 .iter()
                 .any(|gate| gate.task_node_id == task.id && gate.state == "approved")
@@ -3083,8 +3104,22 @@ impl AiDeliveryService {
                 return Err(format!("任务尚无通过的独立审核: {}", task.title));
             }
         }
+        Ok(())
+    }
+
+   fn merge_delivery_locally_locked_impl(
+       delivery: &AiDelivery,
+       project: &AiProject,
+   ) -> Result<AiMergeRecord, String> {
+       let tasks = Self::get_task_nodes(&delivery.id)?;
+        let gates = Self::get_review_gates(Some(&delivery.id))?;
+        Self::validate_tasks_mergeable(&tasks, &gates)?;
         let mut task_groups = BTreeMap::<String, Vec<(AiTaskNode, AiTaskContract)>>::new();
-        for task in tasks.iter().filter(|task| task.execution_mode == "write") {
+        // skipped 任务没有可合并的分支（级联跳过的从未派发，无契约），跳过分组
+        for task in tasks
+            .iter()
+            .filter(|task| task.execution_mode == "write" && task.state != "skipped")
+        {
             let contract_id = task
                 .contract_id
                 .as_deref()
@@ -3568,13 +3603,26 @@ impl AiDeliveryService {
 
         let contract = match task.contract_id.as_deref() {
             Some(contract_id) => {
-                let contract = Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "任务契约")?;
+                let mut contract =
+                    Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "任务契约")?;
                 if contract.state != "allocated"
                     || !PathBuf::from(&contract.working_directory).is_dir()
                     || (execution_context == EXECUTION_CONTEXT_TASK_WORKTREE
                         && contract.worktree_path.is_none())
                 {
                     return Err("返工任务的执行目录不可用，无法重新派发".to_string());
+                }
+                // 编辑执行相关字段后契约被标脏（update_task_node）：用任务最新字段同步契约，
+                // 否则 agent 提示词与验收校验仍按旧约束执行（契约字段是二者的数据源）。
+                if contract.dirty {
+                    contract.allowed_write_paths = task.allowed_write_paths.clone();
+                    contract.expected_artifacts = task.expected_artifacts.clone();
+                    contract.acceptance_commands = task.acceptance_commands.clone();
+                    contract.execution_context = execution_context;
+                    contract.retry_count = task.retry_count;
+                    contract.dirty = false;
+                    contract.updated_at = chrono::Utc::now().to_rfc3339();
+                    Self::save(CONTRACTS_DIR, contract_id, &contract)?;
                 }
                 contract
             }
@@ -4069,6 +4117,7 @@ impl AiDeliveryService {
                             let _ = fail_attempt_from_watchdog(
                                 &current_attempt,
                                 &format!("Agent 终端已关闭，任务状态检查失败：{}", error),
+                                "attemptFailed",
                                 app_handle.clone(),
                                 monitor_terminal_service.clone(),
                             );
@@ -4243,27 +4292,108 @@ impl AiDeliveryService {
         Ok(task)
     }
 
-    /// 标记任务忽略（skipped）：failed/policyViolation/rework/needsInput 可标记，
+    /// 标记任务忽略（skipped）：failed/policyViolation/rework/needsInput/planned/ready 可标记，
     /// 收尾判定将 skipped 视为可完成状态（不阻塞后续合并）。
+    /// planned/ready 允许直接标记（缩小交付范围）；依赖被跳过会级联跳过下游 planned/ready 任务，
+    /// 否则下游因「依赖须全 succeeded 才 ready」永久停在 planned，交付无法收尾合并。
     pub fn mark_task_skipped(task_node_id: &str) -> Result<(), String> {
         let mut task = Self::get_task_node(task_node_id)?;
         if !matches!(
             task.state.as_str(),
-            "failed" | "policyViolation" | "rework" | "needsInput"
+            "failed" | "policyViolation" | "rework" | "needsInput" | "planned" | "ready"
         ) {
             return Err(format!("任务状态 {} 不可标记忽略", task.state));
         }
+        // 注：交付整体收尾（全部任务完成/跳过后自动合并）由命令层 mark_ai_task_skipped
+        // 在服务层返回后触发 try_complete_workflow_delivery，不在本函数内调用——
+        // 使级联逻辑可独立单测（合并链路引用 comctl32 v6 专属 API，无 manifest 的
+        // cargo test 产物加载时会因 TaskDialogIndirect 缺失而失败）。
+        let delivery_id = task.delivery_id.clone();
+        let mut skipped_ids = vec![task.id.clone()];
         task.state = "skipped".to_string();
         task.updated_at = chrono::Utc::now().to_rfc3339();
         Self::save(TASK_NODES_DIR, &task.id, &task)?;
+        Self::cancel_queued_attempts_of_task(&task);
+        Self::cleanup_skipped_task_worktree(&task);
         Self::append_event(
-            &task.delivery_id,
+            &delivery_id,
             Some(&task.id),
             None,
             "taskSkipped",
             &format!("任务 {} 已标记忽略（不阻塞后续合并）", task.title),
         )?;
+        // 级联：依赖链上任一任务被跳过，下游 planned/ready 任务无法再获得产物，一并跳过。
+        loop {
+            let mut cascaded = false;
+            for mut downstream in Self::get_task_nodes(&delivery_id)? {
+                if skipped_ids.contains(&downstream.id)
+                    || !matches!(downstream.state.as_str(), "planned" | "ready")
+                    || !downstream.dependency_ids.iter().any(|dep| skipped_ids.contains(dep))
+                {
+                    continue;
+                }
+                downstream.state = "skipped".to_string();
+                downstream.updated_at = chrono::Utc::now().to_rfc3339();
+                Self::save(TASK_NODES_DIR, &downstream.id, &downstream)?;
+                Self::cancel_queued_attempts_of_task(&downstream);
+                Self::cleanup_skipped_task_worktree(&downstream);
+                Self::append_event(
+                    &delivery_id,
+                    Some(&downstream.id),
+                    None,
+                    "taskSkipped",
+                    &format!("依赖任务已忽略，任务 {} 级联跳过", downstream.title),
+                )?;
+                skipped_ids.push(downstream.id.clone());
+                cascaded = true;
+            }
+            if !cascaded {
+                break;
+            }
+        }
         Ok(())
+    }
+
+    /// 取消任务上排队中的 attempt（跳过与自动派发的竞态窗口：ready 任务被级联跳过时
+    /// 可能已被 dispatch 置 queued，若不取消会被后续 start_attempt 启动已跳过的任务）。
+    fn cancel_queued_attempts_of_task(task: &AiTaskNode) {
+        for attempt_id in &task.attempt_ids {
+            if let Ok(mut attempt) = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试") {
+                if attempt.state == "queued" {
+                    attempt.state = "cancelled".to_string();
+                    attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
+                    attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
+                    attempt.summary = Some("任务已标记忽略，排队中的执行记录取消".to_string());
+                    let _ = Self::persist_attempt(&attempt);
+                }
+            }
+        }
+    }
+
+    /// 跳过任务的 worktree/分支资源回收（尽力执行）：被跳过的任务不再续接执行，
+    /// 提前清理避免合并永远不发生时资源累积。契约文件保留供历史查看。
+    fn cleanup_skipped_task_worktree(task: &AiTaskNode) {
+        let _ = (|| -> Result<(), String> {
+            let delivery = Self::get_delivery(&task.delivery_id)?;
+            let project = Self::get_project(&delivery.project_id)?;
+            let Some(contract_id) = task.contract_id.as_deref() else {
+                return Ok(());
+            };
+            let contract = Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "任务契约")?;
+            let (Some(worktree), Some(branch)) =
+                (contract.worktree_path.as_deref(), contract.branch_name.as_deref())
+            else {
+                return Ok(());
+            };
+            let repository = project
+                .repositories
+                .iter()
+                .find(|repository| repository.id == contract.target_repository_id)
+                .ok_or_else(|| "目标仓库不存在".to_string())?;
+            let source = project_repository_path(&project, repository)?;
+            cleanup_unallocated_task_worktree(&source, Path::new(worktree), branch);
+            Ok(())
+        })();
     }
 
     /// 确认 policyViolation 现场可接受：跳过静态越权审计重跑验收（skip_audit 防死循环），
@@ -4761,45 +4891,17 @@ impl AiDeliveryService {
                }
            }
        }
-        // 所有编排步骤完成后自动标记交付成功
+        // 所有编排步骤完成后自动收尾交付：先合并到目标分支，合并成功后再宣告交付成功，
+        // 避免合并失败时出现误导性的「交付成功」事件与通知（merge 失败路径已置 mergeFailed 终态）。
         if workflow_step_completed {
             let tasks = Self::get_task_nodes(delivery_id)?;
             if !tasks.is_empty()
                 && tasks.iter().all(|t| matches!(t.state.as_str(), "succeeded" | "skipped"))
             {
-                let mut delivery = Self::get_delivery(delivery_id)?;
+                let delivery = Self::get_delivery(delivery_id)?;
                 if delivery.state == "running" {
-                    delivery.state = "succeeded".to_string();
-                    let now = chrono::Utc::now();
-                    delivery.updated_at = now.to_rfc3339();
-                    Self::save(DELIVERIES_DIR, &delivery.id, &delivery)?;
-                    let _ = Self::append_event(
-                        delivery_id,
-                        None,
-                        None,
-                        "deliverySucceeded",
-                        "全部任务已完成，交付成功",
-                    )?;
-                    // 推送交付成功到微信/飞书
-                    Self::push_delivery_notice(
-                        delivery_id,
-                        "交付成功",
-                        &format!("交付「{}」全部任务已完成，交付成功", delivery.title),
-                        None,
-                    );
-                    // 系统托盘通知：交付整体收尾
-                    if let Some(app) = APP_HANDLE.get() {
-                        let _ = crate::commands::notification::show_ai_delivery_notification(
-                            app.clone(),
-                            "AI 交付完成",
-                            delivery_id.to_string(),
-                            format!("交付「{}」全部任务已完成，交付成功", delivery.title),
-                        );
-                    }
-                    // 自动合并到目标分支
                     let merge_delivery_id = delivery.id.clone();
-                    let merge_result = Self::merge_delivery_locally(&merge_delivery_id);
-                    match &merge_result {
+                    match Self::merge_delivery_locally(&merge_delivery_id) {
                         Ok(_) => {
                             let _ = Self::append_event(
                                 delivery_id,
@@ -4808,6 +4910,29 @@ impl AiDeliveryService {
                                 "autoMerged",
                                 "交付已自动合并到本地目标分支",
                             );
+                            // 合并成功后才宣告交付成功
+                            let _ = Self::append_event(
+                                delivery_id,
+                                None,
+                                None,
+                                "deliverySucceeded",
+                                "全部任务已完成，交付成功",
+                            )?;
+                            Self::push_delivery_notice(
+                                delivery_id,
+                                "交付成功",
+                                &format!("交付「{}」全部任务已完成，交付成功", delivery.title),
+                                None,
+                            );
+                            // 系统托盘通知：交付整体收尾
+                            if let Some(app) = APP_HANDLE.get() {
+                                let _ = crate::commands::notification::show_ai_delivery_notification(
+                                    app.clone(),
+                                    "AI 交付完成",
+                                    delivery_id.to_string(),
+                                    format!("交付「{}」全部任务已完成，交付成功", delivery.title),
+                                );
+                            }
                         }
                         Err(error) => {
                             let _ = Self::append_event(
@@ -4819,7 +4944,6 @@ impl AiDeliveryService {
                             );
                         }
                     }
-                    // merge 结果已通过 autoMerged/autoMergeFailed 事件记录
                 }
             }
         }
@@ -5120,29 +5244,13 @@ impl AiDeliveryService {
         {
             return Ok(false);
         }
-        let mut delivery = Self::get_delivery(delivery_id)?;
+        let delivery = Self::get_delivery(delivery_id)?;
         if delivery.state != "running" {
             return Ok(false);
         }
-        delivery.state = "succeeded".to_string();
-        delivery.updated_at = chrono::Utc::now().to_rfc3339();
-        Self::save(DELIVERIES_DIR, &delivery.id, &delivery)?;
-        Self::append_event(
-            delivery_id,
-            None,
-            None,
-            "deliverySucceeded",
-            "全部任务已完成，交付成功",
-        )?;
-        // 推送交付成功到微信/飞书
-        Self::push_delivery_notice(
-            delivery_id,
-            "交付成功",
-            &format!("交付「{}」全部任务已完成，交付成功", delivery.title),
-            None,
-        );
-        let merge_result = Self::merge_delivery_locally(&delivery.id);
-        match &merge_result {
+        // 先合并到目标分支，合并成功后再宣告交付成功（merge 成功路径内部置交付为 completed 终态，
+        // 失败路径置 mergeFailed 终态），避免合并失败时出现误导性的「交付成功」事件与通知。
+        match Self::merge_delivery_locally(&delivery.id) {
             Ok(_) => {
                 let _ = Self::append_event(
                     delivery_id,
@@ -5150,6 +5258,20 @@ impl AiDeliveryService {
                     None,
                     "autoMerged",
                     "交付已自动合并到本地目标分支",
+                );
+                Self::append_event(
+                    delivery_id,
+                    None,
+                    None,
+                    "deliverySucceeded",
+                    "全部任务已完成，交付成功",
+                )?;
+                // 推送交付成功到微信/飞书
+                Self::push_delivery_notice(
+                    delivery_id,
+                    "交付成功",
+                    &format!("交付「{}」全部任务已完成，交付成功", delivery.title),
+                    None,
                 );
             }
             Err(error) => {
@@ -5622,7 +5744,24 @@ impl AiDeliveryService {
             worktree_path.to_string_lossy().to_string(),
             repository.default_branch.clone(),
         ];
-        run_git(&source_path, &arguments)?;
+        if let Err(error) = run_git(&source_path, &arguments) {
+            // worktree add 失败时尽力回滚：同名分支/目录可能残留（上次中断），
+            // 不清理会导致「任务 worktree 目录已存在」/「分支已存在」使重试永久阻塞。
+            let _ = run_git(
+                &source_path,
+                &[
+                    "worktree".to_string(),
+                    "remove".to_string(),
+                    "--force".to_string(),
+                    worktree_path.to_string_lossy().to_string(),
+                ],
+            );
+            let _ = run_git(
+                &source_path,
+                &["branch".to_string(), "-D".to_string(), branch_name.clone()],
+            );
+            return Err(error);
+        }
         for dependency_branch in dependency_branches {
             if let Err(error) = run_git(
                 &worktree_path,
@@ -8192,6 +8331,151 @@ mod cycle_detection_tests {
         ];
         assert!(!AiDeliveryService::has_cycle(&tasks));
     }
+
+    #[test]
+    fn skipping_failed_task_cascades_to_downstream_and_unblocks_merge() {
+        let root = std::env::temp_dir().join(format!(
+            "terminal-buddy-skip-cascade-{}",
+            Uuid::new_v4()
+        ));
+        let data_dir = root.join("data");
+        let workspace = root.join("workspace");
+        let repository = workspace.join("service-a");
+        fs::create_dir_all(&repository).unwrap();
+        PathService::set_test_data_dir(Some(data_dir));
+
+        let run = |arguments: &[&str]| {
+            let output = Command::new("git")
+                .args(arguments)
+                .current_dir(&repository)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {} failed: {}",
+                arguments.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&["init"]);
+        run(&["config", "user.name", "TerminalBuddy Test"]);
+        run(&["config", "user.email", "test@terminalbuddy.local"]);
+        fs::write(repository.join("README.md"), "# service-a\n").unwrap();
+        run(&["add", "README.md"]);
+        run(&["commit", "-m", "initial"]);
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let runtime = AiDeliveryService::save_runtime(AiAgentRuntime {
+            id: String::new(),
+            name: "测试 Runtime".to_string(),
+            kind: "test".to_string(),
+            command: "cmd".to_string(),
+            enabled: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })
+        .unwrap();
+        let agent = AiDeliveryService::save_agent(AiAgent {
+            id: String::new(),
+            name: "测试 Agent".to_string(),
+            runtime_id: runtime.id,
+            runtime_args: Vec::new(),
+            startup_preset_name: None,
+            max_concurrency: 1,
+            enabled: true,
+            default_timeout_seconds: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })
+        .unwrap();
+        let project = AiDeliveryService::create_project(CreateAiProjectInput {
+            name: "测试项目".to_string(),
+            workspace_root: workspace.to_string_lossy().to_string(),
+            profile_id: None,
+            worktree_root: None,
+            quality_gate: AiQualityGate {
+                commands: vec!["git status --porcelain".to_string()],
+            },
+            manager_agent_id: None,
+            max_concurrency: 2,
+        })
+        .unwrap();
+        let delivery = AiDeliveryService::create_delivery(CreateAiDeliveryInput {
+            project_id: project.id.clone(),
+            title: "级联跳过测试".to_string(),
+            requirement: "验证跳过级联与合并解锁".to_string(),
+            manager_agent_id: None,
+            workflow_id: None,
+        })
+        .unwrap();
+        let make_task = |title: &str, dependency_ids: Vec<String>| {
+            AiDeliveryService::create_task_node(CreateAiTaskNodeInput {
+                delivery_id: delivery.id.clone(),
+                title: title.to_string(),
+                description: "测试任务".to_string(),
+                role_id: None,
+                workflow_step_id: None,
+                preferred_agent_id: Some(agent.id.clone()),
+                task_prompt: String::new(),
+                execution_mode: "write".to_string(),
+                execution_context: EXECUTION_CONTEXT_TASK_WORKTREE.to_string(),
+                target_repository_id: project.repositories[0].id.clone(),
+                allowed_write_paths: vec!["README.md".to_string()],
+                dependency_ids,
+                input_artifacts: Vec::new(),
+                expected_artifacts: Vec::new(),
+                acceptance_commands: Vec::new(),
+                retry_count: 0,
+                timeout_seconds: None,
+            })
+            .unwrap()
+        };
+        let task_a = make_task("任务 A", Vec::new());
+        let task_b = make_task("任务 B", vec![task_a.id.clone()]);
+        let task_c = make_task("任务 C", vec![task_b.id.clone()]);
+
+        // A 失败 → 标记忽略 → B/C 级联跳过（修复前：B/C 永久停在 planned，交付无法合并）
+        let mut failed_a = AiDeliveryService::get_task_node(&task_a.id).unwrap();
+        failed_a.state = "failed".to_string();
+        AiDeliveryService::save(TASK_NODES_DIR, &failed_a.id, &failed_a).unwrap();
+        AiDeliveryService::mark_task_skipped(&task_a.id).unwrap();
+        assert_eq!(
+            AiDeliveryService::get_task_node(&task_a.id).unwrap().state,
+            "skipped"
+        );
+        assert_eq!(
+            AiDeliveryService::get_task_node(&task_b.id).unwrap().state,
+            "skipped"
+        );
+        assert_eq!(
+            AiDeliveryService::get_task_node(&task_c.id).unwrap().state,
+            "skipped"
+        );
+
+        // planned 任务可直接标记忽略（缩小交付范围）
+        let task_d = make_task("任务 D", Vec::new());
+        AiDeliveryService::mark_task_skipped(&task_d.id).unwrap();
+        assert_eq!(
+            AiDeliveryService::get_task_node(&task_d.id).unwrap().state,
+            "skipped"
+        );
+
+        // 合并前置校验：全部 skipped 放行；存在 planned/queued 时拒绝
+        let tasks = AiDeliveryService::get_task_nodes(&delivery.id).unwrap();
+        let gates = AiDeliveryService::get_review_gates(Some(&delivery.id)).unwrap();
+        assert!(AiDeliveryService::validate_tasks_mergeable(&tasks, &gates).is_ok());
+        let mut stuck = tasks[0].clone();
+        stuck.state = "planned".to_string();
+        assert!(AiDeliveryService::validate_tasks_mergeable(&[stuck], &gates).is_err());
+        // 非编排 succeeded 任务缺独立门禁时拒绝（回归：门禁校验不被 skipped 过滤破坏）
+        let mut need_gate = tasks[0].clone();
+        need_gate.state = "succeeded".to_string();
+        need_gate.workflow_step_id = None;
+        assert!(AiDeliveryService::validate_tasks_mergeable(&[need_gate], &[]).is_err());
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 #[cfg(test)]
@@ -8527,6 +8811,7 @@ fn run_attempt_watchdog(
                        "Agent 执行已超时（超过 {} 分钟），已自动终止",
                        timeout_seconds / 60
                    ),
+                   "attemptTimedOut",
                    app.clone(),
                    terminal_service.clone(),
                );
@@ -8543,6 +8828,7 @@ fn run_attempt_watchdog(
                 let _ = fail_attempt_from_watchdog(
                     &attempt,
                     &format!("Agent 终端已结束，任务状态检查失败：{}", error),
+                    "attemptFailed",
                     app.clone(),
                     terminal_service.clone(),
                 );
@@ -8603,6 +8889,7 @@ fn reconcile_running_attempt(
                 fail_attempt_from_watchdog(
                     attempt,
                     &format!("Agent 终端已结束；已发现成果文件，但自动完成校验失败：{}", error),
+                    "attemptFailed",
                     app,
                     terminal_service,
                 )?;
@@ -8615,6 +8902,7 @@ fn reconcile_running_attempt(
         fail_attempt_from_watchdog(
             attempt,
             "Agent 终端已结束，且尚未检测到本次执行写入的完整成果文件",
+            "attemptFailed",
             app,
             terminal_service,
         )?;
@@ -8625,6 +8913,7 @@ fn reconcile_running_attempt(
 fn fail_attempt_from_watchdog(
     attempt: &AiAttempt,
     message: &str,
+    event_type: &str,
     _app: tauri::AppHandle,
     terminal_service: TerminalService,
 ) -> Result<(), String> {
@@ -8653,7 +8942,7 @@ fn fail_attempt_from_watchdog(
         &current.delivery_id,
         Some(&current.task_node_id),
         Some(&current.id),
-        "attemptFailed",
+        event_type,
         message,
     )?;
     if let Some(terminal_id) = current.terminal_id.as_deref() {
