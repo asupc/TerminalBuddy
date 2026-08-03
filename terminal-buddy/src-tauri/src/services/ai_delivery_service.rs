@@ -187,35 +187,6 @@ struct QualityGatePlan {
     commands: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct RepositoryQualityContext {
-    name: String,
-    relative_path: String,
-    default_branch: String,
-    stacks: Vec<String>,
-    manifests: Vec<QualityManifest>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct QualityManifest {
-    relative_path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scripts: Option<Vec<String>>,
-}
-
-const QUALITY_GATE_SCHEMA: &str = r#"{
-  "type": "object",
-  "required": ["commands"],
-  "properties": {
-    "commands": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "type": "string", "minLength": 1 }
-    }
-  },
-  "additionalProperties": false
-}"#;
-
 const WORKFLOW_REVIEW_SCHEMA: &str = r#"{
   "type": "object",
   "required": ["approved", "comments"],
@@ -225,25 +196,4 @@ const WORKFLOW_REVIEW_SCHEMA: &str = r#"{
   },
   "additionalProperties": false
 }"#;
-
-const QUALITY_MANIFEST_NAMES: &[&str] = &[
-    "package.json",
-    "package-lock.json",
-    "pnpm-lock.yaml",
-    "pnpm-workspace.yaml",
-    "yarn.lock",
-    "cargo.toml",
-    "requirements.txt",
-    "pyproject.toml",
-    "go.mod",
-    "pom.xml",
-    "build.gradle",
-    "build.gradle.kts",
-    "settings.gradle",
-    "settings.gradle.kts",
-    "makefile",
-    "dockerfile",
-    "docker-compose.yml",
-    "docker-compose.yaml",
-];
 

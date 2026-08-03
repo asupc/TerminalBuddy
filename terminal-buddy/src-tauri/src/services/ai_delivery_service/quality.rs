@@ -844,3 +844,53 @@ impl AiDeliveryService {
         Self::delete(PROJECTS_DIR, id, "AI 项目")
     }
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RepositoryQualityContext {
+    pub(crate) name: String,
+    pub(crate) relative_path: String,
+    pub(crate) default_branch: String,
+    pub(crate) stacks: Vec<String>,
+    pub(crate) manifests: Vec<QualityManifest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct QualityManifest {
+    pub(crate) relative_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) scripts: Option<Vec<String>>,
+}
+
+pub(crate) const QUALITY_GATE_SCHEMA: &str = r#"{
+  "type": "object",
+  "required": ["commands"],
+  "properties": {
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "additionalProperties": false
+}"#;
+
+pub(crate) const QUALITY_MANIFEST_NAMES: &[&str] = &[
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "yarn.lock",
+    "cargo.toml",
+    "requirements.txt",
+    "pyproject.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+    "makefile",
+    "dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+];
