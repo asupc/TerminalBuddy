@@ -16,7 +16,6 @@ export interface AiProject {
   name: string;
   workspaceRoot: string;
   repositories: AiRepository[];
-  profileId?: string | null;
   worktreeRoot?: string | null;
   qualityGate: AiQualityGate;
   managerAgentId?: string | null;

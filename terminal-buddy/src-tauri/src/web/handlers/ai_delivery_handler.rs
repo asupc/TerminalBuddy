@@ -95,13 +95,8 @@ pub async fn approve(
         .state::<TerminalService>()
         .inner()
         .clone();
-    for attempt in AiDeliveryService::dispatch_ready_tasks(&id).unwrap_or_default() {
-        let _ = AiDeliveryService::start_attempt(
-            &attempt.id,
-            app.clone(),
-            terminal_service.clone(),
-        );
-    }
+    AiDeliveryService::dispatch_ready_and_start(&id, app, terminal_service)
+        .map_err(ApiError::BadRequest)?;
     Ok(Json(delivery))
 }
 
@@ -120,9 +115,8 @@ pub async fn answer_decision(
     {
         let app = state.app_handle.clone();
         let terminal_service = app.state::<TerminalService>().inner().clone();
-        for attempt in AiDeliveryService::dispatch_ready_tasks(&delivery_id).unwrap_or_default() {
-            let _ = AiDeliveryService::start_attempt(&attempt.id, app.clone(), terminal_service.clone());
-        }
+        AiDeliveryService::dispatch_ready_and_start(&delivery_id, app, terminal_service)
+            .map_err(ApiError::BadRequest)?;
     }
     Ok(Json(request))
 }
@@ -201,9 +195,8 @@ pub async fn complete_attempt(
         }
     }
     // 完成后自动派发后续任务
-    for attempt in AiDeliveryService::dispatch_ready_tasks(&id).unwrap_or_default() {
-        let _ = AiDeliveryService::start_attempt(&attempt.id, app.clone(), terminal_service.clone());
-    }
+    AiDeliveryService::dispatch_ready_and_start(&id, app, terminal_service)
+        .map_err(ApiError::BadRequest)?;
     Ok(Json(completed))
 }
 

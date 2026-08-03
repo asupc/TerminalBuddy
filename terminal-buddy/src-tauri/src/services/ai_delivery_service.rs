@@ -287,7 +287,6 @@ impl AiDeliveryService {
             name: name.to_string(),
             workspace_root: workspace_root.to_string_lossy().to_string(),
             repositories,
-            profile_id: input.profile_id,
             worktree_root: normalize_optional_directory(input.worktree_root)?,
             quality_gate,
             manager_agent_id: input.manager_agent_id,
@@ -922,7 +921,7 @@ impl AiDeliveryService {
                 attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
                 attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
                 attempt.summary = Some("应用中断，任务图生成状态已恢复".to_string());
-                Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+                Self::persist_attempt(&attempt)?;
             }
             delivery.state = "drafting".to_string();
             delivery.updated_at = chrono::Utc::now().to_rfc3339();
@@ -1068,7 +1067,7 @@ impl AiDeliveryService {
                 created_at: now.clone(),
                 updated_at: now,
             };
-            Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+            Self::persist_attempt(&attempt)?;
             Self::append_event(
                 &delivery.id,
                 None,
@@ -1107,7 +1106,7 @@ impl AiDeliveryService {
                 attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
                 attempt.summary = Some(message.to_string());
                 manager_attempt_id = Some(attempt.id.clone());
-                Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+                Self::persist_attempt(&attempt)?;
             }
             Self::append_event(
                 &delivery.id,
@@ -1228,7 +1227,7 @@ impl AiDeliveryService {
                     manager_attempt.finished_at.clone().unwrap_or_default();
                 manager_attempt.summary =
                     Some(format!("任务图生成完成，共 {} 个任务节点", created.len()));
-                Self::save(ATTEMPTS_DIR, &manager_attempt.id, &manager_attempt)?;
+                Self::persist_attempt(&manager_attempt)?;
                 Self::append_event(
                     &delivery.id,
                     None,
@@ -1797,7 +1796,19 @@ impl AiDeliveryService {
             attempt.finished_at = Some(now.clone());
             attempt.updated_at = now.clone();
             attempt.summary = Some("交付已由用户终止".to_string());
-            Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+            Self::persist_attempt(&attempt)?;
+            // 逐 attempt 事件：事件写盘失败不中断取消主流程
+            let _ = Self::append_event(
+                &delivery.id,
+                if attempt.task_node_id.is_empty() {
+                    None
+                } else {
+                    Some(&attempt.task_node_id)
+                },
+                Some(&attempt.id),
+                "attemptCancelled",
+                "交付取消，任务已终止",
+            );
         }
         for mut task in Self::get_task_nodes(&delivery.id)? {
             if matches!(task.state.as_str(), "succeeded" | "policyViolation") {
@@ -2006,7 +2017,7 @@ impl AiDeliveryService {
                 archived.finished_at = Some(chrono::Utc::now().to_rfc3339());
                 archived.updated_at = archived.finished_at.clone().unwrap_or_default();
                 archived.summary = Some("已由用户回答决策，旧执行记录归档".to_string());
-                Self::save(ATTEMPTS_DIR, &archived.id, &archived)?;
+                Self::persist_attempt(&archived)?;
                 Self::append_event(
                     &archived.delivery_id,
                     Some(&archived.task_node_id),
@@ -2333,7 +2344,7 @@ impl AiDeliveryService {
                 // 回答决策时（answer_decision_request 按 task.state 判断）可正常恢复派发。
                 attempt.terminal_id = None;
                 attempt.state = "interrupted".to_string();
-                Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+                Self::persist_attempt(&attempt)?;
                 Self::append_event(
                     &attempt.delivery_id,
                     if attempt.task_node_id.is_empty() {
@@ -2362,7 +2373,7 @@ impl AiDeliveryService {
             attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
             attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
             attempt.summary = Some(message.to_string());
-            Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+            Self::persist_attempt(&attempt)?;
             if !attempt.task_node_id.is_empty() {
                 let mut task = Self::get_task_node(&attempt.task_node_id)?;
                 if matches!(task.state.as_str(), "queued" | "running") {
@@ -2655,7 +2666,7 @@ impl AiDeliveryService {
             created_at: reviewer_started_at.clone(),
             updated_at: reviewer_started_at,
         };
-        Self::save(ATTEMPTS_DIR, &reviewer_attempt.id, &reviewer_attempt)?;
+        Self::persist_attempt(&reviewer_attempt)?;
         let review_result = run_reviewer_agent(
             &reviewer,
             &reviewer_runtime,
@@ -3431,7 +3442,7 @@ impl AiDeliveryService {
             created_at: now.clone(),
             updated_at: now,
         };
-        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        Self::persist_attempt(&attempt)?;
         task.assigned_agent_id = Some(agent.id);
         task.contract_id = Some(contract.id);
         task.attempt_ids.push(attempt.id.clone());
@@ -3563,6 +3574,32 @@ impl AiDeliveryService {
         Ok(attempts)
     }
 
+    /// 统一派发 + 启动：dispatch_ready_tasks 后逐 attempt start_attempt，聚合错误。
+    /// 返回成功启动的 attempt 数；任一步失败立即返回 Err（调用方决定是否静默）。
+    pub fn dispatch_ready_and_start(
+        delivery_id: &str,
+        app: tauri::AppHandle,
+        terminal_service: TerminalService,
+    ) -> Result<usize, String> {
+        let attempts = Self::dispatch_ready_tasks(delivery_id)?;
+        let mut started = 0usize;
+        let mut errors: Vec<String> = Vec::new();
+        for attempt in attempts {
+            match Self::start_attempt(&attempt.id, app.clone(), terminal_service.clone()) {
+                Ok(_) => started += 1,
+                Err(error) => errors.push(format!("{}: {}", attempt.id, error)),
+            }
+        }
+        if !errors.is_empty() {
+            return Err(format!(
+                "部分任务启动失败（成功 {} 个）: {}",
+                started,
+                errors.join("; ")
+            ));
+        }
+        Ok(started)
+    }
+
     pub fn start_attempt(
         attempt_id: &str,
         app: tauri::AppHandle,
@@ -3691,7 +3728,7 @@ impl AiDeliveryService {
             attempt.state = "running".to_string();
             attempt.started_at = chrono::Utc::now().to_rfc3339();
             attempt.updated_at = attempt.started_at.clone();
-           Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+           Self::persist_attempt(&attempt)?;
            let mut running_task = task;
            running_task.state = "running".to_string();
            running_task.updated_at = chrono::Utc::now().to_rfc3339();
@@ -3944,7 +3981,7 @@ impl AiDeliveryService {
         attempt.state = "cancelled".to_string();
         attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
         attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
-        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        Self::persist_attempt(&attempt)?;
         Self::cleanup_attempt_run_dir(&attempt.id);
         let _ = terminal_service.close_terminal(&terminal_id);
         let mut task = Self::get_task_node(&attempt.task_node_id)?;
@@ -3984,7 +4021,7 @@ impl AiDeliveryService {
                     updated.state = "cancelled".to_string();
                     updated.finished_at = Some(chrono::Utc::now().to_rfc3339());
                     updated.updated_at = updated.finished_at.clone().unwrap_or_default();
-                    let _ = Self::save(ATTEMPTS_DIR, &updated.id, &updated);
+                    let _ = Self::persist_attempt(&updated);
                     Self::cleanup_attempt_run_dir(&updated.id);
                 }
             }
@@ -4047,7 +4084,7 @@ impl AiDeliveryService {
         let mut workflow_review = None;
         attempt.state = "running".to_string();
         attempt.updated_at = chrono::Utc::now().to_rfc3339();
-        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        Self::persist_attempt(&attempt)?;
         // 重跑验收（skip_audit=true：现场已人工确认，不再重复静态越权判定）
         let completion_error = Self::run_acceptance_validation(
             &task,
@@ -4078,7 +4115,7 @@ impl AiDeliveryService {
             None if let Some(review) = workflow_review.as_ref() => review.comments.clone(),
             None => "现场已确认，重跑验收通过".to_string(),
         });
-        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        Self::persist_attempt(&attempt)?;
         // 验收通过时记录当前分支 HEAD 作为 validated_commit，合并前须再次确认一致
         if successful && task.execution_mode == "write" {
             if let Some(worktree) = contract.worktree_path.as_deref() {
@@ -4217,7 +4254,7 @@ impl AiDeliveryService {
         attempt.summary = Some(message.to_string());
         task.state = "cancelled".to_string();
         task.updated_at = now;
-        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        Self::persist_attempt(&attempt)?;
         Self::cleanup_attempt_run_dir(&attempt.id);
         Self::save(TASK_NODES_DIR, &task.id, &task)?;
         let _ = Self::append_event(
@@ -4248,7 +4285,7 @@ impl AiDeliveryService {
         attempt.summary = Some(format!("任务启动失败: {}", reason));
         task.state = "failed".to_string();
         task.updated_at = now;
-        Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+        Self::persist_attempt(&attempt)?;
         Self::cleanup_attempt_run_dir(&attempt.id);
         Self::save(TASK_NODES_DIR, &task.id, &task)?;
         let _ = Self::append_event(
@@ -4283,7 +4320,7 @@ impl AiDeliveryService {
        attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
        attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
        attempt.summary = Some(format!("已请求用户决策：{}", request.question));
-       Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+       Self::persist_attempt(&attempt)?;
         // 同步将任务状态设为 needsInput，使 answer_decision_request 能正确识别并转回 ready。
         let mut task = Self::get_task_node(task_node_id)?;
         if task.state == "running" {
@@ -4423,7 +4460,7 @@ impl AiDeliveryService {
             None if let Some(review) = workflow_review.as_ref() => review.comments.clone(),
             None => compact_output(if successful { stdout } else { stderr }),
         });
-       Self::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+       Self::persist_attempt(&attempt)?;
         // attempt 达到终态（completed/failed/policyViolation）后清理运行目录；
         // 验收所用 review.json / transcript 已在 run_acceptance_validation 中消费完毕。
         Self::cleanup_attempt_run_dir(&attempt.id);
@@ -4714,22 +4751,89 @@ impl AiDeliveryService {
     }
 
     fn active_attempt_count_for_agent(agent_id: &str) -> Result<usize, String> {
-        Ok(Self::get_all_attempts(None)?
+        Ok(Self::active_attempts_snapshot()?
             .into_iter()
-            .filter(|attempt| {
-                matches!(attempt.state.as_str(), "queued" | "starting" | "running")
-                    && attempt.agent_id == agent_id
-            })
+            .filter(|attempt| attempt.agent_id == agent_id)
             .count())
+    }
+
+    /// 活跃 attempt 内存索引（N18）：attempt 置 queued/starting/running 时 insert，
+    /// 置任何非活跃态（含 needsInput/cancelled/failed/completed/interrupted）时 remove。
+    /// 由 persist_attempt 统一维护；lib.rs setup 启动时 rebuild 一次。
+    fn active_attempts_index() -> &'static Mutex<HashMap<String, AiAttempt>> {
+        static INDEX: OnceLock<Mutex<HashMap<String, AiAttempt>>> = OnceLock::new();
+        INDEX.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// 保存 attempt 并同步活跃索引（所有 attempt 持久化的统一收口点）。
+    fn persist_attempt(attempt: &AiAttempt) -> Result<(), String> {
+        if let Ok(mut index) = Self::active_attempts_index().lock() {
+            if matches!(attempt.state.as_str(), "queued" | "starting" | "running") {
+                index.insert(attempt.id.clone(), attempt.clone());
+            } else {
+                index.remove(&attempt.id);
+            }
+        }
+        Self::save(ATTEMPTS_DIR, &attempt.id, attempt)
+    }
+
+    /// 启动时重建活跃索引一次（lib.rs setup 调用）。返回活跃 attempt 数。
+    pub fn rebuild_active_attempt_index() -> Result<usize, String> {
+        let attempts = Self::get_all_attempts(None)?;
+        let mut index = HashMap::new();
+        for attempt in attempts {
+            if matches!(attempt.state.as_str(), "queued" | "starting" | "running") {
+                index.insert(attempt.id.clone(), attempt);
+            }
+        }
+        let count = index.len();
+        *Self::active_attempts_index()
+            .lock()
+            .map_err(|_| "活跃索引锁异常".to_string())? = index;
+        Ok(count)
+    }
+
+    /// 活跃 attempt 快照（读内存索引；索引为空时回退全量扫描，保证启动早期正确性）。
+    /// 测试模式下始终回退全量扫描：测试数据目录是 thread_local 而索引是全局静态，
+    /// 并行测试共享索引会交叉污染；且测试直接用 `save` 置终态会绕过索引维护。
+    /// 索引项按 state 防御性过滤：直接 `save` 绕过的场景（如测试置 completed）不会残留误计。
+    fn active_attempts_snapshot() -> Result<Vec<AiAttempt>, String> {
+        #[cfg(test)]
+        {
+            return Ok(Self::get_all_attempts(None)?
+                .into_iter()
+                .filter(|attempt| {
+                    matches!(attempt.state.as_str(), "queued" | "starting" | "running")
+                })
+                .collect());
+        }
+        #[cfg(not(test))]
+        {
+            let guard = Self::active_attempts_index()
+                .lock()
+                .map_err(|_| "活跃索引锁异常".to_string())?;
+            if guard.is_empty() {
+                drop(guard);
+                return Ok(Self::get_all_attempts(None)?
+                    .into_iter()
+                    .filter(|attempt| {
+                        matches!(attempt.state.as_str(), "queued" | "starting" | "running")
+                    })
+                    .collect());
+            }
+            Ok(guard
+                .values()
+                .filter(|attempt| {
+                    matches!(attempt.state.as_str(), "queued" | "starting" | "running")
+                })
+                .cloned()
+                .collect())
+        }
     }
 
     /// 全局活跃 attempt 数（queued/starting/running，三态口径与既有 7 处过滤一致）。
     fn global_active_attempts() -> Result<usize, String> {
-        let active = Self::get_all_attempts(None)?
-            .iter()
-            .filter(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
-            .count();
-        Ok(active)
+        Ok(Self::active_attempts_snapshot()?.len())
     }
 
     /// 派发优先级：workflow 首步 + taskWorktree 的写入任务优先；其余（含 readonly/workspaceRoot）延后。
@@ -4755,10 +4859,7 @@ impl AiDeliveryService {
         agent: &AiAgent,
         task: &AiTaskNode,
     ) -> Result<(), String> {
-        let active = Self::get_all_attempts(None)?
-            .into_iter()
-            .filter(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
-            .collect::<Vec<_>>();
+        let active = Self::active_attempts_snapshot()?;
         let project_active = active
             .iter()
             .filter(|attempt| {
@@ -7152,7 +7253,6 @@ mod agent_decision_tests {
             name: "测试项目".to_string(),
             workspace_root: root.to_string_lossy().to_string(),
             repositories: Vec::new(),
-            profile_id: None,
             worktree_root: None,
             quality_gate: AiQualityGate::default(),
             manager_agent_id: None,
@@ -8337,7 +8437,7 @@ fn fail_attempt_from_watchdog(
     current.finished_at = Some(now.clone());
     current.updated_at = now.clone();
     current.summary = Some(message.to_string());
-    AiDeliveryService::save(ATTEMPTS_DIR, &current.id, &current)?;
+    AiDeliveryService::persist_attempt(&current)?;
 
     let mut task = AiDeliveryService::get_task_node(&current.task_node_id)?;
     if matches!(task.state.as_str(), "queued" | "running") {
@@ -8415,7 +8515,7 @@ fn record_watchdog_observation(
     }
     attempt.updated_at = chrono::Utc::now().to_rfc3339();
     attempt.summary = Some(message.to_string());
-    AiDeliveryService::save(ATTEMPTS_DIR, attempt_id, &attempt)?;
+    AiDeliveryService::persist_attempt(&attempt)?;
     let mut task = AiDeliveryService::get_task_node(task_node_id)?;
     if task.state == "running" {
         task.updated_at = attempt.updated_at.clone();
@@ -8626,7 +8726,7 @@ fn run_reviewer_agent(
         AiDeliveryService::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "Reviewer 执行")?;
     attempt.terminal_id = Some(terminal_id.clone());
     attempt.updated_at = chrono::Utc::now().to_rfc3339();
-    AiDeliveryService::save(ATTEMPTS_DIR, &attempt.id, &attempt)?;
+    AiDeliveryService::persist_attempt(&attempt)?;
     let _ = AiDeliveryService::append_event(
         &attempt.delivery_id,
         Some(&attempt.task_node_id),
@@ -9191,7 +9291,7 @@ fn run_manager_planner(
     manager_attempt.terminal_id = Some(terminal_id.clone());
     manager_attempt.summary = Some("管理者已在原生终端中启动".to_string());
     manager_attempt.updated_at = chrono::Utc::now().to_rfc3339();
-    AiDeliveryService::save(ATTEMPTS_DIR, &manager_attempt.id, &manager_attempt)?;
+    AiDeliveryService::persist_attempt(&manager_attempt)?;
     let _ = AiDeliveryService::append_event(
         delivery_id,
         None,

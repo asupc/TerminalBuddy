@@ -52,8 +52,6 @@ pub struct AiProject {
     pub workspace_root: String,
     pub repositories: Vec<AiRepository>,
     #[serde(default)]
-    pub profile_id: Option<String>,
-    #[serde(default)]
     pub worktree_root: Option<String>,
     #[serde(default)]
     pub quality_gate: AiQualityGate,
@@ -475,7 +473,7 @@ pub struct AiAttemptOutput {
     /// decision.json 解析结果（如果存在）
     #[serde(default)]
     pub decision: Option<AiAttemptDecision>,
-    /// prompt.txt 的前 500 字符摘要
+    /// prompt.txt 的完整内容（如果存在）
     #[serde(default)]
     pub prompt_excerpt: Option<String>,
     /// plan.json 原始内容（如果存在），用于查看成果

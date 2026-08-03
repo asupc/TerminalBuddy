@@ -346,6 +346,12 @@ pub fn run() {
                 Err(error) => boot_log(format!("AI delivery recovery failed: {}", error)),
             }
 
+            // 重建活跃 attempt 内存索引（N18），此后容量检查不再逐次全量读盘。
+            match AiDeliveryService::rebuild_active_attempt_index() {
+                Ok(count) => boot_log(format!("active attempt index rebuilt: {} items", count)),
+                Err(error) => boot_log(format!("active attempt index rebuild failed: {}", error)),
+            }
+
             // 应用重启后，自动恢复运行中交付的就绪任务派发。
             let app_handle = app.handle().clone();
             let terminal_service = app.state::<TerminalService>().inner().clone();
@@ -400,26 +406,18 @@ pub fn run() {
                     if delivery.state != "running" {
                         continue;
                     }
-                    match AiDeliveryService::dispatch_ready_tasks(&delivery.id) {
-                        Ok(attempts) => {
-                            if !attempts.is_empty() {
+                    match AiDeliveryService::dispatch_ready_and_start(
+                        &delivery.id,
+                        app_handle.clone(),
+                        terminal_service.clone(),
+                    ) {
+                        Ok(started) => {
+                            if started > 0 {
                                 boot_log(format!(
                                     "auto-dispatched {} ready tasks for delivery {}",
-                                    attempts.len(),
+                                    started,
                                     delivery.id
                                 ));
-                                for attempt in attempts {
-                                    if let Err(error) = AiDeliveryService::start_attempt(
-                                        &attempt.id,
-                                        app_handle.clone(),
-                                        terminal_service.clone(),
-                                    ) {
-                                        boot_log(format!(
-                                            "auto-dispatch start_attempt failed: {}",
-                                            error
-                                        ));
-                                    }
-                                }
                             }
                         }
                         Err(error) => {

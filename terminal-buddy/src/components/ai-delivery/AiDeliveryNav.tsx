@@ -16,10 +16,11 @@ interface AiDeliveryNavProps {
 }
 
 export function AiDeliveryNav({ runtimes, isDetecting, error, onDetect, onOpenConfiguration }: AiDeliveryNavProps) {
+  const currentRuntime = runtimes.find((item) => item.available && item.version);
 
   return <aside className="ai-delivery-nav ai-delivery-rail" aria-label="AI 交付导航">
     <div className="panel-titlebar"><span className="panel-title">AI 交付</span></div>
-    <section className="ai-rail-section"><div className="ai-rail-heading"><CircleDot size={14} />可用 Runtime<button type="button" className="ai-rail-runtime-reload" disabled={isDetecting} onClick={() => void onDetect()}><RefreshCw size={12} />重新检测</button></div>{runtimeKinds.map(kind => { const available = runtimes.some(item => item.kind === kind && item.available); return <div className="ai-rail-runtime" key={kind}><i className={!isDetecting && available ? 'online' : ''} /><span>{label(kind)}</span><small>{isDetecting ? '检测中' : available ? '已就绪' : '不可用'}</small></div>; })}{error && <p className="ai-rail-error">{error}</p>}</section>
+    <section className="ai-rail-section"><div className="ai-rail-heading"><CircleDot size={14} />可用 Runtime<button type="button" className="ai-rail-runtime-reload" disabled={isDetecting} onClick={() => void onDetect()}><RefreshCw size={12} />重新检测</button></div>{runtimeKinds.map(kind => { const available = runtimes.some(item => item.kind === kind && item.available); return <div className="ai-rail-runtime" key={kind}><i className={!isDetecting && available ? 'online' : ''} /><span>{label(kind)}</span><small>{isDetecting ? '检测中' : available ? '已就绪' : '不可用'}</small></div>; })}{currentRuntime && <div className="ai-nav-version"><span>Runtime {currentRuntime.version ?? "未知"}</span></div>}{error && <p className="ai-rail-error">{error}</p>}</section>
     <section className="ai-rail-section"><div className="ai-rail-heading"><Workflow size={14} />交付流程</div><ol className="ai-rail-steps"><li>登记多仓库项目</li><li>创建需求与任务图</li><li>批准后并发执行</li><li>审核并本地合并</li></ol></section>
     <nav className="ai-rail-section ai-rail-config" aria-label="AI 交付配置管理">
       <div className="ai-rail-heading">配置管理</div>

@@ -8,7 +8,7 @@ use crate::models::{
     UpdateAiTaskNodeInput, UpdateAiDeliveryTemplateInput,
 };
 use crate::services::AiDeliveryService;
-use tauri::{command, Emitter};
+use tauri::command;
 
 #[command]
 pub fn get_ai_projects() -> Result<Vec<AiProject>, String> {
@@ -325,13 +325,7 @@ pub fn resume_ai_delivery(
     let delivery = AiDeliveryService::resume_delivery(&id)?;
     // 恢复后自动派发所有就绪任务
     let terminal_service = terminal_service.inner().clone();
-    for attempt in AiDeliveryService::dispatch_ready_tasks(&id)? {
-        let _ = AiDeliveryService::start_attempt(
-            &attempt.id,
-            app.clone(),
-            terminal_service.clone(),
-        );
-    }
+    AiDeliveryService::dispatch_ready_and_start(&id, app, terminal_service)?;
     Ok(delivery)
 }
 
@@ -366,7 +360,6 @@ pub fn create_ai_decision_request(
     app: tauri::AppHandle,
 ) -> Result<crate::models::AiDecisionRequest, String> {
     let request = AiDeliveryService::create_decision_request(input)?;
-    let _ = app.emit("ai-delivery-decision", &request);
     let _ = crate::commands::notification::show_ai_delivery_notification(
         app,
         "AI 交付等待决策",
@@ -384,16 +377,13 @@ pub fn answer_ai_decision_request(
     terminal_service: tauri::State<TerminalService>,
 ) -> Result<crate::models::AiDecisionRequest, String> {
     let request = AiDeliveryService::answer_decision_request(&id, &answer)?;
-    let _ = app.emit("ai-delivery-decision", &request);
     if AiDeliveryService::get_delivery(&request.delivery_id)?.state == "running" {
         let terminal_service = terminal_service.inner().clone();
-        for attempt in AiDeliveryService::dispatch_ready_tasks(&request.delivery_id)? {
-            let _ = AiDeliveryService::start_attempt(
-                &attempt.id,
-                app.clone(),
-                terminal_service.clone(),
-            );
-        }
+        AiDeliveryService::dispatch_ready_and_start(
+            &request.delivery_id,
+            app,
+            terminal_service,
+        )?;
     }
     Ok(request)
 }
