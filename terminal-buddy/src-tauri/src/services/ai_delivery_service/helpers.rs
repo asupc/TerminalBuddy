@@ -1303,6 +1303,13 @@ pub(crate) fn discard_task_contract(task: &mut AiTaskNode) -> bool {
                     .join(compact_path_id(&delivery.id))
                     .join(compact_path_id(&task.id));
                 let _ = fs::remove_dir_all(&handoff_root);
+                // 同理回收只读任务成果目录（outputs/{delivery}/{task}），避免重派被
+                // prepare_output_artifact_directory 的残留检查阻塞。
+                let output_root = project_artifact_base_path(&project)
+                    .join("outputs")
+                    .join(compact_path_id(&delivery.id))
+                    .join(compact_path_id(&task.id));
+                let _ = fs::remove_dir_all(&output_root);
             }
         }
     }
@@ -1365,11 +1372,11 @@ pub(crate) fn materialize_dependency_artifacts(
         .join("handoff")
         .join(compact_path_id(&contract.delivery_id))
         .join(compact_path_id(&contract.task_id));
+    // handoff 残留（上次拷贝中断/回收未清理）会让任务被空目录永久卡死；
+    // 派发对应新建契约，清理后重建并重新拷贝前置成果。
     if handoff_root.exists() {
-        return Err(format!(
-            "任务成果交接目录已存在: {}",
-            handoff_root.display()
-        ));
+        fs::remove_dir_all(&handoff_root)
+            .map_err(|error| format!("清理任务成果交接目录失败: {}", error))?;
     }
     let mut missing = contract
         .input_artifacts
@@ -1440,8 +1447,11 @@ pub(crate) fn prepare_output_artifact_directory(
         .join("outputs")
         .join(compact_path_id(&contract.delivery_id))
         .join(compact_path_id(&contract.task_id));
+    // outputs 残留（上次派发未产出/中断、或契约回收未清理）会让任务被空目录永久卡死；
+    // 派发对应新建契约，旧 outputs 无意义，清理后重建。
     if output_root.exists() {
-        return Err(format!("只读任务成果目录已存在: {}", output_root.display()));
+        fs::remove_dir_all(&output_root)
+            .map_err(|error| format!("清理只读任务成果目录失败: {}", error))?;
     }
     fs::create_dir_all(&output_root)
         .map_err(|error| format!("创建只读任务成果目录失败: {}", error))?;

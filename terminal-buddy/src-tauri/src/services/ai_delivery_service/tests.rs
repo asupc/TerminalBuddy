@@ -1000,6 +1000,33 @@ mod cycle_detection_tests {
         .unwrap()
     }
 
+    fn make_readonly_analysis_task(
+        delivery: &AiDelivery,
+        project: &AiProject,
+        agent: &AiAgent,
+    ) -> AiTaskNode {
+        AiDeliveryService::create_task_node(CreateAiTaskNodeInput {
+            delivery_id: delivery.id.clone(),
+            title: "只读分析".to_string(),
+            description: "只读分析任务".to_string(),
+            role_id: None,
+            workflow_step_id: None,
+            preferred_agent_id: Some(agent.id.clone()),
+            task_prompt: "仅分析，不得修改项目源码。".to_string(),
+            execution_mode: "readonly".to_string(),
+            execution_context: EXECUTION_CONTEXT_WORKSPACE_ROOT.to_string(),
+            target_repository_id: project.repositories[0].id.clone(),
+            allowed_write_paths: vec![".".to_string()],
+            dependency_ids: Vec::new(),
+            input_artifacts: Vec::new(),
+            expected_artifacts: vec!["analysis/service-a.md".to_string()],
+            acceptance_commands: Vec::new(),
+            retry_count: 0,
+            timeout_seconds: None,
+        })
+        .unwrap()
+    }
+
     #[test]
     fn capacity_blocked_start_reverts_task_to_ready() {
         let root =
@@ -1488,6 +1515,140 @@ mod cycle_detection_tests {
             "任务契约"
         )
         .is_err());
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 回归：readonly 任务派发时若 outputs 目录已存在但为空（上次未产出/中断残留），
+    /// 不应拒绝派发——应清理重建，否则任务被空目录永久卡死。
+    #[test]
+    fn readonly_dispatch_recovers_from_empty_outputs_directory() {
+        let (root, project, delivery, agent) = setup_git_project();
+        let task = make_readonly_analysis_task(&delivery, &project, &agent);
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+
+        // 模拟上次派发未产出/中断留下的空 outputs 残留
+        let output_root = project_artifact_base_path(&project)
+            .join("outputs")
+            .join(compact_path_id(&delivery.id))
+            .join(compact_path_id(&task.id));
+        fs::create_dir_all(&output_root).unwrap();
+        assert_eq!(fs::read_dir(&output_root).unwrap().count(), 0);
+
+        // 空残留不应阻塞派发：应清理重建
+        let attempt = AiDeliveryService::dispatch_task_node(&task.id, None);
+        assert!(
+            attempt.is_ok(),
+            "空 outputs 残留应允许派发: {:?}",
+            attempt.err()
+        );
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 回归：write 任务派发时若 handoff 目录已存在但为空（上次拷贝中断/回收未清理），
+    /// 不应拒绝派发——应清理重建并重新拷贝前置成果。
+    #[test]
+    fn write_dispatch_recovers_from_empty_handoff_directory() {
+        let (root, project, delivery, agent) = setup_git_project();
+        // 前置 readonly 任务产出成果并标记成功
+        let upstream = make_readonly_analysis_task(&delivery, &project, &agent);
+        // 下游 write 任务使用前置成果（须在交付审批前创建）
+        let downstream = AiDeliveryService::create_task_node(CreateAiTaskNodeInput {
+            delivery_id: delivery.id.clone(),
+            title: "下游实现".to_string(),
+            description: "使用前置成果".to_string(),
+            role_id: None,
+            workflow_step_id: None,
+            preferred_agent_id: Some(agent.id.clone()),
+            task_prompt: String::new(),
+            execution_mode: "write".to_string(),
+            execution_context: EXECUTION_CONTEXT_TASK_WORKTREE.to_string(),
+            target_repository_id: project.repositories[0].id.clone(),
+            allowed_write_paths: vec!["README.md".to_string()],
+            dependency_ids: vec![upstream.id.clone()],
+            input_artifacts: vec!["analysis/service-a.md".to_string()],
+            expected_artifacts: Vec::new(),
+            acceptance_commands: Vec::new(),
+            retry_count: 0,
+            timeout_seconds: None,
+        })
+        .unwrap();
+
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+        let upstream_attempt = AiDeliveryService::dispatch_task_node(&upstream.id, None).unwrap();
+        let mut upstream_contract = AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &upstream_attempt.contract_id,
+            "任务契约",
+        )
+        .unwrap();
+        let upstream_output =
+            PathBuf::from(upstream_contract.output_artifact_directory.as_deref().unwrap());
+        fs::create_dir_all(upstream_output.join("analysis")).unwrap();
+        fs::write(upstream_output.join("analysis/service-a.md"), "结论").unwrap();
+        let mut up_attempt = upstream_attempt.clone();
+        up_attempt.state = "completed".to_string();
+        AiDeliveryService::save(ATTEMPTS_DIR, &up_attempt.id, &up_attempt).unwrap();
+        let mut up_task = AiDeliveryService::get_task_node(&upstream.id).unwrap();
+        up_task.state = "succeeded".to_string();
+        AiDeliveryService::save(TASK_NODES_DIR, &up_task.id, &up_task).unwrap();
+        upstream_contract.state = "completed".to_string();
+        AiDeliveryService::save(CONTRACTS_DIR, &upstream_contract.id, &upstream_contract)
+            .unwrap();
+
+        // 上游验收通过后下游就绪（手动模拟，聚焦 handoff 残留场景）
+        let mut down_task = AiDeliveryService::get_task_node(&downstream.id).unwrap();
+        down_task.state = "ready".to_string();
+        AiDeliveryService::save(TASK_NODES_DIR, &down_task.id, &down_task).unwrap();
+
+        // 模拟上次拷贝中断/回收未清理留下的空 handoff 残留
+        let handoff_root = project_artifact_base_path(&project)
+            .join("handoff")
+            .join(compact_path_id(&delivery.id))
+            .join(compact_path_id(&downstream.id));
+        fs::create_dir_all(&handoff_root).unwrap();
+
+        // 空残留不应阻塞派发：应清理重建并拷贝前置成果
+        let attempt = AiDeliveryService::dispatch_task_node(&downstream.id, None);
+        assert!(
+            attempt.is_ok(),
+            "空 handoff 残留应允许派发: {:?}",
+            attempt.err()
+        );
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 回归：discard_task_contract 必须同时回收只读任务的 outputs 成果目录，
+    /// 否则重派会被 prepare_output_artifact_directory 的残留检查阻塞。
+    #[test]
+    fn discard_task_contract_removes_outputs_directory() {
+        let (root, _project, delivery, agent) = setup_git_project();
+        let task = make_readonly_analysis_task(&delivery, &_project, &agent);
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+        let attempt = AiDeliveryService::dispatch_task_node(&task.id, None).unwrap();
+        let mut stored_task = AiDeliveryService::get_task_node(&task.id).unwrap();
+        assert!(stored_task.contract_id.is_some());
+
+        let contract = AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &attempt.contract_id,
+            "任务契约",
+        )
+        .unwrap();
+        let output_root = PathBuf::from(contract.output_artifact_directory.as_deref().unwrap());
+        assert!(output_root.is_dir());
+        fs::create_dir_all(output_root.join("analysis")).unwrap();
+        fs::write(output_root.join("analysis/service-a.md"), "结论").unwrap();
+
+        let cleaned = discard_task_contract(&mut stored_task);
+        assert!(cleaned);
+        assert!(stored_task.contract_id.is_none());
+        assert!(!output_root.exists(), "只读成果目录应被回收");
 
         PathService::set_test_data_dir(None);
         let _ = fs::remove_dir_all(root);
