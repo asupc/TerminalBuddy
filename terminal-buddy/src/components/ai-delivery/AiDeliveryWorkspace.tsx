@@ -1001,10 +1001,18 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
      await cancelAiDelivery(delivery.id);
       await refresh(project.id, delivery.id);
     });
-  const reviewGateByTask = useMemo(
-    () => new Map(reviewGates.map((gate) => [gate.taskNodeId, gate])),
-    [reviewGates],
-  );
+  const reviewGateByTask = useMemo(() => {
+    // 后端 get_review_gates 按 updated_at 降序（新→旧）。用 Map 直接构造会让旧 gate
+    // （失败/返工记录）覆盖新 gate，导致「运行质量门禁/通过/退回」按钮全部隐藏、
+    // 任务永久卡死。只保留每个任务最新的 gate。
+    const map = new Map<string, AiReviewGate>();
+    for (const gate of reviewGates) {
+      if (!map.has(gate.taskNodeId)) {
+        map.set(gate.taskNodeId, gate);
+      }
+    }
+    return map;
+  }, [reviewGates]);
   const taskContractByTask = useMemo(
     () => new Map(taskContracts.map((contract) => [contract.taskId, contract])),
     [taskContracts],

@@ -28,7 +28,9 @@ impl AiDeliveryService {
             return Err("交付尚未进入运行状态".to_string());
         }
         if Self::global_active_attempts()? >= GLOBAL_MAX_ATTEMPTS {
-            return Err("全局并发已达上限，稍后重试".to_string());
+            // 引用常量而非硬编码：fail_queued_attempt 按文案区分暂时性错误（回退待执行队列），
+            // 两处文案漂移会使容量错误被误判为结构性失败而把任务置 failed
+            return Err(GLOBAL_CAPACITY_ERROR.to_string());
         }
         let project = Self::get_project(&delivery.project_id)?;
         let repository = project
@@ -186,7 +188,7 @@ impl AiDeliveryService {
                     }
                     Ok(())
                 })();
-                // 触顶：暂停交付并通知（不直接静默拒绝），人工检查后可继续
+                // 触顶：暂停交付并通知（不直接静默拒绝），人工检查后可编辑提高上限再继续
                 let mut delivery = Self::get_delivery(&task.delivery_id)?;
                 if delivery.state == "running" {
                     delivery.state = "paused".to_string();
@@ -200,13 +202,19 @@ impl AiDeliveryService {
                     "deliveryPaused",
                     &format!("任务 {} 重试触顶，交付已暂停", task.title),
                 )?;
+                // 触顶清理后旧契约已失效（worktree/分支已回收）：清空 contract_id 并删除契约文件。
+                // 否则用户「编辑提高上限再重试」时 dispatch_task_node 会命中契约的
+                // 「执行目录不可用」检查而永久卡死（契约存在但 worktree 目录已被清理）。
+                if let Some(contract_id) = task.contract_id.take() {
+                    let _ = Self::delete(CONTRACTS_DIR, &contract_id, "任务契约");
+                }
+                task.updated_at = chrono::Utc::now().to_rfc3339();
+                let _ = Self::save(TASK_NODES_DIR, &task.id, &task);
                 return Err(format!(
                     "任务已达到最大重试次数（{} / {}），交付已暂停，请检查现场后调整",
                     attempted, effective_retry_limit
                 ));
             }
-            // 动态扩展容错：已有重试记录多于当前设置时自动提高上限
-            task.retry_count = task.retry_count.max(attempted.saturating_add(1));
         }
         let delivery = Self::get_delivery(&task.delivery_id)?;
         if delivery.state != "running" {
@@ -259,13 +267,14 @@ impl AiDeliveryService {
             match Self::dispatch_task_node(&task.id, None) {
                 Ok(attempt) => attempts.push(attempt),
                 Err(error) => {
+                    // 事件写盘失败不中断批量派发：其余就绪任务仍应继续派发
                     let _ = Self::append_event(
                         delivery_id,
                         Some(&task.id),
                         None,
                         "dispatchDeferred",
                         &error,
-                    )?;
+                    );
                 }
             }
         }
@@ -311,7 +320,7 @@ impl AiDeliveryService {
             return Err(format!("当前执行尝试不能启动: {}", attempt.state));
         }
         if Self::global_active_attempts()? >= GLOBAL_MAX_ATTEMPTS {
-            return Err("全局并发已达上限，稍后重试".to_string());
+            return Err(GLOBAL_CAPACITY_ERROR.to_string());
         }
         let start_result = (|| -> Result<AiAttempt, String> {
             let delivery = Self::get_delivery(&attempt.delivery_id)?;
@@ -660,7 +669,7 @@ impl AiDeliveryService {
             Ok(attempt)
         })();
         if let Err(error) = &start_result {
-            let _ = Self::fail_queued_attempt(attempt_id, error, &app);
+            let _ = Self::fail_queued_attempt(attempt_id, error);
         }
         start_result
     }
@@ -681,7 +690,7 @@ impl AiDeliveryService {
         attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
         attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
         Self::persist_attempt(&attempt)?;
-        Self::cleanup_attempt_run_dir(&attempt.id);
+        // 运行目录保留：取消后用户仍需查看现场输出；重试时新 attempt 使用新目录
         let _ = terminal_service.close_terminal(&terminal_id);
         let mut task = Self::get_task_node(&attempt.task_node_id)?;
         task.state = "cancelled".to_string();
@@ -720,11 +729,14 @@ impl AiDeliveryService {
                     updated.state = "cancelled".to_string();
                     updated.finished_at = Some(chrono::Utc::now().to_rfc3339());
                     updated.updated_at = updated.finished_at.clone().unwrap_or_default();
+                    // 运行目录保留：取消后现场输出仍可查看
                     let _ = Self::persist_attempt(&updated);
-                    Self::cleanup_attempt_run_dir(&updated.id);
                 }
             }
         }
+        // 排队中的 attempt 一并取消：否则任务置 cancelled 后仍可被手动 start_attempt
+        // 启动，monitor 收尾会把已取消任务的状态覆盖为终态（任务“复活”）。
+        Self::cancel_queued_attempts_of_task(&task);
         task.state = "cancelled".to_string();
         task.updated_at = chrono::Utc::now().to_rfc3339();
         Self::save(TASK_NODES_DIR, &task.id, &task)?;
@@ -768,12 +780,14 @@ impl AiDeliveryService {
             "taskSkipped",
             &format!("任务 {} 已标记忽略（不阻塞后续合并）", task.title),
         )?;
-        // 级联：依赖链上任一任务被跳过，下游 planned/ready 任务无法再获得产物，一并跳过。
+        // 级联：依赖链上任一任务被跳过，下游 planned/ready/queued 任务无法再获得产物，一并跳过。
+        // queued 必须纳入：已入队未启动的任务若只取消 attempt 而任务保持 queued，
+        // 会永久卡死且阻塞交付收尾（合并要求全部 succeeded/skipped）。
         loop {
             let mut cascaded = false;
             for mut downstream in Self::get_task_nodes(&delivery_id)? {
                 if skipped_ids.contains(&downstream.id)
-                    || !matches!(downstream.state.as_str(), "planned" | "ready")
+                    || !matches!(downstream.state.as_str(), "planned" | "ready" | "queued")
                     || !downstream.dependency_ids.iter().any(|dep| skipped_ids.contains(dep))
                 {
                     continue;
@@ -865,7 +879,14 @@ impl AiDeliveryService {
         attempt.state = "running".to_string();
         attempt.updated_at = chrono::Utc::now().to_rfc3339();
         Self::persist_attempt(&attempt)?;
-        // 重跑验收（skip_audit=true：现场已人工确认，不再重复静态越权判定）
+        // 重跑验收（skip_audit=true：现场已人工确认，不再重复静态越权判定）。
+        // readonly 编排审查任务（requires_workflow_review）需要 review.json 结论：
+        // 越权拦截发生在验收前，review.json 未被消费，仍在运行目录中。
+        let workflow_review_path = if requires_workflow_review(&task) {
+            Some(terminal_run_dir_by_id(&attempt.id).join("review.json"))
+        } else {
+            None
+        };
         let completion_error = Self::run_acceptance_validation(
             &task,
             &contract,
@@ -873,7 +894,7 @@ impl AiDeliveryService {
             Some(0),
             &None,
             workflow_managed,
-            None,
+            workflow_review_path.as_deref(),
             &mut workflow_review,
         );
         let successful = completion_error.is_none();
@@ -1016,49 +1037,64 @@ impl AiDeliveryService {
         Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn interrupt_attempt(
-        attempt_id: &str,
-        message: &str,
-        _app: tauri::AppHandle,
-    ) -> Result<(), String> {
-        let mut attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")?;
-        if attempt.state != "running" {
-            return Ok(());
-        }
-        let mut task = Self::get_task_node(&attempt.task_node_id)?;
-        let now = chrono::Utc::now().to_rfc3339();
-        attempt.state = "cancelled".to_string();
-        attempt.finished_at = Some(now.clone());
-        attempt.updated_at = now.clone();
-        attempt.summary = Some(message.to_string());
-        task.state = "cancelled".to_string();
-        task.updated_at = now;
-        Self::persist_attempt(&attempt)?;
-        Self::cleanup_attempt_run_dir(&attempt.id);
-        Self::save(TASK_NODES_DIR, &task.id, &task)?;
-        let _ = Self::append_event(
-            &attempt.delivery_id,
-            Some(&task.id),
-            Some(&attempt.id),
-            "attemptCancelled",
-            message,
-        )?;
-        Ok(())
-    }
-
     /// 启动本机终端前失败时，不能让任务永久停留在“已排队”。
-    pub(crate) fn fail_queued_attempt(
-        attempt_id: &str,
-        reason: &str,
-        _app: &tauri::AppHandle,
-    ) -> Result<(), String> {
+    /// 容量不足属暂时性错误：任务回退到就绪队列等待自动/手动补派，不置失败；
+    /// 其余结构性错误（目录/契约缺失、Agent 禁用等）才置失败要求人工介入。
+    pub(crate) fn fail_queued_attempt(attempt_id: &str, reason: &str) -> Result<(), String> {
         let mut attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")?;
         if attempt.state != "queued" {
             return Ok(());
         }
-        let mut task = Self::get_task_node(&attempt.task_node_id)?;
         let now = chrono::Utc::now().to_rfc3339();
+        // 暂时性错误：容量不足 / 交付被暂停。任务回退就绪队列，恢复后自动补派，不置失败。
+        let transient = reason == GLOBAL_CAPACITY_ERROR || reason.contains("交付已暂停或未运行");
+        if transient {
+            // 全局并发已满：把任务退回就绪/规划态，attempt 取消留痕（不入任务失败统计），
+            // 后续工作流步骤完成、恢复、回答决策等自动派发点会再次尝试。
+            attempt.state = "cancelled".to_string();
+            attempt.finished_at = Some(now.clone());
+            attempt.updated_at = now.clone();
+            attempt.summary = Some(format!("启动暂缓，任务已退回待执行队列: {}", reason));
+            Self::persist_attempt(&attempt)?;
+            let mut task = Self::get_task_node(&attempt.task_node_id)?;
+            // 依赖读取失败按「未满足」处理（回退 planned），不让回退路径本身报错卡死任务
+            let dependencies_ready = task.dependency_ids.iter().all(|dependency_id| {
+                Self::get_task_node(dependency_id)
+                    .map(|dependency| dependency.state == "succeeded")
+                    .unwrap_or(false)
+            });
+            task.state = if dependencies_ready {
+                "ready"
+            } else {
+                "planned"
+            }
+            .to_string();
+            task.updated_at = now;
+            Self::save(TASK_NODES_DIR, &task.id, &task)?;
+            // 事件写盘失败不阻断回退流程
+            let _ = Self::append_event(
+                &attempt.delivery_id,
+                Some(&task.id),
+                Some(&attempt.id),
+                "dispatchDeferred",
+                "任务启动暂缓（并发已满或交付暂停），已退回待执行队列，稍后自动重试",
+            );
+            // 容量满：延时自动补派（60 秒后）——把回退的就绪任务重新排队（创建 queued attempt）。
+            // 注意只用 dispatch_ready_tasks 而不经 dispatch_ready_and_start：
+            // start_attempt 链路会把 tauri 窗口/菜单系统（comctl32 的 TaskDialogIndirect）拉进
+            // 链接，无 manifest 的 cargo test 二进制会因入口点缺失无法加载（见 mod.rs 注释）。
+            // queued attempt 的启动由既有自动派发点（其他任务完成续派、resume/answer、重启恢复）
+            // 或前端手动「启动」按钮兜底；「交付已暂停」不自动补派——恢复时 resume 路径会派发。
+            if reason == GLOBAL_CAPACITY_ERROR {
+                let delivery_id_for_retry = task.delivery_id.clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(60));
+                    let _ = Self::dispatch_ready_tasks(&delivery_id_for_retry);
+                });
+            }
+            return Ok(());
+        }
+        let mut task = Self::get_task_node(&attempt.task_node_id)?;
         attempt.state = "failed".to_string();
         attempt.finished_at = Some(now.clone());
         attempt.updated_at = now.clone();
@@ -1235,15 +1271,18 @@ impl AiDeliveryService {
         attempt.exit_code = exit_code;
         attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
         attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
-        attempt.summary = Some(match completion_error.as_deref() {
-            Some(error) => format!("{}：{}", error, compact_output(stderr)),
-            None if let Some(review) = workflow_review.as_ref() => review.comments.clone(),
-            None => compact_output(if successful { stdout } else { stderr }),
+        attempt.summary = Some(match (policy_violation.as_deref(), completion_error.as_deref(), workflow_review.as_ref()) {
+            // 越权拦截：summary 必须携带违规原因（stderr 可能为空，不能作为唯一来源）
+            (Some(violation), _, _) => format!("{}：{}", violation, compact_output(stderr)),
+            (None, Some(error), _) => format!("{}：{}", error, compact_output(stderr)),
+            (None, None, Some(review)) => review.comments.clone(),
+            _ => compact_output(if successful { stdout } else { stderr }),
         });
        Self::persist_attempt(&attempt)?;
-        // attempt 达到终态（completed/failed/policyViolation）后清理运行目录；
+        // 运行目录保留到交付/任务/项目删除：read_attempt_output（前端「查看成果」）、
+        // 产物列表/归档/导出与重试续接上下文（final-message.txt / transcript.log）都依赖它，
+        // 终态立即删除会让全部成果查看与重试续接失效。
         // 验收所用 review.json / transcript 已在 run_acceptance_validation 中消费完毕。
-        Self::cleanup_attempt_run_dir(&attempt.id);
         // 验收通过时记录当前分支 HEAD 作为 validated_commit，合并前须再次确认一致
         if successful && task.execution_mode == "write" {
             if let Some(worktree) = contract.worktree_path.as_deref() {
@@ -1785,10 +1824,15 @@ impl AiDeliveryService {
         if let Some(app) = APP_HANDLE.get() {
             let _ = app.emit("ai-delivery-event", &event);
         }
-        // 滚动清理：每 50 次写入 prune 一次（prune 全量扫描 EVENTS_DIR，降频避免每次 O(N)）
+        // 滚动清理：每 50 次写入 prune 一次（prune 全量扫描 EVENTS_DIR，降频避免每次 O(N)）。
+        // 只 prune 当前交付会让其他交付的事件文件无限增长（交付数通常小，全量遍历开销可接受）。
         static EVENT_APPEND_COUNTER: AtomicUsize = AtomicUsize::new(0);
         if EVENT_APPEND_COUNTER.fetch_add(1, Ordering::Relaxed) % 50 == 49 {
-            Self::prune_delivery_events(delivery_id);
+            if let Ok(deliveries) = Self::get_all_deliveries(None) {
+                for delivery in deliveries {
+                    Self::prune_delivery_events(&delivery.id);
+                }
+            }
         }
         Ok(event)
     }
@@ -1961,7 +2005,10 @@ impl AiDeliveryService {
             let message =
                 "TerminalBuddy 已重启，原 Agent 终端无法恢复；任务已取消，请检查现场后重新派发。";
             if attempt.task_node_id.is_empty() {
-                let delivery = Self::get_delivery(&attempt.delivery_id)?;
+                // 交付文件缺失（重启前已被删除）时该 attempt 无法归属，跳过而非中断整个恢复
+                let Ok(delivery) = Self::get_delivery(&attempt.delivery_id) else {
+                    continue;
+                };
                 if matches!(delivery.state.as_str(), "planning" | "awaitingApproval") {
                     Self::fail_delivery_planning(&delivery.id, message)?;
                     recovered += 1;
@@ -1974,11 +2021,13 @@ impl AiDeliveryService {
             attempt.summary = Some(message.to_string());
             Self::persist_attempt(&attempt)?;
             if !attempt.task_node_id.is_empty() {
-                let mut task = Self::get_task_node(&attempt.task_node_id)?;
-                if matches!(task.state.as_str(), "queued" | "running") {
-                    task.state = "cancelled".to_string();
-                    task.updated_at = chrono::Utc::now().to_rfc3339();
-                    Self::save(TASK_NODES_DIR, &task.id, &task)?;
+                // 任务文件缺失（已删除）时只中断 attempt，不阻断其他 attempt 的恢复
+                if let Ok(mut task) = Self::get_task_node(&attempt.task_node_id) {
+                    if matches!(task.state.as_str(), "queued" | "running") {
+                        task.state = "cancelled".to_string();
+                        task.updated_at = chrono::Utc::now().to_rfc3339();
+                        Self::save(TASK_NODES_DIR, &task.id, &task)?;
+                    }
                 }
             }
             Self::append_event(

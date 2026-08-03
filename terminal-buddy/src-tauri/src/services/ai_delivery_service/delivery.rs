@@ -136,7 +136,7 @@ impl AiDeliveryService {
          let delivery = Self::get_delivery(id)?;
         if !matches!(
             delivery.state.as_str(),
-            "drafting" | "cancelled" | "failed" | "succeeded" | "completed"
+            "drafting" | "cancelled" | "failed" | "succeeded" | "completed" | "mergeFailed"
         ) {
             return Err("仅草稿或已结束（取消/失败/成功/完成）的交付可以删除；请先暂停或处理当前交付流程".to_string());
         }
@@ -425,6 +425,10 @@ impl AiDeliveryService {
         .iter()
         .any(|changed| *changed);
         let dependency_ids_changed = input.dependency_ids.is_some();
+        // 执行环境字段快照：字段随后被移动，先克隆用于「是否实际变更」判断
+        let proposed_execution_mode = input.execution_mode.clone();
+        let proposed_execution_context = input.execution_context.clone();
+        let proposed_target_repository_id = input.target_repository_id.clone();
 
         // 3) 字段应用（Option 语义：None 不改，Some(Some(v)) 赋值，Some(None) 置空）
         if let Some(v) = input.title {
@@ -485,8 +489,27 @@ impl AiDeliveryService {
             return Err("依赖关系形成环，任务无法保存".to_string());
         }
 
-        // 6) 执行相关字段变更 → 标脏 contract（重试派发时重新审计/重建，避免旧 worktree 审计结果被复用）
-        if exec_fields_changed {
+        // 6) 执行环境字段（目标仓库/执行模式/执行上下文）实际变更 → 丢弃旧契约重建；
+        //    其余执行参数变更 → 标脏 contract（重试派发时同步字段重新审计，避免旧 worktree 审计结果被复用）
+        let environment_rebuilt = [
+            (
+                proposed_execution_mode.is_some(),
+                task.execution_mode != original.execution_mode,
+            ),
+            (
+                proposed_execution_context.is_some(),
+                task.execution_context != original.execution_context,
+            ),
+            (
+                proposed_target_repository_id.is_some(),
+                task.target_repository_id != original.target_repository_id,
+            ),
+        ]
+        .iter()
+        .any(|(provided, changed)| *provided && *changed);
+        if environment_rebuilt {
+            discard_task_contract(&mut task);
+        } else if exec_fields_changed {
             if let Some(contract_id) = &task.contract_id {
                 if let Ok(mut contract) =
                     Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "任务契约")
@@ -532,8 +555,37 @@ impl AiDeliveryService {
             return Err(format!("任务状态 {} 不可删除", task.state));
         }
 
-        // 1) contract
+        // 1) contract：先回收 worktree/分支（尽力，契约文件随后删除），避免删除任务残留目录与分支。
+        //    仓库已从项目移除时退化为直接删目录（与 cleanup_delivery_task_worktrees 的退化一致）。
         if let Some(contract_id) = &task.contract_id {
+            if let Ok(contract) =
+                Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "任务契约")
+            {
+                if let (Some(worktree), Some(branch)) = (
+                    contract.worktree_path.as_deref(),
+                    contract.branch_name.as_deref(),
+                ) {
+                    if let Ok(project) = Self::get_project(&delivery.project_id) {
+                        let source = project
+                            .repositories
+                            .iter()
+                            .find(|repository| repository.id == contract.target_repository_id)
+                            .and_then(|repository| {
+                                project_repository_path(&project, repository).ok()
+                            });
+                        match source {
+                            Some(source) => cleanup_unallocated_task_worktree(
+                                &source,
+                                Path::new(worktree),
+                                branch,
+                            ),
+                            None => {
+                                let _ = fs::remove_dir_all(worktree);
+                            }
+                        }
+                    }
+                }
+            }
             let _ = Self::delete(CONTRACTS_DIR, contract_id, "任务契约");
         }
         // 2) attempt 文件 + 运行目录（terminal_run_dir_by_id 兼容「纯 UUID」与「label__UUID」目录）
@@ -723,6 +775,13 @@ impl AiDeliveryService {
             request.state = "cancelled".to_string();
             request.updated_at = now.clone();
             Self::save(DECISIONS_DIR, &request.id, &request)?;
+        }
+        // 删除未决审核门禁：取消后任务已置 cancelled，残留的 awaitingReviewer gate
+        // 无法再被处理（resolve 校验任务状态），保留只会让前端按任务渲染旧 gate 干扰展示。
+        for gate in Self::get_review_gates(Some(&delivery.id))? {
+            if gate.state == "awaitingReviewer" {
+                let _ = Self::delete(REVIEW_GATES_DIR, &gate.id, "审核门禁");
+            }
         }
         delivery.state = "cancelled".to_string();
         delivery.updated_at = now;
@@ -1807,6 +1866,12 @@ impl AiDeliveryService {
          run_git(&source, &vec!["rev-parse".to_string(), "HEAD".to_string()])
      }
 
+     /// 续接合并需要重跑的仓库子记录状态：failed（冲突/失败待重试）与 rolledBack（已回滚需重新合并）。
+     /// 只重跑 failed 会让被回滚仓库的改动永久丢失——交付宣告完成但目标分支上没有这些改动。
+     pub(crate) fn merge_continuation_needed(state: &str) -> bool {
+         matches!(state, "failed" | "rolledBack")
+     }
+
      /// 冲突已解决后继续合并：仅重跑 state == "failed" 的仓库子记录
      /// （TOCTOU 校验 + 干净状态检查由 merge_single_repository 保证），
      /// 全部成功则走既有收尾（契约完成/交付 completed/清理集成与任务 worktree）。
@@ -1828,7 +1893,11 @@ impl AiDeliveryService {
          let contracts = Self::list::<AiTaskContract>(CONTRACTS_DIR)?;
          let mut all_ok = true;
          for index in 0..record.repositories.len() {
-             if record.repositories[index].state != "failed" {
+             // 只重跑 failed 会让已回滚（rolledBack）仓库的改动永久丢失：
+             // 首次合并失败时 rollback_merge_record 会把已合并仓库 reset 回合并前 HEAD，
+             // 若续接不再合并它们，交付会宣告完成但目标分支上没有这些仓库的任何改动。
+             // rollbackFailed / merged 仓库的代码已在目标分支，跳过。
+             if !Self::merge_continuation_needed(&record.repositories[index].state) {
                  continue;
              }
              let repository_id = record.repositories[index].repository_id.clone();

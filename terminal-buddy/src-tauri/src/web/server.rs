@@ -87,6 +87,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::ai_delivery_handler::merge),
         )
         .route(
+            "/api/ai-delivery/deliveries/{id}/continue-merge",
+            post(handlers::ai_delivery_handler::continue_merge),
+        )
+        .route(
             "/api/ai-delivery/deliveries/{id}/cleanup-integration",
             post(handlers::ai_delivery_handler::cleanup_integration),
         )

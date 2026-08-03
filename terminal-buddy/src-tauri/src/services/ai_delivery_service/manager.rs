@@ -72,12 +72,16 @@ pub(crate) fn run_manager_planner(
         "managerTerminalStarted",
         "管理者 CLI 已在原生终端中启动",
     )?;
-    start_interactive_terminal_command(
+    if let Err(error) = start_interactive_terminal_command(
         &terminal_service,
         &terminal_id,
         &working_directory,
         &terminal_command,
-    )?;
+    ) {
+        // 启动失败时关闭终端，避免标签页与 PTY 泄漏
+        let _ = terminal_service.close_terminal(&terminal_id);
+        return Err(error);
+    }
     let result = wait_for_manager_plan(
         &terminal_service,
         &terminal_id,
@@ -317,26 +321,34 @@ pub(crate) fn run_reviewer_agent(
         "reviewerTerminalStarted",
         "Reviewer CLI 已在原生终端中启动",
     )?;
-    start_interactive_terminal_command(
-        &terminal_service,
-        &terminal_id,
-        &agent_start_directory,
-        &terminal_command,
-    )?;
-    let (exit_code, terminal_output) = wait_for_terminal_exit(
-        &terminal_service,
-        &terminal_id,
-        &control.exit_marker,
-    )?;
-    if exit_code != 0 {
-        return Err(format!(
-            "Reviewer Agent 执行失败（退出码 {}）: {}",
-            exit_code,
-            compact_output(&terminal_output)
-        ));
+    let result = (|| -> Result<(String, i32), String> {
+        start_interactive_terminal_command(
+            &terminal_service,
+            &terminal_id,
+            &agent_start_directory,
+            &terminal_command,
+        )?;
+        let (exit_code, terminal_output) = wait_for_terminal_exit(
+            &terminal_service,
+            &terminal_id,
+            &control.exit_marker,
+        )?;
+        if exit_code != 0 {
+            return Err(format!(
+                "Reviewer Agent 执行失败（退出码 {}）: {}",
+                exit_code,
+                compact_output(&terminal_output)
+            ));
+        }
+        ensure_task_branch_clean(worktree)?;
+        Ok((compact_output(&terminal_output), exit_code))
+    })();
+    // 失败/超时路径关闭终端（ConPTY 关闭连带终止 CLI 进程），防止终端与进程泄漏、
+    // 重试时多个 Reviewer 并发操作同一 worktree；成功路径保留终端供人工查看。
+    if result.is_err() {
+        let _ = terminal_service.close_terminal(&terminal_id);
     }
-    ensure_task_branch_clean(worktree)?;
-    Ok((compact_output(&terminal_output), exit_code))
+    result
 }
 
 pub(crate) fn repair_workflow_review(

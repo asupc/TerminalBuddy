@@ -54,9 +54,14 @@ pub fn delete_ai_project(id: String) -> Result<(), String> {
 
 #[command]
 pub async fn detect_ai_runtimes() -> Vec<AiRuntimeProbe> {
-    tauri::async_runtime::spawn_blocking(AiDeliveryService::detect_local_runtimes)
-        .await
-        .unwrap_or_default()
+    match tauri::async_runtime::spawn_blocking(AiDeliveryService::detect_local_runtimes).await {
+        Ok(probes) => probes,
+        Err(error) => {
+            // 探测线程异常时返回空列表会让前端误导用户「未发现 Runtime」；记日志便于排查
+            eprintln!("[AI Delivery] Runtime 探测线程失败: {}", error);
+            Vec::new()
+        }
+    }
 }
 
 #[command]
@@ -323,9 +328,26 @@ pub fn resume_ai_delivery(
     terminal_service: tauri::State<TerminalService>,
 ) -> Result<AiDelivery, String> {
     let delivery = AiDeliveryService::resume_delivery(&id)?;
-    // 恢复后自动派发所有就绪任务
+    // 恢复后自动派发所有就绪任务。
+    // 注意：resume 内部可能已自动合并收尾并把交付置为 completed（全部任务完成/跳过），
+    // 此时不再派发，避免「仅运行中的交付可以派发任务」的误导性报错。
     let terminal_service = terminal_service.inner().clone();
-    AiDeliveryService::dispatch_ready_and_start(&id, app, terminal_service)?;
+    if AiDeliveryService::get_delivery(&id)?.state == "running" {
+        // 派发/启动部分失败不阻断「恢复」本身：失败任务已由服务层回退
+        // （容量满→ready 待补派，结构性错误→failed），前端轮询可见并可手动派发。
+        if let Err(error) =
+            AiDeliveryService::dispatch_ready_and_start(&id, app, terminal_service)
+        {
+            let _ = AiDeliveryService::append_event(
+                &id,
+                None,
+                None,
+                "dispatchFailed",
+                &format!("恢复后自动派发部分失败: {}", error),
+            );
+            eprintln!("[AI Delivery] resume 后自动派发失败: {}", error);
+        }
+    }
     Ok(delivery)
 }
 
@@ -379,11 +401,21 @@ pub fn answer_ai_decision_request(
     let request = AiDeliveryService::answer_decision_request(&id, &answer)?;
     if AiDeliveryService::get_delivery(&request.delivery_id)?.state == "running" {
         let terminal_service = terminal_service.inner().clone();
-        AiDeliveryService::dispatch_ready_and_start(
+        // 同 resume：派发部分失败不阻断回答决策本身，失败原因写入事件留痕
+        if let Err(error) = AiDeliveryService::dispatch_ready_and_start(
             &request.delivery_id,
             app,
             terminal_service,
-        )?;
+        ) {
+            let _ = AiDeliveryService::append_event(
+                &request.delivery_id,
+                None,
+                None,
+                "dispatchFailed",
+                &format!("回答决策后自动派发部分失败: {}", error),
+            );
+            eprintln!("[AI Delivery] answer 后自动派发失败: {}", error);
+        }
     }
     Ok(request)
 }
@@ -438,7 +470,13 @@ pub fn cancel_ai_task_node(
 
 #[command]
 pub fn mark_ai_task_skipped(task_node_id: String) -> Result<(), String> {
-    AiDeliveryService::mark_task_skipped(&task_node_id)
+    let delivery_id = AiDeliveryService::get_task_node(&task_node_id)?.delivery_id;
+    AiDeliveryService::mark_task_skipped(&task_node_id)?;
+    // 全部任务完成/跳过后自动收尾交付（自动合并 + 终态），与 finish_attempt 路径一致。
+    // 放在命令层：服务层 mark_task_skipped 保持可独立单测（合并链路引用 comctl32 v6
+    // 专属 API，无 manifest 的 cargo test 产物加载时会因 TaskDialogIndirect 缺失而失败）。
+    let _ = AiDeliveryService::try_complete_workflow_delivery(&delivery_id)?;
+    Ok(())
 }
 
 #[command]

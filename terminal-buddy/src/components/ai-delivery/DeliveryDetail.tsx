@@ -989,13 +989,17 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                     </button>
                                   </div>
                                 )}
-                                {["failed", "policyViolation", "rework", "needsInput"].includes(task.state) && (
+                                {["failed", "policyViolation", "rework", "needsInput", "planned", "ready"].includes(task.state) && (
                                   <div className="ai-task-actions">
                                     <button
                                       type="button"
                                       className="btn-secondary"
                                       disabled={busy === `skip-${task.id}`}
-                                      title="标记忽略后不再阻塞合并与交付收尾"
+                                      title={
+                                        task.state === "planned" || task.state === "ready"
+                                          ? "标记忽略：不再执行该任务并从交付范围移除，依赖它的下游任务会级联跳过"
+                                          : "标记忽略后不再阻塞合并与交付收尾；依赖它的下游任务会级联跳过"
+                                      }
                                       onClick={() => markSkipped(task)}
                                     >
                                       <CircleStop size={13} />

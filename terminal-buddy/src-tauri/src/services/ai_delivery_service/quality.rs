@@ -511,6 +511,14 @@ impl AiDeliveryService {
         if task.state != "awaitingReview" {
             return Err(format!("当前任务不能进入质量门禁: {}", task.state));
         }
+        // 进入新一轮门禁 = 上一轮审核作废：清理该任务下所有非 approved 旧 gate。
+        // 否则门禁命令失败（failed）或 Reviewer 退回（rework）产生的旧 gate 残留，
+        // 前端按 taskNodeId 渲染最旧 gate 时「运行质量门禁/通过/退回」按钮全部隐藏，任务永久卡死。
+        for gate in Self::get_review_gates(Some(&task.delivery_id))? {
+            if gate.task_node_id == task.id && gate.state != "approved" {
+                let _ = Self::delete(REVIEW_GATES_DIR, &gate.id, "审核门禁");
+            }
+        }
         let delivery = Self::get_delivery(&task.delivery_id)?;
         let project = Self::get_project(&delivery.project_id)?;
         let reviewer = match reviewer_agent_id {
@@ -535,7 +543,12 @@ impl AiDeliveryService {
             return Err("任务 worktree 不存在".to_string());
         }
         ensure_expected_artifacts(&contract, &worktree)?;
-        ensure_task_branch_clean(&worktree)?;
+        // 只对 write 任务检查分支干净：readonly workspace-root 任务的「worktree」是共享的项目
+        // 工作区根目录（可能不是 git 仓库、或含用户/其他任务的未提交改动），
+        // 无条件检查会把只读分析任务永久卡在门禁前且错误归咎于 Agent。
+        if task.execution_mode == "write" {
+            ensure_task_branch_clean(&worktree)?;
+        }
         let commands = project
             .quality_gate
             .commands
@@ -545,7 +558,53 @@ impl AiDeliveryService {
             .collect::<Vec<_>>();
         let mut results = Vec::new();
         for command in commands {
-            let result = run_shell_command(&worktree, &command)?;
+            let result = match run_shell_command(&worktree, &command) {
+                Ok(result) => result,
+                Err(error) => {
+                    // 命令启动失败/超时（30 分钟上限）：与退出码非零同等对待——落 failed gate +
+                    // 任务退回返工。否则任务静默留在 awaitingReview，无失败记录、无法推进，
+                    // 且超时命令可能留下未提交产物，重试时被分支干净检查拦截再次失败。
+                    let failed_gate = Self::save_review_gate(AiReviewGate {
+                        id: Uuid::new_v4().to_string(),
+                        delivery_id: delivery.id.clone(),
+                        task_node_id: task.id.clone(),
+                        reviewer_agent_id: Some(reviewer.id.clone()),
+                        state: "failed".to_string(),
+                        comments: Some(format!(
+                            "质量门禁命令执行失败，任务已退回返工: {}",
+                            error
+                        )),
+                        command_results: {
+                            results.push(AiCommandResult {
+                                command: command.clone(),
+                                exit_code: -1,
+                                output: error.clone(),
+                            });
+                            results
+                        },
+                        line_comments: Vec::new(),
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        updated_at: chrono::Utc::now().to_rfc3339(),
+                    })?;
+                    task.state = "rework".to_string();
+                    task.updated_at = chrono::Utc::now().to_rfc3339();
+                    Self::save(TASK_NODES_DIR, &task.id, &task)?;
+                    Self::append_event(
+                        &delivery.id,
+                        Some(&task.id),
+                        None,
+                        "qualityGateFailed",
+                        &format!("质量门禁命令执行失败，任务已退回返工: {}", error),
+                    )?;
+                    Self::push_delivery_notice(
+                        &delivery.id,
+                        "质量门禁失败",
+                        &format!("任务「{}」质量门禁命令执行失败：{}", task.title, error),
+                        None,
+                    );
+                    return Ok(failed_gate);
+                }
+            };
             let failed = result.exit_code != 0;
             results.push(result);
             if failed {
@@ -614,7 +673,7 @@ impl AiDeliveryService {
             &reviewer_attempt_id,
             &project,
             app.clone(),
-            terminal_service,
+            terminal_service.clone(),
         );
         let mut finished_reviewer_attempt =
             Self::get::<AiAttempt>(ATTEMPTS_DIR, &reviewer_attempt_id, "Reviewer 执行")?;
@@ -633,11 +692,14 @@ impl AiDeliveryService {
             Err(error) => {
                 finished_reviewer_attempt.state = "failed".to_string();
                 finished_reviewer_attempt.summary = Some(error.clone());
-                Self::save(
-                    ATTEMPTS_DIR,
-                    &finished_reviewer_attempt.id,
-                    &finished_reviewer_attempt,
-                )?;
+                // persist_attempt：维护活跃索引（否则 reviewer running 副本永久滞留，
+                // 全局/Agent/仓库并发配额随审核次数累积泄漏，最终阻塞一切派发）
+                Self::persist_attempt(&finished_reviewer_attempt)?;
+                // Reviewer 失败/超时：关闭其终端（ConPTY 关闭连带终止 CLI 进程树）。
+                // 否则终端窗口与进程泄漏，重试时多个 Reviewer 并发操作同一 worktree。
+                if let Some(terminal_id) = finished_reviewer_attempt.terminal_id.as_deref() {
+                    let _ = terminal_service.close_terminal(terminal_id);
+                }
                 let _ = Self::append_event(
                     &delivery.id,
                     Some(&task.id),
@@ -648,11 +710,8 @@ impl AiDeliveryService {
                 return Err(error);
             }
         };
-        Self::save(
-            ATTEMPTS_DIR,
-            &finished_reviewer_attempt.id,
-            &finished_reviewer_attempt,
-        )?;
+        // persist_attempt：同上，终态从活跃索引移除
+        Self::persist_attempt(&finished_reviewer_attempt)?;
         let _ = Self::append_event(
             &delivery.id,
             Some(&task.id),
@@ -696,6 +755,14 @@ impl AiDeliveryService {
             return Err(format!("当前审核门不能处理: {}", gate.state));
         }
         let mut task = Self::get_task_node(&gate.task_node_id)?;
+        // 任务必须处于等待审核态：交付取消后未决 gate 残留（历史数据），
+        // 不校验会把已取消的任务「复活」为 succeeded/rework，破坏交付状态机。
+        if task.state != "awaitingReview" {
+            return Err(format!(
+                "任务当前状态 {} 不能处理审核（仅等待审核状态可处理）",
+                task.state
+            ));
+        }
         gate.state = if approved { "approved" } else { "rework" }.to_string();
         gate.comments = Some(comments.trim().to_string()).filter(|value| !value.is_empty());
         gate.updated_at = chrono::Utc::now().to_rfc3339();

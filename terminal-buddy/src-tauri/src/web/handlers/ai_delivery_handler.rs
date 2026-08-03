@@ -95,8 +95,18 @@ pub async fn approve(
         .state::<TerminalService>()
         .inner()
         .clone();
-    AiDeliveryService::dispatch_ready_and_start(&id, app, terminal_service)
-        .map_err(ApiError::BadRequest)?;
+    // 派发/启动部分失败不阻断「批准」本身：任务已由服务层回退（容量满→ready，结构性→failed），
+    // 快照轮询可见；返回 400 会让 Web 端误判「批准失败」重复提交，反而撞状态机报错。
+    if let Err(error) = AiDeliveryService::dispatch_ready_and_start(&id, app, terminal_service) {
+        let _ = AiDeliveryService::append_event(
+            &id,
+            None,
+            None,
+            "dispatchFailed",
+            &format!("批准后自动派发部分失败: {}", error),
+        );
+        eprintln!("[WebAPI] approve dispatch failed {}: {}", id, error);
+    }
     Ok(Json(delivery))
 }
 
@@ -115,8 +125,19 @@ pub async fn answer_decision(
     {
         let app = state.app_handle.clone();
         let terminal_service = app.state::<TerminalService>().inner().clone();
-        AiDeliveryService::dispatch_ready_and_start(&delivery_id, app, terminal_service)
-            .map_err(ApiError::BadRequest)?;
+        // 同 approve：派发部分失败不阻断回答决策
+        if let Err(error) =
+            AiDeliveryService::dispatch_ready_and_start(&delivery_id, app, terminal_service)
+        {
+            let _ = AiDeliveryService::append_event(
+                &delivery_id,
+                None,
+                None,
+                "dispatchFailed",
+                &format!("回答决策后自动派发部分失败: {}", error),
+            );
+            eprintln!("[WebAPI] answer dispatch failed {}: {}", delivery_id, error);
+        }
     }
     Ok(Json(request))
 }
@@ -194,9 +215,17 @@ pub async fn complete_attempt(
             }
         }
     }
-    // 完成后自动派发后续任务
-    AiDeliveryService::dispatch_ready_and_start(&id, app, terminal_service)
-        .map_err(ApiError::BadRequest)?;
+    // 完成后自动派发后续任务（部分失败不阻断：任务回退后由轮询/手动派发兜底）
+    if let Err(error) = AiDeliveryService::dispatch_ready_and_start(&id, app, terminal_service) {
+        let _ = AiDeliveryService::append_event(
+            &id,
+            None,
+            None,
+            "dispatchFailed",
+            &format!("完成确认后自动派发部分失败: {}", error),
+        );
+        eprintln!("[WebAPI] complete dispatch failed {}: {}", id, error);
+    }
     Ok(Json(completed))
 }
 
@@ -213,6 +242,22 @@ pub async fn merge(
     .await
     .map_err(|e| ApiError::Internal(format!("本地合并执行线程失败: {}", e)))?
     .map(Json)
+    .map_err(ApiError::BadRequest)
+}
+
+/// 冲突已解决后继续合并（仅 merge 记录处于 blocked 状态时可续接，补齐 Web 端合并闭环）
+pub async fn continue_merge(
+    State(state): State<AppState>,
+    _claims: ClaimsFromRequest,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _ = &state.app_handle;
+    tauri::async_runtime::spawn_blocking(move || {
+        AiDeliveryService::continue_merge_after_conflict(&id)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("续接合并执行线程失败: {}", e)))?
+    .map(|_| Json(serde_json::json!({"ok": true})))
     .map_err(ApiError::BadRequest)
 }
 

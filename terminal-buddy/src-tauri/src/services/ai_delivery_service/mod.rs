@@ -70,6 +70,8 @@ const EXECUTION_CONTEXT_WORKSPACE_ROOT: &str = "workspaceRoot";
 const EXECUTION_CONTEXT_TASK_WORKTREE: &str = "taskWorktree";
 /// 跨项目全局并发上限（后续可做设置项）。
 pub const GLOBAL_MAX_ATTEMPTS: usize = 4;
+/// 全局并发已满的标准错误文案：`fail_queued_attempt` 据此把任务回退到就绪队列而非置失败。
+pub const GLOBAL_CAPACITY_ERROR: &str = "全局并发已达上限，稍后重试";
 
 fn resolve_execution_context(execution_mode: &str, configured: &str) -> Result<String, String> {
     let context = if configured.trim().is_empty() {

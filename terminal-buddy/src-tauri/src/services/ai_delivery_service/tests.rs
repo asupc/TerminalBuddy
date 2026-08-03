@@ -1,4 +1,6 @@
 //! AI 交付服务 · 跨域测试模块（自 ai_delivery_service.rs 拆分）
+#[cfg(test)]
+#[allow(unused_imports)] // 仅被下方测试子模块的 use super::* 传播引用
 use super::*;
 
 #[cfg(test)]
@@ -887,6 +889,754 @@ mod cycle_detection_tests {
         need_gate.state = "succeeded".to_string();
         need_gate.workflow_step_id = None;
         assert!(AiDeliveryService::validate_tasks_mergeable(&[need_gate], &[]).is_err());
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 快速搭建隔离的 git 仓库 + 项目 + 交付环境（与既有端到端测试同构）。
+    fn setup_git_project() -> (PathBuf, AiProject, AiDelivery, AiAgent) {
+        let root =
+            std::env::temp_dir().join(format!("terminal-buddy-git-env-{}", Uuid::new_v4()));
+        let data_dir = root.join("data");
+        let workspace = root.join("workspace");
+        let repository = workspace.join("service-a");
+        fs::create_dir_all(&repository).unwrap();
+        PathService::set_test_data_dir(Some(data_dir));
+
+        let run = |arguments: &[&str]| {
+            let output = Command::new("git")
+                .args(arguments)
+                .current_dir(&repository)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {} failed: {}",
+                arguments.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&["init"]);
+        run(&["config", "user.name", "TerminalBuddy Test"]);
+        run(&["config", "user.email", "test@terminalbuddy.local"]);
+        fs::write(repository.join("README.md"), "# service-a\n").unwrap();
+        run(&["add", "README.md"]);
+        run(&["commit", "-m", "initial"]);
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let runtime = AiDeliveryService::save_runtime(AiAgentRuntime {
+            id: String::new(),
+            name: "测试 Runtime".to_string(),
+            kind: "test".to_string(),
+            command: "cmd".to_string(),
+            enabled: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })
+        .unwrap();
+        let agent = AiDeliveryService::save_agent(AiAgent {
+            id: String::new(),
+            name: "测试 Agent".to_string(),
+            runtime_id: runtime.id,
+            runtime_args: Vec::new(),
+            startup_preset_name: None,
+            max_concurrency: 1,
+            enabled: true,
+            default_timeout_seconds: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })
+        .unwrap();
+        let project = AiDeliveryService::create_project(CreateAiProjectInput {
+            name: "测试项目".to_string(),
+            workspace_root: workspace.to_string_lossy().to_string(),
+            profile_id: None,
+            worktree_root: None,
+            quality_gate: AiQualityGate {
+                commands: vec!["git status --porcelain".to_string()],
+            },
+            manager_agent_id: None,
+            max_concurrency: 2,
+        })
+        .unwrap();
+        let delivery = AiDeliveryService::create_delivery(CreateAiDeliveryInput {
+            project_id: project.id.clone(),
+            title: "测试交付".to_string(),
+            requirement: "验证编排边界".to_string(),
+            manager_agent_id: None,
+            workflow_id: None,
+        })
+        .unwrap();
+        (root, project, delivery, agent)
+    }
+
+    fn make_write_task(
+        delivery: &AiDelivery,
+        project: &AiProject,
+        agent: &AiAgent,
+        title: &str,
+        dependency_ids: Vec<String>,
+    ) -> AiTaskNode {
+        AiDeliveryService::create_task_node(CreateAiTaskNodeInput {
+            delivery_id: delivery.id.clone(),
+            title: title.to_string(),
+            description: "测试任务".to_string(),
+            role_id: None,
+            workflow_step_id: None,
+            preferred_agent_id: Some(agent.id.clone()),
+            task_prompt: String::new(),
+            execution_mode: "write".to_string(),
+            execution_context: EXECUTION_CONTEXT_TASK_WORKTREE.to_string(),
+            target_repository_id: project.repositories[0].id.clone(),
+            allowed_write_paths: vec!["README.md".to_string()],
+            dependency_ids,
+            input_artifacts: Vec::new(),
+            expected_artifacts: Vec::new(),
+            acceptance_commands: Vec::new(),
+            retry_count: 0,
+            timeout_seconds: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn capacity_blocked_start_reverts_task_to_ready() {
+        let root =
+            std::env::temp_dir().join(format!("terminal-buddy-capacity-{}", Uuid::new_v4()));
+        let data_dir = root.join("data");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        PathService::set_test_data_dir(Some(data_dir));
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let project = AiProject {
+            id: "project".to_string(),
+            name: "测试项目".to_string(),
+            workspace_root: workspace.to_string_lossy().to_string(),
+            repositories: Vec::new(),
+            worktree_root: None,
+            quality_gate: AiQualityGate::default(),
+            manager_agent_id: None,
+            max_concurrency: 1,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        AiDeliveryService::save(PROJECTS_DIR, &project.id, &project).unwrap();
+        let delivery = AiDeliveryService::create_delivery(CreateAiDeliveryInput {
+            project_id: project.id.clone(),
+            title: "容量测试".to_string(),
+            requirement: "验证容量回退".to_string(),
+            manager_agent_id: None,
+            workflow_id: None,
+        })
+        .unwrap();
+        let mut running = delivery.clone();
+        running.state = "running".to_string();
+        AiDeliveryService::save(DELIVERIES_DIR, &running.id, &running).unwrap();
+        let task = AiTaskNode {
+            id: "task".to_string(),
+            delivery_id: delivery.id.clone(),
+            title: "容量任务".to_string(),
+            description: "测试".to_string(),
+            role_id: None,
+            workflow_step_id: None,
+            preferred_agent_id: None,
+            task_prompt: String::new(),
+            execution_mode: "write".to_string(),
+            execution_context: EXECUTION_CONTEXT_TASK_WORKTREE.to_string(),
+            target_repository_id: String::new(),
+            allowed_write_paths: vec![".".to_string()],
+            dependency_ids: Vec::new(),
+            input_artifacts: Vec::new(),
+            expected_artifacts: Vec::new(),
+            acceptance_commands: Vec::new(),
+            retry_count: 0,
+            timeout_seconds: None,
+            state: "ready".to_string(),
+            assigned_agent_id: None,
+            contract_id: None,
+            attempt_ids: vec!["attempt".to_string()],
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        AiDeliveryService::save(TASK_NODES_DIR, &task.id, &task).unwrap();
+        running.task_node_ids.push(task.id.clone());
+        AiDeliveryService::save(DELIVERIES_DIR, &running.id, &running).unwrap();
+        let attempt = AiAttempt {
+            id: "attempt".to_string(),
+            delivery_id: delivery.id.clone(),
+            task_node_id: task.id.clone(),
+            contract_id: "contract".to_string(),
+            agent_id: "agent".to_string(),
+            runtime_id: "runtime".to_string(),
+            terminal_id: None,
+            state: "queued".to_string(),
+            started_at: now.clone(),
+            finished_at: None,
+            exit_code: None,
+            summary: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        AiDeliveryService::persist_attempt(&attempt).unwrap();
+
+        // 容量错误：任务回退 ready、attempt 取消留痕（不置 failed）
+        AiDeliveryService::fail_queued_attempt(&attempt.id, GLOBAL_CAPACITY_ERROR).unwrap();
+        assert_eq!(
+            AiDeliveryService::get_task_node(&task.id).unwrap().state,
+            "ready"
+        );
+        assert_eq!(
+            AiDeliveryService::get::<AiAttempt>(ATTEMPTS_DIR, &attempt.id, "执行尝试")
+                .unwrap()
+                .state,
+            "cancelled"
+        );
+
+        // 结构错误：仍置 failed（要求人工介入）
+        let task2_id = "task2".to_string();
+        let mut task2 = task.clone();
+        task2.id = task2_id.clone();
+        task2.attempt_ids = vec!["attempt2".to_string()];
+        AiDeliveryService::save(TASK_NODES_DIR, &task2.id, &task2).unwrap();
+        let mut attempt2 = attempt.clone();
+        attempt2.id = "attempt2".to_string();
+        attempt2.task_node_id = task2_id.clone();
+        attempt2.state = "queued".to_string();
+        AiDeliveryService::persist_attempt(&attempt2).unwrap();
+        AiDeliveryService::fail_queued_attempt(&attempt2.id, "任务执行目录不可用").unwrap();
+        assert_eq!(
+            AiDeliveryService::get_task_node(&task2_id).unwrap().state,
+            "failed"
+        );
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn skipping_queued_downstream_cascades_and_cancels_attempt() {
+        let (root, project, delivery, agent) = setup_git_project();
+        let task_a = make_write_task(&delivery, &project, &agent, "任务 A", Vec::new());
+        let task_b = make_write_task(&delivery, &project, &agent, "任务 B", vec![task_a.id.clone()]);
+
+        // A 真实派发（创建契约+worktree）→ 置成功 → B ready → 派发 B（queued）
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+        let attempt_a = AiDeliveryService::dispatch_task_node(&task_a.id, None).unwrap();
+        // A 验收通过：attempt 置终态释放 Agent 并发配额（agent max_concurrency = 1）
+        let mut completed_a_attempt =
+            AiDeliveryService::get::<AiAttempt>(ATTEMPTS_DIR, &attempt_a.id, "执行尝试").unwrap();
+        completed_a_attempt.state = "completed".to_string();
+        AiDeliveryService::persist_attempt(&completed_a_attempt).unwrap();
+        let mut succeeded_a = AiDeliveryService::get_task_node(&task_a.id).unwrap();
+        succeeded_a.state = "succeeded".to_string();
+        AiDeliveryService::save(TASK_NODES_DIR, &succeeded_a.id, &succeeded_a).unwrap();
+        AiDeliveryService::refresh_ready_task_nodes(&delivery.id).unwrap();
+        assert_eq!(
+            AiDeliveryService::get_task_node(&task_b.id).unwrap().state,
+            "ready"
+        );
+        let attempt = AiDeliveryService::dispatch_task_node(&task_b.id, None).unwrap();
+        assert_eq!(attempt.state, "queued");
+
+        // A 改失败 → 标记跳过 → B（queued）级联跳过且 attempt 取消，不卡死
+        let mut failed_a = AiDeliveryService::get_task_node(&task_a.id).unwrap();
+        failed_a.state = "failed".to_string();
+        AiDeliveryService::save(TASK_NODES_DIR, &failed_a.id, &failed_a).unwrap();
+        AiDeliveryService::mark_task_skipped(&task_a.id).unwrap();
+        let skipped_b = AiDeliveryService::get_task_node(&task_b.id).unwrap();
+        assert_eq!(skipped_b.state, "skipped");
+        assert_eq!(
+            AiDeliveryService::get::<AiAttempt>(ATTEMPTS_DIR, &attempt.id, "执行尝试")
+                .unwrap()
+                .state,
+            "cancelled"
+        );
+        // 跳过任务的 worktree 已回收（目录不存在），不再阻塞交付收尾
+        let contract = AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &skipped_b.contract_id.clone().unwrap(),
+            "任务契约",
+        )
+        .unwrap();
+        assert!(contract
+            .worktree_path
+            .as_deref()
+            .map(|path| !PathBuf::from(path).exists())
+            .unwrap_or(false));
+        let tasks = AiDeliveryService::get_task_nodes(&delivery.id).unwrap();
+        let gates = AiDeliveryService::get_review_gates(Some(&delivery.id)).unwrap();
+        assert!(AiDeliveryService::validate_tasks_mergeable(&tasks, &gates).is_ok());
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn editing_execution_environment_rebuilds_contract() {
+        let (root, project, delivery, agent) = setup_git_project();
+        let task = make_write_task(&delivery, &project, &agent, "实现任务", Vec::new());
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+        let attempt = AiDeliveryService::dispatch_task_node(&task.id, None).unwrap();
+        let contract = AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &attempt.contract_id,
+            "任务契约",
+        )
+        .unwrap();
+        let worktree = PathBuf::from(contract.worktree_path.clone().unwrap());
+        assert!(worktree.is_dir());
+
+        // 任务失败后可编辑；执行环境字段（模式/上下文）变更 → 旧契约与 worktree 被丢弃重建
+        let mut failed_attempt = attempt.clone();
+        failed_attempt.state = "failed".to_string();
+        AiDeliveryService::persist_attempt(&failed_attempt).unwrap();
+        let mut failed_task = AiDeliveryService::get_task_node(&task.id).unwrap();
+        failed_task.state = "failed".to_string();
+        AiDeliveryService::save(TASK_NODES_DIR, &failed_task.id, &failed_task).unwrap();
+
+        let updated = AiDeliveryService::update_task_node(UpdateAiTaskNodeInput {
+            id: task.id.clone(),
+            title: None,
+            description: None,
+            role_id: None,
+            preferred_agent_id: None,
+            task_prompt: None,
+            execution_mode: Some("readonly".to_string()),
+            execution_context: Some(EXECUTION_CONTEXT_WORKSPACE_ROOT.to_string()),
+            target_repository_id: None,
+            allowed_write_paths: None,
+            dependency_ids: None,
+            expected_artifacts: None,
+            acceptance_commands: None,
+            timeout_seconds: None,
+            retry_count: None,
+        })
+        .unwrap();
+        assert_eq!(updated.execution_mode, "readonly");
+        assert_eq!(updated.execution_context, EXECUTION_CONTEXT_WORKSPACE_ROOT);
+        assert!(updated.contract_id.is_none());
+        assert!(AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &attempt.contract_id,
+            "任务契约"
+        )
+        .is_err());
+        assert!(!worktree.exists());
+
+        // 重试派发走全新契约路径：新契约按新执行环境创建（workspaceRoot 无 worktree/分支）
+        let retried = AiDeliveryService::retry_task_node(&task.id).unwrap();
+        assert_eq!(retried.state, "ready");
+        let new_attempt = AiDeliveryService::dispatch_task_node(&task.id, None).unwrap();
+        let new_contract = AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &new_attempt.contract_id,
+            "任务契约",
+        )
+        .unwrap();
+        assert_eq!(new_contract.execution_context, EXECUTION_CONTEXT_WORKSPACE_ROOT);
+        assert!(new_contract.worktree_path.is_none());
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn merge_continuation_needed_covers_failed_and_rolled_back() {
+        assert!(AiDeliveryService::merge_continuation_needed("failed"));
+        assert!(AiDeliveryService::merge_continuation_needed("rolledBack"));
+        assert!(!AiDeliveryService::merge_continuation_needed("merged"));
+        assert!(!AiDeliveryService::merge_continuation_needed("rollbackFailed"));
+        assert!(!AiDeliveryService::merge_continuation_needed("pending"));
+    }
+
+    /// F1 回归：continue_merge_after_conflict 必须重跑 failed 与 rolledBack 两类仓库子记录。
+    /// 首次合并失败时 rollback_merge_record 会把已合并仓库 reset 回合并前 HEAD，
+    /// 只重跑 failed 会让被回滚仓库的改动永久丢失而交付仍宣告完成。
+    #[test]
+    fn merge_continuation_retries_failed_and_rolled_back_repositories() {
+        let (root, project, delivery, agent) = setup_git_project();
+        // 测试同时派发两个任务：放宽 Agent 并发配额（默认 1）
+        let mut editable_agent = agent.clone();
+        editable_agent.max_concurrency = 2;
+        let agent = AiDeliveryService::save_agent(editable_agent).unwrap();
+        let task_a = make_write_task(&delivery, &project, &agent, "任务 A", Vec::new());
+        let mut task_b = make_write_task(&delivery, &project, &agent, "任务 B", Vec::new());
+        // 两个任务必须写入不同范围，否则派发时被「同一仓库重叠写入范围」拦截
+        task_b.allowed_write_paths = vec!["docs/".to_string()];
+        AiDeliveryService::save(TASK_NODES_DIR, &task_b.id, &task_b).unwrap();
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+        let attempt_a = AiDeliveryService::dispatch_task_node(&task_a.id, None).unwrap();
+        let attempt_b = AiDeliveryService::dispatch_task_node(&task_b.id, None).unwrap();
+
+        // 模拟两个任务均在各自 worktree 完成改动并通过验收（分支 HEAD 记录为 validated_commit）
+        let source = project_repository_path(&project, &project.repositories[0]).unwrap();
+        let pre_merge_head = run_git(&source, &["rev-parse".to_string(), "HEAD".to_string()]).unwrap();
+        let mut branches = Vec::new();
+        for (task, attempt) in [(&task_a, &attempt_a), (&task_b, &attempt_b)] {
+            let contract = AiDeliveryService::get::<AiTaskContract>(
+                CONTRACTS_DIR,
+                &attempt.contract_id,
+                "任务契约",
+            )
+            .unwrap();
+            let worktree = PathBuf::from(contract.worktree_path.as_deref().unwrap());
+            // 两个任务写不同文件，避免 merge 时产生真实冲突（本测试关注续接逻辑而非解决冲突）
+            if task.title == "任务 A" {
+                fs::write(worktree.join("README.md"), "change by A").unwrap();
+            } else {
+                fs::create_dir_all(worktree.join("docs")).unwrap();
+                fs::write(worktree.join("docs/feature.md"), "change by B").unwrap();
+            }
+            run_git(&worktree, &["add".to_string(), ".".to_string()]).unwrap();
+            run_git(
+                &worktree,
+                &["commit".to_string(), "-m".to_string(), task.title.clone()],
+            )
+            .unwrap();
+            let head = run_git(&worktree, &["rev-parse".to_string(), "HEAD".to_string()]).unwrap();
+            let mut updated_contract = contract.clone();
+            updated_contract.validated_commit = Some(head);
+            AiDeliveryService::save(CONTRACTS_DIR, &updated_contract.id, &updated_contract).unwrap();
+            let mut completed_attempt = AiDeliveryService::get::<AiAttempt>(
+                ATTEMPTS_DIR,
+                &attempt.id,
+                "执行尝试",
+            )
+            .unwrap();
+            completed_attempt.state = "completed".to_string();
+            AiDeliveryService::persist_attempt(&completed_attempt).unwrap();
+            let mut succeeded_task = AiDeliveryService::get_task_node(&task.id).unwrap();
+            succeeded_task.state = "succeeded".to_string();
+            AiDeliveryService::save(TASK_NODES_DIR, &succeeded_task.id, &succeeded_task).unwrap();
+            branches.push((
+                updated_contract.branch_name.clone().unwrap(),
+                task.title.clone(),
+            ));
+        }
+
+        // 构造 blocked 合并记录：A 已合并后被回滚（rolledBack），B 冲突待续接（failed）
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut record = AiMergeRecord {
+            id: Uuid::new_v4().to_string(),
+            delivery_id: delivery.id.clone(),
+            project_id: project.id.clone(),
+            state: "blocked".to_string(),
+            repositories: branches
+                .iter()
+                .map(|(branch, _)| AiMergeRepositoryRecord {
+                    repository_id: project.repositories[0].id.clone(),
+                    branch_name: branch.clone(),
+                    pre_merge_head: pre_merge_head.clone(),
+                    merged_head: None,
+                    state: "pending".to_string(),
+                    error: None,
+                })
+                .collect(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        record.repositories[0].state = "rolledBack".to_string();
+        record.repositories[1].state = "failed".to_string();
+        AiDeliveryService::save(MERGE_RECORDS_DIR, &record.id, &record).unwrap();
+
+        AiDeliveryService::continue_merge_after_conflict(&delivery.id).unwrap();
+        let stored =
+            AiDeliveryService::get::<AiMergeRecord>(MERGE_RECORDS_DIR, &record.id, "合并记录")
+                .unwrap();
+        assert_eq!(
+            stored.state,
+            "completed",
+            "续接失败: {:?}",
+            stored
+                .repositories
+                .iter()
+                .map(|r| (
+                    r.branch_name.as_str(),
+                    r.state.as_str(),
+                    r.error.as_deref().unwrap_or("")
+                ))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            stored.repositories.iter().all(|r| r.state == "merged"),
+            "rolledBack 仓库必须一并重新合并: {:?}",
+            stored
+                .repositories
+                .iter()
+                .map(|r| (r.branch_name.as_str(), r.state.as_str()))
+                .collect::<Vec<_>>()
+        );
+        // 目标仓库应包含两个任务分支的合并提交
+        let log = run_git(&source, &["log".to_string(), "--oneline".to_string()]).unwrap();
+        assert!(log.contains("TerminalBuddy: terminalbuddy/"), "合并提交缺失: {}", log);
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// F4 回归：重试触顶清理 worktree 后必须清空 contract_id 并删除契约文件，
+    /// 否则用户提高重试上限后 dispatch 会命中「执行目录不可用」永久卡死。
+    #[test]
+    fn retry_cap_exhaustion_clears_contract_for_retry() {
+        let (root, project, delivery, agent) = setup_git_project();
+        let mut task = make_write_task(&delivery, &project, &agent, "实现任务", Vec::new());
+        task.retry_count = 1;
+        AiDeliveryService::save(TASK_NODES_DIR, &task.id, &task).unwrap();
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+        let attempt = AiDeliveryService::dispatch_task_node(&task.id, None).unwrap();
+        let contract_id = attempt.contract_id.clone();
+        assert!(AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &contract_id,
+            "任务契约"
+        )
+        .is_ok());
+
+        // 首次执行失败（attempt failed + task failed）
+        let mut failed_attempt = AiDeliveryService::get::<AiAttempt>(
+            ATTEMPTS_DIR,
+            &attempt.id,
+            "执行尝试",
+        )
+        .unwrap();
+        failed_attempt.state = "failed".to_string();
+        AiDeliveryService::persist_attempt(&failed_attempt).unwrap();
+        let mut failed_task = AiDeliveryService::get_task_node(&task.id).unwrap();
+        failed_task.state = "failed".to_string();
+        AiDeliveryService::save(TASK_NODES_DIR, &failed_task.id, &failed_task).unwrap();
+
+        // 触顶：attempted=1 >= retry_count=1 → worktree 回收 + contract_id 清空 + 交付暂停
+        let result = AiDeliveryService::retry_task_node(&task.id);
+        assert!(result.is_err(), "应触顶报错: {:?}", result);
+        let after_cap = AiDeliveryService::get_task_node(&task.id).unwrap();
+        assert!(after_cap.contract_id.is_none(), "触顶后 contract_id 应清空");
+        assert!(
+            AiDeliveryService::get::<AiTaskContract>(CONTRACTS_DIR, &contract_id, "任务契约")
+                .is_err(),
+            "触顶后契约文件应删除"
+        );
+        assert_eq!(
+            AiDeliveryService::get_delivery(&delivery.id).unwrap().state,
+            "paused"
+        );
+
+        // 用户编辑提高重试上限 → 恢复交付 → 重试派发走全新契约路径
+        let updated = AiDeliveryService::update_task_node(UpdateAiTaskNodeInput {
+            id: task.id.clone(),
+            title: None,
+            description: None,
+            role_id: None,
+            preferred_agent_id: None,
+            task_prompt: None,
+            execution_mode: None,
+            execution_context: None,
+            target_repository_id: None,
+            allowed_write_paths: None,
+            dependency_ids: None,
+            expected_artifacts: None,
+            acceptance_commands: None,
+            timeout_seconds: None,
+            retry_count: Some(3),
+        })
+        .unwrap();
+        assert_eq!(updated.retry_count, 3);
+        AiDeliveryService::resume_delivery(&delivery.id).unwrap();
+        let retried = AiDeliveryService::retry_task_node(&task.id).unwrap();
+        assert_eq!(retried.state, "ready");
+        let new_attempt = AiDeliveryService::dispatch_task_node(&task.id, None).unwrap();
+        assert_ne!(new_attempt.contract_id, contract_id, "重试应使用全新契约");
+        assert!(AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &new_attempt.contract_id,
+            "任务契约"
+        )
+        .is_ok());
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// F2 回归：discard_task_contract（编辑执行环境字段）必须同时回收成果交接目录，
+    /// 否则重试派发被 materialize_dependency_artifacts 的「交接目录已存在」拒绝。
+    #[test]
+    fn discard_task_contract_removes_handoff_directory() {
+        let (root, project, delivery, agent) = setup_git_project();
+        let task = make_write_task(&delivery, &project, &agent, "实现任务", Vec::new());
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+        let attempt = AiDeliveryService::dispatch_task_node(&task.id, None).unwrap();
+        let mut stored_task = AiDeliveryService::get_task_node(&task.id).unwrap();
+        assert!(stored_task.contract_id.is_some());
+
+        // 构造契约对应任务的成果交接目录（materialize_dependency_artifacts 的落点）
+        let handoff_root = project_artifact_base_path(&project)
+            .join("handoff")
+            .join(compact_path_id(&delivery.id))
+            .join(compact_path_id(&task.id));
+        fs::create_dir_all(&handoff_root).unwrap();
+        fs::write(handoff_root.join("analysis.md"), "result").unwrap();
+
+        let cleaned = discard_task_contract(&mut stored_task);
+        assert!(cleaned);
+        assert!(stored_task.contract_id.is_none());
+        assert!(!handoff_root.exists(), "交接目录应被回收");
+        assert!(AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &attempt.contract_id,
+            "任务契约"
+        )
+        .is_err());
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// F5 回归：mergeFailed 是交付终态（无继续入口除非续接成功），必须允许删除。
+    #[test]
+    fn deleting_merge_failed_delivery_allowed() {
+        let (root, _project, delivery, _agent) = setup_git_project();
+        let mut failed_delivery = AiDeliveryService::get_delivery(&delivery.id).unwrap();
+        failed_delivery.state = "mergeFailed".to_string();
+        AiDeliveryService::save(DELIVERIES_DIR, &failed_delivery.id, &failed_delivery).unwrap();
+        AiDeliveryService::delete_delivery(&failed_delivery.id).unwrap();
+        assert!(AiDeliveryService::get_delivery(&failed_delivery.id).is_err());
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// F3 回归：删除任务节点必须回收其 worktree 目录与 git 分支，避免资源残留。
+    #[test]
+    fn deleting_task_node_reclaims_worktree() {
+        let (root, project, delivery, agent) = setup_git_project();
+        let task = make_write_task(&delivery, &project, &agent, "实现任务", Vec::new());
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+        let attempt = AiDeliveryService::dispatch_task_node(&task.id, None).unwrap();
+        let contract = AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &attempt.contract_id,
+            "任务契约",
+        )
+        .unwrap();
+        let worktree = PathBuf::from(contract.worktree_path.as_deref().unwrap());
+        assert!(worktree.is_dir());
+
+        // 置 failed 后删除任务
+        let mut failed_attempt = AiDeliveryService::get::<AiAttempt>(
+            ATTEMPTS_DIR,
+            &attempt.id,
+            "执行尝试",
+        )
+        .unwrap();
+        failed_attempt.state = "failed".to_string();
+        AiDeliveryService::persist_attempt(&failed_attempt).unwrap();
+        let mut failed_task = AiDeliveryService::get_task_node(&task.id).unwrap();
+        failed_task.state = "failed".to_string();
+        AiDeliveryService::save(TASK_NODES_DIR, &failed_task.id, &failed_task).unwrap();
+        AiDeliveryService::delete_task_node(&task.id).unwrap();
+
+        assert!(!worktree.exists(), "任务删除后 worktree 目录应被回收");
+        assert!(AiDeliveryService::get::<AiTaskContract>(
+            CONTRACTS_DIR,
+            &attempt.contract_id,
+            "任务契约"
+        )
+        .is_err());
+        let source = project_repository_path(&project, &project.repositories[0]).unwrap();
+        let branches = run_git(
+            &source,
+            &["branch".to_string(), "--list".to_string(), "terminalbuddy/*".to_string()],
+        )
+        .unwrap();
+        assert!(branches.trim().is_empty(), "任务分支应被删除: {}", branches);
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// F6 回归：重启恢复时单条 attempt 的 task/delivery 文件缺失不应中断其余 attempt 的恢复。
+    #[test]
+    fn recover_interrupted_attempts_skips_missing_task_files() {
+        let (root, project, delivery, agent) = setup_git_project();
+        let task = make_write_task(&delivery, &project, &agent, "实现任务", Vec::new());
+        AiDeliveryService::approve_delivery(&delivery.id).unwrap();
+        // 任务先正常派发（任务置 queued + attempt 入目录），再模拟崩溃时 attempt 正在运行
+        let dispatched = AiDeliveryService::dispatch_task_node(&task.id, None).unwrap();
+        let mut running_attempt =
+            AiDeliveryService::get::<AiAttempt>(ATTEMPTS_DIR, &dispatched.id, "执行尝试")
+                .unwrap();
+        running_attempt.state = "running".to_string();
+        AiDeliveryService::persist_attempt(&running_attempt).unwrap();
+
+        let now = chrono::Utc::now().to_rfc3339();
+        // 第二个 attempt 的任务文件缺失（重启前已被删除）——恢复不应被它中断
+        let orphan = AiAttempt {
+            id: "attempt-orphan".to_string(),
+            delivery_id: delivery.id.clone(),
+            task_node_id: "missing-task".to_string(),
+            contract_id: "contract".to_string(),
+            agent_id: agent.id.clone(),
+            runtime_id: "runtime".to_string(),
+            terminal_id: None,
+            state: "running".to_string(),
+            started_at: now.clone(),
+            finished_at: None,
+            exit_code: None,
+            summary: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        AiDeliveryService::persist_attempt(&orphan).unwrap();
+
+        let recovered = AiDeliveryService::recover_interrupted_attempts().unwrap();
+        assert_eq!(recovered, 2, "孤立 attempt 不应中断整体恢复");
+        for id in [&dispatched.id, "attempt-orphan"] {
+            assert_eq!(
+                AiDeliveryService::get::<AiAttempt>(ATTEMPTS_DIR, id, "执行尝试")
+                    .unwrap()
+                    .state,
+                "cancelled"
+            );
+        }
+        assert_eq!(
+            AiDeliveryService::get_task_node(&task.id).unwrap().state,
+            "cancelled"
+        );
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Q3 回归：resolve_review_gate 必须要求任务处于 awaitingReview，
+    /// 防止取消交付后残留的未决 gate 把已取消任务「复活」为 succeeded。
+    #[test]
+    fn resolving_gate_requires_awaiting_review_task() {
+        let (root, project, delivery, agent) = setup_git_project();
+        let task = make_write_task(&delivery, &project, &agent, "实现任务", Vec::new());
+        let mut cancelled_task = AiDeliveryService::get_task_node(&task.id).unwrap();
+        cancelled_task.state = "cancelled".to_string();
+        AiDeliveryService::save(TASK_NODES_DIR, &cancelled_task.id, &cancelled_task).unwrap();
+        let gate = AiReviewGate {
+            id: "gate".to_string(),
+            delivery_id: delivery.id.clone(),
+            task_node_id: task.id.clone(),
+            reviewer_agent_id: None,
+            state: "awaitingReviewer".to_string(),
+            comments: Some("待审核".to_string()),
+            command_results: Vec::new(),
+            line_comments: Vec::new(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        AiDeliveryService::save(REVIEW_GATES_DIR, &gate.id, &gate).unwrap();
+
+        let result = AiDeliveryService::resolve_review_gate(&gate.id, true, "通过".to_string());
+        assert!(result.is_err(), "取消的任务不应被审核通过");
+        assert_eq!(
+            AiDeliveryService::get_task_node(&task.id).unwrap().state,
+            "cancelled"
+        );
 
         PathService::set_test_data_dir(None);
         let _ = fs::remove_dir_all(root);

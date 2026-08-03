@@ -428,6 +428,15 @@ pub fn run() {
                             ));
                         }
                     }
+                    // 崩溃于「任务全部完成 → 自动合并」窗口的交付：重启后补上收尾
+                    // （任务均 succeeded/skipped 的 running 交付，自动合并并置终态）。
+                    if let Ok(true) = AiDeliveryService::try_complete_workflow_delivery(&delivery.id)
+                    {
+                        boot_log(format!(
+                            "auto-completed delivery {} after restart",
+                            delivery.id
+                        ));
+                    }
                 }
             });
 

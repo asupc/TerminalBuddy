@@ -232,7 +232,40 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<String, String> {
     Ok(run_git_capture(cwd, args)?.stdout.trim().to_string())
 }
 
-fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<GitCommandOutput, String> {
+/// git 命令整体超时：网络 stall 时终止进程树，避免前端永久 pending。
+const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
+
+struct GitRunOutput {
+    status: std::process::ExitStatus,
+    stdout: String,
+    stderr: String,
+}
+
+/// 终止 git 进程树：Windows 下 taskkill /T /F（git 会派生 ssh/git-remote-https 等子进程，
+/// 仅 kill 直接子进程会留下孤儿）；其余平台回退 child.kill()。
+fn kill_git_process_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = child.kill();
+    }
+}
+
+fn drain_channel(rx: &mpsc::Receiver<String>, target: &mut String) {
+    while let Ok(chunk) = rx.try_recv() {
+        target.push_str(&chunk);
+    }
+}
+
+/// 统一执行 git 命令：双流 reader 防管道满阻塞，整体超时（GIT_COMMAND_TIMEOUT）或
+/// 系统退出开关置位（stop_git_commands）时终止进程树。
+fn run_git_process(cwd: &Path, args: &[&str]) -> Result<GitRunOutput, String> {
     ensure_git_commands_allowed()?;
     let mut cmd = Command::new("git");
     cmd.arg("-C")
@@ -240,15 +273,69 @@ fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<GitCommandOutput, String
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "Never")
-        .stdin(Stdio::null());
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let output = cmd.output().map_err(|e| format!("无法运行 git：{}", e))?;
+    let mut child = cmd.spawn().map_err(|e| format!("无法运行 git：{}", e))?;
+    let (tx_out, rx_out) = mpsc::channel::<String>();
+    let (tx_err, rx_err) = mpsc::channel::<String>();
+    let mut readers = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        readers.push(spawn_git_output_reader(stdout, tx_out));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        readers.push(spawn_git_output_reader(stderr, tx_err));
+    }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let started_at = std::time::Instant::now();
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let status = loop {
+        drain_channel(&rx_out, &mut stdout);
+        drain_channel(&rx_err, &mut stderr);
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("读取 git 状态失败：{}", e))?
+        {
+            break status;
+        }
+        if GIT_COMMANDS_STOPPED.load(Ordering::Acquire)
+            || started_at.elapsed() >= GIT_COMMAND_TIMEOUT
+        {
+            kill_git_process_tree(&mut child);
+            let _ = child.wait();
+            return Err(if GIT_COMMANDS_STOPPED.load(Ordering::Acquire) {
+                "系统正在退出，已取消 Git 操作".to_string()
+            } else {
+                format!(
+                    "git {:?} 执行超时（{} 秒），已终止",
+                    args,
+                    GIT_COMMAND_TIMEOUT.as_secs()
+                )
+            });
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    for reader in readers {
+        let _ = reader.join();
+    }
+    drain_channel(&rx_out, &mut stdout);
+    drain_channel(&rx_err, &mut stderr);
+    Ok(GitRunOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<GitCommandOutput, String> {
+    let output = run_git_process(cwd, args)?;
+    let stdout = output.stdout.trim().to_string();
+    let stderr = output.stderr.trim().to_string();
 
     if output.status.success() {
         Ok(GitCommandOutput { stdout, stderr })
@@ -266,25 +353,13 @@ fn run_git_capture(cwd: &Path, args: &[&str]) -> Result<GitCommandOutput, String
 }
 
 fn run_git_stdout_raw(cwd: &Path, args: &[&str]) -> Result<String, String> {
-    ensure_git_commands_allowed()?;
-    let mut cmd = Command::new("git");
-    cmd.arg("-C")
-        .arg(cwd)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "Never")
-        .stdin(Stdio::null());
-
-    #[cfg(windows)]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-
-    let output = cmd.output().map_err(|e| format!("无法运行 git：{}", e))?;
+    let output = run_git_process(cwd, args)?;
 
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(output.stdout)
     } else {
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = output.stdout.trim().to_string();
+        let stderr = output.stderr.trim().to_string();
         if !stderr.is_empty() {
             Err(stderr)
         } else if !stdout.is_empty() {
@@ -387,6 +462,7 @@ fn run_git_streaming(
     drop(tx);
 
     let mut output = String::new();
+    let started_at = std::time::Instant::now();
     let status = loop {
         while let Ok(chunk) = rx.try_recv() {
             output.push_str(&chunk);
@@ -398,6 +474,23 @@ fn run_git_streaming(
             .map_err(|e| format!("读取 git 状态失败：{}", e))?
         {
             break status;
+        }
+
+        // 整体超时或系统退出开关置位时终止进程树，避免网络 stall 永久挂起/退出后孤儿进程
+        if GIT_COMMANDS_STOPPED.load(Ordering::Acquire)
+            || started_at.elapsed() >= GIT_COMMAND_TIMEOUT
+        {
+            kill_git_process_tree(&mut child);
+            let _ = child.wait();
+            return Err(if GIT_COMMANDS_STOPPED.load(Ordering::Acquire) {
+                "系统正在退出，已取消 Git 操作".to_string()
+            } else {
+                format!(
+                    "git {:?} 执行超时（{} 秒），已终止",
+                    args,
+                    GIT_COMMAND_TIMEOUT.as_secs()
+                )
+            });
         }
 
         match rx.recv_timeout(Duration::from_millis(80)) {

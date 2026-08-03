@@ -944,19 +944,25 @@ pub(crate) fn cleanup_delivery_task_worktrees(project: &AiProject, delivery: &Ai
         let Some(branch_name) = contract.branch_name.as_deref() else {
             continue;
         };
-        let Some(repository) = project
+        let repository = project
             .repositories
             .iter()
-            .find(|repository| repository.id == contract.target_repository_id)
-        else {
-            continue;
-        };
-        let Ok(source) = project_repository_path(project, repository) else {
-            continue;
-        };
+            .find(|repository| repository.id == contract.target_repository_id);
         if let Some(worktree_path) = contract.worktree_path.as_deref() {
-            cleanup_unallocated_task_worktree(&source, Path::new(worktree_path), branch_name);
-        } else {
+            match repository.and_then(|repository| project_repository_path(project, repository).ok()) {
+                Some(source) => {
+                    cleanup_unallocated_task_worktree(&source, Path::new(worktree_path), branch_name)
+                }
+                // 仓库已从项目移除（或目录不可用）时退化为直接删目录，
+                // 避免 worktree 目录永久残留；契约文件保留供历史查看
+                None => {
+                    let _ = fs::remove_dir_all(worktree_path);
+                }
+            }
+        } else if let Some(repository) = repository {
+            let Ok(source) = project_repository_path(project, repository) else {
+                continue;
+            };
             let _ = run_git(
                 &source,
                 &[
@@ -1252,6 +1258,57 @@ pub(crate) fn build_task_diff(original: &AiTaskNode, updated: &AiTaskNode) -> St
     } else {
         parts.join("；")
     }
+}
+
+/// 丢弃任务契约并尽力清理其 worktree/分支：任务执行环境字段（目标仓库/执行模式/
+/// 执行上下文）变更后旧契约的 worktree 位于旧仓库旧目录，重试若复用会让 Agent 在
+/// 错误位置执行、审计按旧基线、合并时分支不在新目标仓库——必须重建契约与 worktree。
+/// 返回清理是否完整（false 表示 worktree 可能残留，交付删除时兜底清理）。
+pub(crate) fn discard_task_contract(task: &mut AiTaskNode) -> bool {
+    let Some(contract_id) = task.contract_id.clone() else {
+        return true;
+    };
+    let mut cleaned = true;
+    if let Ok(contract) =
+        AiDeliveryService::get::<AiTaskContract>(CONTRACTS_DIR, &contract_id, "任务契约")
+    {
+        if let Ok(delivery) = AiDeliveryService::get_delivery(&task.delivery_id) {
+            if let Ok(project) = AiDeliveryService::get_project(&delivery.project_id) {
+                if let (Some(worktree), Some(branch)) = (
+                    contract.worktree_path.as_deref(),
+                    contract.branch_name.as_deref(),
+                ) {
+                    if let Some(repository) = project
+                        .repositories
+                        .iter()
+                        .find(|repository| repository.id == contract.target_repository_id)
+                    {
+                        match project_repository_path(&project, repository) {
+                            Ok(source) => {
+                                cleanup_unallocated_task_worktree(
+                                    &source,
+                                    Path::new(worktree),
+                                    branch,
+                                );
+                            }
+                            Err(_) => cleaned = false,
+                        }
+                    }
+                }
+                // 同时回收成果交接目录（handoff/{delivery}/{task}）：旧契约的交接目录若残留，
+                // 重试派发时 materialize_dependency_artifacts 会以「任务成果交接目录已存在」
+                // 拒绝创建，任务永久卡死（编辑环境字段后走全新契约路径的场景）。
+                let handoff_root = project_artifact_base_path(&project)
+                    .join("handoff")
+                    .join(compact_path_id(&delivery.id))
+                    .join(compact_path_id(&task.id));
+                let _ = fs::remove_dir_all(&handoff_root);
+            }
+        }
+    }
+    let _ = AiDeliveryService::delete(CONTRACTS_DIR, &contract_id, "任务契约");
+    task.contract_id = None;
+    cleaned
 }
 
 pub(crate) fn cleanup_unallocated_task_worktree(source: &Path, worktree: &Path, branch_name: &str) {
