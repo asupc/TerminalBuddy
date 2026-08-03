@@ -1,6 +1,9 @@
 import { useState } from "react";
 import Editor from "@monaco-editor/react";
 import { updateAiTaskNode, deleteAiTaskNode } from "../../services/tauri";
+import { Dialog } from "../shared/Dialog";
+import { STATE_COLORS } from "./TaskNodeCard";
+import { taskStateName } from "./workspace-utils";
 import type { AiTaskNode, AiAgent, AiRole, AiProject } from "../../types/aiDelivery";
 
 interface Props {
@@ -15,7 +18,8 @@ interface Props {
   onAfterSaved?: () => Promise<void>;
 }
 
-/** 任务节点编辑抽屉：左侧字段表单 + 右侧实时预览；环依赖即时检测阻止保存；删除带级联清理确认。 */
+/** 任务节点编辑弹窗：头部摘要（状态/执行模式/角色）+ 左侧字段表单 + 右侧实时预览；
+ *  操作按钮固定在 footer；环依赖即时检测阻止保存；删除带级联清理确认。 */
 export function TaskNodeEditor({ task, agents, roles, project, deliveryTasks, onClose, onSaved, onAfterSaved }: Props) {
   const [form, setForm] = useState({ ...task, dependencyIds: [...task.dependencyIds] });
   const [busy, setBusy] = useState(false);
@@ -82,9 +86,40 @@ export function TaskNodeEditor({ task, agents, roles, project, deliveryTasks, on
     }
   };
 
+  const roleName = form.roleId
+    ? roles.find((role) => role.id === form.roleId)?.name
+    : undefined;
+
   return (
-    <div className="ai-task-editor" role="dialog" aria-label="编辑任务节点">
-      <h3>编辑任务 {task.title}</h3>
+    <Dialog
+      ariaLabel="编辑任务节点"
+      className="ai-task-editor-dialog"
+      style={{ width: "min(860px, calc(100vw - 32px))", height: "min(720px, calc(100vh - 96px))" }}
+      title={
+        <div className="ai-task-editor-header">
+          <small>
+            <span
+              className="ai-status-chip"
+              style={{ background: STATE_COLORS[task.state] ?? "#94a3b8" }}
+            >
+              {taskStateName(task.state)}
+            </span>
+            <span>· {form.executionMode === "write" ? "写入" : "只读"}</span>
+            {roleName && <span>· 角色 {roleName}</span>}
+          </small>
+          <h3>{task.title}</h3>
+          <p>{task.description || "（无说明）"}</p>
+        </div>
+      }
+      footer={
+        <div className="ai-task-editor-actions">
+          <button className="btn-primary" disabled={busy || hasCycle || !form.title} onClick={save}>保存</button>
+          <button className="btn-danger" disabled={busy} onClick={remove}>删除此任务</button>
+          <button className="btn-secondary" onClick={onClose}>取消</button>
+        </div>
+      }
+      onClose={onClose}
+    >
       <div className="ai-task-editor-grid">
         <div className="ai-task-editor-fields">
           <label>任务标题<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
@@ -129,11 +164,6 @@ export function TaskNodeEditor({ task, agents, roles, project, deliveryTasks, on
             <Editor height="180px" defaultLanguage="markdown" value={form.taskPrompt}
               onChange={(v) => setForm({ ...form, taskPrompt: v ?? "" })} /></label>
           {error && <div className="ai-field-error">{error}</div>}
-          <div className="ai-task-editor-actions">
-            <button className="btn-primary" disabled={busy || hasCycle || !form.title} onClick={save}>保存</button>
-            <button className="btn-danger" disabled={busy} onClick={remove}>删除此任务</button>
-            <button className="btn-secondary" onClick={onClose}>取消</button>
-          </div>
         </div>
         <div className="ai-task-editor-preview">
           <h4>实时预览</h4>
@@ -146,6 +176,6 @@ export function TaskNodeEditor({ task, agents, roles, project, deliveryTasks, on
           <p><strong>重试：</strong>{form.retryCount === 0 ? "不限" : `${form.retryCount} 次`}</p>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

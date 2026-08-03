@@ -308,7 +308,13 @@ pub(crate) fn build_interactive_terminal_command_with_codex_output(
         if command_parts.iter().any(|argument| argument == "chat") {
             invocation.push_str(" '--quiet' '--query' $tbPrompt");
         } else {
-            invocation.push_str(" '--oneshot' $tbPrompt");
+            // hermes.cmd 在 Windows 下若直接传多行位置参数会被截断为首行；
+            // 用 Get-Content 子表达式从 prompt.txt 读入，避免引号转义崩溃。
+            invocation.push_str(" '--oneshot' (Get-Content -LiteralPath ");
+            invocation.push_str(&powershell_literal(
+                control.prompt_path.to_string_lossy().as_ref(),
+            ));
+            invocation.push_str(" -Raw -Encoding UTF8)");
         }
     } else if is_opencode {
         // opencode.cmd 在 Windows 下会将多行位置参数截断为首行；用附件传递完整任务契约。
@@ -470,7 +476,7 @@ mod terminal_command_tests {
                 "opencode",
                 "& 'opencode' 'run' '--model' 'test-model' '请完整阅读附件中的任务说明，并严格执行其中的所有约束。' '--file' 'C:\\TerminalBuddy\\prompt.txt'",
             ),
-            ("hermes", "hermes", "& 'hermes' '--model' 'test-model' '--oneshot' $tbPrompt"),
+            ("hermes", "hermes", "& 'hermes' '--model' 'test-model' '--oneshot' (Get-Content -LiteralPath 'C:\\TerminalBuddy\\prompt.txt' -Raw -Encoding UTF8)"),
             ("pi", "pi", "$tbPrompt | & 'pi' '--model' 'test-model' '--print'"),
             ("mimo", "mimo", "$tbPrompt | & 'mimo' '--model' 'test-model' '--print'"),
             ("kimi", "kimi", "& 'kimi' '--model' 'test-model' '--prompt'"),
@@ -496,6 +502,40 @@ mod terminal_command_tests {
         .unwrap();
 
         assert!(command.contains("& 'hermes' 'chat' '--model' 'test-model' '--quiet' '--query' $tbPrompt"));
+    }
+
+    #[test]
+    fn hermes_oneshot_prompt_comes_from_prompt_file_and_model_args_precede_oneshot() {
+        let model_args =
+            preset_model_args_from_value(&Some(serde_json::json!({ "temperature": 0.2 })));
+        let command = build_interactive_terminal_command_with_codex_output(
+            &test_runtime("hermes", "hermes"),
+            &test_agent(),
+            &test_control(),
+            None,
+            None,
+            &[],
+            &model_args,
+        )
+        .unwrap();
+
+        assert!(command.contains("'--temperature=0.2' '--oneshot' (Get-Content -LiteralPath 'C:\\TerminalBuddy\\prompt.txt' -Raw -Encoding UTF8)"));
+        assert!(!command.contains("'--oneshot' $tbPrompt"));
+    }
+
+    #[test]
+    fn hermes_cmd_absolute_path_still_uses_oneshot() {
+        // shell_words 是 POSIX 分词器，反斜杠会被当作转义符；
+        // 绝对路径用例采用 Windows 兼容的正斜杠形式（file_stem 仍匹配 hermes）。
+        let command = build_interactive_terminal_command(
+            &test_runtime("hermes", "C:/Users/me/hermes.cmd"),
+            &test_agent(),
+            &test_control(),
+        )
+        .unwrap();
+
+        assert!(command.contains("& 'C:/Users/me/hermes.cmd' '--model' 'test-model' '--oneshot' (Get-Content"));
+        assert!(command.contains("Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
     }
 
     #[test]

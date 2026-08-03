@@ -863,8 +863,8 @@ export function ConfigDialog({
                 }}
               />
             </label>
-            <label>
-              套用参数预设
+            <label className="ai-agent-preset">
+              <span>套用参数预设</span>
               <select
                 value={
                   backendPresets.some((item) => item.name === agent.startupPresetName)
@@ -903,7 +903,8 @@ export function ConfigDialog({
               </select>
               <button
                 type="button"
-                className="btn-secondary"
+                className="ai-preset-manage-btn"
+                title="管理启动参数预设"
                 onClick={() => {
                   setEditingPreset(null);
                   setPresetDraft({ name: "", promptPrefix: "", modelArgsText: "", contextStrategy: "" });
