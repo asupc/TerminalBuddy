@@ -233,15 +233,21 @@ pub(crate) fn build_interactive_terminal_command_with_codex_output(
         command_parts.push("run".to_string());
     }
     let pipes_prompt_to_stdin = is_codex || is_claude || is_pi;
+    // ConvertTo-ArgValue：按 CommandLineToArgvW 规则转义参数值。PowerShell 5.1 调用原生程序时
+    // 对值中的 " 不转义，prompt 里含引号（如验收命令）会把命令行拆碎成多个参数（argparse
+    // 报 unrecognized arguments / invalid choice）；转义后 5.1 原样放行、解析器还原为字面引号。
+    let convert_arg_value_fn = r#"function ConvertTo-ArgValue { param([string]$Value) $sb = [System.Text.StringBuilder]::new(); $i = 0; while ($i -lt $Value.Length) { $c = $Value[$i]; if ($c -eq '\') { $n = 0; while ($i -lt $Value.Length -and $Value[$i] -eq '\') { $n++; $i++ }; if ($i -lt $Value.Length -and $Value[$i] -eq '"') { [void]$sb.Append('\' * ($n * 2 + 1)); [void]$sb.Append('"'); $i++ } else { [void]$sb.Append('\' * $n) } } elseif ($c -eq '"') { [void]$sb.Append('\"'); $i++ } else { [void]$sb.Append($c); $i++ } }; $sb.ToString() }"#;
     let mut invocation = if pipes_prompt_to_stdin {
         format!(
-            "$tbPrompt = Get-Content -LiteralPath {} -Raw -Encoding UTF8; $OutputEncoding = [System.Text.UTF8Encoding]::new($false); $tbPrompt | & {}",
+            r#"{}; $tbPrompt = Get-Content -LiteralPath {} -Raw -Encoding UTF8; $OutputEncoding = [System.Text.UTF8Encoding]::new($false); $tbPrompt | & {}"#,
+            convert_arg_value_fn,
             powershell_literal(control.prompt_path.to_string_lossy().as_ref()),
             powershell_literal(&executable),
         )
     } else {
         format!(
-            "$tbPrompt = Get-Content -LiteralPath {} -Raw -Encoding UTF8; & {}",
+            r#"{}; $tbPrompt = Get-Content -LiteralPath {} -Raw -Encoding UTF8; & {}"#,
+            convert_arg_value_fn,
             powershell_literal(control.prompt_path.to_string_lossy().as_ref()),
             powershell_literal(&executable),
         )
@@ -311,22 +317,17 @@ pub(crate) fn build_interactive_terminal_command_with_codex_output(
             control.prompt_path.to_string_lossy().as_ref(),
         ));
     } else if is_kimi {
-        invocation.push_str(" '--prompt' (Get-Content -LiteralPath ");
-        invocation.push_str(&powershell_literal(control.prompt_path.to_string_lossy().as_ref()));
-        invocation.push_str(" -Raw -Encoding UTF8)");
+        // --prompt 值含引号时同样会被 PowerShell 5.1 拆碎命令行，转义后传入
+        invocation.push_str(" '--prompt' (ConvertTo-ArgValue $tbPrompt)");
     } else if is_hermes {
         if command_parts.iter().any(|argument| argument == "chat") {
-            invocation.push_str(" '--quiet' '--query' $tbPrompt");
+            // runtime 命令已含 chat 子命令时补 --quiet/--query；prompt 转义后传入
+            invocation.push_str(" '--quiet' '--query' (ConvertTo-ArgValue $tbPrompt)");
         } else {
-            // hermes 顶层必须指定子命令（--oneshot 无效，prompt 位置参数会被 argparse
-            // 当作子命令解析报 invalid choice）；补上 chat 子命令。
-            // hermes.cmd 在 Windows 下若直接传多行位置参数会被截断为首行；
-            // 用 Get-Content 子表达式从 prompt.txt 读入，避免引号转义崩溃。
-            invocation.push_str(" 'chat' '--quiet' '--query' (Get-Content -LiteralPath ");
-            invocation.push_str(&powershell_literal(
-                control.prompt_path.to_string_lossy().as_ref(),
-            ));
-            invocation.push_str(" -Raw -Encoding UTF8)");
+            // hermes 顶层 -z/--oneshot：单次模式（stdout 仅最终响应），无需子命令。
+            // prompt 经 ConvertTo-ArgValue 转义：验收命令等含 " 的内容会拆碎命令行
+            // （PowerShell 5.1 对原生参数中的引号不做转义）。
+            invocation.push_str(" '--oneshot' (ConvertTo-ArgValue $tbPrompt)");
         }
     } else if is_opencode {
         // opencode.cmd 在 Windows 下会将多行位置参数截断为首行；用附件传递完整任务契约。
@@ -488,10 +489,10 @@ mod terminal_command_tests {
                 "opencode",
                 "& 'opencode' 'run' '--model' 'test-model' '请完整阅读附件中的任务说明，并严格执行其中的所有约束。' '--file' 'C:\\TerminalBuddy\\prompt.txt'",
             ),
-            ("hermes", "hermes", "& 'hermes' '--model' 'test-model' 'chat' '--quiet' '--query' (Get-Content -LiteralPath 'C:\\TerminalBuddy\\prompt.txt' -Raw -Encoding UTF8)"),
+            ("hermes", "hermes", "& 'hermes' '--model' 'test-model' '--oneshot' (ConvertTo-ArgValue $tbPrompt)"),
             ("pi", "pi", "$tbPrompt | & 'pi' '--model' 'test-model' '--print'"),
             ("mimo", "mimo", "& 'mimo' 'run' '--model' 'test-model' '请完整阅读附件中的任务说明，并严格执行其中的所有约束。' '--file' 'C:\\TerminalBuddy\\prompt.txt'"),
-            ("kimi", "kimi", "& 'kimi' '--model' 'test-model' '--prompt'"),
+            ("kimi", "kimi", "& 'kimi' '--model' 'test-model' '--prompt' (ConvertTo-ArgValue $tbPrompt)"),
         ] {
             let command = build_interactive_terminal_command(
                 &test_runtime(kind, executable),
@@ -513,11 +514,11 @@ mod terminal_command_tests {
         )
         .unwrap();
 
-        assert!(command.contains("& 'hermes' 'chat' '--model' 'test-model' '--quiet' '--query' $tbPrompt"));
+        assert!(command.contains("& 'hermes' 'chat' '--model' 'test-model' '--quiet' '--query' (ConvertTo-ArgValue $tbPrompt)"));
     }
 
     #[test]
-    fn hermes_prompt_comes_from_prompt_file_and_model_args_precede_chat() {
+    fn hermes_oneshot_escapes_prompt_and_model_args_precede_oneshot() {
         let model_args =
             preset_model_args_from_value(&Some(serde_json::json!({ "temperature": 0.2 })));
         let command = build_interactive_terminal_command_with_codex_output(
@@ -531,13 +532,13 @@ mod terminal_command_tests {
         )
         .unwrap();
 
-        assert!(command.contains("'--temperature=0.2' 'chat' '--quiet' '--query' (Get-Content -LiteralPath 'C:\\TerminalBuddy\\prompt.txt' -Raw -Encoding UTF8)"));
-        assert!(!command.contains("'chat' $tbPrompt"));
-        assert!(!command.contains("--oneshot"));
+        assert!(command.contains("'--temperature=0.2' '--oneshot' (ConvertTo-ArgValue $tbPrompt)"));
+        assert!(!command.contains("'--oneshot' $tbPrompt"));
+        assert!(command.contains("function ConvertTo-ArgValue"));
     }
 
     #[test]
-    fn hermes_cmd_absolute_path_still_uses_chat() {
+    fn hermes_cmd_absolute_path_still_uses_oneshot() {
         // shell_words 是 POSIX 分词器，反斜杠会被当作转义符；
         // 绝对路径用例采用 Windows 兼容的正斜杠形式（file_stem 仍匹配 hermes）。
         let command = build_interactive_terminal_command(
@@ -547,7 +548,7 @@ mod terminal_command_tests {
         )
         .unwrap();
 
-        assert!(command.contains("& 'C:/Users/me/hermes.cmd' '--model' 'test-model' 'chat' '--quiet' '--query' (Get-Content"));
+        assert!(command.contains("& 'C:/Users/me/hermes.cmd' '--model' 'test-model' '--oneshot' (ConvertTo-ArgValue $tbPrompt)"));
         assert!(command.contains("Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
     }
 
