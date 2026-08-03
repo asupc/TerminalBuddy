@@ -4,7 +4,7 @@
 
 **基于 Tauri 2 + React 19 + Rust 的现代化 Windows 桌面终端模拟器**
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue)](terminal-buddy/package.json)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue)](terminal-buddy/package.json)
 [![Rust](https://img.shields.io/badge/Rust-edition%202021-orange)](terminal-buddy/src-tauri/Cargo.toml)
 [![React](https://img.shields.io/badge/React-19-blue)](terminal-buddy/package.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -41,6 +41,17 @@
 - 桌面 Toast 通知（决策通知与完成通知独立拆分）
 - 决议通道枚举模型（原生通知 / 终端 / 两者）
 - 任务状态实时追踪（busy/idle/error）
+
+### 🚀 AI 交付编排（v1.4.0 重磅新功能）
+- **独立 AI 交付窗口**：关闭后后台任务继续运行，SQLite 持久化交付 / 任务 / attempt / 事件 / 决策
+- **DAG 任务编排**：环依赖检测 + 拓扑分层布局可视化；列表/DAG 双视图切换
+- **多 Agent 派发**：Codex / Claude 双协议适配，启动预设 + 容量索引 + 优先级派发 + 全局并发上限
+- **实时终端监控**：运行中 attempt 实时终端弹窗（事件流零延迟），monitor 线程 drain 增量落盘 `live-output.log`
+- **质量门禁**：命令结果逐条可视化（退出码 / 输出 / 复制），基线 commit 派发校验防下游过期基线
+- **重试与重跑**：失败聚合 / 标记忽略 / 带参重试；重试触顶暂停交付；policyViolation 一键确认现场重跑
+- **合并与产物**：合并失败 `mergeFailed` 终态、冲突解决可继续合并；产物归档浏览、跨交付对比、ZIP 打包导出
+- **统计与审查**：成功率 / 平均时长 / 失败聚类 / Agent 调用统计；Monaco Diff 增量审查 + 行评论持久化
+- **跨端协作**：决策事件推送微信 / 飞书，聊天引用回复即可回答；Web 端 7 接口封装 + 决策自由文本
 
 </td>
 <td width="50%">
@@ -111,8 +122,8 @@
 
 从 [Releases](https://gitee.com/updateme/terminal-buddy/releases) 页面下载最新版本：
 
-- `TerminalBuddy_1.3.0_x64-setup.exe` — NSIS 安装包（推荐）
-- `TerminalBuddy_1.3.0_x64.zip` — 便携版压缩包
+- `TerminalBuddy_1.4.0_x64-setup.exe` — NSIS 安装包（推荐）
+- `TerminalBuddy_1.4.0_x64.zip` — 便携版压缩包
 
 ---
 
@@ -214,6 +225,7 @@ terminal-buddy/
 │       │   ├── remote_file.rs  # SSH remote file operations
 │       │   ├── server_monitor.rs  # SSH server stats monitoring
 │       │   ├── client_data.rs  # Client-side data persistence
+│       │   ├── ai_delivery.rs  # AI delivery orchestration (DAG, dispatch, merge, stats)
 │       │   ├── ai_usage.rs  # AI API usage (Qianfan, Deepseek, Minimax, Ark)
 │       │   ├── clipboard.rs  # Clipboard operations
 │       │   ├── fs.rs  # Local filesystem operations
@@ -229,14 +241,15 @@ terminal-buddy/
 │       │   ├── path_service.rs  # Data directory resolution & migration
 │       │   ├── ssh_session_service.rs  # SSH session management
 │       │   ├── client_data_service.rs  # Client data persistence
+│       │   ├── ai_delivery_service/  # AI delivery orchestration (mod / entity / dispatch / delivery / quality / manager / terminal / helpers / tests)
 │       │   └── crypto_service.rs  # Encryption helpers
-│       ├── models/  # Data structures (Profile, AppSettings, etc.)
+│       ├── models/  # Data structures (Profile, AppSettings, ai_delivery, etc.)
 │       ├── web/  # Web API module (axum)
 │       │   ├── server.rs  # Axum router & SPA serving
 │       │   ├── auth.rs  # JWT authentication
 │       │   ├── ws.rs  # WebSocket terminal I/O
 │       │   ├── error.rs  # Error types
-│       │   └── handlers/  # REST handlers (auth, profiles, terminals)
+│       │   └── handlers/  # REST handlers (auth, profiles, terminals, ai_delivery)
 │       └── portable-pty-patched/  # Local patch for portable-pty
 └── web/  # Web frontend (separate React SPA)
     └── src/
@@ -271,7 +284,10 @@ terminal-buddy/
 ├── Workspaces/                # Saved workspaces
 ├── command_history.json       # Command history with notes
 ├── command_templates.json     # Command templates
-└── settings.json              # App settings
+├── settings.json              # App settings
+└── ai_delivery/               # AI delivery orchestration (v1.4.0+)
+    ├── ai_delivery.db         # SQLite database (deliveries / tasks / attempts / events)
+    └── live-output.log        # Real-time terminal monitor output logs
 ```
 
 ---
@@ -315,7 +331,36 @@ terminal-buddy/
 
 ## 📝 版本历史
 
-### v1.3.0 (2026-07-20) — 当前版本
+### v1.4.0 (2026-08-03) — 当前版本
+
+**🎯 AI 交付编排子系统（重磅新功能）**
+- 独立 `ai-delivery` 窗口，关闭后调度、监控、合并任务在后台继续运行
+- SQLite 存储：交付、任务、attempt、事件、决策、合并记录全部落库，崩溃/重启可恢复
+- DAG 任务编排：依赖关系 + 环依赖检测 + 3 例单元测试；拓扑分层布局可视化（localStorage 缓存）+ 列表/DAG 双视图
+- 任务节点编辑抽屉 / 批量操作 / 多 Agent 派发（Codex / Claude 双协议 + 启动预设 + 容量索引 + 优先级派发）
+- 实时终端监控：运行中 attempt 弹窗（事件流零延迟），monitor 线程 drain 增量落盘 `live-output.log`
+- 质量门禁：命令结果逐条可视化（退出码 / 输出 / 复制），基线 commit 派发校验
+- 重试与重跑：失败聚合 / 标记忽略 / 重试触顶暂停交付 / policyViolation 一键现场重跑
+- 合并与产物：合并前 TOCTOU 校验、冲突解决可继续合并、`mergeFailed` 终态；产物归档 + 跨交付对比 + ZIP 打包导出
+- 统计与审查：成功率 / 平均时长 / 失败聚类 / Agent 调用统计；Monaco Diff 增量审查 + 行评论持久化
+- 跨端协作：决策事件推送微信 / 飞书并通过聊天引用回复；Web 端 7 接口封装 + 决策自由文本
+
+**🛠️ 组件与 UI**
+- AI 交付窗口独立为配置窗口方案（解决创建死锁导致主线程阻塞、终端/设置功能卡住）
+- 修复 AI 交付工作区缺失 CSS 导入及 `DeliveryDetail` 的 `deliveries` prop 映射错误
+- `open_in_explorer` 路径不存在时逐级向上查找已存在目录
+- `components` 重组为按域子目录结构
+
+**🔧 资源与稳定性**
+- 锁机制重构为 RAII 守卫，资源清理与超时多路加固
+- 事件文件按条数与体积滚动清理 + 事件列表查看全部/搜索/分页统一组件
+- Watchdog 超时可配置并按 80% 提前告警 `approachingTimeout`
+- 错误分类本地化、banner 重试、轮询失败可见
+- `ai_delivery_service` 拆分为子模块（delivery / quality / manager / terminal / entity / dispatch / helpers / tests）
+
+> 📄 完整更新说明：[RELEASE_NOTES_v1.4.0.md](./RELEASE_NOTES_v1.4.0.md)
+
+### v1.3.0 (2026-07-20)
 
 **🎯 启动参数预设体系（ExtraParamsPreset）**
 - 后端新增启动参数预设 REST 接口，终端实例挂载 `tag` 字段
