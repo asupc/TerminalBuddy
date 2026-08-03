@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { DeliveryStatsPanel } from "./DeliveryStatsPanel";
+import { classifyAiError } from "./utils/aiError";
 import type {
   AiAgent,
   AiAgentRuntime,
@@ -199,6 +200,8 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
   const [manualTaskRetryCount, setManualTaskRetryCount] = useState("0");
   const [manualTaskTimeoutMinutes, setManualTaskTimeoutMinutes] = useState("");
   const [busy, setBusy] = useState<string | null>(null);  const [error, setError] = useState("");
+  const [pollWarning, setPollWarning] = useState(0);
+  const lastFailedActionRef = useRef<(() => Promise<void>) | null>(null);
   const liveRefreshInProgress = useRef(false);
   const runtimeSyncInProgress = useRef(false);
   useEffect(() => {
@@ -343,9 +346,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
       .then((syncedRuntimes) => {
         if (syncedRuntimes !== savedRuntimes) setSavedRuntimes(syncedRuntimes);
       })
-      .catch((reason) =>
-        setError(reason instanceof Error ? reason.message : String(reason)),
-      )
+      .catch((reason) => setError(classifyAiError(reason).message))
       .finally(() => {
         runtimeSyncInProgress.current = false;
       });
@@ -382,12 +383,16 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
       setMergeRecords(nextMergeRecords);
       setAttempts(nextAttempts);
       setDeliveryEvents(nextEvents);
+      setPollWarning(0);
     } finally {
       liveRefreshInProgress.current = false;
     }
   }, [deliveryId, projectId]);
   useEffect(() => {
-    void refresh().catch((reason) => setError(String(reason)));
+    void refresh().catch((reason) => {
+      lastFailedActionRef.current = () => refresh();
+      setError(classifyAiError(reason).message);
+    });
   // 初次加载才需要读取 Runtime 与完整团队配置。
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -399,12 +404,14 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         if (target) return refresh(target.projectId, target.id);
         return undefined;
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .catch((reason) => setError(classifyAiError(reason).message))
       .finally(onNotificationTargetHandled);
   }, [notificationTargetDeliveryId, onNotificationTargetHandled, refresh]);
   useEffect(() => {
     const timer = window.setInterval(() => {
-      void refreshLiveDelivery().catch(() => undefined);
+      void refreshLiveDelivery().catch(() => {
+        setPollWarning((w) => (w ?? 0) + 1);  // 累计轮询失败计数
+      });
     }, 4000);
     return () => window.clearInterval(timer);
   }, [refreshLiveDelivery]);
@@ -436,10 +443,16 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
     try {
       await action();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      lastFailedActionRef.current = action;
+      setError(classifyAiError(reason).message);
     } finally {
       setBusy(null);
     }
+  };
+  /** 重新执行最近一次失败的操作 */
+  const retryLastAction = async () => {
+    const action = lastFailedActionRef.current;
+    if (action) await execute("retry-last", action);
   };
   const dispatchAndStartReadyTasks = async (targetDeliveryId: string) => {
     const attempts = await dispatchAiReadyTasks(targetDeliveryId);
@@ -703,7 +716,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
       });
       if (typeof selected === "string") setWorkspaceRoot(selected);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(classifyAiError(reason).message);
     }
   };
   const openProjectSettings = () => {
@@ -1405,10 +1418,26 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         </button>
       </header>
       {error && (
-        <div className="ai-workspace-error">
+        <div className="ai-error-banner" role="alert">
           <CircleAlert size={16} />
-          {error}
+          <strong>{classifyAiError(error).category}</strong>
+          <span>{classifyAiError(error).message}</span>
+          <span className="ai-error-hint">{classifyAiError(error).hint}</span>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={retryLastAction}
+            disabled={!lastFailedActionRef.current}
+          >
+            重试
+          </button>
+          <button type="button" className="btn-secondary" onClick={() => setError("")}>
+            关闭
+          </button>
         </div>
+      )}
+      {pollWarning > 0 && (
+        <span className="ai-poll-warning">轮询失败 {pollWarning} 次，界面可能非最新</span>
       )}
       <section className="ai-projects-panel ai-projects-panel-compact" aria-label="交付项目">
         {projects.length === 0 ? (

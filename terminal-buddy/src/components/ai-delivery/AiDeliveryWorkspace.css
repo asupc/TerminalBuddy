@@ -904,6 +904,35 @@
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
+.ai-error-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -12px;
+  margin-bottom: 14px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.ai-error-banner .ai-error-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.ai-error-banner .btn-secondary {
+  margin-left: auto;
+}
+.ai-poll-warning {
+  display: inline-block;
+  margin: 0 0 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  font-size: 12px;
+}
 .ai-project-context {
   display: grid;
   grid-template-columns: 2fr repeat(3, 1fr);
@@ -1390,6 +1419,14 @@
 .ai-attempt-failed time,
 .ai-state-failed {
   color: var(--danger);
+}
+.ai-attempt-duration,
+.ai-attempt-finished {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.ai-attempt-duration {
+  font-variant-numeric: tabular-nums;
 }
 .ai-event-failed {
   background: color-mix(in srgb, var(--danger) 6%, transparent);
