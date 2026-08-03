@@ -837,8 +837,12 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                 </label>
                                 <div className="ai-task-summary">
                                   <div className="ai-task-title-row">
+                                    <span
+                                      className={`ai-status-chip${task.state === "failed" ? " ai-status-chip-failed" : ""}`}
+                                    >
+                                      {taskStateName(task.state)}
+                                    </span>
                                     <strong>{task.title}</strong>
-                                    <span className="ai-status-chip">{taskStateName(task.state)}</span>
                                   </div>
                                   {workflowStep && (
                                     <small className="ai-task-workflow-step">
@@ -846,6 +850,19 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                       {plannedAgent ? ` · ${plannedAgent.name}` : ""}
                                     </small>
                                   )}
+                                  <small
+                                    className={`ai-task-retry-limit${
+                                      task.retryCount > 0 && task.attemptIds.length >= task.retryCount
+                                        ? " ai-task-retry-exhausted"
+                                        : ""
+                                    }`}
+                                    title="最大重试次数可在任务编辑（铅笔图标）中调整，0 = 不限"
+                                  >
+                                    重试 {task.attemptIds.length} / {task.retryCount === 0 ? "不限" : task.retryCount}
+                                    {task.retryCount > 0 && task.attemptIds.length >= task.retryCount
+                                      ? "（已触顶）"
+                                      : ""}
+                                  </small>
                                   <p>
                                     {project.repositories.find(
                                       (repo) => repo.id === task.targetRepositoryId,

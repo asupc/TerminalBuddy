@@ -1407,7 +1407,8 @@ mod cycle_detection_tests {
         failed_task.state = "failed".to_string();
         AiDeliveryService::save(TASK_NODES_DIR, &failed_task.id, &failed_task).unwrap();
 
-        // 触顶：attempted=1 >= retry_count=1 → worktree 回收 + contract_id 清空 + 交付暂停
+        // 触顶：attempted=1 >= retry_count=1 → worktree 回收 + contract_id 清空；交付保持运行，
+        // 否则「编辑提高上限再重试」会被「仅运行中的交付」检查拦死，形成无法派发的死锁。
         let result = AiDeliveryService::retry_task_node(&task.id);
         assert!(result.is_err(), "应触顶报错: {:?}", result);
         let after_cap = AiDeliveryService::get_task_node(&task.id).unwrap();
@@ -1419,10 +1420,11 @@ mod cycle_detection_tests {
         );
         assert_eq!(
             AiDeliveryService::get_delivery(&delivery.id).unwrap().state,
-            "paused"
+            "running",
+            "触顶不应暂停交付"
         );
 
-        // 用户编辑提高重试上限 → 恢复交付 → 重试派发走全新契约路径
+        // 用户编辑提高重试上限后无需恢复交付，直接重试派发走全新契约路径
         let updated = AiDeliveryService::update_task_node(UpdateAiTaskNodeInput {
             id: task.id.clone(),
             title: None,
@@ -1442,7 +1444,6 @@ mod cycle_detection_tests {
         })
         .unwrap();
         assert_eq!(updated.retry_count, 3);
-        AiDeliveryService::resume_delivery(&delivery.id).unwrap();
         let retried = AiDeliveryService::retry_task_node(&task.id).unwrap();
         assert_eq!(retried.state, "ready");
         let new_attempt = AiDeliveryService::dispatch_task_node(&task.id, None).unwrap();

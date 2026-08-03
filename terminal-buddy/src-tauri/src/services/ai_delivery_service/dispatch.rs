@@ -167,7 +167,7 @@ impl AiDeliveryService {
         ) {
             return Err(format!("当前任务不能重新派发: {}", task.state));
         }
-        // 检查重试次数上限。retry_count=0 表示不限制，>0 时已用尽则暂停交付。
+        // 检查重试次数上限。retry_count=0 表示不限制，>0 时已用尽则拦截本次重试。
         let effective_retry_limit = task.retry_count;
         if effective_retry_limit > 0 {
             let attempted = task.attempt_ids.len() as u32;
@@ -188,19 +188,18 @@ impl AiDeliveryService {
                     }
                     Ok(())
                 })();
-                // 触顶：暂停交付并通知（不直接静默拒绝），人工检查后可编辑提高上限再继续
-                let mut delivery = Self::get_delivery(&task.delivery_id)?;
-                if delivery.state == "running" {
-                    delivery.state = "paused".to_string();
-                    delivery.updated_at = chrono::Utc::now().to_rfc3339();
-                    Self::save(DELIVERIES_DIR, &delivery.id, &delivery)?;
-                }
+                // 触顶只拦截本任务，不暂停整个交付：暂停后「编辑提高上限再重试」会被下方
+                // 「仅运行中的交付」检查拦死，形成无法派发的死锁；交付保持运行，
+                // 用户编辑提高上限后可直接重新派发本任务。
                 Self::append_event(
-                    &delivery.id,
+                    &task.delivery_id,
                     Some(&task.id),
                     None,
-                    "deliveryPaused",
-                    &format!("任务 {} 重试触顶，交付已暂停", task.title),
+                    "taskRetryBlocked",
+                    &format!(
+                        "任务「{}」已达到重试上限（{} / {}），请在任务编辑中调整「最大重试次数」后重新派发",
+                        task.title, attempted, effective_retry_limit
+                    ),
                 )?;
                 // 触顶清理后旧契约已失效（worktree/分支已回收）：清空 contract_id 并删除契约文件。
                 // 否则用户「编辑提高上限再重试」时 dispatch_task_node 会命中契约的
@@ -211,7 +210,7 @@ impl AiDeliveryService {
                 task.updated_at = chrono::Utc::now().to_rfc3339();
                 let _ = Self::save(TASK_NODES_DIR, &task.id, &task);
                 return Err(format!(
-                    "任务已达到最大重试次数（{} / {}），交付已暂停，请检查现场后调整",
+                    "任务已达到最大重试次数（{} / {}），请在任务编辑中调整「最大重试次数」（0 = 不限）后重新派发",
                     attempted, effective_retry_limit
                 ));
             }

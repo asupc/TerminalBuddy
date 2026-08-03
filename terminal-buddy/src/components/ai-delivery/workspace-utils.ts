@@ -185,6 +185,7 @@ export const eventTypeNames: Record<string, string> = {
   taskReady: "任务就绪",
   taskQueued: "任务已入队",
   taskRetryReady: "任务可重试",
+  taskRetryBlocked: "重试触顶",
   taskReworkRequested: "要求返工",
   dispatchDeferred: "派发暂缓",
   dispatchFailed: "派发失败",

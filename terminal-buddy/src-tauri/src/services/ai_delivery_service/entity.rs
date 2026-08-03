@@ -758,16 +758,27 @@ impl AiDeliveryService {
                 if !command_parts.iter().any(|argument| argument == "run") {
                     command.arg("run");
                 }
-                command.arg("--print").arg(&clipped);
+                command.arg(&clipped);
             }
             "kimi" => {
                 command.arg("--prompt").arg(&clipped);
             }
             "hermes" => {
-                command.arg("--oneshot").arg(&clipped);
+                // hermes 顶层必须指定子命令（--oneshot 无效），chat --quiet 为程序化单次查询
+                if !command_parts.iter().any(|argument| argument == "chat") {
+                    command.arg("chat");
+                }
+                command.arg("--quiet").arg("--query").arg(&clipped);
             }
-            // claude / pi / mimo 走 --print 非交互输出
-            "claude" | "pi" | "mimo" => {
+            "mimo" => {
+                // mimo 没有 --print 参数也不从 stdin 读 prompt，run 子命令 + message 传提示词
+                if !command_parts.iter().any(|argument| argument == "run") {
+                    command.arg("run");
+                }
+                command.arg(&clipped);
+            }
+            // claude / pi 走 --print 非交互输出
+            "claude" | "pi" => {
                 command.arg("--print").arg(&clipped);
             }
             // 未知 kind 兜底：作为最后一个位置参数传入

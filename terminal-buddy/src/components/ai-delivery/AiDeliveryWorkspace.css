@@ -1266,6 +1266,17 @@
 }
 .ai-task-title-row .ai-status-chip {
   flex: 0 0 auto;
+  margin-bottom: 0;
+}
+.ai-task-title-row .ai-status-chip-failed {
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  color: #ef4444;
+}
+.ai-task-retry-limit {
+  color: var(--text-tertiary);
+}
+.ai-task-retry-limit.ai-task-retry-exhausted {
+  color: #ef4444;
 }
 .ai-task-summary strong {
   overflow: hidden;
@@ -1815,6 +1826,8 @@
   .ai-delivery-events li { grid-template-columns: 1fr; gap: 3px; }
   .ai-task-contract-summary, .ai-task-contract-artifacts { grid-template-columns: 1fr; }
   .ai-task-create-grid, .ai-task-create-artifacts { grid-template-columns: 1fr; }
+  .ai-task-editor-grid { grid-template-columns: 1fr; }
+  .ai-task-editor-preview { position: static; }
 }
 
 /* 执行产出物面板 */
@@ -2114,14 +2127,46 @@
   overflow: auto;
 }
 .ai-task-editor-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.55fr);
+  gap: 16px;
+  align-items: start;
 }
 .ai-task-editor-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+/* 字段表单：label 网格 + 输入控件样式与其他弹窗（.ai-delivery-create-body 等）保持一致 */
+.ai-task-editor-fields label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ai-task-editor-fields input:not([type="checkbox"]),
+.ai-task-editor-fields select,
+.ai-task-editor-fields textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  padding: 6px 9px;
+  font: inherit;
+  outline: none;
+}
+.ai-task-editor-fields textarea {
+  min-height: 68px;
+  resize: vertical;
+}
+.ai-task-editor-fields input:focus,
+.ai-task-editor-fields select:focus,
+.ai-task-editor-fields textarea:focus {
+  border-color: var(--accent);
 }
 .ai-task-editor-actions {
   display: flex;
@@ -2129,10 +2174,24 @@
   justify-content: flex-end;
 }
 .ai-task-editor-preview {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
   font-size: 12px;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
+}
+.ai-task-editor-preview h4 {
+  margin: 0 0 2px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.ai-task-editor-preview p {
+  margin: 0;
 }
 .ai-task-dependencies {
   border: 1px solid var(--border);
