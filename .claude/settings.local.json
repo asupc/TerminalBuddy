@@ -29,5 +29,8 @@
       "Bash(git commit *)",
       "Bash(sed 's/^[* ]*//')"
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
   }
 }
