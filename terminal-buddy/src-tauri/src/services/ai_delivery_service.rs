@@ -66,6 +66,8 @@ pub const DEFAULT_ATTEMPT_TIMEOUT_SECONDS: u32 = 60 * 60;
 pub const TIMEOUT_WARNING_RATIO: f32 = 0.8;
 const EXECUTION_CONTEXT_WORKSPACE_ROOT: &str = "workspaceRoot";
 const EXECUTION_CONTEXT_TASK_WORKTREE: &str = "taskWorktree";
+/// 跨项目全局并发上限（后续可做设置项）。
+pub const GLOBAL_MAX_ATTEMPTS: usize = 4;
 
 fn resolve_execution_context(execution_mode: &str, configured: &str) -> Result<String, String> {
     let context = if configured.trim().is_empty() {
@@ -3329,6 +3331,9 @@ impl AiDeliveryService {
         if delivery.state != "running" {
             return Err("交付尚未进入运行状态".to_string());
         }
+        if Self::global_active_attempts()? >= GLOBAL_MAX_ATTEMPTS {
+            return Err("全局并发已达上限，稍后重试".to_string());
+        }
         let project = Self::get_project(&delivery.project_id)?;
         let repository = project
             .repositories
@@ -3535,7 +3540,13 @@ impl AiDeliveryService {
         let _ = Self::refresh_ready_task_nodes(delivery_id)?;
         let tasks = Self::get_task_nodes(delivery_id)?;
         let mut attempts = Vec::new();
-        for task in tasks.into_iter().filter(|task| task.state == "ready") {
+        // 优先级排序：workflow 首步 + taskWorktree 的写入任务先派发，其余延后
+        let mut ready_tasks = tasks
+            .into_iter()
+            .filter(|task| task.state == "ready")
+            .collect::<Vec<_>>();
+        ready_tasks.sort_by_key(|task| Self::dispatch_priority(task, &delivery));
+        for task in ready_tasks {
             match Self::dispatch_task_node(&task.id, None) {
                 Ok(attempt) => attempts.push(attempt),
                 Err(error) => {
@@ -3563,6 +3574,9 @@ impl AiDeliveryService {
         let mut attempt = Self::get::<AiAttempt>(ATTEMPTS_DIR, attempt_id, "执行尝试")?;
         if attempt.state != "queued" {
             return Err(format!("当前执行尝试不能启动: {}", attempt.state));
+        }
+        if Self::global_active_attempts()? >= GLOBAL_MAX_ATTEMPTS {
+            return Err("全局并发已达上限，稍后重试".to_string());
         }
         let start_result = (|| -> Result<AiAttempt, String> {
             let delivery = Self::get_delivery(&attempt.delivery_id)?;
@@ -4707,6 +4721,32 @@ impl AiDeliveryService {
                     && attempt.agent_id == agent_id
             })
             .count())
+    }
+
+    /// 全局活跃 attempt 数（queued/starting/running，三态口径与既有 7 处过滤一致）。
+    fn global_active_attempts() -> Result<usize, String> {
+        let active = Self::get_all_attempts(None)?
+            .iter()
+            .filter(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
+            .count();
+        Ok(active)
+    }
+
+    /// 派发优先级：workflow 首步 + taskWorktree 的写入任务优先；其余（含 readonly/workspaceRoot）延后。
+    fn dispatch_priority(task: &AiTaskNode, delivery: &AiDelivery) -> u8 {
+        let is_workflow_first = task
+            .workflow_step_id
+            .as_deref()
+            .zip(delivery.workflow_steps.first())
+            .map(|(step_id, first)| step_id == first.id)
+            .unwrap_or(false);
+        let is_high =
+            task.execution_context == EXECUTION_CONTEXT_TASK_WORKTREE && is_workflow_first;
+        if is_high {
+            0
+        } else {
+            1
+        }
     }
 
     fn check_capacity(
