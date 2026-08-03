@@ -737,4 +737,110 @@ impl AiDeliveryService {
         Ok(gate)
     }
 
+
+    pub fn generate_quality_gate_commands(
+        workspace_root: &str,
+        runtime_id: Option<&str>,
+        agent_id: Option<&str>,
+    ) -> Result<AiQualityGate, String> {
+        let workspace_root = canonical_directory(workspace_root)?;
+        let contexts = scan_repository_quality_contexts(&workspace_root)?;
+        if contexts.is_empty() {
+            return Err("工作区中未发现 Git 仓库，无法生成质量门禁命令".to_string());
+        }
+        let runtime =
+            if let Some(runtime_id) = runtime_id.filter(|id| !id.trim().is_empty()) {
+                let runtime = Self::get::<AiAgentRuntime>(RUNTIMES_DIR, runtime_id, "Runtime")?;
+                if !runtime.enabled {
+                    return Err("所选 Runtime 已禁用".to_string());
+                }
+                runtime
+            } else if let Some(agent_id) = agent_id.filter(|id| !id.trim().is_empty()) {
+                let agent = Self::get::<AiAgent>(AGENTS_DIR, agent_id, "管理者 Agent")?;
+                if !agent.enabled {
+                    return Err("项目关联的管理者 Agent 已禁用".to_string());
+                }
+                let runtime = Self::get::<AiAgentRuntime>(
+                    RUNTIMES_DIR,
+                    &agent.runtime_id,
+                    "管理者 Runtime",
+                )?;
+                if !runtime.enabled {
+                    return Err("项目关联的管理者 Runtime 已禁用".to_string());
+                }
+                runtime
+            } else {
+                Self::get_all_runtimes()?
+                    .into_iter()
+                    .find(|r| r.enabled)
+                    .ok_or_else(|| {
+                        "未找到可用的 Runtime，请先在 AI 交付设置中启用一个 Runtime"
+                            .to_string()
+                    })?
+            };
+        generate_quality_gate_with_runtime(&runtime, &workspace_root, &contexts)
+    }
+
+   pub fn delete_project(id: &str) -> Result<(), String> {
+       let project = Self::get_project(id)?;
+        let contracts = Self::get_all_task_contracts(Some(id))?;
+        if contracts
+            .iter()
+            .any(|contract| !matches!(contract.state.as_str(), "completed" | "cancelled"))
+        {
+            return Err("项目仍有未完成的任务契约，无法删除".to_string());
+        }
+
+        let deliveries = Self::get_all_deliveries(Some(id))?;
+        let delivery_ids = deliveries
+            .iter()
+            .map(|delivery| delivery.id.as_str())
+            .collect::<HashSet<_>>();
+        let attempts = Self::get_all_attempts(None)?
+            .into_iter()
+            .filter(|attempt| delivery_ids.contains(attempt.delivery_id.as_str()))
+            .collect::<Vec<_>>();
+        if attempts
+            .iter()
+            .any(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
+        {
+            return Err("项目仍有正在运行的 Agent，无法删除".to_string());
+        }
+
+       // 项目删除时清理本应用创建的 worktree、Git 分支和产出物目录，避免资源泄漏。
+       for delivery in &deliveries {
+           cleanup_delivery_task_worktrees(&project, delivery);
+           let _ = cleanup_delivery_integration_workspace(&project, delivery);
+           for task in Self::get_task_nodes(&delivery.id)? {
+                Self::delete(TASK_NODES_DIR, &task.id, "任务节点")?;
+            }
+            for attempt in attempts
+                .iter()
+                .filter(|attempt| attempt.delivery_id == delivery.id)
+            {
+                Self::delete(ATTEMPTS_DIR, &attempt.id, "执行尝试")?;
+                let terminal_run_dir = terminal_run_dir_by_id(&attempt.id);
+                let _ = fs::remove_dir_all(terminal_run_dir);
+            }
+            for gate in Self::get_review_gates(Some(&delivery.id))? {
+                Self::delete(REVIEW_GATES_DIR, &gate.id, "审核门禁")?;
+            }
+            for request in Self::get_decision_requests(Some(&delivery.id))? {
+                Self::delete(DECISIONS_DIR, &request.id, "决策请求")?;
+            }
+            for event in Self::get_delivery_events(&delivery.id)? {
+                Self::delete(EVENTS_DIR, &event.id, "交付事件")?;
+            }
+            for record in Self::get_merge_records(Some(&delivery.id))? {
+                Self::delete(MERGE_RECORDS_DIR, &record.id, "合并记录")?;
+            }
+            let plan_directory = Self::entity_dir(PLANS_DIR).join(safe_path_segment(&delivery.id));
+            let _ = fs::remove_dir_all(plan_directory);
+            Self::delete(DELIVERIES_DIR, &delivery.id, "交付")?;
+        }
+        for contract in contracts {
+            Self::delete(CONTRACTS_DIR, &contract.id, "任务契约")?;
+        }
+        Self::delete(PROJECTS_DIR, id, "AI 项目")
+    }
 }

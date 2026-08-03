@@ -1412,3 +1412,47 @@ pub(crate) fn copy_artifact_path(source: &Path, destination: &Path) -> Result<()
     Ok(())
 }
 
+
+impl AiDeliveryService {
+    pub fn detect_local_runtimes() -> Vec<AiRuntimeProbe> {
+        let mut runtime_commands = [
+            ("codex", "codex"),
+            ("claude", "claude"),
+            ("opencode", "opencode"),
+            ("hermes", "hermes"),
+            ("pi", "pi"),
+            ("mimo", "mimo"),
+            ("kimi", "kimi"),
+        ]
+        .into_iter()
+        .map(|(kind, command)| (kind.to_string(), command.to_string()))
+        .collect::<Vec<_>>();
+
+        // 自定义命令可能位于非标准 PATH。保留默认探测以发现新安装的 CLI，
+        // 同时探测已保存的 Runtime，确保 Agent 实际会启动的命令得到准确状态。
+        for runtime in Self::get_all_runtimes().unwrap_or_default() {
+            if runtime.command.trim().is_empty()
+                || runtime_commands
+                    .iter()
+                    .any(|(kind, command)| kind == &runtime.kind && command == &runtime.command)
+            {
+                continue;
+            }
+            runtime_commands.push((runtime.kind, runtime.command));
+        }
+
+        runtime_commands
+            .into_iter()
+            .map(|(kind, command)| {
+                let fallback = unavailable_runtime_probe(&kind, &command);
+                (
+                    fallback,
+                    thread::spawn(move || probe_local_runtime(&kind, &command)),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(fallback, handle)| handle.join().unwrap_or(fallback))
+            .collect()
+    }
+}

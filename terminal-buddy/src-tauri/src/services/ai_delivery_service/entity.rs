@@ -363,4 +363,442 @@ impl AiDeliveryService {
         Self::save(CONTRACTS_DIR, &contract.id, &contract)?;
         Ok(contract)
     }
+
+    pub(crate) fn root_dir() -> PathBuf {
+        let dir = PathService::get_data_dir().join("AiDelivery");
+        fs::create_dir_all(&dir).ok();
+        dir
+    }
+
+    pub(crate) fn entity_dir(name: &str) -> PathBuf {
+        let dir = Self::root_dir().join(name);
+        fs::create_dir_all(&dir).ok();
+        dir
+    }
+
+    pub(crate) fn list<T: DeserializeOwned>(dir: &str) -> Result<Vec<T>, String> {
+        DatabaseService::list_ai_entities(dir)
+    }
+
+    pub(crate) fn save<T: Serialize>(dir: &str, id: &str, value: &T) -> Result<(), String> {
+        DatabaseService::save_ai_entity(dir, id, value)
+    }
+
+    pub(crate) fn get<T: DeserializeOwned>(dir: &str, id: &str, label: &str) -> Result<T, String> {
+        DatabaseService::get_ai_entity(dir, id, label)
+    }
+
+    pub(crate) fn delete(dir: &str, id: &str, label: &str) -> Result<(), String> {
+        DatabaseService::delete_ai_entity(dir, id, label)
+    }
+
+    pub fn get_all_projects() -> Result<Vec<AiProject>, String> {
+        let mut projects = Self::list(PROJECTS_DIR)?;
+        projects
+            .sort_by(|left: &AiProject, right: &AiProject| right.updated_at.cmp(&left.updated_at));
+        Ok(projects)
+    }
+
+    pub fn get_project(id: &str) -> Result<AiProject, String> {
+        Self::get(PROJECTS_DIR, id, "AI 项目")
+    }
+
+    pub fn create_project(input: CreateAiProjectInput) -> Result<AiProject, String> {
+        let name = input.name.trim();
+        if name.is_empty() {
+            return Err("项目名称不能为空".to_string());
+        }
+        let workspace_root = canonical_directory(&input.workspace_root)?;
+        let repositories = discover_repositories(&workspace_root)?;
+        if repositories.is_empty() {
+            return Err("工作区及其一级子目录中未发现 Git 仓库".to_string());
+        }
+        let quality_gate = normalize_quality_gate(input.quality_gate)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let project = AiProject {
+            id: Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            workspace_root: workspace_root.to_string_lossy().to_string(),
+            repositories,
+            worktree_root: normalize_optional_directory(input.worktree_root)?,
+            quality_gate,
+            manager_agent_id: input.manager_agent_id,
+            max_concurrency: input.max_concurrency.clamp(1, 32),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        Self::save(PROJECTS_DIR, &project.id, &project)?;
+        Ok(project)
+    }
+
+    pub fn refresh_project_repositories(id: &str) -> Result<AiProject, String> {
+        let mut project = Self::get_project(id)?;
+        let existing = project
+            .repositories
+            .iter()
+            .map(|repository| (repository.relative_path.clone(), repository.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let mut repositories = discover_repositories(Path::new(&project.workspace_root))?;
+        if repositories.is_empty() {
+            return Err("未发现 Git 仓库，项目配置未更新".to_string());
+        }
+        for repository in &mut repositories {
+            if let Some(previous) = existing.get(&repository.relative_path) {
+                repository.id = previous.id.clone();
+                repository.write_concurrency = previous.write_concurrency;
+                repository.write_enabled = previous.write_enabled;
+            }
+        }
+        project.repositories = repositories;
+        project.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(PROJECTS_DIR, &project.id, &project)?;
+        Ok(project)
+    }
+
+    pub fn update_project(mut project: AiProject) -> Result<AiProject, String> {
+        let existing = Self::get_project(&project.id)?;
+        if project.name.trim().is_empty() {
+            return Err("项目名称不能为空".to_string());
+        }
+        if project.workspace_root != existing.workspace_root {
+            return Err("项目创建后不能修改工作区根目录，请新建项目".to_string());
+        }
+        project.quality_gate = normalize_quality_gate(project.quality_gate)?;
+        project.max_concurrency = project.max_concurrency.clamp(1, 32);
+        project.created_at = existing.created_at;
+        project.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(PROJECTS_DIR, &project.id, &project)?;
+        Ok(project)
+    }
+
+    pub fn get_all_runtimes() -> Result<Vec<AiAgentRuntime>, String> {
+        let mut runtimes = Self::list(RUNTIMES_DIR)?;
+        runtimes
+            .sort_by(|left: &AiAgentRuntime, right: &AiAgentRuntime| left.name.cmp(&right.name));
+        Ok(runtimes)
+    }
+
+    pub fn save_runtime(mut runtime: AiAgentRuntime) -> Result<AiAgentRuntime, String> {
+        let _lock = runtime_save_lock()
+            .lock()
+            .map_err(|_| "Runtime 保存锁异常".to_string())?;
+        validate_runtime(&runtime)?;
+        if let Some(existing) = Self::list::<AiAgentRuntime>(RUNTIMES_DIR)?
+            .into_iter()
+            .find(|item| item.id != runtime.id && same_runtime_command(item, &runtime))
+        {
+            return Ok(existing);
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        if runtime.id.trim().is_empty() {
+            runtime.id = Uuid::new_v4().to_string();
+            runtime.created_at = now.clone();
+        } else if let Ok(existing) =
+            Self::get::<AiAgentRuntime>(RUNTIMES_DIR, &runtime.id, "运行时")
+        {
+            runtime.created_at = existing.created_at;
+        } else if runtime.created_at.is_empty() {
+            runtime.created_at = now.clone();
+        }
+        runtime.updated_at = now;
+        Self::save(RUNTIMES_DIR, &runtime.id, &runtime)?;
+        Ok(runtime)
+    }
+
+    pub fn delete_runtime(id: &str) -> Result<(), String> {
+        if Self::get_all_agents()?
+            .iter()
+            .any(|agent| agent.runtime_id == id)
+        {
+            return Err("仍有 Agent 使用该运行时，无法删除".to_string());
+        }
+        Self::delete(RUNTIMES_DIR, id, "运行时")
+    }
+
+    pub fn get_all_agents() -> Result<Vec<AiAgent>, String> {
+        let mut agents = Self::list(AGENTS_DIR)?;
+        agents.sort_by(|left: &AiAgent, right: &AiAgent| left.name.cmp(&right.name));
+        Ok(agents)
+    }
+
+    pub fn save_agent(mut agent: AiAgent) -> Result<AiAgent, String> {
+        if agent.name.trim().is_empty() {
+            return Err("Agent 名称不能为空".to_string());
+        }
+        Self::get::<AiAgentRuntime>(RUNTIMES_DIR, &agent.runtime_id, "运行时")?;
+        validate_agent_configuration(&agent)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        if agent.id.trim().is_empty() {
+            agent.id = Uuid::new_v4().to_string();
+            agent.created_at = now.clone();
+        } else if let Ok(existing) = Self::get::<AiAgent>(AGENTS_DIR, &agent.id, "Agent") {
+            agent.created_at = existing.created_at;
+        } else if agent.created_at.is_empty() {
+            agent.created_at = now.clone();
+        }
+        agent.max_concurrency = agent.max_concurrency.clamp(1, 16);
+        agent.updated_at = now;
+        Self::save(AGENTS_DIR, &agent.id, &agent)?;
+        Ok(agent)
+    }
+
+    pub fn delete_agent(id: &str) -> Result<(), String> {
+        if Self::get_all_roles()?.iter().any(|role| {
+            role.locked_agent_id.as_deref() == Some(id)
+                || role
+                    .candidate_agent_ids
+                    .iter()
+                    .any(|agent_id| agent_id == id)
+        }) {
+            return Err("仍有角色引用该 Agent，无法删除".to_string());
+        }
+        if Self::get_all_workflows()?
+            .iter()
+            .any(|workflow| {
+                workflow
+                    .steps
+                    .iter()
+                    .any(|step| step.role_id.is_none() && step.agent_id == id)
+            })
+        {
+            return Err("仍有编排步骤引用该 Agent，无法删除".to_string());
+        }
+        Self::delete(AGENTS_DIR, id, "Agent")
+    }
+
+    pub fn get_all_startup_presets() -> Result<Vec<AiStartupPreset>, String> {
+        let mut presets = Self::list(STARTUP_PRESETS_DIR)?;
+        presets.sort_by(|left: &AiStartupPreset, right: &AiStartupPreset| {
+            right.updated_at.cmp(&left.updated_at)
+        });
+        Ok(presets)
+    }
+
+    pub fn get_startup_preset_by_name(name: &str) -> Result<AiStartupPreset, String> {
+        Self::get_all_startup_presets()?
+            .into_iter()
+            .find(|preset| preset.name == name)
+            .ok_or_else(|| format!("启动预设不存在: {}", name))
+    }
+
+    pub fn save_startup_preset(mut preset: AiStartupPreset) -> Result<AiStartupPreset, String> {
+        let name = preset.name.trim();
+        if name.is_empty() {
+            return Err("预设名称不能为空".to_string());
+        }
+        preset.name = name.to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut existing_created_at = None;
+        if preset.id.trim().is_empty() {
+            preset.id = Uuid::new_v4().to_string();
+        } else {
+            existing_created_at = Self::get::<AiStartupPreset>(
+                STARTUP_PRESETS_DIR,
+                &preset.id,
+                "启动预设",
+            )
+            .ok()
+            .map(|existing| existing.created_at);
+        }
+        if Self::get_all_startup_presets()?
+            .iter()
+            .any(|other| other.id != preset.id && other.name == preset.name)
+        {
+            return Err(format!("启动预设名称已存在: {}", preset.name));
+        }
+        preset.created_at = existing_created_at.unwrap_or_else(|| now.clone());
+        preset.updated_at = now;
+        Self::save(STARTUP_PRESETS_DIR, &preset.id, &preset)?;
+        Ok(preset)
+    }
+
+    pub fn delete_startup_preset(id: &str) -> Result<(), String> {
+        Self::delete(STARTUP_PRESETS_DIR, id, "启动预设")
+    }
+
+    pub fn get_all_roles() -> Result<Vec<AiRole>, String> {
+        let mut roles = Self::list(ROLES_DIR)?;
+        roles.sort_by(|left: &AiRole, right: &AiRole| left.name.cmp(&right.name));
+        Ok(roles)
+    }
+
+    pub fn save_role(mut role: AiRole) -> Result<AiRole, String> {
+        if role.name.trim().is_empty() {
+            return Err("角色名称不能为空".to_string());
+        }
+        let agents = Self::get_all_agents()?;
+        for agent_id in &role.candidate_agent_ids {
+            if !agents.iter().any(|agent| agent.id == *agent_id) {
+                return Err(format!("候选 Agent 不存在: {}", agent_id));
+            }
+        }
+        if let Some(agent_id) = role.locked_agent_id.as_deref() {
+            if !role
+                .candidate_agent_ids
+                .iter()
+                .any(|candidate| candidate == agent_id)
+            {
+                return Err("锁定 Agent 必须包含在候选 Agent 中".to_string());
+            }
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        if role.id.trim().is_empty() {
+            role.id = Uuid::new_v4().to_string();
+            role.created_at = now.clone();
+        } else if let Ok(existing) = Self::get::<AiRole>(ROLES_DIR, &role.id, "角色") {
+            role.created_at = existing.created_at;
+        } else if role.created_at.is_empty() {
+            role.created_at = now.clone();
+        }
+        role.updated_at = now;
+        Self::save(ROLES_DIR, &role.id, &role)?;
+        Ok(role)
+    }
+
+    pub fn delete_role(id: &str) -> Result<(), String> {
+        if Self::get_all_workflows()?.iter().any(|workflow| {
+            workflow
+                .steps
+                .iter()
+                .any(|step| step.role_id.as_deref() == Some(id))
+        }) {
+            return Err("仍有编排步骤引用该角色，无法删除".to_string());
+        }
+        Self::delete(ROLES_DIR, id, "角色")
+    }
+
+    pub fn get_all_workflows() -> Result<Vec<AiWorkflow>, String> {
+        let mut workflows = Self::list(WORKFLOWS_DIR)?;
+        workflows.sort_by(|left: &AiWorkflow, right: &AiWorkflow| {
+            right.updated_at.cmp(&left.updated_at)
+        });
+        Ok(workflows)
+    }
+
+    /// 单步模拟测试（实验性）：用 {featureName} 占位替换后的步骤提示词，
+    /// 走一次 claude --print 调用并返回输出前 2000 字符。
+    /// 只调用不落盘、不建 attempt；失败仅前端展示错误，不影响既有功能。
+    pub fn test_workflow_step(workflow_step_id: &str, feature_name: &str) -> Result<String, String> {
+        let workflow = Self::get_all_workflows()?
+            .into_iter()
+            .find(|workflow| workflow.steps.iter().any(|step| step.id == workflow_step_id))
+            .ok_or_else(|| "工作流步骤不存在".to_string())?;
+        let step = workflow
+            .steps
+            .iter()
+            .find(|step| step.id == workflow_step_id)
+            .ok_or_else(|| "工作流步骤不存在".to_string())?;
+        let prompt = if step.prompt.contains("{featureName}") {
+            step.prompt.replace("{featureName}", feature_name)
+        } else {
+            format!("功能描述：{}\n\n{}", feature_name, step.prompt)
+        };
+        let runtime = Self::get_all_runtimes()?
+            .into_iter()
+            .filter(|runtime| runtime.enabled)
+            .find(|runtime| runtime.kind == "claude")
+            .ok_or_else(|| "未找到可用的 claude 运行时，无法模拟测试".to_string())?;
+        let mut command_parts = split_runtime_command(&runtime.command)?;
+        let executable = command_parts.remove(0);
+        let mut command = Command::new(&executable);
+        command.args(&command_parts);
+        command.args(["--print".to_string()]);
+        // 模拟测试用的提示词不落盘，直接作为参数传入（限制长度避免命令行超限）
+        let clipped = if prompt.len() > 4000 {
+            format!("{}…", &prompt[..prompt.ceil_char_boundary(4000)])
+        } else {
+            prompt
+        };
+        command.arg(clipped);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let output = run_command_with_timeout(
+            &mut command,
+            Duration::from_secs(60),
+            "工作流步骤模拟测试",
+        )?;
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(format!(
+                "Agent 未输出内容：{}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(if text.len() > 2000 {
+            format!("{}…", &text[..text.ceil_char_boundary(2000)])
+        } else {
+            text.to_string()
+        })
+    }
+
+    pub fn save_workflow(mut workflow: AiWorkflow) -> Result<AiWorkflow, String> {
+        if workflow.name.trim().is_empty() {
+            return Err("编排方案名称不能为空".to_string());
+        }
+        if workflow.steps.is_empty() {
+            return Err("编排方案至少需要一个步骤".to_string());
+        }
+        let agents = Self::get_all_agents()?;
+        let roles = Self::get_all_roles()?;
+        let mut step_ids = HashSet::new();
+        for step in &mut workflow.steps {
+            if step.id.trim().is_empty() {
+                step.id = Uuid::new_v4().to_string();
+            }
+            if !step_ids.insert(step.id.clone()) {
+                return Err("编排步骤 ID 不能重复".to_string());
+            }
+            step.name = step.name.trim().to_string();
+            step.prompt = step.prompt.trim().to_string();
+            if step.name.is_empty() {
+                return Err("编排步骤名称不能为空".to_string());
+            }
+            if !matches!(step.execution_mode.as_str(), "write" | "readonly") {
+                return Err(format!("编排步骤“{}”的执行模式无效", step.name));
+            }
+            step.execution_context =
+                resolve_execution_context(&step.execution_mode, &step.execution_context)?;
+            if step.execution_mode == "write"
+                && step.execution_context != EXECUTION_CONTEXT_TASK_WORKTREE
+            {
+                return Err(format!(
+                    "编排步骤“{}”允许写入时必须在任务 worktree 中执行",
+                    step.name
+                ));
+            }
+            if let Some(role_id) = step.role_id.as_deref() {
+                let role = roles
+                    .iter()
+                    .find(|role| role.id == role_id)
+                    .ok_or_else(|| format!("编排步骤“{}”指定的角色不存在", step.name))?;
+                if role.locked_agent_id.is_none() && role.candidate_agent_ids.is_empty() {
+                    return Err(format!("编排步骤“{}”的角色未配置 Agent", step.name));
+                }
+            } else if step.agent_id.is_empty() {
+                return Err(format!("编排步骤“{}”请选择执行角色", step.name));
+            } else if !agents.iter().any(|agent| agent.id == step.agent_id) {
+                return Err(format!("编排步骤“{}”指定的 Agent 不存在", step.name));
+            }
+        }
+        workflow.name = workflow.name.trim().to_string();
+        workflow.description = workflow.description.trim().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        if workflow.id.trim().is_empty() {
+            workflow.id = Uuid::new_v4().to_string();
+            workflow.created_at = now.clone();
+        } else if let Ok(existing) =
+            Self::get::<AiWorkflow>(WORKFLOWS_DIR, &workflow.id, "编排方案")
+        {
+            workflow.created_at = existing.created_at;
+        } else if workflow.created_at.is_empty() {
+            workflow.created_at = now.clone();
+        }
+        workflow.updated_at = now;
+        Self::save(WORKFLOWS_DIR, &workflow.id, &workflow)?;
+        Ok(workflow)
+    }
+
+    pub fn delete_workflow(id: &str) -> Result<(), String> {
+        Self::delete(WORKFLOWS_DIR, id, "编排方案")
+    }
 }
