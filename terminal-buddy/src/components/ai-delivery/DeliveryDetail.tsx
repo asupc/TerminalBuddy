@@ -103,6 +103,15 @@ export interface DeliveryDetailProps {
   openTemplatesDialog: () => void;
 }
 
+/** 计算 attempt 运行时长：已结束取 finishedAt，运行中取至今 */
+function attemptDuration(attempt: AiAttempt): string {
+  if (!attempt.startedAt) return "—";
+  const end = attempt.finishedAt ? new Date(attempt.finishedAt).getTime() : Date.now();
+  const start = new Date(attempt.startedAt).getTime();
+  const secs = Math.max(0, Math.round((end - start) / 1000));
+  return secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
+}
+
 /** 交付看板详情：当项目已选择且存在交付时的看板视图。 */
 export function DeliveryDetail(props: DeliveryDetailProps) {
   // 解构所有 props，使 JSX 中的变量名保持不变
@@ -1022,6 +1031,14 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                             >
                               <time dateTime={attempt.startedAt}>
                                 {formatEventTime(attempt.startedAt)}
+                                <span className="ai-attempt-duration">
+                                  {" "}运行 {attemptDuration(attempt)}
+                                </span>
+                                {attempt.finishedAt && (
+                                  <span className="ai-attempt-finished">
+                                    {" "}完成于 {new Date(attempt.finishedAt).toLocaleString("zh-CN")}
+                                  </span>
+                                )}
                               </time>
                               <div>
                                 <strong>{attemptTitle}</strong>
