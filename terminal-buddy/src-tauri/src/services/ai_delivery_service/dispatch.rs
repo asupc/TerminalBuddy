@@ -1923,4 +1923,78 @@ impl AiDeliveryService {
             }
         }
     }
+
+    /// 应用进程已退出时，内存中的终端无法恢复；保留现场并允许用户重新派发。
+    pub fn recover_interrupted_attempts() -> Result<usize, String> {
+        let interrupted = Self::get_all_attempts(None)?
+            .into_iter()
+            .filter(|attempt| {
+                matches!(
+                    attempt.state.as_str(),
+                    "queued" | "starting" | "running" | "needsInput"
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut recovered = 0;
+        for mut attempt in interrupted {
+            if attempt.state == "needsInput" {
+                // 等待决策时应用重启：清理死终端引用（重启后 terminal_id 无效），
+                // 标记 interrupted 供前端展示。任务 state 保持 needsInput，
+                // 回答决策时（answer_decision_request 按 task.state 判断）可正常恢复派发。
+                attempt.terminal_id = None;
+                attempt.state = "interrupted".to_string();
+                Self::persist_attempt(&attempt)?;
+                Self::append_event(
+                    &attempt.delivery_id,
+                    if attempt.task_node_id.is_empty() {
+                        None
+                    } else {
+                        Some(&attempt.task_node_id)
+                    },
+                    Some(&attempt.id),
+                    "attemptInterrupted",
+                    "等待决策时应用重启，attempt 已中断",
+                )?;
+                recovered += 1;
+                continue;
+            }
+            let message =
+                "TerminalBuddy 已重启，原 Agent 终端无法恢复；任务已取消，请检查现场后重新派发。";
+            if attempt.task_node_id.is_empty() {
+                let delivery = Self::get_delivery(&attempt.delivery_id)?;
+                if matches!(delivery.state.as_str(), "planning" | "awaitingApproval") {
+                    Self::fail_delivery_planning(&delivery.id, message)?;
+                    recovered += 1;
+                    continue;
+                }
+            }
+            attempt.state = "cancelled".to_string();
+            attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
+            attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
+            attempt.summary = Some(message.to_string());
+            Self::persist_attempt(&attempt)?;
+            if !attempt.task_node_id.is_empty() {
+                let mut task = Self::get_task_node(&attempt.task_node_id)?;
+                if matches!(task.state.as_str(), "queued" | "running") {
+                    task.state = "cancelled".to_string();
+                    task.updated_at = chrono::Utc::now().to_rfc3339();
+                    Self::save(TASK_NODES_DIR, &task.id, &task)?;
+                }
+            }
+            Self::append_event(
+                &attempt.delivery_id,
+                if attempt.task_node_id.is_empty() {
+                    None
+                } else {
+                    Some(&attempt.task_node_id)
+                },
+                Some(&attempt.id),
+                "attemptInterrupted",
+                message,
+            )?;
+            recovered += 1;
+        }
+        Ok(recovered)
+    }
+
 }

@@ -571,3 +571,307 @@ pub(crate) fn build_agent_prompt(
         checks,
     ))
 }
+
+impl AiDeliveryService {
+
+    pub fn replan_legacy_delivery(
+        id: &str,
+        terminal_service: TerminalService,
+    ) -> Result<AiDelivery, String> {
+        let delivery = Self::get_delivery(id)?;
+        let tasks = Self::get_task_nodes(id)?;
+        if !is_legacy_delivery_plan(&delivery, &tasks) {
+            return Err("当前交付不是需要重新规划的旧任务图".to_string());
+        }
+        if Self::get_all_attempts(Some(id))?
+            .iter()
+            .any(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
+        {
+            return Err("仍有运行中的 Agent，不能重新规划".to_string());
+        }
+        let workflow_id = delivery
+            .workflow_id
+            .as_deref()
+            .ok_or_else(|| "旧任务图未关联任务编排，无法自动重新规划".to_string())?;
+        let mut workflow = Self::get::<AiWorkflow>(WORKFLOWS_DIR, workflow_id, "任务编排")?;
+        if upgrade_legacy_workflow_steps(&mut workflow) {
+            workflow.updated_at = chrono::Utc::now().to_rfc3339();
+            Self::save(WORKFLOWS_DIR, &workflow.id, &workflow)?;
+        }
+
+        // 保留旧任务图、尝试和事件以便追溯；新交付从草案重新生成有效的任务契约。
+        Self::cancel_delivery(id, terminal_service)?;
+        let replacement = Self::create_delivery(CreateAiDeliveryInput {
+            project_id: delivery.project_id.clone(),
+            title: delivery.title.clone(),
+            requirement: delivery.requirement.clone(),
+            manager_agent_id: delivery.manager_agent_id.clone(),
+            workflow_id: Some(workflow.id),
+        })?;
+        Self::append_event(
+            &replacement.id,
+            None,
+            None,
+            "deliveryReplanned",
+            "已从旧任务图重新创建交付草案，将按升级后的流程重新生成任务节点",
+        )?;
+        Ok(replacement)
+    }
+
+    /// 规划中断「以当前状态重跑」：校验交付可重新规划并记录采纳事件。
+    /// 基线是规划前的内存快照（非持久化），仓库被改动阻断后无需手动清理——
+    /// 直接复用既有 plan 路径（commands 层 begin_delivery_planning + spawn_blocking）重新规划。
+    pub fn replan_delivery_accepting_current_state(delivery_id: &str) -> Result<(), String> {
+        let delivery = Self::get_delivery(delivery_id)?;
+        if !matches!(delivery.state.as_str(), "drafting" | "planning" | "needsInput") {
+            return Err(format!(
+                "交付状态 {} 不可重新规划（仅草稿/规划中/等待决策可采纳当前状态重跑）",
+                delivery.state
+            ));
+        }
+        if Self::get_all_attempts(Some(delivery_id))?
+            .iter()
+            .any(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
+        {
+            return Err("仍有运行中的 Agent，不能重新规划".to_string());
+        }
+        Self::append_event(
+            delivery_id,
+            None,
+            None,
+            "deliveryReplanned",
+            "已采纳当前仓库状态并重新规划",
+        )?;
+        Ok(())
+    }
+
+
+    pub fn begin_delivery_planning(id: &str) -> Result<AiAttempt, String> {
+        let mut delivery = Self::get_delivery(id)?;
+        if delivery.state != "drafting" || !delivery.task_node_ids.is_empty() {
+            return Err("管理者仅能为尚未含任务的交付草案生成任务图".to_string());
+        }
+        let manager_id = delivery
+            .manager_agent_id
+            .as_deref()
+            .ok_or_else(|| "交付未指定管理者 Agent".to_string())?;
+        let manager = Self::get::<AiAgent>(AGENTS_DIR, manager_id, "管理者 Agent")?;
+        if !manager.enabled {
+            return Err("管理者 Agent 已禁用".to_string());
+        }
+        let runtime =
+            Self::get::<AiAgentRuntime>(RUNTIMES_DIR, &manager.runtime_id, "管理者 Runtime")?;
+        if !runtime.enabled {
+            return Err("管理者 Runtime 已禁用".to_string());
+        }
+        let active_manager_attempts = Self::active_attempt_count_for_agent(&manager.id)?;
+        if active_manager_attempts >= manager.max_concurrency as usize {
+            return Err(format!(
+                "管理者 Agent 已达到并发上限（{}）",
+                manager.max_concurrency
+            ));
+        }
+        active_manager_plans()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(delivery.id.clone());
+        let result: Result<AiAttempt, String> = (|| {
+            delivery.state = "planning".to_string();
+            delivery.updated_at = chrono::Utc::now().to_rfc3339();
+            Self::save(DELIVERIES_DIR, &delivery.id, &delivery)?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let attempt = AiAttempt {
+                id: Uuid::new_v4().to_string(),
+                delivery_id: delivery.id.clone(),
+                task_node_id: String::new(),
+                contract_id: String::new(),
+                agent_id: manager.id,
+                runtime_id: runtime.id,
+                terminal_id: None,
+                state: "running".to_string(),
+                started_at: now.clone(),
+                finished_at: None,
+                exit_code: None,
+                summary: Some("管理者正在分析需求并生成任务图".to_string()),
+                created_at: now.clone(),
+                updated_at: now,
+            };
+            Self::persist_attempt(&attempt)?;
+            Self::append_event(
+                &delivery.id,
+                None,
+                Some(&attempt.id),
+                "managerPlanStarted",
+                "管理者正在生成结构化任务图",
+            )?;
+            Ok(attempt)
+        })();
+        if let Err(error) = &result {
+            let _ = Self::fail_delivery_planning(id, error);
+        }
+        result
+    }
+
+    pub fn fail_delivery_planning(id: &str, message: &str) -> Result<(), String> {
+        let result: Result<(), String> = (|| {
+            let mut delivery = Self::get_delivery(id)?;
+            if !matches!(delivery.state.as_str(), "planning" | "awaitingApproval") {
+                return Ok(());
+            }
+            let task_ids = std::mem::take(&mut delivery.task_node_ids);
+            for task_id in task_ids {
+                let _ = Self::delete(TASK_NODES_DIR, &task_id, "任务节点");
+            }
+            delivery.state = "drafting".to_string();
+            delivery.updated_at = chrono::Utc::now().to_rfc3339();
+            Self::save(DELIVERIES_DIR, &delivery.id, &delivery)?;
+            let mut manager_attempt_id = None;
+            for mut attempt in Self::get_all_attempts(Some(&delivery.id))?
+                .into_iter()
+                .filter(|attempt| attempt.task_node_id.is_empty() && attempt.state == "running")
+            {
+                attempt.state = "failed".to_string();
+                attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
+                attempt.updated_at = attempt.finished_at.clone().unwrap_or_default();
+                attempt.summary = Some(message.to_string());
+                manager_attempt_id = Some(attempt.id.clone());
+                Self::persist_attempt(&attempt)?;
+            }
+            Self::append_event(
+                &delivery.id,
+                None,
+                manager_attempt_id.as_deref(),
+                "managerPlanFailed",
+                message,
+            )?;
+            Ok(())
+        })();
+        active_manager_plans()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(id);
+        result
+    }
+
+    pub fn plan_delivery_with_manager(
+        id: &str,
+        manager_attempt_id: &str,
+        app: tauri::AppHandle,
+        terminal_service: TerminalService,
+    ) -> Result<Vec<AiTaskNode>, String> {
+        let delivery = Self::get_delivery(id)?;
+        if delivery.state != "planning" || !delivery.task_node_ids.is_empty() {
+            return Err("交付未处于任务图生成状态".to_string());
+        }
+        let mut created = Vec::new();
+        let _plan_guard = ManagerPlanGuard { delivery_id: delivery.id.clone() };
+        let result = (|| -> Result<(), String> {
+            let manager_id = delivery
+                .manager_agent_id
+                .as_deref()
+                .ok_or_else(|| "交付未指定管理者 Agent".to_string())?;
+            let manager = Self::get::<AiAgent>(AGENTS_DIR, manager_id, "管理者 Agent")?;
+            let runtime =
+                Self::get::<AiAgentRuntime>(RUNTIMES_DIR, &manager.runtime_id, "管理者 Runtime")?;
+            let project = Self::get_project(&delivery.project_id)?;
+            let roles = Self::get_all_roles()?;
+            let prompt = build_manager_prompt(&delivery, &project, &roles);
+            let repository_baseline = project_repository_statuses(&project)?;
+            let plan_result = run_manager_planner(
+                &runtime,
+                &manager,
+                &project,
+                &delivery.id,
+                manager_attempt_id,
+                &prompt,
+                app.clone(),
+                terminal_service.clone(),
+            );
+            ensure_project_repository_statuses_unchanged(&project, &repository_baseline)?;
+            let plan = plan_result?;
+            if plan.tasks.is_empty() {
+                return Err("管理者未生成任何任务节点".to_string());
+            }
+            validate_manager_workflow_plan(&plan, &delivery)?;
+            for plan_task in plan.tasks {
+                let workflow_step = plan_task.workflow_step_id.as_deref().and_then(|step_id| {
+                    delivery
+                        .workflow_steps
+                        .iter()
+                        .find(|step| step.id == step_id)
+                });
+                let dependencies = plan_task
+                    .dependency_indexes
+                    .iter()
+                    .map(|index| {
+                        created
+                            .get(*index)
+                            .map(|task: &AiTaskNode| task.id.clone())
+                            .ok_or_else(|| format!("任务依赖索引无效: {}", index))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                let task = Self::create_task_node(CreateAiTaskNodeInput {
+                    delivery_id: delivery.id.clone(),
+                    title: plan_task.title,
+                    description: plan_task.description,
+                    role_id: workflow_step
+                        .and_then(|step| step.role_id.clone())
+                        .or(plan_task.role_id),
+                    workflow_step_id: workflow_step.map(|step| step.id.clone()),
+                    preferred_agent_id: workflow_step
+                        .and_then(|step| {
+                            (step.role_id.is_none() && !step.agent_id.is_empty())
+                                .then(|| step.agent_id.clone())
+                        }),
+                    task_prompt: workflow_step
+                        .map(|step| step.prompt.clone())
+                        .unwrap_or_default(),
+                    execution_mode: workflow_step
+                        .map(|step| step.execution_mode.clone())
+                        .unwrap_or_else(|| "write".to_string()),
+                    execution_context: workflow_step
+                        .map(|step| step.execution_context.clone())
+                        .unwrap_or_else(|| EXECUTION_CONTEXT_TASK_WORKTREE.to_string()),
+                    target_repository_id: plan_task.target_repository_id,
+                    allowed_write_paths: plan_task.allowed_write_paths,
+                    dependency_ids: dependencies,
+                    input_artifacts: plan_task.input_artifacts,
+                    expected_artifacts: plan_task.expected_artifacts,
+                    acceptance_commands: plan_task.acceptance_commands,
+                    retry_count: plan_task.retry_count,
+            timeout_seconds: None,
+                })?;
+                created.push(task);
+            }
+            Ok(())
+        })();
+        let final_result = (|| match result {
+            Ok(()) => {
+                let mut manager_attempt =
+                    Self::get::<AiAttempt>(ATTEMPTS_DIR, manager_attempt_id, "管理者执行")?;
+                manager_attempt.state = "completed".to_string();
+                manager_attempt.exit_code = Some(0);
+                manager_attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
+                manager_attempt.updated_at =
+                    manager_attempt.finished_at.clone().unwrap_or_default();
+                manager_attempt.summary =
+                    Some(format!("任务图生成完成，共 {} 个任务节点", created.len()));
+                Self::persist_attempt(&manager_attempt)?;
+                Self::append_event(
+                    &delivery.id,
+                    None,
+                    Some(manager_attempt_id),
+                    "managerPlanCreated",
+                    "管理者已生成结构化任务图，等待用户批准",
+                )?;
+                Ok(created)
+            }
+            Err(error) => {
+                Self::fail_delivery_planning(&delivery.id, &format!("任务图生成失败: {}", error))?;
+                Err(error)
+            }
+        })();
+        final_result
+    }
+
+}

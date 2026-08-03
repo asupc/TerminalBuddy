@@ -333,3 +333,408 @@ pub(crate) fn discover_repositories(workspace_root: &Path) -> Result<Vec<AiRepos
     Ok(repositories.into_values().collect())
 }
 
+
+impl AiDeliveryService {
+
+    pub fn get_review_gates(delivery_id: Option<&str>) -> Result<Vec<AiReviewGate>, String> {
+        let mut gates = Self::list(REVIEW_GATES_DIR)?;
+        if let Some(delivery_id) = delivery_id {
+            gates.retain(|gate: &AiReviewGate| gate.delivery_id == delivery_id);
+        }
+        gates.sort_by(|left: &AiReviewGate, right: &AiReviewGate| {
+            right.updated_at.cmp(&left.updated_at)
+        });
+        Ok(gates)
+    }
+
+    /// 审查用增量 Diff：取任务契约的基线提交与任务分支 HEAD，返回文件清单与双侧文本。
+    /// 返回 { baseCommit, headCommit, files: [{path,status,additions,deletions}], diffs: [{path,original,modified}] }。
+    pub fn get_review_diff(
+        delivery_id: &str,
+        task_node_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        let task = Self::get_task_node(task_node_id)?;
+        if task.delivery_id != delivery_id {
+            return Err("任务不属于该交付".to_string());
+        }
+        let contract_id = task
+            .contract_id
+            .as_deref()
+            .ok_or_else(|| "任务缺少任务契约，无法查看代码变更".to_string())?;
+        let contract =
+            Self::get::<AiTaskContract>(CONTRACTS_DIR, contract_id, "任务契约")?;
+        let base_commit = contract
+            .base_commit
+            .as_deref()
+            .ok_or_else(|| "任务契约缺少基线提交，无法查看代码变更".to_string())?;
+        let worktree = contract
+            .worktree_path
+            .as_deref()
+            .ok_or_else(|| "任务缺少工作目录，无法查看代码变更".to_string())?;
+        let repository = PathBuf::from(worktree);
+        let range = format!("{}...HEAD", base_commit);
+        let head_commit = run_git(&repository, &["rev-parse".to_string(), "HEAD".to_string()])?;
+
+        let name_status = run_git(
+            &repository,
+            &["diff".to_string(), range.clone(), "--name-status".to_string()],
+        )?;
+        let numstat = run_git(
+            &repository,
+            &["diff".to_string(), range, "--numstat".to_string()],
+        )?;
+
+        let name_lines: Vec<&str> = name_status.lines().collect();
+        let num_lines: Vec<&str> = numstat.lines().collect();
+        let mut files: Vec<serde_json::Value> = Vec::new();
+        for (index, line) in name_lines.iter().enumerate() {
+            // 行格式：状态符 + TAB + 路径（重命名时含两个路径，取新路径）
+            let mut parts = line.split('\t');
+            let status = parts
+                .next()
+                .unwrap_or("?")
+                .chars()
+                .next()
+                .unwrap_or('?')
+                .to_string();
+            let path = parts.last().unwrap_or("").trim().to_string();
+            if path.is_empty() {
+                continue;
+            }
+            let (additions, deletions) = num_lines
+                .get(index)
+                .map(|line| {
+                    let mut parts = line.split('\t');
+                    let added = parts
+                        .next()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    let removed = parts
+                        .next()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    (added, removed)
+                })
+                .unwrap_or((0, 0));
+            files.push(serde_json::json!({
+                "path": path,
+                "status": status,
+                "additions": additions,
+                "deletions": deletions,
+            }));
+        }
+
+        let mut diffs: Vec<serde_json::Value> = Vec::new();
+        for file in &files {
+            let path = file["path"].as_str().unwrap_or("");
+            let status = file["status"].as_str().unwrap_or("M");
+            let original = if status == "A" {
+                String::new()
+            } else {
+                run_git(
+                    &repository,
+                    &[
+                        "show".to_string(),
+                        format!("{}:{}", base_commit, path),
+                    ],
+                )
+                .unwrap_or_default()
+            };
+            let modified = if status == "D" {
+                String::new()
+            } else {
+                run_git(
+                    &repository,
+                    &["show".to_string(), format!("HEAD:{}", path)],
+                )
+                .unwrap_or_default()
+            };
+            diffs.push(serde_json::json!({
+                "path": path,
+                "original": original,
+                "modified": modified,
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "baseCommit": base_commit,
+            "headCommit": head_commit,
+            "files": files,
+            "diffs": diffs,
+        }))
+    }
+
+    /// 添加审查行评论到 reviewGate.lineComments 并持久化。
+    pub fn add_review_line_comment(
+        gate_id: &str,
+        path: &str,
+        line: i64,
+        text: &str,
+    ) -> Result<AiReviewGate, String> {
+        let mut gate = Self::get::<AiReviewGate>(REVIEW_GATES_DIR, gate_id, "审核门禁")?;
+        if text.trim().is_empty() {
+            return Err("评论内容不能为空".to_string());
+        }
+        gate.line_comments.push(serde_json::json!({
+            "path": path,
+            "line": line,
+            "text": text.trim(),
+            "createdAt": chrono::Utc::now().to_rfc3339(),
+        }));
+        gate.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(REVIEW_GATES_DIR, &gate.id, &gate)?;
+        Ok(gate)
+    }
+
+    pub fn run_quality_gate(
+        task_node_id: &str,
+        reviewer_agent_id: Option<&str>,
+        app: tauri::AppHandle,
+        terminal_service: TerminalService,
+    ) -> Result<AiReviewGate, String> {
+        let _guard = acquire_quality_gate_lock(task_node_id)?;
+        Self::run_quality_gate_inner(
+            task_node_id,
+            reviewer_agent_id,
+            app,
+            terminal_service,
+        )
+    }
+
+    pub(crate) fn run_quality_gate_inner(
+        task_node_id: &str,
+        reviewer_agent_id: Option<&str>,
+        app: tauri::AppHandle,
+        terminal_service: TerminalService,
+    ) -> Result<AiReviewGate, String> {
+        let mut task = Self::get_task_node(task_node_id)?;
+        if task.state != "awaitingReview" {
+            return Err(format!("当前任务不能进入质量门禁: {}", task.state));
+        }
+        let delivery = Self::get_delivery(&task.delivery_id)?;
+        let project = Self::get_project(&delivery.project_id)?;
+        let reviewer = match reviewer_agent_id {
+            Some(reviewer_id) => Self::get::<AiAgent>(AGENTS_DIR, reviewer_id, "Reviewer Agent")?,
+            None => Self::get_all_agents()?
+                .into_iter()
+                .find(|agent| {
+                    agent.enabled && task.assigned_agent_id.as_deref() != Some(agent.id.as_str())
+                })
+                .ok_or_else(|| "未找到可用的独立 Reviewer Agent".to_string())?,
+        };
+        if !reviewer.enabled || task.assigned_agent_id.as_deref() == Some(reviewer.id.as_str()) {
+            return Err("产出任务的 Agent 不能审核自己的改动".to_string());
+        }
+        let contract_id = task
+            .contract_id
+            .clone()
+            .ok_or_else(|| "任务未关联任务契约".to_string())?;
+        let contract = Self::get::<AiTaskContract>(CONTRACTS_DIR, &contract_id, "任务契约")?;
+        let worktree = PathBuf::from(&contract.working_directory);
+        if !worktree.is_dir() {
+            return Err("任务 worktree 不存在".to_string());
+        }
+        ensure_expected_artifacts(&contract, &worktree)?;
+        ensure_task_branch_clean(&worktree)?;
+        let commands = project
+            .quality_gate
+            .commands
+            .iter()
+            .chain(task.acceptance_commands.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut results = Vec::new();
+        for command in commands {
+            let result = run_shell_command(&worktree, &command)?;
+            let failed = result.exit_code != 0;
+            results.push(result);
+            if failed {
+                task.state = "rework".to_string();
+                task.updated_at = chrono::Utc::now().to_rfc3339();
+                Self::save(TASK_NODES_DIR, &task.id, &task)?;
+                let gate = Self::save_review_gate(AiReviewGate {
+                    id: Uuid::new_v4().to_string(),
+                    delivery_id: delivery.id.clone(),
+                    task_node_id: task.id.clone(),
+                    reviewer_agent_id: Some(reviewer.id.clone()),
+                    state: "failed".to_string(),
+                    comments: Some("质量门禁失败，任务已退回返工".to_string()),
+                    command_results: results,
+                    line_comments: Vec::new(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                })?;
+                Self::append_event(
+                    &delivery.id,
+                    Some(&task.id),
+                    None,
+                    "qualityGateFailed",
+                    "质量门禁失败，任务已退回返工",
+                )?;
+                return Ok(gate);
+            }
+        }
+        let reviewer_runtime =
+            Self::get::<AiAgentRuntime>(RUNTIMES_DIR, &reviewer.runtime_id, "Reviewer Runtime")?;
+        if !reviewer_runtime.enabled {
+            return Err("Reviewer Runtime 已禁用".to_string());
+        }
+        let active_reviewer_attempts = Self::active_attempt_count_for_agent(&reviewer.id)?;
+        if active_reviewer_attempts >= reviewer.max_concurrency as usize {
+            return Err(format!(
+                "Reviewer Agent 已达到并发上限（{}）",
+                reviewer.max_concurrency
+            ));
+        }
+        let reviewer_attempt_id = Uuid::new_v4().to_string();
+        let reviewer_started_at = chrono::Utc::now().to_rfc3339();
+        let reviewer_attempt = AiAttempt {
+            id: reviewer_attempt_id.clone(),
+            delivery_id: delivery.id.clone(),
+            task_node_id: task.id.clone(),
+            contract_id: contract.id.clone(),
+            agent_id: reviewer.id.clone(),
+            runtime_id: reviewer_runtime.id.clone(),
+            terminal_id: None,
+            state: "running".to_string(),
+            started_at: reviewer_started_at.clone(),
+            finished_at: None,
+            exit_code: None,
+            summary: Some("Reviewer 正在独立审查".to_string()),
+            created_at: reviewer_started_at.clone(),
+            updated_at: reviewer_started_at,
+        };
+        Self::persist_attempt(&reviewer_attempt)?;
+        let review_result = run_reviewer_agent(
+            &reviewer,
+            &reviewer_runtime,
+            &task,
+            &contract,
+            &worktree,
+            &reviewer_attempt_id,
+            &project,
+            app.clone(),
+            terminal_service,
+        );
+        let mut finished_reviewer_attempt =
+            Self::get::<AiAttempt>(ATTEMPTS_DIR, &reviewer_attempt_id, "Reviewer 执行")?;
+        finished_reviewer_attempt.finished_at = Some(chrono::Utc::now().to_rfc3339());
+        finished_reviewer_attempt.updated_at = finished_reviewer_attempt
+            .finished_at
+            .clone()
+            .unwrap_or_default();
+        let review_comments = match review_result {
+            Ok((comments, exit_code)) => {
+                finished_reviewer_attempt.state = "completed".to_string();
+                finished_reviewer_attempt.exit_code = Some(exit_code);
+                finished_reviewer_attempt.summary = Some(comments.clone());
+                comments
+            }
+            Err(error) => {
+                finished_reviewer_attempt.state = "failed".to_string();
+                finished_reviewer_attempt.summary = Some(error.clone());
+                Self::save(
+                    ATTEMPTS_DIR,
+                    &finished_reviewer_attempt.id,
+                    &finished_reviewer_attempt,
+                )?;
+                let _ = Self::append_event(
+                    &delivery.id,
+                    Some(&task.id),
+                    Some(&reviewer_attempt_id),
+                    "reviewerFailed",
+                    &error,
+                )?;
+                return Err(error);
+            }
+        };
+        Self::save(
+            ATTEMPTS_DIR,
+            &finished_reviewer_attempt.id,
+            &finished_reviewer_attempt,
+        )?;
+        let _ = Self::append_event(
+            &delivery.id,
+            Some(&task.id),
+            Some(&reviewer_attempt_id),
+            "reviewerCompleted",
+            "Reviewer Agent 已完成独立审查",
+        )?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let gate = Self::save_review_gate(AiReviewGate {
+            id: Uuid::new_v4().to_string(),
+            delivery_id: delivery.id.clone(),
+            task_node_id: task.id.clone(),
+            reviewer_agent_id: Some(reviewer.id),
+            state: "awaitingReviewer".to_string(),
+            comments: Some(review_comments),
+            command_results: results,
+            line_comments: Vec::new(),
+            created_at: now.clone(),
+            updated_at: now,
+        })?;
+        task.state = "awaitingReview".to_string();
+        task.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(TASK_NODES_DIR, &task.id, &task)?;
+        Self::append_event(
+            &delivery.id,
+            Some(&task.id),
+            None,
+            "qualityGatePassed",
+            "质量门禁通过，等待独立 Reviewer 审核",
+        )?;
+        Ok(gate)
+    }
+
+    pub fn resolve_review_gate(
+        id: &str,
+        approved: bool,
+        comments: String,
+    ) -> Result<AiReviewGate, String> {
+        let mut gate = Self::get::<AiReviewGate>(REVIEW_GATES_DIR, id, "审核门")?;
+        if gate.state != "awaitingReviewer" {
+            return Err(format!("当前审核门不能处理: {}", gate.state));
+        }
+        let mut task = Self::get_task_node(&gate.task_node_id)?;
+        gate.state = if approved { "approved" } else { "rework" }.to_string();
+        gate.comments = Some(comments.trim().to_string()).filter(|value| !value.is_empty());
+        gate.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(REVIEW_GATES_DIR, &gate.id, &gate)?;
+        task.state = if approved { "succeeded" } else { "rework" }.to_string();
+        task.updated_at = chrono::Utc::now().to_rfc3339();
+        Self::save(TASK_NODES_DIR, &task.id, &task)?;
+        let message = if approved {
+            "独立审核已通过"
+        } else {
+            "独立审核要求返工"
+        };
+        Self::append_event(
+            &gate.delivery_id,
+            Some(&task.id),
+            None,
+            if approved {
+                "reviewApproved"
+            } else {
+                "reviewRework"
+            },
+            message,
+        )?;
+        if approved {
+            let _ = Self::refresh_ready_task_nodes(&gate.delivery_id)?;
+            let _ = Self::try_complete_workflow_delivery(&gate.delivery_id)?;
+        }
+        Ok(gate)
+    }
+
+    pub(crate) fn save_review_gate(mut gate: AiReviewGate) -> Result<AiReviewGate, String> {
+        if gate.created_at.is_empty() {
+            gate.created_at = chrono::Utc::now().to_rfc3339();
+        }
+        if gate.updated_at.is_empty() {
+            gate.updated_at = gate.created_at.clone();
+        }
+        Self::save(REVIEW_GATES_DIR, &gate.id, &gate)?;
+        Ok(gate)
+    }
+
+}
