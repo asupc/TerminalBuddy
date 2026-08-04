@@ -136,8 +136,8 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
     openManualTaskDialog, openDeliveryEditor,
     execute, dispatchAndStartReadyTasks,
     answerDecision, retryTask, runReview, resolveReview,
-    toggleAttemptOutput, openAttemptTerminal,
-    cancelAttempt, completeAttempt,
+    toggleAttemptOutput,
+    cancelAttempt,
     removeDelivery, replanLegacyDelivery, replanAcceptingCurrentState,
     cancelDelivery, mergeDelivery, cleanupDeliveryIntegration,
     planAiDeliveryWithManager, refresh,
@@ -917,6 +917,29 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                   )}
                                 </div>
                                 <div className="ai-task-controls">
+                                {task.state === "running" &&
+                                  attempts.find(
+                                    (a) => a.taskNodeId === task.id && a.state === "running",
+                                  ) && (
+                                    <div className="ai-task-actions">
+                                      <button
+                                        type="button"
+                                        className="btn-secondary"
+                                        title="实时查看 Agent 终端输出与任务信息"
+                                        onClick={() => {
+                                          const runningAttempt = attempts.find(
+                                            (a) =>
+                                              a.taskNodeId === task.id &&
+                                              a.state === "running",
+                                          );
+                                          if (runningAttempt) setLiveAttemptId(runningAttempt.id);
+                                        }}
+                                      >
+                                        <SquareTerminal size={13} />
+                                        实时终端
+                                      </button>
+                                    </div>
+                                  )}
                                 {task.state === "awaitingReview" && !gate && (
                                   <div className="ai-task-actions">
                                     <button
@@ -1081,12 +1104,6 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                       <ol>
                         {filteredAttempts.map((attempt) => {
                           const task = tasks.find((item) => item.id === attempt.taskNodeId);
-                          const lastWorkflowStep = delivery.workflowSteps[delivery.workflowSteps.length - 1];
-                          const canManuallyComplete = Boolean(
-                            task?.workflowStepId &&
-                            lastWorkflowStep &&
-                            task.workflowStepId === lastWorkflowStep.id,
-                          );
                           const attemptTitle = task?.title ??
                             (attempt.taskNodeId
                               ? "未命名任务"
@@ -1136,17 +1153,6 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                 )}
                                 {attempt.state === "running" && (
                                 <div className="ai-attempt-actions">
-                                  {attempt.terminalId && (
-                                    <button
-                                      type="button"
-                                      className="btn-secondary"
-                                      title="打开 Agent 终端"
-                                      onClick={() => openAttemptTerminal(attempt.terminalId!)}
-                                    >
-                                      <SquareTerminal size={14} />
-                                      打开终端
-                                    </button>
-                                  )}
                                   <button
                                     type="button"
                                     className="btn-secondary"
@@ -1158,16 +1164,6 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                   </button>
                                   {attempt.taskNodeId && (
                                     <>
-                                      {canManuallyComplete && <button
-                                        type="button"
-                                        className="btn-primary"
-                                        title="确认 Agent 已完成，并执行任务校验"
-                                        disabled={busy === "complete-attempt-" + attempt.id}
-                                        onClick={() => void completeAttempt(attempt)}
-                                      >
-                                        <Check size={14} />
-                                        确认完成
-                                      </button>}
                                       <button
                                         type="button"
                                         className="btn-secondary"
