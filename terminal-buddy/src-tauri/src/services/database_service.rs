@@ -448,11 +448,21 @@ impl DatabaseService {
         for binding in bindings {
             let content = serde_json::to_string(binding)
                 .map_err(|error| format!("序列化机器人决策绑定失败: {}", error))?;
+            // 使用 ON CONFLICT DO UPDATE 而非裸 INSERT：
+            // 1) legacy-bot-bindings-v1 迁移导入的旧 JSON 可能含重复 (channel_id, external_message_id)；
+            // 2) 历史 cancel() 的占位条目共用 ("","") 主键也曾触发本错误；
+            // 重复时后写入者覆盖前写入者，与 BotBindingService::add 内 retain 行为一致。
             transaction
                 .execute(
                     "INSERT INTO bot_decision_bindings
                      (channel_id, external_message_id, decision_id, status, expires_at, created_at, content)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                     ON CONFLICT(channel_id, external_message_id) DO UPDATE SET
+                        decision_id = excluded.decision_id,
+                        status = excluded.status,
+                        expires_at = excluded.expires_at,
+                        created_at = excluded.created_at,
+                        content = excluded.content",
                     params![
                         binding.channel_id,
                         binding.external_message_id,

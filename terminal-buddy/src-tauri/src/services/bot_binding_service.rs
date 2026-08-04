@@ -5,6 +5,12 @@ use std::sync::{Mutex, OnceLock};
 
 const DECISION_BATCH_WINDOW_MS: u64 = 10_000;
 
+// cancel() 在决策从未发送（无真实 binding）时会插入一条占位条目以备后续 add() 的复活守卫使用。
+// 历史上 channel_id/external_message_id 都填空串，导致 PK("","") 重复撞 UNIQUE 约束。
+// 这里改用魔术 channel + decision_id 作为 message_id，保证 PK 唯一；select_reply_binding_index
+// 等下游匹配仍走真实 channel_id，不会命中 sentinel。
+const CANCEL_SENTINEL_CHANNEL: &str = "__cancel_sentinel__";
+
 fn binding_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -118,9 +124,9 @@ impl BotBindingService {
                 decision_id: decision_id.to_string(),
                 terminal_id: String::new(),
                 terminal_name: String::new(),
-                channel_id: String::new(),
+                channel_id: CANCEL_SENTINEL_CHANNEL.to_string(),
                 target_id: String::new(),
-                external_message_id: String::new(),
+                external_message_id: decision_id.to_string(),
                 custom_option_down_count: None,
                 option_move_counts: Vec::new(),
                 option_labels: Vec::new(),
@@ -328,5 +334,14 @@ mod tests {
             select_reply_binding_index(&bindings, "weixin", "user", "user", Some("server-msg-id"),),
             Some(1)
         );
+    }
+
+    #[test]
+    fn cancel_sentinel_channel_is_non_empty() {
+        // 防止有人把 sentinel channel 改回空串：那样 cancel() 多次为不同 decision_id
+        // 插入占位条目时会撞 PK(channel_id="", external_message_id=decision_id) 的同一行，
+        // 触发 UNIQUE constraint failed。
+        use super::CANCEL_SENTINEL_CHANNEL;
+        assert!(!CANCEL_SENTINEL_CHANNEL.is_empty());
     }
 }
