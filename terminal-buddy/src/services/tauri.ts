@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Profile, Workspace, RemoteFileEntry, ServerStats } from '../types';
-import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord, AiProject, AiQualityGate, AiReviewDiffResult, AiReviewGate, AiRole, AiRuntimeProbe, AiStartupPreset, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiDeliveryTemplateInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiDeliveryTemplateInput, UpdateAiTaskNodeInput } from '../types/aiDelivery';
+import type { AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiQualityGate, AiReviewDiffResult, AiReviewGate, AiRole, AiRuntimeProbe, AiStartupPreset, AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput, CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, UpdateAiDeliveryInput, UpdateAiTaskNodeInput } from '../types/aiDelivery';
 import type { AiArtifactMeta, AiAttemptOutput } from '../types/aiDelivery';
 
 // Profile Commands
@@ -717,16 +717,6 @@ export const continueMergeAfterConflict = (deliveryId: string) =>
   invoke<void>('continue_ai_merge_after_conflict', { deliveryId });
 export const cleanupAiDeliveryIntegration = (deliveryId: string) =>
   invoke<void>('cleanup_ai_delivery_integration', { deliveryId });
-export const listAiDeliveryTemplates = () =>
-  invoke<AiDeliveryTemplate[]>('list_ai_delivery_templates');
-export const createAiDeliveryTemplate = (input: CreateAiDeliveryTemplateInput) =>
-  invoke<AiDeliveryTemplate>('create_ai_delivery_template', { input });
-export const updateAiDeliveryTemplate = (input: UpdateAiDeliveryTemplateInput) =>
-  invoke<AiDeliveryTemplate>('update_ai_delivery_template', { input });
-export const deleteAiDeliveryTemplate = (id: string) =>
-  invoke<void>('delete_ai_delivery_template', { id });
-export const saveDeliveryAsTemplate = (deliveryId: string, name: string) =>
-  invoke<AiDeliveryTemplate>('save_ai_delivery_as_template', { deliveryId, name });
 export const getAiDecisionRequests = (deliveryId?: string) =>
   invoke<AiDecisionRequest[]>('get_ai_decision_requests', { deliveryId: deliveryId ?? null });
 export const createAiDecisionRequest = (input: CreateAiDecisionRequestInput) =>
