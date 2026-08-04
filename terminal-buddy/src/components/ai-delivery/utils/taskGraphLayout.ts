@@ -7,7 +7,7 @@ interface LayoutCache {
   edges: Edge[];
 }
 
-const CACHE_PREFIX = "ai-delivery-graph-layout:v2:";
+const CACHE_PREFIX = "ai-delivery-graph-layout:v3:";
 
 function simpleHash(input: string): string {
   let hash = 0;
