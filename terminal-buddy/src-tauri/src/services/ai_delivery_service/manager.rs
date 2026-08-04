@@ -290,6 +290,20 @@ pub(crate) fn run_reviewer_agent(
     if !agent_start_directory.is_dir() {
         return Err("任务 worktree 不可用，无法启动 Reviewer Agent".to_string());
     }
+    // 预期产物给出绝对完整路径：成果目录优先，否则为任务 worktree 内路径
+    let expected_artifacts = contract
+        .expected_artifacts
+        .iter()
+        .map(|artifact| {
+            let base = contract
+                .output_artifact_directory
+                .as_deref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| worktree.to_path_buf());
+            format!("{}：{}", artifact, base.join(artifact).display())
+        })
+        .collect::<Vec<_>>()
+        .join("；");
     let prompt = format!(
         "你是独立 Reviewer。请审查当前任务分支的本地提交和 git diff，确认是否覆盖需求、是否违反允许写入范围、是否有明显风险。\n\n任务：{}\n说明：{}\nAgent 起始目录：{}\n项目工作区根目录：{}\n本任务 worktree：{}\n允许写入范围：{}\n预期产物：{}\n\n只读审查：终端已从本任务 worktree 启动。项目工作区根目录只用于了解上下文，不得修改文件、不得提交、不得推送、不得执行部署或破坏性操作。请输出中文审核意见，包括发现的问题与剩余风险。确认审核完成后请退出当前 CLI，TerminalBuddy 将进入人工审核确认。",
         task.title,
@@ -298,7 +312,7 @@ pub(crate) fn run_reviewer_agent(
         project.workspace_root,
         worktree.display(),
         contract.allowed_write_paths.join(", "),
-        contract.expected_artifacts.join("；"),
+        expected_artifacts,
     );
     let control = prepare_terminal_control(attempt_id, Some(&format!("审查 · {}", task.title)), &prompt)?;
     let terminal_command = build_interactive_terminal_command(runtime, reviewer, &control)?;
@@ -467,8 +481,25 @@ pub(crate) fn build_agent_prompt(
     let allowed_paths = contract.allowed_write_paths.join(", ");
     let artifacts = if contract.expected_artifacts.is_empty() {
         "无".to_string()
-    } else {
+    } else if contract.output_artifact_directory.is_some() {
+        // 只读任务：绝对完整路径已由「成果写入」段落给出，此处保留相对条目
         contract.expected_artifacts.join("；")
+    } else {
+        // 写任务：产物写入任务 worktree，给出相对 worktree 的绝对完整路径
+        contract
+            .expected_artifacts
+            .iter()
+            .map(|artifact| {
+                format!(
+                    "- {}：{}",
+                    artifact,
+                    PathBuf::from(&contract.working_directory)
+                        .join(artifact)
+                        .display()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     let checks = if contract.acceptance_commands.is_empty() {
         "未配置".to_string()

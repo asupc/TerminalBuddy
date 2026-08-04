@@ -542,6 +542,23 @@ mod agent_decision_tests {
         assert!(prompt.contains("用户决定：使用 JSON 格式"));
         assert!(prompt.contains(&project.workspace_root));
         assert!(prompt.contains(contract.worktree_path.as_deref().unwrap()));
+        // 写任务「预期产物」必须给出相对 worktree 的绝对完整路径，而非裸相对路径
+        let mut write_contract = contract.clone();
+        write_contract.expected_artifacts =
+            vec!["docs/service-a.md".to_string(), "docs/service-b.md".to_string()];
+        let write_prompt = build_agent_prompt(&task, &write_contract, &project).unwrap();
+        assert!(write_prompt.contains(&format!(
+            "- docs/service-a.md：{}",
+            PathBuf::from(&write_contract.working_directory)
+                .join("docs/service-a.md")
+                .display()
+        )));
+        assert!(write_prompt.contains(&format!(
+            "- docs/service-b.md：{}",
+            PathBuf::from(&write_contract.working_directory)
+                .join("docs/service-b.md")
+                .display()
+        )));
         let worktree = PathBuf::from(contract.worktree_path.clone().unwrap());
         fs::write(worktree.join("out-of-scope.txt"), "not allowed\n").unwrap();
         assert!(audit_contract_scope(&project, &contract).unwrap().is_some());

@@ -227,7 +227,7 @@ pub(crate) fn build_continuation_context(
                 .expected_artifacts
                 .iter()
                 .filter(|a| output_dir.join(a).exists())
-                .map(|a| format!("  - {}", a))
+                .map(|a| format!("  - {}：{}", a, output_dir.join(a).display()))
                 .collect();
             if !existing.is_empty() {
                 partial_outputs = existing.join("\n");
