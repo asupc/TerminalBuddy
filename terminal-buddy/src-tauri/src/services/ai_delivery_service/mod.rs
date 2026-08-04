@@ -118,24 +118,6 @@ fn acquire_quality_gate_lock(tid: &str) -> Result<QualityGateGuard,String> { let
 
 struct ManagerPlanGuard { delivery_id: String }
 impl Drop for ManagerPlanGuard { fn drop(&mut self) { let _ = active_manager_plans().lock().map(|mut l| l.remove(&self.delivery_id)); } }
-#[cfg(windows)]
-fn same_runtime_command(left: &AiAgentRuntime, right: &AiAgentRuntime) -> bool {
-    if !left.kind.trim().eq_ignore_ascii_case(right.kind.trim()) {
-        return false;
-    }
-    left.command
-        .trim()
-        .eq_ignore_ascii_case(right.command.trim())
-}
-
-#[cfg(not(windows))]
-fn same_runtime_command(left: &AiAgentRuntime, right: &AiAgentRuntime) -> bool {
-    if !left.kind.trim().eq_ignore_ascii_case(right.kind.trim()) {
-        return false;
-    }
-    left.command.trim() == right.command.trim()
-}
-
 pub struct AiDeliveryService;
 
 mod manager;

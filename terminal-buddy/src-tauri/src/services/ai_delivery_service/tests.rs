@@ -158,6 +158,58 @@ mod agent_decision_tests {
     }
 
     #[test]
+    fn save_runtime_new_entry_with_same_command_is_persisted() {
+        let root = std::env::temp_dir().join(format!(
+            "terminal-buddy-save-runtime-{}",
+            Uuid::new_v4()
+        ));
+        PathService::set_test_data_dir(Some(root.join("data")));
+        let now = chrono::Utc::now().to_rfc3339();
+        // 用户手动新建第一条
+        let first = AiDeliveryService::save_runtime(AiAgentRuntime {
+            id: "runtime-1".to_string(),
+            name: "Pi".to_string(),
+            kind: "pi".to_string(),
+            command: "pi".to_string(),
+            enabled: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })
+        .unwrap();
+        // 用户再次手动新建：显式新 id、相同 kind/command → 必须真实保存，
+        // 不能被静默去重成「保存成功但列表无新增」（实测用户反馈：新建保存无数据）。
+        let second = AiDeliveryService::save_runtime(AiAgentRuntime {
+            id: "runtime-2".to_string(),
+            name: "Pi（自定义）".to_string(),
+            kind: "pi".to_string(),
+            command: "pi".to_string(),
+            enabled: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })
+        .unwrap();
+        assert_ne!(first.id, second.id, "新建条目不应被静默去重");
+        let all = AiDeliveryService::get_all_runtimes().unwrap();
+        assert_eq!(all.len(), 2, "两条相同命令的 Runtime 都应保存");
+
+        // 编辑已有记录也不应因其它记录命令相同而被拦（重复项由用户管理/删除）
+        let edited = AiDeliveryService::save_runtime(AiAgentRuntime {
+            id: "runtime-1".to_string(),
+            name: "Pi（已编辑）".to_string(),
+            kind: "pi".to_string(),
+            command: "pi".to_string(),
+            enabled: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })
+        .unwrap();
+        assert_eq!(edited.name, "Pi（已编辑）");
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn reads_workflow_reviewer_result() {
         let path =
             std::env::temp_dir().join(format!("terminal-buddy-review-{}.json", Uuid::new_v4()));

@@ -393,12 +393,6 @@ impl AiDeliveryService {
             .lock()
             .map_err(|_| "Runtime 保存锁异常".to_string())?;
         validate_runtime(&runtime)?;
-        if let Some(existing) = Self::list::<AiAgentRuntime>(RUNTIMES_DIR)?
-            .into_iter()
-            .find(|item| item.id != runtime.id && same_runtime_command(item, &runtime))
-        {
-            return Ok(existing);
-        }
         let now = chrono::Utc::now().to_rfc3339();
         if runtime.id.trim().is_empty() {
             runtime.id = Uuid::new_v4().to_string();
