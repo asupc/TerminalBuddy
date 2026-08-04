@@ -1319,6 +1319,8 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
           {liveAttemptId && attempts.find((a) => a.id === liveAttemptId) && (
             <AttemptLiveTerminalDialog
               attempt={attempts.find((a) => a.id === liveAttemptId)!}
+              task={tasks.find((t) => t.id === attempts.find((a) => a.id === liveAttemptId)!.taskNodeId)}
+              agentName={agents.find((a) => a.id === attempts.find((a) => a.id === liveAttemptId)!.agentId)?.name}
               onClose={() => setLiveAttemptId(null)}
             />
           )}

@@ -27,6 +27,9 @@ export const TerminalTabBar: FC = () => {
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const tabBarRef = useRef<HTMLDivElement>(null);
+  // AI 交付派发的终端不渲染在主窗口选项卡中（输出面向 Agent/平台，对人无意义；
+  // 需查看时在 AI 交付页的实时终端/运行记录中查看）。双保险过滤历史遗留条目。
+  const visibleSessions = sessions.filter((session) => session.extraParamTag !== 'AI 交付');
 
   const handleCloseTerminal = useCallback(async (sessionId: string) => {
     const session = sessions.find(s => s.id === sessionId);
@@ -197,7 +200,7 @@ export const TerminalTabBar: FC = () => {
 
   return (
     <div className="terminal-tab-bar" key={settingsVersion} ref={tabBarRef}>
-      {sessions.map((session) => (
+      {visibleSessions.map((session) => (
         <div
           key={session.id}
           className={`terminal-tab ${activeSpecialTab === null && activeSessionId === session.id ? 'active' : ''}`}

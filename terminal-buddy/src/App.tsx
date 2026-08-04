@@ -334,6 +334,9 @@ function App() {
   useEffect(() => {
     const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; groupId?: string; groupName?: string; extraParamTag?: string; extraParamTagColor?: string }>('terminal-created', (event) => {
       const { id, profileId, profileName, terminalType, owner, groupId, groupName, extraParamTag, extraParamTagColor } = event.payload;
+      // AI 交付派发的终端不进入主窗口终端选项卡：其输出面向 Agent/平台，
+      // 对普通用户无意义，需查看时在 AI 交付页的实时终端/运行记录中查看。
+      if (extraParamTag === 'AI 交付') return;
       const store = useAppStore.getState();
       let resolvedGroupId = groupId || 'default';
       if (groupId && groupName) {

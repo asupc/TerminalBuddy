@@ -2090,6 +2090,14 @@
   font-size: 12px;
   color: var(--text-secondary, #888);
 }
+.ai-attempt-live-desc {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  margin: 0;
+  white-space: pre-wrap;
+  max-height: 72px;
+  overflow: auto;
+}
 .ai-attempt-live-terminal {
   height: 320px;
   border-radius: 6px;
