@@ -48,7 +48,7 @@ export const boardColumns = [
   { id: "done", title: "已完成" },
   { id: "failed", title: "异常" },
 ] as const;
-export type DeliveryTabId = (typeof boardColumns)[number]["id"] | "attempts" | "events" | "artifacts" | "report";
+export type DeliveryTabId = "dag" | (typeof boardColumns)[number]["id"] | "attempts" | "events" | "artifacts" | "report";
 export function taskColumn(task: AiTaskNode) {
   if (task.state === "succeeded" || task.state === "skipped") return "done";
   if (task.state === "awaitingReview") return "awaitingReview";

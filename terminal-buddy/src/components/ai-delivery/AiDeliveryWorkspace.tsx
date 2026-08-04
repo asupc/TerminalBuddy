@@ -133,7 +133,7 @@ export function AiDeliveryWorkspace({
   const [attempts, setAttempts] = useState<AiAttempt[]>([]);
   const [deliveryEvents, setDeliveryEvents] = useState<AiDeliveryEvent[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
- const [activeTaskTab, setActiveTaskTab] = useState<DeliveryTabId>("planned");
+ const [activeTaskTab, setActiveTaskTab] = useState<DeliveryTabId>("dag");
  const [projectId, setProjectId] = useState("");
   const [showSuccessAttempts, setShowSuccessAttempts] = useState(true);
 const [showFailedAttempts, setShowFailedAttempts] = useState(true);
@@ -862,11 +862,11 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
       await refresh(projectId, delivery.id);
     });
   const selectProject = async (id: string) => {
-    setActiveTaskTab("planned");
+    setActiveTaskTab("dag");
     await refresh(id, "");
   };
   const selectDelivery = async (id: string) => {
-    setActiveTaskTab("planned");
+    setActiveTaskTab("dag");
     await refresh(projectId, id);
   };
   const openDeliveryEditor = () => {
@@ -900,7 +900,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         danger: true,
       })) return;
      const replacement = await replanLegacyAiDelivery(delivery.id);
-      setActiveTaskTab("planned");
+      setActiveTaskTab("dag");
       try {
         await planAiDeliveryWithManager(replacement.id);
       } finally {

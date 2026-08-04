@@ -147,7 +147,6 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
   } = props;
 
   const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"list" | "dag">("list");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [showAllEventsDialog, setShowAllEventsDialog] = useState(false);
   const [allEvents, setAllEvents] = useState<AiDeliveryEvent[] | null>(null);
@@ -703,6 +702,16 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                   )}
                   <section className="ai-task-panel" aria-label="交付任务">
                     <div className="ai-task-tabs" role="tablist" aria-label="任务状态">
+                      <button
+                        type="button"
+                        role="tab"
+                        className={activeTaskTab === "dag" ? "active" : ""}
+                        aria-selected={activeTaskTab === "dag"}
+                        onClick={() => setActiveTaskTab("dag")}
+                      >
+                        <span>DAG</span>
+                        <small>{tasks.length}</small>
+                      </button>
                       {boardColumns.map((column) => {
                         const count = taskCountsByColumn.get(column.id) ?? 0;
                         const isActive = activeTaskTab === column.id;
@@ -759,14 +768,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                         <span>报告</span>
                       </button>
                     </div>
-                    <div className="ai-detail-tabs">
-                      <button className={viewMode === "list" ? "active" : ""} onClick={() => setViewMode("list")}>列表视图</button>
-                      <button className={viewMode === "dag" ? "active" : ""} onClick={() => setViewMode("dag")}>DAG 视图</button>
-                      {tasks.length > 5 && viewMode === "list" && (
-                        <span className="ai-dag-hint">任务较多，建议切换 DAG 视图</span>
-                      )}
-                    </div>
-                    {viewMode === "dag" ? (
+                    {activeTaskTab === "dag" ? (
                       <TaskDagView tasks={tasks} onNodeClick={(id) => setEditingTaskId(id)} />
                     ) : (
                       <>
