@@ -8,12 +8,35 @@ import {
   type Edge,
   type Node,
   type NodeChange,
+  type NodeProps,
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { computeTaskGraphLayout } from "./utils/taskGraphLayout";
 import { TaskNodeCard } from "./TaskNodeCard";
 import type { AiTaskNode } from "../../types/aiDelivery";
+
+/** 虚拟「开始」「结束」节点：纯展示，无 Handle、不可连线/拖拽（draggable 在布局层已置 false）。 */
+function MarkerNode({ data }: NodeProps) {
+  const label = (data as { label?: unknown })?.label;
+  return (
+    <div
+      className="ai-dag-marker"
+      style={{
+        padding: "6px 14px",
+        borderRadius: 999,
+        background: "#1e293b",
+        color: "#e2e8f0",
+        fontSize: 13,
+        fontWeight: 600,
+        border: "1px dashed #64748b",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {typeof label === "string" ? label : ""}
+    </div>
+  );
+}
 
 interface Props {
   tasks: AiTaskNode[];
@@ -39,6 +62,7 @@ function applySavedPositions(nodes: Node[], saved: SavedPositions): Node[] {
   if (entries.length === 0) return nodes;
   const savedById = new Map(entries);
   return nodes.map((node) => {
+    if (node.id.startsWith("__")) return node;
     const position = savedById.get(node.id);
     return position ? { ...node, position } : node;
   });
@@ -82,6 +106,7 @@ export function TaskDagView({ tasks, onNodeClick }: Props) {
   // 拖拽结束持久化位置：跨轮询刷新、重启应用均保持用户布局
   const onNodeDragStop = useCallback(
     (_: unknown, node: Node) => {
+      if (node.id.startsWith("__")) return; // 虚拟节点不持久化
       try {
         const saved = loadSavedPositions(deliveryId);
         saved[node.id] = node.position;
@@ -94,7 +119,10 @@ export function TaskDagView({ tasks, onNodeClick }: Props) {
   );
 
   const nodeTypes = useMemo<NodeTypes>(
-    () => ({ taskNode: (props: any) => <TaskNodeCard {...props} compact={compact} /> }),
+    () => ({
+      taskNode: (props: any) => <TaskNodeCard {...props} compact={compact} />,
+      markerNode: MarkerNode,
+    }),
     [compact],
   );
 
@@ -109,7 +137,10 @@ export function TaskDagView({ tasks, onNodeClick }: Props) {
         nodesConnectable={false}
         onNodesChange={onNodesChange}
         onNodeDragStop={onNodeDragStop}
-        onNodeClick={(_, node) => onNodeClick(String(node.id))}
+        onNodeClick={(_, node) => {
+          if (String(node.id).startsWith("__")) return; // 虚拟节点不打开编辑
+          onNodeClick(String(node.id));
+        }}
       >
         <Background />
         <Controls showInteractive={false} />
