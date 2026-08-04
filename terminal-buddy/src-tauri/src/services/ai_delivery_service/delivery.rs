@@ -1660,18 +1660,18 @@ impl AiDeliveryService {
                     &vec!["diff".to_string(), "--cached".to_string(), "--name-only".to_string()],
                 )?;
                 if !staged_changes.trim().is_empty() {
-                    run_git(
-                        &integration_repo,
-                        &vec![
-                            "-c".to_string(),
-                            "user.name=TerminalBuddy".to_string(),
-                            "-c".to_string(),
-                            "user.email=terminalbuddy@local".to_string(),
-                            "commit".to_string(),
-                            "-m".to_string(),
-                            format!("集成 {}", branch),
-                        ],
-                    )?;
+                run_git(
+                    &integration_repo,
+                    &vec![
+                        "-c".to_string(),
+                        "user.name=TerminalBuddy".to_string(),
+                        "-c".to_string(),
+                        "user.email=terminalbuddy@local".to_string(),
+                        "commit".to_string(),
+                        "-m".to_string(),
+                        format!("集成 {}", contract.title),
+                    ],
+                )?;
                 }
             }
         }
@@ -1878,11 +1878,37 @@ impl AiDeliveryService {
                  "merge".to_string(),
                  "--no-ff".to_string(),
                  "-m".to_string(),
-                 format!("TerminalBuddy: {}", branch_name),
+                 Self::readable_merge_message(branch_name),
                  branch_name.to_string(),
              ],
          )?;
          run_git(&source, &vec!["rev-parse".to_string(), "HEAD".to_string()])
+     }
+
+     /// 生成可读的合并提交消息：优先「交付标题 - 任务标题」，
+     /// 解析失败回退任务标题，最终回退分支名（不再直接使用 UUID 分支名）。
+     pub(crate) fn readable_merge_message(branch_name: &str) -> String {
+         let fallback = format!("TerminalBuddy: {}", branch_name);
+         let Ok(contracts) = Self::list::<AiTaskContract>(CONTRACTS_DIR) else {
+             return fallback;
+         };
+         let Some(contract) = contracts
+             .iter()
+             .find(|contract| contract.branch_name.as_deref() == Some(branch_name))
+         else {
+             return fallback;
+         };
+         let task_title = Self::get_task_node(&contract.task_id)
+             .map(|task| task.title)
+             .unwrap_or_else(|_| contract.title.clone());
+         let delivery_title = Self::get_delivery(&contract.delivery_id)
+             .map(|delivery| delivery.title)
+             .unwrap_or_default();
+         if delivery_title.trim().is_empty() {
+             format!("TerminalBuddy: {}", task_title)
+         } else {
+             format!("TerminalBuddy: {} - {}", delivery_title.trim(), task_title)
+         }
      }
 
      /// 续接合并需要重跑的仓库子记录状态：failed（冲突/失败待重试）与 rolledBack（已回滚需重新合并）。

@@ -1632,7 +1632,11 @@ mod cycle_detection_tests {
         );
         // 目标仓库应包含两个任务分支的合并提交
         let log = run_git(&source, &["log".to_string(), "--oneline".to_string()]).unwrap();
-        assert!(log.contains("TerminalBuddy: terminalbuddy/"), "合并提交缺失: {}", log);
+        assert!(
+            log.contains("TerminalBuddy:") && !log.contains("terminalbuddy/"),
+            "合并提交消息应可读（不得使用 UUID 分支名）: {}",
+            log
+        );
 
         PathService::set_test_data_dir(None);
         let _ = fs::remove_dir_all(root);
