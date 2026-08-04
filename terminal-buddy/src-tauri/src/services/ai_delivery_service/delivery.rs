@@ -338,6 +338,10 @@ impl AiDeliveryService {
             return Err("只有草案或待批准交付可以新增任务".to_string());
         }
         let existing_tasks = Self::get_task_nodes(&delivery.id)?;
+        // 传递依赖裁剪：只保留直接依赖，避免 DAG 出现 D→A、D→B 这类间接依赖线
+        // （间接链路由直接依赖的既有依赖隐式满足）。
+        let dependency_ids =
+            reduce_transitive_dependencies(input.dependency_ids, existing_tasks.iter());
         let now = chrono::Utc::now().to_rfc3339();
         let task = AiTaskNode {
             id: Uuid::new_v4().to_string(),
@@ -352,7 +356,7 @@ impl AiDeliveryService {
             execution_context,
             target_repository_id: input.target_repository_id,
             allowed_write_paths: input.allowed_write_paths,
-            dependency_ids: input.dependency_ids,
+            dependency_ids,
             input_artifacts: input.input_artifacts,
             expected_artifacts: input.expected_artifacts,
             acceptance_commands: input.acceptance_commands,
@@ -488,6 +492,11 @@ impl AiDeliveryService {
         if Self::has_cycle(&all_tasks) {
             return Err("依赖关系形成环，任务无法保存".to_string());
         }
+        // 5.1) 传递依赖裁剪：只保留直接依赖（裁剪只移除边，不可能引入环，置于环校验后）
+        task.dependency_ids = reduce_transitive_dependencies(
+            task.dependency_ids.clone(),
+            all_tasks.iter(),
+        );
 
         // 6) 执行环境字段（目标仓库/执行模式/执行上下文）实际变更 → 丢弃旧契约重建；
         //    其余执行参数变更 → 标脏 contract（重试派发时同步字段重新审计，避免旧 worktree 审计结果被复用）
@@ -1642,18 +1651,28 @@ impl AiDeliveryService {
                         branch.to_string(),
                     ],
                 )?;
-                run_git(
+                // 任务分支可能没有产生任何新提交（如交付物在基线上已存在、Agent
+                // 无改动通过验收）：merge --no-commit 后无暂存变更，直接 commit 会
+                // 报「nothing to commit」并把整个交付打成 mergeFailed。此时视为
+                // 无可合并内容，跳过提交即可。
+                let staged_changes = run_git(
                     &integration_repo,
-                    &vec![
-                        "-c".to_string(),
-                        "user.name=TerminalBuddy".to_string(),
-                        "-c".to_string(),
-                        "user.email=terminalbuddy@local".to_string(),
-                        "commit".to_string(),
-                        "-m".to_string(),
-                        format!("集成 {}", branch),
-                    ],
+                    &vec!["diff".to_string(), "--cached".to_string(), "--name-only".to_string()],
                 )?;
+                if !staged_changes.trim().is_empty() {
+                    run_git(
+                        &integration_repo,
+                        &vec![
+                            "-c".to_string(),
+                            "user.name=TerminalBuddy".to_string(),
+                            "-c".to_string(),
+                            "user.email=terminalbuddy@local".to_string(),
+                            "commit".to_string(),
+                            "-m".to_string(),
+                            format!("集成 {}", branch),
+                        ],
+                    )?;
+                }
             }
         }
         for (repository_name, integration_repository) in integration_repositories {

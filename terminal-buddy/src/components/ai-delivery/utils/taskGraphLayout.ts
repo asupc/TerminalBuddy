@@ -7,7 +7,36 @@ interface LayoutCache {
   edges: Edge[];
 }
 
-const CACHE_PREFIX = "ai-delivery-graph-layout:v4:";
+const CACHE_PREFIX = "ai-delivery-graph-layout:v5:";
+
+/** 传递依赖裁剪：只保留直接依赖边，去掉可由其他直接依赖间接到达的依赖。
+ *  例如 D 依赖 [A, B, C] 且 C→B→A 时，只保留 D→C（间接链路由数据隐式满足）。 */
+function directDependencyPairs(tasks: AiTaskNode[]): Array<[string, string]> {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const collectReachable = (start: string, visited: Set<string>) => {
+    if (visited.has(start)) return;
+    visited.add(start);
+    byId.get(start)?.dependencyIds.forEach((depId) => collectReachable(depId, visited));
+  };
+  const pairs: Array<[string, string]> = [];
+  for (const task of tasks) {
+    const deps = Array.from(new Set(task.dependencyIds));
+    const reachableFrom = new Map<string, Set<string>>();
+    deps.forEach((depId) => {
+      const set = new Set<string>();
+      collectReachable(depId, set);
+      set.delete(depId);
+      reachableFrom.set(depId, set);
+    });
+    deps.forEach((depId) => {
+      const indirect = deps.some(
+        (other) => other !== depId && (reachableFrom.get(other)?.has(depId) ?? false),
+      );
+      if (!indirect) pairs.push([depId, task.id]);
+    });
+  }
+  return pairs;
+}
 
 function simpleHash(input: string): string {
   let hash = 0;
@@ -19,8 +48,8 @@ function simpleHash(input: string): string {
 
 function computeVersion(tasks: AiTaskNode[]): string {
   const nodeIds = tasks.map((t) => t.id).sort().join(",");
-  const edgePairs = tasks
-    .flatMap((t) => t.dependencyIds.map((d) => [d, t.id].sort().join("|")))
+  const edgePairs = directDependencyPairs(tasks)
+    .map(([source, target]) => [source, target].sort().join("|"))
     .sort()
     .join(",");
   return simpleHash(`${nodeIds};;${edgePairs}`);
@@ -65,6 +94,15 @@ export function computeTaskGraphLayout(tasks: AiTaskNode[]) {
   tasks.forEach((t) => (byLayer[layer[t.id]] ??= []).push(t));
   Object.values(byLayer).forEach((list) => list.sort((a, b) => a.title.localeCompare(b.title)));
 
+  // 依赖边在全图上做传递裁剪：旧数据里可能存了 D→A、D→B 这类间接依赖，
+  // 渲染只保留直接依赖线，避免 DAG 杂乱。
+  const directPairs = directDependencyPairs(tasks);
+  const directDepOf = new Map<string, Set<string>>();
+  directPairs.forEach(([source, target]) => {
+    if (!directDepOf.has(target)) directDepOf.set(target, new Set());
+    directDepOf.get(target)!.add(source);
+  });
+
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   Object.entries(byLayer).forEach(([layerNum, layerTasks]) => {
@@ -75,7 +113,7 @@ export function computeTaskGraphLayout(tasks: AiTaskNode[]) {
         data: { task },
         type: "taskNode",
       });
-      task.dependencyIds.forEach((depId) =>
+      (directDepOf.get(task.id) ?? []).forEach((depId) =>
         edges.push({ id: `${depId}->${task.id}`, source: depId, target: task.id } as Edge)
       );
     });
@@ -85,8 +123,8 @@ export function computeTaskGraphLayout(tasks: AiTaskNode[]) {
   // id 以 __ 前缀标记，TaskDagView 据此跳过点击编辑；位置可拖动并随其他节点一起持久化。
   if (tasks.length > 0) {
     const positionById = new Map(nodes.map((node) => [node.id, node.position]));
-    const referencedIds = new Set(tasks.flatMap((task) => task.dependencyIds));
-    const startTargets = tasks.filter((task) => task.dependencyIds.length === 0);
+    const referencedIds = new Set(directPairs.map(([source]) => source));
+    const startTargets = tasks.filter((task) => (directDepOf.get(task.id)?.size ?? 0) === 0);
     const endSources = tasks.filter((task) => !referencedIds.has(task.id));
     const meanY = (ids: string[]): number =>
       ids.length === 0

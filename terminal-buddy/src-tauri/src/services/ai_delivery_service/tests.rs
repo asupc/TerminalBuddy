@@ -727,6 +727,49 @@ mod cycle_detection_tests {
     }
 
     #[test]
+    fn reduce_transitive_dependencies_keeps_only_direct_edges() {
+        // A ← B ← C ← D：D 直接依赖 C，B 依赖 A，C 依赖 B
+        let chain = vec![
+            node("a", vec![]),
+            node("b", vec!["a".to_string()]),
+            node("c", vec!["b".to_string()]),
+        ];
+        // D 被写入 [A, B, C] 三个依赖（旧版/管理者常输出传递依赖）
+        let reduced = reduce_transitive_dependencies(
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+            ],
+            chain.iter(),
+        );
+        assert_eq!(reduced, vec!["c".to_string()], "只应保留直接依赖 C");
+
+        // 并行依赖互不可达，全部保留
+        let parallel = vec![
+            node("a", vec![]),
+            node("b", vec![]),
+            node("c", vec!["a".to_string(), "b".to_string()]),
+        ];
+        let reduced_parallel = reduce_transitive_dependencies(
+            vec!["a".to_string(), "b".to_string()],
+            parallel.iter(),
+        );
+        assert_eq!(
+            reduced_parallel,
+            vec!["a".to_string(), "b".to_string()],
+            "并行依赖应全部保留"
+        );
+
+        // 重复依赖去重
+        let reduced_dup = reduce_transitive_dependencies(
+            vec!["a".to_string(), "a".to_string(), "c".to_string()],
+            chain.iter(),
+        );
+        assert_eq!(reduced_dup, vec!["c".to_string()]);
+    }
+
+    #[test]
     fn cycle_detection_complex() {
         // V 形分叉 + 汇合后的环：a->b, a->c, b->d, c->d, d->a
         let tasks = vec![

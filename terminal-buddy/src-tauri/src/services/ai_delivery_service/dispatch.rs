@@ -423,8 +423,12 @@ impl AiDeliveryService {
                 &control,
                 (workflow_review_required && runtime_is_codex(&runtime))
                     .then_some(control.review_schema_path.as_path()),
-                (workflow_review_required && runtime_is_codex(&runtime))
-                    .then_some(control.review_path.as_path()),
+                // 审查结论文件必须由 Agent 按提示词直接写入（Set-Content 等），
+                // 不能把 codex 的 --output-last-message 指向 review.json：
+                // codex 退出时会用最终消息覆盖该文件，而 DeepSeek 等模型的最终
+                // 消息常是散文，把模型已写好的合法 JSON 冲掉（实测复现：写入并
+                // 自检通过后 review.json 仍变成 Markdown 导致协议失败）。
+                None,
                 &codex_writable_directories,
                 &preset_model_args,
             )?;

@@ -371,13 +371,28 @@ pub(crate) fn repair_workflow_review(
         .map_err(|error| format!("写入 Reviewer 修复提示失败: {}", error))?;
     let _ = fs::remove_file(&control.exit_marker);
     let _ = fs::remove_file(&control.review_path);
+    // 修复轮必须以与首轮一致的可写目录启动 CLI：运行目录（review.json 所在处）
+    // 和 Agent 工作目录。缺一不可——否则沙箱只放行工作目录，模型写不了
+    // review.json，会转而往工作区写测试文件，被只读越权审计判失败（实测复现）。
+    let mut repair_writable_directories = vec![
+        control
+            .review_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default(),
+        working_directory.to_path_buf(),
+    ];
+    repair_writable_directories.sort();
+    repair_writable_directories.dedup();
     let terminal_command = build_interactive_terminal_command_with_codex_output(
         runtime,
         agent,
         control,
         runtime_is_codex(runtime).then_some(control.review_schema_path.as_path()),
-        runtime_is_codex(runtime).then_some(control.review_path.as_path()),
-        &[],
+        // 与首轮一致：review.json 由 Agent 直接写入，避免 --output-last-message
+        // 用最终消息覆盖已写入的合法 JSON（模型最终消息常为散文，实测复现）。
+        None,
+        &repair_writable_directories,
         &[],
     )?;
     start_interactive_terminal_command(

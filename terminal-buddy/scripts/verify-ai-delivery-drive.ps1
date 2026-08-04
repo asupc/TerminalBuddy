@@ -2,7 +2,8 @@
     [string]$BaseUrl = "http://127.0.0.1:9600",
     [string]$TokenFile = "D:\TerminalBuddy\verify.token",
     [int]$PollSeconds = 6,
-    [int]$MaxMinutes = 25
+    [int]$MaxMinutes = 25,
+    [switch]$WithReview
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,13 +42,13 @@ $task1 = Invoke-Api -Method Post -Path "/api/ai-delivery/deliveries/$deliveryId/
     deliveryId        = $deliveryId
     title             = "命令行验收-分析 demo-repo"
     description       = "只读分析 demo-repo 现状，输出结论文件。"
-    taskPrompt        = "简要分析当前仓库（README 与目录结构），把分析结论写入 analysis/cli-acceptance-1.md，然后退出 CLI。"
+    taskPrompt        = "简要分析当前仓库（README 与目录结构），把分析结论写入 analysis/cli-acceptance-$stamp-1.md，然后退出 CLI。"
     executionMode     = "readonly"
     targetRepositoryId = $repoId
     allowedWritePaths = @("analysis")
     dependencyIds     = @()
-    expectedArtifacts = @("analysis/cli-acceptance-1.md")
-    acceptanceCommands = @("Test-Path analysis/cli-acceptance-1.md")
+    expectedArtifacts = @("analysis/cli-acceptance-$stamp-1.md")
+    acceptanceCommands = @("Test-Path analysis/cli-acceptance-$stamp-1.md")
     retryCount        = 1
     preferredAgentId  = $codexAgentId
     roleId            = $null
@@ -55,19 +56,42 @@ $task1 = Invoke-Api -Method Post -Path "/api/ai-delivery/deliveries/$deliveryId/
 }
 Write-Output "TASK1_ID=$($task1.id) STATE=$($task1.state)"
 
-# 3. 添加任务 2：编码实现（依赖任务 1，验证任务推进）
+# 3. 可选：添加审查任务（只读 + 有前置依赖 → 触发 review.json 协议链路）
+$task2Deps = @($task1.id)
+if ($WithReview) {
+    $review = Invoke-Api -Method Post -Path "/api/ai-delivery/deliveries/$deliveryId/tasks" -Body @{
+        deliveryId        = $deliveryId
+        title             = "命令行验收-需求评审"
+        description       = "评审前置分析结论，输出评审意见并完成平台审查协议（review.json）。"
+        taskPrompt        = "阅读前置分析结论，检查其完整性与可执行性；把评审意见写入 analysis/cli-acceptance-$stamp-review.md，并按平台要求写入 review.json 后退出 CLI。"
+        executionMode     = "readonly"
+        targetRepositoryId = $repoId
+        allowedWritePaths = @("analysis")
+        dependencyIds     = @($task1.id)
+        expectedArtifacts = @("analysis/cli-acceptance-$stamp-review.md")
+        acceptanceCommands = @("Test-Path analysis/cli-acceptance-$stamp-review.md")
+        retryCount        = 2
+        preferredAgentId  = $codexAgentId
+        roleId            = $null
+        workflowStepId    = "e0f30d61-9f5d-4247-9b6c-afeb129c345a"
+    }
+    Write-Output "REVIEW_TASK_ID=$($review.id) STATE=$($review.state)"
+    $task2Deps = @($task1.id, $review.id)
+}
+
+# 4. 添加任务：编码实现（依赖前置任务，验证任务推进）
 $task2 = Invoke-Api -Method Post -Path "/api/ai-delivery/deliveries/$deliveryId/tasks" -Body @{
     deliveryId        = $deliveryId
     title             = "命令行验收-编码实现"
     description       = "新增团队约定文档并更新 README。"
-    taskPrompt        = "在 docs/ 下新建 cli-acceptance-2.md 记录本次验收结论，并在 README.md 追加一行验收记录，然后退出 CLI。"
+    taskPrompt        = "在 docs/ 下新建 cli-acceptance-$stamp-2.md 记录本次验收结论，并在 README.md 追加一行验收记录，然后退出 CLI。"
     executionMode     = "write"
     targetRepositoryId = $repoId
     allowedWritePaths = @("docs", "README.md")
-    dependencyIds     = @($task1.id)
-    expectedArtifacts = @("docs/cli-acceptance-2.md", "README.md")
+    dependencyIds     = $task2Deps
+    expectedArtifacts = @("docs/cli-acceptance-$stamp-2.md", "README.md")
     acceptanceCommands = @(
-        "test -f docs/cli-acceptance-2.md",
+        "test -f docs/cli-acceptance-$stamp-2.md",
         'test -z "$(git status --porcelain)"'
     )
     retryCount        = 1
@@ -77,11 +101,11 @@ $task2 = Invoke-Api -Method Post -Path "/api/ai-delivery/deliveries/$deliveryId/
 }
 Write-Output "TASK2_ID=$($task2.id) STATE=$($task2.state)"
 
-# 4. 批准并派发就绪任务
+# 5. 批准并派发就绪任务
 $started = Invoke-Api -Method Post -Path "/api/ai-delivery/deliveries/$deliveryId/dispatch"
 Write-Output "DISPATCH_STARTED=$($started.Count)"
 
-# 5. 轮询到终态
+# 6. 轮询到终态
 $deadline = (Get-Date).AddMinutes($MaxMinutes)
 $seenEvents = @{}
 $terminalStates = @("completed", "succeeded", "failed", "cancelled")

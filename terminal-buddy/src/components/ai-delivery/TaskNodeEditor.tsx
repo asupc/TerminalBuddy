@@ -1,5 +1,4 @@
 import { useState } from "react";
-import Editor from "@monaco-editor/react";
 import { updateAiTaskNode, deleteAiTaskNode } from "../../services/tauri";
 import { Dialog } from "../shared/Dialog";
 import { STATE_COLORS } from "./TaskNodeCard";
@@ -161,8 +160,8 @@ export function TaskNodeEditor({ task, agents, roles, project, deliveryTasks, on
           <label>最大重试次数（0 = 不限，允许超过 10）
             <input type="number" min="0" max="50" value={form.retryCount} onChange={(e) => setForm({ ...form, retryCount: Number(e.target.value) })} /></label>
           <label>给 Agent 的任务说明
-            <Editor height="180px" defaultLanguage="markdown" value={form.taskPrompt}
-              onChange={(v) => setForm({ ...form, taskPrompt: v ?? "" })} /></label>
+            <textarea rows={8} value={form.taskPrompt}
+              onChange={(e) => setForm({ ...form, taskPrompt: e.target.value })} /></label>
           {error && <div className="ai-field-error">{error}</div>}
         </div>
         <div className="ai-task-editor-preview">

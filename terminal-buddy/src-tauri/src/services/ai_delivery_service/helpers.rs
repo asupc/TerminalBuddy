@@ -1658,6 +1658,63 @@ pub(crate) fn collect_transitive_dependency_ids(task: &AiTaskNode) -> Result<Vec
     Ok(result)
 }
 
+/// 传递依赖裁剪：仅保留直接依赖，去掉可由其他直接依赖间接到达的依赖。
+/// 例如 D 依赖 [A, B, C] 且 C→B→A（C 依赖 B、B 依赖 A）时，D 只保留 [C]，
+/// 间接链路 C→B→A 已隐式满足，DAG 不再出现 D→A、D→B 这类冗余依赖线。
+/// all_tasks 需包含可能被引用的任务节点，用于沿既有依赖链做可达性分析。
+pub(crate) fn reduce_transitive_dependencies<'a, I>(
+    dependency_ids: impl IntoIterator<Item = String>,
+    all_tasks: I,
+) -> Vec<String>
+where
+    I: IntoIterator<Item = &'a AiTaskNode>,
+{
+    let by_id: HashMap<&str, &AiTaskNode> = all_tasks
+        .into_iter()
+        .map(|task| (task.id.as_str(), task))
+        .collect();
+    fn collect_reachable<'a>(
+        start: &str,
+        by_id: &HashMap<&str, &'a AiTaskNode>,
+        visited: &mut HashSet<String>,
+    ) {
+        if !visited.insert(start.to_string()) {
+            return;
+        }
+        if let Some(task) = by_id.get(start) {
+            for dep in &task.dependency_ids {
+                collect_reachable(dep, by_id, visited);
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    let unique: Vec<String> = dependency_ids
+        .into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect();
+    let mut reachable_from: HashMap<String, HashSet<String>> = HashMap::new();
+    for dep in &unique {
+        let mut set = HashSet::new();
+        collect_reachable(dep, &by_id, &mut set);
+        set.remove(dep);
+        reachable_from.insert(dep.clone(), set);
+    }
+    unique
+        .iter()
+        .filter(|dep| {
+            let dep_id: &String = dep;
+            !unique.iter().any(|other| {
+                let other_id: &String = other;
+                other_id != dep_id
+                    && reachable_from
+                        .get(other_id.as_str())
+                        .is_some_and(|set| set.contains(dep_id.as_str()))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn materialize_dependency_artifacts(
     project: &AiProject,
     task: &AiTaskNode,
