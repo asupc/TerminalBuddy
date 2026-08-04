@@ -7,7 +7,7 @@ interface LayoutCache {
   edges: Edge[];
 }
 
-const CACHE_PREFIX = "ai-delivery-graph-layout:v2:";
+const CACHE_PREFIX = "ai-delivery-graph-layout:v3:";
 
 function simpleHash(input: string): string {
   let hash = 0;
@@ -80,6 +80,47 @@ export function computeTaskGraphLayout(tasks: AiTaskNode[]) {
       );
     });
   });
+
+  // 虚拟「开始」「结束」节点：纯展示，不代表真实任务，不参与依赖校验/派发/成果交接。
+  // id 以 __ 前缀标记，TaskDagView 据此跳过拖拽持久化与点击编辑（Task 4）。
+  if (tasks.length > 0) {
+    const positionById = new Map(nodes.map((node) => [node.id, node.position]));
+    const referencedIds = new Set(tasks.flatMap((task) => task.dependencyIds));
+    const startTargets = tasks.filter((task) => task.dependencyIds.length === 0);
+    const endSources = tasks.filter((task) => !referencedIds.has(task.id));
+    const meanY = (ids: string[]): number =>
+      ids.length === 0
+        ? 0
+        : ids.reduce((sum, id) => sum + (positionById.get(id)?.y ?? 0), 0) / ids.length;
+    const maxLayerNum = Object.keys(byLayer)
+      .map(Number)
+      .reduce((max, value) => Math.max(max, value), -1);
+
+    if (startTargets.length > 0) {
+      nodes.push({
+        id: "__start__",
+        type: "markerNode",
+        position: { x: -240, y: meanY(startTargets.map((task) => task.id)) },
+        data: { label: "开始" },
+        draggable: false,
+      });
+      startTargets.forEach((task) =>
+        edges.push({ id: `__start__->${task.id}`, source: "__start__", target: task.id } as Edge),
+      );
+    }
+    if (endSources.length > 0) {
+      nodes.push({
+        id: "__end__",
+        type: "markerNode",
+        position: { x: (maxLayerNum + 1) * 240, y: meanY(endSources.map((task) => task.id)) },
+        data: { label: "结束" },
+        draggable: false,
+      });
+      endSources.forEach((task) =>
+        edges.push({ id: `${task.id}->__end__`, source: task.id, target: "__end__" } as Edge),
+      );
+    }
+  }
 
   const result: LayoutCache = { layoutVersion, nodes, edges };
   try {

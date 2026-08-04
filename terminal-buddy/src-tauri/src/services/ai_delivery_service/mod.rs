@@ -3,13 +3,12 @@
 use crate::commands::terminal::TerminalService;
 use crate::models::{
     AiAgent, AiAgentRuntime, AiArtifactMeta, AiAttempt, AiCommandResult, AiDecisionOption,
-    AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiDeliveryTemplate, AiMergeRecord,
+    AiDecisionRequest, AiDelivery, AiDeliveryEvent, AiMergeRecord,
     AiMergeRepositoryRecord, AiProject, AiQualityGate, AiAttemptOutput, AiRepository,
     AiRepositoryStatusBaseline, AiReviewGate, AiRole, AiRuntimeProbe, AiStartupPreset,
     AiTaskContract, AiTaskNode, AiWorkflow, CreateAiDecisionRequestInput, CreateAiDeliveryInput,
-    CreateAiDeliveryTemplateInput, CreateAiProjectInput, CreateAiTaskNodeInput,
-    CreateTaskContractInput, TerminalOwner, UpdateAiDeliveryInput, UpdateAiTaskNodeInput,
-    UpdateAiDeliveryTemplateInput,
+    CreateAiProjectInput, CreateAiTaskNodeInput, CreateTaskContractInput, TerminalOwner,
+    UpdateAiDeliveryInput, UpdateAiTaskNodeInput,
 };
 use crate::services::{BotSettingsService, DatabaseService, PathService};
 use serde::de::DeserializeOwned;
@@ -50,7 +49,6 @@ const REVIEW_GATES_DIR: &str = "ReviewGates";
 const MERGE_RECORDS_DIR: &str = "MergeRecords";
 const PLANS_DIR: &str = "Plans";
 const TERMINAL_RUNS_DIR: &str = "TerminalRuns";
-const TEMPLATES_DIR: &str = "Templates";
 const STARTUP_PRESETS_DIR: &str = "StartupPresets";
 /// 每交付保留事件条数上限（append_event 滚动清理，超出删最旧）。
 pub const MAX_EVENTS_PER_DELIVERY: usize = 1000;

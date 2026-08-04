@@ -103,7 +103,6 @@ export interface DeliveryDetailProps {
   phaseFilter: string;
   setPhaseFilter: React.Dispatch<React.SetStateAction<string>>;
   batchResult: string;
-  openTemplatesDialog: () => void;
 }
 
 /** 计算 attempt 运行时长：已结束取 finishedAt，运行中取至今 */
@@ -143,11 +142,10 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
     planAiDeliveryWithManager, refresh,
     selectedTaskIds, toggleTask,
     batchDispatch, batchRetry, batchCancel, retryAllFailed, dispatchPhase,
-    phaseFilter, setPhaseFilter, batchResult, openTemplatesDialog,
+    phaseFilter, setPhaseFilter, batchResult,
   } = props;
 
   const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"list" | "dag">("list");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [showAllEventsDialog, setShowAllEventsDialog] = useState(false);
   const [allEvents, setAllEvents] = useState<AiDeliveryEvent[] | null>(null);
@@ -365,18 +363,6 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                         >
                           <Trash2 size={15} />
                           {delivery.state === "drafting" ? "删除草稿" : "删除交付"}
-                        </button>
-                      )}
-                      {!["cancelled"].includes(delivery.state) && (
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          disabled={busy !== null}
-                          onClick={() => openTemplatesDialog()}
-                          title="将当前交付保存为模板，或管理已有模板"
-                        >
-                          <FileText size={15} />
-                          保存为模板
                         </button>
                       )}
                       {delivery.state === "drafting" &&
@@ -703,6 +689,16 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                   )}
                   <section className="ai-task-panel" aria-label="交付任务">
                     <div className="ai-task-tabs" role="tablist" aria-label="任务状态">
+                      <button
+                        type="button"
+                        role="tab"
+                        className={activeTaskTab === "dag" ? "active" : ""}
+                        aria-selected={activeTaskTab === "dag"}
+                        onClick={() => setActiveTaskTab("dag")}
+                      >
+                        <span>DAG</span>
+                        <small>{tasks.length}</small>
+                      </button>
                       {boardColumns.map((column) => {
                         const count = taskCountsByColumn.get(column.id) ?? 0;
                         const isActive = activeTaskTab === column.id;
@@ -759,14 +755,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                         <span>报告</span>
                       </button>
                     </div>
-                    <div className="ai-detail-tabs">
-                      <button className={viewMode === "list" ? "active" : ""} onClick={() => setViewMode("list")}>列表视图</button>
-                      <button className={viewMode === "dag" ? "active" : ""} onClick={() => setViewMode("dag")}>DAG 视图</button>
-                      {tasks.length > 5 && viewMode === "list" && (
-                        <span className="ai-dag-hint">任务较多，建议切换 DAG 视图</span>
-                      )}
-                    </div>
-                    {viewMode === "dag" ? (
+                    {activeTaskTab === "dag" ? (
                       <TaskDagView tasks={tasks} onNodeClick={(id) => setEditingTaskId(id)} />
                     ) : (
                       <>
