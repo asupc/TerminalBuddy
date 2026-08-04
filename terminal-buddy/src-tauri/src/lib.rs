@@ -351,6 +351,19 @@ pub fn run() {
                 Err(error) => boot_log(format!("active attempt index rebuild failed: {}", error)),
             }
 
+            // 自动扫描本机已就绪的 CLI 并初始化 Runtime 配置（后台执行，不阻塞窗口）。
+            // 只添加「可用且 kind 未配置」的条目，已配置的 kind 不覆盖；
+            // 前端 AI 交付窗口打开时仍会重新检测并同步，二者互补。
+            tauri::async_runtime::spawn_blocking(move || {
+                match AiDeliveryService::auto_init_runtimes() {
+                    Ok(0) => boot_log(
+                        "runtime auto-init: no new runtimes (detected kinds already configured)",
+                    ),
+                    Ok(count) => boot_log(format!("auto-initialized {} runtimes", count)),
+                    Err(error) => boot_log(format!("runtime auto-init failed: {}", error)),
+                }
+            });
+
             // 应用重启后，自动恢复运行中交付的就绪任务派发。
             let app_handle = app.handle().clone();
             let terminal_service = app.state::<TerminalService>().inner().clone();

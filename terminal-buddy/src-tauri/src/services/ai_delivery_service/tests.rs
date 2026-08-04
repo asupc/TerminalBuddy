@@ -210,6 +210,44 @@ mod agent_decision_tests {
     }
 
     #[test]
+    fn auto_init_runtimes_does_not_duplicate_configured_kinds() {
+        let root = std::env::temp_dir().join(format!(
+            "terminal-buddy-auto-init-{}",
+            Uuid::new_v4()
+        ));
+        PathService::set_test_data_dir(Some(root.join("data")));
+        let now = chrono::Utc::now().to_rfc3339();
+        // 预置一个已配置的 codex Runtime
+        AiDeliveryService::save_runtime(AiAgentRuntime {
+            id: "runtime-codex".to_string(),
+            name: "Codex".to_string(),
+            kind: "codex".to_string(),
+            command: "codex".to_string(),
+            enabled: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })
+        .unwrap();
+        let before = AiDeliveryService::get_all_runtimes().unwrap().len();
+        let created = AiDeliveryService::auto_init_runtimes().unwrap();
+        let after = AiDeliveryService::get_all_runtimes().unwrap();
+        // 已配置 kind 不重复添加
+        assert_eq!(
+            after
+                .iter()
+                .filter(|runtime| runtime.kind.eq_ignore_ascii_case("codex"))
+                .count(),
+            1,
+            "已配置的 codex 不应被重复初始化"
+        );
+        // 新增数量与列表增长一致（本机探测到其它可用 CLI 时才会新增）
+        assert_eq!(after.len() - before, created);
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn reads_workflow_reviewer_result() {
         let path =
             std::env::temp_dir().join(format!("terminal-buddy-review-{}.json", Uuid::new_v4()));

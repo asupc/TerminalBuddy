@@ -11,6 +11,19 @@ pub(crate) fn compact_output(value: &str) -> String {
     format!("{}…", trimmed.chars().take(MAX_CHARS).collect::<String>())
 }
 
+/// 按 Runtime kind 返回展示名称（与前端 runtimeName 保持一致）。
+pub(crate) fn runtime_display_name(kind: &str) -> String {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "claude" => "Claude Code".to_string(),
+        "opencode" => "OpenCode".to_string(),
+        "hermes" => "Hermes".to_string(),
+        "pi" => "Pi".to_string(),
+        "mimo" => "Mimo Code".to_string(),
+        "kimi" => "Kimi Code".to_string(),
+        _ => "Codex".to_string(),
+    }
+}
+
 /// 验收命令预检：在派发前发现验收命令引用的构建目标（.sln/.csproj 等）不存在，
 /// 给出明确原因，避免 LLM 生成的验收命令拼错文件名后，Agent 反复执行构建仍验收失败
 /// （实测案例：`dotnet build Kyber.Industry.BaseData.sln` 而实际文件是

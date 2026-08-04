@@ -409,6 +409,45 @@ impl AiDeliveryService {
         Ok(runtime)
     }
 
+    /// 应用启动时自动扫描本机已就绪的 CLI 并初始化 Runtime 配置。
+    /// 只添加「可用且 kind 未配置」的条目，已配置的 kind 不覆盖（尊重用户配置）；
+    /// 幂等，可反复调用。返回本次新增数量。
+    pub fn auto_init_runtimes() -> Result<usize, String> {
+        let probes = Self::detect_local_runtimes();
+        let existing = Self::get_all_runtimes().unwrap_or_default();
+        let configured_kinds = existing
+            .iter()
+            .map(|runtime| runtime.kind.trim().to_ascii_lowercase())
+            .collect::<HashSet<_>>();
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut created = 0usize;
+        for probe in probes {
+            if !probe.available {
+                continue;
+            }
+            let kind = probe.kind.trim().to_string();
+            if kind.is_empty()
+                || configured_kinds.contains(&kind.to_ascii_lowercase())
+            {
+                continue;
+            }
+            if Self::save_runtime(AiAgentRuntime {
+                id: Uuid::new_v4().to_string(),
+                name: runtime_display_name(&kind),
+                kind: kind.clone(),
+                command: probe.command,
+                enabled: true,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            })
+            .is_ok()
+            {
+                created += 1;
+            }
+        }
+        Ok(created)
+    }
+
     pub fn delete_runtime(id: &str) -> Result<(), String> {
         if Self::get_all_agents()?
             .iter()
