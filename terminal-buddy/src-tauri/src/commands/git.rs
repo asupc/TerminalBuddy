@@ -869,6 +869,53 @@ fn file_extension(path: &str) -> String {
         .unwrap_or_default()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct GitStatusEntry {
+    x: char,
+    y: char,
+    path: String,
+}
+
+fn parse_git_status(output: &str) -> Vec<GitStatusEntry> {
+    let mut records = output.split_terminator('\0');
+    let mut entries = Vec::new();
+
+    while let Some(record) = records.next() {
+        let bytes = record.as_bytes();
+        if bytes.len() < 3 || bytes[2] != b' ' {
+            continue;
+        }
+
+        let x = bytes[0] as char;
+        let y = bytes[1] as char;
+        let path = &record[3..];
+        if path.is_empty() {
+            continue;
+        }
+
+        entries.push(GitStatusEntry {
+            x,
+            y,
+            path: path.to_string(),
+        });
+
+        // In porcelain -z output, rename/copy destinations precede a separate source record.
+        if matches!(x, 'R' | 'C') || matches!(y, 'R' | 'C') {
+            let _ = records.next();
+        }
+    }
+
+    entries
+}
+
+fn git_status_entries(root: &Path) -> Result<Vec<GitStatusEntry>, String> {
+    let output = run_git_stdout_raw(
+        root,
+        &["--no-optional-locks", "status", "--porcelain=v1", "-z"],
+    )?;
+    Ok(parse_git_status(&output))
+}
+
 fn status_label(x: char, y: char, untracked: bool) -> String {
     if untracked {
         return "未版本控制".to_string();
@@ -1221,7 +1268,9 @@ fn normalize_commit_pathspec(root: &Path, base: &Path, raw_path: &str) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::{history_log_revisions, normalize_commit_pathspec, GitHistoryRef};
+    use super::{
+        history_log_revisions, normalize_commit_pathspec, parse_git_status, GitHistoryRef,
+    };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
     use std::{env, fs, process};
@@ -1286,6 +1335,28 @@ mod tests {
             history_log_revisions("head", Some(&upstream), Some(&base)),
             vec!["head", "upstream", "base"]
         );
+    }
+
+    #[test]
+    fn parse_git_status_preserves_first_unstaged_path() {
+        let entries = parse_git_status(
+            " M terminal-buddy/package-lock.json\0 M terminal-buddy/src-tauri/Cargo.toml\0",
+        );
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].x, ' ');
+        assert_eq!(entries[0].y, 'M');
+        assert_eq!(entries[0].path, "terminal-buddy/package-lock.json");
+        assert_eq!(entries[1].path, "terminal-buddy/src-tauri/Cargo.toml");
+    }
+
+    #[test]
+    fn parse_git_status_uses_rename_destination_without_trimming_paths() {
+        let entries = parse_git_status("R  new -> name.txt\0old name.txt\0??  leading-space.txt\0");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "new -> name.txt");
+        assert_eq!(entries[1].path, " leading-space.txt");
     }
 
     #[test]
@@ -1367,24 +1438,23 @@ fn parse_ahead_behind(root: &Path, upstream: Option<&str>) -> (u32, u32) {
     (ahead, behind)
 }
 
-fn parse_status_counts(porcelain: &str) -> (u32, u32, u32, u32) {
+fn parse_status_counts(entries: &[GitStatusEntry]) -> (u32, u32, u32, u32) {
     let mut changed = 0;
     let mut staged = 0;
     let mut unstaged = 0;
     let mut untracked = 0;
 
-    for line in porcelain.lines().filter(|line| !line.trim().is_empty()) {
+    for entry in entries {
         changed += 1;
-        if line.starts_with("??") {
+        if entry.x == '?' && entry.y == '?' {
             untracked += 1;
             continue;
         }
 
-        let bytes = line.as_bytes();
-        if bytes.first().is_some_and(|c| *c != b' ') {
+        if entry.x != ' ' {
             staged += 1;
         }
-        if bytes.get(1).is_some_and(|c| *c != b' ') {
+        if entry.y != ' ' {
             unstaged += 1;
         }
     }
@@ -1417,9 +1487,9 @@ fn get_git_repository_status_impl(path: String) -> Result<Option<GitRepositorySt
     .ok()
     .filter(|value| !value.is_empty());
     let (ahead, behind) = parse_ahead_behind(&root, upstream.as_deref());
-    let porcelain = run_git(&root, &["status", "--porcelain=v1"]).unwrap_or_default();
+    let status_entries = git_status_entries(&root).unwrap_or_default();
     let (changed_count, staged_count, unstaged_count, untracked_count) =
-        parse_status_counts(&porcelain);
+        parse_status_counts(&status_entries);
     let has_remote = run_git(&root, &["remote"])
         .map(|output| !output.trim().is_empty())
         .unwrap_or(false);
@@ -1793,30 +1863,17 @@ pub async fn git_get_changed_files(path: String) -> Result<Vec<GitChangedFile>, 
 
 fn git_get_changed_files_impl(path: String) -> Result<Vec<GitChangedFile>, String> {
     let root = require_repo_root(&path)?;
-    let status_output = run_git(&root, &["status", "--porcelain=v1"])?;
+    let status_entries = git_status_entries(&root)?;
     let stats = numstat_map(&root);
 
-    let mut files = status_output
-        .lines()
-        .filter_map(|line| {
-            if line.len() < 3 {
-                return None;
-            }
-
-            let mut chars = line.chars();
-            let x = chars.next().unwrap_or(' ');
-            let y = chars.next().unwrap_or(' ');
+    let mut files = status_entries
+        .into_iter()
+        .map(|entry| {
+            let GitStatusEntry { x, y, path } = entry;
             let untracked = x == '?' && y == '?';
-            let raw_path = line[3..].trim();
-            let path = raw_path
-                .split(" -> ")
-                .last()
-                .unwrap_or(raw_path)
-                .trim()
-                .to_string();
             let (additions, deletions) = lookup_numstat(&stats, &path);
 
-            Some(GitChangedFile {
+            GitChangedFile {
                 extension: file_extension(&path),
                 status: status_label(x, y, untracked),
                 additions,
@@ -1824,7 +1881,7 @@ fn git_get_changed_files_impl(path: String) -> Result<Vec<GitChangedFile>, Strin
                 staged: x != ' ' && x != '?',
                 untracked,
                 path,
-            })
+            }
         })
         .collect::<Vec<_>>();
 
