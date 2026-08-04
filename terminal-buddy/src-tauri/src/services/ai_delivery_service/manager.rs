@@ -361,10 +361,11 @@ pub(crate) fn repair_workflow_review(
     validation_error: &str,
 ) -> Result<(), String> {
     let repair_prompt = format!(
-        "上一轮 Reviewer 输出未通过平台协议校验：{}\n\n请不要继续解释审查过程。请重新检查当前审查结论，并覆盖写入 {}。JSON 必须严格符合 {}，只能包含 approved（布尔值）和 comments（非空字符串）两个字段，禁止 acceptedArtifacts 或任何其他字段。写入后请重新读取该文件并自行校验 JSON，再退出当前 CLI。",
+        "上一轮 Reviewer 输出未通过平台协议校验：{}\n\n请不要继续解释审查过程。请重新检查当前审查结论，并覆盖写入 {}。JSON 必须严格符合 {}，只能包含 approved（布尔值）和 comments（非空字符串）两个字段，禁止 acceptedArtifacts 或任何其他字段。\n推荐直接在终端执行以下命令覆盖写入（把 comments 的中文结论替换成你的实际结论）：\nSet-Content -LiteralPath {} -Encoding UTF8 -Value '{{\"approved\":true,\"comments\":\"中文审查结论和剩余风险\"}}'\nJSON 语法要求（必须逐条自查）：\n1. 整份文件必须是一个合法 JSON 对象，不能被 Markdown 代码块、说明文字包裹或前后追加任何内容；\n2. comments 字符串内禁止出现未转义的双引号，引用原文时改用中文引号「」或转义为 \\\"；\n3. 字符串内不得包含未转义的真实换行符，换行一律写成 \\n；\n4. 写入后必须重新读取该文件并自行用 JSON 解析校验（如 ConvertFrom-Json），确认合法后再退出当前 CLI。",
         validation_error,
         control.review_path.display(),
         control.review_schema_path.display(),
+        powershell_literal(&control.review_path.to_string_lossy()),
     );
     fs::write(&control.prompt_path, repair_prompt)
         .map_err(|error| format!("写入 Reviewer 修复提示失败: {}", error))?;

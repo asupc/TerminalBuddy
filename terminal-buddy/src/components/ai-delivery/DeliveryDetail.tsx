@@ -24,7 +24,7 @@ import { ReviewDiffView } from "./ReviewDiffView";
 import type { ReviewComment } from "./ReviewDiffView";
 import type { AiReviewDiffResult } from "../../types/aiDelivery";
 import type {
-  AiAgent, AiAttempt, AiDecisionRequest,
+  AiAgent, AiAgentRuntime, AiAttempt, AiDecisionRequest,
   AiDelivery, AiDeliveryEvent, AiMergeRecord, AiProject, AiReviewGate, AiRole,
   AiTaskNode,
 } from "../../types/aiDelivery";
@@ -37,6 +37,7 @@ export interface DeliveryDetailProps {
   deliveries: AiDelivery[];
   tasks: AiTaskNode[];
   agents: AiAgent[];
+  runtimes: AiAgentRuntime[];
   roles: AiRole[];
   attempts: AiAttempt[];
   deliveryEvents: AiDeliveryEvent[];
@@ -118,7 +119,7 @@ function attemptDuration(attempt: AiAttempt): string {
 export function DeliveryDetail(props: DeliveryDetailProps) {
   // 解构所有 props，使 JSX 中的变量名保持不变
   const {
-    project, delivery, deliveries, tasks, agents, roles,
+    project, delivery, deliveries, tasks, agents, runtimes, roles,
     attempts, deliveryEvents,
     filteredDeliveries, filteredAttempts, filteredRecentDeliveryEvents,
     visibleTasks, taskCountsByColumn, legacyTaskGraph, allTasksApproved,
@@ -756,7 +757,13 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                       </button>
                     </div>
                     {activeTaskTab === "dag" ? (
-                      <TaskDagView tasks={tasks} onNodeClick={(id) => setEditingTaskId(id)} />
+                      <TaskDagView
+                        tasks={tasks}
+                        roles={roles}
+                        agents={agents}
+                        runtimes={runtimes}
+                        onNodeClick={(id) => setEditingTaskId(id)}
+                      />
                     ) : (
                       <>
                     {boardColumns.some((column) => column.id === activeTaskTab) && (
@@ -1095,18 +1102,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                               key={attempt.id}
                               className={isFailed ? "ai-attempt-failed" : undefined}
                             >
-                              <time dateTime={attempt.startedAt}>
-                                {formatEventTime(attempt.startedAt)}
-                                <span className="ai-attempt-duration">
-                                  {" "}运行 {attemptDuration(attempt)}
-                                </span>
-                                {attempt.finishedAt && (
-                                  <span className="ai-attempt-finished">
-                                    {" "}完成于 {new Date(attempt.finishedAt).toLocaleString("zh-CN")}
-                                  </span>
-                                )}
-                              </time>
-                              <div>
+                              <div className="ai-attempt-main">
                                 <strong>{attemptTitle}</strong>
                                 <small className={isFailed ? "ai-state-failed" : undefined}>
                                   {attemptAgent?.name ?? "未知 Agent"} · {attemptStateName(attempt.state)}
@@ -1114,6 +1110,16 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                     ? " · 退出码 " + attempt.exitCode
                                     : ""}
                                 </small>
+                              </div>
+                              <div className="ai-attempt-meta">
+                                <span>开始 <time dateTime={attempt.startedAt}>{formatEventTime(attempt.startedAt)}</time></span>
+                                {attempt.finishedAt ? (
+                                  <span>结束 <time dateTime={attempt.finishedAt}>{new Date(attempt.finishedAt).toLocaleString("zh-CN")}</time></span>
+                                ) : (
+                                  <span>结束 运行中</span>
+                                )}
+                                <span className="ai-attempt-duration">运行时长 {attemptDuration(attempt)}</span>
+                              </div>
                                {attempt.summary && <p>{attempt.summary}</p>}
                                {/* 仅对非运行中的任务显示查看成果按钮 */}
                                {!["queued", "starting", "running"].includes(attempt.state) && (
@@ -1126,7 +1132,7 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                 </button>
                                )}
                                {attemptEvents.length > 0 && (
-                                  <EventListView events={attemptEvents} />
+                                  <EventListView events={attemptEvents} compact />
                                 )}
                                 {attempt.state === "running" && (
                                 <div className="ai-attempt-actions">
@@ -1173,10 +1179,9 @@ export function DeliveryDetail(props: DeliveryDetailProps) {
                                         终止执行
                                       </button>
                                     </>
-                                  )}
+                                   )}
                                 </div>
                                 )}
-                             </div>
                            </li>
                          );
                        })}

@@ -9,7 +9,16 @@ export const STATE_COLORS: Record<string, string> = {
   awaitingReview: "#06b6d4", needsInput: "#a855f7", skipped: "#94a3b8",
 };
 
-export function TaskNodeCard({ data, compact }: NodeProps & { compact?: boolean }) {
+export function TaskNodeCard({
+  data,
+  compact,
+  roleName,
+  runtimeName,
+}: NodeProps & {
+  compact?: boolean;
+  roleName?: string;
+  runtimeName?: string;
+}) {
   const task = data.task as AiTaskNode;
   if (compact) {
     return (
@@ -25,8 +34,9 @@ export function TaskNodeCard({ data, compact }: NodeProps & { compact?: boolean 
       <div className="ai-dag-node-title">{task.title}</div>
       <div className="ai-dag-node-meta">
         <span className="ai-status-chip" style={{ background: STATE_COLORS[task.state] ?? "#94a3b8" }}>{task.state}</span>
-        {task.roleId && <span className="ai-dag-node-role">角色 {task.roleId}</span>}
+        {roleName && <span className="ai-dag-node-role">角色 {roleName}</span>}
       </div>
+      {runtimeName && <div className="ai-dag-node-runtime">Runtime · {runtimeName}</div>}
       <Handle type="source" position={Position.Right} />
     </div>
   );

@@ -1,28 +1,17 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ArrowDown, ArrowUp, Bot, Check,
-  ChevronDown, ChevronRight, Eye, Pencil,
+  ChevronDown, ChevronRight, Eye,
   Plus, SquareTerminal, Trash2, Users, Workflow,
 } from "lucide-react";
 import { Dialog } from "../shared/Dialog";
 import { TaskDagView } from "./TaskDagView";
-import {
-  type AiDeliveryConfigView,
-  parseRuntimeArgs,
-  presetMatchesRuntime,
-} from "./workspace-utils";
+import { type AiDeliveryConfigView, parseRuntimeArgs } from "./workspace-utils";
 import type {
-  AiAgent, AiAgentRuntime, AiRole, AiRuntimeProbe, AiStartupPreset, AiTaskNode, AiWorkflow,
+  AiAgent, AiAgentRuntime, AiRole, AiRuntimeProbe, AiTaskNode, AiWorkflow,
   AiWorkflowStep,
 } from "../../types/aiDelivery";
-import type { ExtraParamPreset } from "../../types";
-import {
-  listAiStartupPresets,
-  createAiStartupPreset,
-  updateAiStartupPreset,
-  deleteAiStartupPreset,
-  testWorkflowStep,
-} from "../../services/tauri";
+import { testWorkflowStep } from "../../services/tauri";
 
 interface ConfigDialogProps {
   view: AiDeliveryConfigView;
@@ -34,7 +23,6 @@ interface ConfigDialogProps {
   savedRuntimes: AiAgentRuntime[];
   runtimeProbes: AiRuntimeProbe[];
   isRuntimeDetecting: boolean;
-  presets: ExtraParamPreset[];
   busy: string | null;
   setError: (error: string) => void;
   onCreateWorkflow: () => void;
@@ -59,7 +47,7 @@ interface ConfigDialogProps {
 /** AI 交付配置对话框，包含任务编排、角色、Runtime 和 Agent 管理。 */
 export function ConfigDialog({
   view, onViewChange, onClose,
-  workflows, roles, agents, savedRuntimes, runtimeProbes, isRuntimeDetecting, presets,
+  workflows, roles, agents, savedRuntimes, runtimeProbes, isRuntimeDetecting,
   busy, setError,
   onCreateWorkflow, onSaveWorkflowConfig, onRemoveWorkflow,
   onAddWorkflowStep, onUpdateWorkflowStep, onMoveWorkflowStep, onRemoveWorkflowStep,
@@ -72,66 +60,10 @@ export function ConfigDialog({
   const [newRuntimeName, setNewRuntimeName] = useState("");
   const [newRuntimeKind, setNewRuntimeKind] = useState("");
   const [newRuntimeCommand, setNewRuntimeCommand] = useState("");
-  const [backendPresets, setBackendPresets] = useState<AiStartupPreset[]>([]);
-  const [showPresetManager, setShowPresetManager] = useState(false);
   const [previewWorkflow, setPreviewWorkflow] = useState<AiWorkflow | null>(null);
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
   const [testingStepId, setTestingStepId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, string>>({});
-  const [editingPreset, setEditingPreset] = useState<AiStartupPreset | null>(null);
-  const [presetDraft, setPresetDraft] = useState<{
-    name: string;
-    promptPrefix: string;
-    modelArgsText: string;
-    contextStrategy: string;
-  }>({ name: "", promptPrefix: "", modelArgsText: "", contextStrategy: "" });
-
-  useEffect(() => {
-    void listAiStartupPresets()
-      .then(setBackendPresets)
-      .catch(() => undefined);
-  }, []);
-
-  const savePresetDraft = async () => {
-    if (!presetDraft.name.trim()) return;
-    let modelArgs: Record<string, unknown> | null = null;
-    const trimmed = presetDraft.modelArgsText.trim();
-    if (trimmed) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          modelArgs = parsed as Record<string, unknown>;
-        }
-      } catch {
-        setError("modelArgs 必须是合法 JSON 对象");
-        return;
-      }
-    }
-    const payload: AiStartupPreset = editingPreset
-      ? { ...editingPreset, ...presetDraft, modelArgs, contextStrategy: presetDraft.contextStrategy || null }
-      : {
-          id: "",
-          name: presetDraft.name.trim(),
-          promptPrefix: presetDraft.promptPrefix,
-          modelArgs,
-          contextStrategy: presetDraft.contextStrategy || null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-    try {
-      const saved = editingPreset
-        ? await updateAiStartupPreset(payload)
-        : await createAiStartupPreset(payload);
-      setBackendPresets((current) => {
-        const filtered = current.filter((item) => item.id !== saved.id);
-        return [saved, ...filtered];
-      });
-      setShowPresetManager(false);
-      setEditingPreset(null);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    }
-  };
 
   // 工作流拓扑预览：把 steps 映射为模拟任务节点（依赖 = 前一 step），只读渲染
   const previewTasks = (workflow: AiWorkflow): AiTaskNode[] =>
@@ -152,7 +84,7 @@ export function ConfigDialog({
       inputArtifacts: [],
       expectedArtifacts: [],
       acceptanceCommands: [],
-      retryCount: 0,
+      retryCount: 3,
       state: "planned",
       attemptIds: [],
       createdAt: new Date().toISOString(),
@@ -191,16 +123,6 @@ export function ConfigDialog({
       })
       .finally(() => setTestingStepId(null));
   };
-
-  const removePreset = async (preset: AiStartupPreset) => {
-    try {
-      await deleteAiStartupPreset(preset.id);
-      setBackendPresets((current) => current.filter((item) => item.id !== preset.id));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    }
-  };
-
 
   // 映射到原始变量名，保持提取的 JSX 不变
   const configDialogView = view;
@@ -553,7 +475,8 @@ export function ConfigDialog({
       </div>
       <div className="ai-role-map">
         <div className="ai-team-table-head">
-          <span>角色与职责</span>
+          <span>角色名</span>
+          <span>角色备注</span>
           <span>执行 Agent</span>
           <span>实际运行配置</span>
           <span>操作</span>
@@ -587,6 +510,8 @@ export function ConfigDialog({
                         });
                     }}
                   />
+                </div>
+                <div className="ai-role-remark">
                   <input
                     aria-label={`${role.name}职责`}
                     defaultValue={role.description}
@@ -702,6 +627,11 @@ export function ConfigDialog({
                   ?? runtimes.find((item) => item.kind === runtime.kind);
                 return (
                   <div className="ai-runtime-config-row" key={runtime.id}>
+                    <div className="ai-runtime-config-status">
+                      <small className={!isRuntimeDetecting && probe?.available ? "online" : ""}>
+                        {isRuntimeDetecting ? "检测中" : probe?.available ? "已就绪" : "不可用"}
+                      </small>
+                    </div>
                     <label>
                       名称
                       <input
@@ -726,23 +656,18 @@ export function ConfigDialog({
                         }}
                       />
                     </label>
-                    <div className="ai-runtime-config-status">
-                      <small className={!isRuntimeDetecting && probe?.available ? "online" : ""}>
-                        {isRuntimeDetecting ? "检测中" : probe?.available ? "已就绪" : "不可用"}
-                      </small>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={runtime.enabled}
-                          onChange={(event) =>
-                            void saveRuntimeConfig(runtime, {
-                              enabled: event.target.checked,
-                            })
-                          }
-                        />
-                        启用
-                      </label>
-                    </div>
+                    <label className="ai-runtime-config-enable">
+                      <input
+                        type="checkbox"
+                        checked={runtime.enabled}
+                        onChange={(event) =>
+                          void saveRuntimeConfig(runtime, {
+                            enabled: event.target.checked,
+                          })
+                        }
+                      />
+                      启用
+                    </label>
                     <button
                       type="button"
                       className="ai-icon-button danger"
@@ -780,9 +705,6 @@ export function ConfigDialog({
           </button>
         </div>
         {agents.map((agent) => {
-          const runtime = savedRuntimes.find((item) => item.id === agent.runtimeId);
-          const matchingPresets = presets.filter((preset) => presetMatchesRuntime(preset, runtime));
-          const selectedPreset = matchingPresets.find((preset) => preset.name === agent.startupPresetName);
           return (
             <div className="ai-agent-config-row" key={agent.id}>
             <label className="ai-agent-name">
@@ -823,16 +745,7 @@ export function ConfigDialog({
                 value={agent.runtimeId}
                 onChange={(event) => {
                   const runtimeId = event.target.value;
-                  const nextRuntime = savedRuntimes.find((item) => item.id === runtimeId);
-                  const currentPreset = presets.find(
-                    (preset) => preset.name === agent.startupPresetName,
-                  );
-                  void saveAgentConfig(agent, {
-                    runtimeId,
-                    ...(currentPreset && !presetMatchesRuntime(currentPreset, nextRuntime)
-                      ? { startupPresetName: null, runtimeArgs: [] }
-                      : {}),
-                  });
+                  void saveAgentConfig(agent, { runtimeId });
                 }}
               >
                 {savedRuntimes
@@ -856,63 +769,9 @@ export function ConfigDialog({
                     runtimeArgs.join("\u0000") !==
                     agent.runtimeArgs.join("\u0000")
                   )
-                    void saveAgentConfig(agent, {
-                      runtimeArgs,
-                      startupPresetName: null,
-                    });
+                    void saveAgentConfig(agent, { runtimeArgs });
                 }}
               />
-            </label>
-            <label className="ai-agent-preset">
-              <span>套用参数预设</span>
-              <select
-                value={
-                  backendPresets.some((item) => item.name === agent.startupPresetName)
-                    ? agent.startupPresetName ?? ""
-                    : selectedPreset?.name ?? ""
-                }
-                onChange={(event) => {
-                  const name = event.target.value;
-                  const backend = backendPresets.find((item) => item.name === name);
-                  const client = matchingPresets.find((item) => item.name === name);
-                  // 名称一致时优先后端预设：modelArgs 由 AI 交付派发时在后端注入，
-                  // 不再冻结 runtimeArgs；客户端预设保持既有冻结行为。
-                  void saveAgentConfig(agent, {
-                    startupPresetName: backend?.name ?? client?.name ?? null,
-                    runtimeArgs: backend
-                      ? []
-                      : client
-                        ? parseRuntimeArgs(client.params)
-                        : [],
-                  });
-                }}
-              >
-                <option value="">不附加参数</option>
-                {backendPresets.map((preset) => (
-                  <option key={`backend-${preset.id}`} value={preset.name}>
-                    {preset.name}（后端）
-                  </option>
-                ))}
-                {matchingPresets
-                  .filter((preset) => !backendPresets.some((item) => item.name === preset.name))
-                  .map((preset) => (
-                    <option key={preset.id} value={preset.name}>
-                      {preset.name}
-                    </option>
-                  ))}
-              </select>
-              <button
-                type="button"
-                className="ai-preset-manage-btn"
-                title="管理启动参数预设"
-                onClick={() => {
-                  setEditingPreset(null);
-                  setPresetDraft({ name: "", promptPrefix: "", modelArgsText: "", contextStrategy: "" });
-                  setShowPresetManager(true);
-                }}
-              >
-                管理预设…
-              </button>
             </label>
             <label>
               默认超时（分钟）
@@ -945,128 +804,23 @@ export function ConfigDialog({
         })}
       </div>
       )}
-      {showPresetManager && (
-        <Dialog
-          title={editingPreset ? `编辑预设 — ${editingPreset.name}` : "新建启动预设"}
-          onClose={() => setShowPresetManager(false)}
-          className="ai-preset-manager-dialog"
-        >
-          <div className="ai-preset-manager-layout">
-            <div className="ai-preset-list">
-              <h4>已有预设</h4>
-              {backendPresets.length === 0 ? (
-                <p className="ai-stats-muted">暂无预设，点击「新建」添加。</p>
-              ) : (
-                backendPresets.map((preset) => (
-                  <div key={preset.id} className="ai-preset-list-item">
-                    <strong>{preset.name}</strong>
-                    <small>
-                      {preset.promptPrefix ? `前缀 ${preset.promptPrefix.length} 字` : "无前缀"}
-                      {preset.contextStrategy ? " · 有上下文策略" : ""}
-                    </small>
-                    <button
-                      type="button"
-                      className="ai-icon-button"
-                      title="编辑预设"
-                      aria-label={`编辑预设 ${preset.name}`}
-                      onClick={() => {
-                        setEditingPreset(preset);
-                        setPresetDraft({
-                          name: preset.name,
-                          promptPrefix: preset.promptPrefix,
-                          modelArgsText: preset.modelArgs ? JSON.stringify(preset.modelArgs, null, 2) : "",
-                          contextStrategy: preset.contextStrategy ?? "",
-                        });
-                      }}
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="ai-icon-button danger"
-                      title="删除预设"
-                      aria-label={`删除预设 ${preset.name}`}
-                      onClick={() => void removePreset(preset)}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="ai-preset-form">
-              <h4>{editingPreset ? "编辑" : "新建"}</h4>
-              <label>
-                名称
-                <input
-                  value={presetDraft.name}
-                  onChange={(event) => setPresetDraft((draft) => ({ ...draft, name: event.target.value }))}
-                />
-              </label>
-              <label>
-                提示词前缀
-                <textarea
-                  rows={4}
-                  value={presetDraft.promptPrefix}
-                  placeholder="派发时拼入 Agent 提示词开头"
-                  onChange={(event) => setPresetDraft((draft) => ({ ...draft, promptPrefix: event.target.value }))}
-                />
-              </label>
-              <label>
-                modelArgs（JSON）
-                <textarea
-                  rows={4}
-                  value={presetDraft.modelArgsText}
-                  placeholder={'{"temperature": 0.2, "maxTokens": 8192}'}
-                  onChange={(event) => setPresetDraft((draft) => ({ ...draft, modelArgsText: event.target.value }))}
-                />
-              </label>
-              <label>
-                上下文策略
-                <textarea
-                  rows={2}
-                  value={presetDraft.contextStrategy}
-                  placeholder="拼入提示词的上下文使用说明"
-                  onChange={(event) => setPresetDraft((draft) => ({ ...draft, contextStrategy: event.target.value }))}
-                />
-              </label>
-              <div className="ai-preset-form-actions">
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={!presetDraft.name.trim()}
-                  onClick={() => void savePresetDraft()}
-                >
-                  <Check size={14} />
-                  保存
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => {
-                    setEditingPreset(null);
-                    setPresetDraft({ name: "", promptPrefix: "", modelArgsText: "", contextStrategy: "" });
-                  }}
-                >
-                  <Plus size={14} />
-                  新建
-                </button>
-              </div>
-            </div>
-          </div>
-        </Dialog>
-      )}
       {previewWorkflow && (
         <Dialog
           title={`任务拓扑预览 — ${previewWorkflow.name}`}
           onClose={() => setPreviewWorkflow(null)}
           className="ai-workflow-preview-dialog"
-          style={{ width: 'min(860px, 94vw)', height: 'min(560px, 82vh)' }}
+          style={{ width: "min(1180px, 96vw)", height: "min(800px, 90vh)" }}
         >
           <p className="ai-workflow-preview-hint">
             将按步骤顺序生成串行任务（每个步骤一个节点，依赖前一步骤）。实际派发时同一步骤可拆分为多个并行任务。
           </p>
-          <TaskDagView tasks={previewTasks(previewWorkflow)} onNodeClick={() => undefined} />
+          <TaskDagView
+            tasks={previewTasks(previewWorkflow)}
+            roles={roles}
+            agents={agents}
+            runtimes={savedRuntimes}
+            onNodeClick={() => undefined}
+          />
         </Dialog>
       )}
     </Dialog>

@@ -302,30 +302,227 @@ pub(crate) fn ensure_task_branch_clean(worktree: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 读取 Agent 运行记录（transcript.log，为空时回退 live-output.log）的尾部，
+/// 用于在「终端已结束且无完整成果」这类模糊失败中附带真实原因，便于人工定位。
+pub(crate) fn terminal_transcript_tail(run_id: &str) -> Option<String> {
+    let directory = terminal_run_dir_by_id(run_id);
+    let content = fs::read_to_string(directory.join("transcript.log"))
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            fs::read_to_string(directory.join("live-output.log"))
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })?;
+    let compact = strip_terminal_control_sequences(&content);
+    const MAX_TAIL_CHARS: usize = 600;
+    let tail = compact
+        .chars()
+        .rev()
+        .take(MAX_TAIL_CHARS)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    let trimmed = tail.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// 写任务验收前，把 Agent 遗留的、位于允许写入路径内的未提交改动自动提交，
+/// 避免「Agent 执行后存在未提交改动」直接失败阻断任务推进。
+/// - 全部改动都在允许范围内：自动提交并返回提交摘要；
+/// - 无改动：返回 None；
+/// - 存在允许范围外的改动：跳过自动提交返回 None，交由静态越权审计判定。
+pub(crate) fn auto_commit_allowed_changes(
+    contract: &AiTaskContract,
+    commit_message: &str,
+) -> Result<Option<String>, String> {
+    let worktree = PathBuf::from(&contract.working_directory);
+    if !worktree.is_dir() {
+        return Err("任务 worktree 不可用，无法自动提交".to_string());
+    }
+    let mut changed_paths = Vec::new();
+    // 只统计尚未提交的改动：工作树未暂存 + 已暂存 + 未跟踪。
+    // 不能用 `git diff <base>`：它包含相对基线已提交的改动，重试场景下
+    // 改动早已提交，git commit 会报「nothing to commit」退出码 1，误判失败。
+    changed_paths.extend(
+        run_git(
+            &worktree,
+            &["diff".to_string(), "--name-only".to_string()],
+        )?
+        .lines()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string),
+    );
+    changed_paths.extend(
+        run_git(
+            &worktree,
+            &[
+                "diff".to_string(),
+                "--cached".to_string(),
+                "--name-only".to_string(),
+            ],
+        )?
+        .lines()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string),
+    );
+    changed_paths.extend(
+        run_git(
+            &worktree,
+            &[
+                "ls-files".to_string(),
+                "--others".to_string(),
+                "--exclude-standard".to_string(),
+            ],
+        )?
+        .lines()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string),
+    );
+    changed_paths.sort();
+    changed_paths.dedup();
+    if changed_paths.is_empty() {
+        return Ok(None);
+    }
+    let in_scope = changed_paths
+        .iter()
+        .all(|path| is_allowed_write_path(path, &contract.allowed_write_paths));
+    if !in_scope {
+        // 越权改动交给 audit_contract_scope 判定（policyViolation），平台不代提交。
+        return Ok(None);
+    }
+    let mut add_args = vec!["-c".to_string(), "user.name=TerminalBuddy".to_string()];
+    add_args.extend([
+        "-c".to_string(),
+        "user.email=terminalbuddy@local".to_string(),
+        "add".to_string(),
+        "-A".to_string(),
+        "--".to_string(),
+    ]);
+    add_args.extend(changed_paths.iter().cloned());
+    run_git(&worktree, &add_args)?;
+    run_git(
+        &worktree,
+        &[
+            "-c".to_string(),
+            "user.name=TerminalBuddy".to_string(),
+            "-c".to_string(),
+            "user.email=terminalbuddy@local".to_string(),
+            "commit".to_string(),
+            "-m".to_string(),
+            commit_message.to_string(),
+        ],
+    )?;
+    let head = run_git(&worktree, &["rev-parse".to_string(), "HEAD".to_string()])?;
+    Ok(Some(format!(
+        "{}（{} 个文件）",
+        head.get(..8).unwrap_or(&head),
+        changed_paths.len()
+    )))
+}
+
 pub(crate) fn run_shell_command(working_directory: &Path, command: &str) -> Result<AiCommandResult, String> {
     // 验收命令与质量门禁命令使用 PowerShell 语法（Test-Path、Select-String 等 cmdlet），
     // 必须通过 powershell.exe 执行，cmd.exe 无法识别 PowerShell cmdlet。
-    let mut cmd = Command::new("powershell");
-    cmd.args(["-NoProfile", "-NonInteractive", "-Command", command])
-        .current_dir(working_directory);
-    #[cfg(windows)]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    let output = run_command_with_timeout(&mut cmd, QUALITY_GATE_COMMAND_TIMEOUT, "质量门禁命令")?;
-    let mut combined = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.trim().is_empty() {
-        if !combined.is_empty() {
-            combined.push('\n');
+    let run_powershell = || -> Result<AiCommandResult, String> {
+        let mut cmd = Command::new("powershell");
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", command])
+            .current_dir(working_directory);
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        let output =
+            run_command_with_timeout(&mut cmd, QUALITY_GATE_COMMAND_TIMEOUT, "质量门禁命令")?;
+        let mut combined = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.trim().is_empty() {
+            if !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str(&stderr);
         }
-        combined.push_str(&stderr);
+        Ok(AiCommandResult {
+            command: command.to_string(),
+            exit_code: output.status.code().unwrap_or(-1),
+            output: compact_output(&combined),
+        })
+    };
+    let mut result = run_powershell()?;
+    // bash 兼容回退：管理者/Agent 生成的验收命令可能混入 bash 语法（如
+    // `test -f docs/x.md`、`test -z "$(git status --porcelain)"`），PowerShell 5.1
+    // 无法识别会直接退出码 1，把「命令不兼容」误判成「验收失败」。
+    // PowerShell 失败且本机存在 Git Bash 时用 bash -c 重跑一次（bash 仍失败则如实失败）。
+    if result.exit_code != 0 {
+        if let Some(bash) = git_bash_executable() {
+            let mut cmd = Command::new(bash);
+            cmd.args(["-c", command]).current_dir(working_directory);
+            #[cfg(windows)]
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            cmd.stdout(Stdio::piped());
+            cmd.stderr(Stdio::piped());
+            if let Ok(output) = run_command_with_timeout(
+                &mut cmd,
+                QUALITY_GATE_COMMAND_TIMEOUT,
+                "验收命令（bash 兼容回退）",
+            ) {
+                let mut combined = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.trim().is_empty() {
+                    if !combined.is_empty() {
+                        combined.push('\n');
+                    }
+                    combined.push_str(&stderr);
+                }
+                result = AiCommandResult {
+                    command: format!("{}（bash 回退）", command),
+                    exit_code: output.status.code().unwrap_or(-1),
+                    output: compact_output(&combined),
+                };
+            }
+        }
     }
-    Ok(AiCommandResult {
-        command: command.to_string(),
-        exit_code: output.status.code().unwrap_or(-1),
-        output: compact_output(&combined),
+    Ok(result)
+}
+
+pub(crate) fn git_bash_executable() -> Option<&'static str> {
+    static BASH: OnceLock<Option<&'static str>> = OnceLock::new();
+    *BASH.get_or_init(|| {
+        let candidates = [
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+        ];
+        candidates
+            .iter()
+            .find(|candidate| Path::new(candidate).is_file())
+            .copied()
+            .or_else(|| {
+                which_bash_from_path().map(|value| {
+                    let leaked: &'static str = Box::leak(value.into_boxed_str());
+                    leaked
+                })
+            })
     })
+}
+
+fn which_bash_from_path() -> Option<String> {
+    let path_var = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&path_var) {
+        let candidate = directory.join("bash.exe");
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+    None
 }
 
 pub(crate) fn build_manager_prompt(delivery: &AiDelivery, project: &AiProject, roles: &[AiRole]) -> String {
@@ -379,7 +576,7 @@ pub(crate) fn build_manager_prompt(delivery: &AiDelivery, project: &AiProject, r
             .join("\n")
     };
     format!(
-        "你是 AI 交付团队的管理者。请把用户需求拆解为可执行的结构化任务图。\n\n需求标题：{}\n需求正文：{}\n\n项目工作区：{}\n可用仓库：\n{}\n\n可用角色：\n{}\n\n用户指定的任务编排（必须逐步覆盖并保持顺序）：\n{}\n\n硬性约束：\n1. 每个写入任务只能指定一个 targetRepositoryId，禁止单个 Agent 跨服务修改。\n2. 跨服务依赖判断（必须遵守）：\n   - 若任务 B 的正确改动需要任务 A 先完成，则 B 的 dependencyIndexes 必须包含 A，且 A 在 tasks 中排在 B 之前（dependencyIndexes 只能引用更早的任务）。\n   - 出现以下任一情况即视为存在依赖，必须建立：\n     a) A 改动了 B 依赖的契约：API 接口/参数/返回值、数据模型、DB schema/迁移、共享类型定义、对外配置项；\n     b) A 属于基础/底层服务（如基础数据、用户、字典、权限等），B 属于依赖它的上层业务服务（如仓储 wms、订单、库存）；\n     c) 同一编排步骤内按服务拆分的并行任务，若存在 a/b 所述契约依赖，也要建立依赖，而非默认并行；必要时把被依赖的服务拆到更早的编排步骤。\n   - 反之，若两个跨服务任务无任何契约或数据依赖，不得建立依赖（避免不必要串行）。\n   - 判断口诀：B 离开 A 能否独立正确完成——不能则必须依赖。\n3. 每个阶段任务必须声明至少一个具体交付物 expectedArtifacts，禁止空数组；每个元素只能是安全相对路径，例如 `analysis/mom-app-item1-4.md` 或 `uni-app/pages/outbounds/index.vue`，不能填写说明句子、绝对路径或 `../`。任务只有在交付物实际存在并通过校验后才能更新为完成。只读步骤的交付物会写入平台提供的项目外成果目录，并自动交接给后续步骤。\n4. 每个任务必须声明 allowedWritePaths 和验收命令；只读步骤的 allowedWritePaths 使用 [\".\"]。\n5. workflowStepId 必须使用上面给出的 stepId；每个编排步骤至少生成一个任务，同一步骤可以按服务拆成多个并行任务。\n6. 后一步骤的每个任务必须依赖前一步骤的全部任务；tasks 按编排顺序和拓扑顺序输出，dependencyIndexes 从 0 开始且只能引用之前的任务。\n7. 不要计划 git push、PR、部署、删除数据或破坏性操作。\n8. 只返回符合提供 JSON Schema 的数据。",
+        "你是 AI 交付团队的管理者。请把用户需求拆解为可执行的结构化任务图。\n\n需求标题：{}\n需求正文：{}\n\n项目工作区：{}\n可用仓库：\n{}\n\n可用角色：\n{}\n\n用户指定的任务编排（必须逐步覆盖并保持顺序）：\n{}\n\n硬性约束：\n1. 每个写入任务只能指定一个 targetRepositoryId，禁止单个 Agent 跨服务修改。\n2. 跨服务依赖判断（必须遵守）：\n   - 若任务 B 的正确改动需要任务 A 先完成，则 B 的 dependencyIndexes 必须包含 A，且 A 在 tasks 中排在 B 之前（dependencyIndexes 只能引用更早的任务）。\n   - 出现以下任一情况即视为存在依赖，必须建立：\n     a) A 改动了 B 依赖的契约：API 接口/参数/返回值、数据模型、DB schema/迁移、共享类型定义、对外配置项；\n     b) A 属于基础/底层服务（如基础数据、用户、字典、权限等），B 属于依赖它的上层业务服务（如仓储 wms、订单、库存）；\n     c) 同一编排步骤内按服务拆分的并行任务，若存在 a/b 所述契约依赖，也要建立依赖，而非默认并行；必要时把被依赖的服务拆到更早的编排步骤。\n   - 反之，若两个跨服务任务无任何契约或数据依赖，不得建立依赖（避免不必要串行）。\n   - 判断口诀：B 离开 A 能否独立正确完成——不能则必须依赖。\n3. 每个阶段任务必须声明至少一个具体交付物 expectedArtifacts，禁止空数组；每个元素只能是安全相对路径，例如 `analysis/mom-app-item1-4.md` 或 `uni-app/pages/outbounds/index.vue`，不能填写说明句子、绝对路径或 `../`。任务只有在交付物实际存在并通过校验后才能更新为完成。只读步骤的交付物会写入平台提供的项目外成果目录，并自动交接给后续步骤。\n4. 每个任务必须声明 allowedWritePaths 和验收命令；只读步骤的 allowedWritePaths 使用 [\".\"]。\n   - 验收命令由平台在 Windows PowerShell 5.1 中执行：必须使用 PowerShell 兼容语法，并以非零退出码表示验收失败（如 `Test-Path -LiteralPath 'docs/x.md'` 判文件存在、`git status --porcelain` 判工作树干净，失败时 `exit 1`）。\n   - 禁止使用 bash 专属语法（如 `test -f`、`test -z \"$(...)\"`、`&&`/`||` 连接、`$()` 命令替换）；反例 `test -f docs/x.md` 在 PowerShell 中必然报“test 不是 cmdlet”而失败。\n   - 正确示例：`if (Test-Path -LiteralPath 'docs/team-conventions.md') {{ exit 0 }} else {{ exit 1 }}`。\n5. workflowStepId 必须使用上面给出的 stepId；每个编排步骤至少生成一个任务，同一步骤可以按服务拆成多个并行任务。\n6. 后一步骤的每个任务必须依赖前一步骤的全部任务；tasks 按编排顺序和拓扑顺序输出，dependencyIndexes 从 0 开始且只能引用之前的任务。\n7. 不要计划 git push、PR、部署、删除数据或破坏性操作。\n8. 只返回符合提供 JSON Schema 的数据。",
         delivery.title,
         delivery.requirement,
         project.workspace_root,
@@ -1154,6 +1351,110 @@ pub(crate) fn available_runtime_probe(kind: &str, command: &str, output: Output)
             .filter(|value| !value.is_empty())
             .map(str::to_string),
     }
+}
+
+/// 按 PowerShell 的命令解析规则解析 runtime 可执行文件（优先 .ps1/.cmd 包装器），
+/// 与 AI 终端内 `& 'codex'` 的解析保持一致，避免派发前探活与实际执行命中不同版本。
+pub(crate) fn resolve_runtime_executable(command: &str) -> Result<String, String> {
+    let parts = split_runtime_command(command)?;
+    let executable = &parts[0];
+    let path = Path::new(executable);
+    if path.is_absolute() || path.components().count() > 1 {
+        return Ok(executable.clone());
+    }
+    // 裸命令名：用 PowerShell Get-Command 解析（与终端内一致），
+    // 不用 cmd 的 PATHEXT 规则，避免命中 WinGet/WindowsApps 等不同版本。
+    let script = format!(
+        "(Get-Command -Name {} -ErrorAction Stop | Select-Object -First 1).Source",
+        powershell_literal(executable)
+    );
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let output =
+        run_command_with_timeout(&mut cmd, RUNTIME_PROBE_TIMEOUT, "Runtime 命令解析")?;
+    let source = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !output.status.success() || source.is_empty() {
+        return Err(format!("无法在系统 PATH 中找到 Runtime CLI「{}」", executable));
+    }
+    Ok(source)
+}
+
+/// 运行 runtime CLI（兼容 .ps1 包装器：需经 powershell.exe 执行）。
+fn run_runtime_cli(executable: &str, args: &[&str], label: &str) -> Result<String, String> {
+    let mut process = if executable.to_ascii_lowercase().ends_with(".ps1") {
+        let mut script = format!("& {}", powershell_literal(executable));
+        for argument in args {
+            script.push(' ');
+            script.push_str(&powershell_literal(argument));
+        }
+        let mut cmd = Command::new("powershell");
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+        cmd
+    } else {
+        let mut cmd = Command::new(executable);
+        cmd.args(args);
+        cmd
+    };
+    #[cfg(windows)]
+    process.creation_flags(CREATE_NO_WINDOW);
+    process.stdout(Stdio::piped());
+    process.stderr(Stdio::piped());
+    let output = run_command_with_timeout(&mut process, RUNTIME_PROBE_TIMEOUT, label)?;
+    let mut combined = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.trim().is_empty() {
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(&stderr);
+    }
+    if !output.status.success() {
+        return Err(format!(
+            "{}失败（退出码 {}）: {}",
+            label,
+            output.status.code().unwrap_or(-1),
+            compact_output(&combined)
+        ));
+    }
+    Ok(combined)
+}
+
+/// 派发前探活：确认 Runtime CLI 可用，并校验 Codex 支持 AI 交付注入的关键标志。
+/// 历史故障中 Codex CLI 版本与注入标志不兼容时会在终端内秒退（exit=2）且几乎无输出，
+/// 这里提前在平台侧验证，失败时返回可直接展示给用户的明确原因。
+pub(crate) fn probe_runtime_for_dispatch(runtime: &AiAgentRuntime) -> Result<(), String> {
+    let resolved = resolve_runtime_executable(&runtime.command)?;
+    let _ = run_runtime_cli(&resolved, &["--version"], "Runtime CLI 版本探测")?;
+    let is_codex = split_runtime_command(&runtime.command)?.into_iter().next().is_some_and(
+        |executable| runtime_kind_matches(runtime, &executable, "codex"),
+    );
+    if !is_codex {
+        return Ok(());
+    }
+    // Codex：校验 exec 非交互执行所需的关键标志，版本过旧时提前报错而不是秒退。
+    let help = run_runtime_cli(&resolved, &["exec", "--help"], "Codex exec 参数探测")?;
+    const REQUIRED_FLAGS: [&str; 4] = [
+        "--output-schema",
+        "--output-last-message",
+        "--add-dir",
+        "--skip-git-repo-check",
+    ];
+    let missing: Vec<&str> = REQUIRED_FLAGS
+        .iter()
+        .copied()
+        .filter(|flag| !help.contains(flag))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Codex CLI 版本过旧，缺少 AI 交付所需的参数：{}。请升级：npm install -g @openai/codex@latest",
+            missing.join("、")
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]

@@ -1827,4 +1827,184 @@ mod cycle_detection_tests {
         PathService::set_test_data_dir(None);
         let _ = fs::remove_dir_all(root);
     }
+
+    /// 写任务验收改进：允许路径内的未提交改动由平台自动提交，
+    /// 避免「Agent 执行后存在未提交改动」直接失败阻断推进；越权改动不代提交。
+    #[test]
+    fn auto_commit_allowed_changes_commits_in_scope_only() {
+        let root =
+            std::env::temp_dir().join(format!("terminal-buddy-autocommit-{}", Uuid::new_v4()));
+        let repository = root.join("service-a");
+        fs::create_dir_all(&repository).unwrap();
+        let run = |arguments: &[&str]| {
+            let output = Command::new("git")
+                .args(arguments)
+                .current_dir(&repository)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {} failed: {}",
+                arguments.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&["init"]);
+        run(&["config", "user.name", "TerminalBuddy Test"]);
+        run(&["config", "user.email", "test@terminalbuddy.local"]);
+        fs::write(repository.join("README.md"), "# service-a\n").unwrap();
+        run(&["add", "README.md"]);
+        run(&["commit", "-m", "initial"]);
+        let base =
+            run_git(&repository, &["rev-parse".to_string(), "HEAD".to_string()]).unwrap();
+
+        let contract = AiTaskContract {
+            id: "contract".to_string(),
+            project_id: "project".to_string(),
+            delivery_id: "delivery".to_string(),
+            task_id: "task".to_string(),
+            title: "task".to_string(),
+            target_repository_id: "repository".to_string(),
+            target_repository_name: "repository".to_string(),
+            allowed_write_paths: vec!["README.md".to_string()],
+            execution_context: EXECUTION_CONTEXT_TASK_WORKTREE.to_string(),
+            forbidden_repository_ids: Vec::new(),
+            repository_status_baselines: Vec::new(),
+            input_artifacts: Vec::new(),
+            input_artifact_directory: None,
+            output_artifact_directory: None,
+            expected_artifacts: Vec::new(),
+            acceptance_commands: Vec::new(),
+            retry_count: 0,
+            state: "allocated".to_string(),
+            working_directory: repository.to_string_lossy().to_string(),
+            branch_name: None,
+            worktree_path: None,
+            base_commit: Some(base),
+            validated_commit: None,
+            dirty: false,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+
+        // 范围内改动：自动提交并保持 worktree 干净
+        fs::write(repository.join("README.md"), "# service-a\nupdated\n").unwrap();
+        let committed =
+            auto_commit_allowed_changes(&contract, "TerminalBuddy: 测试任务").unwrap();
+        assert!(committed.is_some(), "范围内改动应被自动提交");
+        let status = run_git(
+            &repository,
+            &["status".to_string(), "--porcelain".to_string()],
+        )
+        .unwrap();
+        assert!(status.is_empty(), "自动提交后 worktree 应干净: {}", status);
+        // 重试场景：改动已提交后再次自动提交应为无操作（不能因「nothing to commit」报错）
+        let noop = auto_commit_allowed_changes(&contract, "TerminalBuddy: 测试任务").unwrap();
+        assert!(noop.is_none(), "已提交后不应重复提交");
+
+        // 存在越权改动：跳过自动提交，留给静态越权审计判定
+        fs::write(repository.join("README.md"), "# service-a\nupdated-2\n").unwrap();
+        fs::create_dir_all(repository.join("src")).unwrap();
+        fs::write(repository.join("src/out.txt"), "out-of-scope\n").unwrap();
+        let skipped =
+            auto_commit_allowed_changes(&contract, "TerminalBuddy: 测试任务").unwrap();
+        assert!(skipped.is_none(), "越权改动不应被自动提交");
+        let status = run_git(
+            &repository,
+            &["status".to_string(), "--porcelain".to_string()],
+        )
+        .unwrap();
+        assert!(
+            status.contains("src"),
+            "越权文件应保持未提交: {}",
+            status
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 失败信息改进：运行记录尾部为空时回退 live-output.log，并截断到合理长度。
+    #[test]
+    fn terminal_transcript_tail_reads_run_log_tail() {
+        let root =
+            std::env::temp_dir().join(format!("terminal-buddy-tail-{}", Uuid::new_v4()));
+        PathService::set_test_data_dir(Some(root.join("data")));
+        let run_id = Uuid::new_v4().to_string();
+        let run_dir = AiDeliveryService::entity_dir(TERMINAL_RUNS_DIR).join(run_id.clone());
+        fs::create_dir_all(&run_dir).unwrap();
+        fs::write(run_dir.join("transcript.log"), "").unwrap();
+        fs::write(run_dir.join("live-output.log"), "long-".repeat(200)).unwrap();
+        let tail = terminal_transcript_tail(&run_id).unwrap();
+        assert!(tail.len() <= 600, "尾部应截断到 600 字符: {}", tail.len());
+        assert!(
+            tail.starts_with("long-"),
+            "应读取 live-output.log 尾部: {}",
+            &tail[..20]
+        );
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 验收命令兼容性：bash 语法（test -f）在 PowerShell 5.1 不可用，
+    /// 平台应回退到 Git Bash 执行；文件真实不存在时 bash 回退同样失败。
+    #[test]
+    fn run_shell_command_falls_back_to_bash_for_bash_syntax() {
+        if git_bash_executable().is_none() {
+            eprintln!("跳过：本机未安装 Git Bash");
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "terminal-buddy-bash-fallback-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("x.md"), "x").unwrap();
+
+        let result = run_shell_command(&root, "test -f x.md").unwrap();
+        assert_eq!(result.exit_code, 0, "bash 回退应通过: {}", result.output);
+
+        let missing = run_shell_command(&root, "test -f nope.md").unwrap();
+        assert_ne!(missing.exit_code, 0, "不存在的文件 bash 回退也应失败");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 派发前探活：裸命令名按 PowerShell 规则解析出绝对路径（与终端内一致）。
+    #[test]
+    fn resolve_runtime_executable_resolves_bare_command() {
+        let resolved = resolve_runtime_executable("powershell").unwrap();
+        assert!(
+            !resolved.trim().is_empty(),
+            "应解析出可执行文件路径: {}",
+            resolved
+        );
+        let resolved_path = Path::new(resolved.trim());
+        assert!(
+            resolved_path.is_absolute(),
+            "解析结果应为绝对路径: {}",
+            resolved
+        );
+    }
+
+    /// 派发前探活：CLI 不存在时返回明确错误，而不是放行后秒退成模糊失败。
+    #[test]
+    fn probe_runtime_for_dispatch_rejects_missing_cli() {
+        let now = chrono::Utc::now().to_rfc3339();
+        let runtime = AiAgentRuntime {
+            id: "runtime".to_string(),
+            name: "Missing CLI".to_string(),
+            kind: "codex".to_string(),
+            command: "terminal-buddy-no-such-cli-7f3a9c".to_string(),
+            enabled: true,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        let error = probe_runtime_for_dispatch(&runtime).unwrap_err();
+        assert!(
+            error.contains("PATH") || error.contains("无法"),
+            "应给出明确的 CLI 缺失原因: {}",
+            error
+        );
+    }
 }

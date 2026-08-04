@@ -5,13 +5,15 @@ import { eventTypeName, isFailedEventType, formatEventTime } from "./workspace-u
 interface EventListViewProps {
   events: AiDeliveryEvent[];
   pageSize?: number;
+  /** 紧凑模式：用于 Agent 运行记录内的少量执行事件，去掉搜索/分页，时间跟在事件标题后。 */
+  compact?: boolean;
 }
 
 /**
  * 通用事件列表：最新在前、关键字搜索、分页展示。
  * 输入按 occurredAt 升序（get_delivery_events 返回序），组件内部 reverse 以匹配既有时间线 UX。
  */
-export function EventListView({ events, pageSize = 100 }: EventListViewProps) {
+export function EventListView({ events, pageSize = 100, compact = false }: EventListViewProps) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const filtered = useMemo(() => {
@@ -28,6 +30,26 @@ export function EventListView({ events, pageSize = 100 }: EventListViewProps) {
     () => filtered.slice(-(page + 1) * pageSize, filtered.length - page * pageSize).reverse(),
     [filtered, page, pageSize],
   );
+
+  if (compact) {
+    // 运行记录的执行事件数量固定很少（开始/结束/消息），按发生顺序展示即可
+    return (
+      <ol className="ai-attempt-events">
+        {events.map((event) => (
+          <li
+            key={event.id}
+            className={isFailedEventType(event.eventType) ? "ai-event-failed" : undefined}
+          >
+            <div className="ai-attempt-event-row">
+              <strong>{eventTypeName(event.eventType)}</strong>
+              <time dateTime={event.occurredAt}>{formatEventTime(event.occurredAt)}</time>
+            </div>
+            {event.message ? <p>{event.message}</p> : null}
+          </li>
+        ))}
+      </ol>
+    );
+  }
 
   return (
     <div className="ai-event-list-view">

@@ -31,7 +31,6 @@ import type {
   AiTaskContract,
   AiWorkflow,
 } from "../../types/aiDelivery";
-import type { ExtraParamPreset } from "../../types";
 import {
   answerAiDecisionRequest,
   cancelAiAttempt,
@@ -67,7 +66,6 @@ import {
   mergeAiDeliveryLocally,
   onAiDeliveryEvent,
   planAiDeliveryWithManager,
-  readClientData,
   replanDeliveryAcceptingCurrentState,
   replanLegacyAiDelivery,
   refreshAiProjectRepositories,
@@ -117,7 +115,6 @@ export function AiDeliveryWorkspace({
   const [agents, setAgents] = useState<AiAgent[]>([]);
   const [roles, setRoles] = useState<AiRole[]>([]);
   const [workflows, setWorkflows] = useState<AiWorkflow[]>([]);
-  const [presets, setPresets] = useState<ExtraParamPreset[]>([]);
   const [deliveries, setDeliveries] = useState<AiDelivery[]>([]);
   const [tasks, setTasks] = useState<AiTaskNode[]>([]);
   const [taskContracts, setTaskContracts] = useState<AiTaskContract[]>([]);
@@ -186,7 +183,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
   const [manualTaskRoleId, setManualTaskRoleId] = useState("");
   const [manualTaskAgentId, setManualTaskAgentId] = useState("");
   const [manualTaskDependencyIds, setManualTaskDependencyIds] = useState<string[]>([]);
-  const [manualTaskRetryCount, setManualTaskRetryCount] = useState("0");
+  const [manualTaskRetryCount, setManualTaskRetryCount] = useState("3");
   const [manualTaskTimeoutMinutes, setManualTaskTimeoutMinutes] = useState("");
   const [busy, setBusy] = useState<string | null>(null);  const [error, setError] = useState("");
   const [pollWarning, setPollWarning] = useState(0);
@@ -268,7 +265,6 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         nextAgents,
         nextRoles,
         nextWorkflows,
-        rawPresets,
         nextAllDeliveries,
       ] = await Promise.all([
         getAiProjects(),
@@ -276,28 +272,18 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         getAiAgents(),
         getAiRoles(),
         getAiWorkflows(),
-        readClientData("extra_param_presets"),
         getAiDeliveries(),
       ]);
       const activeProjectId = nextProjectId
         || pickMostRecentDelivery(nextAllDeliveries)?.projectId
         || pickMostRecentProject(nextProjects)?.id
         || "";
-      let nextPresets: ExtraParamPreset[] = [];
-      try {
-        nextPresets = rawPresets
-          ? (JSON.parse(rawPresets) as ExtraParamPreset[])
-          : [];
-      } catch {
-        nextPresets = [];
-      }
       setProjects(nextProjects);
       setSavedRuntimes(nextSavedRuntimes);
       setConfigurationLoaded(true);
       setAgents(nextAgents);
       setRoles(nextRoles);
       setWorkflows(nextWorkflows);
-      setPresets(Array.isArray(nextPresets) ? nextPresets : []);
       setProjectId(activeProjectId);
       const [nextDeliveries, nextContracts] = activeProjectId
         ? await Promise.all([
@@ -575,7 +561,6 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           name,
           runtimeId,
           runtimeArgs: [],
-          startupPresetName: null,
           maxConcurrency,
           enabled: true,
           createdAt: stamp,
@@ -779,7 +764,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
     setManualTaskRoleId("");
     setManualTaskAgentId("");
     setManualTaskDependencyIds([]);
-    setManualTaskRetryCount("0");
+    setManualTaskRetryCount("3");
     setManualTaskTimeoutMinutes("");
     setManualTaskExecutionContext("taskWorktree");
     setShowTaskDialog(true);
@@ -1350,7 +1335,6 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         name: "未命名 Agent",
         runtimeId: runtime.id,
         runtimeArgs: [],
-        startupPresetName: null,
         maxConcurrency: 2,
         enabled: true,
         createdAt: stamp,
@@ -1628,7 +1612,6 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
           savedRuntimes={savedRuntimes}
           runtimeProbes={runtimes}
           isRuntimeDetecting={isRuntimeDetecting}
-          presets={presets}
           busy={busy}
           setError={setError}
           onCreateWorkflow={() => void createWorkflow()}
@@ -1702,7 +1685,7 @@ const [attemptOutputMap, setAttemptOutputMap] = useState<Record<string, AiAttemp
         </section>
       ) : (
         <DeliveryDetail
-          tasks={tasks} agents={agents} roles={roles}
+          tasks={tasks} agents={agents} runtimes={savedRuntimes} roles={roles}
          reviewGateByTask={reviewGateByTask}
          project={project} delivery={delivery} deliveries={deliveries}
          attempts={attempts} deliveryEvents={deliveryEvents}

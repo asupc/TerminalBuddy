@@ -1,5 +1,4 @@
-import type { AiAgentRuntime, AiDelivery, AiProject, AiTaskNode } from "../../types/aiDelivery";
-import type { ExtraParamPreset } from "../../types";
+import type { AiDelivery, AiProject, AiTaskNode } from "../../types/aiDelivery";
 
 
 export const runtimeName = (kind: string) =>
@@ -27,13 +26,6 @@ export const parseRuntimeArgs = (value: string) =>
     value.matchAll(/(?:"([^"]*)")|(?:'([^']*)')|([^\s]+)/g),
     (match) => match[1] ?? match[2] ?? match[3],
   ).filter(Boolean);
-export const presetMatchesRuntime = (
-  preset: ExtraParamPreset,
-  runtime: AiAgentRuntime | undefined,
-) => {
-  const commandMatch = preset.commandMatch?.trim().toLowerCase();
-  return !commandMatch || Boolean(runtime?.command.toLowerCase().includes(commandMatch));
-};
 export const parseTaskLines = (value: string) =>
   value
     .split(/\r?\n|,/)

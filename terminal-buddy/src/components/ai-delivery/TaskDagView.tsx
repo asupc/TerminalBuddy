@@ -3,7 +3,9 @@ import {
   ReactFlow,
   Background,
   Controls,
+  Handle,
   MiniMap,
+  Position,
   applyNodeChanges,
   type Edge,
   type Node,
@@ -14,9 +16,15 @@ import {
 import "@xyflow/react/dist/style.css";
 import { computeTaskGraphLayout } from "./utils/taskGraphLayout";
 import { TaskNodeCard } from "./TaskNodeCard";
-import type { AiTaskNode } from "../../types/aiDelivery";
+import type {
+  AiAgent,
+  AiAgentRuntime,
+  AiRole,
+  AiTaskNode,
+} from "../../types/aiDelivery";
 
-/** 虚拟「开始」「结束」节点：纯展示，无 Handle、不可连线/拖拽（draggable 在布局层已置 false）。 */
+/** 虚拟「开始」「结束」节点：纯展示，不可连线，但允许拖动位置；
+ *  仍需保留 Handle 作为连线锚点，否则 ReactFlow 不会渲染与虚拟节点相连的边。 */
 function MarkerNode({ data }: NodeProps) {
   const label = (data as { label?: unknown })?.label;
   return (
@@ -33,6 +41,9 @@ function MarkerNode({ data }: NodeProps) {
         whiteSpace: "nowrap",
       }}
     >
+      {/* 虚拟节点也需要 Handle，否则 ReactFlow 无法锚定「开始→首任务」「末任务→结束」的连线 */}
+      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
       {typeof label === "string" ? label : ""}
     </div>
   );
@@ -40,6 +51,9 @@ function MarkerNode({ data }: NodeProps) {
 
 interface Props {
   tasks: AiTaskNode[];
+  roles?: AiRole[];
+  agents?: AiAgent[];
+  runtimes?: AiAgentRuntime[];
   onNodeClick: (taskId: string) => void;
 }
 
@@ -62,13 +76,12 @@ function applySavedPositions(nodes: Node[], saved: SavedPositions): Node[] {
   if (entries.length === 0) return nodes;
   const savedById = new Map(entries);
   return nodes.map((node) => {
-    if (node.id.startsWith("__")) return node;
     const position = savedById.get(node.id);
     return position ? { ...node, position } : node;
   });
 }
 
-export function TaskDagView({ tasks, onNodeClick }: Props) {
+export function TaskDagView({ tasks, roles, agents, runtimes, onNodeClick }: Props) {
   const compact = tasks.length > 50;
   const deliveryId = tasks[0]?.deliveryId ?? "unknown";
   const layout = useMemo(() => computeTaskGraphLayout(tasks), [tasks]);
@@ -106,7 +119,6 @@ export function TaskDagView({ tasks, onNodeClick }: Props) {
   // 拖拽结束持久化位置：跨轮询刷新、重启应用均保持用户布局
   const onNodeDragStop = useCallback(
     (_: unknown, node: Node) => {
-      if (node.id.startsWith("__")) return; // 虚拟节点不持久化
       try {
         const saved = loadSavedPositions(deliveryId);
         saved[node.id] = node.position;
@@ -120,10 +132,34 @@ export function TaskDagView({ tasks, onNodeClick }: Props) {
 
   const nodeTypes = useMemo<NodeTypes>(
     () => ({
-      taskNode: (props: any) => <TaskNodeCard {...props} compact={compact} />,
+      taskNode: (props: any) => {
+        const task = (props.data as { task?: AiTaskNode })?.task;
+        const role = task?.roleId
+          ? roles?.find((item) => item.id === task.roleId)
+          : undefined;
+        const roleName = role?.name;
+        const agent =
+          (task?.assignedAgentId
+            ? agents?.find((item) => item.id === task.assignedAgentId)
+            : undefined)
+          ?? (role?.lockedAgentId
+            ? agents?.find((item) => item.id === role.lockedAgentId)
+            : undefined);
+        const runtimeName = agent?.runtimeId
+          ? runtimes?.find((item) => item.id === agent.runtimeId)?.name
+          : undefined;
+        return (
+          <TaskNodeCard
+            {...props}
+            compact={compact}
+            roleName={roleName}
+            runtimeName={runtimeName}
+          />
+        );
+      },
       markerNode: MarkerNode,
     }),
-    [compact],
+    [compact, roles, agents, runtimes],
   );
 
   return (

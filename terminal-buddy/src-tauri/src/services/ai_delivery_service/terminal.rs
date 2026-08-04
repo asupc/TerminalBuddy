@@ -237,19 +237,31 @@ pub(crate) fn build_interactive_terminal_command_with_codex_output(
     // 对值中的 " 不转义，prompt 里含引号（如验收命令）会把命令行拆碎成多个参数（argparse
     // 报 unrecognized arguments / invalid choice）；转义后 5.1 原样放行、解析器还原为字面引号。
     let convert_arg_value_fn = r#"function ConvertTo-ArgValue { param([string]$Value) $sb = [System.Text.StringBuilder]::new(); $i = 0; while ($i -lt $Value.Length) { $c = $Value[$i]; if ($c -eq '\') { $n = 0; while ($i -lt $Value.Length -and $Value[$i] -eq '\') { $n++; $i++ }; if ($i -lt $Value.Length -and $Value[$i] -eq '"') { [void]$sb.Append('\' * ($n * 2 + 1)); [void]$sb.Append('"'); $i++ } else { [void]$sb.Append('\' * $n) } } elseif ($c -eq '"') { [void]$sb.Append('\"'); $i++ } else { [void]$sb.Append($c); $i++ } }; $sb.ToString() }"#;
+    // 裸命令名（如 codex/claude）在终端内先用 Get-Command 解析为绝对路径，
+    // 与派发前探活保持一致，避免 PATH 中多个同名 CLI（npm/WinGet/WindowsApps）命中不一致版本。
+    let runtime_target = if Path::new(&executable).is_absolute()
+        || Path::new(&executable).components().count() > 1
+    {
+        powershell_literal(&executable)
+    } else {
+        format!(
+            "(Get-Command -Name {} -ErrorAction Stop | Select-Object -First 1).Source",
+            powershell_literal(&executable)
+        )
+    };
     let mut invocation = if pipes_prompt_to_stdin {
         format!(
-            r#"{}; $tbPrompt = Get-Content -LiteralPath {} -Raw -Encoding UTF8; $OutputEncoding = [System.Text.UTF8Encoding]::new($false); $tbPrompt | & {}"#,
+            r#"{}; $tbPrompt = Get-Content -LiteralPath {} -Raw -Encoding UTF8; $OutputEncoding = [System.Text.UTF8Encoding]::new($false); $tbRuntime = {}; $tbPrompt | & $tbRuntime"#,
             convert_arg_value_fn,
             powershell_literal(control.prompt_path.to_string_lossy().as_ref()),
-            powershell_literal(&executable),
+            runtime_target,
         )
     } else {
         format!(
-            r#"{}; $tbPrompt = Get-Content -LiteralPath {} -Raw -Encoding UTF8; & {}"#,
+            r#"{}; $tbPrompt = Get-Content -LiteralPath {} -Raw -Encoding UTF8; $tbRuntime = {}; & $tbRuntime"#,
             convert_arg_value_fn,
             powershell_literal(control.prompt_path.to_string_lossy().as_ref()),
-            powershell_literal(&executable),
+            runtime_target,
         )
     };
     for argument in &command_parts {
@@ -415,7 +427,9 @@ mod terminal_command_tests {
         assert!(command.contains("Get-Content -LiteralPath 'C:\\TerminalBuddy\\prompt.txt' -Raw -Encoding UTF8"));
         assert!(command.contains("$OutputEncoding = [System.Text.UTF8Encoding]::new($false)"));
         assert!(command.contains("'--skip-git-repo-check'"));
-        assert!(command.contains("$tbPrompt | & 'codex' 'exec' '--skip-git-repo-check' '--model' 'test-model'"));
+        assert!(command.contains(
+            "$tbRuntime = (Get-Command -Name 'codex' -ErrorAction Stop | Select-Object -First 1).Source; $tbPrompt | & $tbRuntime 'exec' '--skip-git-repo-check' '--model' 'test-model'"
+        ));
         assert!(!command.contains("'--sandbox' 'workspace-write'"));
         assert!(command.contains("'--output-last-message' 'C:\\TerminalBuddy\\final-message.txt' '-' 2>&1 | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
         assert!(command.contains("Get-Content -LiteralPath 'C:\\TerminalBuddy\\final-message.txt' -Raw -Encoding UTF8"));
@@ -478,7 +492,9 @@ mod terminal_command_tests {
         )
         .unwrap();
 
-        assert!(command.contains("$tbPrompt | & 'claude' '--model' 'test-model' '--print' 2>&1 | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
+        assert!(command.contains(
+            "$tbRuntime = (Get-Command -Name 'claude' -ErrorAction Stop | Select-Object -First 1).Source; $tbPrompt | & $tbRuntime '--model' 'test-model' '--print' 2>&1 | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"
+        ));
     }
 
     #[test]
@@ -487,12 +503,12 @@ mod terminal_command_tests {
             (
                 "opencode",
                 "opencode",
-                "& 'opencode' 'run' '--model' 'test-model' '请完整阅读附件中的任务说明，并严格执行其中的所有约束。' '--file' 'C:\\TerminalBuddy\\prompt.txt'",
+                "& $tbRuntime 'run' '--model' 'test-model' '请完整阅读附件中的任务说明，并严格执行其中的所有约束。' '--file' 'C:\\TerminalBuddy\\prompt.txt'",
             ),
-            ("hermes", "hermes", "& 'hermes' '--model' 'test-model' '--oneshot' (ConvertTo-ArgValue $tbPrompt)"),
-            ("pi", "pi", "$tbPrompt | & 'pi' '--model' 'test-model' '--print'"),
-            ("mimo", "mimo", "& 'mimo' 'run' '--model' 'test-model' '请完整阅读附件中的任务说明，并严格执行其中的所有约束。' '--file' 'C:\\TerminalBuddy\\prompt.txt'"),
-            ("kimi", "kimi", "& 'kimi' '--model' 'test-model' '--prompt' (ConvertTo-ArgValue $tbPrompt)"),
+            ("hermes", "hermes", "& $tbRuntime '--model' 'test-model' '--oneshot' (ConvertTo-ArgValue $tbPrompt)"),
+            ("pi", "pi", "$tbPrompt | & $tbRuntime '--model' 'test-model' '--print'"),
+            ("mimo", "mimo", "& $tbRuntime 'run' '--model' 'test-model' '请完整阅读附件中的任务说明，并严格执行其中的所有约束。' '--file' 'C:\\TerminalBuddy\\prompt.txt'"),
+            ("kimi", "kimi", "& $tbRuntime '--model' 'test-model' '--prompt' (ConvertTo-ArgValue $tbPrompt)"),
         ] {
             let command = build_interactive_terminal_command(
                 &test_runtime(kind, executable),
@@ -501,6 +517,11 @@ mod terminal_command_tests {
             )
             .unwrap();
             assert!(command.contains(expected), "{} command was: {}", kind, command);
+            assert!(
+                command.contains("$tbRuntime = (Get-Command -Name '"),
+                "{} 应使用 Get-Command 解析裸命令名",
+                kind
+            );
             assert!(command.contains("Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
         }
     }
@@ -514,7 +535,9 @@ mod terminal_command_tests {
         )
         .unwrap();
 
-        assert!(command.contains("& 'hermes' 'chat' '--model' 'test-model' '--quiet' '--query' (ConvertTo-ArgValue $tbPrompt)"));
+        assert!(command.contains(
+            "& $tbRuntime 'chat' '--model' 'test-model' '--quiet' '--query' (ConvertTo-ArgValue $tbPrompt)"
+        ));
     }
 
     #[test]
@@ -548,7 +571,9 @@ mod terminal_command_tests {
         )
         .unwrap();
 
-        assert!(command.contains("& 'C:/Users/me/hermes.cmd' '--model' 'test-model' '--oneshot' (ConvertTo-ArgValue $tbPrompt)"));
+        assert!(command.contains(
+            "$tbRuntime = 'C:/Users/me/hermes.cmd'; & $tbRuntime '--model' 'test-model' '--oneshot' (ConvertTo-ArgValue $tbPrompt)"
+        ));
         assert!(command.contains("Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
     }
 
@@ -787,11 +812,17 @@ pub(crate) fn reconcile_running_attempt(
         &attempt.contract_id,
         "任务契约 watchdog",
     )?;
+    let task = AiDeliveryService::get_task_node(&attempt.task_node_id)?;
+    // Review 协议任务（requires_workflow_review）的完成必须走监视线程的
+    // 「exit-code + review.json 校验 + 协议修复」链路；watchdog 若在 Agent 退出前
+    // 看到产物就抢先 complete_attempt，会读到尚未写完整/格式无效的 review.json，
+    // 直接判失败并关闭终端，导致监视线程的修复逻辑永远没有机会执行（竞态实测复现）。
+    let workflow_review_managed = requires_workflow_review(&task);
     let artifacts_written = expected_artifacts_written(&contract, &attempt.started_at)?;
     let terminal_running = attempt_terminal_running(attempt, &terminal_service);
 
     // 成果文件优先于终端状态：Agent 可能已经写完成果，但还没有退出 CLI。
-    if artifacts_written {
+    if artifacts_written && !workflow_review_managed {
         match AiDeliveryService::complete_attempt(
             &attempt.id,
             app.clone(),
@@ -815,13 +846,31 @@ pub(crate) fn reconcile_running_attempt(
     }
 
     if !terminal_running {
-        fail_attempt_from_watchdog(
-            attempt,
-            "Agent 终端已结束，且尚未检测到本次执行写入的完整成果文件",
-            "attemptFailed",
-            app,
-            terminal_service,
-        )?;
+        if workflow_review_managed {
+            // Review 协议任务：exit-code 已存在时由监视线程读取并执行
+            // review.json 校验/修复，watchdog 不得抢跑；仅当终端结束且未留下
+            // 退出码时才判失败，避免与修复链路竞争导致协议永远无法完成。
+            let exit_marker_present =
+                read_terminal_exit_code(&terminal_exit_marker_path(&attempt.id)).is_some();
+            if exit_marker_present {
+                return Ok(());
+            }
+            fail_attempt_from_watchdog(
+                attempt,
+                "Reviewer 终端已结束，且未留下退出码；审查结论无法完成协议校验",
+                "attemptFailed",
+                app,
+                terminal_service,
+            )?;
+        } else {
+            fail_attempt_from_watchdog(
+                attempt,
+                "Agent 终端已结束，且尚未检测到本次执行写入的完整成果文件",
+                "attemptFailed",
+                app,
+                terminal_service,
+            )?;
+        }
     }
     Ok(())
 }
@@ -842,10 +891,20 @@ pub(crate) fn fail_attempt_from_watchdog(
         return Ok(());
     }
     let now = chrono::Utc::now().to_rfc3339();
+    // 「终端已结束且无完整成果」这类模糊失败附带运行记录尾部，
+    // 让用户/平台能看到 Agent 退出前的真实输出（如 CLI 用法错误、认证失败等）。
+    let detail_message = if message.starts_with("Agent 终端已结束，且尚未检测到本次执行写入的完整成果文件") {
+        match terminal_transcript_tail(&current.id) {
+            Some(tail) => format!("{}：{}", message, tail),
+            None => message.to_string(),
+        }
+    } else {
+        message.to_string()
+    };
     current.state = "failed".to_string();
     current.finished_at = Some(now.clone());
     current.updated_at = now.clone();
-    current.summary = Some(message.to_string());
+    current.summary = Some(detail_message.clone());
     AiDeliveryService::persist_attempt(&current)?;
 
     let mut task = AiDeliveryService::get_task_node(&current.task_node_id)?;
@@ -859,7 +918,7 @@ pub(crate) fn fail_attempt_from_watchdog(
         Some(&current.task_node_id),
         Some(&current.id),
         event_type,
-        message,
+        &detail_message,
     )?;
     if let Some(terminal_id) = current.terminal_id.as_deref() {
         let _ = terminal_service.close_terminal(terminal_id);

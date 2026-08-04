@@ -335,6 +335,11 @@ impl AiDeliveryService {
             if !agent.enabled || !runtime.enabled {
                 return Err("Agent 或 Runtime 已禁用".to_string());
             }
+            // 派发前探活：CLI 缺失或版本与注入标志不兼容时提前报出明确原因，
+            // 避免历史故障中「终端秒退 exit=2 且无任何输出」的模糊失败。
+            if let Err(probe_error) = probe_runtime_for_dispatch(&runtime) {
+                return Err(format!("派发前 Runtime 探活失败: {}", probe_error));
+            }
             let working_directory = PathBuf::from(&contract.working_directory);
             if !working_directory.is_dir()
                 || (contract.execution_context == EXECUTION_CONTEXT_TASK_WORKTREE
@@ -384,6 +389,10 @@ impl AiDeliveryService {
                     "\n\n这是编排中的独立审查步骤。完成审查后，必须将严格符合 Schema 的 JSON 写入 {}，再退出当前 CLI。Schema 文件：{}\n只允许以下两个字段，禁止输出 acceptedArtifacts 或任何其他字段：\n{{\"approved\":true,\"comments\":\"中文审查结论和剩余风险\"}}\n写入后必须重新读取 review.json，自检 JSON 格式、字段名、字段类型和 comments 非空。若发现需要返工的问题，将 approved 设为 false，并在 comments 中说明问题和修复方向。未写入或格式无效将视为审查失败。",
                     control.review_path.display(),
                     control.review_schema_path.display(),
+                ));
+                prompt.push_str(&format!(
+                    "\n推荐做法：不要用 Markdown 代码块包裹 JSON，也不要把结论只放在对话里。审查结束后，直接在终端执行以下命令写入结论（把 comments 的中文结论替换成你的实际结论）：\nSet-Content -LiteralPath {} -Encoding UTF8 -Value '{{\"approved\":true,\"comments\":\"中文审查结论和剩余风险\"}}'\n写入后必须重新读取该文件并自行校验（例如 ConvertFrom-Json），确认合法后再退出当前 CLI。",
+                    powershell_literal(&control.review_path.to_string_lossy()),
                 ));
                 prompt.push_str(&format!(
                     "\n若 approved 为 false，必须再将所有需要用户选择的阻塞项汇总成一个 JSON 写入 {}：\n{{\"question\":\"需要用户决定的阻塞事项\",\"impact\":\"不决策会如何影响后续实现\",\"options\":[{{\"label\":\"选项名称\",\"description\":\"选项说明\"}}]}}\n拒绝评审时缺少该文件也视为审查失败。",
@@ -477,7 +486,10 @@ impl AiDeliveryService {
                     .parent()
                     .map(std::path::Path::to_path_buf)
                     .unwrap_or_default();
-                let mut review_repair_attempted = false;
+                // Review 协议文件缺失/格式不符时最多自动修复 2 轮；
+                // 每轮都会用新提示重跑同一 Agent，失败信息累计进 transcript 便于定位。
+                let mut review_repairs_left: u32 = 2;
+                let mut review_repair_history: Vec<String> = Vec::new();
                 let (exit_code, _output, transcript) = loop {
                     let exit_code = loop {
                         if let Some(code) = read_terminal_exit_code(&control.exit_marker) {
@@ -531,8 +543,9 @@ impl AiDeliveryService {
                     if exit_code.is_some() {
                         if let Some(review_path) = workflow_review_path.as_deref() {
                             if let Err(validation_error) = read_workflow_review(review_path) {
-                                if !review_repair_attempted {
-                                    review_repair_attempted = true;
+                                if review_repairs_left > 0 {
+                                    review_repairs_left -= 1;
+                                    review_repair_history.push(validation_error.clone());
                                     match repair_workflow_review(
                                         &control,
                                         &monitor_runtime,
@@ -556,6 +569,15 @@ impl AiDeliveryService {
                         }
                     }
                     break (exit_code, String::new(), transcript);
+                };
+                let transcript = if review_repair_history.is_empty() {
+                    transcript
+                } else {
+                    format!(
+                        "{}\n\nReviewer 协议修复记录：\n{}",
+                        transcript,
+                        review_repair_history.join("\n")
+                    )
                 };
                 if exit_code.is_none() {
                     if let Ok(current_attempt) = Self::get::<AiAttempt>(
@@ -1194,6 +1216,26 @@ impl AiDeliveryService {
                 })
         } else {
             ensure_expected_artifacts(contract, &worktree)
+                .and_then(|_| {
+                    // 模型常忘记提交：允许路径内的改动由平台自动提交，
+                    // 避免「Agent 执行后存在未提交改动」直接失败阻断推进。
+                    match auto_commit_allowed_changes(
+                        contract,
+                        &format!("TerminalBuddy: {}", task.title),
+                    )? {
+                        Some(commit) => {
+                            let _ = Self::append_event(
+                                &task.delivery_id,
+                                Some(&task.id),
+                                None,
+                                "autoCommitted",
+                                &format!("Agent 未提交的改动已由平台自动提交：{}", commit),
+                            );
+                            Ok(())
+                        }
+                        None => Ok(()),
+                    }
+                })
                 .and_then(|_| ensure_task_branch_clean(&worktree))
                 .and_then(|_| {
                     for command in &contract.acceptance_commands {
