@@ -1027,6 +1027,30 @@ mod cycle_detection_tests {
         .unwrap()
     }
 
+    /// 约束 #2 升级后，manager prompt 必须给出可操作的跨服务依赖判断准则，
+    /// 否则 AI 会漏建跨仓库依赖（根因见 docs/superpowers/specs/2026-08-04-dag-tab-and-cross-repo-dependency-design.md）。
+    #[test]
+    fn manager_prompt_includes_cross_service_dependency_guidance() {
+        let (root, project, delivery, _agent) = setup_git_project();
+        let prompt = build_manager_prompt(&delivery, &project, &[]);
+
+        assert!(
+            prompt.contains("跨服务依赖判断"),
+            "manager prompt 缺少跨服务依赖判断小节: {prompt}"
+        );
+        assert!(
+            prompt.contains("B 离开 A 能否独立正确完成"),
+            "manager prompt 缺少判断口诀: {prompt}"
+        );
+        assert!(
+            prompt.contains("不得建立依赖"),
+            "manager prompt 缺少反向约束（无契约不得建依赖）: {prompt}"
+        );
+
+        PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn capacity_blocked_start_reverts_task_to_ready() {
         let root =
