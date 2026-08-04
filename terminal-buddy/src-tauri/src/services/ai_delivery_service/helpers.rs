@@ -11,6 +11,102 @@ pub(crate) fn compact_output(value: &str) -> String {
     format!("{}…", trimmed.chars().take(MAX_CHARS).collect::<String>())
 }
 
+/// 验收命令预检：在派发前发现验收命令引用的构建目标（.sln/.csproj 等）不存在，
+/// 给出明确原因，避免 LLM 生成的验收命令拼错文件名后，Agent 反复执行构建仍验收失败
+/// （实测案例：`dotnet build Kyber.Industry.BaseData.sln` 而实际文件是
+/// `Kyber.Industry.Base.Data.sln`，任务连续 3 次失败）。
+///
+/// 只检查「构建/编译输入」类引用（Agent 启动前必须已存在）：
+/// - 构建命令（dotnet build / dotnet msbuild / msbuild）的位置参数目标；
+/// - 构建命令无目标参数时，工作目录下必须存在 .sln/.slnx/.csproj。
+///
+/// 不检查 `test -f` / `Test-Path` 等产物验收（对应 expectedArtifacts，
+/// 派发时产物尚不存在属于正常情况），也不检查含变量/绝对路径的复杂表达式。
+pub(crate) fn preflight_acceptance_commands(
+    working_directory: &Path,
+    commands: &[String],
+) -> Result<(), String> {
+    for command in commands {
+        let trimmed = command.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let tokens = match shell_words::split(trimmed) {
+            Ok(tokens) => tokens,
+            Err(_) => continue, // 无法解析的命令跳过预检，交由验收执行阶段判定
+        };
+        let lower = trimmed.to_ascii_lowercase();
+        let is_build_command = lower.starts_with("dotnet build")
+            || lower.starts_with("dotnet msbuild")
+            || lower.starts_with("msbuild");
+        if !is_build_command {
+            continue; // 非构建命令不预检
+        }
+        // 构建目标 = 命令中第一个以 .sln/.slnx/.csproj/.proj 结尾的 token。
+        // 只看项目文件扩展名，避免把 `-c Debug` 这类选项值误判为目标。
+        let candidate_tokens: Vec<&String> =
+            if lower.starts_with("dotnet build") || lower.starts_with("dotnet msbuild") {
+                tokens.iter().skip(2).collect()
+            } else {
+                tokens.iter().skip(1).collect()
+            };
+        let build_target = candidate_tokens
+            .iter()
+            .copied()
+            .find(|token| {
+                let token_lower = token.to_ascii_lowercase();
+                [".sln", ".slnx", ".csproj", ".proj"]
+                    .iter()
+                    .any(|extension| token_lower.ends_with(extension))
+                    && !token.contains('$')
+                    && !token.contains('%')
+                    && !token.contains('(')
+                    && !Path::new(token).is_absolute()
+            });
+        let Some(target) = build_target else {
+            // 构建命令无目标参数：要求工作目录存在解决方案或项目文件
+            let has_project_file = working_directory
+                .read_dir()
+                .map(|entries| {
+                    entries.flatten().any(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .to_ascii_lowercase()
+                            .ends_with(".sln")
+                            || entry
+                                .file_name()
+                                .to_string_lossy()
+                                .to_ascii_lowercase()
+                                .ends_with(".slnx")
+                            || entry
+                                .file_name()
+                                .to_string_lossy()
+                                .to_ascii_lowercase()
+                                .ends_with(".csproj")
+                    })
+                })
+                .unwrap_or(false);
+            if !has_project_file {
+                return Err(format!(
+                    "构建命令未指定目标，且工作目录 {} 下未找到 .sln/.slnx/.csproj，无法执行构建",
+                    working_directory.display()
+                ));
+            }
+            continue;
+        };
+        let resolved = working_directory.join(target);
+        if !resolved.is_file() {
+            return Err(format!(
+                "验收命令引用的文件不存在: {}（工作目录 {}），请核对文件名后修正验收命令",
+                target,
+                working_directory.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn strip_terminal_control_sequences(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     let mut chars = value.chars().peekable();

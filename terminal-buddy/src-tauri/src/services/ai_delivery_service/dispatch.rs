@@ -125,6 +125,20 @@ impl AiDeliveryService {
                 }
             }
         }
+        // 验收命令预检：在 Agent 启动前发现验收命令引用的构建文件不存在
+        // （如 sln/csproj 名拼错），给出明确原因；任务保持待执行状态，
+        // 由用户修正验收命令后重新派发，避免 Agent 反复执行后仍验收失败。
+        if let Err(preflight_error) = preflight_acceptance_commands(
+            Path::new(&contract.working_directory),
+            &contract.acceptance_commands,
+        ) {
+            // 任务回退为 planned：ready 状态不可编辑，回退后用户可直接修正
+            // 验收命令（如 sln 文件名）再重新派发。
+            task.state = "planned".to_string();
+            task.updated_at = chrono::Utc::now().to_rfc3339();
+            let _ = Self::save(TASK_NODES_DIR, &task.id, &task);
+            return Err(format!("验收命令预检失败: {}", preflight_error));
+        }
         let now = chrono::Utc::now().to_rfc3339();
         let attempt = AiAttempt {
             id: Uuid::new_v4().to_string(),

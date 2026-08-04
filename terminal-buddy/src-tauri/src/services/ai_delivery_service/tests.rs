@@ -770,6 +770,84 @@ mod cycle_detection_tests {
     }
 
     #[test]
+    fn preflight_acceptance_commands_detects_missing_build_target() {
+        let root = std::env::temp_dir().join(format!(
+            "terminal-buddy-preflight-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("Kyber.Industry.Base.Data.sln"), "").unwrap();
+
+        // 拼错 sln 名：应报“文件不存在”
+        let missing = preflight_acceptance_commands(
+            &root,
+            &["dotnet build Kyber.Industry.BaseData.sln -c Debug --nologo -v q".to_string()],
+        )
+        .unwrap_err();
+        assert!(
+            missing.contains("不存在") && missing.contains("Kyber.Industry.BaseData.sln"),
+            "应明确指出缺失文件: {}",
+            missing
+        );
+
+        // 正确的 sln 名：通过
+        preflight_acceptance_commands(
+            &root,
+            &["dotnet build Kyber.Industry.Base.Data.sln -c Debug --nologo -v q".to_string()],
+        )
+        .unwrap();
+
+        // 产物验收（test -f / Test-Path）不预检：派发时产物尚不存在属正常
+        preflight_acceptance_commands(
+            &root,
+            &[
+                "test -f docs/team-conventions.md".to_string(),
+                "if (Test-Path -LiteralPath 'docs/x.md') { exit 0 } else { exit 1 }".to_string(),
+            ],
+        )
+        .unwrap();
+
+        // 子目录 csproj：存在通过，不存在报错
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/App.csproj"), "").unwrap();
+        preflight_acceptance_commands(&root, &["dotnet build src/App.csproj".to_string()])
+            .unwrap();
+        let missing_sub = preflight_acceptance_commands(
+            &root,
+            &["dotnet build src/NoSuch.csproj".to_string()],
+        )
+        .unwrap_err();
+        assert!(missing_sub.contains("src/NoSuch.csproj"));
+
+        // 非构建命令跳过
+        preflight_acceptance_commands(&root, &["npm run build".to_string()]).unwrap();
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preflight_acceptance_commands_checks_default_build_dir() {
+        // 无目标参数的 dotnet build：目录没有项目文件应报错
+        let empty = std::env::temp_dir().join(format!(
+            "terminal-buddy-preflight-empty-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&empty).unwrap();
+        let err = preflight_acceptance_commands(
+            &empty,
+            &["dotnet build -c Debug".to_string()],
+        )
+        .unwrap_err();
+        assert!(err.contains("未找到"), "应提示目录缺少项目文件: {}", err);
+
+        // 有 sln 时通过
+        fs::write(empty.join("Demo.sln"), "").unwrap();
+        preflight_acceptance_commands(&empty, &["dotnet build -c Debug".to_string()]).unwrap();
+
+        let _ = fs::remove_dir_all(empty);
+    }
+
+    #[test]
     fn cycle_detection_complex() {
         // V 形分叉 + 汇合后的环：a->b, a->c, b->d, c->d, d->a
         let tasks = vec![
