@@ -23,19 +23,6 @@
         "visible": false,
         "backgroundColor": "#1e1e1e",
         "decorations": false
-      },
-      {
-        "label": "ai-delivery",
-        "title": "AI 交付",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 520,
-        "center": true,
-        "resizable": true,
-        "visible": false,
-        "backgroundColor": "#1e1e1e",
-        "decorations": false
       }
     ],
     "security": {

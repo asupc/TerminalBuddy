@@ -2,7 +2,7 @@
   "$schema": "https://schemas.tauri.app/v2/capability",
   "identifier": "default",
   "description": "Default permissions for TerminalBuddy",
-  "windows": ["main", "ai-delivery"],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "dialog:default",
