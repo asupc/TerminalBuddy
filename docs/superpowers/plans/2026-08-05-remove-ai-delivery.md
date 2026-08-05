@@ -22,8 +22,8 @@
 - **不删**：已安装用户旧库中的 `ai_entities` 等旧表数据（运行时数据，由用户自行决定）
 - **不改**：`commands/terminal.rs`、`commands/git.rs` 等共享服务的业务行为（仅允许清理其中指向已删除功能的注释文字）
 - **不动**：`.codegraph/`、`.terminalbuddy-worktrees/`、`.superpowers/`（运行时/会话数据目录）
-- **不动**：`src-tauri/gen/`（构建时自动再生成）
-- 删除后全局 grep `ai_delivery`、`AiDelivery`、`ai-delivery`、`AI 交付` 应仅剩白名单：本设计规格文档、`.superpowers/sdd/**` 会话数据、`src-tauri/gen/**` 生成文件
+- **不手改** `src-tauri/gen/`：tauri-build 在构建/编译时自动再生（如 `gen/schemas/capabilities.json` 随能力文件编辑同步更新）。再生成的同步变更可随提交保留——本仓库跟踪该文件（Task 4 审查裁定，2026-08-05；规格「八、不做的事」未涉及 gen/，此为计划文字修正）
+- 删除后全局 grep `ai_delivery`、`AiDelivery`、`ai-delivery`、`AI 交付` 应仅剩白名单：本设计规格文档、本实施计划文档、`.superpowers/sdd/**` 会话数据、`src-tauri/gen/**` 生成文件；另 `src/components/ai-delivery/**` 与 `web/src/screens/AiDelivery.tsx` 在 Task 5-7 删除前属预期残留（Task 9 复核）
 - 编译门禁：`cargo check` 零错误、零警告；`npx tsc --noEmit` 零错误
 - 提交信息遵循项目惯例 `[模块] 变更描述`（中文）
 
