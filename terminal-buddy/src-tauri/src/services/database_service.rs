@@ -1,41 +1,9 @@
-use crate::models::{AiAgent, AiAgentRuntime, DecisionBinding};
+use crate::models::DecisionBinding;
 use crate::services::PathService;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::fs;
 use std::time::Duration;
-
-const AI_ENTITY_DIRECTORIES: &[&str] = &[
-    "Projects",
-    "Runtimes",
-    "Agents",
-    "Roles",
-    "Workflows",
-    "TaskContracts",
-    "Deliveries",
-    "TaskNodes",
-    "DecisionRequests",
-    "Events",
-    "Attempts",
-    "ReviewGates",
-    "MergeRecords",
-];
-
-fn runtime_deduplication_key(runtime: &AiAgentRuntime) -> String {
-    let command = runtime.command.trim();
-    #[cfg(windows)]
-    let command = command.to_ascii_lowercase();
-    #[cfg(not(windows))]
-    let command = command.to_string();
-    format!(
-        "{}\u{0}{}",
-        runtime.kind.trim().to_ascii_lowercase(),
-        command
-    )
-}
 
 pub struct DatabaseService;
 
@@ -54,12 +22,6 @@ impl DatabaseService {
                  PRAGMA foreign_keys = ON;
                  CREATE TABLE IF NOT EXISTS schema_migrations (
                     name TEXT PRIMARY KEY
-                 );
-                 CREATE TABLE IF NOT EXISTS ai_entities (
-                    kind TEXT NOT NULL,
-                    id TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    PRIMARY KEY (kind, id)
                  );
                  CREATE TABLE IF NOT EXISTS app_documents (
                     key TEXT PRIMARY KEY,
@@ -111,55 +73,6 @@ impl DatabaseService {
     }
 
     fn run_migrations(connection: &mut Connection) -> Result<(), String> {
-        if !Self::has_migration(connection, "legacy-ai-entities-v1")? {
-            let transaction = connection
-                .transaction()
-                .map_err(|error| format!("开始 AI 交付迁移失败: {}", error))?;
-            let root = PathService::get_data_dir().join("AiDelivery");
-            for kind in AI_ENTITY_DIRECTORIES {
-                let directory = root.join(kind);
-                let Ok(entries) = fs::read_dir(directory) else {
-                    continue;
-                };
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_none_or(|extension| extension != "json") {
-                        continue;
-                    }
-                    let Ok(content) = fs::read_to_string(&path) else {
-                        continue;
-                    };
-                    if serde_json::from_str::<Value>(&content).is_err() {
-                        continue;
-                    }
-                    let Some(id) = path.file_stem().and_then(|value| value.to_str()) else {
-                        continue;
-                    };
-                    transaction
-                        .execute(
-                            "INSERT OR IGNORE INTO ai_entities (kind, id, content) VALUES (?1, ?2, ?3)",
-                            params![kind, id, content],
-                        )
-                        .map_err(|error| format!("迁移 AI 交付数据失败: {}", error))?;
-                }
-            }
-            Self::complete_migration(&transaction, "legacy-ai-entities-v1")?;
-            transaction
-                .commit()
-                .map_err(|error| format!("提交 AI 交付迁移失败: {}", error))?;
-        }
-
-        if !Self::has_migration(connection, "ai-runtime-deduplication-v1")? {
-            let transaction = connection
-                .transaction()
-                .map_err(|error| format!("开始 Runtime 去重失败: {}", error))?;
-            Self::deduplicate_ai_runtimes(&transaction)?;
-            Self::complete_migration(&transaction, "ai-runtime-deduplication-v1")?;
-            transaction
-                .commit()
-                .map_err(|error| format!("提交 Runtime 去重失败: {}", error))?;
-        }
-
         if !Self::has_migration(connection, "legacy-command-history-v1")? {
             let transaction = connection
                 .transaction()
@@ -243,192 +156,6 @@ impl DatabaseService {
                 .map_err(|error| format!("提交微信状态迁移失败: {}", error))?;
         }
         Ok(())
-    }
-
-    fn deduplicate_ai_runtimes(transaction: &Transaction<'_>) -> Result<(), String> {
-        let mut runtimes = {
-            let mut statement = transaction
-                .prepare("SELECT id, content FROM ai_entities WHERE kind = 'Runtimes'")
-                .map_err(|error| format!("读取 Runtime 记录失败: {}", error))?;
-            let rows = statement
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .map_err(|error| format!("读取 Runtime 记录失败: {}", error))?;
-            rows.map(|row| {
-                let (id, content) =
-                    row.map_err(|error| format!("读取 Runtime 记录失败: {}", error))?;
-                let mut runtime = serde_json::from_str::<AiAgentRuntime>(&content)
-                    .map_err(|error| format!("解析 Runtime 记录失败: {}", error))?;
-                runtime.id = id.clone();
-                Ok((id, runtime))
-            })
-            .collect::<Result<Vec<_>, String>>()?
-        };
-        runtimes.sort_by(|left, right| {
-            left.1
-                .created_at
-                .cmp(&right.1.created_at)
-                .then_with(|| left.0.cmp(&right.0))
-        });
-
-        let mut canonical_by_key = HashMap::<String, (String, AiAgentRuntime)>::new();
-        let mut duplicate_to_canonical = HashMap::<String, String>::new();
-        for (id, runtime) in runtimes {
-            let key = runtime_deduplication_key(&runtime);
-            if let Some((canonical_id, canonical)) = canonical_by_key.get_mut(&key) {
-                duplicate_to_canonical.insert(id, canonical_id.clone());
-                canonical.enabled |= runtime.enabled;
-                if runtime.updated_at > canonical.updated_at {
-                    canonical.updated_at = runtime.updated_at;
-                }
-            } else {
-                canonical_by_key.insert(key, (id, runtime));
-            }
-        }
-        if duplicate_to_canonical.is_empty() {
-            return Ok(());
-        }
-
-        for (id, runtime) in canonical_by_key.values() {
-            let content = serde_json::to_string(runtime)
-                .map_err(|error| format!("序列化 Runtime 记录失败: {}", error))?;
-            transaction
-                .execute(
-                    "UPDATE ai_entities SET content = ?1 WHERE kind = 'Runtimes' AND id = ?2",
-                    params![content, id],
-                )
-                .map_err(|error| format!("更新 Runtime 记录失败: {}", error))?;
-        }
-
-        let agents = {
-            let mut statement = transaction
-                .prepare("SELECT id, content FROM ai_entities WHERE kind = 'Agents'")
-                .map_err(|error| format!("读取 Agent 记录失败: {}", error))?;
-            let rows = statement
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .map_err(|error| format!("读取 Agent 记录失败: {}", error))?;
-            rows.map(|row| {
-                let (id, content) =
-                    row.map_err(|error| format!("读取 Agent 记录失败: {}", error))?;
-                let agent = serde_json::from_str::<AiAgent>(&content)
-                    .map_err(|error| format!("解析 Agent 记录失败: {}", error))?;
-                Ok((id, agent))
-            })
-            .collect::<Result<Vec<_>, String>>()?
-        };
-        for (id, mut agent) in agents {
-            let Some(runtime_id) = duplicate_to_canonical.get(&agent.runtime_id) else {
-                continue;
-            };
-            agent.runtime_id = runtime_id.clone();
-            let content = serde_json::to_string(&agent)
-                .map_err(|error| format!("序列化 Agent 记录失败: {}", error))?;
-            transaction
-                .execute(
-                    "UPDATE ai_entities SET content = ?1 WHERE kind = 'Agents' AND id = ?2",
-                    params![content, id],
-                )
-                .map_err(|error| format!("更新 Agent 记录失败: {}", error))?;
-        }
-        for duplicate_id in duplicate_to_canonical.keys() {
-            transaction
-                .execute(
-                    "DELETE FROM ai_entities WHERE kind = 'Runtimes' AND id = ?1",
-                    [duplicate_id],
-                )
-                .map_err(|error| format!("删除重复 Runtime 记录失败: {}", error))?;
-        }
-        Ok(())
-    }
-
-    pub fn list_ai_entities<T: DeserializeOwned>(kind: &str) -> Result<Vec<T>, String> {
-        let connection = Self::open()?;
-        let mut statement = connection
-            .prepare("SELECT content FROM ai_entities WHERE kind = ?1")
-            .map_err(|error| format!("查询 AI 交付数据失败: {}", error))?;
-        let rows = statement
-            .query_map([kind], |row| row.get::<_, String>(0))
-            .map_err(|error| format!("读取 AI 交付数据失败: {}", error))?;
-        rows.map(|row| {
-            let content = row.map_err(|error| format!("读取 AI 交付记录失败: {}", error))?;
-            serde_json::from_str(&content)
-                .map_err(|error| format!("解析 AI 交付记录失败: {}", error))
-        })
-        .collect()
-    }
-
-    pub fn get_ai_entity<T: DeserializeOwned>(
-        kind: &str,
-        id: &str,
-        label: &str,
-    ) -> Result<T, String> {
-        let connection = Self::open()?;
-        let content = connection
-            .query_row(
-                "SELECT content FROM ai_entities WHERE kind = ?1 AND id = ?2",
-                params![kind, id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| format!("读取{}失败: {}", label, error))?
-            .ok_or_else(|| format!("{}不存在", label))?;
-        serde_json::from_str(&content).map_err(|error| format!("解析{}失败: {}", label, error))
-    }
-
-    pub fn save_ai_entity<T: Serialize>(kind: &str, id: &str, value: &T) -> Result<(), String> {
-        let content = serde_json::to_string(value)
-            .map_err(|error| format!("序列化 AI 交付记录失败: {}", error))?;
-        let connection = Self::open()?;
-        connection
-            .execute(
-                "INSERT INTO ai_entities (kind, id, content) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(kind, id) DO UPDATE SET content = excluded.content",
-                params![kind, id, content],
-            )
-            .map_err(|error| format!("保存 AI 交付记录失败: {}", error))?;
-        Ok(())
-    }
-
-    pub fn delete_ai_entity(kind: &str, id: &str, label: &str) -> Result<(), String> {
-        let connection = Self::open()?;
-        let affected = connection
-            .execute(
-                "DELETE FROM ai_entities WHERE kind = ?1 AND id = ?2",
-                params![kind, id],
-            )
-            .map_err(|error| format!("删除{}失败: {}", label, error))?;
-        if affected == 0 {
-            return Err(format!("{}不存在", label));
-        }
-        Ok(())
-    }
-
-    /// 单个事务内批量删除同一 kind 的多条记录，替代逐条 `delete_ai_entity`
-    /// （每条都会打开新连接并独立提交，删除一个交付的几十个实体时开销显著）。
-    pub fn delete_ai_entities(kind: &str, ids: &[&str], label: &str) -> Result<(), String> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-        let mut connection = Self::open()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("开始删除{}事务失败: {}", label, error))?;
-        {
-            let mut statement = transaction
-                .prepare("DELETE FROM ai_entities WHERE kind = ?1 AND id = ?2")
-                .map_err(|error| format!("删除{}失败: {}", label, error))?;
-            for id in ids {
-                statement
-                    .execute(params![kind, id])
-                    .map_err(|error| format!("删除{}失败: {}", label, error))?;
-            }
-        }
-        transaction
-            .commit()
-            .map_err(|error| format!("提交删除{}事务失败: {}", label, error))
     }
 
     pub fn read_command_history() -> Result<Option<String>, String> {

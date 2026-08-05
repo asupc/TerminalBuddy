@@ -869,8 +869,7 @@ impl TerminalService {
                 .ok_or("Terminal not found".to_string())?
         };
         let mut buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
-        // 统一消费：drain 清空缓冲并返回全部内容。AI 交付终端的 monitor 线程靠此取增量
-        // 落盘 live-output.log——消费后下一轮只拿到新输出，避免全量重复累积。
+        // 统一消费：drain 清空缓冲并返回全部内容；消费后下一轮只拿到新输出，避免重复累积。
         Ok(buffer.drain())
     }
 
