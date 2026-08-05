@@ -14,6 +14,7 @@ pub mod path_service;
 pub mod profile_service;
 pub mod settings_service;
 pub mod ssh_session_service;
+pub mod ssh_transfer;
 pub mod template_service;
 pub mod update_service;
 pub mod vscode_terminal_service;

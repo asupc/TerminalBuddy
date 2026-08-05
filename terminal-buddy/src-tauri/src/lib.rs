@@ -134,6 +134,15 @@ fn prepare_startup_window(app: &tauri::App) {
     }
 }
 
+/// 展示主窗口：取消最小化 + 显示 + 聚焦（托盘/单实例回调共用）。
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 fn reveal_main_window(webview: &tauri::Webview) {
     if MAIN_WINDOW_REVEALED
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -211,6 +220,86 @@ fn install_system_shutdown_handler(app: &tauri::App) {
     boot_log("system shutdown handler installed");
 }
 
+/// 构建系统托盘：菜单（打开窗口/退出）+ 双击展示主窗口。
+fn bootstrap_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show_item = MenuItemBuilder::with_id("show", "打开窗口").build(app)?;
+    let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .item(&show_item)
+        .item(&quit_item)
+        .build()?;
+
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .expect("Failed to load default window icon for tray");
+
+    let _tray = TrayIconBuilder::new()
+        .icon(icon)
+        .menu(&menu)
+        .tooltip("TerminalBuddy")
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => show_main_window(app),
+            "quit" => {
+                show_main_window(app);
+                let _ = app.emit("tray-exit-requested", ());
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let tauri::tray::TrayIconEvent::DoubleClick { .. } = event {
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    boot_log("tray built");
+    Ok(())
+}
+
+/// Web API 或机器人回调任一需要时启动统一 HTTP 服务。
+fn bootstrap_http_server(app: &tauri::AppHandle) -> std::io::Result<()> {
+    let settings = SettingsService::get_settings();
+    if settings.web_api_enabled || crate::services::BotSettingsService::requires_callback_server()
+    {
+        boot_log(format!(
+            "starting HTTP server on port {}",
+            settings.web_api_port
+        ));
+        crate::commands::web::sync_http_server_for_bot(app.clone()).map_err(std::io::Error::other)?;
+        boot_log("HTTP server task spawned");
+    }
+    Ok(())
+}
+
+/// 同步机器人长连接任务（WebSocket 推送等）。
+fn bootstrap_bot_connections(app: &tauri::AppHandle) -> std::io::Result<()> {
+    crate::services::sync_bot_long_connections(app.clone()).map_err(std::io::Error::other)?;
+    boot_log("Bot long-connection tasks synchronized");
+    Ok(())
+}
+
+/// 修复并启动 Claude hook 本地 HTTP 服务（失败仅记录日志，不阻塞启动）。
+fn bootstrap_claude_hook(app: &tauri::AppHandle) {
+    match crate::services::repair_claude_http_hooks_if_managed(None) {
+        Ok(status) => boot_log(format!("Claude hooks status: {}", status.status)),
+        Err(error) => boot_log(format!("Claude hooks inspection failed: {}", error)),
+    }
+    match crate::web::claude_hook_server::bind() {
+        Ok(listener) => {
+            let port = crate::services::ClaudeHookService::server_port();
+            tauri::async_runtime::spawn(crate::web::claude_hook_server::run(
+                app.clone(),
+                listener,
+            ));
+            boot_log(format!(
+                "Claude hook HTTP server task spawned on port {}",
+                port
+            ));
+        }
+        Err(error) => boot_log(format!("Claude hook HTTP server disabled: {}", error)),
+    }
+}
+
 pub fn run() {
     let _ = BOOT_START.set(Instant::now());
     boot_log("=== TerminalBuddy process start ===");
@@ -229,11 +318,7 @@ pub fn run() {
 
     if settings.single_instance {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
         }));
     }
 
@@ -253,94 +338,16 @@ pub fn run() {
             boot_log("setup enter");
             #[cfg(windows)]
             install_system_shutdown_handler(app);
-            let show_item = MenuItemBuilder::with_id("show", "打开窗口").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-            let menu = MenuBuilder::new(app)
-                .item(&show_item)
-                .item(&quit_item)
-                .build()?;
-
-            let icon = app
-                .default_window_icon()
-                .cloned()
-                .expect("Failed to load default window icon for tray");
-
-            let _tray = TrayIconBuilder::new()
-                .icon(icon)
-                .menu(&menu)
-                .tooltip("TerminalBuddy")
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            window.show().ok();
-                            window.set_focus().ok();
-                        }
-                    }
-                    "quit" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            window.show().ok();
-                            window.set_focus().ok();
-                        }
-                        let _ = app.emit("tray-exit-requested", ());
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::DoubleClick { .. } = event {
-                        if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = window.unminimize();
-                            window.show().ok();
-                            window.set_focus().ok();
-                        }
-                    }
-                })
-                .build(app)?;
-            boot_log("tray built");
-
+            bootstrap_tray(app)?;
             prepare_startup_window(app);
 
             // Sync launch_at_login setting with Windows Registry
             let _ = commands::sync_launch_at_login();
             boot_log("after sync_launch_at_login");
 
-            // Web API 或机器人回调任一需要时启动统一 HTTP 服务。
-            let app_handle = app.handle().clone();
-            let settings_clone = SettingsService::get_settings();
-            if settings_clone.web_api_enabled
-                || crate::services::BotSettingsService::requires_callback_server()
-            {
-                boot_log(format!(
-                    "starting HTTP server on port {}",
-                    settings_clone.web_api_port
-                ));
-                crate::commands::web::sync_http_server_for_bot(app_handle)
-                    .map_err(std::io::Error::other)?;
-                boot_log("HTTP server task spawned");
-            }
-            crate::services::sync_bot_long_connections(app.handle().clone())
-                .map_err(std::io::Error::other)?;
-            boot_log("Bot long-connection tasks synchronized");
-
-            match crate::services::repair_claude_http_hooks_if_managed(None) {
-                Ok(status) => boot_log(format!("Claude hooks status: {}", status.status)),
-                Err(error) => boot_log(format!("Claude hooks inspection failed: {}", error)),
-            }
-            match crate::web::claude_hook_server::bind() {
-                Ok(listener) => {
-                    let port = crate::services::ClaudeHookService::server_port();
-                    tauri::async_runtime::spawn(crate::web::claude_hook_server::run(
-                        app.handle().clone(),
-                        listener,
-                    ));
-                    boot_log(format!(
-                        "Claude hook HTTP server task spawned on port {}",
-                        port
-                    ));
-                }
-                Err(error) => boot_log(format!("Claude hook HTTP server disabled: {}", error)),
-            }
+            bootstrap_http_server(app.handle())?;
+            bootstrap_bot_connections(app.handle())?;
+            bootstrap_claude_hook(app.handle());
 
             boot_log("setup done — waiting for WebView page load before showing window");
             Ok(())
