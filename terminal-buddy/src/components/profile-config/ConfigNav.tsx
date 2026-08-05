@@ -430,7 +430,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           <button
             type="button"
             className="config-nav-sort-btn"
-            onClick={() => setSortDropdownOpen(!sortDropdownOpen)}
+            // 阻止冒泡：根容器 onClick={closeContextMenu} 会把刚打开的下拉立即关掉
+            onClick={(e) => { e.stopPropagation(); setSortDropdownOpen(!sortDropdownOpen); }}
             title="排序"
             aria-label="配置排序"
             aria-expanded={sortDropdownOpen}
