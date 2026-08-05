@@ -1,4 +1,4 @@
-﻿use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -45,79 +45,6 @@ pub fn build_router(state: AppState) -> Router {
         )
         // 杩炴帴锛坧rofile锛夊彧璇诲垪琛?鈥斺€?鎵嬫満绔笉绠＄悊 profile锛岀収鎼數鑴戠宸查厤缃殑瀵艰埅
         .route("/api/profiles", get(handlers::profile_handler::list))
-        // AI 浜や粯锛氳繙绔粎瑙傚療銆佹壒鍑嗕换鍔″浘涓庡洖绛斿緟鍐崇瓥椤癸紝涓嶈Е鍙戞湰鏈?CLI銆?
-        .route(
-            "/api/ai-delivery/projects",
-            get(handlers::ai_delivery_handler::projects),
-        )
-        .route(
-            "/api/ai-delivery/projects/{project_id}/deliveries",
-            get(handlers::ai_delivery_handler::deliveries),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}",
-            get(handlers::ai_delivery_handler::snapshot),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/approve",
-            post(handlers::ai_delivery_handler::approve),
-        )
-        .route(
-            "/api/ai-delivery/decisions/{id}/answer",
-            post(handlers::ai_delivery_handler::answer_decision),
-        )
-        .route(
-            "/api/ai-delivery/deliveries",
-            post(handlers::ai_delivery_handler::create_delivery),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/plan",
-            post(handlers::ai_delivery_handler::plan),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/dispatch",
-            post(handlers::ai_delivery_handler::dispatch),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/complete",
-            post(handlers::ai_delivery_handler::complete_attempt),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/merge",
-            post(handlers::ai_delivery_handler::merge),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/continue-merge",
-            post(handlers::ai_delivery_handler::continue_merge),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/cleanup-integration",
-            post(handlers::ai_delivery_handler::cleanup_integration),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/retry",
-            post(handlers::ai_delivery_handler::retry_task),
-        )
-        .route(
-            "/api/ai-delivery/attempts/{attempt_id}/output",
-            get(handlers::ai_delivery_handler::attempt_output),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}",
-            put(handlers::ai_delivery_handler::update_delivery),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/tasks",
-            post(handlers::ai_delivery_handler::create_task),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/tasks/{task_id}",
-            put(handlers::ai_delivery_handler::update_task),
-        )
-        .route(
-            "/api/ai-delivery/deliveries/{id}/tasks/{task_id}",
-            delete(handlers::ai_delivery_handler::delete_task),
-        )
         // 鍚姩鍙傛暟棰勮锛堜笌 PC 绔叡浜?ClientData/extra_param_presets.json锛?
         .route(
             "/api/extra-param-presets",

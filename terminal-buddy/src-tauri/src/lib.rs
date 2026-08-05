@@ -35,33 +35,8 @@ use commands::{
     save_web_api_share_sessions, set_data_path, show_claude_code_notification,
     start_blank_terminal, start_mstsc, start_terminal, sync_launch_at_login, update_profile,
     update_profile_last_used, update_terminal_display_name, update_workspace, window_close,
-    window_exit_app, window_minimize, window_toggle_maximize, open_ai_delivery_window, write_client_data,
+    window_exit_app, window_minimize, window_toggle_maximize, write_client_data,
     write_file_content, write_to_terminal,
-};
-use commands::{
-    allocate_ai_task_worktree, create_ai_project, create_ai_task_contract, delete_ai_agent,
-    delete_ai_project, delete_ai_role, delete_ai_runtime, delete_ai_workflow, detect_ai_runtimes,
-    generate_ai_quality_gate_commands, get_ai_agents, get_ai_projects, get_ai_roles,
-    get_ai_runtimes, get_ai_task_contracts, get_ai_workflows, refresh_ai_project_repositories,
-    save_ai_agent, save_ai_role, save_ai_runtime, save_ai_workflow, update_ai_project,
-};
-use commands::{
-    answer_ai_decision_request, approve_ai_delivery, cancel_ai_attempt, cancel_ai_delivery,
-    cancel_ai_task_node, complete_ai_attempt, confirm_ai_policy_violation_site,
-    continue_ai_merge_after_conflict, mark_ai_task_skipped,
-    cleanup_ai_delivery_integration, create_ai_decision_request, create_ai_delivery,
-    create_ai_task_node, delete_ai_delivery, dispatch_ai_ready_tasks, dispatch_ai_task_node,
-    delete_ai_task_node, update_ai_task_node,
-    get_ai_attempts, read_ai_attempt_output, list_ai_delivery_artifacts, read_ai_delivery_artifact,
-    export_ai_delivery_artifacts_zip, generate_ai_delivery_report, get_ai_decision_requests,
-    get_ai_deliveries, get_ai_delivery_events,
-    get_ai_merge_records, get_ai_review_gates, get_ai_task_nodes, merge_ai_delivery_locally,
-    pause_ai_delivery, plan_ai_delivery_with_manager, refresh_ai_ready_task_nodes,
-    replan_legacy_ai_delivery,
-    resolve_ai_review_gate, resume_ai_delivery, retry_ai_task_node, run_ai_quality_gate,
-    start_ai_attempt, update_ai_delivery, get_ai_review_diff, add_ai_review_line_comment,
-    list_ai_startup_presets, create_ai_startup_preset, update_ai_startup_preset,
-    delete_ai_startup_preset, test_ai_workflow_step, replan_ai_delivery_accepting_current_state,
 };
 use commands::{
     bot_scan_begin, bot_scan_poll, cancel_bot_decision, get_bot_callback_base_url,
@@ -73,12 +48,8 @@ use commands::{
     save_claude_hook_config_dir, uninstall_claude_hooks,
 };
 use commands::{MonitorCache, TerminalService};
-// AiAgent 仅用于 debug 构建下的测试派发入口（见 setup 中的
-// TERMINAL_BUDDY_TEST_DISPATCH_TASK_ID 分支），release 构建会编译掉该块。
-#[cfg(debug_assertions)]
-use models::ai_delivery::AiAgent;
 use models::{CloseBehavior, LaunchWindowMode};
-use services::{AiDeliveryService, SettingsService, SshSessionService, WebServiceState};
+use services::{SettingsService, SshSessionService, WebServiceState};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -275,17 +246,12 @@ pub fn run() {
                         boot_log(format!("main page load finished: {}", payload.url()));
                         reveal_main_window(webview);
                     }
-                    "ai-delivery" => {
-                        boot_log("ai-delivery page load finished (hidden, shown on demand)");
-                    }
                     _ => {}
                 }
             }
         })
         .setup(|app| {
             boot_log("setup enter");
-            // 注入全局 AppHandle：append_event 统一实时推送 ai-delivery-event
-            let _ = services::ai_delivery_service::APP_HANDLE.set(app.handle().clone());
             #[cfg(windows)]
             install_system_shutdown_handler(app);
             let show_item = MenuItemBuilder::with_id("show", "打开窗口").build(app)?;
@@ -335,121 +301,6 @@ pub fn run() {
             boot_log("tray built");
 
             prepare_startup_window(app);
-
-            match AiDeliveryService::recover_interrupted_attempts() {
-                Ok(0) => {}
-                Ok(count) => boot_log(format!(
-                    "recovered {} interrupted AI delivery attempts",
-                    count
-                )),
-                Err(error) => boot_log(format!("AI delivery recovery failed: {}", error)),
-            }
-
-            // 重建活跃 attempt 内存索引（N18），此后容量检查不再逐次全量读盘。
-            match AiDeliveryService::rebuild_active_attempt_index() {
-                Ok(count) => boot_log(format!("active attempt index rebuilt: {} items", count)),
-                Err(error) => boot_log(format!("active attempt index rebuild failed: {}", error)),
-            }
-
-            // 自动扫描本机已就绪的 CLI 并初始化 Runtime 配置（后台执行，不阻塞窗口）。
-            // 只添加「可用且 kind 未配置」的条目，已配置的 kind 不覆盖；
-            // 前端 AI 交付窗口打开时仍会重新检测并同步，二者互补。
-            tauri::async_runtime::spawn_blocking(move || {
-                match AiDeliveryService::auto_init_runtimes() {
-                    Ok(0) => boot_log(
-                        "runtime auto-init: no new runtimes (detected kinds already configured)",
-                    ),
-                    Ok(count) => boot_log(format!("auto-initialized {} runtimes", count)),
-                    Err(error) => boot_log(format!("runtime auto-init failed: {}", error)),
-                }
-            });
-
-            // 应用重启后，自动恢复运行中交付的就绪任务派发。
-            let app_handle = app.handle().clone();
-            let terminal_service = app.state::<TerminalService>().inner().clone();
-            #[cfg(debug_assertions)]
-            if let Ok(task_id) = std::env::var("TERMINAL_BUDDY_TEST_DISPATCH_TASK_ID") {
-                if !task_id.trim().is_empty() {
-                    let dispatch_handle = app_handle.clone();
-                    let dispatch_terminal = terminal_service.clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        let result = (|| {
-                            let runtime = AiDeliveryService::get_all_runtimes()?
-                                .into_iter()
-                                .find(|rt| rt.enabled && rt.kind.trim().eq_ignore_ascii_case("opencode"))
-                                .ok_or_else(|| "未找到已启用的 OpenCode Runtime".to_string())?;
-                            let agent = AiDeliveryService::get_all_agents()?
-                                .into_iter()
-                                .find(|a| a.enabled && a.runtime_id == runtime.id && a.runtime_args.iter().any(|arg| arg == "--auto"))
-                                .map(Ok)
-                                .unwrap_or_else(|| {
-                                    AiDeliveryService::save_agent(AiAgent {
-                                        id: String::new(),
-                                        name: "OpenCode（免费模型）".to_string(),
-                                        runtime_id: runtime.id,
-                                        runtime_args: vec!["--auto".to_string()],
-                                        startup_preset_name: Some("AI 交付自动批准".to_string()),
-                                        max_concurrency: 1,
-                                        enabled: true,
-                                        default_timeout_seconds: None,
-                                        created_at: String::new(),
-                                        updated_at: String::new(),
-                                    })
-                                })?;
-                            let existing = AiDeliveryService::get_task_node(&task_id)?;
-                            let task = if matches!(existing.state.as_str(), "failed" | "rework" | "cancelled") {
-                                AiDeliveryService::retry_task_node(&task_id)?
-                            } else {
-                                AiDeliveryService::refresh_ready_task_nodes(&existing.delivery_id)?;
-                                AiDeliveryService::get_task_node(&task_id)?
-                            };
-                            let attempt = AiDeliveryService::dispatch_task_node(&task.id, Some(&agent.id))?;
-                            AiDeliveryService::start_attempt(&attempt.id, dispatch_handle, dispatch_terminal)
-                        })();
-                        match result {
-                            Ok(a) => boot_log(format!("test task dispatched: {}", a.id)),
-                            Err(e) => boot_log(format!("test task dispatch failed: {}", e)),
-                        }
-                    });
-                }
-            }
-            tauri::async_runtime::spawn_blocking(move || {
-                for delivery in AiDeliveryService::get_all_deliveries(None).unwrap_or_default() {
-                    if delivery.state != "running" {
-                        continue;
-                    }
-                    match AiDeliveryService::dispatch_ready_and_start(
-                        &delivery.id,
-                        app_handle.clone(),
-                        terminal_service.clone(),
-                    ) {
-                        Ok(started) => {
-                            if started > 0 {
-                                boot_log(format!(
-                                    "auto-dispatched {} ready tasks for delivery {}",
-                                    started,
-                                    delivery.id
-                                ));
-                            }
-                        }
-                        Err(error) => {
-                            boot_log(format!(
-                                "auto-dispatch failed for delivery {}: {}",
-                                delivery.id, error
-                            ));
-                        }
-                    }
-                    // 崩溃于「任务全部完成 → 自动合并」窗口的交付：重启后补上收尾
-                    // （任务均 succeeded/skipped 的 running 交付，自动合并并置终态）。
-                    if let Ok(true) = AiDeliveryService::try_complete_workflow_delivery(&delivery.id)
-                    {
-                        boot_log(format!(
-                            "auto-completed delivery {} after restart",
-                            delivery.id
-                        ));
-                    }
-                }
-            });
 
             // Sync launch_at_login setting with Windows Registry
             let _ = commands::sync_launch_at_login();
@@ -504,86 +355,11 @@ pub fn run() {
                         api.prevent_close();
                         window.hide().ok();
                     }
-                } else if window.label() == "ai-delivery" {
-                    // AI 交付窗口关闭时仅隐藏，保留窗口以便再次打开；后台任务不受影响
-                    api.prevent_close();
-                    let _ = window.hide();
                 }
             }
         })
 
         .invoke_handler(tauri::generate_handler![
-            get_ai_projects,
-            create_ai_project,
-            refresh_ai_project_repositories,
-            update_ai_project,
-            generate_ai_quality_gate_commands,
-            delete_ai_project,
-            detect_ai_runtimes,
-            get_ai_runtimes,
-            save_ai_runtime,
-            delete_ai_runtime,
-            get_ai_agents,
-            save_ai_agent,
-            delete_ai_agent,
-            get_ai_roles,
-            save_ai_role,
-            delete_ai_role,
-            get_ai_workflows,
-            save_ai_workflow,
-            delete_ai_workflow,
-            get_ai_task_contracts,
-            create_ai_task_contract,
-            allocate_ai_task_worktree,
-            get_ai_deliveries,
-            create_ai_delivery,
-            update_ai_delivery,
-            plan_ai_delivery_with_manager,
-            replan_legacy_ai_delivery,
-            replan_ai_delivery_accepting_current_state,
-            delete_ai_delivery,
-            get_ai_task_nodes,
-            create_ai_task_node,
-            update_ai_task_node,
-            delete_ai_task_node,
-            approve_ai_delivery,
-            pause_ai_delivery,
-            resume_ai_delivery,
-            cancel_ai_delivery,
-            refresh_ai_ready_task_nodes,
-            get_ai_delivery_events,
-            get_ai_decision_requests,
-            create_ai_decision_request,
-            answer_ai_decision_request,
-            get_ai_attempts,
-            read_ai_attempt_output,
-            list_ai_delivery_artifacts,
-            read_ai_delivery_artifact,
-            export_ai_delivery_artifacts_zip,
-            generate_ai_delivery_report,
-            dispatch_ai_task_node,
-            dispatch_ai_ready_tasks,
-            retry_ai_task_node,
-            start_ai_attempt,
-            cancel_ai_attempt,
-            cancel_ai_task_node,
-            mark_ai_task_skipped,
-            confirm_ai_policy_violation_site,
-            complete_ai_attempt,
-            get_ai_review_gates,
-            run_ai_quality_gate,
-            resolve_ai_review_gate,
-            get_ai_review_diff,
-            add_ai_review_line_comment,
-            list_ai_startup_presets,
-            create_ai_startup_preset,
-            update_ai_startup_preset,
-            delete_ai_startup_preset,
-            test_ai_workflow_step,
-            get_ai_merge_records,
-            merge_ai_delivery_locally,
-            continue_ai_merge_after_conflict,
-            cleanup_ai_delivery_integration,
             get_all_profiles,
             get_profile,
             get_ssh_temp_directory,
@@ -692,7 +468,6 @@ pub fn run() {
             window_toggle_maximize,
             window_close,
             window_exit_app,
-            open_ai_delivery_window,
             fetch_qianfan_usage,
             fetch_deepseek_usage,
             fetch_minimax_usage,
