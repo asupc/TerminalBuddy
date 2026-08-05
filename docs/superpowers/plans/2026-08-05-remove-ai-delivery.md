@@ -461,12 +461,14 @@ git commit -m "[移除AI交付] 桌面前端移除窗口挂载分支/通知监�
 - Modify: `terminal-buddy/src/services/tauri.ts`
 - Modify: `terminal-buddy/src/utils/settings.ts`
 - Delete: `terminal-buddy/src/types/aiDelivery.ts`
+- Delete: `terminal-buddy/src/components/ai-delivery/`（整目录 26 个已跟踪文件）
 - Modify: `terminal-buddy/src/components/settings/BotChannelDialog.tsx`
 - Modify: `terminal-buddy/src/components/settings/BotNotificationSettings.tsx`
 
 **Interfaces:**
-- Consumes: Task 5 后 `tauri.ts` 的 AI 交付函数无调用方；`settings.ts` 的 AI 交付字段无读取方（`AiDeliveryWorkspace` 已随目录删除）
-- Produces: `tauri.ts` 仅剩共享接口；`BotChannelConfig` 去掉 `aiDeliveryEnabled`；`src/types/aiDelivery.ts` 消失。Task 7 不依赖本任务（web 是独立项目）。
+- Consumes: Task 5 后 `tauri.ts` 的 AI 交付函数无调用方；`settings.ts` 的 AI 交付字段无读取方
+- Produces: `tauri.ts` 仅剩共享接口；`BotChannelConfig` 去掉 `aiDeliveryEnabled`；`src/types/aiDelivery.ts` 消失；`components/ai-delivery/` 目录消失。Task 7 不依赖本任务（web 是独立项目）。
+- **缺陷修正**：`components/ai-delivery/` 目录删除原未分配给任何任务（Task 5 只删引用点、本任务 Interfaces 曾误称已删）；该目录组件 import 本任务删除的导出，不删则 `npx tsc --noEmit` 必失败。已并入本任务执行（实现中裁定，2026-08-05）。
 
 - [ ] **Step 1: 删除 `tauri.ts` 的类型 import 与 bot 字段**
 
