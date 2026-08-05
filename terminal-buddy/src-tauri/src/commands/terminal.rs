@@ -1,4 +1,5 @@
 use crate::models::web_api::TerminalInfo;
+use crate::models::Profile;
 use crate::models::TerminalLoadingMode;
 use crate::models::TerminalOwner;
 use crate::services::ssh_session_service::SshSessionService;
@@ -9,9 +10,7 @@ use crate::services::SettingsService;
 use crate::services::VsCodeTerminalProcess;
 use crate::services::WebServiceState;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use serde::Deserialize;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{Read, Write};
@@ -129,6 +128,13 @@ pub struct TerminalInstance {
     pub exited: AtomicBool,
 }
 
+impl TerminalInstance {
+    /// 后端进程 PID（供 Claude 会话发现等跨模块使用）
+    pub(crate) fn process_id(&self) -> Option<u32> {
+        self.backend.process_id()
+    }
+}
+
 enum TerminalBackend {
     Default {
         child: Box<dyn Child + Send + Sync>,
@@ -186,13 +192,6 @@ impl TerminalBackend {
         match self {
             Self::Default { child, .. } => child.process_id(),
             Self::VsCode(process) => process.process_id(),
-        }
-    }
-
-    fn is_running(&mut self) -> bool {
-        match self {
-            Self::Default { child, .. } => matches!(child.try_wait(), Ok(None)),
-            Self::VsCode(process) => process.is_running(),
         }
     }
 
@@ -402,11 +401,7 @@ fn spawn_output_forwarder(
         // 2. Mark the instance exited so it drops out of the mobile sessions list.
         {
             let ts = app.state::<TerminalService>();
-            if let Some(inst) = ts
-                .instances
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get_mut(&terminal_id)
+            if let Some(inst) = ts.lock_instances().get_mut(&terminal_id)
             {
                 inst.exited.store(true, Ordering::SeqCst);
             }
@@ -418,6 +413,223 @@ fn spawn_output_forwarder(
         }
         ClaudeHookService::unregister_terminal(&terminal_id);
     });
+}
+
+/// 统一获取 instances 锁：毒锁时取回内部值，避免 panic 扩散。
+fn lock_instances_map(
+    instances: &Mutex<HashMap<String, TerminalInstance>>,
+) -> std::sync::MutexGuard<'_, HashMap<String, TerminalInstance>> {
+    instances.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 终端尺寸默认值：0/空值回退 24x80。
+fn resolve_terminal_size(rows: u16, cols: u16) -> (u16, u16) {
+    let rows = if rows > 0 { rows } else { 24 };
+    let cols = if cols > 0 { cols } else { 80 };
+    (rows, cols)
+}
+
+/// 组装终端环境变量：profile 变量 + CLAUDE_CONFIG_DIR（未设置时）+ TERMINAL_BUDDY_* 三个标志位。
+fn build_terminal_env(terminal_id: &str, extra_env: Option<&[(String, String)]>) -> Vec<(String, String)> {
+    let mut env_vars = extra_env.map(|vars| vars.to_vec()).unwrap_or_default();
+    if !env_vars
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"))
+    {
+        if let Some(config_dir) = SettingsService::get_settings().claude_hook_config_dir {
+            env_vars.push(("CLAUDE_CONFIG_DIR".to_string(), config_dir));
+        }
+    }
+    let hook_token = ClaudeHookService::register_terminal(terminal_id);
+    env_vars.push((
+        "TERMINAL_BUDDY_TERMINAL_ID".to_string(),
+        terminal_id.to_string(),
+    ));
+    env_vars.push(("TERMINAL_BUDDY_HOOK_TOKEN".to_string(), hook_token));
+    env_vars.push((
+        "TERMINAL_BUDDY_HOOK_PORT".to_string(),
+        ClaudeHookService::server_port().to_string(),
+    ));
+    env_vars
+}
+
+/// spawn 后端，失败时反注册 hook 并记录日志。
+fn spawn_backend_with_cleanup(
+    app: &AppHandle,
+    loading_mode: &TerminalLoadingMode,
+    init_rows: u16,
+    init_cols: u16,
+    startup_path: Option<&str>,
+    env_vars: &[(String, String)],
+    terminal_id: &str,
+    log_prefix: &str,
+) -> Result<
+    (
+        TerminalBackend,
+        Box<dyn Read + Send>,
+        TerminalOutputBufferMode,
+    ),
+    String,
+> {
+    let backend = spawn_terminal_backend(
+        app,
+        loading_mode,
+        init_rows,
+        init_cols,
+        startup_path,
+        env_vars,
+    )
+    .map_err(|error| {
+        ClaudeHookService::unregister_terminal(terminal_id);
+        log_debug(&format!("[{}] backend FAILED: {}", log_prefix, error));
+        error
+    })?;
+    crate::boot_log(format!("[terminal] backend ready mode={:?}", loading_mode));
+    Ok(backend)
+}
+
+/// 延迟 300ms 向终端写入初始化命令（等待 cmd.exe 初始化完成，保留原有时序）。
+fn schedule_delayed_input(
+    instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
+    terminal_id: String,
+    commands: Vec<String>,
+    log_prefix: &str,
+) {
+    if commands.is_empty() {
+        return;
+    }
+    let log_prefix = log_prefix.to_string();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        log_debug(&format!(
+            "[{}] sending {} commands for {}",
+            log_prefix,
+            commands.len(),
+            terminal_id
+        ));
+
+        let mut instances = lock_instances_map(&instances);
+        if let Some(instance) = instances.get_mut(&terminal_id) {
+            for command in &commands {
+                let command = format!("{}\r", command);
+                if let Err(error) = instance.backend.write_input(command.as_bytes()) {
+                    log_debug(&format!("[{}] failed: {}", log_prefix, error));
+                    break;
+                }
+                log_debug(&format!("[{}] sent: {}", log_prefix, command));
+            }
+        }
+    });
+}
+
+/// 启动输出转发线程并完成创建收尾（日志 + 会话变更通知）。
+fn finalize_terminal_creation(
+    service: &TerminalService,
+    backend_reader: Box<dyn Read + Send>,
+    terminal_id: &str,
+    app: AppHandle,
+    output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
+    output_buffer_mode: TerminalOutputBufferMode,
+    debug_prefix: &str,
+    boot_prefix: &str,
+) {
+    spawn_output_forwarder(
+        backend_reader,
+        terminal_id.to_string(),
+        app,
+        output_buffer,
+        output_buffer_mode,
+    );
+    log_debug(&format!("[{}] DONE, id={}", debug_prefix, terminal_id));
+    crate::boot_log(format!("[{}] DONE", boot_prefix));
+    service.notify_sessions_changed();
+}
+
+/// 按终端类型构造启动命令；ssh/docker/k8s 需要 profile 连接参数。
+fn build_init_commands(
+    terminal_type: &str,
+    startup_commands: Vec<String>,
+    profile: Option<&Profile>,
+) -> Result<Vec<String>, String> {
+    match terminal_type {
+        "cmd" => Ok(startup_commands),
+        "powershell" => {
+            let mut cmds = vec!["powershell.exe".to_string()];
+            cmds.extend(startup_commands);
+            Ok(cmds)
+        }
+        "pwsh" => {
+            let pwsh = resolve_pwsh_exe()?;
+            let mut cmds = vec![pwsh];
+            cmds.extend(startup_commands);
+            Ok(cmds)
+        }
+        "ssh" => {
+            let host = profile.and_then(|p| p.ssh_host.clone()).unwrap_or_default();
+            let port = profile.and_then(|p| p.ssh_port).unwrap_or(22);
+            let user = profile.and_then(|p| p.ssh_user.clone()).unwrap_or_default();
+            let auth_type = profile
+                .and_then(|p| p.ssh_auth_type.clone())
+                .unwrap_or_else(|| "key".to_string());
+            let key_path = profile
+                .and_then(|p| p.ssh_key_path.clone())
+                .unwrap_or_default();
+            let ssh_cmd = if auth_type == "key" && !key_path.is_empty() {
+                format!(
+                    "ssh -i {} -p {} {}@{}",
+                    shell_escape(&key_path),
+                    port,
+                    shell_escape(&user),
+                    shell_escape(&host)
+                )
+            } else {
+                format!(
+                    "ssh -p {} {}@{}",
+                    port,
+                    shell_escape(&user),
+                    shell_escape(&host)
+                )
+            };
+            Ok(vec![ssh_cmd])
+        }
+        "docker" => {
+            let container = profile
+                .and_then(|p| p.docker_container_name.clone())
+                .or_else(|| profile.and_then(|p| p.docker_container_id.clone()))
+                .unwrap_or_default();
+            Ok(vec![format!(
+                "docker exec -it {} cmd.exe",
+                shell_escape(&container)
+            )])
+        }
+        "k8s" => {
+            let ns = profile
+                .and_then(|p| p.k8s_namespace.clone())
+                .unwrap_or_default();
+            let pod = profile
+                .and_then(|p| p.k8s_pod_name.clone())
+                .unwrap_or_default();
+            let container = profile
+                .and_then(|p| p.k8s_container_name.clone())
+                .unwrap_or_default();
+            let mut cmd = format!(
+                "kubectl exec -it -n {} {}",
+                shell_escape(&ns),
+                shell_escape(&pod)
+            );
+            if !container.is_empty() {
+                cmd = format!("{} -c {} -- cmd.exe", cmd, shell_escape(&container));
+            } else {
+                cmd = format!("{} -- cmd.exe", cmd);
+            }
+            Ok(vec![cmd])
+        }
+        _ => {
+            let mut cmds = vec!["powershell.exe".to_string()];
+            cmds.extend(startup_commands);
+            Ok(cmds)
+        }
+    }
 }
 
 impl Default for TerminalService {
@@ -440,6 +652,25 @@ impl TerminalService {
         let _ = self.session_change_tx.send(());
     }
 
+    pub(crate) fn lock_instances(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, TerminalInstance>> {
+        lock_instances_map(&self.instances)
+    }
+
+    fn insert_instance(&self, instance: TerminalInstance) {
+        let mut instances = self.lock_instances();
+        instances.insert(instance.id.clone(), instance);
+    }
+
+    fn output_buffer_arc(&self, id: &str) -> Result<Arc<Mutex<TerminalOutputBuffer>>, String> {
+        let instances = self.lock_instances();
+        instances
+            .get(id)
+            .map(|inst| inst.output_buffer.clone())
+            .ok_or("Terminal not found".to_string())
+    }
+
     /// 构建当前存活终端的列表（供 REST `GET /api/terminals`、Tauri 命令、meta WS 共用）。
     /// 过滤掉 PTY 已退出的实例，并用 ProfileService 补全 profile 元数据。
     pub fn list_terminals_info(&self) -> Vec<TerminalInfo> {
@@ -453,7 +684,7 @@ impl TerminalService {
             Option<String>,
             Option<String>,
         )> = {
-            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            let instances = self.lock_instances();
             instances
                 .values()
                 .filter(|inst| !inst.exited.load(Ordering::SeqCst))
@@ -567,7 +798,7 @@ impl TerminalService {
         } else {
             startup_commands
         };
-        let mut env_vars: Vec<(String, String)> = profile
+        let profile_env: Vec<(String, String)> = profile
             .as_ref()
             .map(|p| {
                 p.environment_variables
@@ -576,24 +807,7 @@ impl TerminalService {
                     .collect()
             })
             .unwrap_or_default();
-        if !env_vars
-            .iter()
-            .any(|(key, _)| key.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"))
-        {
-            if let Some(config_dir) = SettingsService::get_settings().claude_hook_config_dir {
-                env_vars.push(("CLAUDE_CONFIG_DIR".to_string(), config_dir));
-            }
-        }
-        let hook_token = ClaudeHookService::register_terminal(&terminal_id);
-        env_vars.push((
-            "TERMINAL_BUDDY_TERMINAL_ID".to_string(),
-            terminal_id.clone(),
-        ));
-        env_vars.push(("TERMINAL_BUDDY_HOOK_TOKEN".to_string(), hook_token));
-        env_vars.push((
-            "TERMINAL_BUDDY_HOOK_PORT".to_string(),
-            ClaudeHookService::server_port().to_string(),
-        ));
+        let env_vars = build_terminal_env(&terminal_id, Some(&profile_env));
 
         log_debug(&format!(
             "[create] type={}, path={:?}, commands={}, envs={}",
@@ -607,23 +821,18 @@ impl TerminalService {
             terminal_type, profile_id
         ));
 
-        let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
-        let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
+        let (init_rows, init_cols) = resolve_terminal_size(initial_rows, initial_cols);
         let loading_mode = SettingsService::get_settings().terminal_loading_mode;
-        let (backend, backend_reader, output_buffer_mode) = spawn_terminal_backend(
+        let (backend, backend_reader, output_buffer_mode) = spawn_backend_with_cleanup(
             &app,
             &loading_mode,
             init_rows,
             init_cols,
             startup_path.as_deref(),
             &env_vars,
-        )
-        .map_err(|error| {
-            ClaudeHookService::unregister_terminal(&terminal_id);
-            log_debug(&format!("[create] backend FAILED: {}", error));
-            error
-        })?;
-        crate::boot_log(format!("[terminal] backend ready mode={:?}", loading_mode));
+            &terminal_id,
+            "create",
+        )?;
 
         let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
 
@@ -641,141 +850,34 @@ impl TerminalService {
             current_cols: init_cols,
             exited: AtomicBool::new(false),
         };
-
-        {
-            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            instances.insert(terminal_id.clone(), instance);
-        }
+        self.insert_instance(instance);
 
         // Build init commands based on terminal type
-        let init_commands = match terminal_type {
-            "cmd" => startup_commands,
-            "powershell" => {
-                let mut cmds = vec!["powershell.exe".to_string()];
-                cmds.extend(startup_commands);
-                cmds
-            }
-            "pwsh" => {
-                let pwsh = resolve_pwsh_exe()?;
-                let mut cmds = vec![pwsh];
-                cmds.extend(startup_commands);
-                cmds
-            }
-            "ssh" => {
-                let p = profile.as_ref();
-                let host = p.and_then(|p| p.ssh_host.clone()).unwrap_or_default();
-                let port = p.and_then(|p| p.ssh_port).unwrap_or(22);
-                let user = p.and_then(|p| p.ssh_user.clone()).unwrap_or_default();
-                let auth_type = p
-                    .and_then(|p| p.ssh_auth_type.clone())
-                    .unwrap_or_else(|| "key".to_string());
-                let key_path = p.and_then(|p| p.ssh_key_path.clone()).unwrap_or_default();
-                let ssh_cmd = if auth_type == "key" && !key_path.is_empty() {
-                    format!(
-                        "ssh -i {} -p {} {}@{}",
-                        shell_escape(&key_path),
-                        port,
-                        shell_escape(&user),
-                        shell_escape(&host)
-                    )
-                } else {
-                    format!(
-                        "ssh -p {} {}@{}",
-                        port,
-                        shell_escape(&user),
-                        shell_escape(&host)
-                    )
-                };
-                vec![ssh_cmd]
-            }
-            "docker" => {
-                let container = profile
-                    .as_ref()
-                    .and_then(|p| p.docker_container_name.clone())
-                    .or_else(|| profile.as_ref().and_then(|p| p.docker_container_id.clone()))
-                    .unwrap_or_default();
-                vec![format!(
-                    "docker exec -it {} cmd.exe",
-                    shell_escape(&container)
-                )]
-            }
-            "k8s" => {
-                let ns = profile
-                    .as_ref()
-                    .and_then(|p| p.k8s_namespace.clone())
-                    .unwrap_or_default();
-                let pod = profile
-                    .as_ref()
-                    .and_then(|p| p.k8s_pod_name.clone())
-                    .unwrap_or_default();
-                let container = profile
-                    .as_ref()
-                    .and_then(|p| p.k8s_container_name.clone())
-                    .unwrap_or_default();
-                let mut cmd = format!(
-                    "kubectl exec -it -n {} {}",
-                    shell_escape(&ns),
-                    shell_escape(&pod)
-                );
-                if !container.is_empty() {
-                    cmd = format!("{} -c {} -- cmd.exe", cmd, shell_escape(&container));
-                } else {
-                    cmd = format!("{} -- cmd.exe", cmd);
-                }
-                vec![cmd]
-            }
-            _ => {
-                let mut cmds = vec!["powershell.exe".to_string()];
-                cmds.extend(startup_commands);
-                cmds
-            }
-        };
-
-        if !init_commands.is_empty() {
-            let tid = terminal_id.clone();
-            let commands = init_commands;
-            let instances = self.instances.clone();
-
-            thread::spawn(move || {
-                // Wait for cmd.exe to initialize
-                thread::sleep(std::time::Duration::from_millis(300));
-                log_debug(&format!(
-                    "[init-cmds] sending {} commands for {}",
-                    commands.len(),
-                    tid
-                ));
-
-                let mut instances_lock = instances.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(instance) = instances_lock.get_mut(&tid) {
-                    for cmd_str in &commands {
-                        let command = format!("{}\r", cmd_str);
-                        if let Err(error) = instance.backend.write_input(command.as_bytes()) {
-                            log_debug(&format!("[init-cmds] failed: {}", error));
-                            break;
-                        }
-                        log_debug(&format!("[init-cmds] sent: {}", cmd_str));
-                    }
-                }
-            });
-        }
+        let init_commands = build_init_commands(terminal_type, startup_commands, profile.as_ref())?;
+        schedule_delayed_input(
+            self.instances.clone(),
+            terminal_id.clone(),
+            init_commands,
+            "init-cmds",
+        );
 
         // Output forwarding thread
-        spawn_output_forwarder(
+        finalize_terminal_creation(
+            self,
             backend_reader,
-            terminal_id.clone(),
+            &terminal_id,
             app,
             output_buffer,
             output_buffer_mode,
+            "create",
+            "create_terminal",
         );
 
-        log_debug(&format!("[create] DONE, id={}", terminal_id));
-        crate::boot_log("[create_terminal] DONE");
-        self.notify_sessions_changed();
         Ok(terminal_id)
     }
 
     pub fn write_to_terminal(&self, id: &str, data: &str) -> Result<(), String> {
-        let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+        let mut instances = self.lock_instances();
         if let Some(instance) = instances.get_mut(id) {
             instance.backend.write_input(data.as_bytes())
         } else {
@@ -790,7 +892,7 @@ impl TerminalService {
         }
 
         let changed = {
-            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            let mut instances = self.lock_instances();
             let instance = instances
                 .get_mut(id)
                 .ok_or("Terminal not found".to_string())?;
@@ -818,7 +920,7 @@ impl TerminalService {
         // 传入 ConPTY 触发底层异常（前端在布局过渡帧可能短暂算出 0）。
         let rows = rows.clamp(1, 500);
         let cols = cols.clamp(1, 500);
-        let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+        let mut instances = self.lock_instances();
         if let Some(instance) = instances.get_mut(id) {
             let (new_rows, new_cols) = if allow_shrink {
                 (rows, cols)
@@ -846,7 +948,7 @@ impl TerminalService {
     }
 
     pub fn acknowledge_terminal_output(&self, id: &str, char_count: u32) -> Result<(), String> {
-        let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+        let mut instances = self.lock_instances();
         let instance = instances
             .get_mut(id)
             .ok_or("Terminal not found".to_string())?;
@@ -854,51 +956,22 @@ impl TerminalService {
     }
 
     pub fn terminal_loading_mode(&self, id: &str) -> Result<&'static str, String> {
-        let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+        let instances = self.lock_instances();
         let instance = instances.get(id).ok_or("Terminal not found".to_string())?;
         Ok(instance.backend.loading_mode())
     }
 
     pub fn drain_terminal_output(&self, id: &str) -> Result<String, String> {
-        // Get buffer reference while holding instances lock briefly
-        let buf_arc = {
-            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            instances
-                .get(id)
-                .map(|inst| inst.output_buffer.clone())
-                .ok_or("Terminal not found".to_string())?
-        };
+        let buf_arc = self.output_buffer_arc(id)?;
         let mut buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
         // 统一消费：drain 清空缓冲并返回全部内容；消费后下一轮只拿到新输出，避免重复累积。
         Ok(buffer.drain())
     }
 
     pub fn peek_terminal_output(&self, id: &str) -> Result<String, String> {
-        let buf_arc = {
-            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            instances
-                .get(id)
-                .map(|inst| inst.output_buffer.clone())
-                .ok_or("Terminal not found".to_string())?
-        };
+        let buf_arc = self.output_buffer_arc(id)?;
         let buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
         Ok(buffer.collect())
-    }
-
-    /// 检查终端后端进程是否仍在运行。仅能读取输出并不代表 PTY 进程仍然存活。
-    pub fn is_terminal_running(&self, id: &str) -> bool {
-        let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(instance) = instances.get_mut(id) else {
-            return false;
-        };
-        if instance.exited.load(Ordering::SeqCst) {
-            return false;
-        }
-        let running = instance.backend.is_running();
-        if !running {
-            instance.exited.store(true, Ordering::SeqCst);
-        }
-        running
     }
 
     /// 检查 PC 端是否有权限操作指定终端
@@ -906,7 +979,7 @@ impl TerminalService {
     pub fn check_pc_permission(&self, id: &str) -> Result<(), String> {
         let settings = SettingsService::get_settings();
         if !settings.web_api_share_sessions {
-            let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            let instances = self.lock_instances();
             if let Some(terminal) = instances.get(id) {
                 if terminal.owner == TerminalOwner::Web {
                     return Err("终端由 Web 端管理，PC 端只读".to_string());
@@ -917,14 +990,7 @@ impl TerminalService {
     }
 
     pub fn close_terminal(&self, id: &str) -> Result<(), String> {
-        let instance = {
-            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            instances
-                .remove(id)
-                .ok_or("Terminal not found".to_string())?
-        };
-        self.schedule_terminal_cleanup(id, instance);
-        Ok(())
+        self.close_terminal_with_check(id, None)
     }
 
     pub fn close_terminal_with_check(
@@ -933,7 +999,7 @@ impl TerminalService {
         required_owner: Option<TerminalOwner>,
     ) -> Result<(), String> {
         let instance = {
-            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+            let mut instances = self.lock_instances();
             let instance = instances.get(id).ok_or("Terminal not found".to_string())?;
             if let Some(expected) = required_owner {
                 if instance.owner != expected {
@@ -1007,38 +1073,19 @@ impl TerminalService {
                 "pwsh" => "PowerShell 7".to_string(),
                 _ => "PowerShell".to_string(),
             });
-        let init_rows = if initial_rows > 0 { initial_rows } else { 24 };
-        let init_cols = if initial_cols > 0 { initial_cols } else { 80 };
+        let (init_rows, init_cols) = resolve_terminal_size(initial_rows, initial_cols);
         let loading_mode = SettingsService::get_settings().terminal_loading_mode;
-        let hook_token = ClaudeHookService::register_terminal(&terminal_id);
-        let mut env_vars = vec![
-            (
-                "TERMINAL_BUDDY_TERMINAL_ID".to_string(),
-                terminal_id.clone(),
-            ),
-            ("TERMINAL_BUDDY_HOOK_TOKEN".to_string(), hook_token),
-            (
-                "TERMINAL_BUDDY_HOOK_PORT".to_string(),
-                ClaudeHookService::server_port().to_string(),
-            ),
-        ];
-        if let Some(config_dir) = SettingsService::get_settings().claude_hook_config_dir {
-            env_vars.push(("CLAUDE_CONFIG_DIR".to_string(), config_dir));
-        }
-        let (backend, backend_reader, output_buffer_mode) = spawn_terminal_backend(
+        let env_vars = build_terminal_env(&terminal_id, None);
+        let (backend, backend_reader, output_buffer_mode) = spawn_backend_with_cleanup(
             &app,
             &loading_mode,
             init_rows,
             init_cols,
             startup_path.as_deref(),
             &env_vars,
-        )
-        .map_err(|error| {
-            ClaudeHookService::unregister_terminal(&terminal_id);
-            log_debug(&format!("[create-blank] backend FAILED: {}", error));
-            error
-        })?;
-        crate::boot_log(format!("[terminal] backend ready mode={:?}", loading_mode));
+            &terminal_id,
+            "create-blank",
+        )?;
 
         let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
 
@@ -1059,11 +1106,7 @@ impl TerminalService {
             extra_param_tag: None,
             extra_param_tag_color: None,
         };
-
-        {
-            let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-            instances.insert(terminal_id.clone(), instance);
-        }
+        self.insert_instance(instance);
 
         // For "cmd" type: cmd.exe is already the base shell, no need to start another one
         // For "powershell" type: need to start powershell.exe
@@ -1073,36 +1116,30 @@ impl TerminalService {
             "pwsh" => resolve_pwsh_exe()?,
             _ => "powershell.exe".to_string(),
         };
-        let tid = terminal_id.clone();
-        let instances = self.instances.clone();
-
-        thread::spawn(move || {
-            thread::sleep(std::time::Duration::from_millis(300));
-            log_debug(&format!("[init-blank] sending shell command for {}", tid));
-
-            let mut instances_lock = instances.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(instance) = instances_lock.get_mut(&tid) {
-                if !shell_cmd.is_empty() {
-                    let command = format!("{}\r", shell_cmd);
-                    if let Err(error) = instance.backend.write_input(command.as_bytes()) {
-                        log_debug(&format!("[init-blank] failed: {}", error));
-                    }
-                }
-            }
-        });
+        let init_commands = if shell_cmd.is_empty() {
+            Vec::new()
+        } else {
+            vec![shell_cmd]
+        };
+        schedule_delayed_input(
+            self.instances.clone(),
+            terminal_id.clone(),
+            init_commands,
+            "init-blank",
+        );
 
         // Output forwarding thread
-        spawn_output_forwarder(
+        finalize_terminal_creation(
+            self,
             backend_reader,
-            terminal_id.clone(),
+            &terminal_id,
             app,
             output_buffer,
             output_buffer_mode,
+            "create-blank",
+            "create_blank_terminal",
         );
 
-        log_debug(&format!("[create-blank] DONE, id={}", terminal_id));
-        crate::boot_log("[create_blank_terminal] DONE");
-        self.notify_sessions_changed();
         Ok(terminal_id)
     }
 }
@@ -1255,409 +1292,3 @@ pub async fn start_blank_terminal(
     .map_err(|error| format!("终端后台启动失败：{}", error))?
 }
 
-// 跟踪已启动的 mstsc 进程 PID，key = profile_id
-static MSTSC_PROCESSES: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
-
-fn mstsc_processes() -> &'static Mutex<HashMap<String, u32>> {
-    MSTSC_PROCESSES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// 检查进程是否仍在运行
-fn is_process_running(pid: u32) -> bool {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
-
-    unsafe {
-        if let Ok(handle) = OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) {
-            let mut exit_code: u32 = 0;
-            let running =
-                windows::Win32::System::Threading::GetExitCodeProcess(handle, &mut exit_code)
-                    .is_ok()
-                    && exit_code == 259; // STILL_ACTIVE
-            let _ = CloseHandle(handle);
-            running
-        } else {
-            false
-        }
-    }
-}
-
-/// 将指定 PID 的窗口提到前台
-fn bring_window_to_front(pid: u32) -> bool {
-    use windows::Win32::Foundation::{HWND, LPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow,
-    };
-
-    struct EnumCtx {
-        target_pid: u32,
-        found_hwnd: Option<HWND>,
-    }
-
-    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
-        let ctx = unsafe { &mut *(lparam.0 as *mut EnumCtx) };
-        let mut pid: u32 = 0;
-        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
-        if pid == ctx.target_pid && unsafe { IsWindowVisible(hwnd) }.as_bool() {
-            ctx.found_hwnd = Some(hwnd);
-            return windows::core::BOOL(0); // stop enumeration
-        }
-        windows::core::BOOL(1) // continue
-    }
-
-    let mut ctx = EnumCtx {
-        target_pid: pid,
-        found_hwnd: None,
-    };
-    unsafe {
-        let _ = EnumWindows(Some(enum_callback), LPARAM(&mut ctx as *mut _ as isize));
-        if let Some(hwnd) = ctx.found_hwnd {
-            let _ = SetForegroundWindow(hwnd);
-            return true;
-        }
-    }
-    false
-}
-
-/// 直接写入 Windows 凭据管理器，避免每次连接都启动并等待 cmdkey.exe。
-fn store_mstsc_credential(host: &str, user: &str, password: &str) -> windows::core::Result<()> {
-    use windows::core::PWSTR;
-    use windows::Win32::Security::Credentials::{
-        CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
-    };
-
-    let mut target: Vec<u16> = format!("TERMSRV/{}", host)
-        .encode_utf16()
-        .chain(Some(0))
-        .collect();
-    let mut username: Vec<u16> = user.encode_utf16().chain(Some(0)).collect();
-    let mut password: Vec<u16> = password.encode_utf16().collect();
-    let credential = CREDENTIALW {
-        Type: CRED_TYPE_GENERIC,
-        TargetName: PWSTR::from_raw(target.as_mut_ptr()),
-        CredentialBlobSize: (password.len() * size_of::<u16>()) as u32,
-        CredentialBlob: password.as_mut_ptr().cast::<u8>(),
-        Persist: CRED_PERSIST_LOCAL_MACHINE,
-        UserName: PWSTR::from_raw(username.as_mut_ptr()),
-        ..Default::default()
-    };
-
-    unsafe { CredWriteW(&credential, 0) }
-}
-
-#[command]
-pub fn start_mstsc(profile_id: String, _app: AppHandle) -> Result<(), String> {
-    let profile =
-        ProfileService::get_profile(&profile_id).map_err(|e| format!("配置不存在: {}", e))?;
-
-    let host = profile
-        .mstsc_host
-        .as_ref()
-        .filter(|h| !h.is_empty())
-        .ok_or_else(|| "请先配置远程主机地址".to_string())?;
-
-    // 检查是否已有该 Profile 的 mstsc 进程在运行
-    {
-        let mut processes = mstsc_processes().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(&pid) = processes.get(&profile_id) {
-            if is_process_running(pid) {
-                bring_window_to_front(pid);
-                return Ok(());
-            } else {
-                processes.remove(&profile_id);
-            }
-        }
-    }
-
-    let port = profile.mstsc_port.unwrap_or(3389);
-    let user = profile.mstsc_user.as_deref().unwrap_or("");
-    let password = profile.mstsc_password.as_deref().unwrap_or("");
-    let resolution = profile.mstsc_resolution.as_deref().unwrap_or("");
-
-    // 存储凭据到 Windows 凭据管理器
-    if !user.is_empty() {
-        if let Err(error) = store_mstsc_credential(host, user, password) {
-            eprintln!("[mstsc] 写入 Windows 凭据管理器失败: {}", error);
-        }
-    }
-
-    // 构建 mstsc.exe 参数
-    let addr = if port == 3389 {
-        host.clone()
-    } else {
-        format!("{}:{}", host, port)
-    };
-
-    let mut args = vec![format!("/v:{}", addr)];
-
-    if !resolution.is_empty() {
-        if let Some((w, h)) = resolution.split_once('x') {
-            args.push(format!("/w:{}", w));
-            args.push(format!("/h:{}", h));
-        }
-    } else {
-        args.push("/f".to_string());
-    }
-
-    let child = std::process::Command::new("mstsc.exe")
-        .args(&args)
-        .spawn()
-        .map_err(|e| format!("启动远程桌面失败: {}", e))?;
-
-    let pid = child.id();
-
-    // 记录进程 PID
-    {
-        let mut processes = mstsc_processes().lock().unwrap_or_else(|e| e.into_inner());
-        processes.insert(profile_id.clone(), pid);
-    }
-
-    Ok(())
-}
-
-/// Claude Code 会话文件结构 (位于 ~/.claude/sessions/<pid>.json)
-#[derive(Deserialize)]
-struct ClaudeSessionFile {
-    #[serde(rename = "sessionId")]
-    session_id: String,
-    cwd: String,
-    #[serde(rename = "updatedAt")]
-    updated_at: u64,
-}
-
-/// 获取终端进程的 PID
-#[command]
-pub fn get_terminal_process_id(
-    terminal_id: String,
-    service: State<'_, TerminalService>,
-) -> Result<Option<u32>, String> {
-    let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(instance) = instances.get(&terminal_id) {
-        Ok(instance.backend.process_id())
-    } else {
-        Ok(None)
-    }
-}
-
-/// 一次性获取所有进程的父子关系，返回 (pid, parent_pid, name)
-/// 使用 Windows API CreateToolhelp32Snapshot（几十毫秒），远快于 PowerShell/WMIC
-fn get_all_processes() -> Vec<(u32, u32, String)> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-        TH32CS_SNAPPROCESS,
-    };
-
-    let mut result = Vec::new();
-    unsafe {
-        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
-            Ok(h) => h,
-            Err(_) => return result,
-        };
-        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-        if Process32FirstW(snapshot, &mut entry).is_ok() {
-            loop {
-                let pid = entry.th32ProcessID;
-                let ppid = entry.th32ParentProcessID;
-                let name_end = entry
-                    .szExeFile
-                    .iter()
-                    .position(|&c| c == 0)
-                    .unwrap_or(entry.szExeFile.len());
-                let name = String::from_utf16_lossy(&entry.szExeFile[..name_end]).to_lowercase();
-                result.push((pid, ppid, name));
-                if Process32NextW(snapshot, &mut entry).is_err() {
-                    break;
-                }
-            }
-        }
-        let _ = CloseHandle(snapshot);
-    }
-    result
-}
-
-/// 在进程树中查找 Claude Code 进程（基于预加载的进程列表）
-/// 只匹配进程名包含 "claude" 的进程，排除 node（避免 IDE/codegraph 误报）
-fn find_claude_pids_in_tree(
-    parent_pid: u32,
-    all_processes: &[(u32, u32, String)],
-    visited: &mut HashSet<u32>,
-) -> Vec<u32> {
-    let mut result = Vec::new();
-    if visited.contains(&parent_pid) {
-        return result;
-    }
-    visited.insert(parent_pid);
-
-    for &(pid, ppid, ref name) in all_processes {
-        if ppid == parent_pid {
-            if name.contains("claude") {
-                // 检查这个进程是否有对应的 session 文件
-                let home = dirs::home_dir().unwrap_or_default();
-                let session_file = home
-                    .join(".claude")
-                    .join("sessions")
-                    .join(format!("{}.json", pid));
-                if session_file.exists() {
-                    result.push(pid);
-                }
-            }
-            // 递归查找子进程（即使当前进程不是 claude，子进程也可能是）
-            result.extend(find_claude_pids_in_tree(pid, all_processes, visited));
-        }
-    }
-
-    result
-}
-
-/// 通过终端进程树查找 Claude Code 会话 ID
-/// 不限制 status，返回 updatedAt 最大的会话（最近活跃的）
-#[command]
-pub fn get_claude_session_for_terminal(
-    terminal_id: String,
-    service: State<'_, TerminalService>,
-) -> Result<Option<String>, String> {
-    // 获取终端进程的 PID
-    let terminal_pid = {
-        let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
-        instances
-            .get(&terminal_id)
-            .and_then(|instance| instance.backend.process_id())
-    };
-
-    let Some(pid) = terminal_pid else {
-        return Ok(None);
-    };
-
-    // 一次性获取所有进程
-    let all_processes = get_all_processes();
-
-    // 在进程树中查找 Claude Code 进程
-    let mut visited = HashSet::new();
-    let claude_pids = find_claude_pids_in_tree(pid, &all_processes, &mut visited);
-
-    // 读取找到的 Claude Code 进程的 session 文件
-    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
-    let sessions_dir = home.join(".claude").join("sessions");
-
-    // 返回 updatedAt 最大的会话（最近活跃的），不限制 status
-    let mut best: Option<(String, u64)> = None;
-
-    for claude_pid in claude_pids {
-        let session_file = sessions_dir.join(format!("{}.json", claude_pid));
-        if let Ok(content) = fs::read_to_string(&session_file) {
-            if let Ok(session) = serde_json::from_str::<ClaudeSessionFile>(&content) {
-                match &best {
-                    Some((_, ts)) if session.updated_at <= *ts => {}
-                    _ => best = Some((session.session_id.clone(), session.updated_at)),
-                }
-            }
-        }
-    }
-
-    Ok(best.map(|(id, _)| id))
-}
-
-/// 批量获取多个终端的 Claude Code 会话 ID
-/// 只调用一次 CreateToolhelp32Snapshot，对所有终端在内存中查找，避免 N 次进程快照
-#[command]
-pub fn get_claude_sessions_for_terminals(
-    terminal_ids: Vec<String>,
-    service: State<'_, TerminalService>,
-) -> Result<HashMap<String, String>, String> {
-    // 1. 一次性获取所有终端的 PID
-    let terminal_pids: Vec<(String, u32)> = {
-        let instances = service.instances.lock().unwrap_or_else(|e| e.into_inner());
-        terminal_ids
-            .iter()
-            .filter_map(|id| {
-                instances
-                    .get(id)
-                    .and_then(|instance| instance.backend.process_id())
-                    .map(|pid| (id.clone(), pid))
-            })
-            .collect()
-    };
-
-    if terminal_pids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    // 2. 一次性获取所有进程（Windows API，几十毫秒）
-    let all_processes = get_all_processes();
-
-    // 3. 对每个终端在进程树中查找 Claude session
-    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
-    let sessions_dir = home.join(".claude").join("sessions");
-
-    let mut result = HashMap::new();
-
-    for (terminal_id, pid) in &terminal_pids {
-        let mut visited = HashSet::new();
-        let claude_pids = find_claude_pids_in_tree(*pid, &all_processes, &mut visited);
-
-        let mut best: Option<(String, u64)> = None;
-        for claude_pid in claude_pids {
-            let session_file = sessions_dir.join(format!("{}.json", claude_pid));
-            if let Ok(content) = fs::read_to_string(&session_file) {
-                if let Ok(session) = serde_json::from_str::<ClaudeSessionFile>(&content) {
-                    match &best {
-                        Some((_, ts)) if session.updated_at <= *ts => {}
-                        _ => best = Some((session.session_id.clone(), session.updated_at)),
-                    }
-                }
-            }
-        }
-
-        if let Some((id, _)) = best {
-            result.insert(terminal_id.clone(), id);
-        }
-    }
-
-    Ok(result)
-}
-
-/// 扫描 ~/.claude/sessions/*.json，返回指定 cwd 下最近活跃的 Claude Code 会话 ID
-/// 注意：当同一目录有多个终端时，此函数可能返回错误的结果，建议使用 get_claude_session_for_terminal
-#[command]
-pub fn get_claude_session_for_cwd(cwd: String) -> Result<Option<String>, String> {
-    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
-    let sessions_dir = home.join(".claude").join("sessions");
-
-    if !sessions_dir.exists() {
-        return Ok(None);
-    }
-
-    let cwd_normalized = cwd.replace('/', "\\").to_lowercase();
-    let mut best: Option<(String, u64)> = None;
-
-    let entries =
-        fs::read_dir(&sessions_dir).map_err(|e| format!("读取 Claude sessions 目录失败: {}", e))?;
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().map_or(true, |ext| ext != "json") {
-            continue;
-        }
-        let Ok(content) = fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(session) = serde_json::from_str::<ClaudeSessionFile>(&content) else {
-            continue;
-        };
-
-        // 只考虑 cwd 匹配的会话（不限制 status，返回最近活跃的）
-        let session_cwd = session.cwd.replace('/', "\\").to_lowercase();
-        if session_cwd != cwd_normalized {
-            continue;
-        }
-
-        match &best {
-            Some((_, ts)) if session.updated_at <= *ts => {}
-            _ => best = Some((session.session_id.clone(), session.updated_at)),
-        }
-    }
-
-    Ok(best.map(|(id, _)| id))
-}
