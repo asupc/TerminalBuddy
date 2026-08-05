@@ -68,6 +68,12 @@ export function AttemptOutputDialog({ output, attemptLabel, onClose }: AttemptOu
       result.push({ key: 'transcriptTail', label: '终端日志', language: 'plaintext', content: output.transcriptTail });
     }
 
+    // live-output.log 尾部：PTY 实时显示流（含命令回显/提示符，比 transcript 更全）。
+    // 修复 agent 输出回流 PTY 后才有内容；执行完毕后在此回看执行过程。
+    if (output.liveOutputTail) {
+      result.push({ key: 'liveOutputTail', label: '实时输出', language: 'plaintext', content: output.liveOutputTail });
+    }
+
     return result;
   }, [output]);
 

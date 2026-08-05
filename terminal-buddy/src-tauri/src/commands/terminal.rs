@@ -121,8 +121,6 @@ pub struct TerminalInstance {
     pub owner: TerminalOwner,
     pub extra_param_tag: Option<String>,
     pub extra_param_tag_color: Option<String>,
-    /// AI 交付终端标记：drain_terminal_output 对其只返回缓冲不消费（monitor 线程独占消费落盘）。
-    pub ai_delivery: bool,
     backend: TerminalBackend,
     output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
     current_rows: u16,
@@ -637,7 +635,6 @@ impl TerminalService {
             owner,
             extra_param_tag: extra_param_tag.map(str::to_string),
             extra_param_tag_color: extra_param_tag_color.map(str::to_string),
-            ai_delivery: false,
             backend,
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
@@ -786,16 +783,6 @@ impl TerminalService {
         }
     }
 
-    /// 将终端标记为 AI 交付终端：drain_terminal_output 对其只读不消费（monitor 线程独占消费）。
-    pub fn set_ai_delivery_flag(&self, id: &str) -> Result<(), String> {
-        let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
-        let instance = instances
-            .get_mut(id)
-            .ok_or("Terminal not found".to_string())?;
-        instance.ai_delivery = true;
-        Ok(())
-    }
-
     pub fn update_terminal_display_name(&self, id: &str, display_name: &str) -> Result<(), String> {
         let display_name = display_name.trim();
         if display_name.is_empty() {
@@ -874,18 +861,16 @@ impl TerminalService {
 
     pub fn drain_terminal_output(&self, id: &str) -> Result<String, String> {
         // Get buffer reference while holding instances lock briefly
-        let (buf_arc, ai_delivery) = {
+        let buf_arc = {
             let instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
             instances
                 .get(id)
-                .map(|inst| (inst.output_buffer.clone(), inst.ai_delivery))
+                .map(|inst| inst.output_buffer.clone())
                 .ok_or("Terminal not found".to_string())?
         };
         let mut buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
-        if ai_delivery {
-            // AI 交付终端：只返回当前缓冲、不消费（monitor 线程是唯一消费方，负责落盘 live-output.log）
-            return Ok(buffer.collect());
-        }
+        // 统一消费：drain 清空缓冲并返回全部内容。AI 交付终端的 monitor 线程靠此取增量
+        // 落盘 live-output.log——消费后下一轮只拿到新输出，避免全量重复累积。
         Ok(buffer.drain())
     }
 
@@ -1067,7 +1052,6 @@ impl TerminalService {
                 .filter(|group| !group.is_empty())
                 .map(str::to_string),
             owner,
-            ai_delivery: false,
             backend,
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,

@@ -314,11 +314,14 @@ pub(crate) fn build_interactive_terminal_command_with_codex_output(
         invocation.push_str(&powershell_literal(
             codex_final_message_path.to_string_lossy().as_ref(),
         ));
-        invocation.push_str(" '-' 2>&1 | Out-File -LiteralPath ");
+        // Tee-Object -Variable 让 codex 输出实时回流 PTY（实时终端可见），
+        // 同时暂存到 $tbTranscript；退出后再以 UTF-8 写 transcript.log。
+        // 直接 | Out-File 会把输出管道吞掉，PTY 看不到 agent 执行过程。
+        invocation.push_str(" '-' 2>&1 | Tee-Object -Variable tbTranscript; if ($null -ne $tbTranscript) { $tbTranscript | Out-File -LiteralPath ");
         invocation.push_str(&powershell_literal(
             control.transcript_path.to_string_lossy().as_ref(),
         ));
-        invocation.push_str(" -Encoding UTF8");
+        invocation.push_str(" -Encoding UTF8 }");
     } else if is_claude || is_pi {
         invocation.push_str(" '--print'");
     } else if is_mimo {
@@ -351,11 +354,12 @@ pub(crate) fn build_interactive_terminal_command_with_codex_output(
         invocation.push_str(" $tbPrompt");
     }
     if captures_one_shot_output && !is_codex {
-        invocation.push_str(" 2>&1 | Out-File -LiteralPath ");
+        // 与 codex 分支同构：Tee 实时回流 PTY，退出后再写 UTF-8 transcript.log。
+        invocation.push_str(" 2>&1 | Tee-Object -Variable tbTranscript; if ($null -ne $tbTranscript) { $tbTranscript | Out-File -LiteralPath ");
         invocation.push_str(&powershell_literal(
             control.transcript_path.to_string_lossy().as_ref(),
         ));
-        invocation.push_str(" -Encoding UTF8");
+        invocation.push_str(" -Encoding UTF8 }");
     }
     Ok(wrap_terminal_command(
         &invocation,
@@ -431,7 +435,8 @@ mod terminal_command_tests {
             "$tbRuntime = (Get-Command -Name 'codex' -ErrorAction Stop | Select-Object -First 1).Source; $tbPrompt | & $tbRuntime 'exec' '--skip-git-repo-check' '--model' 'test-model'"
         ));
         assert!(!command.contains("'--sandbox' 'workspace-write'"));
-        assert!(command.contains("'--output-last-message' 'C:\\TerminalBuddy\\final-message.txt' '-' 2>&1 | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
+        assert!(command.contains("'--output-last-message' 'C:\\TerminalBuddy\\final-message.txt' '-' 2>&1 | Tee-Object -Variable tbTranscript"));
+        assert!(command.contains("$tbTranscript | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
         assert!(command.contains("Get-Content -LiteralPath 'C:\\TerminalBuddy\\final-message.txt' -Raw -Encoding UTF8"));
         assert!(!command.contains("'--' $tbPrompt"));
     }
@@ -493,8 +498,9 @@ mod terminal_command_tests {
         .unwrap();
 
         assert!(command.contains(
-            "$tbRuntime = (Get-Command -Name 'claude' -ErrorAction Stop | Select-Object -First 1).Source; $tbPrompt | & $tbRuntime '--model' 'test-model' '--print' 2>&1 | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"
+            "$tbRuntime = (Get-Command -Name 'claude' -ErrorAction Stop | Select-Object -First 1).Source; $tbPrompt | & $tbRuntime '--model' 'test-model' '--print' 2>&1 | Tee-Object -Variable tbTranscript"
         ));
+        assert!(command.contains("$tbTranscript | Out-File -LiteralPath 'C:\\TerminalBuddy\\transcript.log' -Encoding UTF8"));
     }
 
     #[test]
@@ -660,8 +666,6 @@ pub(crate) fn create_ai_terminal(
         app.clone(),
         TerminalOwner::Pc,
     )?;
-    // 标记 AI 交付终端：drain_terminal_output 对其只读不消费，monitor 线程独占消费落盘
-    terminal_service.set_ai_delivery_flag(&terminal_id)?;
     if let Err(error) = app.emit(
         "terminal-created",
         serde_json::json!({
