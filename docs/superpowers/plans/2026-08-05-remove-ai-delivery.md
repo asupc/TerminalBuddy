@@ -120,7 +120,8 @@ git commit -m "[移除AI交付] 清理 lib.rs 引用中枢：AI 命令注册/set
 
 **Interfaces:**
 - Consumes: Task 1 已使 lib.rs 不再引用 AI 交付（否则本任务删除模块后 lib.rs 编译失败）
-- Produces: `AiDeliveryService` 类型与 `Ai*` 模型类型全部消失；bot 文件不再依赖 AI 交付；`show_ai_delivery_notification`、`send_feishu_text` 被删除。Task 3 依赖本任务：`database_service` 的 ai_entities 方法只有在无调用方后才能删。
+- Produces: `AiDeliveryService` 类型与 `Ai*` 模型类型全部消失；bot 文件不再依赖 AI 交付；`show_ai_delivery_notification`、`send_feishu_text` 被删除。
+- **顺序耦合修正**：`models/ai_delivery.rs` 定义了 `AiAgent` / `AiAgentRuntime`，`database_service.rs` 直接 import 并在 `deduplicate_ai_runtimes` 等函数中使用。本任务删除 `models/ai_delivery.rs` 后 `database_service.rs` 无法编译，因此 **Task 3 的 database_service 编辑（Step 1-4）与 terminal.rs 注释（Step 5）改由本任务作为第二个 commit 执行**（内容与 Task 3 完全相同，提交信息 `[移除AI交付] database_service 删除 ai_entities 建表/迁移/去重/CRUD`）。Task 3 随之并入本任务，不再单独派遣。
 
 - [ ] **Step 1: 删除 4 个 AI 交付模块文件**
 
@@ -204,6 +205,8 @@ git commit -m "[移除AI交付] 删除服务/命令/模型/Web handler 模块，
 
 ### Task 3: database_service 清理（ai_entities 表与全部方法）
 
+> **已并入 Task 2 执行**（编译耦合：`models/ai_delivery.rs` 的 `AiAgent`/`AiAgentRuntime` 被 `database_service.rs` 直接 import，删除模型文件必然破坏其编译，故 Task 2 作为第二个 commit 执行本任务全部步骤）。本节内容由 Task 2 实现者按原文执行，不再单独派遣；Task 2 的审查范围覆盖本节。
+
 **Files:**
 - Modify: `terminal-buddy/src-tauri/src/services/database_service.rs`
 - Modify: `terminal-buddy/src-tauri/src/commands/terminal.rs`（仅注释）
@@ -216,7 +219,7 @@ git commit -m "[移除AI交付] 删除服务/命令/模型/Web handler 模块，
 
 打开 `terminal-buddy/src-tauri/src/services/database_service.rs`：
 1. 第 1 行：`use crate::models::{AiAgent, AiAgentRuntime, DecisionBinding};` → `use crate::models::DecisionBinding;`
-2. 删除第 4 行 `use serde::de::DeserializeOwned;`、第 5 行 `use serde::Serialize;`、第 7 行 `use std::collections::HashMap;`、第 8 行 `use serde_json::Value;`（这四个 import 仅被 AI 交付相关代码使用；删除后若 `cargo check` 报其余 unused import，一并删除）
+2. 删除第 4 行 `use serde::de::DeserializeOwned;`、第 5 行 `use serde::Serialize;`、第 7 行 `use std::collections::HashMap;`（这三个 import 仅被 AI 交付相关代码使用）。**保留第 8 行 `use serde_json::Value;`**——`legacy-command-history-v1`（~L174）与 `legacy-weixin-runtime-v1`（~L229）迁移仍使用 `serde_json::from_str::<Value>`。`params` / `Transaction` / `fs` / `Duration` / `OptionalExtension` 均保留（其余方法仍用）。删除后若 `cargo check` 报其余 unused import，一并删除
 3. 第 11-25 行：删除整个 `AI_ENTITY_DIRECTORIES` 常量（Projects / Runtimes / Agents / Roles / Workflows / TaskContracts / Deliveries / TaskNodes / DecisionRequests / Events / Attempts / ReviewGates / MergeRecords）
 4. 第 27-38 行：删除整个 `runtime_deduplication_key` 函数
 
