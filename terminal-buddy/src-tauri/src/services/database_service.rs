@@ -406,6 +406,31 @@ impl DatabaseService {
         Ok(())
     }
 
+    /// 单个事务内批量删除同一 kind 的多条记录，替代逐条 `delete_ai_entity`
+    /// （每条都会打开新连接并独立提交，删除一个交付的几十个实体时开销显著）。
+    pub fn delete_ai_entities(kind: &str, ids: &[&str], label: &str) -> Result<(), String> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut connection = Self::open()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始删除{}事务失败: {}", label, error))?;
+        {
+            let mut statement = transaction
+                .prepare("DELETE FROM ai_entities WHERE kind = ?1 AND id = ?2")
+                .map_err(|error| format!("删除{}失败: {}", label, error))?;
+            for id in ids {
+                statement
+                    .execute(params![kind, id])
+                    .map_err(|error| format!("删除{}失败: {}", label, error))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("提交删除{}事务失败: {}", label, error))
+    }
+
     pub fn read_command_history() -> Result<Option<String>, String> {
         Self::read_document("command_history")
     }

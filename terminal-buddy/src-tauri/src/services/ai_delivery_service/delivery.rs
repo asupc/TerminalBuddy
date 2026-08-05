@@ -133,29 +133,27 @@ impl AiDeliveryService {
     }
 
     pub fn delete_delivery(id: &str) -> Result<(), String> {
-         let delivery = Self::get_delivery(id)?;
+        let delivery = Self::get_delivery(id)?;
         if !matches!(
             delivery.state.as_str(),
             "drafting" | "cancelled" | "failed" | "succeeded" | "completed" | "mergeFailed"
         ) {
             return Err("仅草稿或已结束（取消/失败/成功/完成）的交付可以删除；请先暂停或处理当前交付流程".to_string());
         }
+        let contracts = Self::get_all_task_contracts(Some(&delivery.project_id))?;
         if delivery.state != "drafting" {
-            // 非草稿状态：清理 worktree、分支和产出物目录后再删除
+            // 非草稿状态：清理 worktree、分支和产出物目录后再删除。
+            // 收集后按仓库批量执行 git 清理，避免逐任务/逐仓库重复启动 git 进程导致卡顿。
             if let Ok(project) = Self::get_project(&delivery.project_id) {
-                cleanup_delivery_task_worktrees(&project, &delivery);
-                let _ = cleanup_delivery_integration_workspace(&project, &delivery);
+                let _ = cleanup_delivery_git_resources(&project, &delivery);
             }
-        } else {
-            let contracts = Self::get_all_task_contracts(Some(&delivery.project_id))?;
-            if contracts
-                .iter()
-                .any(|contract| contract.delivery_id == delivery.id)
-            {
-                return Err("草稿已存在任务契约或 worktree，不能直接删除".to_string());
-            }
+        } else if contracts
+            .iter()
+            .any(|contract| contract.delivery_id == delivery.id)
+        {
+            return Err("草稿已存在任务契约或 worktree，不能直接删除".to_string());
         }
-         let attempts = Self::get_all_attempts(Some(&delivery.id))?;
+        let attempts = Self::get_all_attempts(Some(&delivery.id))?;
         if attempts
             .iter()
             .any(|attempt| matches!(attempt.state.as_str(), "queued" | "starting" | "running"))
@@ -164,33 +162,42 @@ impl AiDeliveryService {
         }
         let tasks = Self::get_task_nodes(&delivery.id)?;
         Self::delete(DELIVERIES_DIR, id, "交付")?;
-        for task in tasks {
-            let _ = Self::delete(TASK_NODES_DIR, &task.id, "任务节点");
-        }
-        // 删除关联的任务契约
-        for contract in Self::get_all_task_contracts(Some(&delivery.project_id))?
-            .into_iter()
+        // 实体删除按 kind 批量事务化，替代逐条打开新连接的 delete
+        let task_ids = tasks.iter().map(|task| task.id.as_str()).collect::<Vec<_>>();
+        Self::delete_many(TASK_NODES_DIR, &task_ids, "任务节点")?;
+        let contract_ids = contracts
+            .iter()
             .filter(|contract| contract.delivery_id == delivery.id)
-        {
-            let _ = Self::delete(CONTRACTS_DIR, &contract.id, "任务契约");
-        }
-        for attempt in attempts {
-            let _ = Self::delete(ATTEMPTS_DIR, &attempt.id, "执行尝试");
+            .map(|contract| contract.id.as_str())
+            .collect::<Vec<_>>();
+        Self::delete_many(CONTRACTS_DIR, &contract_ids, "任务契约")?;
+        let attempt_ids = attempts
+            .iter()
+            .map(|attempt| attempt.id.as_str())
+            .collect::<Vec<_>>();
+        Self::delete_many(ATTEMPTS_DIR, &attempt_ids, "执行尝试")?;
+        for attempt in &attempts {
             let terminal_run_dir = terminal_run_dir_by_id(&attempt.id);
             let _ = fs::remove_dir_all(terminal_run_dir);
         }
-        for event in Self::get_delivery_events(&delivery.id)? {
-            let _ = Self::delete(EVENTS_DIR, &event.id, "交付事件");
-        }
-        for request in Self::get_decision_requests(Some(&delivery.id))? {
-            let _ = Self::delete(DECISIONS_DIR, &request.id, "决策请求");
-        }
-        for gate in Self::get_review_gates(Some(&delivery.id))? {
-            let _ = Self::delete(REVIEW_GATES_DIR, &gate.id, "审核记录");
-        }
-        for record in Self::get_merge_records(Some(&delivery.id))? {
-            let _ = Self::delete(MERGE_RECORDS_DIR, &record.id, "合并记录");
-        }
+        let events = Self::get_delivery_events(&delivery.id)?;
+        let event_ids = events.iter().map(|event| event.id.as_str()).collect::<Vec<_>>();
+        Self::delete_many(EVENTS_DIR, &event_ids, "交付事件")?;
+        let requests = Self::get_decision_requests(Some(&delivery.id))?;
+        let request_ids = requests
+            .iter()
+            .map(|request| request.id.as_str())
+            .collect::<Vec<_>>();
+        Self::delete_many(DECISIONS_DIR, &request_ids, "决策请求")?;
+        let gates = Self::get_review_gates(Some(&delivery.id))?;
+        let gate_ids = gates.iter().map(|gate| gate.id.as_str()).collect::<Vec<_>>();
+        Self::delete_many(REVIEW_GATES_DIR, &gate_ids, "审核记录")?;
+        let records = Self::get_merge_records(Some(&delivery.id))?;
+        let record_ids = records
+            .iter()
+            .map(|record| record.id.as_str())
+            .collect::<Vec<_>>();
+        Self::delete_many(MERGE_RECORDS_DIR, &record_ids, "合并记录")?;
         let plan_dir = Self::entity_dir(PLANS_DIR).join(safe_path_segment(&delivery.id));
         let _ = fs::remove_dir_all(plan_dir);
         Ok(())

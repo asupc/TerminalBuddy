@@ -1203,7 +1203,104 @@ pub(crate) fn ensure_worktree_directory_is_ignored(repository: &Path) -> Result<
     Ok(())
 }
 
-pub(crate) fn cleanup_delivery_integration_workspace(
+/// git 资源回收聚合收集器：把「逐任务/逐仓库 spawn git」改为收集后按仓库批量执行。
+/// 删除交付/项目时原先对每个任务契约、每个仓库重复启动 git 子进程
+/// （Windows 上每次 spawn 约 100-400ms，大量注定失败/无用的调用累计成明显卡顿），
+/// 收集后 `branch -D` 按仓库一次批量删多个分支，spawn 次数降到 O(仓库数)。
+pub(crate) struct GitCleanupCollector {
+    /// (source, worktree_path) —— worktree 目录确认存在，需逐个 `git worktree remove --force`
+    worktree_removals: Vec<(PathBuf, PathBuf)>,
+    /// source → 待删本地分支；执行时每仓库一次 `git branch -D b1 b2 ...` 批量删除
+    branch_deletions: BTreeMap<PathBuf, Vec<String>>,
+    /// worktree 目录已不存在但 git 元数据可能残留的仓库 → 执行 `git worktree prune` 兜底
+    stale_worktree_repos: Vec<PathBuf>,
+}
+
+impl GitCleanupCollector {
+    pub(crate) fn new() -> Self {
+        Self {
+            worktree_removals: Vec::new(),
+            branch_deletions: BTreeMap::new(),
+            stale_worktree_repos: Vec::new(),
+        }
+    }
+
+    fn push_branch(&mut self, source: &Path, branch_name: &str) {
+        self.branch_deletions
+            .entry(source.to_path_buf())
+            .or_default()
+            .push(branch_name.to_string());
+    }
+
+    /// 登记一次任务 worktree 回收：目录存在 → 收集 remove；目录不存在 → 分支仍进批量删除
+    /// （一次尝试，失败即分支本就不存在），并标记仓库需要 prune 清理残留 worktree 元数据。
+    pub(crate) fn push_task_worktree(&mut self, source: Option<&Path>, worktree: &Path, branch_name: &str) {
+        match source {
+            Some(source) if worktree.exists() => {
+                self.worktree_removals
+                    .push((source.to_path_buf(), worktree.to_path_buf()));
+                self.push_branch(source, branch_name);
+            }
+            Some(source) => {
+                self.push_branch(source, branch_name);
+                self.stale_worktree_repos.push(source.to_path_buf());
+            }
+            // 仓库已从项目移除（或目录不可用）：无法走 git 清理，退化为直接删目录
+            None => {
+                let _ = fs::remove_dir_all(worktree);
+            }
+        }
+    }
+
+    /// 登记一次集成分支回收：目录存在才需要 remove，分支删除并入批量删除。
+    pub(crate) fn push_integration(
+        &mut self,
+        source: &Path,
+        integration_repository: &Path,
+        branch_name: &str,
+    ) {
+        if integration_repository.exists() {
+            self.worktree_removals
+                .push((source.to_path_buf(), integration_repository.to_path_buf()));
+        } else {
+            self.stale_worktree_repos.push(source.to_path_buf());
+        }
+        self.push_branch(source, branch_name);
+    }
+
+    /// 批量执行收集的清理：worktree remove 逐个（目录已确认存在）；残留元数据 prune 兜底；
+    /// 分支按仓库一次 `git branch -D b1 b2 ...` 批量删除（不存在的分支被忽略）。
+    /// 全部以尽力方式执行，单次失败不阻断后续清理。
+    pub(crate) fn execute(&self) -> Result<(), String> {
+        for (source, worktree) in &self.worktree_removals {
+            let _ = run_git(
+                source,
+                &[
+                    "worktree".to_string(),
+                    "remove".to_string(),
+                    "--force".to_string(),
+                    worktree.to_string_lossy().to_string(),
+                ],
+            );
+        }
+        for source in &self.stale_worktree_repos {
+            let _ = run_git(source, &["worktree".to_string(), "prune".to_string()]);
+        }
+        for (source, branches) in &self.branch_deletions {
+            if branches.is_empty() {
+                continue;
+            }
+            let mut arguments = vec!["branch".to_string(), "-D".to_string()];
+            arguments.extend(branches.iter().cloned());
+            let _ = run_git(source, &arguments);
+        }
+        Ok(())
+    }
+}
+
+/// 收集交付的集成分支/集成工作区回收项（不执行，由调用方统一 execute）。
+pub(crate) fn collect_delivery_integration_git_cleanup(
+    collector: &mut GitCleanupCollector,
     project: &AiProject,
     delivery: &AiDelivery,
 ) -> Result<(), String> {
@@ -1212,33 +1309,23 @@ pub(crate) fn cleanup_delivery_integration_workspace(
         let integration_repository = repository_worktree_base_path(project, repository)?
             .join("integration")
             .join(compact_path_id(&delivery.id));
-        if integration_repository.exists() {
-            run_git(
-                &source,
-                &[
-                    "worktree".to_string(),
-                    "remove".to_string(),
-                    "--force".to_string(),
-                    integration_repository.to_string_lossy().to_string(),
-                ],
-            )?;
-        }
         let integration_branch = format!(
             "terminalbuddy/integration/{}-{}",
             safe_ref_segment(&delivery.id),
             safe_ref_segment(&repository.name)
         );
-        let _ = run_git(
-            &source,
-            &["branch".to_string(), "-D".to_string(), integration_branch],
-        );
+        collector.push_integration(&source, &integration_repository, &integration_branch);
     }
     Ok(())
 }
 
-/// 清理交付关联的所有任务 worktree、分支和产出物交接目录。
+/// 收集交付关联的所有任务 worktree、分支回收项，并清理产出物交接目录（handoff）。
 /// 用于交付删除或合并完成后的资源回收，全部以尽力方式执行，不阻断主流程。
-pub(crate) fn cleanup_delivery_task_worktrees(project: &AiProject, delivery: &AiDelivery) {
+pub(crate) fn collect_delivery_task_git_cleanup(
+    collector: &mut GitCleanupCollector,
+    project: &AiProject,
+    delivery: &AiDelivery,
+) {
     let contracts = match AiDeliveryService::get_all_task_contracts(Some(&project.id)) {
         Ok(contracts) => contracts,
         Err(_) => return,
@@ -1254,35 +1341,55 @@ pub(crate) fn cleanup_delivery_task_worktrees(project: &AiProject, delivery: &Ai
             .repositories
             .iter()
             .find(|repository| repository.id == contract.target_repository_id);
-        if let Some(worktree_path) = contract.worktree_path.as_deref() {
-            match repository.and_then(|repository| project_repository_path(project, repository).ok()) {
-                Some(source) => {
-                    cleanup_unallocated_task_worktree(&source, Path::new(worktree_path), branch_name)
-                }
-                // 仓库已从项目移除（或目录不可用）时退化为直接删目录，
-                // 避免 worktree 目录永久残留；契约文件保留供历史查看
-                None => {
-                    let _ = fs::remove_dir_all(worktree_path);
+        match (contract.worktree_path.as_deref(), repository) {
+            (Some(worktree_path), Some(repository)) => {
+                let source = project_repository_path(project, repository).ok();
+                collector.push_task_worktree(source.as_deref(), Path::new(worktree_path), branch_name);
+            }
+            (Some(worktree_path), None) => {
+                // 仓库已从项目移除：退化为直接删目录，避免 worktree 目录永久残留
+                let _ = fs::remove_dir_all(worktree_path);
+            }
+            (None, Some(repository)) => {
+                if let Ok(source) = project_repository_path(project, repository) {
+                    collector.push_branch(&source, branch_name);
                 }
             }
-        } else if let Some(repository) = repository {
-            let Ok(source) = project_repository_path(project, repository) else {
-                continue;
-            };
-            let _ = run_git(
-                &source,
-                &[
-                    "branch".to_string(),
-                    "-D".to_string(),
-                    branch_name.to_string(),
-                ],
-            );
+            (None, None) => {}
         }
     }
     let handoff_root = project_artifact_base_path(project)
         .join("handoff")
         .join(compact_path_id(&delivery.id));
     let _ = fs::remove_dir_all(&handoff_root);
+}
+
+/// 兼容入口：交付删除/合并完成后清理该交付的集成工作区与任务 worktree（收集后批量执行）。
+pub(crate) fn cleanup_delivery_integration_workspace(
+    project: &AiProject,
+    delivery: &AiDelivery,
+) -> Result<(), String> {
+    let mut collector = GitCleanupCollector::new();
+    collect_delivery_integration_git_cleanup(&mut collector, project, delivery)?;
+    collector.execute()
+}
+
+/// 兼容入口：交付删除/合并完成后清理该交付的所有任务 worktree、分支和产出物交接目录。
+pub(crate) fn cleanup_delivery_task_worktrees(project: &AiProject, delivery: &AiDelivery) {
+    let mut collector = GitCleanupCollector::new();
+    collect_delivery_task_git_cleanup(&mut collector, project, delivery);
+    let _ = collector.execute();
+}
+
+/// 交付删除/项目删除共用：一次收集该交付的全部 git 资源（任务 worktree + 集成工作区）并批量执行。
+pub(crate) fn cleanup_delivery_git_resources(
+    project: &AiProject,
+    delivery: &AiDelivery,
+) -> Result<(), String> {
+    let mut collector = GitCleanupCollector::new();
+    collect_delivery_task_git_cleanup(&mut collector, project, delivery);
+    collect_delivery_integration_git_cleanup(&mut collector, project, delivery)?;
+    collector.execute()
 }
 
 
@@ -1729,15 +1836,18 @@ pub(crate) fn discard_task_contract(task: &mut AiTaskNode) -> bool {
 }
 
 pub(crate) fn cleanup_unallocated_task_worktree(source: &Path, worktree: &Path, branch_name: &str) {
-    let _ = run_git(
-        source,
-        &[
-            "worktree".to_string(),
-            "remove".to_string(),
-            "--force".to_string(),
-            worktree.to_string_lossy().to_string(),
-        ],
-    );
+    // 目录已不存在时跳过 worktree remove（注定失败的调用，Windows 上每次 git spawn 约 100-400ms）
+    if worktree.exists() {
+        let _ = run_git(
+            source,
+            &[
+                "worktree".to_string(),
+                "remove".to_string(),
+                "--force".to_string(),
+                worktree.to_string_lossy().to_string(),
+            ],
+        );
+    }
     let _ = run_git(
         source,
         &[

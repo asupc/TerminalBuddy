@@ -875,40 +875,94 @@ impl AiDeliveryService {
         }
 
        // 项目删除时清理本应用创建的 worktree、Git 分支和产出物目录，避免资源泄漏。
+       // 先收集全部交付的 git 回收项（任务 worktree + 集成分支），按仓库批量执行：
+       // 原先对每个交付重复清理同一批仓库，逐任务 spawn git 进程，多交付项目删除会卡顿数秒到数十秒。
+       let mut collector = GitCleanupCollector::new();
        for delivery in &deliveries {
-           cleanup_delivery_task_worktrees(&project, delivery);
-           let _ = cleanup_delivery_integration_workspace(&project, delivery);
-           for task in Self::get_task_nodes(&delivery.id)? {
-                Self::delete(TASK_NODES_DIR, &task.id, "任务节点")?;
-            }
-            for attempt in attempts
-                .iter()
-                .filter(|attempt| attempt.delivery_id == delivery.id)
-            {
-                Self::delete(ATTEMPTS_DIR, &attempt.id, "执行尝试")?;
-                let terminal_run_dir = terminal_run_dir_by_id(&attempt.id);
-                let _ = fs::remove_dir_all(terminal_run_dir);
-            }
-            for gate in Self::get_review_gates(Some(&delivery.id))? {
-                Self::delete(REVIEW_GATES_DIR, &gate.id, "审核门禁")?;
-            }
-            for request in Self::get_decision_requests(Some(&delivery.id))? {
-                Self::delete(DECISIONS_DIR, &request.id, "决策请求")?;
-            }
-            for event in Self::get_delivery_events(&delivery.id)? {
-                Self::delete(EVENTS_DIR, &event.id, "交付事件")?;
-            }
-            for record in Self::get_merge_records(Some(&delivery.id))? {
-                Self::delete(MERGE_RECORDS_DIR, &record.id, "合并记录")?;
-            }
-            let plan_directory = Self::entity_dir(PLANS_DIR).join(safe_path_segment(&delivery.id));
-            let _ = fs::remove_dir_all(plan_directory);
-            Self::delete(DELIVERIES_DIR, &delivery.id, "交付")?;
-        }
-        for contract in contracts {
-            Self::delete(CONTRACTS_DIR, &contract.id, "任务契约")?;
-        }
-        Self::delete(PROJECTS_DIR, id, "AI 项目")
+           collect_delivery_task_git_cleanup(&mut collector, &project, delivery);
+           let _ = collect_delivery_integration_git_cleanup(&mut collector, &project, delivery);
+       }
+       let _ = collector.execute();
+       // 实体删除按 kind 收集后批量事务化（每 kind 一次事务，替代逐条打开新连接）
+       let mut task_ids = Vec::new();
+       let mut gate_ids = Vec::new();
+       let mut request_ids = Vec::new();
+       let mut event_ids = Vec::new();
+       let mut record_ids = Vec::new();
+       for delivery in &deliveries {
+           task_ids.extend(
+               Self::get_task_nodes(&delivery.id)?
+                   .into_iter()
+                   .map(|task| task.id),
+           );
+           gate_ids.extend(
+               Self::get_review_gates(Some(&delivery.id))?
+                   .into_iter()
+                   .map(|gate| gate.id),
+           );
+           request_ids.extend(
+               Self::get_decision_requests(Some(&delivery.id))?
+                   .into_iter()
+                   .map(|request| request.id),
+           );
+           event_ids.extend(
+               Self::get_delivery_events(&delivery.id)?
+                   .into_iter()
+                   .map(|event| event.id),
+           );
+           record_ids.extend(
+               Self::get_merge_records(Some(&delivery.id))?
+                   .into_iter()
+                   .map(|record| record.id),
+           );
+           let plan_directory = Self::entity_dir(PLANS_DIR).join(safe_path_segment(&delivery.id));
+           let _ = fs::remove_dir_all(plan_directory);
+       }
+       let delivery_id_refs = deliveries
+           .iter()
+           .map(|delivery| delivery.id.as_str())
+           .collect::<Vec<_>>();
+       let attempt_id_refs = attempts
+           .iter()
+           .map(|attempt| attempt.id.as_str())
+           .collect::<Vec<_>>();
+       let contract_id_refs = contracts
+           .iter()
+           .map(|contract| contract.id.as_str())
+           .collect::<Vec<_>>();
+       Self::delete_many(DELIVERIES_DIR, &delivery_id_refs, "交付")?;
+       Self::delete_many(
+           TASK_NODES_DIR,
+           &task_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+           "任务节点",
+       )?;
+       Self::delete_many(ATTEMPTS_DIR, &attempt_id_refs, "执行尝试")?;
+       Self::delete_many(
+           REVIEW_GATES_DIR,
+           &gate_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+           "审核门禁",
+       )?;
+       Self::delete_many(
+           DECISIONS_DIR,
+           &request_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+           "决策请求",
+       )?;
+       Self::delete_many(
+           EVENTS_DIR,
+           &event_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+           "交付事件",
+       )?;
+       Self::delete_many(
+           MERGE_RECORDS_DIR,
+           &record_ids.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+           "合并记录",
+       )?;
+       for attempt in &attempts {
+           let terminal_run_dir = terminal_run_dir_by_id(&attempt.id);
+           let _ = fs::remove_dir_all(terminal_run_dir);
+       }
+       Self::delete_many(CONTRACTS_DIR, &contract_id_refs, "任务契约")?;
+       Self::delete(PROJECTS_DIR, id, "AI 项目")
     }
 }
 

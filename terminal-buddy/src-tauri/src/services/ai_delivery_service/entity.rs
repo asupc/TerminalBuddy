@@ -302,6 +302,11 @@ impl AiDeliveryService {
         DatabaseService::delete_ai_entity(dir, id, label)
     }
 
+    /// 单个事务批量删除同一 kind 的多条记录（删除交付/项目时替代逐条 delete，减少连接开销）。
+    pub(crate) fn delete_many(dir: &str, ids: &[&str], label: &str) -> Result<(), String> {
+        DatabaseService::delete_ai_entities(dir, ids, label)
+    }
+
     pub fn get_all_projects() -> Result<Vec<AiProject>, String> {
         let mut projects = Self::list(PROJECTS_DIR)?;
         projects
