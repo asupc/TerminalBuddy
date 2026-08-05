@@ -7,7 +7,6 @@ import { TerminalPanel } from "./components/terminal/TerminalPanel";
 import { FileNav } from "./components/file-explorer/FileNav";
 import { TabNav } from "./components/shell/TabNav";
 import { ActivityBar, type SidebarPanel } from "./components/shell/ActivityBar";
-import { AiDeliveryFloatingButton } from "./components/ai-delivery/AiDeliveryFloatingButton";
 import { ConfigEditDialog } from "./components/profile-config/ConfigEditDialog";
 import { ExtraParamsDialog } from "./components/profile-config/ExtraParamsDialog";
 import { ClaudeDecisionDialog } from "./components/shared/ClaudeDecisionDialog";
@@ -16,7 +15,7 @@ import { GlobalDialogHost } from "./components/shared/GlobalDialogHost";
 import { Toast } from "./components/shared/Toast";
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, loadSavedTabs, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, closeTerminal, getClaudeSessionsForTerminals, checkAppUpdate, openAiDeliveryWindow, type UpdateInfo } from './services/tauri';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, closeTerminal, getClaudeSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
 import { APP_VERSION } from './version';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
@@ -305,38 +304,10 @@ function App() {
     return () => window.removeEventListener('app-settings-changed', handler);
   }, []);
 
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const terminalId = (event as CustomEvent<{ terminalId?: string }>).detail?.terminalId;
-      if (!terminalId) return;
-      const store = useAppStore.getState();
-      if (!store.sessions.some((session) => session.id === terminalId)) return;
-      store.setActiveSession(terminalId);
-      setSidebarPanel(uiStyle === 'sidebar' && enableTabNav ? 'tabs' : 'config');
-    };
-    window.addEventListener('open-ai-attempt-terminal', handler);
-    return () => window.removeEventListener('open-ai-attempt-terminal', handler);
-  }, [enableTabNav, uiStyle]);
-
-  // 收到 AI 交付通知时，存储目标 ID 并打开独立窗口
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listen<string>('ai-delivery-notification-activated', (event) => {
-      localStorage.setItem('aiDelivery.pendingNotificationId', event.payload);
-      void openAiDeliveryWindow();
-    }).then((cleanup) => {
-      unlisten = cleanup;
-    });
-    return () => unlisten?.();
-  }, []);
-
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
     const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; groupId?: string; groupName?: string; extraParamTag?: string; extraParamTagColor?: string }>('terminal-created', (event) => {
-      const { id, profileId, profileName, terminalType, owner, groupId, groupName, extraParamTag, extraParamTagColor } = event.payload;
-      // AI 交付派发的终端不进入主窗口终端选项卡：其输出面向 Agent/平台，
-      // 对普通用户无意义，需查看时在 AI 交付页的实时终端/运行记录中查看。
-      if (extraParamTag === 'AI 交付') return;
+      const { id, profileId, profileName, terminalType, owner, groupId, groupName } = event.payload;
       const store = useAppStore.getState();
       let resolvedGroupId = groupId || 'default';
       if (groupId && groupName) {
@@ -361,8 +332,6 @@ function App() {
           profileName,
           groupId: groupId ? resolvedGroupId : existingSession.groupId,
           groupName: groupName ?? existingSession.groupName,
-          extraParamTag,
-          extraParamTagColor: extraParamTagColor ?? null,
         });
         return;
       }
@@ -378,8 +347,6 @@ function App() {
         groupId: resolvedGroupId,
         groupName,
         owner,
-        extraParamTag,
-        extraParamTagColor: extraParamTagColor ?? null,
       }, true);
     });
 
@@ -749,10 +716,6 @@ function App() {
     });
   }, []);
 
-  const handleToggleAiDelivery = useCallback(() => {
-    void openAiDeliveryWindow();
-  }, []);
-
   return (
     <div className={`app-container ui-style-${uiStyle}${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`} tabIndex={0}>
       <TitleBar
@@ -805,10 +768,6 @@ function App() {
         )}
         <TerminalPanel />
       </div>
-      <AiDeliveryFloatingButton
-        active={false}
-        onToggle={handleToggleAiDelivery}
-      />
       {showEditDialog && (
         <ConfigEditDialog
           profile={editingProfile}
