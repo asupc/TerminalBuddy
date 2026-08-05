@@ -28,7 +28,6 @@
 - **Claude Code 机器人通知** — 支持飞书、企业微信、DingTalk 及 QQ/通用桥接，发送终端截图并通过引用回复完成远程决策（[接入指南](docs/机器人通知接入指南.md)）
 - **文本编辑器** — 集成 Monaco Editor，双击文件树中的文本文件打开编辑器标签页，语法高亮、查找替换、格式化文档
 - **数据可移植** — 所有数据以 JSON 文件存储，支持完整导入/导出
-- **AI 交付编排（v1.4.0 重磅新功能）** — 独立窗口承载的 AI 交付编排子系统，SQLite 持久化交付 / 任务 / attempt / 事件 / 决策；DAG 任务编排（环依赖检测 + 拓扑分层布局可视化）；多 Agent 派发（Codex / Claude 双协议 + 启动预设 + 容量索引 + 优先级派发）；实时终端监控（事件流零延迟 + `live-output.log` 增量落盘）；质量门禁（命令结果逐条可视化 + 基线 commit 派发校验）；合并与产物（合并前 TOCTOU 校验 + 冲突解决 + `mergeFailed` 终态 + 产物归档 + 跨交付对比 + ZIP 打包导出）；统计与审查（成功率 / 平均时长 / 失败聚类 / Monaco Diff 增量审查 + 行评论持久化）；跨端协作（决策事件推送微信 / 飞书 + 聊天引用回复 + Web 端 7 接口封装 + 决策自由文本）
 
 ## 技术栈
 
@@ -139,7 +138,6 @@ terminal-buddy/
 │       │   ├── remote_file.rs  # SSH 远程文件操作
 │       │   ├── server_monitor.rs  # SSH 服务器状态监控
 │       │   ├── client_data.rs  # 客户端数据持久化
-│       │   ├── ai_delivery.rs  # AI 交付编排（DAG、派发、合并、统计）
 │       │   ├── ai_usage.rs  # AI API 用量（千帆、Deepseek、Minimax、火山方舟）
 │       │   ├── clipboard.rs  # 剪贴板操作
 │       │   ├── fs.rs  # 本地文件系统操作
@@ -155,15 +153,14 @@ terminal-buddy/
 │       │   ├── path_service.rs  # 数据目录解析与迁移
 │       │   ├── ssh_session_service.rs  # SSH 会话管理
 │       │   ├── client_data_service.rs  # 客户端数据持久化
-│       │   ├── ai_delivery_service/  # AI 交付编排（mod / entity / dispatch / delivery / quality / manager / terminal / helpers / tests）
 │       │   └── crypto_service.rs  # 加密辅助
-│       ├── models/  # 数据结构（Profile、AppSettings、ai_delivery 等）
+│       ├── models/  # 数据结构（Profile、AppSettings 等）
 │       ├── web/  # Web API 模块（axum）
 │       │   ├── server.rs  # Axum 路由与 SPA 服务
 │       │   ├── auth.rs  # JWT 认证
 │       │   ├── ws.rs  # WebSocket 终端 I/O
 │       │   ├── error.rs  # 错误类型
-│       │   └── handlers/  # REST 处理器（认证、配置、终端、AI 交付）
+│       │   └── handlers/  # REST 处理器（认证、配置、终端）
 │       └── portable-pty-patched/  # portable-pty 本地补丁
 └── web/  # Web 前端（独立 React SPA）
     └── src/
@@ -184,10 +181,7 @@ terminal-buddy/
 ├── Workspaces/                # 保存的工作区
 ├── command_history.json       # 命令历史（含备注）
 ├── command_templates.json     # 命令模板
-├── settings.json              # 应用设置
-└── ai_delivery/               # AI 交付编排（v1.4.0+）
-    ├── ai_delivery.db         # SQLite 数据库（交付 / 任务 / attempt / 事件）
-    └── live-output.log        # 实时终端监控日志
+└── settings.json              # 应用设置
 ```
 
 ### 设置分区
