@@ -455,7 +455,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           <span className="dot" aria-hidden="true" />
           <span>{metaOnline ? '服务在线' : '等待连接'}</span>
         </div>
-        <a className="nav-ai-link" href="/ai-delivery">AI 交付</a>
         <button
           className="icon-button nav-collapse-toggle"
           onClick={toggleNavCollapsed}
