@@ -6,10 +6,10 @@ use serde_json::{json, Value};
 use tauri::Manager;
 
 use crate::commands::{
-    process_bot_card_selection, process_bot_multi_selection, process_bot_reply, send_feishu_reply,
-    TerminalService,
+    process_bot_card_selection, process_bot_multi_selection, process_bot_reply, TerminalService,
 };
 use crate::models::BridgeInboundMessage;
+use crate::services::bot_channel::send_feishu_reply;
 use crate::services::BotSettingsService;
 use crate::web::server::AppState;
 

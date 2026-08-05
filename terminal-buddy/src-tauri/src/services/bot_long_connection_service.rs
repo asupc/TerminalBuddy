@@ -1,8 +1,8 @@
 use crate::commands::{
-    process_bot_card_selection, process_bot_multi_selection, process_bot_reply, send_feishu_reply,
-    TerminalService,
+    process_bot_card_selection, process_bot_multi_selection, process_bot_reply, TerminalService,
 };
 use crate::models::{BotChannelConfig, BotLongConnectionStatus, BridgeInboundMessage};
+use crate::services::bot_channel::send_feishu_reply;
 use crate::services::{
     extract_weixin_reply_to, extract_weixin_text, get_weixin_updates, load_weixin_state,
     save_weixin_context_token, save_weixin_sync_buf, send_weixin_reply, validate_weixin_response,

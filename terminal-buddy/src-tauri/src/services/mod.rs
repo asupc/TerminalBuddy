@@ -1,5 +1,6 @@
 pub mod atomic_file;
 pub mod bot_binding_service;
+pub mod bot_channel;
 pub mod bot_long_connection_service;
 pub mod bot_scan;
 pub mod bot_settings_service;

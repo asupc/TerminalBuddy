@@ -3,24 +3,21 @@ use crate::models::{
     BotChannelConfig, BotDecisionOption, BotDeliveryReport, BotNotificationRequest, BotSettings,
     BridgeInboundMessage, DecisionBinding,
 };
+use crate::services::bot_channel::{bot_client, dispatch_channel};
 use crate::services::{
-    append_weixin_reply_marker, begin_scan, get_bot_long_connection_statuses,
-    install_claude_http_hooks, new_weixin_message_id, poll_scan, send_weixin_text_with_id,
+    begin_scan, get_bot_long_connection_statuses, install_claude_http_hooks, poll_scan,
     sync_bot_long_connections, BotBindingService, BotSettingsService, ScanBeginResult,
     ScanPollResult,
 };
 use chrono::{Duration, Utc};
-use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::collections::HashSet;
 use tauri::{AppHandle, Emitter};
 
-#[derive(Debug)]
-struct AdapterResult {
-    message_id: Option<String>,
-}
-
 const BOT_TEST_TERMINAL_ID: &str = "__terminal_buddy_bot_decision_test__";
+
+/// 终端方向键移动位置上限：超出说明终端状态与卡片不一致，拒绝合成按键序列。
+const OPTION_POSITION_LIMIT: u16 = 20;
 
 fn notification_body(request: &BotNotificationRequest) -> String {
     let mut parts = vec![
@@ -35,537 +32,6 @@ fn notification_body(request: &BotNotificationRequest) -> String {
         parts.push("请引用此消息回复：“确认”采用推荐选项，其他内容将作为自定义消息。".to_string());
     }
     parts.join("\n\n")
-}
-
-fn truncate_decision_text(value: &str, max_chars: usize) -> String {
-    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    if compact.chars().count() <= max_chars {
-        return compact;
-    }
-    let mut truncated = compact
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    truncated.push('…');
-    truncated
-}
-
-fn weixin_decision_body(request: &BotNotificationRequest) -> String {
-    let title = request
-        .decision_title
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(request.title.trim());
-    let question = request
-        .decision_question
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(request.summary.trim());
-    let mut parts = vec![
-        truncate_decision_text(title, 120),
-        format!(
-            "终端：{}\n时间：{}",
-            request.terminal_name.trim(),
-            Utc::now().format("%Y-%m-%d %H:%M:%S")
-        ),
-    ];
-    if !question.trim().is_empty() {
-        parts.push(truncate_decision_text(question, 500));
-    }
-
-    let options = request.decision_options.as_deref().unwrap_or_default();
-    if options.is_empty() {
-        parts.push("请引用本消息回复“确认”采用推荐选项，其他内容将作为自定义消息。".to_string());
-        return parts.join("\n\n");
-    }
-
-    // 微信手机端会重排 Markdown 列表的缩进续行，选项统一输出为单行纯文本。
-    let option_lines = options
-        .iter()
-        .enumerate()
-        .map(|(index, option)| {
-            let mut flags = Vec::new();
-            if option.recommended {
-                flags.push("推荐");
-            }
-            if request.decision_multi_select && option.selected {
-                flags.push("已选");
-            }
-            let suffix = if flags.is_empty() {
-                String::new()
-            } else {
-                format!("（{}）", flags.join("、"))
-            };
-            let mut line = format!(
-                "{}. {}{}",
-                index + 1,
-                truncate_decision_text(&option.label, 120),
-                suffix
-            );
-            if let Some(description) = option
-                .description
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                line.push('：');
-                line.push_str(&truncate_decision_text(description, 180));
-            }
-            line
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    parts.push(option_lines);
-    parts.push(if request.decision_multi_select {
-        "请引用本消息回复选项编号，多个编号用逗号分隔（如 1,3）。".to_string()
-    } else {
-        "请引用本消息回复选项编号（如 2）；回复“确认”采用推荐选项。".to_string()
-    });
-    parts.join("\n\n")
-}
-
-fn feishu_decision_card(request: &BotNotificationRequest) -> Value {
-    let metadata = [
-        format!("终端：{}", request.terminal_name.trim()),
-        format!("时间：{}", Utc::now().format("%Y-%m-%d %H:%M:%S")),
-    ]
-    .into_iter()
-    .filter(|value| !value.is_empty())
-    .collect::<Vec<_>>()
-    .join("\n");
-    let card_title = request
-        .decision_title
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(request.title.trim());
-    let question = request
-        .decision_question
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(request.summary.trim());
-    let mut elements = vec![
-        json!({
-            "tag": "div",
-            "text": {
-                "tag": "plain_text",
-                "content": metadata
-            }
-        }),
-        json!({
-            "tag": "div",
-            "text": {
-                "tag": "plain_text",
-                "content": question
-            }
-        }),
-        json!({ "tag": "hr" }),
-    ];
-    let options = request.decision_options.as_deref().unwrap_or_default();
-    if request.decision_multi_select && !options.is_empty() {
-        let form_options = options
-            .iter()
-            .map(|option| {
-                json!({
-                    "text": {
-                        "tag": "plain_text",
-                        "content": option.label.trim()
-                    },
-                    "value": option.move_count.to_string()
-                })
-            })
-            .collect::<Vec<_>>();
-        let selected_values = options
-            .iter()
-            .filter(|option| option.selected)
-            .map(|option| option.move_count.to_string())
-            .collect::<Vec<_>>();
-        let initial_selected_move_counts = options
-            .iter()
-            .filter(|option| option.selected)
-            .map(|option| option.move_count)
-            .collect::<Vec<_>>();
-        elements.push(json!({
-            "tag": "form",
-            "name": "decisionForm",
-            "elements": [
-                {
-                    "tag": "multi_select_static",
-                    "name": "selectedOptions",
-                    "placeholder": {
-                        "tag": "plain_text",
-                        "content": "请选择一个或多个选项"
-                    },
-                    "selected_values": selected_values,
-                    "options": form_options
-                },
-                {
-                    "tag": "button",
-                    "name": "submitDecision",
-                    "type": "primary",
-                    "action_type": "form_submit",
-                    "text": {
-                        "tag": "plain_text",
-                        "content": "提交选择"
-                    },
-                    "value": {
-                        "action": "submit_multi_select",
-                        "initialSelectedMoveCounts": initial_selected_move_counts,
-                        "submitMoveCount": request.decision_submit_move_count
-                    },
-                    "confirm": {
-                        "title": { "tag": "plain_text", "content": "确认提交所选选项？" },
-                        "text": { "tag": "plain_text", "content": "确认后将立即在终端勾选并提交。" }
-                    }
-                }
-            ]
-        }));
-    } else if options.is_empty() {
-        elements.push(json!({
-            "tag": "action",
-            "actions": [{
-                "tag": "button",
-                "type": "primary",
-                "text": {
-                    "tag": "plain_text",
-                    "content": "采用推荐选项"
-                },
-                "value": {
-                    "action": "select_option",
-                    "moveCount": 0
-                },
-                "confirm": {
-                    "title": { "tag": "plain_text", "content": "确认采用推荐选项？" },
-                    "text": { "tag": "plain_text", "content": "确认后将立即提交当前高亮选项。" }
-                }
-            }]
-        }));
-    } else {
-        for option in options {
-            let mut content = option.label.trim().to_string();
-            if let Some(description) = option
-                .description
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                content.push('\n');
-                content.push_str(description.trim());
-            }
-            elements.push(json!({
-                "tag": "div",
-                "text": { "tag": "plain_text", "content": content }
-            }));
-            let button_label = if option.recommended {
-                format!("选择 {}（推荐）", option.label.trim())
-            } else {
-                format!("选择 {}", option.label.trim())
-            };
-            let button_label = button_label.chars().take(40).collect::<String>();
-            elements.push(json!({
-                "tag": "action",
-                "actions": [{
-                    "tag": "button",
-                    "type": if option.recommended { "primary" } else { "default" },
-                    "text": { "tag": "plain_text", "content": button_label },
-                    "value": {
-                        "action": "select_option",
-                        "moveCount": option.move_count
-                    },
-                    "confirm": {
-                        "title": { "tag": "plain_text", "content": "确认提交该选项？" },
-                        "text": { "tag": "plain_text", "content": option.label.trim() }
-                    }
-                }]
-            }));
-        }
-    }
-    elements.push(json!({
-        "tag": "note",
-        "elements": [{
-            "tag": "plain_text",
-            "content": "需要自定义处理时，请引用此卡片回复消息。"
-        }]
-    }));
-
-    json!({
-        "config": {
-            "wide_screen_mode": true,
-            "enable_forward": false
-        },
-        "header": {
-            "template": "blue",
-            "title": {
-                "tag": "plain_text",
-                "content": card_title
-            }
-        },
-        "elements": elements
-    })
-}
-
-async fn feishu_access_token(
-    client: &Client,
-    channel: &BotChannelConfig,
-) -> Result<String, String> {
-    let response = client
-        .post("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal")
-        .json(&json!({ "app_id": channel.app_id, "app_secret": channel.secret }))
-        .send()
-        .await
-        .map_err(|error| format!("飞书认证请求失败: {}", error))?;
-    let status = response.status();
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("解析飞书认证响应失败: {}", error))?;
-    if !status.is_success() || body.get("code").and_then(Value::as_i64).unwrap_or(-1) != 0 {
-        return Err(format!("飞书认证失败: {}", body));
-    }
-    body.get("tenant_access_token")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| "飞书认证响应缺少 tenant_access_token".to_string())
-}
-
-async fn feishu_send_message(
-    client: &Client,
-    channel: &BotChannelConfig,
-    token: &str,
-    msg_type: &str,
-    content: Value,
-) -> Result<String, String> {
-    let receive_type = if channel.receive_id_type.is_empty() {
-        "chat_id"
-    } else {
-        &channel.receive_id_type
-    };
-    let response = client
-        .post(format!(
-            "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={}",
-            urlencoding::encode(receive_type)
-        ))
-        .bearer_auth(token)
-        .json(&json!({
-            "receive_id": channel.target_id,
-            "msg_type": msg_type,
-            "content": content.to_string(),
-        }))
-        .send()
-        .await
-        .map_err(|error| format!("发送飞书消息失败: {}", error))?;
-    let status = response.status();
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("解析飞书消息响应失败: {}", error))?;
-    if !status.is_success() || body.get("code").and_then(Value::as_i64).unwrap_or(-1) != 0 {
-        return Err(format!("发送飞书消息失败: {}", body));
-    }
-    body.pointer("/data/message_id")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| "飞书消息响应缺少 message_id".to_string())
-}
-
-pub(crate) async fn send_feishu_reply(
-    channel: &BotChannelConfig,
-    reply_to_message_id: &str,
-    text: &str,
-) -> Result<(), String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|error| format!("创建飞书回执客户端失败: {}", error))?;
-    let token = feishu_access_token(&client, channel).await?;
-    let response = client
-        .post(format!(
-            "https://open.feishu.cn/open-apis/im/v1/messages/{}/reply",
-            urlencoding::encode(reply_to_message_id),
-        ))
-        .bearer_auth(token)
-        .json(&json!({
-            "msg_type": "text",
-            "content": json!({ "text": text }).to_string(),
-        }))
-        .send()
-        .await
-        .map_err(|error| format!("发送飞书回执失败: {}", error))?;
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("解析飞书回执失败: {}", error))?;
-    if body.get("code").and_then(Value::as_i64).unwrap_or(-1) != 0 {
-        return Err(format!("发送飞书回执失败: {}", body));
-    }
-    Ok(())
-}
-
-async fn send_feishu(
-    client: &Client,
-    channel: &BotChannelConfig,
-    request: &BotNotificationRequest,
-    body: &str,
-) -> Result<AdapterResult, String> {
-    if channel.app_id.is_empty() || channel.secret.is_empty() || channel.target_id.is_empty() {
-        return Err("飞书通道需要 App ID、App Secret 和接收目标".to_string());
-    }
-    let token = feishu_access_token(client, channel).await?;
-    let message_id = if request.decision_id.is_some() {
-        feishu_send_message(
-            client,
-            channel,
-            &token,
-            "interactive",
-            feishu_decision_card(request),
-        )
-        .await?
-    } else {
-        feishu_send_message(client, channel, &token, "text", json!({ "text": body })).await?
-    };
-    Ok(AdapterResult {
-        message_id: Some(message_id),
-    })
-}
-
-async fn dingtalk_access_token(
-    client: &Client,
-    channel: &BotChannelConfig,
-) -> Result<String, String> {
-    let response = client
-        .post("https://api.dingtalk.com/v1.0/oauth2/accessToken")
-        .json(&json!({
-            "appKey": channel.app_id,
-            "appSecret": channel.secret,
-        }))
-        .send()
-        .await
-        .map_err(|error| format!("请求钉钉 access_token 失败: {}", error))?;
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("解析钉钉 access_token 响应失败: {}", error))?;
-    body.get("accessToken")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| format!("获取钉钉 access_token 失败: {}", body))
-}
-
-async fn send_dingtalk(
-    client: &Client,
-    channel: &BotChannelConfig,
-    body: &str,
-) -> Result<AdapterResult, String> {
-    if channel.app_id.is_empty() || channel.secret.is_empty() {
-        return Err("钉钉通道需要 AppKey 与 AppSecret，请扫码配置".to_string());
-    }
-    if channel.target_id.is_empty() {
-        return Err("钉钉通道需要收件人 userId".to_string());
-    }
-    let token = dingtalk_access_token(client, channel).await?;
-    // sampleText 的 msgParam 为 stringified JSON {"content": "..."}。
-    let msg_param = serde_json::to_string(&json!({ "content": body }))
-        .map_err(|error| format!("构造钉钉消息参数失败: {}", error))?;
-    let response = client
-        .post("https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend")
-        .header("x-acs-dingtalk-access-token", &token)
-        .json(&json!({
-            "robotCode": channel.app_id,
-            "userIds": [channel.target_id],
-            "msgKey": "sampleText",
-            "msgParam": msg_param,
-        }))
-        .send()
-        .await
-        .map_err(|error| format!("发送钉钉消息失败: {}", error))?;
-    let status = response.status();
-    let result: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("解析钉钉消息响应失败: {}", error))?;
-    if !status.is_success() {
-        return Err(format!("发送钉钉消息失败: {}", result));
-    }
-    // oToMessages/batchSend 返回 {messageId: {userId: msgId}}，取第一条。
-    let message_id = result
-        .pointer("/messageId")
-        .and_then(Value::as_object)
-        .and_then(|map| map.values().next())
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    Ok(AdapterResult { message_id })
-}
-
-async fn send_weixin(
-    client: &Client,
-    channel: &BotChannelConfig,
-    request: &BotNotificationRequest,
-    body: &str,
-) -> Result<AdapterResult, String> {
-    let message_id = new_weixin_message_id();
-    let content = if request.decision_id.is_some() {
-        append_weixin_reply_marker(&weixin_decision_body(request), &message_id)
-    } else {
-        body.to_string()
-    };
-    send_weixin_text_with_id(client, channel, &channel.target_id, &content, &message_id).await?;
-    Ok(AdapterResult {
-        message_id: Some(message_id),
-    })
-}
-
-async fn send_bridge(
-    client: &Client,
-    channel: &BotChannelConfig,
-    request: &BotNotificationRequest,
-    body: &str,
-) -> Result<AdapterResult, String> {
-    if channel.webhook_url.is_empty() {
-        return Err("桥接通道需要发送 URL".to_string());
-    }
-    let mut builder = client.post(&channel.webhook_url).json(&json!({
-        "eventId": request.event_id,
-        "decisionId": request.decision_id,
-        "platform": channel.platform,
-        "targetId": channel.target_id,
-        "terminalId": request.terminal_id,
-        "terminalName": request.terminal_name,
-        "kind": request.kind,
-        "text": body,
-        "callbackChannelId": channel.id,
-    }));
-    if !channel.secret.is_empty() {
-        builder = builder.bearer_auth(&channel.secret);
-    }
-    let response = builder
-        .send()
-        .await
-        .map_err(|error| format!("发送桥接消息失败: {}", error))?;
-    let status = response.status();
-    let result: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("解析桥接响应失败: {}", error))?;
-    if !status.is_success() || result.get("success").and_then(Value::as_bool) == Some(false) {
-        return Err(format!("发送桥接消息失败: {}", result));
-    }
-    let message_id = result
-        .get("messageId")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    Ok(AdapterResult { message_id })
-}
-
-async fn dispatch_channel(
-    client: &Client,
-    channel: &BotChannelConfig,
-    request: &BotNotificationRequest,
-    body: &str,
-) -> Result<AdapterResult, String> {
-    match channel.platform.as_str() {
-        "feishu" => send_feishu(client, channel, request, body).await,
-        "dingtalk" => send_dingtalk(client, channel, body).await,
-        "weixin" => send_weixin(client, channel, request, body).await,
-        "qq" | "bridge" => send_bridge(client, channel, request, body).await,
-        other => Err(format!("不支持的机器人平台: {}", other)),
-    }
 }
 
 fn is_mobile_bot_notification(kind: &str, decision_id: Option<&str>) -> bool {
@@ -613,6 +79,45 @@ pub async fn save_bot_settings(
     Ok(saved)
 }
 
+/// 由通知请求与通道构造决策绑定记录（send_bot_notification / 通道决策测试共用）。
+fn build_decision_binding(
+    decision_id: &str,
+    request: &BotNotificationRequest,
+    channel: &BotChannelConfig,
+    message_id: String,
+    decision_ttl_minutes: i64,
+) -> DecisionBinding {
+    let options = request.decision_options.as_deref().unwrap_or_default();
+    DecisionBinding {
+        decision_id: decision_id.to_string(),
+        terminal_id: request.terminal_id.clone(),
+        terminal_name: request.terminal_name.clone(),
+        channel_id: channel.id.clone(),
+        target_id: channel.target_id.clone(),
+        external_message_id: message_id,
+        custom_option_down_count: request.custom_option_down_count,
+        option_move_counts: options.iter().map(|option| option.move_count).collect(),
+        option_labels: options
+            .iter()
+            .map(|option| option.label.trim().to_string())
+            .collect(),
+        initial_selected_move_counts: options
+            .iter()
+            .filter(|option| option.selected)
+            .map(|option| option.move_count)
+            .collect(),
+        recommended_move_count: options
+            .iter()
+            .find(|option| option.recommended)
+            .map(|option| option.move_count),
+        multi_select: request.decision_multi_select,
+        submit_move_count: request.decision_submit_move_count,
+        created_at: Utc::now().timestamp_millis(),
+        status: "pending".to_string(),
+        expires_at: (Utc::now() + Duration::minutes(decision_ttl_minutes)).timestamp_millis(),
+    }
+}
+
 #[tauri::command]
 pub async fn send_bot_notification(
     request: BotNotificationRequest,
@@ -631,10 +136,7 @@ pub async fn send_bot_notification(
         return Ok(Vec::new());
     }
     let body = notification_body(&request);
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|error| format!("创建机器人 HTTP 客户端失败: {}", error))?;
+    let client = bot_client(20)?;
     let mut reports = Vec::new();
     for channel in settings.channels.iter().filter(|channel| channel.enabled) {
         match dispatch_channel(&client, channel, &request, &body).await {
@@ -642,51 +144,13 @@ pub async fn send_bot_notification(
                 if let (Some(decision_id), Some(message_id)) =
                     (&request.decision_id, &result.message_id)
                 {
-                    BotBindingService::add(DecisionBinding {
-                        decision_id: decision_id.clone(),
-                        terminal_id: request.terminal_id.clone(),
-                        terminal_name: request.terminal_name.clone(),
-                        channel_id: channel.id.clone(),
-                        target_id: channel.target_id.clone(),
-                        external_message_id: message_id.clone(),
-                        custom_option_down_count: request.custom_option_down_count,
-                        option_move_counts: request
-                            .decision_options
-                            .as_deref()
-                            .unwrap_or_default()
-                            .iter()
-                            .map(|option| option.move_count)
-                            .collect(),
-                        option_labels: request
-                            .decision_options
-                            .as_deref()
-                            .unwrap_or_default()
-                            .iter()
-                            .map(|option| option.label.trim().to_string())
-                            .collect(),
-                        initial_selected_move_counts: request
-                            .decision_options
-                            .as_deref()
-                            .unwrap_or_default()
-                            .iter()
-                            .filter(|option| option.selected)
-                            .map(|option| option.move_count)
-                            .collect(),
-                        recommended_move_count: request
-                            .decision_options
-                            .as_deref()
-                            .unwrap_or_default()
-                            .iter()
-                            .find(|option| option.recommended)
-                            .map(|option| option.move_count),
-                        multi_select: request.decision_multi_select,
-                        submit_move_count: request.decision_submit_move_count,
-                        created_at: Utc::now().timestamp_millis(),
-                        status: "pending".to_string(),
-                        expires_at: (Utc::now()
-                            + Duration::minutes(settings.decision_ttl_minutes as i64))
-                        .timestamp_millis(),
-                    })?;
+                    BotBindingService::add(build_decision_binding(
+                        decision_id,
+                        &request,
+                        channel,
+                        message_id.clone(),
+                        settings.decision_ttl_minutes as i64,
+                    ))?;
                 }
                 reports.push(BotDeliveryReport {
                     channel_id: channel.id.clone(),
@@ -729,10 +193,7 @@ fn bot_connection_test_request() -> BotNotificationRequest {
 async fn dispatch_connection_test(channel: &BotChannelConfig) -> Result<BotDeliveryReport, String> {
     let request = bot_connection_test_request();
     let body = notification_body(&request);
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|error| format!("创建机器人 HTTP 客户端失败: {}", error))?;
+    let client = bot_client(20)?;
     match dispatch_channel(&client, channel, &request, &body).await {
         Ok(result) => Ok(BotDeliveryReport {
             channel_id: channel.id.clone(),
@@ -826,10 +287,7 @@ pub async fn test_bot_decision_channel(channel_id: String) -> Result<BotDelivery
         custom_option_down_count: Some(3),
     };
     let body = notification_body(&request);
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|error| format!("创建机器人 HTTP 客户端失败: {}", error))?;
+    let client = bot_client(20)?;
     match dispatch_channel(&client, channel, &request, &body).await {
         Ok(result) => {
             let Some(message_id) = result.message_id.clone() else {
@@ -841,50 +299,13 @@ pub async fn test_bot_decision_channel(channel_id: String) -> Result<BotDelivery
                     error: Some("机器人响应缺少消息标识".to_string()),
                 });
             };
-            BotBindingService::add(DecisionBinding {
-                decision_id,
-                terminal_id: BOT_TEST_TERMINAL_ID.to_string(),
-                terminal_name: "通知功能测试".to_string(),
-                channel_id: channel.id.clone(),
-                target_id: channel.target_id.clone(),
-                external_message_id: message_id,
-                custom_option_down_count: Some(3),
-                option_move_counts: request
-                    .decision_options
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|option| option.move_count)
-                    .collect(),
-                option_labels: request
-                    .decision_options
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|option| option.label.trim().to_string())
-                    .collect(),
-                initial_selected_move_counts: request
-                    .decision_options
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|option| option.selected)
-                    .map(|option| option.move_count)
-                    .collect(),
-                recommended_move_count: request
-                    .decision_options
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|option| option.recommended)
-                    .map(|option| option.move_count),
-                multi_select: request.decision_multi_select,
-                submit_move_count: request.decision_submit_move_count,
-                created_at: Utc::now().timestamp_millis(),
-                status: "pending".to_string(),
-                expires_at: (Utc::now() + Duration::minutes(settings.decision_ttl_minutes as i64))
-                    .timestamp_millis(),
-            })?;
+            BotBindingService::add(build_decision_binding(
+                &decision_id,
+                &request,
+                channel,
+                message_id,
+                settings.decision_ttl_minutes as i64,
+            ))?;
             Ok(BotDeliveryReport {
                 channel_id: channel.id.clone(),
                 channel_name: channel.name.clone(),
@@ -1047,7 +468,7 @@ fn decision_reply_feedback(binding: &DecisionBinding, reply: &ParsedDecisionRepl
 }
 
 fn single_select_input(move_count: i16) -> Result<String, String> {
-    if move_count.unsigned_abs() > 20 {
+    if move_count.unsigned_abs() > OPTION_POSITION_LIMIT {
         return Err("选项位置无效，请返回终端操作".to_string());
     }
     let arrow = if move_count >= 0 { "\x1b[B" } else { "\x1b[A" };
@@ -1107,7 +528,7 @@ pub fn process_bot_card_selection(
     move_count: i16,
 ) -> Result<String, String> {
     validate_bot_sender(channel, sender_id, conversation_id)?;
-    if move_count.unsigned_abs() > 20 {
+    if move_count.unsigned_abs() > OPTION_POSITION_LIMIT {
         return Err("选项位置无效，请返回终端操作".to_string());
     }
     let binding = BotBindingService::consume_with(&channel.id, card_message_id, |binding| {
@@ -1146,11 +567,11 @@ fn multi_select_input(
     initial_selected_move_counts: &[i16],
     submit_move_count: i16,
 ) -> Result<String, String> {
-    if submit_move_count.unsigned_abs() > 20
+    if submit_move_count.unsigned_abs() > OPTION_POSITION_LIMIT
         || selected_move_counts
             .iter()
             .chain(initial_selected_move_counts)
-            .any(|value| value.unsigned_abs() > 20)
+            .any(|value| value.unsigned_abs() > OPTION_POSITION_LIMIT)
     {
         return Err("多选项位置无效，请返回终端操作".to_string());
     }
@@ -1236,6 +657,7 @@ pub fn process_bot_reply(
 ) -> Result<String, String> {
     validate_bot_sender(channel, &inbound.sender_id, &inbound.conversation_id)?;
     let settings = BotSettingsService::get_runtime()?;
+    let mut parsed_reply: Option<ParsedDecisionReply> = None;
     let binding = BotBindingService::consume_reply_with(
         &channel.id,
         &inbound.sender_id,
@@ -1243,6 +665,7 @@ pub fn process_bot_reply(
         inbound.reply_to_message_id.as_deref(),
         |binding| {
             let reply = parse_decision_reply(&inbound.text, binding)?;
+            parsed_reply = Some(reply.clone());
             let hook_reply = match &reply {
                 ParsedDecisionReply::Recommended(move_count)
                 | ParsedDecisionReply::Single { move_count, .. }
@@ -1309,7 +732,7 @@ pub fn process_bot_reply(
                     let down_count = binding.custom_option_down_count.ok_or_else(|| {
                         "无法识别自定义输入选项，请回复编号、回复“确认”或返回终端操作".to_string()
                     })?;
-                    if down_count > 20 {
+                    if down_count > OPTION_POSITION_LIMIT {
                         return Err("自定义输入选项位置无效，请返回终端操作".to_string());
                     }
                     let custom_reply = sanitize_reply(&inbound.text, settings.append_enter)?;
@@ -1319,7 +742,7 @@ pub fn process_bot_reply(
             terminal_service.write_to_terminal(&binding.terminal_id, &data)
         },
     )?;
-    let reply = parse_decision_reply(&inbound.text, &binding)?;
+    let reply = parsed_reply.ok_or_else(|| "内部错误：回复解析结果缺失".to_string())?;
     let feedback = decision_reply_feedback(&binding, &reply);
     if binding.terminal_id == BOT_TEST_TERMINAL_ID {
         return Ok(feedback);
@@ -1347,10 +770,10 @@ pub async fn bot_scan_poll(begin: ScanBeginResult) -> Result<ScanPollResult, Str
 #[cfg(test)]
 mod tests {
     use super::{
-        decision_reply_feedback, multi_select_input, parse_decision_reply, weixin_decision_body,
-        ParsedDecisionReply,
+        decision_reply_feedback, multi_select_input, parse_decision_reply, ParsedDecisionReply,
     };
     use crate::models::{BotDecisionOption, BotNotificationRequest, DecisionBinding};
+    use crate::services::bot_channel::weixin_decision_body;
 
     fn decision_binding(multi_select: bool) -> DecisionBinding {
         DecisionBinding {
