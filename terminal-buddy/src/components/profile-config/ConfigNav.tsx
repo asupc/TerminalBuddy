@@ -1,5 +1,4 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
-import { ArrowUpDown } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
@@ -43,9 +42,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const setProfiles = useAppStore(s => s.setProfiles);
   const configPanelVisible = useAppStore(s => s.configPanelVisible);
   const configSearchQuery = useAppStore(s => s.configSearchQuery);
-  const configSortBy = useAppStore(s => s.configSortBy);
   const setConfigSearchQuery = useAppStore(s => s.setConfigSearchQuery);
-  const setConfigSortBy = useAppStore(s => s.setConfigSortBy);
   const extraParamPresets = useAppStore(s => s.extraParamPresets);
   const setDragProfileId = useAppStore(s => s.setDragProfileId);
   const [width, setWidth] = useState(250);
@@ -91,7 +88,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null);
   const [renamingProfileName, setRenamingProfileName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
 
   // Build tree items: hierarchical groups -> profiles
   const treeItems = useMemo(() => {
@@ -106,20 +102,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     const pinnedItems = filtered.filter(p => p.pinned);
     const normalItems = filtered.filter(p => !p.pinned);
 
-    const sortProfiles = (items: Profile[]): Profile[] => {
-      return items.sort((a, b) => {
-        switch (configSortBy) {
-          case 'name-asc': return a.name.localeCompare(b.name, 'zh');
-          case 'name-desc': return b.name.localeCompare(a.name, 'zh');
-          case 'recent': return (b.lastUsedAt || '').localeCompare(a.lastUsedAt || '');
-          case 'oldest': return (a.lastUsedAt || '').localeCompare(b.lastUsedAt || '');
-          case 'created-new': return b.createdAt.localeCompare(a.createdAt);
-          case 'created-old': return a.createdAt.localeCompare(b.createdAt);
-          default: return 0;
-        }
-      });
-    };
-
     const toLeaf = (p: Profile): TreeItem => ({
       id: p.id,
       label: p.name,
@@ -128,7 +110,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       data: p,
     });
 
-    const tree = buildGroupTree<Profile>(normalItems, p => p.group || '默认', sortProfiles);
+    const tree = buildGroupTree<Profile>(normalItems, p => p.group || '默认');
 
     const toTreeItems = (nodes: ReturnType<typeof buildGroupTree<Profile>>): TreeItem[] =>
       nodes.map((node): TreeItem => ({
@@ -149,12 +131,12 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
         id: PINNED_GROUP_ID,
         label: '置顶',
         isGroup: true,
-        children: sortProfiles([...pinnedItems]).map(toLeaf),
+        children: [...pinnedItems].map(toLeaf),
       });
     }
 
     return result;
-  }, [profiles, configSearchQuery, configSortBy]);
+  }, [profiles, configSearchQuery]);
 
   const handleToggle = (groupId: string) => {
     setExpandedGroups(prev => {
@@ -181,7 +163,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
 
   const handleItemContextMenu = useCallback((e: React.MouseEvent, item: TreeItem) => {
     e.preventDefault();
-    setSortDropdownOpen(false);
     if (item.data) {
       const profile = item.data as Profile;
       selectProfile(profile.id);
@@ -199,7 +180,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     setContextMenu(null);
     setGroupContextMenu(null);
     setBlankContextMenu(null);
-    setSortDropdownOpen(false);
   };
 
   const isLocalProfile = (p: Profile) => p.terminalType === 'powershell' || p.terminalType === 'pwsh' || p.terminalType === 'cmd';
@@ -426,41 +406,10 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           value={configSearchQuery}
           onChange={(e) => setConfigSearchQuery(e.target.value)}
         />
-        <div className="config-nav-sort-wrapper">
-          <button
-            type="button"
-            className="config-nav-sort-btn"
-            // 阻止冒泡：根容器 onClick={closeContextMenu} 会把刚打开的下拉立即关掉
-            onClick={(e) => { e.stopPropagation(); setSortDropdownOpen(!sortDropdownOpen); }}
-            title="排序"
-            aria-label="配置排序"
-            aria-expanded={sortDropdownOpen}
-          >
-            <ArrowUpDown aria-hidden="true" />
-          </button>
-          {sortDropdownOpen && (
-            <div className="config-nav-sort-dropdown">
-              {([
-                ['name-asc', '名称 A-Z'], ['name-desc', '名称 Z-A'],
-                ['recent', '最近使用'], ['oldest', '最久未用'],
-                ['created-new', '创建 新→旧'], ['created-old', '创建 旧→新'],
-              ] as const).map(([key, label]) => (
-                <div
-                  key={key}
-                  className={`config-nav-sort-option ${configSortBy === key ? 'active' : ''}`}
-                  onClick={() => { setConfigSortBy(key); setSortDropdownOpen(false); }}
-                >
-                  {label}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
       <div className="config-nav-list" onContextMenu={(e) => {
         if ((e.target as HTMLElement).closest('.tree-item')) return;
         e.preventDefault();
-        setSortDropdownOpen(false);
         setContextMenu(null);
         setGroupContextMenu(null);
         setBlankContextMenu({ x: e.clientX, y: e.clientY });

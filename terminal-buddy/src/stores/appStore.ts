@@ -149,11 +149,9 @@ export interface AppState {
 	toggleConfigPanel: () => void;
 	toggleFileTree: () => void;
 
-	// Config panel search & sort
+	// Config panel search
 	configSearchQuery: string;
-	configSortBy: "name-asc" | "name-desc" | "recent" | "oldest" | "created-new" | "created-old";
 	setConfigSearchQuery: (query: string) => void;
-	setConfigSortBy: (sortBy: AppState["configSortBy"]) => void;
 
 	// Settings dialog and workspace special tabs
 	settingsDialogOpen: boolean;

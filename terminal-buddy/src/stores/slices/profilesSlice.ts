@@ -38,9 +38,7 @@ export const createProfilesSlice = (
 			return { fileTreeVisible: next };
 		}),
 	configSearchQuery: "",
-	configSortBy: "name-asc",
 	setConfigSearchQuery: (query) => set({ configSearchQuery: query }),
-	setConfigSortBy: (sortBy) => set({ configSortBy: sortBy }),
 
 	settingsDialogOpen: false,
 	gitHistoryTab: null,
