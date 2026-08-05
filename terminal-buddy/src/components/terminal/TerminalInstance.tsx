@@ -7,15 +7,13 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openPath, readClipboardFilePaths, readClipboardImageAsFile, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../../services/tauri';
+import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../../services/tauri';
 import { ServerMonitor } from '../shared/ServerMonitor';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import { getAppSettings } from '../../utils/settings';
 import { bootLog } from '../../utils/bootLog';
 import { useAppStore } from '../../stores/appStore';
 import { isLightBackground, type TerminalColors } from '../../utils/terminalTheme';
-import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../../utils/terminalResizeEvent';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
@@ -27,8 +25,11 @@ import {
   getInputAtCursor, getAutocompleteCompletion,
   getCommandSuggestions, installStableImeAnchor,
   resolveCdTarget, detectAndTrackCd, SUGGESTION_KIND_LABEL,
+  pasteFromClipboard, forceFitOf, setForceFit, syncImeAnchorOf, xtermCoreOf,
 } from './terminal-helpers';
 import type { WebTerminalResizePayload } from './terminal-helpers';
+import { usePtyResize } from './hooks/usePtyResize';
+import { useDragDrop } from './hooks/useDragDrop';
 
 
 interface TerminalInstanceProps {
@@ -74,20 +75,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
-  const [dragOver, setDragOver] = useState(false);
-  const [internalDragOver, setInternalDragOver] = useState(false);
   const isSsh = useAppStore(s => s.sessions.find(sess => sess.id === terminalId)?.terminalType === 'ssh');
   const windowMode = useAppStore(s => s.windowMode);
-  const [fontSizeSettings, setFontSizeSettings] = useState(() => {
-    const s = getAppSettings();
-    return {
-      terminalFontSizeOff: s.terminalFontSizeOff,
-      terminalFontSize2x1: s.terminalFontSize2x1,
-      terminalFontSize2x2: s.terminalFontSize2x2,
-    };
-  });
   const [scrollInfo, setScrollInfo] = useState({ top: 0, height: 0, visible: false });
-  const scrollThumbRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const autocompletePopupRef = useRef<HTMLDivElement>(null);
@@ -187,15 +177,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
   // Resize-related refs (learned from VS Code's terminal implementation)
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
   const lastPtyDimensionsRef = useRef<{ cols: number; rows: number } | null>(null);
   const [termBg, setTermBg] = useState(colorTheme?.background || '#1e1e1e');
   const inAltBufferRef = useRef(false);
-
-  // Output tracking refs (learned from VS Code's terminalInstance.ts)
-  // These track write/parse state to ensure cursor position stays in sync
-  const latestWriteDataRef = useRef(0);
-  const latestParseDataRef = useRef(0);
 
   // Sync terminal theme (xterm canvas + outer div) when colorTheme prop changes.
   // xterm 在 options.theme 变化后自动重绘（canvas/webgl 渲染器均支持），
@@ -323,9 +307,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         ? adaptCodexInputBackground(output, lightBackground)
         : output;
 
-      const messageId = ++latestWriteDataRef.current;
       term.write(renderedOutput, () => {
-        latestParseDataRef.current = messageId;
         if (!allowsTerminalAutocomplete(term)) {
           clearAutocomplete();
         }
@@ -543,7 +525,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           if (terminal.rows !== rows || terminal.cols !== cols) {
             terminal.resize(cols, rows);
           }
-          lastDimensionsRef.current = { cols, rows };
           return true;
         }
 
@@ -570,7 +551,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // A final layout repair may redeclare an unchanged stable size. This is
         // intentionally still serialized with all ordinary resize requests.
         queuePtyResize(terminal.rows, terminal.cols, redeclarePty);
-        lastDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
         return true;
       };
 
@@ -579,8 +559,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       let imeAnchorSyncRaf: number | null = null;
       const imeAnchorSyncTimers: number[] = [];
       const syncImeAnchorAfterLayout = () => {
-        const syncImeAnchor = (terminal as any)._tbSyncImeAnchor;
-        if (typeof syncImeAnchor === 'function') {
+        const syncImeAnchor = syncImeAnchorOf(terminal);
+        if (syncImeAnchor) {
           syncImeAnchor();
         }
         if (imeAnchorSyncRaf !== null) {
@@ -589,8 +569,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         imeAnchorSyncRaf = requestAnimationFrame(() => {
           imeAnchorSyncRaf = null;
           if (disposed) return;
-          const nextSyncImeAnchor = (terminal as any)._tbSyncImeAnchor;
-          if (typeof nextSyncImeAnchor === 'function') {
+          const nextSyncImeAnchor = syncImeAnchorOf(terminal);
+          if (nextSyncImeAnchor) {
             nextSyncImeAnchor();
           }
         });
@@ -679,7 +659,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       });
 
       // Expose forceFit for the isActive effect below
-      (terminal as any)._tbForceFit = forceFit;
+      setForceFit(terminal, forceFit);
 
       // --- TUI buffer tracking (learned from VS Code's terminalInstance.ts) ---
       // Track alternate buffer to detect TUI programs (vim, claude, htop, etc.)
@@ -692,8 +672,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           // TUI program just exited: force viewport refresh to clear stale content.
           // This mirrors VS Code's forceRefresh() which calls viewport._innerRefresh().
           try {
-            const core = (terminal as any)._core;
-            core?.viewport?._innerRefresh?.();
+            xtermCoreOf(terminal)?.viewport?._innerRefresh?.();
           } catch { /* xterm internal API may change */ }
           // Schedule a deferred fit to handle any dimension mismatch
           setTimeout(() => {
@@ -979,38 +958,37 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               if (paths.length === 1 && IMAGE_EXT.test(paths[0])) {
                 onOutputRef.current(terminalId, `[图片:${paths[0]}]`);
               } else {
-                const text = paths.map(p => p).join(' ');
-                onOutputRef.current(terminalId, text);
+                onOutputRef.current(terminalId, paths.join(' '));
               }
             } else {
-              // No file paths — try clipboard image (e.g. screenshot), then text
-              readClipboardImageAsFile().then((imagePath) => {
-                onOutputRef.current(terminalId, `[图片:${imagePath}]`);
-              }).catch(() => {
-                navigator.clipboard.readText().then((text) => {
-                  if (text) {
-                    const trimmed = text.trim();
-                    if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
-                      onOutputRef.current(terminalId, trimmed.replace(/"/g, '\\"'));
-                    } else if (text.includes('\n') || text.includes('\r')) {
-                      const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                      onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
-                    } else {
-                      sendPastedText(text);
-                    }
-                  }
-                }).catch(() => {});
+              // No file paths — fall back to image (e.g. screenshot), then text
+              void pasteFromClipboard().then((result) => {
+                if (!result) return;
+                if (result.kind === 'image') {
+                  onOutputRef.current(terminalId, `[图片:${result.path}]`);
+                  return;
+                }
+                const text = result.text;
+                const trimmed = text.trim();
+                if (/^[A-Za-z]:[\\/]/.test(trimmed) && !trimmed.includes('\n')) {
+                  onOutputRef.current(terminalId, trimmed.replace(/"/g, '\\"'));
+                } else if (text.includes('\n') || text.includes('\r')) {
+                  const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                  onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+                } else {
+                  sendPastedText(text);
+                }
               });
             }
           }).catch(() => {
-            readClipboardImageAsFile().then((imagePath) => {
-              onOutputRef.current(terminalId, `[图片:${imagePath}]`);
-            }).catch(() => {
-              navigator.clipboard.readText().then((text) => {
-                if (text) {
-                  sendPastedText(text);
-                }
-              }).catch(() => {});
+            // readClipboardFilePaths 失败（无文件剪贴板权限等）→ 图片/文本回退
+            void pasteFromClipboard().then((result) => {
+              if (!result) return;
+              if (result.kind === 'image') {
+                onOutputRef.current(terminalId, `[图片:${result.path}]`);
+              } else {
+                sendPastedText(result.text);
+              }
             });
           });
           return;
@@ -1051,26 +1029,23 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (pasteState.inFlight) return;
         pasteState.inFlight = true;
 
-        readClipboardImageAsFile().then((imagePath) => {
-          onOutputRef.current(terminalId, `[图片:${imagePath}]`);
-          terminal.focus();
-        }).catch(() => {
-          navigator.clipboard.readText().then((text) => {
-            if (!text) return;
-
-            const textNow = performance.now();
+        void pasteFromClipboard().then((result) => {
+          if (!result) return;
+          if (result.kind === 'image') {
+            onOutputRef.current(terminalId, `[图片:${result.path}]`);
+          } else {
+            const text = result.text;
             if (
               pasteState.lastText === text &&
-              textNow - pasteState.lastTextAt < RIGHT_CLICK_PASTE_DEDUPE_MS
+              performance.now() - pasteState.lastTextAt < RIGHT_CLICK_PASTE_DEDUPE_MS
             ) {
               return;
             }
-
             pasteState.lastText = text;
-            pasteState.lastTextAt = textNow;
+            pasteState.lastTextAt = performance.now();
             sendPastedText(text);
-            terminal.focus();
-          }).catch(() => {});
+          }
+          terminal.focus();
         }).finally(() => {
           pasteState.inFlight = false;
         });
@@ -1172,7 +1147,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         if (terminal.rows !== payload.rows || terminal.cols !== payload.cols) {
           terminal.resize(payload.cols, payload.rows);
         }
-        lastDimensionsRef.current = { cols: payload.cols, rows: payload.rows };
         try { terminal.refresh(0, terminal.rows - 1); } catch { /* renderer may be disposing */ }
       }),
       listen<string>('terminal-web-takeover-ended', (event) => {
@@ -1188,8 +1162,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           pendingWebTakeoverRecoveryRef.current = true;
           return;
         }
-        const forceFit = (terminal as any)._tbForceFit;
-        if (typeof forceFit === 'function') {
+        const forceFit = forceFitOf(terminal);
+        if (forceFit) {
           pendingWebTakeoverRecoveryRef.current = !forceFit(true, true);
         } else if (fitAddonRef.current) {
           fitAddonRef.current.fit();
@@ -1245,9 +1219,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         clearTimeout(workingFallback);
         workingFallback = null;
       }
-      // Reset output tracking refs
-      latestWriteDataRef.current = 0;
-      latestParseDataRef.current = 0;
       pendingPtyResize = null;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
@@ -1256,152 +1227,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     };
   }, [terminalId]);
 
-  // When tab becomes visible (isActive changes to true), force a fit to ensure
-  // correct dimensions. This mirrors VS Code's setVisible() which flushes pending
-  // resizes and re-evaluates dimensions on visibility change.
-  useEffect(() => {
-    if (!visible) return;
-    // Use double rAF to ensure the CSS visibility transition has completed
-    // and layout is stable before measuring
-    let raf1: number;
-    let raf2: number;
-    raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        const term = xtermRef.current;
-        if (!term) return;
-        const forceFit = (term as any)._tbForceFit;
-        if (typeof forceFit === 'function') {
-          const recoverFromWebTakeover = pendingWebTakeoverRecoveryRef.current;
-          const fitted = forceFit(recoverFromWebTakeover, recoverFromWebTakeover);
-          if (recoverFromWebTakeover) {
-            pendingWebTakeoverRecoveryRef.current = !fitted;
-          }
-        }
-        try {
-          if (term.rows > 0) term.refresh(0, term.rows - 1);
-        } catch { /* renderer may be disposing */ }
-        if (isActive) term.focus();
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-    };
-  }, [isActive, visible]);
-
-  // Split-screen layout changes (enter/exit/2x1<->2x2) must force a resize even
-  // when a TUI (vim/claude code) is running, so the program redraws via SIGWINCH.
-  // Incidental resizes still respect the alt-buffer guard inside doFit.
-  useEffect(() => {
-    let raf1 = 0;
-    let raf2 = 0;
-    let repairTimers: ReturnType<typeof setTimeout>[] = [];
-    const clearPendingRepair = () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-      raf1 = 0;
-      raf2 = 0;
-      repairTimers.forEach(timer => clearTimeout(timer));
-      repairTimers = [];
-    };
-    const isCurrentLayout = (detail: TerminalResizeDetail) => {
-      const state = useAppStore.getState();
-      if (detail.layoutVersion !== state.terminalLayoutVersion) return false;
-      if (detail.splitMode !== state.splitMode || detail.windowMode !== state.windowMode) return false;
-      if (state.splitMode !== 'off' && !state.splitSlots.some(slot => slot.sessionId === terminalId)) return false;
-      return true;
-    };
-    const runLayoutRepair = (detail: TerminalResizeDetail, redeclarePty = false) => {
-      if (!visibleRef.current || !isCurrentLayout(detail)) return;
-      const term = xtermRef.current;
-      if (!term) return;
-      const forceFit = (term as any)._tbForceFit;
-      if (typeof forceFit === 'function') forceFit(true, redeclarePty);
-      try { term.refresh(0, term.rows - 1); } catch { /* renderer may be disposing */ }
-      // Only the focused pane should steal keyboard focus on a layout change.
-      if (useAppStore.getState().activeSessionId === terminalId) term.focus();
-    };
-    const onSplitResize = (e: Event) => {
-      const detail = (e as CustomEvent<TerminalResizeDetail>).detail;
-      if (!detail?.terminalIds?.includes(terminalId) || !isCurrentLayout(detail)) return;
-      clearPendingRepair();
-      raf1 = requestAnimationFrame(() => {
-        raf2 = requestAnimationFrame(() => {
-          runLayoutRepair(detail);
-          repairTimers = [80, 220].map((delay, index, delays) =>
-            setTimeout(() => runLayoutRepair(detail, index === delays.length - 1), delay)
-          );
-        });
-      });
-    };
-    window.addEventListener(TERMINAL_RESIZE_EVENT, onSplitResize);
-    return () => {
-      window.removeEventListener(TERMINAL_RESIZE_EVENT, onSplitResize);
-      clearPendingRepair();
-    };
-  }, [terminalId]);
-
-  // 监听用户在设置面板改了终端字号，同步到本地 fontSizeSettings 以驱动下方
-  // splitMode effect 重算。空依赖：mount 时挂一次，unmount 时解绑。
-  useEffect(() => {
-    const sync = () => {
-      const s = getAppSettings();
-      setFontSizeSettings({
-        terminalFontSizeOff: s.terminalFontSizeOff,
-        terminalFontSize2x1: s.terminalFontSize2x1,
-        terminalFontSize2x2: s.terminalFontSize2x2,
-      });
-    };
-    window.addEventListener('app-settings-changed', sync);
-    return () => window.removeEventListener('app-settings-changed', sync);
-  }, []);
-
-  // 分屏/单屏字号跟随设置：splitMode 切换或用户在设置面板改值都会重新评估。
-  // 这里只改字号,不立即 fit；TerminalPanel 会在布局稳定后派发带版本号的
-  // TERMINAL_RESIZE_EVENT，避免快速连点时把 2x1/2x2/off 的中间尺寸同步给 PTY。
-  useEffect(() => {
-    if (!visible) return;
-    const term = xtermRef.current;
-    if (!term) return;
-    const newSize = resolveSplitFontSize(splitMode, fontSizeSettings);
-    if (term.options.fontSize === newSize) return;
-    term.options.fontSize = newSize;
-  }, [
-    splitMode,
+  usePtyResize({
+    terminalRef,
+    xtermRef,
+    fitAddonRef,
+    visibleRef,
+    pendingWebTakeoverRecoveryRef,
+    terminalId,
+    isActive,
     visible,
-    fontSizeSettings.terminalFontSizeOff,
-    fontSizeSettings.terminalFontSize2x1,
-    fontSizeSettings.terminalFontSize2x2,
-  ]);
-
-  // F11 切换 windowMode（panels-hidden）时，.terminal-content 宽度突变，grid 重排
-  // 需要时间落定。这里直接订阅 windowMode 再补一次 forceFit，与 TerminalPanel 派发
-  // 的 tb-split-resize 互为备份——任意一条路径被 ResizeObserver 卡住时另一条仍能
-  // 触发 fit。
-  useEffect(() => {
-    const term = xtermRef.current;
-    if (!term) return;
-    const forceFit = (term as any)._tbForceFit;
-    if (typeof forceFit !== 'function') return;
-    const scheduledLayoutVersion = useAppStore.getState().terminalLayoutVersion;
-    let raf1 = 0;
-    let raf2 = 0;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        timer = setTimeout(() => {
-          timer = null;
-          if (useAppStore.getState().terminalLayoutVersion !== scheduledLayoutVersion) return;
-          try { forceFit(true); } catch { /* terminal may be disposing */ }
-        }, 50);
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-      if (timer) clearTimeout(timer);
-    };
-  }, [windowMode]);
+    splitMode,
+    windowMode,
+  });
 
   const handleSearch = useCallback((direction: 'next' | 'prev' = 'next') => {
     const searchAddon = searchAddonRef.current;
@@ -1428,16 +1265,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         navigator.clipboard.writeText(selection).catch(() => {});
       }
     } else if (!readOnly) {
-      readClipboardImageAsFile().then((imagePath) => {
-        onOutputRef.current(terminalId, `[图片:${imagePath}]`);
+      void pasteFromClipboard().then((result) => {
+        if (!result) return;
+        if (result.kind === 'image') {
+          onOutputRef.current(terminalId, `[图片:${result.path}]`);
+        } else {
+          sendPastedText(result.text);
+        }
         terminal.focus();
-      }).catch(() => {
-        navigator.clipboard.readText().then((text) => {
-          if (text) {
-            sendPastedText(text);
-            terminal.focus();
-          }
-        }).catch(() => {});
       });
     }
     setContextMenu({ x: 0, y: 0, anchorX: 0, anchorY: 0, visible: false });
@@ -1473,72 +1308,15 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
 
-  // Tauri native drag-drop: listen for file drops into the window
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    let cancelled = false;
-
-    getCurrentWebview().onDragDropEvent((event) => {
-      if (cancelled) return;
-      if (event.payload.type === 'enter') {
-        if (isActiveRef.current) setDragOver(true);
-      } else if (event.payload.type === 'over') {
-        // hovering — keep drag-over state
-      } else if (event.payload.type === 'drop') {
-        setDragOver(false);
-        if (!isActiveRef.current || readOnly) return;
-        const paths = event.payload.paths;
-        if (paths && paths.length > 0) {
-          const text = paths.join(' ');
-          onOutputRef.current(terminalId, text);
-          xtermRef.current?.focus();
-        }
-      } else {
-        // 'leave' / cancel
-        setDragOver(false);
-      }
-    }).then(fn => {
-      if (cancelled) { fn(); return; }
-      unlisten = fn;
-    });
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  // Internal drag from FileTree: detect mouseup to receive dropped paths
-  useEffect(() => {
-    const el = terminalRef.current;
-    if (!el) return;
-
-    const handleMouseUp = () => {
-      const paths = useAppStore.getState().dragPaths;
-      if (!paths || !isActiveRef.current || readOnly) return;
-      setInternalDragOver(false);
-      const text = paths.join(' ');
+  const { dragOver, internalDragOver } = useDragDrop({
+    terminalRef,
+    isActiveRef,
+    readOnly,
+    onDrop: (text) => {
       onOutputRef.current(terminalId, text);
-      useAppStore.getState().setDragPaths(null);
       xtermRef.current?.focus();
-    };
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const paths = useAppStore.getState().dragPaths;
-      if (!paths || !isActiveRef.current) return;
-      const rect = el.getBoundingClientRect();
-      const inside = e.clientX >= rect.left && e.clientX <= rect.right
-                  && e.clientY >= rect.top && e.clientY <= rect.bottom;
-      setInternalDragOver(inside);
-    };
-
-    el.addEventListener('mouseup', handleMouseUp);
-    document.addEventListener('mousemove', handleMouseMove);
-    return () => {
-      el.removeEventListener('mouseup', handleMouseUp);
-      document.removeEventListener('mousemove', handleMouseMove);
-    };
-  }, []);
+    },
+  });
 
   return (
     <div
@@ -1650,7 +1428,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         <div className="terminal-scroll-wrapper">
           <div className="terminal-scroll-track">
             <div
-              ref={scrollThumbRef}
               className="terminal-scroll-thumb"
               style={{ top: scrollInfo.top, height: scrollInfo.height }}
               onMouseDown={(e) => {

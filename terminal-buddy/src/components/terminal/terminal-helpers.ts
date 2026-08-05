@@ -3,6 +3,7 @@ import { FLOATING_MENU_MARGIN } from './instance-utils';
 import { useAppStore } from '../../stores/appStore';
 import type { SuggestionItem } from '../../data/commandTemplates';
 import { getTerminalSuggestions } from '../../data/commandTemplates';
+import { readClipboardImageAsFile } from '../../services/tauri';
 
 export type WebTerminalResizePayload = {
   terminalId: string;
@@ -498,6 +499,51 @@ export function detectAndTrackCd(terminal: Terminal, terminalId: string) {
     const target = resolveCdTarget(cwd, parts[1]);
     if (target) {
       useAppStore.getState().setSessionDirectory(terminalId, target);
+    }
+  }
+}
+
+// --- xterm 私有 API 访问收敛 ---
+// 这些是版本锁定的内部接口（_tbForceFit 为本项目挂载），带类型注记便于替换。
+
+export type ForceFitFn = (force?: boolean, redeclarePty?: boolean) => boolean;
+
+export function forceFitOf(term: Terminal): ForceFitFn | null {
+  const fn = (term as any)._tbForceFit;
+  return typeof fn === 'function' ? fn : null;
+}
+
+export function setForceFit(term: Terminal, fn: ForceFitFn): void {
+  (term as any)._tbForceFit = fn;
+}
+
+export function syncImeAnchorOf(term: Terminal): (() => void) | null {
+  const fn = (term as any)._tbSyncImeAnchor;
+  return typeof fn === 'function' ? fn : null;
+}
+
+export function xtermCoreOf(term: Terminal): { viewport?: { _innerRefresh?: () => void } } | null {
+  return ((term as any)._core as { viewport?: { _innerRefresh?: () => void } } | undefined) ?? null;
+}
+
+// --- 剪贴板粘贴（图片/文本三级回退的单一实现） ---
+
+export type ClipboardPasteResult =
+  | { kind: 'image'; path: string }
+  | { kind: 'text'; text: string }
+  | null;
+
+/** 读取剪贴板：优先图片（截图），否则回退纯文本；两者均不可用时返回 null。 */
+export async function pasteFromClipboard(): Promise<ClipboardPasteResult> {
+  try {
+    const imagePath = await readClipboardImageAsFile();
+    return { kind: 'image', path: imagePath };
+  } catch {
+    try {
+      const text = await navigator.clipboard.readText();
+      return text ? { kind: 'text', text } : null;
+    } catch {
+      return null;
     }
   }
 }
