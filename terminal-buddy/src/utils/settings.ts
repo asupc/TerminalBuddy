@@ -7,11 +7,6 @@ export type LaunchWindowMode = 'windowed' | 'maximized';
 export type TerminalLoadingMode = 'default' | 'vsCode';
 export type UiStyle = 'default' | 'sidebar';
 
-export interface AiDeliveryFloatingButtonPosition {
-  x: number;
-  y: number;
-}
-
 export interface AppSettings {
   uiStyle: UiStyle;
   restoreTabsOnStartup: boolean;
@@ -54,8 +49,6 @@ export interface AppSettings {
   terminalFontSizeOff: number;
   terminalFontSize2x1: number;
   terminalFontSize2x2: number;
-  aiDeliveryFloatingButtonPosition: AiDeliveryFloatingButtonPosition | null;
-  aiDeliveryStateFilters: string[] | null;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -100,8 +93,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   terminalFontSizeOff: 14,
   terminalFontSize2x1: 12,
   terminalFontSize2x2: 11,
-  aiDeliveryFloatingButtonPosition: null,
-  aiDeliveryStateFilters: null,
 };
 
 let _cachedSettings: AppSettings | null = null;

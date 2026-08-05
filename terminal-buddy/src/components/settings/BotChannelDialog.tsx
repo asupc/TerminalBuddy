@@ -40,7 +40,6 @@ export function createBotChannel(
     allowedUserIds: [],
     hasSecret: false,
     hasCallbackToken: false,
-    aiDeliveryEnabled: false,
   };
 }
 
