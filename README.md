@@ -184,7 +184,7 @@ terminal-buddy/
 │   │   ├── AboutDialog.tsx  # About / version dialog
 │   │   └── Toast.tsx  # Global toast notifications
 │   ├── stores/appStore.ts  # Zustand state management
-│   ├── services/tauri.ts  # Tauri invoke wrappers (108 commands)
+│   ├── services/tauri.ts  # Typed Tauri invoke wrappers
 │   ├── services/aiUsage.ts  # AI API usage fetching (5 providers)
 │   ├── data/commandTemplates.ts  # Template definitions & history
 │   ├── data/terminalSuggestions.ts  # VS Code-style prompt suggestions
@@ -204,7 +204,7 @@ terminal-buddy/
 │   └── types/index.ts  # TypeScript types & presets
 ├── src-tauri/                    # Backend (Rust/Tauri)
 │   └── src/
-│       ├── lib.rs  # App setup, tray, single instance, Web API (108 commands)
+│       ├── lib.rs  # App setup, tray, single instance, Web API
 │       ├── commands/  # Tauri command handlers
 │       │   ├── terminal.rs  # PTY management (TerminalService)
 │       │   ├── profile.rs  # Profile CRUD + export/import
@@ -253,7 +253,7 @@ terminal-buddy/
 ┌──────────────────────────────────┐
 │  React 前端 (Zustand 状态管理)     │  ← 桌面 UI + Web UI
 ├──────────────────────────────────┤
-│  Tauri 命令桥 (IPC, 79 个命令)     │  ← JSON 序列化，camelCase
+│  Tauri 命令桥 (IPC)                │  ← JSON 序列化，camelCase
 ├──────────────────────────────────┤
 │  Rust 服务层                      │  ← 业务逻辑、JSON 持久化
 ├──────────────────────────────────┤
@@ -326,8 +326,6 @@ terminal-buddy/
 - 事件文件按条数与体积滚动清理 + 事件列表查看全部/搜索/分页统一组件
 - Watchdog 超时可配置并按 80% 提前告警 `approachingTimeout`
 - 错误分类本地化、banner 重试、轮询失败可见
-
-> 📄 完整更新说明：[RELEASE_NOTES_v1.4.0.md](./RELEASE_NOTES_v1.4.0.md)
 
 ### v1.3.0 (2026-07-20)
 

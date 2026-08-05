@@ -108,7 +108,7 @@ terminal-buddy/
 │   │   ├── AboutDialog.tsx  # 关于/版本弹窗
 │   │   └── Toast.tsx  # 全局通知
 │   ├── stores/appStore.ts  # Zustand 状态管理
-│   ├── services/tauri.ts  # Tauri invoke 封装（108 个命令）
+│   ├── services/tauri.ts  # Tauri invoke 封装
 │   ├── services/aiUsage.ts  # AI API 用量获取（5 个提供商）
 │   ├── data/commandTemplates.ts  # 模板定义与历史记录
 │   ├── data/terminalSuggestions.ts  # VS Code 风格提示词
@@ -128,7 +128,7 @@ terminal-buddy/
 │   └── types/index.ts  # TypeScript 类型与预设
 ├── src-tauri/                    # 后端（Rust/Tauri）
 │   └── src/
-│       ├── lib.rs  # 应用初始化、托盘、单实例、Web API（108 个命令）
+│       ├── lib.rs  # 应用初始化、托盘、单实例、Web API
 │       ├── commands/  # Tauri 命令处理
 │       │   ├── terminal.rs  # PTY 管理（TerminalService）
 │       │   ├── profile.rs  # 配置文件 CRUD + 导入/导出
