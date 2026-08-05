@@ -1,16 +1,17 @@
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
-import { ChevronRight, FileText, X } from 'lucide-react';
+import { FileText, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore } from '../../stores/appStore';
-import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, saveEnableTabNavigation, writeFileContent, readFileContent, openInExplorer } from '../../services/tauri';
+import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, writeFileContent, readFileContent } from '../../services/tauri';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
-import { getAppSettings, saveAppSettings } from '../../utils/settings';
-import { formatDuration } from '../../utils/formatDuration';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getWorkingDotColor } from '../../utils/tabColor';
-import { TreeView, type TreeItem } from '../file-explorer/TreeView';
+import type { TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { buildGroupTree, type GroupNode } from '../../utils/groupTree';
-import type { Profile, TerminalSession } from '../../types';
+import type { Profile } from '../../types';
+import { SessionTreeItem } from './SessionTreeItem';
+import { TabContextMenu } from './TabContextMenu';
+import { NewTerminalMenu } from './NewTerminalMenu';
 import './TabNav.css';
 
 interface TabSidebarProps {
@@ -35,12 +36,10 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
 
   const renameSession = useAppStore(s => s.renameSession);
   const terminalActivities = useAppStore(s => s.terminalActivities);
-  const terminalWebTakeovers = useAppStore(s => s.terminalWebTakeovers);
   const settingsVersion = useAppStore(s => s.settingsVersion);
   const dragProfileId = useAppStore(s => s.dragProfileId);
   const setDragProfileId = useAppStore(s => s.setDragProfileId);
   const [dropActive, setDropActive] = useState(false);
-  const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const highlightedIndexRef = useRef(-1);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -57,7 +56,6 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [submenuExpandedGroups, setSubmenuExpandedGroups] = useState<Set<string>>(new Set());
-  const [, setSettingsTick] = useState(0);
   // 终端运行时长后缀每 60s 刷新一次
   const [, setUptimeTick] = useState(0);
   useEffect(() => {
@@ -105,12 +103,6 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
       renameInputRef.current.select();
     }
   }, [renamingSessionId]);
-
-  useEffect(() => {
-    const handler = () => setSettingsTick(t => t + 1);
-    window.addEventListener('app-settings-changed', handler);
-    return () => window.removeEventListener('app-settings-changed', handler);
-  }, []);
 
   // Dismiss open dialogs when all sessions are closed
   useEffect(() => {
@@ -373,6 +365,23 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     setDraftCloseDialog(null);
   };
 
+  // 批量关闭会话：清理 draft 文件索引 → 移除 store 会话 → 关闭后端 PTY。
+  // 分组关闭与「关闭所有」共用。
+  const closeSessionsWithBackend = async (targets: typeof sessions) => {
+    const store = useAppStore.getState();
+    const terminalIds = targets
+      .filter(session => session.sessionType !== 'editor' && !session.starting)
+      .map(session => session.id);
+    for (const session of targets) {
+      if (session.sessionType === 'editor') {
+        const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
+        if (isDraft) void store.removeDraftFile(session.profileId);
+      }
+    }
+    removeSessions(targets.map(session => session.id));
+    void Promise.all(terminalIds.map(id => closeTerminalCmd(id).catch(err => console.error(err))));
+  };
+
   const handleCloseGroup = async (groupName: string, groupSessions: typeof sessions) => {
     const workingCount = groupSessions.filter(
       s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
@@ -384,18 +393,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
         : `确定要关闭分组「${groupName}」中的所有 ${groupSessions.length} 个终端吗？`,
       onConfirm: async () => {
         setConfirmDialog(null);
-        const store = useAppStore.getState();
-        const terminalIds = groupSessions
-          .filter(session => session.sessionType !== 'editor' && !session.starting)
-          .map(session => session.id);
-        for (const session of groupSessions) {
-          if (session.sessionType === 'editor') {
-            const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
-            if (isDraft) void store.removeDraftFile(session.profileId);
-          }
-        }
-        removeSessions(groupSessions.map(session => session.id));
-        void Promise.all(terminalIds.map(id => closeTerminalCmd(id).catch(err => console.error(err))));
+        await closeSessionsWithBackend(groupSessions);
       },
     });
   };
@@ -421,18 +419,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
       message,
       onConfirm: async () => {
         setConfirmDialog(null);
-        const store = useAppStore.getState();
-        const terminalIds = sessions
-          .filter(session => session.sessionType !== 'editor' && !session.starting)
-          .map(session => session.id);
-        for (const session of sessions) {
-          if (session.sessionType === 'editor') {
-            const isDraft = session.profileId.includes('\\drafts\\draft_') || session.profileId.includes('/drafts/draft_');
-            if (isDraft) void store.removeDraftFile(session.profileId);
-          }
-        }
-        removeSessions(sessions.map(session => session.id));
-        void Promise.all(terminalIds.map(id => closeTerminalCmd(id).catch(err => console.error(err))));
+        await closeSessionsWithBackend(sessions);
         setShowContextMenu(false);
       },
     });
@@ -510,155 +497,10 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
 
   if (sessions.length === 0 && !gitHistoryTab) return null;
 
-  const renderGroupEnd = (item: TreeItem) => {
-    if (!item.isGroup || !item.children) return null;
-    // Recursively collect all session IDs from this group and its sub-groups
-    const collectSessionIds = (treeItem: TreeItem): string[] => {
-      const ids: string[] = [];
-      if (!treeItem.isGroup && treeItem.id) ids.push(treeItem.id);
-      for (const child of (treeItem.children || [])) {
-        ids.push(...collectSessionIds(child));
-      }
-      return ids;
-    };
-    const allSessionIds = collectSessionIds(item);
-    const groupSessions = sessions.filter(s => allSessionIds.includes(s.id));
-    return (
-      <span className="tree-item-end">
-        <span className="tree-item-count">{groupSessions.length}</span>
-        <button
-          className="tree-item-close"
-          onClick={(e) => { e.stopPropagation(); handleCloseGroup(item.id, groupSessions); }}
-          title="关闭分组内所有终端"
-        >
-          <X aria-hidden="true" />
-        </button>
-      </span>
-    );
-  };
-
-  const renderGroupRecursive = (item: TreeItem, depth: number) => {
-    if (!item.isGroup && !item.children?.length) return null;
-    const indent = 8 + depth * 12;
-    const isCollapsed = collapsedGroups.has(item.id);
-
-    return (
-      <div key={item.id}>
-        <div
-          className="tree-item"
-          style={{ paddingLeft: `${indent}px` }}
-          onClick={() => {
-            setCollapsedGroups(prev => {
-              const next = new Set(prev);
-              if (next.has(item.id)) next.delete(item.id);
-              else next.add(item.id);
-              return next;
-            });
-          }}
-        >
-          <span className={`tree-arrow${isCollapsed ? '' : ' expanded'}`}>
-            <ChevronRight aria-hidden="true" />
-          </span>
-          <span className="tree-name" style={{ fontWeight: 600 }}>{item.label}</span>
-          {renderGroupEnd(item)}
-        </div>
-        {!isCollapsed && item.children?.map((child) => {
-          if (child.isGroup || (child.children && child.children.length > 0)) {
-            return renderGroupRecursive(child, depth + 1);
-          }
-          // Leaf node: session
-          return (
-            <div key={child.id}>
-              {renamingSessionId === child.id ? (
-                <div className="tree-item" style={{ paddingLeft: `${indent + 12}px` }}>
-                  {child.icon || (
-                    <span
-                      className={`tab-nav-dot${isTerminalWorking(terminalActivities[child.id]) ? ' working' : ''}`}
-                      style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[child.id]), (child.data as any)?.tabColor) }}
-                    />
-                  )}
-                  <input
-                    ref={renameInputRef}
-                    className="tree-rename-input"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={() => {
-                      const trimmed = renameValue.trim();
-                      if (trimmed && trimmed !== child.label) renameSession(child.id, trimmed);
-                      setRenamingSessionId(null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        const trimmed = renameValue.trim();
-                        if (trimmed && trimmed !== child.label) renameSession(child.id, trimmed);
-                        setRenamingSessionId(null);
-                      } else if (e.key === 'Escape') {
-                        setRenamingSessionId(null);
-                      }
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </div>
-              ) : (
-                <div
-                  className={`tree-item tab-nav-item ${activeSpecialTab === null && activeSessionId === child.id ? 'active' : ''}`}
-                  style={{ paddingLeft: `${indent + 12}px` }}
-                  onMouseDown={() => { useAppStore.getState().setLastClickRegion('tab'); }}
-                  onClick={() => {
-                    const store = useAppStore.getState();
-                    store.setLastClickRegion('tab');
-                    if (store.splitMode !== 'off') {
-                      if (!store.splitSlots.some(slot => slot.sessionId === child.id)) {
-                        store.placeSessionInSplitSlot(child.id);
-                      } else {
-                        store.setActiveSession(child.id);
-                      }
-                    } else {
-                      store.setActiveSession(child.id);
-                    }
-                  }}
-                  onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTerminal(child.id); } }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId: child.id });
-                  }}
-                >
-                  {child.icon || (
-                    <span
-                      className={`tab-nav-dot${isTerminalWorking(terminalActivities[child.id]) ? ' working' : ''}`}
-                      style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[child.id]), (child.data as any)?.tabColor) }}
-                    />
-                  )}
-                  <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
-                    {child.label}
-                    {(() => {
-                      const childSession = child.data as TerminalSession | undefined;
-                      if (childSession && childSession.sessionType !== 'editor' && childSession.createdAt) {
-                        return <span className="tab-nav-uptime"> · {formatDuration(Date.now() - childSession.createdAt)}</span>;
-                      }
-                      return null;
-                    })()}
-                  </span>
-                  {(child.data as any)?.owner === 'web' && <span className="tab-nav-owner-badge">Web</span>}
-                  {(child.data as any)?.owner !== 'web' && terminalWebTakeovers[child.id] && (
-                    <span className="tab-nav-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
-                  )}
-                  <span className="tree-item-end">
-                    <button
-                      className="tree-item-close"
-                      onClick={(e) => { e.stopPropagation(); handleCloseTerminal(child.id); }}
-                      title="关闭"
-                    >
-                      <X aria-hidden="true" />
-                    </button>
-                  </span>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
+  const handleRenameSubmit = (sessionId: string, currentLabel: string) => {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== currentLabel) renameSession(sessionId, trimmed);
+    setRenamingSessionId(null);
   };
 
   return (
@@ -668,13 +510,6 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
         <span className="panel-title-count">{sessions.length}</span>
       </div>
       <div className="tab-nav-header">
-        <input
-          className="tab-nav-search"
-          type="text"
-          placeholder="搜索选项卡..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
         {gitHistoryTab && (
           <div
             className={`tab-nav-settings-btn ${activeSpecialTab === 'git-history' ? 'active' : ''}`}
@@ -718,7 +553,34 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           setDragProfileId(null);
         }}
       >
-        {sessionTree.map((group) => renderGroupRecursive(group, 0))}
+        {sessionTree.map((group) => (
+          <SessionTreeItem
+            key={group.id}
+            item={group}
+            depth={0}
+            collapsedGroups={collapsedGroups}
+            onToggleCollapse={(id) => {
+              setCollapsedGroups(prev => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              });
+            }}
+            onCloseGroup={handleCloseGroup}
+            renamingSessionId={renamingSessionId}
+            renameValue={renameValue}
+            onRenameValueChange={setRenameValue}
+            onRenameSubmit={handleRenameSubmit}
+            onRenameCancel={() => setRenamingSessionId(null)}
+            renameInputRef={renameInputRef}
+            onCloseSession={handleCloseTerminal}
+            onContextMenu={(e, sessionId) => {
+              e.preventDefault();
+              setTabContextMenu({ x: e.clientX, y: e.clientY, sessionId });
+            }}
+          />
+        ))}
       </div>
       <div
         className={`tab-nav-resize ${isResizing ? 'active' : ''}`}
@@ -727,146 +589,57 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
       {tabContextMenu && (
         <>
           <div className="context-menu-overlay" onClick={() => setTabContextMenu(null)} />
-          <div className="context-menu" style={{ left: tabContextMenu.x, top: tabContextMenu.y }}>
-            <div className="context-menu-item" onClick={() => {
-              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
+          <TabContextMenu
+            x={tabContextMenu.x}
+            y={tabContextMenu.y}
+            sessionId={tabContextMenu.sessionId}
+            sessions={sessions}
+            profiles={profiles}
+            onStartTerminal={onStartTerminal}
+            onClose={() => setTabContextMenu(null)}
+            onRename={(session) => {
               if (session) {
                 setRenameValue(session.profileName);
                 setRenamingSessionId(session.id);
                 setTimeout(() => renameInputRef.current?.select(), 0);
               }
-              setTabContextMenu(null);
-            }}>重命名</div>
-            {(() => {
-              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
-              if (!session || session.sessionType === 'editor') return null;
-              const profile = profiles.find(p => p.id === session.profileId);
-              if (!profile) return null;
-              return (
-                <div className="context-menu-item" onClick={() => {
-                  onStartTerminal(
-                    profile,
-                    session.extraParams,
-                    session.extraParamTag,
-                    session.profileName,
-                    session.extraParamTag,
-                    session.extraParamTagColor,
-                  );
-                  setTabContextMenu(null);
-                }}>以此配置新建终端</div>
+            }}
+            onCloseSession={handleCloseTerminal}
+            onCloseOthers={(sessionId) => {
+              const editorSessions = sessions.filter(
+                s => s.sessionType === 'editor' && s.id !== sessionId
               );
-            })()}
-            {(() => {
-              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
-              if (!session || session.sessionType === 'editor') return null;
-              // 复制配置名：所有终端会话都显示
-              return (
-                <div className="context-menu-item" onClick={() => {
-                  navigator.clipboard.writeText(session.profileName).catch(() => {});
-                  setTabContextMenu(null);
-                }}>复制配置名</div>
-              );
-            })()}
-            {(() => {
-              const session = sessions.find(s => s.id === tabContextMenu.sessionId);
-              if (!session || session.sessionType === 'editor') return null;
-              const profile = profiles.find(p => p.id === session.profileId);
-              if (!profile) return null;
-              const isLocal = profile.terminalType === 'powershell' || profile.terminalType === 'pwsh' || profile.terminalType === 'cmd';
-              const hasPath = !!profile.startupPath && profile.startupPath.trim() !== '';
-              if (!isLocal || !hasPath) return null;
-              return (
-                <>
-                  <div className="context-menu-item" onClick={async () => {
-                    setTabContextMenu(null);
-                    try { await openInExplorer(profile.startupPath!); }
-                    catch (err) { console.error(err); }
-                  }}>打开目录</div>
-                  <div className="context-menu-item" onClick={() => {
-                    navigator.clipboard.writeText(profile.startupPath!).catch(() => {});
-                    setTabContextMenu(null);
-                  }}>复制启动路径</div>
-                </>
-              );
-            })()}
-            <div className="context-menu-item danger" onClick={() => {
-              handleCloseTerminal(tabContextMenu.sessionId);
-              setTabContextMenu(null);
-            }}>关闭</div>
-            {sessions.find(s => s.id === tabContextMenu.sessionId)?.sessionType === 'editor' && (
-              <div className="context-menu-item" onClick={() => {
-                const editorSessions = sessions.filter(
-                  s => s.sessionType === 'editor' && s.id !== tabContextMenu.sessionId
-                );
-                for (const s of editorSessions) {
-                  removeSession(s.id);
-                }
-                setTabContextMenu(null);
-              }}>关闭其它</div>
-            )}
-          </div>
+              for (const s of editorSessions) {
+                removeSession(s.id);
+              }
+            }}
+          />
         </>
       )}
       {showContextMenu && (
-        <>
-          <div className="context-menu-overlay" onClick={() => setShowContextMenu(false)} />
-          <div className="context-menu" ref={contextMenuRef} style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
-            <div className="context-menu-item" onClick={() => { onStartBlankTerminal('powershell'); setShowContextMenu(false); }}>
-              PowerShell
-            </div>
-            <div className="context-menu-item" onClick={() => { onStartBlankTerminal('cmd'); setShowContextMenu(false); }}>
-              CMD
-            </div>
-            <div className="context-menu-item" onClick={() => { onStartTextEditor(); setShowContextMenu(false); }}>
-              文本编辑器
-            </div>
-            <div className="context-menu-item has-submenu">
-              <span>新建配置终端</span>
-              <span className="submenu-arrow">›</span>
-              <div
-                className="context-submenu"
-                ref={submenuRef}
-                style={{ maxHeight: `${Math.max(200, window.innerHeight - contextMenuPos.y - 16)}px` }}
-              >
-                <TreeView
-                  items={submenuTree}
-                  expandedIds={submenuExpandedGroups}
-                  onToggle={(id) => {
-                    setSubmenuExpandedGroups(prev => {
-                      const next = new Set(prev);
-                      if (next.has(id)) next.delete(id);
-                      else next.add(id);
-                      return next;
-                    });
-                  }}
-                  selectedId={highlightedIndex >= 0 ? visibleSubmenuItems[highlightedIndex]?.id : undefined}
-                  onSelect={(item) => {
-                    if (item.data) {
-                      const d = item.data as Record<string, unknown>;
-                      if ('group' in d) onStartTerminal(item.data as Profile);
-                      else if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'pwsh' | 'cmd');
-                      setShowContextMenu(false);
-                    }
-                  }}
-                  className="submenu-tree"
-                  indent={12}
-                />
-              </div>
-            </div>
-            <div className="context-menu-separator" />
-            <div className="context-menu-item danger" onClick={handleCloseAllTabs}>
-              关闭所有选项卡
-            </div>
-            <div className="context-menu-separator" />
-            <div className="context-menu-item" onClick={() => {
-              setShowContextMenu(false);
-              const s = getAppSettings();
-              saveAppSettings({ ...s, enableTabNavigation: false });
-              saveEnableTabNavigation(false).catch(console.error);
-              window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
-            }}>切换为横向选项卡</div>
-          </div>
-        </>
+        <NewTerminalMenu
+          x={contextMenuPos.x}
+          y={contextMenuPos.y}
+          submenuTree={submenuTree}
+          expandedGroups={submenuExpandedGroups}
+          onToggleGroup={(id) => {
+            setSubmenuExpandedGroups(prev => {
+              const next = new Set(prev);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            });
+          }}
+          highlightedIndex={highlightedIndex}
+          visibleSubmenuItems={visibleSubmenuItems}
+          menuRef={contextMenuRef}
+          submenuRef={submenuRef}
+          onStartTerminal={onStartTerminal}
+          onStartBlankTerminal={onStartBlankTerminal}
+          onStartTextEditor={onStartTextEditor}
+          onCloseAllTabs={handleCloseAllTabs}
+          onClose={() => setShowContextMenu(false)}
+        />
       )}
       {confirmDialog && (
         <ConfirmDialog

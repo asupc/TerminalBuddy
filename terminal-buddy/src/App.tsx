@@ -14,40 +14,20 @@ import { ConfirmDialog } from "./components/shared/Dialog";
 import { GlobalDialogHost } from "./components/shared/GlobalDialogHost";
 import { Toast } from "./components/shared/Toast";
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
-import { useAppStore, loadSavedTabs, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, getFileSize, startMstsc, getBackendAppSettings, writeToTerminal, closeTerminal, getClaudeSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
+import { useAppStore, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
+import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
 import { APP_VERSION } from './version';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
 import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
 import { initializeClaudeNotificationActions } from './services/claudeNotification';
-import { showAlert } from './services/dialog';
+import { restoreTabs, launchTerminalSession } from './services/sessionRestore';
+import { useExitConfirm } from './hooks/useExitConfirm';
 
 const SettingsPage = lazy(() => import('./components/settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
 
-/** Estimate terminal rows/cols from the .terminal-content container size. */
-function estimateTerminalSize(): { rows: number; cols: number } {
-  const content = document.querySelector('.terminal-content');
-  if (!content) return { rows: 0, cols: 0 };
-  const w = content.clientWidth;
-  const h = content.clientHeight;
-  const availW = w - 20; // .xterm padding: 10px each side
-  const availH = h - 20;
-  const cols = Math.max(2, Math.floor(availW / 8.4));
-  const rows = Math.max(1, Math.floor(availH / 17));
-  return { rows, cols };
-}
-
-function isLocalShellTerminal(terminalType: string): boolean {
-  return terminalType === 'powershell' || terminalType === 'pwsh' || terminalType === 'cmd';
-}
-
-const RESTORE_TERMINAL_CONCURRENCY = 2;
-function waitForNextFrame(): Promise<void> {
-  return new Promise(resolve => requestAnimationFrame(() => resolve()));
-}
-import type { Profile, TerminalSession } from './types';
+import type { Profile } from './types';
 import { PRESET_THEMES } from './types';
 
 function App() {
@@ -70,11 +50,9 @@ function App() {
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [defaultGroupForNewProfile, setDefaultGroupForNewProfile] = useState<string | undefined>();
   const [showExtraParamsDialog, setShowExtraParamsDialog] = useState(false);
-  const [closeConfirm, setCloseConfirm] = useState<{ sessionCount: number } | null>(null);
   const [enableTabNav, setEnableTabNav] = useState(true);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
-  const closeConfirmedRef = useRef(false);
   const restoredRef = useRef(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(() => {
@@ -283,14 +261,11 @@ function App() {
     }
   }, []);
 
-  const handleCloseConfirm = useCallback(async () => {
-    closeConfirmedRef.current = true;
-    setCloseConfirm(null);
-
+  const { closeConfirm, requestExit, confirmExit, cancelExit } = useExitConfirm(async () => {
     // 先保存 Claude 会话，然后再退出
     await saveClaudeSessionsBeforeExit();
     windowExitApp();
-  }, [saveClaudeSessionsBeforeExit]);
+  });
 
   useEffect(() => {
     const handler = () => setEnableTabNav(getAppSettings().enableTabNavigation);
@@ -356,14 +331,7 @@ function App() {
 
     // Listen for tray exit request to show confirmation dialog
     const unlistenTrayExit = listen('tray-exit-requested', () => {
-      if (closeConfirmedRef.current) return;
-      const { sessions } = useAppStore.getState();
-      if (sessions.length > 0) {
-        setCloseConfirm({ sessionCount: sessions.length });
-      } else {
-        // 无终端时也需要保存 Claude 会话
-        saveClaudeSessionsBeforeExit().then(() => windowExitApp());
-      }
+      requestExit();
     });
 
     return () => {
@@ -375,157 +343,15 @@ function App() {
 
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
-      if (closeConfirmedRef.current) return;
       const settings = getAppSettings();
       if (settings.closeBehavior === 'tray') return; // tray mode handled by Rust
 
+      // 已确认过（confirmExit 已触发）则放行窗口关闭，否则拦截并弹确认框。
+      if (!requestExit()) return;
       event.preventDefault();
-      const { sessions } = useAppStore.getState();
-      if (sessions.length > 0) {
-        setCloseConfirm({ sessionCount: sessions.length });
-      } else {
-        // 无终端时也需要保存 Claude 会话
-        await saveClaudeSessionsBeforeExit();
-        windowExitApp();
-      }
     });
     return () => { unlisten.then(fn => fn()); };
-  }, [saveClaudeSessionsBeforeExit]);
-
-  const handleCloseCancel = useCallback(() => {
-    setCloseConfirm(null);
-  }, []);
-
-  const restoreTabs = async () => {
-    const { tabs, activeIndex } = await loadSavedTabs();
-    if (tabs.length === 0) return;
-    const store = useAppStore.getState();
-    const restoredSessionIds: Array<string | undefined> = new Array(tabs.length);
-    // 暂停逐次写入，恢复完后统一写一次
-    useAppStore.setState({ _skipSaveTabs: true });
-    try {
-      const restoreTab = async (i: number) => {
-        const tab = tabs[i];
-        try {
-          if (tab.sessionType === 'editor') {
-            // Editor tabs don't need a PTY — create session directly
-            store.ensureEditorGroup();
-            try {
-              await getFileSize(tab.profileId);
-              const session: TerminalSession = {
-                id: crypto.randomUUID(),
-                profileId: tab.profileId,
-                profileName: tab.profileName,
-                terminalType: 'editor',
-                colorTheme: tab.colorTheme,
-                tabColor: tab.tabColor,
-                groupId: 'editor-group',
-                sessionType: 'editor',
-                isDirty: false,
-              };
-              store.addSession(session, true);
-              restoredSessionIds[i] = session.id;
-              if (i === activeIndex || useAppStore.getState().activeSessionId === null) {
-                store.setActiveSession(session.id);
-              }
-            } catch {
-              // File no longer exists, skip this tab
-            }
-          } else {
-            const { rows: estRows, cols: estCols } = estimateTerminalSize();
-            // 清理 extraParams 中已有的 --resume 参数（防止历史数据叠加）
-            const baseParams = (tab.extraParams || '')
-              .replace(/--resume\s+[0-9a-fA-F-]+/g, '')
-              .replace(/\s+/g, ' ')
-              .trim();
-            // 构建启动参数：临时追加 --resume（不存入 session，避免下次叠加）
-            let launchParams = baseParams;
-            if (tab.claudeSessionId && tab.profileId) {
-              const settings = getAppSettings();
-              if (settings.autoResumeClaudeSession) {
-                const resumeParam = `--resume ${tab.claudeSessionId}`;
-                launchParams = launchParams ? `${launchParams} ${resumeParam}` : resumeParam;
-              }
-            }
-            const startupPath = tab.directory && isLocalShellTerminal(tab.terminalType)
-              ? tab.directory
-              : undefined;
-            const terminalId = tab.profileId
-              ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath)
-              : await startBlankTerminal(tab.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols, startupPath, tab.profileName);
-            store.addSession({
-              id: terminalId,
-              profileId: tab.profileId,
-              profileName: tab.profileName,
-              terminalType: tab.terminalType as any,
-              colorTheme: tab.colorTheme,
-              tabColor: tab.tabColor,
-              groupId: tab.groupId || 'default',
-              groupName: tab.groupName,
-              owner: 'pc',
-              extraParams: baseParams,
-              extraParamTag: tab.extraParamTag,
-              extraParamTagColor: tab.extraParamTagColor ?? null,
-            }, true);
-            restoredSessionIds[i] = terminalId;
-            // 保存 claudeSessionId 到 store
-            if (tab.claudeSessionId) {
-              store.setClaudeSessionId(terminalId, tab.claudeSessionId);
-            }
-            // 恢复上次记录的目录：本地 shell 直接用启动 cwd，避免恢复时额外写入
-            // 可见的 cd 命令与后端启动命令（powershell/claude）发生竞态。
-            if (tab.directory) {
-              store.setSessionDirectory(terminalId, tab.directory);
-              if (!startupPath) {
-                writeToTerminal(terminalId, `cd "${tab.directory}"\r`).catch(() => {});
-              }
-            }
-            if (i === activeIndex || useAppStore.getState().activeSessionId === null) {
-              store.setActiveSession(terminalId);
-            }
-          }
-        } catch (err) {
-          console.error('Failed to restore tab:', tab.profileName, err);
-        }
-      };
-
-      // 优先恢复并展示上次活动标签，避免等待全部终端启动后才出现可操作界面。
-      await restoreTab(activeIndex);
-
-      const pendingIndexes = tabs
-        .map((_, index) => index)
-        .filter(index => index !== activeIndex);
-      let nextPendingIndex = 0;
-      const worker = async () => {
-        while (nextPendingIndex < pendingIndexes.length) {
-          const index = pendingIndexes[nextPendingIndex++];
-          // 启动下一项前先让出一帧，并用 worker 上限控制重型组件的初始化峰值。
-          await waitForNextFrame();
-          await restoreTab(index);
-        }
-      };
-      const workerCount = Math.min(RESTORE_TERMINAL_CONCURRENCY, pendingIndexes.length);
-      await Promise.all(Array.from({ length: workerCount }, () => worker()));
-    } finally {
-      // 并发完成顺序不稳定，恢复为保存时的标签顺序，同时保留恢复期间外部新建的会话。
-      const restoredIdSet = new Set(restoredSessionIds.filter((id): id is string => id !== undefined));
-      useAppStore.setState(state => {
-        const sessionsById = new Map(state.sessions.map(session => [session.id, session]));
-        const restoredSessions = restoredSessionIds
-          .map(id => id ? sessionsById.get(id) : undefined)
-          .filter((session): session is TerminalSession => session !== undefined);
-        const otherSessions = state.sessions.filter(session => !restoredIdSet.has(session.id));
-        return { sessions: [...restoredSessions, ...otherSessions] };
-      });
-      const restoredActiveId = restoredSessionIds[activeIndex]
-        ?? restoredSessionIds.find((id): id is string => id !== undefined)
-        ?? null;
-      store.setActiveSession(restoredActiveId);
-      useAppStore.setState({ _skipSaveTabs: false });
-      const { sessions, activeSessionId } = useAppStore.getState();
-      saveTabsToStorage(sessions, activeSessionId);
-    }
-  };
+  }, [requestExit]);
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -537,19 +363,23 @@ function App() {
   }, [setProfiles]);
 
   const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, _presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => {
-    let startingId: string | null = null;
-    try {
-      if (profile.terminalType === 'mstsc') {
+    if (profile.terminalType === 'mstsc') {
+      try {
         await startMstsc(profile.id);
         await updateProfileLastUsed(profile.id);
-        return;
+      } catch (err) {
+        console.error('Failed to start mstsc:', err);
       }
-      // Split mode: when the grid is full, placeSessionInSplitSlot will auto-replace the oldest slot.
-      const { rows, cols } = estimateTerminalSize();
-      const resolvedTabName = tabName ?? profile.name;
-      const theme = PRESET_THEMES.find(t => t.id === profile.colorTheme) || PRESET_THEMES[0];
-      startingId = crypto.randomUUID();
-      addSession({
+      return;
+    }
+    // Split mode: when the grid is full, placeSessionInSplitSlot will auto-replace the oldest slot.
+    const resolvedTabName = tabName ?? profile.name;
+    const theme = PRESET_THEMES.find(t => t.id === profile.colorTheme) || PRESET_THEMES[0];
+    await launchTerminalSession({
+      addSession,
+      resolveStartingSession,
+      errorLogPrefix: 'Failed to start terminal:',
+      makeSession: (startingId) => ({
         id: startingId,
         profileId: profile.id,
         profileName: resolvedTabName,
@@ -562,27 +392,17 @@ function App() {
         extraParamTag: presetTag,
         extraParamTagColor: presetTagColor ?? null,
         starting: true,
-      });
-      const pendingStore = useAppStore.getState();
-      if (pendingStore.splitMode !== 'off') pendingStore.placeSessionInSplitSlot(startingId);
-
-      const terminalId = await startTerminal(profile.id, extraParams, rows, cols, resolvedTabName, undefined, presetTag, presetTagColor ?? null);
-      if (!resolveStartingSession(startingId, terminalId)) {
-        void closeTerminal(terminalId).catch(() => {});
-        return;
-      }
-      void updateProfileLastUsed(profile.id).catch(err => console.error('Failed to update profile last used:', err));
-      if (profile.startupPath) {
-        setSessionDirectory(terminalId, profile.startupPath);
-        setCurrentDirectory(profile.startupPath);
-      }
-    } catch (err) {
-      const startingSessionVisible = startingId !== null
-        && useAppStore.getState().sessions.some(session => session.id === startingId);
-      if (startingId) useAppStore.getState().removeSession(startingId);
-      if (startingSessionVisible) void showAlert('启动终端失败: ' + String(err), '启动失败');
-    }
-  }, [addSession, resolveStartingSession]);
+      }),
+      start: (rows, cols) => startTerminal(profile.id, extraParams, rows, cols, resolvedTabName, undefined, presetTag, presetTagColor ?? null),
+      onStarted: (terminalId) => {
+        void updateProfileLastUsed(profile.id).catch(err => console.error('Failed to update profile last used:', err));
+        if (profile.startupPath) {
+          setSessionDirectory(terminalId, profile.startupPath);
+          setCurrentDirectory(profile.startupPath);
+        }
+      },
+    });
+  }, [addSession, resolveStartingSession, setSessionDirectory, setCurrentDirectory]);
 
   const handleEditProfile = useCallback((profile: Profile) => {
     setDefaultGroupForNewProfile(undefined);
@@ -632,17 +452,17 @@ function App() {
   }, [openSettingsDialog]);
 
   const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'pwsh' | 'cmd') => {
-    let startingId: string | null = null;
-    try {
-      const store = useAppStore.getState();
-      if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
-        store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
-        return;
-      }
-      const name = terminalType === 'powershell' ? 'PowerShell' : terminalType === 'pwsh' ? 'PowerShell 7' : 'CMD';
-      const { rows, cols } = estimateTerminalSize();
-      startingId = crypto.randomUUID();
-      addSession({
+    const store = useAppStore.getState();
+    if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
+      store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
+      return;
+    }
+    const name = terminalType === 'powershell' ? 'PowerShell' : terminalType === 'pwsh' ? 'PowerShell 7' : 'CMD';
+    await launchTerminalSession({
+      addSession,
+      resolveStartingSession,
+      errorLogPrefix: 'Failed to start blank terminal:',
+      makeSession: (startingId) => ({
         id: startingId,
         profileId: '',
         profileName: name,
@@ -652,21 +472,9 @@ function App() {
         groupId: 'default',
         owner: 'pc',
         starting: true,
-      });
-      const pendingStore = useAppStore.getState();
-      if (pendingStore.splitMode !== 'off') pendingStore.placeSessionInSplitSlot(startingId);
-
-      const terminalId = await startBlankTerminal(terminalType, rows, cols, undefined, name);
-      if (!resolveStartingSession(startingId, terminalId)) {
-        void closeTerminal(terminalId).catch(() => {});
-      }
-    } catch (err) {
-      const startingSessionVisible = startingId !== null
-        && useAppStore.getState().sessions.some(session => session.id === startingId);
-      if (startingId) useAppStore.getState().removeSession(startingId);
-      console.error('Failed to start blank terminal:', err);
-      if (startingSessionVisible) void showAlert('启动终端失败: ' + String(err), '启动失败');
-    }
+      }),
+      start: (rows, cols) => startBlankTerminal(terminalType, rows, cols, undefined, name),
+    });
   }, [addSession, resolveStartingSession]);
 
   const handleStartTextEditor = useCallback(() => {
@@ -789,8 +597,8 @@ function App() {
         <ConfirmDialog
           title="确认退出"
           message={`当前有 ${closeConfirm.sessionCount} 个终端正在运行，确定要退出吗？`}
-          onClose={handleCloseCancel}
-          onConfirm={handleCloseConfirm}
+          onClose={cancelExit}
+          onConfirm={confirmExit}
           confirmText="退出"
         />
       )}
