@@ -365,19 +365,6 @@ async fn feishu_send_message(
         .ok_or_else(|| "飞书消息响应缺少 message_id".to_string())
 }
 
-/// 向飞书通道发送纯文本消息，返回外部 message_id（供 AI 交付引用回复映射）。
-pub(crate) async fn send_feishu_text(
-    channel: &BotChannelConfig,
-    text: &str,
-) -> Result<String, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|error| format!("创建飞书发送客户端失败: {}", error))?;
-    let token = feishu_access_token(&client, channel).await?;
-    feishu_send_message(&client, channel, &token, "text", json!({ "text": text })).await
-}
-
 pub(crate) async fn send_feishu_reply(
     channel: &BotChannelConfig,
     reply_to_message_id: &str,

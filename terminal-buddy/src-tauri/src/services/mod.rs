@@ -1,4 +1,3 @@
-pub mod ai_delivery_service;
 pub mod atomic_file;
 pub mod bot_binding_service;
 pub mod bot_long_connection_service;
@@ -18,7 +17,6 @@ pub mod update_service;
 pub mod vscode_terminal_service;
 pub mod web_service;
 pub mod workspace_service;
-pub use ai_delivery_service::*;
 pub use atomic_file::*;
 pub use bot_binding_service::*;
 pub use bot_long_connection_service::*;

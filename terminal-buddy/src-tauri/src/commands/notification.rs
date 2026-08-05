@@ -88,34 +88,6 @@ pub fn show_claude_code_notification(
         .map_err(|error| format!("发送 Claude Code 通知失败: {}", error))
 }
 
-pub fn show_ai_delivery_notification(
-    app: AppHandle,
-    title: &str,
-    delivery_id: String,
-    message: String,
-) -> Result<(), String> {
-    let app_id = app.config().identifier.clone();
-    ensure_portable_app_id(&app_id)?;
-    let activated_app = app.clone();
-    Toast::new(&app_id)
-        .title(title)
-        .text1(message.trim())
-        .sound(Some(Sound::Default))
-        .duration(Duration::Short)
-        .add_button("打开交付", "open-ai-delivery")
-        .on_activated(move |_| {
-            if let Some(window) = activated_app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-            let _ = activated_app.emit("ai-delivery-notification-activated", delivery_id.clone());
-            Ok(())
-        })
-        .show()
-        .map_err(|error| format!("发送 AI 交付通知失败: {}", error))
-}
-
 #[cfg(test)]
 mod tests {
     use super::notification_content;

@@ -6,7 +6,7 @@ use crate::models::{BotChannelConfig, BotLongConnectionStatus, BridgeInboundMess
 use crate::services::{
     extract_weixin_reply_to, extract_weixin_text, get_weixin_updates, load_weixin_state,
     save_weixin_context_token, save_weixin_sync_buf, send_weixin_reply, validate_weixin_response,
-    AiDeliveryService, BotSettingsService,
+    BotSettingsService,
 };
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
@@ -320,26 +320,6 @@ async fn handle_weixin_message(
         reply_to_message_id,
         text,
     };
-    // AI 交付决策：引用回复命中 AI 交付推送映射时优先回答（与 claude_hook 卡片决策绑定共存）
-    if let Some(reply_to) = inbound.reply_to_message_id.as_deref() {
-        if let Some(decision_id) =
-            AiDeliveryService::resolve_delivery_decision_binding(reply_to)
-        {
-            let response = match AiDeliveryService::answer_decision_request(
-                &decision_id,
-                &inbound.text,
-            ) {
-                Ok(_) => "已回答 AI 交付决策".to_string(),
-                Err(error) => format!("回答 AI 交付决策失败: {}", error),
-            };
-            if let Err(error) =
-                send_weixin_reply(client, &channel, sender_id, &response).await
-            {
-                eprintln!("[Bot/Weixin] 发送 AI 交付决策回执失败: {}", error);
-            }
-            return;
-        }
-    }
     let terminal_service = app.state::<TerminalService>();
     let result = process_bot_reply(app, &terminal_service, &channel, &inbound);
     if channel
