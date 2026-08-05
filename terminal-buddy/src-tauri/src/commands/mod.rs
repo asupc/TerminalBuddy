@@ -4,6 +4,7 @@ pub mod client_data;
 pub mod clipboard;
 pub mod fs;
 pub mod git;
+pub mod git_parse;
 pub mod hooks;
 pub mod notification;
 pub mod profile;
