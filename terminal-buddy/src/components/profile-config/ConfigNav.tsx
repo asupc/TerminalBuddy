@@ -3,7 +3,7 @@ import { useAppStore } from '../../stores/appStore';
 import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
-import type { Profile } from '../../types';
+import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog } from '../shared/Dialog';
 import { buildGroupTree, renameGroupInPath } from '../../utils/groupTree';
@@ -19,7 +19,7 @@ const PINNED_GROUP_ID = '__pinned__';
 interface ConfigPanelProps {
   isActive: boolean;
   isSidebarMode: boolean;
-  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
   onEditProfile: (profile: Profile) => void;
   onCopyProfile: (profile: Profile) => void;
   onAddProfile: (defaultGroup?: string) => void;
@@ -464,7 +464,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             .map((preset) => (
             <div key={preset.id} className="context-menu-item" onClick={() => {
               const target = profiles.find((p) => p.id === contextMenu.profileId);
-              if (target) onStartTerminal(target, preset.params, preset.name, undefined, preset.name, preset.tagColor);
+              if (target) onStartTerminal(target, preset.params, preset.name, undefined, preset.name, preset.tagColor, preset.mode);
               closeContextMenu();
             }}>
               启动<span

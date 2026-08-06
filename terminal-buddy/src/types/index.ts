@@ -1,4 +1,5 @@
 export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
+export type ExtraParamMode = 'append' | 'independent';
 
 export interface Profile {
   id: string;
@@ -104,6 +105,7 @@ export interface TerminalSession {
   sshTerminalId?: string;
   owner?: 'pc' | 'web';
   extraParams?: string;
+  extraParamMode?: ExtraParamMode;
   // 启动参数预设的 tag / tagColor（启动时快照下来，预设被删除/改名也不影响历史 tab）
   extraParamTag?: string;
   extraParamTagColor?: string | null;
@@ -160,6 +162,8 @@ export interface ExtraParamPreset {
   id: string;
   name: string;
   params: string;
+  // 追加到配置的启动命令，或作为不依赖原启动命令的独立命令执行
+  mode: ExtraParamMode;
   // tag 底色，取自 TAB_COLORS；为空表示使用主题默认色（预设名直接作为 tab 上的 tag 显示）
   tagColor: string | null;
   // 命令匹配：仅当配置的启动命令包含此字符串时，右键菜单才显示该预设；为空表示对所有配置可用

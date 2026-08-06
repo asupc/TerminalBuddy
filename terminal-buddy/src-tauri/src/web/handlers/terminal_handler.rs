@@ -33,6 +33,7 @@ pub async fn start(
             &req.profile_id,
             None,
             req.extra_startup_params.as_deref(),
+            req.extra_startup_mode.as_deref(),
             req.rows.unwrap_or(0),
             req.cols.unwrap_or(0),
             None,

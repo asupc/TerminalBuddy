@@ -1,5 +1,5 @@
 import { useStore } from './store';
-import type { ExtraParamPreset, Profile, TerminalInfo } from './types';
+import type { ExtraParamMode, ExtraParamPreset, Profile, TerminalInfo } from './types';
 
 const BASE = '/api';
 
@@ -64,6 +64,7 @@ export async function login(
 
 export interface CreateTerminalOptions {
   extraStartupParams?: string;
+  extraStartupMode?: ExtraParamMode;
   extraParamTag?: string;
   extraParamTagColor?: string | null;
 }

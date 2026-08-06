@@ -83,6 +83,8 @@ pub struct StartTerminalRequest {
     #[serde(default)]
     pub extra_startup_params: Option<String>,
     #[serde(default)]
+    pub extra_startup_mode: Option<String>,
+    #[serde(default)]
     pub extra_param_tag: Option<String>,
     #[serde(default)]
     pub extra_param_tag_color: Option<String>,

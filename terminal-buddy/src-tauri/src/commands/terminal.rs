@@ -632,6 +632,25 @@ fn build_init_commands(
     }
 }
 
+fn apply_extra_startup_params(
+    startup_commands: Vec<String>,
+    extra_startup_params: Option<&str>,
+    extra_startup_mode: Option<&str>,
+) -> Vec<String> {
+    let Some(extra) = extra_startup_params.filter(|extra| !extra.is_empty()) else {
+        return startup_commands;
+    };
+
+    if extra_startup_mode == Some("independent") {
+        vec![extra.to_string()]
+    } else {
+        startup_commands
+            .into_iter()
+            .map(|cmd| format!("{} {}", cmd, extra))
+            .collect()
+    }
+}
+
 impl Default for TerminalService {
     fn default() -> Self {
         Self::new()
@@ -745,6 +764,7 @@ impl TerminalService {
         profile_id: &str,
         display_name: Option<&str>,
         extra_startup_params: Option<&str>,
+        extra_startup_mode: Option<&str>,
         initial_rows: u16,
         initial_cols: u16,
         startup_path_override: Option<&str>,
@@ -786,18 +806,8 @@ impl TerminalService {
             .as_ref()
             .map(|p| p.startup_commands.clone())
             .unwrap_or_default();
-        let startup_commands: Vec<String> = if let Some(extra) = extra_startup_params {
-            if !extra.is_empty() {
-                startup_commands
-                    .into_iter()
-                    .map(|cmd| format!("{} {}", cmd, extra))
-                    .collect()
-            } else {
-                startup_commands
-            }
-        } else {
-            startup_commands
-        };
+        let startup_commands =
+            apply_extra_startup_params(startup_commands, extra_startup_params, extra_startup_mode);
         let profile_env: Vec<(String, String)> = profile
             .as_ref()
             .map(|p| {
@@ -1149,6 +1159,7 @@ pub async fn start_terminal(
     profile_id: String,
     display_name: Option<String>,
     extra_startup_params: Option<String>,
+    extra_startup_mode: Option<String>,
     initial_rows: u16,
     initial_cols: u16,
     startup_path: Option<String>,
@@ -1163,6 +1174,7 @@ pub async fn start_terminal(
             &profile_id,
             display_name.as_deref(),
             extra_startup_params.as_deref(),
+            extra_startup_mode.as_deref(),
             initial_rows,
             initial_cols,
             startup_path.as_deref(),

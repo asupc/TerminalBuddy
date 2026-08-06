@@ -30,9 +30,9 @@ export const createTransfersSlice = (
 ): Partial<AppState> => ({
 	// Extra param presets
 	extraParamPresets: [],
-	addExtraParamPreset: (name, params, tagColor = null, commandMatch = null) =>
+	addExtraParamPreset: (name, params, tagColor = null, commandMatch = null, mode = "append") =>
 		set((state) => {
-			const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params, tagColor, commandMatch }];
+			const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params, mode, tagColor, commandMatch }];
 			writeClientData("extra_param_presets", JSON.stringify(next)).catch(() => {});
 			return { extraParamPresets: next };
 		}),

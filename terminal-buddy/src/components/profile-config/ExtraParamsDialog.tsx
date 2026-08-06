@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { Pencil, X } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { TAB_COLORS } from '../../types';
-import type { ExtraParamPreset } from '../../types';
+import type { ExtraParamMode, ExtraParamPreset } from '../../types';
 import { Dialog, ConfirmDialog } from '../shared/Dialog';
 import './ExtraParamsDialog.css';
 
@@ -92,6 +92,7 @@ const ColorPicker: FC<{
 interface PresetDraft {
   name: string;
   params: string;
+  mode: ExtraParamMode;
   tagColor: string | null;
   commandMatch: string;
 }
@@ -120,10 +121,20 @@ const PresetEditor: FC<{
         className="extra-param-input extra-param-input-params"
         value={draft.params}
         onChange={(e) => onChange({ ...draft, params: e.target.value })}
-        placeholder="参数"
+        placeholder={draft.mode === 'independent' ? '完整命令' : '参数'}
         style={{ fontFamily: 'monospace' }}
         onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
       />
+      <select
+        className="extra-param-input extra-param-mode-select"
+        value={draft.mode}
+        onChange={(e) => onChange({ ...draft, mode: e.target.value as ExtraParamMode })}
+        aria-label="执行方式"
+        title="选择追加到原启动命令，或作为独立命令执行"
+      >
+        <option value="append">追加参数</option>
+        <option value="independent">独立命令</option>
+      </select>
       <input
         className="extra-param-input extra-param-input-match"
         value={draft.commandMatch}
@@ -151,7 +162,7 @@ const PresetEditor: FC<{
   );
 };
 
-const emptyDraft: PresetDraft = { name: '', params: '', tagColor: null, commandMatch: '' };
+const emptyDraft: PresetDraft = { name: '', params: '', mode: 'append', tagColor: null, commandMatch: '' };
 
 export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
   // 受控：mount 时下一帧切到 open 触发入场；onClose 请求关闭时跑离场，离场结束再回调 prop onClose
@@ -173,7 +184,7 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
 
   const handleAdd = () => {
     if (!draft.name.trim() || !draft.params.trim()) return;
-    addExtraParamPreset(draft.name.trim(), draft.params.trim(), draft.tagColor, draft.commandMatch.trim() || null);
+    addExtraParamPreset(draft.name.trim(), draft.params.trim(), draft.tagColor, draft.commandMatch.trim() || null, draft.mode);
     setDraft(emptyDraft);
   };
 
@@ -182,6 +193,7 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
     setEditDraft({
       name: preset.name,
       params: preset.params,
+      mode: preset.mode ?? 'append',
       tagColor: preset.tagColor,
       commandMatch: preset.commandMatch ?? '',
     });
@@ -193,6 +205,7 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
     updateExtraParamPreset(editingId, {
       name: editDraft.name.trim(),
       params: editDraft.params.trim(),
+      mode: editDraft.mode,
       tagColor: editDraft.tagColor,
       commandMatch: editDraft.commandMatch.trim() || null,
     });
@@ -247,6 +260,9 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
                 {preset.name}
               </span>
               <span className="extra-param-params">{preset.params}</span>
+              <span className={`extra-param-mode-badge ${preset.mode === 'independent' ? 'independent' : ''}`}>
+                {preset.mode === 'independent' ? '独立命令' : '追加参数'}
+              </span>
               {preset.commandMatch && (
                 <span className="extra-param-match" title="命令匹配">匹配: {preset.commandMatch}</span>
               )}

@@ -141,6 +141,28 @@
   flex-shrink: 0;
 }
 
+.extra-param-mode-select {
+  width: 96px;
+  height: 30px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.extra-param-mode-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.extra-param-mode-badge.independent {
+  color: var(--accent-color);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
 .extra-param-match {
   flex-shrink: 0;
   font-size: 11px;
@@ -228,4 +250,22 @@
 
 .extra-params-color-cell.theme-default {
   background: linear-gradient(135deg, var(--accent) 50%, var(--bg-tertiary) 50%);
+}
+
+@media (max-width: 600px) {
+  .extra-param-item:not(.editing) {
+    flex-wrap: wrap;
+  }
+
+  .extra-param-item:not(.editing) .extra-param-params {
+    order: 1;
+    flex-basis: 100%;
+  }
+
+  .extra-param-item:not(.editing) .extra-param-match {
+    order: 2;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }

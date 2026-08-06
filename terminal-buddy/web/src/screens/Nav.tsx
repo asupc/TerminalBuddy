@@ -258,6 +258,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           preset
             ? {
                 extraStartupParams: preset.params,
+                extraStartupMode: preset.mode,
                 extraParamTag: preset.name,
                 extraParamTagColor: preset.tagColor,
               }

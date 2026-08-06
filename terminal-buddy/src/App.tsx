@@ -27,7 +27,7 @@ import { useExitConfirm } from './hooks/useExitConfirm';
 
 const SettingsPage = lazy(() => import('./components/settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
 
-import type { Profile } from './types';
+import type { ExtraParamMode, Profile } from './types';
 import { PRESET_THEMES } from './types';
 
 function App() {
@@ -237,7 +237,10 @@ function App() {
       const startupCommands = profile?.startupCommands || [];
       const extraParams = session.extraParams || '';
       const hookIdentified = store.terminalActivities[session.id]?.runtimeKind === 'claude';
-      const configuredClaude = [...startupCommands, extraParams]
+      const configuredCommands = session.extraParamMode === 'independent'
+        ? [extraParams]
+        : [...startupCommands, extraParams];
+      const configuredClaude = configuredCommands
         .some(command => /(^|[\s;&|])claude(?:\.(?:cmd|exe|ps1))?(?=$|\s)/i.test(command));
       const isClaudeTerminal = hookIdentified || configuredClaude;
       if (isClaudeTerminal) claudeTerminalIds.push(session.id);
@@ -362,7 +365,7 @@ function App() {
     }
   }, [setProfiles]);
 
-  const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, _presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => {
+  const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, _presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => {
     if (profile.terminalType === 'mstsc') {
       try {
         await startMstsc(profile.id);
@@ -389,11 +392,12 @@ function App() {
         groupId: 'default',
         owner: 'pc',
         extraParams,
+        extraParamMode,
         extraParamTag: presetTag,
         extraParamTagColor: presetTagColor ?? null,
         starting: true,
       }),
-      start: (rows, cols) => startTerminal(profile.id, extraParams, rows, cols, resolvedTabName, undefined, presetTag, presetTagColor ?? null),
+      start: (rows, cols) => startTerminal(profile.id, extraParams, rows, cols, resolvedTabName, undefined, presetTag, presetTagColor ?? null, extraParamMode),
       onStarted: (terminalId) => {
         void updateProfileLastUsed(profile.id).catch(err => console.error('Failed to update profile last used:', err));
         if (profile.startupPath) {

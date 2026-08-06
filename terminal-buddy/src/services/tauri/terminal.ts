@@ -1,10 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { listenTauri } from './events';
+import type { ExtraParamMode } from '../../types';
 
 // Terminal Commands
-export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number, displayName?: string, startupPath?: string, extraParamTag?: string, extraParamTagColor?: string | null): Promise<string> {
-  return invoke('start_terminal', { profileId, displayName: displayName || null, extraStartupParams: extraStartupParams || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, extraParamTag: extraParamTag || null, extraParamTagColor: extraParamTagColor ?? null });
+export async function startTerminal(profileId: string, extraStartupParams?: string, initialRows?: number, initialCols?: number, displayName?: string, startupPath?: string, extraParamTag?: string, extraParamTagColor?: string | null, extraStartupMode?: ExtraParamMode): Promise<string> {
+  return invoke('start_terminal', { profileId, displayName: displayName || null, extraStartupParams: extraStartupParams || null, extraStartupMode: extraStartupMode || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, extraParamTag: extraParamTag || null, extraParamTagColor: extraParamTagColor ?? null });
 }
 
 export async function updateTerminalDisplayName(id: string, displayName: string): Promise<void> {

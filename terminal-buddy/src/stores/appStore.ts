@@ -20,6 +20,7 @@ interface SavedTab {
 	isDirty?: boolean;
 	owner?: "pc" | "web";
 	extraParams?: string;
+	extraParamMode?: "append" | "independent";
 	extraParamTag?: string;
 	extraParamTagColor?: string | null;
 	directory?: string;
@@ -66,6 +67,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 			isDirty: s.sessionType === "editor" ? false : undefined,
 			owner: s.owner,
 			extraParams: s.extraParams,
+			extraParamMode: s.extraParamMode,
 			extraParamTag: s.extraParamTag,
 			extraParamTagColor: s.extraParamTagColor ?? null,
 			directory: dirs[s.id],
@@ -95,11 +97,12 @@ export async function initExtraParamPresets() {
 		const raw = await readClientData("extra_param_presets");
 		if (raw) {
 			const parsed = JSON.parse(raw) as Array<Partial<ExtraParamPreset>>;
-			// 兼容旧数据：补齐 tagColor 字段
+			// 兼容旧数据：补齐后续版本新增的可选字段
 			const normalized: ExtraParamPreset[] = (Array.isArray(parsed) ? parsed : []).map((p) => ({
 				id: p.id ?? crypto.randomUUID(),
 				name: p.name ?? "",
 				params: p.params ?? "",
+				mode: p.mode === "independent" ? "independent" : "append",
 				tagColor: p.tagColor ?? null,
 				commandMatch: p.commandMatch ?? null,
 			}));
@@ -262,7 +265,7 @@ export interface AppState {
 
 	// Extra param presets
 	extraParamPresets: ExtraParamPreset[];
-	addExtraParamPreset: (name: string, params: string, tagColor?: string | null, commandMatch?: string | null) => void;
+	addExtraParamPreset: (name: string, params: string, tagColor?: string | null, commandMatch?: string | null, mode?: "append" | "independent") => void;
 	updateExtraParamPreset: (id: string, patch: Partial<Omit<ExtraParamPreset, "id">>) => void;
 	removeExtraParamPreset: (id: string) => void;
 

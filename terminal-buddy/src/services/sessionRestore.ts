@@ -59,10 +59,11 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   const store = useAppStore.getState();
   const { rows: estRows, cols: estCols } = estimateTerminalSize();
   // 清理 extraParams 中已有的 --resume 参数（防止历史数据叠加）
-  const baseParams = (tab.extraParams || '')
-    .replace(/--resume\s+[0-9a-fA-F-]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const paramsWithoutResume = (tab.extraParams || '')
+    .replace(/--resume\s+[0-9a-fA-F-]+/g, '');
+  const baseParams = tab.extraParamMode === 'independent'
+    ? paramsWithoutResume.trim()
+    : paramsWithoutResume.replace(/\s+/g, ' ').trim();
   // 构建启动参数：临时追加 --resume（不存入 session，避免下次叠加）
   let launchParams = baseParams;
   if (tab.claudeSessionId && tab.profileId) {
@@ -76,7 +77,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     ? tab.directory
     : undefined;
   const terminalId = tab.profileId
-    ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath)
+    ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath, undefined, undefined, tab.extraParamMode)
     : await startBlankTerminal(tab.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols, startupPath, tab.profileName);
   store.addSession({
     id: terminalId,
@@ -89,6 +90,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     groupName: tab.groupName,
     owner: 'pc',
     extraParams: baseParams,
+    extraParamMode: tab.extraParamMode,
     extraParamTag: tab.extraParamTag,
     extraParamTagColor: tab.extraParamTagColor ?? null,
   }, true);

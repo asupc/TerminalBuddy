@@ -1,5 +1,6 @@
 export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
 export type TerminalLoadingMode = 'default' | 'vsCode';
+export type ExtraParamMode = 'append' | 'independent';
 
 /** 连接配置（与后端 Profile 同构，仅取 Web 端会用到的字段；其余字段均视作可选以兼容精简场景） */
 export interface Profile {
@@ -94,6 +95,8 @@ export interface ExtraParamPreset {
   id: string;
   name: string;
   params: string;
+  /** 追加到原启动命令，或作为独立命令执行 */
+  mode: ExtraParamMode;
   /** tag 底色，取自 TAB_COLORS；null 表示跟随主题默认色 */
   tagColor: string | null;
   /** 命令匹配（PC 端用，Web 端保留字段不做过滤） */

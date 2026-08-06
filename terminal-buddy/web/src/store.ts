@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from './api';
-import type { ExtraParamPreset, Profile, TerminalInfo, TerminalLoadingMode } from './types';
+import type { ExtraParamMode, ExtraParamPreset, Profile, TerminalInfo, TerminalLoadingMode } from './types';
 
 export type View =
   | { screen: 'nav' }
@@ -39,7 +39,7 @@ interface AppState {
   toggleNavCollapsed: () => void;
 
   loadExtraParamPresets: () => Promise<void>;
-  addExtraParamPreset: (name: string, params: string, tagColor: string | null, commandMatch: string | null) => Promise<void>;
+  addExtraParamPreset: (name: string, params: string, tagColor: string | null, commandMatch: string | null, mode: ExtraParamMode) => Promise<void>;
   updateExtraParamPreset: (id: string, patch: Partial<Omit<ExtraParamPreset, 'id'>>) => Promise<void>;
   removeExtraParamPreset: (id: string) => Promise<void>;
 }
@@ -70,7 +70,11 @@ export const useStore = create<AppState>()(
       loadExtraParamPresets: async () => {
         set({ presetsLoading: true });
         try {
-          const presets = await api.getExtraParamPresets();
+          const rawPresets = await api.getExtraParamPresets();
+          const presets = rawPresets.map((preset) => ({
+            ...preset,
+            mode: preset.mode === 'independent' ? 'independent' as const : 'append' as const,
+          }));
           set({ extraParamPresets: presets });
         } catch {
           /* 静默失败，不影响主流程 */
@@ -78,11 +82,12 @@ export const useStore = create<AppState>()(
           set({ presetsLoading: false });
         }
       },
-      addExtraParamPreset: async (name, params, tagColor, commandMatch) => {
+      addExtraParamPreset: async (name, params, tagColor, commandMatch, mode) => {
         const preset: ExtraParamPreset = {
           id: crypto.randomUUID(),
           name,
           params,
+          mode,
           tagColor,
           commandMatch,
         };
