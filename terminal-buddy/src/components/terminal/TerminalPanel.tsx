@@ -5,7 +5,8 @@ import type { TerminalSession } from '../../types';
 import { TerminalTabBar } from './TerminalTabBar';
 import { isTerminalWorking, useAppStore } from '../../stores/appStore';
 import { writeToTerminal } from '../../services/tauri';
-import { getAppSettings, getEffectiveThemeMode } from '../../utils/settings';
+import { getAppSettings, getEffectiveThemeSkin, isThemeSkin } from '../../utils/settings';
+import type { ThemeChangeDetail, ThemeSkin } from '../../utils/settings';
 import { resolveTerminalColors } from '../../utils/terminalTheme';
 import { getWorkingDotColor } from '../../utils/tabColor';
 import {
@@ -39,7 +40,7 @@ export const TerminalPanel: FC = () => {
   const closeSplitPane = useAppStore(s => s.closeSplitPane);
   const swapSplitSlots = useAppStore(s => s.swapSplitSlots);
   const [settings, setSettings] = useState(() => getAppSettings());
-  const [effectiveTheme, setEffectiveTheme] = useState<'dark' | 'light'>(() => getEffectiveThemeMode());
+  const [effectiveTheme, setEffectiveTheme] = useState<ThemeSkin>(() => getEffectiveThemeSkin());
 
   // Drag-to-swap state (grid-internal two-cell swap only).
   const dragSrcRef = useRef<number | null>(null);
@@ -94,8 +95,8 @@ export const TerminalPanel: FC = () => {
   useEffect(() => {
     const onSettings = () => setSettings(getAppSettings());
     const onTheme = (e: Event) => {
-      const mode = (e as CustomEvent<{ mode: 'dark' | 'light' }>).detail?.mode;
-      if (mode === 'dark' || mode === 'light') setEffectiveTheme(mode);
+      const skin = (e as CustomEvent<ThemeChangeDetail>).detail?.skin;
+      if (isThemeSkin(skin)) setEffectiveTheme(skin);
     };
     window.addEventListener('tab-navigation-changed', onSettings);
     window.addEventListener('app-settings-changed', onSettings);

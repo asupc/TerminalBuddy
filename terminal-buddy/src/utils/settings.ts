@@ -1,6 +1,25 @@
 import { readClientData, writeClientData } from '../services/tauri';
 
-export type ThemeMode = 'dark' | 'light' | 'system';
+export type ThemeSkin = 'dark' | 'light' | 'cartoon' | 'starry' | 'cyber' | 'sakura';
+export type ThemeMode = ThemeSkin | 'system';
+
+export const isThemeSkin = (value: unknown): value is ThemeSkin => (
+  value === 'dark'
+  || value === 'light'
+  || value === 'cartoon'
+  || value === 'starry'
+  || value === 'cyber'
+  || value === 'sakura'
+);
+
+const normalizeThemeMode = (value: unknown): ThemeMode => (
+  value === 'system' || isThemeSkin(value) ? value : 'dark'
+);
+
+export interface ThemeChangeDetail {
+  mode: 'dark' | 'light';
+  skin: ThemeSkin;
+}
 
 export type BreathingLightColorMode = 'tab' | 'custom';
 export type LaunchWindowMode = 'windowed' | 'maximized';
@@ -132,7 +151,7 @@ export const getStoredTheme = (): ThemeMode => {
 
 export const saveTheme = (theme: ThemeMode) => {
   _cachedTheme = theme;
-  // 后端 client_data_service.write 要求 content 为合法 JSON，裸字符串 'light'/'dark' 会被拒绝，
+  // 后端 client_data_service.write 要求 content 为合法 JSON，裸主题字符串会被拒绝，
   // 故用 JSON.stringify 包成 "light"；读取时 initTheme 用 JSON.parse 还原。
   writeClientData('theme', JSON.stringify(theme)).catch(e => console.error('Failed to save theme:', e));
 };
@@ -140,27 +159,37 @@ export const saveTheme = (theme: ThemeMode) => {
 export const initTheme = async (): Promise<ThemeMode> => {
   try {
     const raw = await readClientData('theme');
-    if (raw) _cachedTheme = JSON.parse(raw) as ThemeMode;
+    if (raw) _cachedTheme = normalizeThemeMode(JSON.parse(raw));
   } catch {}
   return _cachedTheme || 'dark';
 };
 
-// 读取当前生效的主题（dark/light）。system 模式下 applyTheme 已解析成具体值写入 data-theme。
+// 读取当前生效的明暗主题，供终端对比度修正等既有逻辑复用。
 export const getEffectiveThemeMode = (): 'dark' | 'light' => {
   return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
 };
 
+export const getEffectiveThemeSkin = (): ThemeSkin => {
+  const skin = document.documentElement.getAttribute('data-skin');
+  return isThemeSkin(skin) ? skin : getEffectiveThemeMode();
+};
+
 export const applyTheme = (theme: ThemeMode) => {
   const root = document.documentElement;
-  let effective: 'dark' | 'light';
+  let skin: ThemeSkin;
   if (theme === 'system') {
-    effective = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    skin = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   } else {
-    effective = theme;
+    skin = theme;
   }
-  root.setAttribute('data-theme', effective);
+
+  const mode = skin === 'dark' || skin === 'starry' || skin === 'cyber' ? 'dark' : 'light';
+  root.setAttribute('data-theme', mode);
+  if (skin !== 'dark' && skin !== 'light') root.setAttribute('data-skin', skin);
+  else root.removeAttribute('data-skin');
+
   // 广播当前生效主题，供终端等组件跟随应用主题切换
-  window.dispatchEvent(new CustomEvent('app-theme-changed', { detail: { mode: effective } }));
+  window.dispatchEvent(new CustomEvent<ThemeChangeDetail>('app-theme-changed', { detail: { mode, skin } }));
 };
 
 /**
@@ -169,15 +198,24 @@ export const applyTheme = (theme: ThemeMode) => {
  */
 export const applyListSelectionStyle = (s: AppSettings) => {
   const root = document.documentElement;
-  const isLight = getEffectiveThemeMode() === 'light';
-  let bg = isLight ? 'rgba(0, 120, 212, 0.15)' : '#4d7db9';
-  let fg = isLight ? '#005a9e' : '#ffffff';
+  const skin = getEffectiveThemeSkin();
+  const skinPalette: Record<ThemeSkin, { ideaBg: string; ideaFg: string; defaultBg: string; defaultFg: string }> = {
+    dark: { ideaBg: '#4d7db9', ideaFg: '#ffffff', defaultBg: '#37373d', defaultFg: '#ffffff' },
+    light: { ideaBg: 'rgba(0, 120, 212, 0.15)', ideaFg: '#005a9e', defaultBg: '#e8e8e8', defaultFg: '#333333' },
+    cartoon: { ideaBg: 'rgba(239, 111, 155, 0.18)', ideaFg: '#9f3f62', defaultBg: '#fff0f5', defaultFg: '#8b4a64' },
+    starry: { ideaBg: 'rgba(192, 138, 255, 0.24)', ideaFg: '#fff9ff', defaultBg: '#373477', defaultFg: '#fff9ff' },
+    cyber: { ideaBg: 'rgba(255, 45, 186, 0.2)', ideaFg: '#f8e9ff', defaultBg: '#321332', defaultFg: '#f8e9ff' },
+    sakura: { ideaBg: 'rgba(228, 85, 104, 0.18)', ideaFg: '#873742', defaultBg: '#f9dfd3', defaultFg: '#74383e' },
+  };
+  const palette = skinPalette[skin];
+  let bg = palette.ideaBg;
+  let fg = palette.ideaFg;
   // 默认 / IDEA 样式：边框透明 + 0 宽度（即无边框）；自定义：读用户设置
   let borderColor = 'transparent';
   let borderWidth = '0px';
   if (s.listSelectionStyle === 'default') {
-    bg = isLight ? '#e8e8e8' : '#37373d';
-    fg = isLight ? '#333333' : '#ffffff';
+    bg = palette.defaultBg;
+    fg = palette.defaultFg;
   } else if (s.listSelectionStyle === 'custom') {
     bg = s.listSelectionBg || '#4d7db9';
     fg = s.listSelectionFg || '#ffffff';

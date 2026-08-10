@@ -1,19 +1,27 @@
 import { FC, useState, useRef, useEffect } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   BarChart3,
   Bell,
+  Check,
   Columns2,
+  Flower2,
   Folder,
   Grid2X2,
+  Heart,
   Info,
   Minus,
   Moon,
+  Palette,
   PanelLeft,
   RefreshCw,
   Settings,
+  Sparkles,
   Square,
   Sun,
   X,
+  Zap,
+  type LucideIcon,
 } from 'lucide-react';
 import { windowMinimize, windowToggleMaximize, windowClose, checkAppUpdate } from '../../services/tauri';
 import type { UpdateInfo } from '../../services/tauri';
@@ -23,8 +31,8 @@ import { UpdatePopover, type UpdateCheckStatus } from '../settings/UpdatePopover
 import { APP_VERSION } from '../../version';
 import appIcon from '../../assets/app-icon.png';
 import './TitleBar.css';
-import { getEffectiveThemeMode, applyTheme, saveTheme } from '../../utils/settings';
-import type { UiStyle } from '../../utils/settings';
+import { getEffectiveThemeSkin, isThemeSkin, applyTheme, saveTheme } from '../../utils/settings';
+import type { ThemeChangeDetail, ThemeSkin, UiStyle } from '../../utils/settings';
 import { useAppStore } from '../../stores/appStore';
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from '../../utils/terminalResizeEvent';
 import { compareVersions } from '../../utils/version';
@@ -42,6 +50,21 @@ interface TitleBarProps {
   lastCheckedAt: number | null;
   onUpdateLastChecked: (now: number) => void;
 }
+
+interface ThemeSkinOption {
+  id: ThemeSkin;
+  label: string;
+  icon: LucideIcon;
+}
+
+const THEME_SKINS: ReadonlyArray<ThemeSkinOption> = [
+  { id: 'dark', label: '深色模式', icon: Moon },
+  { id: 'light', label: '浅色模式', icon: Sun },
+  { id: 'cartoon', label: '甜系少女', icon: Heart },
+  { id: 'starry', label: '星空魔法', icon: Sparkles },
+  { id: 'cyber', label: '霓虹赛博', icon: Zap },
+  { id: 'sakura', label: '樱花和风', icon: Flower2 },
+];
 
 export const TitleBar: FC<TitleBarProps> = ({
   uiStyle,
@@ -66,6 +89,9 @@ export const TitleBar: FC<TitleBarProps> = ({
   const splitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const updateHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const themePickerRef = useRef<HTMLDivElement>(null);
+  const themeButtonRef = useRef<HTMLButtonElement>(null);
+  const themeOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
     return () => {
@@ -83,7 +109,8 @@ export const TitleBar: FC<TitleBarProps> = ({
       }
     };
   }, []);
-  const [theme, setTheme] = useState<'dark' | 'light'>(getEffectiveThemeMode);
+  const [theme, setTheme] = useState<ThemeSkin>(getEffectiveThemeSkin);
+  const [showThemePicker, setShowThemePicker] = useState(false);
   const splitMode = useAppStore(s => s.splitMode);
 
   // 监听应用主题变化。App 启动时 initTheme() 是异步的，applyTheme 会晚于本组件
@@ -92,18 +119,61 @@ export const TitleBar: FC<TitleBarProps> = ({
   // 导致第一次点击只是在「对齐 state」、界面不变，需点两次才真正切换。
   useEffect(() => {
     const onTheme = (e: Event) => {
-      const mode = (e as CustomEvent<{ mode: 'dark' | 'light' }>).detail?.mode;
-      if (mode === 'dark' || mode === 'light') setTheme(state => (state === mode ? state : mode));
+      const skin = (e as CustomEvent<ThemeChangeDetail>).detail?.skin;
+      if (isThemeSkin(skin)) {
+        setTheme(state => (state === skin ? state : skin));
+      }
     };
     window.addEventListener('app-theme-changed', onTheme);
     return () => window.removeEventListener('app-theme-changed', onTheme);
   }, []);
 
-  const toggleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
+  useEffect(() => {
+    if (!showThemePicker) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!themePickerRef.current?.contains(event.target as Node)) setShowThemePicker(false);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setShowThemePicker(false);
+      themeButtonRef.current?.focus();
+    };
+    const selectedIndex = THEME_SKINS.findIndex(option => option.id === theme);
+    const focusFrame = requestAnimationFrame(() => themeOptionRefs.current[selectedIndex]?.focus());
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showThemePicker, theme]);
+
+  const selectTheme = (next: ThemeSkin) => {
     setTheme(next);
     saveTheme(next);
     applyTheme(next);
+    setShowThemePicker(false);
+    themeButtonRef.current?.focus();
+  };
+
+  const handleThemeGridKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = themeOptionRefs.current.indexOf(document.activeElement as HTMLButtonElement);
+    if (currentIndex < 0) return;
+
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % THEME_SKINS.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + THEME_SKINS.length) % THEME_SKINS.length;
+    else if (event.key === 'ArrowDown') nextIndex = (currentIndex + 2) % THEME_SKINS.length;
+    else if (event.key === 'ArrowUp') nextIndex = (currentIndex - 2 + THEME_SKINS.length) % THEME_SKINS.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = THEME_SKINS.length - 1;
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    themeOptionRefs.current[nextIndex]?.focus();
   };
 
   const handleMouseEnter = () => {
@@ -276,15 +346,65 @@ export const TitleBar: FC<TitleBarProps> = ({
           >
             {splitMode === '2x2' ? <Grid2X2 /> : <Columns2 />}
           </button>
-          <button
-            type="button"
-            className="titlebar-btn titlebar-action-btn"
-            onClick={toggleTheme}
-            title={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-            aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-          >
-            {theme === 'dark' ? <Sun /> : <Moon />}
-          </button>
+          <div className="theme-skin-trigger" ref={themePickerRef}>
+            <button
+              ref={themeButtonRef}
+              type="button"
+              className={`titlebar-btn titlebar-action-btn ${showThemePicker ? 'active' : ''}`}
+              onClick={() => setShowThemePicker(open => !open)}
+              title={`皮肤设置：${THEME_SKINS.find(option => option.id === theme)?.label ?? ''}`}
+              aria-label="选择应用皮肤"
+              aria-haspopup="dialog"
+              aria-expanded={showThemePicker}
+              aria-controls="theme-skin-popover"
+            >
+              <Palette aria-hidden="true" />
+            </button>
+            {showThemePicker && (
+              <div
+                id="theme-skin-popover"
+                className="theme-skin-popover"
+                role="dialog"
+                aria-label="选择应用皮肤"
+              >
+                <div className="theme-skin-heading">选择皮肤</div>
+                <div
+                  className="theme-skin-grid"
+                  role="radiogroup"
+                  aria-label="应用皮肤"
+                  onKeyDown={handleThemeGridKeyDown}
+                >
+                  {THEME_SKINS.map((option, index) => {
+                    const Icon = option.icon;
+                    const selected = option.id === theme;
+                    return (
+                      <button
+                        key={option.id}
+                        ref={element => { themeOptionRefs.current[index] = element; }}
+                        type="button"
+                        className={`theme-skin-option theme-skin-option-${option.id}${selected ? ' selected' : ''}`}
+                        role="radio"
+                        aria-checked={selected}
+                        tabIndex={selected ? 0 : -1}
+                        onClick={() => selectTheme(option.id)}
+                      >
+                        <span className="theme-skin-preview" aria-hidden="true">
+                          <span className="theme-skin-preview-bar" />
+                          <span className="theme-skin-preview-sidebar" />
+                          <span className="theme-skin-preview-content" />
+                        </span>
+                        <span className="theme-skin-option-label">
+                          <Icon aria-hidden="true" />
+                          <span>{option.label}</span>
+                          {selected && <Check className="theme-skin-check" aria-hidden="true" />}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             className="titlebar-btn titlebar-action-btn titlebar-about-btn"

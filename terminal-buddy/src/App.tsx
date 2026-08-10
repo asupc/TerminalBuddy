@@ -580,6 +580,11 @@ function App() {
         )}
         <TerminalPanel />
       </div>
+      <div className="cartoon-anime1-overlay" aria-hidden="true">
+        <span className="cartoon-anime1-left" />
+        <span className="cartoon-anime1-center" />
+        <span className="cartoon-anime1-hero" />
+      </div>
       {showEditDialog && (
         <ConfigEditDialog
           profile={editingProfile}

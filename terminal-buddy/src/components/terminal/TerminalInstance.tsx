@@ -378,7 +378,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         letterSpacing: 0,
         scrollback: 50000,
         theme: initialTheme,
-        // 仅自动白板模式启用最低对比度增强；黑板/自定义终端配色保持原样
+        allowTransparency: true,
+        // 仅跟随应用的浅色终端启用最低对比度增强；黑板/自定义终端配色保持原样
         minimumContrastRatio: initialLightOptimized ? 4.5 : 1,
         allowProposedApi: true,
         disableStdin: !!readOnly,

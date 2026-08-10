@@ -1,5 +1,6 @@
 import type { Profile } from '../types';
 import { PRESET_THEMES } from '../types';
+import type { ThemeSkin } from './settings';
 
 /**
  * 判断背景色是否偏亮（浅色背景）。
@@ -232,6 +233,104 @@ const LIGHT_COLORS: TerminalColors = {
   brightWhite: '#8C959F',
 };
 
+const CARTOON_COLORS: TerminalColors = {
+  background: 'rgba(255, 253, 248, 0.58)',
+  foreground: '#71475C',
+  lightOptimized: true,
+  cursor: '#EF6F9B',
+  cursorAccent: '#FFFDF8',
+  selectionBackground: '#FFD5E2',
+  black: '#5F3B4C',
+  red: '#C73F69',
+  green: '#467F3A',
+  yellow: '#85570F',
+  blue: '#377FC1',
+  magenta: '#A95AB5',
+  cyan: '#397F84',
+  white: '#A87D8F',
+  brightBlack: '#846173',
+  brightRed: '#DE5E83',
+  brightGreen: '#5B994C',
+  brightYellow: '#A36D19',
+  brightBlue: '#4C92D2',
+  brightMagenta: '#C379CA',
+  brightCyan: '#57989C',
+  brightWhite: '#C09AAB',
+};
+
+const STARRY_COLORS: TerminalColors = {
+  background: 'rgba(22, 24, 81, 0.28)',
+  foreground: '#E8E3FF',
+  cursor: '#C08AFF',
+  cursorAccent: '#161851',
+  selectionBackground: '#554A91',
+  black: '#20235F',
+  red: '#FF829F',
+  green: '#9EDD70',
+  yellow: '#FFE08A',
+  blue: '#78D8FF',
+  magenta: '#C08AFF',
+  cyan: '#75E1E9',
+  white: '#E8E3FF',
+  brightBlack: '#8F87BD',
+  brightRed: '#FFA3B8',
+  brightGreen: '#BBED91',
+  brightYellow: '#FFEDB3',
+  brightBlue: '#A8E7FF',
+  brightMagenta: '#D7B3FF',
+  brightCyan: '#A6F1F5',
+  brightWhite: '#FFF9FF',
+};
+
+const CYBER_COLORS: TerminalColors = {
+  background: 'rgba(3, 5, 16, 0.34)',
+  foreground: '#D9C8E8',
+  cursor: '#FF2DBA',
+  cursorAccent: '#030510',
+  selectionBackground: '#58204E',
+  black: '#11152B',
+  red: '#FF5B7F',
+  green: '#9CEB50',
+  yellow: '#FFD95D',
+  blue: '#00D9FF',
+  magenta: '#FF2DBA',
+  cyan: '#39E6DE',
+  white: '#D9C8E8',
+  brightBlack: '#877893',
+  brightRed: '#FF82A0',
+  brightGreen: '#B9F17E',
+  brightYellow: '#FFE68F',
+  brightBlue: '#6BE9FF',
+  brightMagenta: '#FF73D4',
+  brightCyan: '#7AF2EC',
+  brightWhite: '#F8E9FF',
+};
+
+const SAKURA_COLORS: TerminalColors = {
+  background: 'rgba(255, 251, 241, 0.58)',
+  foreground: '#552D31',
+  lightOptimized: true,
+  cursor: '#E45568',
+  cursorAccent: '#FFF9EE',
+  selectionBackground: '#F3C8C4',
+  black: '#552D31',
+  red: '#B93649',
+  green: '#507B34',
+  yellow: '#795117',
+  blue: '#276F9F',
+  magenta: '#985186',
+  cyan: '#397B7D',
+  white: '#9C7770',
+  brightBlack: '#79595A',
+  brightRed: '#D14859',
+  brightGreen: '#699744',
+  brightYellow: '#946823',
+  brightBlue: '#3F87B7',
+  brightMagenta: '#B56BA1',
+  brightCyan: '#518F91',
+  brightWhite: '#B8958D',
+};
+
 // preset 分支按 themeId 缓存返回值，保证同一 profile 多次解析得到稳定引用，
 // 避免 TerminalInstance 的 useEffect 因引用变化而误触发 xterm 重新设置 theme。
 const presetCache = new Map<string, TerminalColors>();
@@ -239,20 +338,24 @@ const presetCache = new Map<string, TerminalColors>();
 /**
  * 解析终端实际使用的配色。
  *
- * 终端配色（profile.colorTheme）与应用主题（dark/light）是两套独立系统，
+ * 终端配色（profile.colorTheme）与应用皮肤是两套独立系统，
  * 切换浅色模式时终端默认不会跟着变。本函数统一处理跟随逻辑：
  * - 开启「终端跟随应用主题」且 profile 未显式指定非默认配色时，
- *   终端配色随应用主题切换（浅色模式→白底浅色调色板，深色模式→深色底）。
+ *   终端配色随应用皮肤切换，动漫皮肤使用各自的深色或浅色安全调色板。
  * - 否则使用 profile 自身配置的配色（默认为深色）。
  */
 export const resolveTerminalColors = (
   profile: Pick<Profile, 'colorTheme'> | undefined,
-  appTheme: 'dark' | 'light',
+  appTheme: ThemeSkin,
   followEnabled: boolean,
 ): TerminalColors => {
   const themeId = profile?.colorTheme;
   // 跟随开关开启且未显式指定非默认配色 → 跟随应用主题
   if (followEnabled && (!themeId || themeId === 'dark-default')) {
+    if (appTheme === 'cartoon') return CARTOON_COLORS;
+    if (appTheme === 'starry') return STARRY_COLORS;
+    if (appTheme === 'cyber') return CYBER_COLORS;
+    if (appTheme === 'sakura') return SAKURA_COLORS;
     return appTheme === 'light' ? LIGHT_COLORS : DARK_COLORS;
   }
   const key = themeId || '__default__';
