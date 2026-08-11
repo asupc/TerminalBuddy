@@ -5,8 +5,18 @@ import type { TerminalSession } from '../../types';
 import { TerminalTabBar } from './TerminalTabBar';
 import { isTerminalWorking, useAppStore } from '../../stores/appStore';
 import { writeToTerminal } from '../../services/tauri';
-import { getAppSettings, getEffectiveThemeSkin, isThemeSkin } from '../../utils/settings';
-import type { ThemeChangeDetail, ThemeSkin } from '../../utils/settings';
+import {
+  APP_OPACITY_PREVIEW_EVENT,
+  getAppOpacity,
+  getAppSettings,
+  getEffectiveThemeSkin,
+  isThemeSkin,
+} from '../../utils/settings';
+import type {
+  AppOpacityPreviewDetail,
+  ThemeChangeDetail,
+  ThemeSkin,
+} from '../../utils/settings';
 import { resolveTerminalColors } from '../../utils/terminalTheme';
 import { getWorkingDotColor } from '../../utils/tabColor';
 import {
@@ -98,13 +108,26 @@ export const TerminalPanel: FC = () => {
       const skin = (e as CustomEvent<ThemeChangeDetail>).detail?.skin;
       if (isThemeSkin(skin)) setEffectiveTheme(skin);
     };
+    const onOpacityPreview = (e: Event) => {
+      const detail = (e as CustomEvent<AppOpacityPreviewDetail>).detail;
+      if (!detail) return;
+      setSettings(current => ({
+        ...current,
+        appOpacityBySkin: {
+          ...current.appOpacityBySkin,
+          [detail.skin]: detail.opacity,
+        },
+      }));
+    };
     window.addEventListener('tab-navigation-changed', onSettings);
     window.addEventListener('app-settings-changed', onSettings);
     window.addEventListener('app-theme-changed', onTheme);
+    window.addEventListener(APP_OPACITY_PREVIEW_EVENT, onOpacityPreview);
     return () => {
       window.removeEventListener('tab-navigation-changed', onSettings);
       window.removeEventListener('app-settings-changed', onSettings);
       window.removeEventListener('app-theme-changed', onTheme);
+      window.removeEventListener(APP_OPACITY_PREVIEW_EVENT, onOpacityPreview);
     };
   }, []);
 
@@ -125,7 +148,13 @@ export const TerminalPanel: FC = () => {
     const { slot, active, hidden } = opts;
     const isSlot = slot !== undefined;
     const profile = profiles.find(p => p.id === session.profileId);
-    const resolvedTheme = resolveTerminalColors(profile, effectiveTheme, settings.terminalFollowAppTheme);
+    const appOpacity = getAppOpacity(settings, effectiveTheme);
+    const resolvedTheme = resolveTerminalColors(
+      profile,
+      effectiveTheme,
+      settings.terminalFollowAppTheme,
+      appOpacity,
+    );
     const isActivePane = active && !hidden;
     const containerClass = [
       'terminal-tab-content',

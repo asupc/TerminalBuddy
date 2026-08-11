@@ -1,5 +1,5 @@
 import { FC, useState, useRef, useEffect } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   BarChart3,
   Bell,
@@ -31,8 +31,27 @@ import { UpdatePopover, type UpdateCheckStatus } from '../settings/UpdatePopover
 import { APP_VERSION } from '../../version';
 import appIcon from '../../assets/app-icon.png';
 import './TitleBar.css';
-import { getEffectiveThemeSkin, isThemeSkin, applyTheme, saveTheme } from '../../utils/settings';
-import type { ThemeChangeDetail, ThemeSkin, UiStyle } from '../../utils/settings';
+import {
+  APP_OPACITY_PREVIEW_EVENT,
+  applyTheme,
+  getAppOpacities,
+  getAppSettings,
+  getEffectiveThemeSkin,
+  isDecorativeThemeSkin,
+  isThemeSkin,
+  MAX_APP_OPACITY,
+  normalizeAppOpacity,
+  previewAppOpacity,
+  saveAppSettings,
+  saveTheme,
+} from '../../utils/settings';
+import type {
+  AppOpacityPreviewDetail,
+  DecorativeThemeSkin,
+  ThemeChangeDetail,
+  ThemeSkin,
+  UiStyle,
+} from '../../utils/settings';
 import { useAppStore } from '../../stores/appStore';
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from '../../utils/terminalResizeEvent';
 import { compareVersions } from '../../utils/version';
@@ -111,6 +130,9 @@ export const TitleBar: FC<TitleBarProps> = ({
   }, []);
   const [theme, setTheme] = useState<ThemeSkin>(getEffectiveThemeSkin);
   const [showThemePicker, setShowThemePicker] = useState(false);
+  const [appOpacities, setAppOpacities] = useState(
+    () => getAppOpacities(getAppSettings()),
+  );
   const splitMode = useAppStore(s => s.splitMode);
 
   // 监听应用主题变化。App 启动时 initTheme() 是异步的，applyTheme 会晚于本组件
@@ -126,6 +148,14 @@ export const TitleBar: FC<TitleBarProps> = ({
     };
     window.addEventListener('app-theme-changed', onTheme);
     return () => window.removeEventListener('app-theme-changed', onTheme);
+  }, []);
+
+  useEffect(() => {
+    const syncOpacities = () => {
+      setAppOpacities(getAppOpacities(getAppSettings()));
+    };
+    window.addEventListener('app-settings-changed', syncOpacities);
+    return () => window.removeEventListener('app-settings-changed', syncOpacities);
   }, []);
 
   useEffect(() => {
@@ -157,6 +187,26 @@ export const TitleBar: FC<TitleBarProps> = ({
     applyTheme(next);
     setShowThemePicker(false);
     themeButtonRef.current?.focus();
+  };
+
+  const updateAppOpacityPreview = (skin: DecorativeThemeSkin, opacity: number) => {
+    const normalized = normalizeAppOpacity(opacity);
+    setAppOpacities(current => ({ ...current, [skin]: normalized }));
+    previewAppOpacity(skin, normalized);
+    const detail: AppOpacityPreviewDetail = { skin, opacity: normalized };
+    window.dispatchEvent(new CustomEvent(APP_OPACITY_PREVIEW_EVENT, { detail }));
+  };
+
+  const commitAppOpacity = (skin: DecorativeThemeSkin, opacity: number) => {
+    const normalized = normalizeAppOpacity(opacity);
+    const current = getAppSettings();
+    saveAppSettings({
+      ...current,
+      appOpacityBySkin: {
+        ...getAppOpacities(current),
+        [skin]: normalized,
+      },
+    });
   };
 
   const handleThemeGridKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -377,28 +427,69 @@ export const TitleBar: FC<TitleBarProps> = ({
                   {THEME_SKINS.map((option, index) => {
                     const Icon = option.icon;
                     const selected = option.id === theme;
+                    const decorativeSkin = isDecorativeThemeSkin(option.id) ? option.id : null;
+                    const opacity = decorativeSkin ? appOpacities[decorativeSkin] : 0;
+                    const previewStyle = decorativeSkin
+                      ? { '--theme-app-opacity': opacity / 100 } as CSSProperties
+                      : undefined;
                     return (
-                      <button
+                      <div
                         key={option.id}
-                        ref={element => { themeOptionRefs.current[index] = element; }}
-                        type="button"
-                        className={`theme-skin-option theme-skin-option-${option.id}${selected ? ' selected' : ''}`}
-                        role="radio"
-                        aria-checked={selected}
-                        tabIndex={selected ? 0 : -1}
-                        onClick={() => selectTheme(option.id)}
+                        className={`theme-skin-card${decorativeSkin ? ' theme-skin-card-adjustable' : ''}`}
                       >
-                        <span className="theme-skin-preview" aria-hidden="true">
-                          <span className="theme-skin-preview-bar" />
-                          <span className="theme-skin-preview-sidebar" />
-                          <span className="theme-skin-preview-content" />
-                        </span>
-                        <span className="theme-skin-option-label">
-                          <Icon aria-hidden="true" />
-                          <span>{option.label}</span>
-                          {selected && <Check className="theme-skin-check" aria-hidden="true" />}
-                        </span>
-                      </button>
+                        <button
+                          ref={element => { themeOptionRefs.current[index] = element; }}
+                          type="button"
+                          className={`theme-skin-option theme-skin-option-${option.id}${selected ? ' selected' : ''}`}
+                          role="radio"
+                          aria-checked={selected}
+                          tabIndex={selected ? 0 : -1}
+                          onClick={() => selectTheme(option.id)}
+                        >
+                          <span className="theme-skin-preview" style={previewStyle} aria-hidden="true">
+                            <span className="theme-skin-preview-bar" />
+                            <span className="theme-skin-preview-sidebar" />
+                            <span className="theme-skin-preview-content" />
+                          </span>
+                          <span className="theme-skin-option-label">
+                            <Icon aria-hidden="true" />
+                            <span>{option.label}</span>
+                            {selected && <Check className="theme-skin-check" aria-hidden="true" />}
+                          </span>
+                        </button>
+                        {decorativeSkin && (
+                          <label className="theme-skin-opacity-control">
+                            <span className="theme-skin-opacity-label">
+                              <span>整体不透明度</span>
+                              <span>{opacity}%</span>
+                            </span>
+                            <input
+                              type="range"
+                              min="0"
+                              max={MAX_APP_OPACITY}
+                              step="1"
+                              value={opacity}
+                              aria-label={`${option.label}整体界面不透明度`}
+                              aria-valuetext={opacity === 0 ? '完全透明' : `${opacity}% 不透明`}
+                              style={{
+                                '--theme-app-opacity-percent': `${(opacity / MAX_APP_OPACITY) * 100}%`,
+                              } as CSSProperties}
+                              onChange={(event) => {
+                                updateAppOpacityPreview(decorativeSkin, Number(event.currentTarget.value));
+                              }}
+                              onPointerUp={(event) => {
+                                commitAppOpacity(decorativeSkin, Number(event.currentTarget.value));
+                              }}
+                              onKeyUp={(event) => {
+                                commitAppOpacity(decorativeSkin, Number(event.currentTarget.value));
+                              }}
+                              onBlur={(event) => {
+                                commitAppOpacity(decorativeSkin, Number(event.currentTarget.value));
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
                     );
                   })}
                 </div>

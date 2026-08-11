@@ -1,6 +1,7 @@
 import type { Profile } from '../types';
 import { PRESET_THEMES } from '../types';
-import type { ThemeSkin } from './settings';
+import { isDecorativeThemeSkin, MAX_APP_OPACITY } from './settings';
+import type { DecorativeThemeSkin, ThemeSkin } from './settings';
 
 /**
  * 判断背景色是否偏亮（浅色背景）。
@@ -259,7 +260,7 @@ const CARTOON_COLORS: TerminalColors = {
 };
 
 const STARRY_COLORS: TerminalColors = {
-  background: 'rgba(22, 24, 81, 0.28)',
+  background: 'rgba(22, 24, 81, 0)',
   foreground: '#E8E3FF',
   cursor: '#C08AFF',
   cursorAccent: '#161851',
@@ -283,7 +284,7 @@ const STARRY_COLORS: TerminalColors = {
 };
 
 const CYBER_COLORS: TerminalColors = {
-  background: 'rgba(3, 5, 16, 0.34)',
+  background: 'rgba(3, 5, 16, 0)',
   foreground: '#D9C8E8',
   cursor: '#FF2DBA',
   cursorAccent: '#030510',
@@ -331,6 +332,38 @@ const SAKURA_COLORS: TerminalColors = {
   brightWhite: '#B8958D',
 };
 
+const DECORATIVE_THEME_BACKGROUND_RGB: Record<DecorativeThemeSkin, readonly [number, number, number]> = {
+  cartoon: [255, 253, 248],
+  starry: [22, 24, 81],
+  cyber: [3, 5, 16],
+  sakura: [255, 251, 241],
+};
+
+const appOpacityThemeCache = new WeakMap<TerminalColors, Map<string, TerminalColors>>();
+
+const withAppOpacity = (
+  colors: TerminalColors,
+  skin: DecorativeThemeSkin,
+  opacity: number,
+): TerminalColors => {
+  const normalized = Math.min(MAX_APP_OPACITY, Math.max(0, Math.round(opacity)));
+  const cacheKey = `${skin}:${normalized}`;
+  let colorCache = appOpacityThemeCache.get(colors);
+  if (!colorCache) {
+    colorCache = new Map<string, TerminalColors>();
+    appOpacityThemeCache.set(colors, colorCache);
+  }
+  const cached = colorCache.get(cacheKey);
+  if (cached) return cached;
+  const [red, green, blue] = DECORATIVE_THEME_BACKGROUND_RGB[skin];
+  const result = {
+    ...colors,
+    background: `rgba(${red}, ${green}, ${blue}, ${normalized / 100})`,
+  };
+  colorCache.set(cacheKey, result);
+  return result;
+};
+
 // preset 分支按 themeId 缓存返回值，保证同一 profile 多次解析得到稳定引用，
 // 避免 TerminalInstance 的 useEffect 因引用变化而误触发 xterm 重新设置 theme。
 const presetCache = new Map<string, TerminalColors>();
@@ -348,23 +381,28 @@ export const resolveTerminalColors = (
   profile: Pick<Profile, 'colorTheme'> | undefined,
   appTheme: ThemeSkin,
   followEnabled: boolean,
+  appOpacity = 0,
 ): TerminalColors => {
   const themeId = profile?.colorTheme;
+  let colors: TerminalColors;
   // 跟随开关开启且未显式指定非默认配色 → 跟随应用主题
   if (followEnabled && (!themeId || themeId === 'dark-default')) {
-    if (appTheme === 'cartoon') return CARTOON_COLORS;
-    if (appTheme === 'starry') return STARRY_COLORS;
-    if (appTheme === 'cyber') return CYBER_COLORS;
-    if (appTheme === 'sakura') return SAKURA_COLORS;
-    return appTheme === 'light' ? LIGHT_COLORS : DARK_COLORS;
+    if (appTheme === 'cartoon') colors = CARTOON_COLORS;
+    else if (appTheme === 'starry') colors = STARRY_COLORS;
+    else if (appTheme === 'cyber') colors = CYBER_COLORS;
+    else if (appTheme === 'sakura') colors = SAKURA_COLORS;
+    else colors = appTheme === 'light' ? LIGHT_COLORS : DARK_COLORS;
+  } else {
+    const key = themeId || '__default__';
+    const cached = presetCache.get(key);
+    if (cached) colors = cached;
+    else {
+      const preset = PRESET_THEMES.find((t) => t.id === themeId);
+      colors = preset
+        ? { background: preset.background, foreground: preset.foreground }
+        : DARK_COLORS;
+      presetCache.set(key, colors);
+    }
   }
-  const key = themeId || '__default__';
-  const cached = presetCache.get(key);
-  if (cached) return cached;
-  const preset = PRESET_THEMES.find((t) => t.id === themeId);
-  const colors: TerminalColors = preset
-    ? { background: preset.background, foreground: preset.foreground }
-    : DARK_COLORS;
-  presetCache.set(key, colors);
-  return colors;
+  return isDecorativeThemeSkin(appTheme) ? withAppOpacity(colors, appTheme, appOpacity) : colors;
 };

@@ -2,6 +2,18 @@ import { readClientData, writeClientData } from '../services/tauri';
 
 export type ThemeSkin = 'dark' | 'light' | 'cartoon' | 'starry' | 'cyber' | 'sakura';
 export type ThemeMode = ThemeSkin | 'system';
+export type DecorativeThemeSkin = 'cartoon' | 'starry' | 'cyber' | 'sakura';
+
+export const DECORATIVE_THEME_SKINS: ReadonlyArray<DecorativeThemeSkin> = [
+  'cartoon',
+  'starry',
+  'cyber',
+  'sakura',
+];
+
+export const isDecorativeThemeSkin = (value: ThemeSkin): value is DecorativeThemeSkin => (
+  value === 'cartoon' || value === 'starry' || value === 'cyber' || value === 'sakura'
+);
 
 export const isThemeSkin = (value: unknown): value is ThemeSkin => (
   value === 'dark'
@@ -19,6 +31,14 @@ const normalizeThemeMode = (value: unknown): ThemeMode => (
 export interface ThemeChangeDetail {
   mode: 'dark' | 'light';
   skin: ThemeSkin;
+}
+
+export const APP_OPACITY_PREVIEW_EVENT = 'app-opacity-preview';
+export const MAX_APP_OPACITY = 80;
+
+export interface AppOpacityPreviewDetail {
+  skin: DecorativeThemeSkin;
+  opacity: number;
 }
 
 export type BreathingLightColorMode = 'tab' | 'custom';
@@ -68,6 +88,8 @@ export interface AppSettings {
   terminalFontSizeOff: number;
   terminalFontSize2x1: number;
   terminalFontSize2x2: number;
+  /** 整体界面表面不透明度百分比：0 为完全透明，最大值为 80。 */
+  appOpacityBySkin: Record<DecorativeThemeSkin, number>;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -112,6 +134,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   terminalFontSizeOff: 14,
   terminalFontSize2x1: 12,
   terminalFontSize2x2: 11,
+  appOpacityBySkin: {
+    cartoon: 0,
+    starry: 0,
+    cyber: 0,
+    sakura: 0,
+  },
 };
 
 let _cachedSettings: AppSettings | null = null;
@@ -121,17 +149,69 @@ export const getAppSettings = (): AppSettings => {
   return { ...DEFAULT_SETTINGS };
 };
 
+export const normalizeAppOpacity = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.min(MAX_APP_OPACITY, Math.max(0, Math.round(value)));
+};
+
+export const getAppOpacities = (
+  settings: AppSettings,
+): Record<DecorativeThemeSkin, number> => {
+  const stored = settings.appOpacityBySkin;
+  return {
+    cartoon: normalizeAppOpacity(stored?.cartoon),
+    starry: normalizeAppOpacity(stored?.starry),
+    cyber: normalizeAppOpacity(stored?.cyber),
+    sakura: normalizeAppOpacity(stored?.sakura),
+  };
+};
+
+export const getAppOpacity = (
+  settings: AppSettings,
+  skin: ThemeSkin,
+): number => (
+  isDecorativeThemeSkin(skin) ? getAppOpacities(settings)[skin] : 0
+);
+
+const applyAppOpacityValue = (skin: ThemeSkin, opacity: number) => {
+  const root = document.documentElement;
+  if (!isDecorativeThemeSkin(skin)) {
+    root.style.removeProperty('--skin-app-opacity');
+    root.style.removeProperty('--skin-surface-blur');
+    return;
+  }
+  const normalized = normalizeAppOpacity(opacity);
+  root.style.setProperty('--skin-app-opacity', String(normalized / 100));
+  root.style.setProperty('--skin-surface-blur', `${normalized / 10}px`);
+};
+
+export const applyAppOpacity = (settings: AppSettings, skin: ThemeSkin = getEffectiveThemeSkin()) => {
+  applyAppOpacityValue(skin, getAppOpacity(settings, skin));
+};
+
+export const previewAppOpacity = (skin: DecorativeThemeSkin, opacity: number) => {
+  if (getEffectiveThemeSkin() === skin) applyAppOpacityValue(skin, opacity);
+};
+
 export const initAppSettings = async (): Promise<void> => {
   try {
     const raw = await readClientData('settings');
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<AppSettings>;
+      const parsed = JSON.parse(raw) as Partial<AppSettings> & {
+        terminalBackgroundOpacityBySkin?: Record<DecorativeThemeSkin, number>;
+      };
+      // 兼容短暂使用过的“仅终端透明度”字段，将用户已调数值迁移为整体界面透明度。
+      if (!parsed.appOpacityBySkin && parsed.terminalBackgroundOpacityBySkin) {
+        parsed.appOpacityBySkin = parsed.terminalBackgroundOpacityBySkin;
+      }
+      delete parsed.terminalBackgroundOpacityBySkin;
       // 兼容旧版总开关：升级后保留用户此前关闭通知的选择。
       if (parsed.claudeCodeNotifications === false && parsed.claudeDecisionNotifications === undefined) {
         parsed.claudeDecisionNotifications = false;
         parsed.claudeCompletionNotifications = false;
       }
       _cachedSettings = parsed as AppSettings;
+      applyAppOpacity(getAppSettings());
       window.dispatchEvent(new CustomEvent('app-settings-changed'));
     }
   } catch {}
@@ -139,6 +219,7 @@ export const initAppSettings = async (): Promise<void> => {
 
 export const saveAppSettings = (settings: AppSettings) => {
   _cachedSettings = settings;
+  applyAppOpacity(settings);
   writeClientData('settings', JSON.stringify(settings)).catch(() => {});
   window.dispatchEvent(new CustomEvent('app-settings-changed'));
 };
@@ -187,6 +268,7 @@ export const applyTheme = (theme: ThemeMode) => {
   root.setAttribute('data-theme', mode);
   if (skin !== 'dark' && skin !== 'light') root.setAttribute('data-skin', skin);
   else root.removeAttribute('data-skin');
+  applyAppOpacity(getAppSettings(), skin);
 
   // 广播当前生效主题，供终端等组件跟随应用主题切换
   window.dispatchEvent(new CustomEvent<ThemeChangeDetail>('app-theme-changed', { detail: { mode, skin } }));

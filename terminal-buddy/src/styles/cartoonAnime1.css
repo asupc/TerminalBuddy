@@ -6,9 +6,9 @@
    replace semantic colors, canvas texture, and non-interactive artwork. */
 [data-skin="cartoon"] {
   color-scheme: light;
-  --bg-primary: rgba(255, 249, 252, 0.88);
-  --bg-secondary: rgba(255, 253, 251, 0.9);
-  --bg-tertiary: rgba(255, 234, 244, 0.86);
+  --bg-primary: rgb(255 249 252 / var(--skin-app-opacity, 0));
+  --bg-secondary: rgb(255 253 251 / var(--skin-app-opacity, 0));
+  --bg-tertiary: rgb(255 234 244 / var(--skin-app-opacity, 0));
   --bg-elevated: #fffdfc;
   --bg-overlay: rgba(102, 59, 79, 0.42);
   --text-primary: #573b4d;
@@ -38,17 +38,17 @@
     url('../assets/cartoon-anime1-background.png') center / cover no-repeat,
     #fff7fb;
   --skin-art-shadow: drop-shadow(0 12px 22px rgba(196, 91, 139, 0.18));
-  --skin-toolbar-surface: rgba(255, 250, 252, 0.28);
-  --skin-control-surface: rgba(255, 235, 245, 0.48);
+  --skin-toolbar-surface: rgb(255 250 252 / var(--skin-app-opacity, 0));
+  --skin-control-surface: rgb(255 235 245 / var(--skin-app-opacity, 0));
   --skin-toolbar-border: rgba(239, 176, 201, 0.58);
   --skin-tab-active: rgba(255, 226, 239, 0.52);
 }
 
 [data-skin="starry"] {
   color-scheme: dark;
-  --bg-primary: rgba(22, 24, 81, 0.9);
-  --bg-secondary: rgba(28, 31, 91, 0.9);
-  --bg-tertiary: rgba(47, 48, 119, 0.9);
+  --bg-primary: rgb(22 24 81 / var(--skin-app-opacity, 0));
+  --bg-secondary: rgb(28 31 91 / var(--skin-app-opacity, 0));
+  --bg-tertiary: rgb(47 48 119 / var(--skin-app-opacity, 0));
   --bg-elevated: #292c72;
   --bg-overlay: rgba(5, 7, 37, 0.66);
   --text-primary: #fff9ff;
@@ -78,17 +78,17 @@
     url('../assets/skin-starry-background.png') center bottom / cover no-repeat,
     #17184d;
   --skin-art-shadow: drop-shadow(0 0 26px rgba(137, 125, 255, 0.3));
-  --skin-toolbar-surface: rgba(27, 29, 88, 0.52);
-  --skin-control-surface: rgba(47, 48, 119, 0.62);
+  --skin-toolbar-surface: rgb(27 29 88 / var(--skin-app-opacity, 0));
+  --skin-control-surface: rgb(47 48 119 / var(--skin-app-opacity, 0));
   --skin-toolbar-border: rgba(102, 93, 168, 0.7);
   --skin-tab-active: rgba(91, 74, 154, 0.58);
 }
 
 [data-skin="cyber"] {
   color-scheme: dark;
-  --bg-primary: rgba(3, 5, 16, 0.94);
-  --bg-secondary: rgba(6, 8, 24, 0.92);
-  --bg-tertiary: rgba(11, 13, 38, 0.94);
+  --bg-primary: rgb(3 5 16 / var(--skin-app-opacity, 0));
+  --bg-secondary: rgb(6 8 24 / var(--skin-app-opacity, 0));
+  --bg-tertiary: rgb(11 13 38 / var(--skin-app-opacity, 0));
   --bg-elevated: #11142f;
   --bg-overlay: rgba(0, 0, 0, 0.72);
   --text-primary: #f8e9ff;
@@ -118,17 +118,17 @@
     url('../assets/skin-cyber-background.png') center bottom / cover no-repeat,
     #02030b;
   --skin-art-shadow: drop-shadow(0 0 25px rgba(255, 45, 186, 0.28));
-  --skin-toolbar-surface: rgba(4, 6, 20, 0.62);
-  --skin-control-surface: rgba(15, 17, 47, 0.72);
+  --skin-toolbar-surface: rgb(4 6 20 / var(--skin-app-opacity, 0));
+  --skin-control-surface: rgb(15 17 47 / var(--skin-app-opacity, 0));
   --skin-toolbar-border: rgba(110, 43, 101, 0.72);
   --skin-tab-active: rgba(70, 17, 65, 0.68);
 }
 
 [data-skin="sakura"] {
   color-scheme: light;
-  --bg-primary: rgba(255, 249, 238, 0.9);
-  --bg-secondary: rgba(255, 253, 248, 0.92);
-  --bg-tertiary: rgba(249, 223, 211, 0.88);
+  --bg-primary: rgb(255 249 238 / var(--skin-app-opacity, 0));
+  --bg-secondary: rgb(255 253 248 / var(--skin-app-opacity, 0));
+  --bg-tertiary: rgb(249 223 211 / var(--skin-app-opacity, 0));
   --bg-elevated: #fffdf8;
   --bg-overlay: rgba(88, 42, 38, 0.42);
   --text-primary: #552d31;
@@ -158,8 +158,8 @@
     url('../assets/skin-sakura-background.png') center bottom / cover no-repeat,
     #fff8ef;
   --skin-art-shadow: drop-shadow(0 18px 20px rgba(133, 73, 62, 0.18));
-  --skin-toolbar-surface: rgba(255, 250, 241, 0.32);
-  --skin-control-surface: rgba(249, 223, 211, 0.52);
+  --skin-toolbar-surface: rgb(255 250 241 / var(--skin-app-opacity, 0));
+  --skin-control-surface: rgb(249 223 211 / var(--skin-app-opacity, 0));
   --skin-toolbar-border: rgba(217, 175, 146, 0.62);
   --skin-tab-active: rgba(248, 214, 207, 0.58);
 }
@@ -176,11 +176,15 @@
 }
 
 [data-skin] .config-nav {
-  background: transparent;
+  background: var(--bg-secondary);
+}
+
+[data-skin] .tab-nav {
+  background: var(--bg-secondary);
 }
 
 [data-skin] .file-nav {
-  --file-nav-surface: transparent;
+  --file-nav-surface: var(--bg-secondary);
   --file-nav-toolbar: var(--skin-toolbar-surface);
   --file-nav-control: var(--skin-control-surface);
 }
@@ -188,12 +192,23 @@
 [data-skin] .file-nav > .panel-titlebar,
 [data-skin] .file-nav-filter,
 [data-skin] .git-nav-bar,
-[data-skin] .terminal-tab-bar {
-  -webkit-backdrop-filter: blur(8px) saturate(1.08);
-  backdrop-filter: blur(8px) saturate(1.08);
+[data-skin] .tab-nav > .panel-titlebar {
+  -webkit-backdrop-filter: blur(var(--skin-surface-blur, 0)) saturate(1.08);
+  backdrop-filter: blur(var(--skin-surface-blur, 0)) saturate(1.08);
+}
+
+[data-skin] .tab-nav > .panel-titlebar {
+  background: var(--skin-toolbar-surface);
+}
+
+[data-skin] .tab-nav-search,
+[data-skin] .tab-nav-rename-input {
+  background: var(--skin-control-surface);
 }
 
 [data-skin] .terminal-tab-bar {
+  /* A backdrop filter here turns this scrolling element into the containing
+     block for its fixed context menu, causing the menu to be clipped. */
   background: var(--skin-toolbar-surface);
   border-bottom-color: var(--skin-toolbar-border);
 }
@@ -211,7 +226,7 @@
 [data-skin] .terminal-empty,
 [data-skin] .terminal-starting,
 [data-skin] .lazy-panel-loading {
-  background: color-mix(in srgb, var(--bg-primary) 48%, transparent);
+  background: var(--bg-primary);
 }
 
 [data-skin] .cartoon-anime1-overlay {
