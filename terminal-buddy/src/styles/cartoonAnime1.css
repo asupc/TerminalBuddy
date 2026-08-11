@@ -38,6 +38,10 @@
     url('../assets/cartoon-anime1-background.png') center / cover no-repeat,
     #fff7fb;
   --skin-art-shadow: drop-shadow(0 12px 22px rgba(196, 91, 139, 0.18));
+  --skin-toolbar-surface: rgba(255, 250, 252, 0.28);
+  --skin-control-surface: rgba(255, 235, 245, 0.48);
+  --skin-toolbar-border: rgba(239, 176, 201, 0.58);
+  --skin-tab-active: rgba(255, 226, 239, 0.52);
 }
 
 [data-skin="starry"] {
@@ -76,6 +80,10 @@
     radial-gradient(circle at 80% 85%, rgba(121, 132, 255, 0.22), transparent 34%),
     linear-gradient(145deg, #15184f, #22236c 48%, #17184d);
   --skin-art-shadow: drop-shadow(0 0 26px rgba(137, 125, 255, 0.3));
+  --skin-toolbar-surface: rgba(27, 29, 88, 0.52);
+  --skin-control-surface: rgba(47, 48, 119, 0.62);
+  --skin-toolbar-border: rgba(102, 93, 168, 0.7);
+  --skin-tab-active: rgba(91, 74, 154, 0.58);
 }
 
 [data-skin="cyber"] {
@@ -114,6 +122,10 @@
     radial-gradient(circle at 77% 78%, rgba(255, 45, 186, 0.14), transparent 33%),
     linear-gradient(160deg, #02030b, #070819 56%, #02030b);
   --skin-art-shadow: drop-shadow(0 0 25px rgba(255, 45, 186, 0.28));
+  --skin-toolbar-surface: rgba(4, 6, 20, 0.62);
+  --skin-control-surface: rgba(15, 17, 47, 0.72);
+  --skin-toolbar-border: rgba(110, 43, 101, 0.72);
+  --skin-tab-active: rgba(70, 17, 65, 0.68);
 }
 
 [data-skin="sakura"] {
@@ -152,6 +164,10 @@
     radial-gradient(circle at 92% 6%, rgba(228, 85, 104, 0.13), transparent 27%),
     linear-gradient(145deg, #fffaf0, #fff7ec 54%, #fffaf4);
   --skin-art-shadow: drop-shadow(0 18px 20px rgba(133, 73, 62, 0.18));
+  --skin-toolbar-surface: rgba(255, 250, 241, 0.32);
+  --skin-control-surface: rgba(249, 223, 211, 0.52);
+  --skin-toolbar-border: rgba(217, 175, 146, 0.62);
+  --skin-tab-active: rgba(248, 214, 207, 0.58);
 }
 
 [data-skin] .app-container {
@@ -171,8 +187,25 @@
 
 [data-skin] .file-nav {
   --file-nav-surface: transparent;
-  --file-nav-toolbar: color-mix(in srgb, var(--bg-secondary) 76%, transparent);
-  --file-nav-control: color-mix(in srgb, var(--bg-tertiary) 84%, transparent);
+  --file-nav-toolbar: var(--skin-toolbar-surface);
+  --file-nav-control: var(--skin-control-surface);
+}
+
+[data-skin] .file-nav > .panel-titlebar,
+[data-skin] .file-nav-filter,
+[data-skin] .git-nav-bar,
+[data-skin] .terminal-tab-bar {
+  -webkit-backdrop-filter: blur(8px) saturate(1.08);
+  backdrop-filter: blur(8px) saturate(1.08);
+}
+
+[data-skin] .terminal-tab-bar {
+  background: var(--skin-toolbar-surface);
+  border-bottom-color: var(--skin-toolbar-border);
+}
+
+[data-skin] .terminal-tab.active {
+  background: var(--skin-tab-active);
 }
 
 [data-skin] .terminal-panel,
