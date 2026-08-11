@@ -234,7 +234,7 @@ const LIGHT_COLORS: TerminalColors = {
 };
 
 const CARTOON_COLORS: TerminalColors = {
-  background: 'rgba(255, 253, 248, 0.58)',
+  background: 'rgba(255, 253, 248, 0)',
   foreground: '#71475C',
   lightOptimized: true,
   cursor: '#EF6F9B',
@@ -307,7 +307,7 @@ const CYBER_COLORS: TerminalColors = {
 };
 
 const SAKURA_COLORS: TerminalColors = {
-  background: 'rgba(255, 251, 241, 0.58)',
+  background: 'rgba(255, 251, 241, 0)',
   foreground: '#552D31',
   lightOptimized: true,
   cursor: '#E45568',

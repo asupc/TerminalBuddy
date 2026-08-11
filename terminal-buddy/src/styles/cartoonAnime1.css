@@ -35,9 +35,8 @@
   --shadow-menu: 0 12px 32px rgba(137, 77, 108, 0.18);
   --shadow-dialog: 0 24px 64px rgba(137, 77, 108, 0.22);
   --skin-canvas:
-    radial-gradient(circle at 82% 84%, rgba(241, 116, 170, 0.16), transparent 32%),
-    radial-gradient(circle at 8% 9%, rgba(167, 127, 233, 0.1), transparent 26%),
-    linear-gradient(145deg, #fff9fc, #fff6fa 54%, #fffaf4);
+    url('../assets/cartoon-anime1-background.png') center / cover no-repeat,
+    #fff7fb;
   --skin-art-shadow: drop-shadow(0 12px 22px rgba(196, 91, 139, 0.18));
 }
 
@@ -232,17 +231,19 @@
 }
 
 [data-skin="cartoon"] .cartoon-anime1-left {
-  background-image: url('../assets/cartoon-anime1-left.png');
+  display: none;
 }
 
 [data-skin="cartoon"] .cartoon-anime1-center {
-  background-image: url('../assets/cartoon-anime1-center.png');
+  display: none;
 }
 
 [data-skin="cartoon"] .cartoon-anime1-hero {
   width: min(36%, 590px);
   height: min(54%, 550px);
   background-image: url('../assets/cartoon-anime1-hero.png');
+  filter: drop-shadow(0 12px 24px rgba(196, 91, 139, 0.28)) saturate(1.12) contrast(1.05);
+  opacity: 0.94;
 }
 
 [data-skin="starry"] .cartoon-anime1-left {
@@ -283,6 +284,8 @@
   width: min(40%, 565px);
   height: min(56%, 560px);
   background-image: url('../assets/skin-sakura-hero.png');
+  filter: drop-shadow(0 18px 22px rgba(133, 73, 62, 0.26)) saturate(1.08) contrast(1.06);
+  opacity: 0.94;
 }
 
 @media (max-width: 900px) {
