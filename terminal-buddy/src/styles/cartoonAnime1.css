@@ -75,10 +75,8 @@
   --shadow-menu: 0 12px 34px rgba(6, 8, 43, 0.48);
   --shadow-dialog: 0 24px 68px rgba(6, 8, 43, 0.58);
   --skin-canvas:
-    radial-gradient(circle, rgba(255, 255, 255, 0.72) 0 1px, transparent 1.5px) 0 0 / 46px 46px,
-    radial-gradient(circle, rgba(188, 166, 255, 0.62) 0 1px, transparent 1.7px) 17px 29px / 79px 79px,
-    radial-gradient(circle at 80% 85%, rgba(121, 132, 255, 0.22), transparent 34%),
-    linear-gradient(145deg, #15184f, #22236c 48%, #17184d);
+    url('../assets/skin-starry-background.png') center bottom / cover no-repeat,
+    #17184d;
   --skin-art-shadow: drop-shadow(0 0 26px rgba(137, 125, 255, 0.3));
   --skin-toolbar-surface: rgba(27, 29, 88, 0.52);
   --skin-control-surface: rgba(47, 48, 119, 0.62);
@@ -117,10 +115,8 @@
   --shadow-menu: 0 12px 34px rgba(0, 0, 0, 0.54);
   --shadow-dialog: 0 24px 70px rgba(0, 0, 0, 0.64);
   --skin-canvas:
-    linear-gradient(rgba(0, 217, 255, 0.1) 1px, transparent 1px) 0 0 / 42px 42px,
-    linear-gradient(90deg, rgba(255, 45, 186, 0.1) 1px, transparent 1px) 0 0 / 42px 42px,
-    radial-gradient(circle at 77% 78%, rgba(255, 45, 186, 0.14), transparent 33%),
-    linear-gradient(160deg, #02030b, #070819 56%, #02030b);
+    url('../assets/skin-cyber-background.png') center bottom / cover no-repeat,
+    #02030b;
   --skin-art-shadow: drop-shadow(0 0 25px rgba(255, 45, 186, 0.28));
   --skin-toolbar-surface: rgba(4, 6, 20, 0.62);
   --skin-control-surface: rgba(15, 17, 47, 0.72);
@@ -159,10 +155,8 @@
   --shadow-menu: 0 12px 32px rgba(117, 67, 50, 0.17);
   --shadow-dialog: 0 24px 64px rgba(117, 67, 50, 0.24);
   --skin-canvas:
-    radial-gradient(ellipse, rgba(228, 85, 104, 0.18) 0 2px, transparent 2.6px) 13px 7px / 64px 48px,
-    repeating-linear-gradient(0deg, rgba(144, 97, 64, 0.024) 0 1px, transparent 1px 5px),
-    radial-gradient(circle at 92% 6%, rgba(228, 85, 104, 0.13), transparent 27%),
-    linear-gradient(145deg, #fffaf0, #fff7ec 54%, #fffaf4);
+    url('../assets/skin-sakura-background.png') center bottom / cover no-repeat,
+    #fff8ef;
   --skin-art-shadow: drop-shadow(0 18px 20px rgba(133, 73, 62, 0.18));
   --skin-toolbar-surface: rgba(255, 250, 241, 0.32);
   --skin-control-surface: rgba(249, 223, 211, 0.52);
@@ -284,7 +278,7 @@
 }
 
 [data-skin="starry"] .cartoon-anime1-center {
-  background-image: url('../assets/skin-starry-center.png');
+  display: none;
 }
 
 [data-skin="starry"] .cartoon-anime1-hero {
@@ -293,10 +287,12 @@
 
 [data-skin="cyber"] .cartoon-anime1-left {
   background-image: url('../assets/skin-cyber-left.png');
+  mix-blend-mode: screen;
 }
 
 [data-skin="cyber"] .cartoon-anime1-center {
   background-image: url('../assets/skin-cyber-center.png');
+  mix-blend-mode: screen;
 }
 
 [data-skin="cyber"] .cartoon-anime1-hero {
@@ -307,10 +303,12 @@
 
 [data-skin="sakura"] .cartoon-anime1-left {
   background-image: url('../assets/skin-sakura-left.png');
+  mix-blend-mode: multiply;
 }
 
 [data-skin="sakura"] .cartoon-anime1-center {
   background-image: url('../assets/skin-sakura-center.png');
+  mix-blend-mode: multiply;
 }
 
 [data-skin="sakura"] .cartoon-anime1-hero {
