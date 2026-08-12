@@ -175,6 +175,12 @@
   background: transparent;
 }
 
+/* 侧栏面板的通用进入动画会从 opacity: 0 淡入。半透明皮肤下这会让
+   面板短暂露出完整背景，看起来像不透明度先归零再恢复。 */
+[data-skin] .ui-style-sidebar .nav-panel-slot.active > * {
+  animation: none;
+}
+
 [data-skin] .activity-bar,
 [data-skin] .config-nav {
   background: var(--bg-secondary);
