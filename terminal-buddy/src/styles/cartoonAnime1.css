@@ -175,6 +175,7 @@
   background: transparent;
 }
 
+[data-skin] .activity-bar,
 [data-skin] .config-nav {
   background: var(--bg-secondary);
 }
@@ -185,20 +186,16 @@
 
 [data-skin] .file-nav {
   --file-nav-surface: var(--bg-secondary);
-  --file-nav-toolbar: var(--skin-toolbar-surface);
+  --file-nav-toolbar: transparent;
   --file-nav-control: var(--skin-control-surface);
 }
 
 [data-skin] .file-nav > .panel-titlebar,
 [data-skin] .file-nav-filter,
-[data-skin] .git-nav-bar,
 [data-skin] .tab-nav > .panel-titlebar {
-  -webkit-backdrop-filter: blur(var(--skin-surface-blur, 0)) saturate(1.08);
-  backdrop-filter: blur(var(--skin-surface-blur, 0)) saturate(1.08);
-}
-
-[data-skin] .tab-nav > .panel-titlebar {
-  background: var(--skin-toolbar-surface);
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 [data-skin] .tab-nav-search,
@@ -206,10 +203,14 @@
   background: var(--skin-control-surface);
 }
 
+[data-skin] .file-nav-content {
+  background: transparent;
+}
+
 [data-skin] .terminal-tab-bar {
   /* A backdrop filter here turns this scrolling element into the containing
      block for its fixed context menu, causing the menu to be clipped. */
-  background: var(--skin-toolbar-surface);
+  background: var(--bg-secondary);
   border-bottom-color: var(--skin-toolbar-border);
 }
 
@@ -226,7 +227,7 @@
 [data-skin] .terminal-empty,
 [data-skin] .terminal-starting,
 [data-skin] .lazy-panel-loading {
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
 }
 
 [data-skin] .cartoon-anime1-overlay {

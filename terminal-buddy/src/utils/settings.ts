@@ -205,6 +205,7 @@ export const initAppSettings = async (): Promise<void> => {
         parsed.appOpacityBySkin = parsed.terminalBackgroundOpacityBySkin;
       }
       delete parsed.terminalBackgroundOpacityBySkin;
+      parsed.appOpacityBySkin = getAppOpacities({ ...DEFAULT_SETTINGS, ...parsed } as AppSettings);
       // 兼容旧版总开关：升级后保留用户此前关闭通知的选择。
       if (parsed.claudeCodeNotifications === false && parsed.claudeDecisionNotifications === undefined) {
         parsed.claudeDecisionNotifications = false;
@@ -218,9 +219,13 @@ export const initAppSettings = async (): Promise<void> => {
 };
 
 export const saveAppSettings = (settings: AppSettings) => {
-  _cachedSettings = settings;
-  applyAppOpacity(settings);
-  writeClientData('settings', JSON.stringify(settings)).catch(() => {});
+  const normalizedSettings: AppSettings = {
+    ...settings,
+    appOpacityBySkin: getAppOpacities(settings),
+  };
+  _cachedSettings = normalizedSettings;
+  applyAppOpacity(normalizedSettings);
+  writeClientData('settings', JSON.stringify(normalizedSettings)).catch(() => {});
   window.dispatchEvent(new CustomEvent('app-settings-changed'));
 };
 

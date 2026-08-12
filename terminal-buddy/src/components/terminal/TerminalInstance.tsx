@@ -42,6 +42,15 @@ interface TerminalInstanceProps {
   splitMode?: 'off' | '2x1' | '2x2';
 }
 
+// 半透明皮肤由 terminal-instance 外层统一绘制一次背景。xterm 画布保持透明，
+// 避免相同 rgba 在外层与画布上重复合成（例如 45% 两层叠加后视觉接近 70%）。
+const toXtermCanvasTheme = (colors: TerminalColors) => {
+  const { lightOptimized: _lightOptimized, ...theme } = colors;
+  return colors.background.startsWith('rgba(')
+    ? { ...theme, background: 'rgba(0, 0, 0, 0)' }
+    : theme;
+};
+
 
 export const TerminalInstance: FC<TerminalInstanceProps> = ({
   terminalId,
@@ -170,8 +179,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const bg = currentTheme?.background || '#1e1e1e';
     const fg = currentTheme?.foreground || '#cccccc';
     const lightOptimized = !!currentTheme?.lightOptimized;
-    const { lightOptimized: _lightOptimized, ...xtermTheme } = currentTheme || { background: bg, foreground: fg };
-    term.options.theme = xtermTheme;
+    term.options.theme = toXtermCanvasTheme(currentTheme || { background: bg, foreground: fg });
     term.options.minimumContrastRatio = lightOptimized ? 4.5 : 1;
   }, []);
 
@@ -361,10 +369,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       void bootLog(`initTerminal[${terminalId}]: terminal traits took ${(performance.now() - tBuildNum).toFixed(0)}ms, build=${buildNumber}, mode=${terminalLoadingMode}`);
 
       const tNewTerm = performance.now();
-      const { lightOptimized: initialLightOptimized, ...initialTheme } = colorTheme || {
+      const initialColors = colorTheme || {
         background: '#1e1e1e',
         foreground: '#cccccc',
       };
+      const initialLightOptimized = !!initialColors.lightOptimized;
+      const initialTheme = toXtermCanvasTheme(initialColors);
       const terminal = new Terminal({
         cursorBlink: false,
         cursorStyle: 'block',

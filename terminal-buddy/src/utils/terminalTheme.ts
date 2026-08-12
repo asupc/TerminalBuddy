@@ -333,10 +333,12 @@ const SAKURA_COLORS: TerminalColors = {
 };
 
 const DECORATIVE_THEME_BACKGROUND_RGB: Record<DecorativeThemeSkin, readonly [number, number, number]> = {
-  cartoon: [255, 253, 248],
-  starry: [22, 24, 81],
-  cyber: [3, 5, 16],
-  sakura: [255, 251, 241],
+  // 与各皮肤的 --bg-secondary 完全一致，确保终端与左右主分栏在同一
+  // 不透明度下呈现相同的合成深浅，而不是看起来像用了不同档位。
+  cartoon: [255, 253, 251],
+  starry: [28, 31, 91],
+  cyber: [6, 8, 24],
+  sakura: [255, 253, 248],
 };
 
 const appOpacityThemeCache = new WeakMap<TerminalColors, Map<string, TerminalColors>>();
