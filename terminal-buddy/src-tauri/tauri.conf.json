@@ -22,7 +22,8 @@
         "fullscreen": false,
         "visible": false,
         "backgroundColor": "#1e1e1e",
-        "decorations": false
+        "decorations": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion"
       }
     ],
     "security": {
