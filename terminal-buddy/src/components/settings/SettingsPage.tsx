@@ -11,6 +11,7 @@ import {
   Settings,
   SlidersHorizontal,
   SquareTerminal,
+  Terminal,
   Webhook,
   type LucideIcon,
 } from 'lucide-react';
@@ -36,6 +37,7 @@ const SshSettings = lazy(() => import('./SshSettings').then(module => ({ default
 const BotNotificationSettings = lazy(() => import('./BotNotificationSettings').then(module => ({ default: module.BotNotificationSettings })));
 const HookSettings = lazy(() => import('./HookSettings').then(module => ({ default: module.HookSettings })));
 const WebManageSettings = lazy(() => import('../shared/WebManageDialog').then(module => ({ default: module.WebManageSettings })));
+const ExtraParamsSettings = lazy(() => import('./ExtraParamsSettings').then(module => ({ default: module.ExtraParamsSettings })));
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -51,7 +53,8 @@ type SettingsSectionId =
   | 'ssh'
   | 'hooks'
   | 'web-management'
-  | 'bot-notifications';
+  | 'bot-notifications'
+  | 'extra-params';
 
 interface SettingsSection {
   id: SettingsSectionId;
@@ -70,6 +73,7 @@ const SECTIONS: ReadonlyArray<SettingsSection> = [
   { id: 'hooks', label: 'Hook 设置', icon: Webhook },
   { id: 'web-management', label: 'Web 管理', icon: Globe2 },
   { id: 'bot-notifications', label: '机器人通知', icon: MessageSquareMore },
+  { id: 'extra-params', label: '启动参数', icon: Terminal },
 ];
 
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
@@ -201,6 +205,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         return <WebManageSettings />;
       case 'bot-notifications':
         return <BotNotificationSettings />;
+      case 'extra-params':
+        return <ExtraParamsSettings />;
     }
   };
 

@@ -268,6 +268,7 @@ export interface AppState {
 	addExtraParamPreset: (name: string, params: string, tagColor?: string | null, commandMatch?: string | null, mode?: "append" | "independent") => void;
 	updateExtraParamPreset: (id: string, patch: Partial<Omit<ExtraParamPreset, "id">>) => void;
 	removeExtraParamPreset: (id: string) => void;
+	reorderExtraParamPresets: (fromId: string, toId: string, position: "before" | "after") => void;
 
 	// Last click region for F2 routing
 	lastClickRegion: "config" | "tab" | null;

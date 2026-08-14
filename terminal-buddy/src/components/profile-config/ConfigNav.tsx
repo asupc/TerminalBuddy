@@ -559,7 +559,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             添加配置
           </div>
           <div className="context-menu-item" onClick={() => { onManageExtraParams(); closeContextMenu(); }}>
-            添加启动参数
+            启动参数管理
           </div>
         </div>
       )}

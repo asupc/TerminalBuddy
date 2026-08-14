@@ -1,16 +1,12 @@
 import { FC, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Pencil, X } from 'lucide-react';
+import { Pencil, X, GripVertical } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { TAB_COLORS } from '../../types';
 import type { ExtraParamMode, ExtraParamPreset } from '../../types';
 import { Dialog, ConfirmDialog } from '../shared/Dialog';
 import './ExtraParamsDialog.css';
-
-interface ExtraParamsDialogProps {
-  onClose: () => void;
-}
 
 const ColorPicker: FC<{
   value: string | null;
@@ -164,23 +160,25 @@ const PresetEditor: FC<{
 
 const emptyDraft: PresetDraft = { name: '', params: '', mode: 'append', tagColor: null, commandMatch: '' };
 
-export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
-  // 受控：mount 时下一帧切到 open 触发入场；onClose 请求关闭时跑离场，离场结束再回调 prop onClose
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setOpen(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
+/**
+ * 启动参数预设的管理 UI 主体：新增/编辑/删除/列表。
+ * 既可作为 Dialog 内容（带外层 Dialog 的入场动画），也可直接嵌入设置面板。
+ * 弹出位置无关，因此不要在此处渲染任何外框/Dialog/标题。
+ */
+export const ExtraParamsManager: FC = () => {
   const {
     extraParamPresets,
     addExtraParamPreset,
     updateExtraParamPreset,
     removeExtraParamPreset,
+    reorderExtraParamPresets,
   } = useAppStore();
   const [draft, setDraft] = useState<PresetDraft>(emptyDraft);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<PresetDraft>(emptyDraft);
   const [pendingDelete, setPendingDelete] = useState<ExtraParamPreset | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(null);
 
   const handleAdd = () => {
     if (!draft.name.trim() || !draft.params.trim()) return;
@@ -214,15 +212,68 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
 
   const cancelEdit = () => setEditingId(null);
 
+  // 拖拽排序不走 HTML5 DnD：WebView2 上 Tauri 的原生 drag-drop（dragDropEnabled，文件拖入依赖）
+  // 会替换 OLE drop target，导致页面内 dragover/drop 事件永不触发。
+  // 改用 mouse 事件实现（同 ConfigEditDialog 启动命令排序的做法）。
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ id: string; startY: number; active: boolean } | null>(null);
+  const dropTargetRef = useRef<{ id: string; position: 'before' | 'after' } | null>(null);
+
+  // 按 clientY 命中目标行，并返回插入位置；越过底部时落在最后一行 after
+  const hitTestRow = (clientY: number, draggingId: string): { id: string; position: 'before' | 'after' } | null => {
+    const rows = listRef.current?.querySelectorAll<HTMLElement>('.extra-param-item') ?? [];
+    let last: { id: string; position: 'before' | 'after' } | null = null;
+    for (const row of rows) {
+      const id = row.dataset.presetId;
+      if (!id || id === draggingId) continue;
+      const rect = row.getBoundingClientRect();
+      if (clientY < rect.bottom) {
+        return { id, position: clientY < rect.top + rect.height / 2 ? 'before' : 'after' };
+      }
+      last = { id, position: 'after' };
+    }
+    return last;
+  };
+
+  const handleHandleMouseDown = (e: React.MouseEvent<HTMLSpanElement>, id: string) => {
+    if (e.button !== 0) return;
+    e.preventDefault(); // 阻止按下后选中文本
+    dragRef.current = { id, startY: e.clientY, active: false };
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      if (!drag.active) {
+        // 移动超过阈值才进入拖拽，避免单击误触
+        if (Math.abs(ev.clientY - drag.startY) < 4) return;
+        drag.active = true;
+        setDraggingId(drag.id);
+      }
+      const target = hitTestRow(ev.clientY, drag.id);
+      dropTargetRef.current = target;
+      setDropTarget(prev => (prev?.id === target?.id && prev?.position === target?.position ? prev : target));
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      const drag = dragRef.current;
+      const target = dropTargetRef.current;
+      dragRef.current = null;
+      dropTargetRef.current = null;
+      setDraggingId(null);
+      setDropTarget(null);
+      if (drag?.active && target && target.id !== drag.id) {
+        reorderExtraParamPresets(drag.id, target.id, target.position);
+      }
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
   return (
-    <Dialog
-      title="管理启动参数"
-      className="extra-params-dialog"
-      bodyClassName="extra-params-dialog-content"
-      open={open}
-      onClose={() => setOpen(false)}
-      onExit={onClose}
-    >
+    <>
       <div className="extra-params-input-section">
         <PresetEditor
           draft={draft}
@@ -232,15 +283,20 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
         />
       </div>
 
-      <div className="extra-params-list">
+      <div className="extra-params-list" ref={listRef}>
         <label style={{ display: 'block', marginBottom: 8 }}>
           已有预设 ({extraParamPresets.length})
         </label>
         {extraParamPresets.length === 0 && (
           <div className="extra-params-empty">暂无预设</div>
         )}
-        {extraParamPresets.map((preset) =>
-          editingId === preset.id ? (
+        {extraParamPresets.map((preset) => {
+          const isEditing = editingId === preset.id;
+          const isDragging = draggingId === preset.id;
+          const dropClass = dropTarget && dropTarget.id === preset.id
+            ? (dropTarget.position === 'before' ? ' drop-before' : ' drop-after')
+            : '';
+          return isEditing ? (
             <div key={preset.id} className="extra-param-item editing">
               <PresetEditor
                 draft={editDraft}
@@ -251,7 +307,21 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
               />
             </div>
           ) : (
-            <div key={preset.id} className="extra-param-item">
+            <div
+              key={preset.id}
+              className={`extra-param-item${isDragging ? ' dragging' : ''}${dropClass}`}
+              data-preset-id={preset.id}
+            >
+              <span
+                className="extra-param-drag-handle"
+                onMouseDown={(e) => handleHandleMouseDown(e, preset.id)}
+                title="拖拽排序"
+                aria-label={`拖拽排序 ${preset.name}`}
+                role="button"
+                tabIndex={0}
+              >
+                <GripVertical size={14} aria-hidden="true" />
+              </span>
               <span
                 className="extra-param-tag-chip"
                 style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
@@ -283,8 +353,8 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
                 <X size={14} aria-hidden="true" />
               </button>
             </div>
-          ),
-        )}
+          );
+        })}
       </div>
       {pendingDelete && (
         <ConfirmDialog
@@ -298,6 +368,32 @@ export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
           onClose={() => setPendingDelete(null)}
         />
       )}
+    </>
+  );
+};
+
+interface ExtraParamsDialogProps {
+  onClose: () => void;
+}
+
+export const ExtraParamsDialog: FC<ExtraParamsDialogProps> = ({ onClose }) => {
+  // 受控：mount 时下一帧切到 open 触发入场；onClose 请求关闭时跑离场，离场结束再回调 prop onClose
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  return (
+    <Dialog
+      title="管理启动参数"
+      className="extra-params-dialog"
+      bodyClassName="extra-params-dialog-content"
+      open={open}
+      onClose={() => setOpen(false)}
+      onExit={onClose}
+    >
+      <ExtraParamsManager />
     </Dialog>
   );
 };
