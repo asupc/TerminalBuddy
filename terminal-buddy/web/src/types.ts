@@ -52,6 +52,10 @@ export interface TerminalInfo {
   /** 启动参数预设的 tag（启动时快照，跨端可见、刷新不丢） */
   extraParamTag?: string;
   extraParamTagColor?: string | null;
+  /** 启动时使用的额外参数快照（供「以此配置新建终端」复用） */
+  extraStartupParams?: string;
+  /** 额外参数模式：append / independent */
+  extraStartupMode?: ExtraParamMode;
 }
 
 export interface TabColorOption {

@@ -1,6 +1,6 @@
 import { FC } from 'react';
 import { openInExplorer } from '../../services/tauri';
-import type { Profile, TerminalSession } from '../../types';
+import type { ExtraParamMode, Profile, TerminalSession } from '../../types';
 
 interface TabContextMenuProps {
   x: number;
@@ -8,7 +8,7 @@ interface TabContextMenuProps {
   sessionId: string;
   sessions: TerminalSession[];
   profiles: Profile[];
-  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
   onClose: () => void;
   onRename: (session: TerminalSession | undefined) => void;
   onCloseSession: (sessionId: string) => void;
@@ -48,6 +48,7 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
             session.profileName,
             session.extraParamTag,
             session.extraParamTagColor,
+            session.extraParamMode,
           );
           onClose();
         }}>以此配置新建终端</div>

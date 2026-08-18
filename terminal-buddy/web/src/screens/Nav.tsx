@@ -23,7 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
-import { api } from '../api';
+import { api, type CreateTerminalOptions } from '../api';
 import { Dialog } from '../components/Dialog';
 import { useMetaWs } from '../hooks/useMetaWs';
 import { useHasHover } from '../hooks/useMediaQuery';
@@ -249,21 +249,19 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const activeTerminalId = view.screen === 'terminal' ? view.terminalId : null;
 
   const createNew = useCallback(
-    async (profile: Profile, preset?: ExtraParamPreset) => {
+    async (profile: Profile, preset?: ExtraParamPreset, extra?: CreateTerminalOptions) => {
       setBusyId(profile.id);
       setError('');
       try {
-        const info = await api.createTerminal(
-          profile.id,
-          preset
-            ? {
-                extraStartupParams: preset.params,
-                extraStartupMode: preset.mode,
-                extraParamTag: preset.name,
-                extraParamTagColor: preset.tagColor,
-              }
-            : undefined,
-        );
+        const options: CreateTerminalOptions | undefined = preset
+          ? {
+              extraStartupParams: preset.params,
+              extraStartupMode: preset.mode,
+              extraParamTag: preset.name,
+              extraParamTagColor: preset.tagColor,
+            }
+          : extra;
+        const info = await api.createTerminal(profile.id, options);
         setView({
           screen: 'terminal',
           terminalId: info.id,
@@ -327,7 +325,12 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         setError('配置已被删除，无法新建');
         return;
       }
-      await createNew(profile);
+      await createNew(profile, undefined, {
+        extraStartupParams: session.extraStartupParams,
+        extraStartupMode: session.extraStartupMode,
+        extraParamTag: session.extraParamTag,
+        extraParamTagColor: session.extraParamTagColor,
+      });
     },
     [sessions, profiles.length, handleCloseSession, loadProfiles, createNew, setView],
   );
