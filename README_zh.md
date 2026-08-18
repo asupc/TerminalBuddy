@@ -4,6 +4,12 @@
 
 [English](README.md)
 
+## 用户文档
+
+- [完整使用与配置指南](docs/完整使用与配置指南.md)
+- [使用技巧速查](docs/使用技巧.md)
+- [机器人通知接入指南](docs/机器人通知接入指南.md)
+
 ## 功能特性
 
 - **多终端类型** — 支持 PowerShell、CMD、SSH、Docker、Kubernetes、远程桌面（MSTSC）
