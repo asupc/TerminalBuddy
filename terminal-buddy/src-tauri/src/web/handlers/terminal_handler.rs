@@ -59,6 +59,8 @@ pub async fn start(
         owner: TerminalOwner::Web,
         extra_param_tag: req.extra_param_tag,
         extra_param_tag_color: req.extra_param_tag_color,
+        extra_startup_params: req.extra_startup_params,
+        extra_startup_mode: req.extra_startup_mode,
     };
     let _ = state.app_handle.emit("terminal-created", info.clone());
     Ok(Json(info))

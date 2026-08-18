@@ -120,6 +120,10 @@ pub struct TerminalInstance {
     pub owner: TerminalOwner,
     pub extra_param_tag: Option<String>,
     pub extra_param_tag_color: Option<String>,
+    /// 启动时使用的额外参数（快照，供 Web 端「以此配置新建终端」复用）
+    pub extra_startup_params: Option<String>,
+    /// 额外参数模式：append / independent
+    pub extra_startup_mode: Option<String>,
     backend: TerminalBackend,
     output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
     current_rows: u16,
@@ -693,47 +697,52 @@ impl TerminalService {
     /// 构建当前存活终端的列表（供 REST `GET /api/terminals`、Tauri 命令、meta WS 共用）。
     /// 过滤掉 PTY 已退出的实例，并用 ProfileService 补全 profile 元数据。
     pub fn list_terminals_info(&self) -> Vec<TerminalInfo> {
-        let entries: Vec<(
-            String,
-            String,
-            String,
-            String,
-            TerminalOwner,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        )> = {
+        struct InstanceSnapshot {
+            id: String,
+            profile_id: String,
+            display_name: String,
+            loading_mode: String,
+            owner: TerminalOwner,
+            group_override: Option<String>,
+            extra_param_tag: Option<String>,
+            extra_param_tag_color: Option<String>,
+            extra_startup_params: Option<String>,
+            extra_startup_mode: Option<String>,
+        }
+        let entries: Vec<InstanceSnapshot> = {
             let instances = self.lock_instances();
             instances
                 .values()
                 .filter(|inst| !inst.exited.load(Ordering::SeqCst))
-                .map(|inst| {
-                    (
-                        inst.id.clone(),
-                        inst.profile_id.clone(),
-                        inst.display_name.clone(),
-                        inst.backend.loading_mode().to_string(),
-                        inst.owner.clone(),
-                        inst.group_override.clone(),
-                        inst.extra_param_tag.clone(),
-                        inst.extra_param_tag_color.clone(),
-                    )
+                .map(|inst| InstanceSnapshot {
+                    id: inst.id.clone(),
+                    profile_id: inst.profile_id.clone(),
+                    display_name: inst.display_name.clone(),
+                    loading_mode: inst.backend.loading_mode().to_string(),
+                    owner: inst.owner.clone(),
+                    group_override: inst.group_override.clone(),
+                    extra_param_tag: inst.extra_param_tag.clone(),
+                    extra_param_tag_color: inst.extra_param_tag_color.clone(),
+                    extra_startup_params: inst.extra_startup_params.clone(),
+                    extra_startup_mode: inst.extra_startup_mode.clone(),
                 })
                 .collect()
         };
         entries
             .into_iter()
             .map(
-                |(
-                    id,
-                    profile_id,
-                    display_name,
-                    loading_mode,
-                    owner,
-                    group_override,
-                    extra_param_tag,
-                    extra_param_tag_color,
-                )| {
+                |InstanceSnapshot {
+                     id,
+                     profile_id,
+                     display_name,
+                     loading_mode,
+                     owner,
+                     group_override,
+                     extra_param_tag,
+                     extra_param_tag_color,
+                     extra_startup_params,
+                     extra_startup_mode,
+                 }| {
                     let profile = ProfileService::get_profile(&profile_id).ok();
                     TerminalInfo {
                         id,
@@ -753,6 +762,8 @@ impl TerminalService {
                         owner,
                         extra_param_tag,
                         extra_param_tag_color,
+                        extra_startup_params,
+                        extra_startup_mode,
                     }
                 },
             )
@@ -854,6 +865,8 @@ impl TerminalService {
             owner,
             extra_param_tag: extra_param_tag.map(str::to_string),
             extra_param_tag_color: extra_param_tag_color.map(str::to_string),
+            extra_startup_params: extra_startup_params.map(str::to_string),
+            extra_startup_mode: extra_startup_mode.map(str::to_string),
             backend,
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
@@ -1115,6 +1128,8 @@ impl TerminalService {
             exited: AtomicBool::new(false),
             extra_param_tag: None,
             extra_param_tag_color: None,
+            extra_startup_params: None,
+            extra_startup_mode: None,
         };
         self.insert_instance(instance);
 

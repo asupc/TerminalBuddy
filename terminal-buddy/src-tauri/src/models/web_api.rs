@@ -43,6 +43,12 @@ pub struct TerminalInfo {
     pub extra_param_tag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_param_tag_color: Option<String>,
+    /// 启动时使用的额外参数快照（供 Web 端「以此配置新建终端」复用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_startup_params: Option<String>,
+    /// 额外参数模式：append / independent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_startup_mode: Option<String>,
 }
 
 /// meta WebSocket 推送的消息（会话列表实时同步）。
