@@ -10,6 +10,7 @@ import {
 } from '../../services/tauri';
 import { isTextFile } from '../../utils/fileExtensions';
 import { getAppSettings } from '../../utils/settings';
+import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { showAlert, showConfirm } from '../../services/dialog';
 import { ChmodDialog } from './ChmodDialog';
 import { TransferPanel } from './TransferPanel';
@@ -589,13 +590,17 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
         if (containerRef.current) {
           const rect = containerRef.current.getBoundingClientRect();
           const newWidth = e.clientX - rect.left;
-          if (newWidth >= 150 && newWidth <= 500) setWidth(newWidth);
+          if (newWidth >= 150 && newWidth <= 500) {
+            setWidth(newWidth);
+            notifyTerminalPanelResize();
+          }
         }
       });
     };
     const handleUp = () => {
       setIsResizing(false);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      notifyTerminalPanelResize();
     };
     document.addEventListener('mousemove', handleMove);
     document.addEventListener('mouseup', handleUp);

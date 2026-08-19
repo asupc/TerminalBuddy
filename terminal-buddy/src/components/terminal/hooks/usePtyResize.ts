@@ -3,7 +3,11 @@ import type { Terminal } from '@xterm/xterm';
 import type { FitAddon } from '@xterm/addon-fit';
 import { getAppSettings } from '../../../utils/settings';
 import { useAppStore } from '../../../stores/appStore';
-import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from '../../../utils/terminalResizeEvent';
+import {
+  TERMINAL_PANEL_RESIZE_EVENT,
+  TERMINAL_RESIZE_EVENT,
+  type TerminalResizeDetail,
+} from '../../../utils/terminalResizeEvent';
 import { resolveSplitFontSize } from '../instance-utils';
 import { forceFitOf } from '../terminal-helpers';
 
@@ -66,6 +70,29 @@ export function usePtyResize(opts: UsePtyResizeOptions) {
       cancelAnimationFrame(raf2);
     };
   }, [opts.isActive, opts.visible]);
+
+  // Navigation dividers are deliberate layout changes. Force-fit active TUIs
+  // while dragging, but keep focus on the divider instead of stealing it back.
+  useEffect(() => {
+    let resizeRaf = 0;
+    const onPanelResize = () => {
+      if (resizeRaf) return;
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = 0;
+        if (!opts.visibleRef.current) return;
+        const term = opts.xtermRef.current;
+        if (!term) return;
+        const forceFit = forceFitOf(term);
+        if (forceFit) forceFit(true);
+        try { term.refresh(0, term.rows - 1); } catch { /* renderer may be disposing */ }
+      });
+    };
+    window.addEventListener(TERMINAL_PANEL_RESIZE_EVENT, onPanelResize);
+    return () => {
+      window.removeEventListener(TERMINAL_PANEL_RESIZE_EVENT, onPanelResize);
+      cancelAnimationFrame(resizeRaf);
+    };
+  }, [opts.terminalId]);
 
   // Split-screen layout changes (enter/exit/2x1<->2x2) must force a resize even
   // when a TUI (vim/claude code) is running, so the program redraws via SIGWINCH.
