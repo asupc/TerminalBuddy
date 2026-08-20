@@ -11,7 +11,7 @@ import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, open
 import { ServerMonitor } from '../shared/ServerMonitor';
 import { listen } from '@tauri-apps/api/event';
 import { getAppSettings, matchesHotkey } from '../../utils/settings';
-import { getHotkey } from '../../services/hotkeys';
+import { getHotkey, isAppHotkeyEvent } from '../../services/hotkeys';
 import { getAllSuggestions, getTerminalSuggestions } from '../../data/commandTemplates';
 import { bootLog } from '../../utils/bootLog';
 import { useAppStore } from '../../stores/appStore';
@@ -451,6 +451,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // F11: 全屏切换；F2: 重命名（TabNav / ConfigNav / TerminalTabBar）
         // 返回 false 让这些键冒泡到 document，不被 xterm 消费
         if (e.type === 'keydown' && (e.key === 'F11' || e.key === 'F2')) return false;
+        // 应用内快捷键（导航开关/设置/新建/关闭标签）放行到 window 分发器,不被 xterm 消费;
+        // autocomplete 不在此列,由 capture 阶段 handleKeyDown 本地拦截
+        if (isAppHotkeyEvent(e)) return false;
         return true;
       });
 
