@@ -1,7 +1,7 @@
-import { FC } from 'react';
+import { FC, useEffect, useState } from 'react';
 import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, type VsCodeTerminalSupport } from '../../services/tauri';
 import { BREATHING_LIGHT_COLORS } from '../../types';
-import type { AppSettings, BreathingLightColorMode } from '../../utils/settings';
+import { formatHotkey, type AppSettings, type BreathingLightColorMode } from '../../utils/settings';
 
 interface BehaviorSettingsProps {
   settings: AppSettings;
@@ -11,6 +11,21 @@ interface BehaviorSettingsProps {
 
 export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSetting, vsCodeSupport }) => {
   const vsCodeAvailable = vsCodeSupport?.available === true;
+  const [recordingHotkey, setRecordingHotkey] = useState(false);
+
+  // 录制期间在 window 捕获阶段拦截 Esc 取消录制；设置弹窗（Dialog）在 document
+  // 捕获阶段监听 Esc 关闭整个弹窗，必须先于它阻止传播
+  useEffect(() => {
+    if (!recordingHotkey) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        setRecordingHotkey(false);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [recordingHotkey]);
   return (
     <div className="settings-general">
       <div className="settings-section">
@@ -207,6 +222,29 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <span>右键粘贴</span>
         </label>
         <p className="settings-desc">右键时若无选中文本，直接粘贴剪贴板内容到终端</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-label">补全面板快捷键</label>
+        <button
+          className={`btn-secondary hotkey-recorder ${recordingHotkey ? 'recording' : ''}`}
+          type="button"
+          onClick={() => setRecordingHotkey(true)}
+          onBlur={() => setRecordingHotkey(false)}
+          onKeyDown={(e) => {
+            if (!recordingHotkey) return;
+            e.preventDefault();
+            e.stopPropagation();
+            // Esc 取消录制由 window 捕获阶段监听统一处理（见上）
+            const formatted = formatHotkey(e.nativeEvent);
+            if (formatted) {
+              updateSetting('autocompleteHotkey', formatted);
+              setRecordingHotkey(false);
+            }
+          }}
+        >
+          {recordingHotkey ? '请按下新快捷键…' : (settings.autocompleteHotkey || '未设置')}
+        </button>
+        <p className="settings-desc">在终端中按下该快捷键可唤起或关闭命令补全面板（输入为空时显示全部命令）；点击按钮后按下组合键录制，Esc 取消</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">

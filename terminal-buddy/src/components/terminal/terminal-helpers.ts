@@ -54,6 +54,8 @@ export type AutocompleteState = {
   anchorX: number;
   anchorBelowY: number;
   anchorAboveY: number;
+  /** 快捷键唤起的面板内置搜索框（自动弹出面板无搜索框） */
+  searchable?: boolean;
 };
 
 export type RightClickPasteState = {

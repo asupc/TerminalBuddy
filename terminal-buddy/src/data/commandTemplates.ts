@@ -131,6 +131,18 @@ export function getAllSuggestions(): SuggestionItem[] {
   return result;
 }
 
+// 子序列模糊匹配：query 的每个字符按顺序出现在 text 中即可命中（如 ns 匹配 netstat）
+const isSubsequence = (query: string, text: string): boolean => {
+  let index = 0;
+  for (const ch of text) {
+    if (ch === query[index]) {
+      index += 1;
+      if (index === query.length) return true;
+    }
+  }
+  return false;
+};
+
 export function getTerminalSuggestions(input: string): SuggestionItem[] {
   const query = input.trimStart().toLowerCase();
   if (!query) return [];
@@ -154,9 +166,10 @@ export function getTerminalSuggestions(input: string): SuggestionItem[] {
     const command = suggestion.command.toLowerCase();
     const desc = suggestion.desc.toLowerCase();
     if (command === query) continue;
-    if (command.startsWith(query)) {
+    // 命令与说明均支持子序列模糊匹配；命令命中（10）优先于说明命中（30）
+    if (isSubsequence(query, command)) {
       add({ ...suggestion, kind: suggestion.kind ?? 'template' }, 10);
-    } else if (desc.includes(query)) {
+    } else if (isSubsequence(query, desc)) {
       add({ ...suggestion, kind: suggestion.kind ?? 'template' }, 30);
     }
   }
