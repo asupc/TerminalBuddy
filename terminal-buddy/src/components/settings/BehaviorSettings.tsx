@@ -212,6 +212,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
       </div>
       <div className="settings-section">
         <label className="settings-label">快捷键</label>
+        <p className="settings-desc">点击按钮后按下组合键录制,按 Esc 取消</p>
         {HOTKEY_ACTIONS.map((action) => {
           const current = getHotkey(action.id);
           // 与其他动作当前生效键重复时提示,不阻止保存
