@@ -49,26 +49,45 @@ registerHotkeyAction('toggleConfigNav', () => useAppStore.getState().toggleConfi
 registerHotkeyAction('toggleFileNav', () => useAppStore.getState().toggleFileTree());
 registerHotkeyAction('openSettings', () => useAppStore.getState().openSettingsDialog());
 // 关闭当前标签：与 TabNav / TerminalTabBar 单标签关闭逻辑一致；
-// 活跃终端（正在执行任务）先弹窗确认，避免误按快捷键直接杀掉正在执行任务的终端
+// 编辑器脏页签与活跃终端（正在执行任务）先弹窗确认，避免误按快捷键丢失未保存内容或杀掉正在执行任务的终端
 registerHotkeyAction('closeTab', () => {
   const store = useAppStore.getState();
+  // 特殊页签（git 历史等）展示时不关闭后台终端，与标签栏关闭按钮不可达一致
+  if (store.activeSpecialTab) return;
   const sessionId = store.activeSessionId;
   if (!sessionId) return;
   const session = store.sessions.find(s => s.id === sessionId);
-  if (session && isTerminalWorking(store.terminalActivities[sessionId])) {
-    void (async () => {
-      const message = session.profileName
-        ? `终端「${session.profileName}」正在执行任务，确定要关闭吗？`
-        : '终端正在执行任务，确定要关闭吗？';
-      const confirmed = await showConfirm(message, { title: '终端正在执行任务' });
-      if (!confirmed) return;
-      store.removeSession(sessionId);
-      void closeTerminal(sessionId).catch(err => console.error(err));
-    })();
-    return;
+  if (session?.sessionType === 'editor') {
+    if (session.isDirty) {
+      void (async () => {
+        const confirmed = await showConfirm(
+          `文件「${session.profileName}」有未保存的更改，确定要关闭吗？`,
+          { title: '未保存的更改' },
+        );
+        if (!confirmed) return;
+        store.removeSession(sessionId);
+      })();
+      return;
+    }
+    store.removeSession(sessionId);
+  } else if (session?.starting) {
+    store.removeSession(sessionId);
+  } else if (session) {
+    if (isTerminalWorking(store.terminalActivities[sessionId])) {
+      void (async () => {
+        const confirmed = await showConfirm(
+          `终端「${session.profileName}」正在执行任务，确定要关闭吗？`,
+          { title: '终端正在执行任务' },
+        );
+        if (!confirmed) return;
+        store.removeSession(sessionId);
+        void closeTerminal(sessionId).catch(err => console.error(err));
+      })();
+      return;
+    }
+    store.removeSession(sessionId);
+    void closeTerminal(sessionId).catch(err => console.error(err));
   }
-  store.removeSession(sessionId);
-  void closeTerminal(sessionId).catch(err => console.error(err));
 });
 
 // 判断按键事件是否命中任一应用内快捷键（不含 autocomplete 本地拦截与 showWindow 全局动作）
