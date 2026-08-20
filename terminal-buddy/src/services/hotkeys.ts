@@ -1,8 +1,9 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { register, unregister } from '@tauri-apps/plugin-global-shortcut';
-import { useAppStore } from '../stores/appStore';
+import { isTerminalWorking, useAppStore } from '../stores/appStore';
 import { getAppSettings, matchesHotkey } from '../utils/settings';
 import { closeTerminal } from './tauri';
+import { showConfirm } from './dialog';
 
 export type HotkeyActionId =
   | 'showWindow' | 'toggleConfigNav' | 'toggleFileNav'
@@ -47,11 +48,25 @@ export const registerHotkeyAction = (id: HotkeyActionId, fn: () => void): void =
 registerHotkeyAction('toggleConfigNav', () => useAppStore.getState().toggleConfigPanel());
 registerHotkeyAction('toggleFileNav', () => useAppStore.getState().toggleFileTree());
 registerHotkeyAction('openSettings', () => useAppStore.getState().openSettingsDialog());
-// 关闭当前标签：与 TabNav / TerminalTabBar 单标签关闭逻辑一致
+// 关闭当前标签：与 TabNav / TerminalTabBar 单标签关闭逻辑一致；
+// 活跃终端（正在执行任务）先弹窗确认，避免误按快捷键直接杀掉正在执行任务的终端
 registerHotkeyAction('closeTab', () => {
   const store = useAppStore.getState();
   const sessionId = store.activeSessionId;
   if (!sessionId) return;
+  const session = store.sessions.find(s => s.id === sessionId);
+  if (session && isTerminalWorking(store.terminalActivities[sessionId])) {
+    void (async () => {
+      const message = session.profileName
+        ? `终端「${session.profileName}」正在执行任务，确定要关闭吗？`
+        : '终端正在执行任务，确定要关闭吗？';
+      const confirmed = await showConfirm(message, { title: '终端正在执行任务' });
+      if (!confirmed) return;
+      store.removeSession(sessionId);
+      void closeTerminal(sessionId).catch(err => console.error(err));
+    })();
+    return;
+  }
   store.removeSession(sessionId);
   void closeTerminal(sessionId).catch(err => console.error(err));
 });
