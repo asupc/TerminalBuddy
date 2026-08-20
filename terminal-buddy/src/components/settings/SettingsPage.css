@@ -1723,3 +1723,27 @@ input.data-path-input {
   color: var(--text-secondary, #aaa);
   font-size: 12px;
 }
+/* 快捷键分区:动作名 + 录制按钮 + 说明/重复提示 */
+.hotkey-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.hotkey-row-name {
+  min-width: 96px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.hotkey-desc {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+}
+
+.hotkey-duplicate {
+  font-size: 12px;
+  color: var(--danger, #f48771);
+}
