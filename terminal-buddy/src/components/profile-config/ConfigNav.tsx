@@ -3,6 +3,7 @@ import { useAppStore } from '../../stores/appStore';
 import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
+import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog } from '../shared/Dialog';
@@ -323,6 +324,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
         if (newWidth >= 150 && newWidth <= (isSidebarMode ? 400 : 500)) {
           setWidth(newWidth);
           widthRef.current = newWidth;
+          notifyTerminalPanelResize();
         }
       }
     });
@@ -332,6 +334,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     setIsResizing(false);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     saveConfigNavWidth(widthRef.current).catch(() => {});
+    notifyTerminalPanelResize();
     if (isSidebarMode) {
       window.dispatchEvent(new CustomEvent('navigation-width-changed', { detail: widthRef.current }));
     }

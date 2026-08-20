@@ -5,6 +5,7 @@ import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWi
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getWorkingDotColor } from '../../utils/tabColor';
+import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { buildGroupTree, type GroupNode } from '../../utils/groupTree';
@@ -119,11 +120,16 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     onResizeEnd: (w) => {
       const saveWidth = isSidebarMode ? saveConfigNavWidth : saveTabSidebarWidth;
       saveWidth(w).catch(console.error);
+      notifyTerminalPanelResize();
       if (isSidebarMode) {
         window.dispatchEvent(new CustomEvent('navigation-width-changed', { detail: w }));
       }
     },
   });
+
+  useEffect(() => {
+    if (isResizing) notifyTerminalPanelResize();
+  }, [isResizing, width]);
 
   useEffect(() => {
     getBackendAppSettings().then(s => setWidth(isSidebarMode ? s.configNavWidth || 250 : s.tabSidebarWidth || 200)).catch(() => {});

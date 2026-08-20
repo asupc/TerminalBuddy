@@ -5,6 +5,7 @@ import { listDirectory, openPath, openInExplorer, deletePath, renamePath, saveCo
 import { useAppStore } from '../../stores/appStore';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
+import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { showAlert } from '../../services/dialog';
 import { GitNavBar } from '../git/GitNavBar';
 import { RemoteFileTree } from './RemoteFileTree';
@@ -200,6 +201,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
         if (newWidth >= 150 && newWidth <= (isSidebarMode ? 400 : 500)) {
           setWidth(newWidth);
           widthRef.current = newWidth;
+          notifyTerminalPanelResize();
         }
       }
     });
@@ -212,6 +214,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     }
     const saveWidth = isSidebarMode ? saveConfigNavWidth : saveFileNavWidth;
     saveWidth(widthRef.current).catch(() => {});
+    notifyTerminalPanelResize();
     if (isSidebarMode) {
       window.dispatchEvent(new CustomEvent('navigation-width-changed', { detail: widthRef.current }));
     }
