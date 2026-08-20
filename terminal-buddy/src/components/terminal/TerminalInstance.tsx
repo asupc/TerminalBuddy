@@ -10,7 +10,9 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, openPath, readClipboardFilePaths, onTerminalOutput, drainTerminalOutput, getWindowsBuildNumber } from '../../services/tauri';
 import { ServerMonitor } from '../shared/ServerMonitor';
 import { listen } from '@tauri-apps/api/event';
-import { getAppSettings } from '../../utils/settings';
+import { getAppSettings, matchesHotkey } from '../../utils/settings';
+import { getHotkey, isAppHotkeyEvent } from '../../services/hotkeys';
+import { getAllSuggestions, getTerminalSuggestions } from '../../data/commandTemplates';
 import { bootLog } from '../../utils/bootLog';
 import { useAppStore } from '../../stores/appStore';
 import { isLightBackground, type TerminalColors } from '../../utils/terminalTheme';
@@ -84,6 +86,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
+  // 快捷键唤起面板内搜索框的关键字（自动弹出面板不使用）
+  const [autocompleteSearch, setAutocompleteSearch] = useState('');
   const isSsh = useAppStore(s => s.sessions.find(sess => sess.id === terminalId)?.terminalType === 'ssh');
   const windowMode = useAppStore(s => s.windowMode);
   const [scrollInfo, setScrollInfo] = useState({ top: 0, height: 0, visible: false });
@@ -103,6 +107,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     autocompleteRef.current = val;
     setAutocomplete(val);
   }, []);
+
+  // 关闭补全面板；搜索面板关闭后把焦点还给终端（搜索框卸载后焦点会丢失）
+  const closeAutocomplete = useCallback(() => {
+    if (autocompleteRef.current?.searchable) {
+      xtermRef.current?.focus();
+    }
+    updateAutocomplete(null);
+  }, [updateAutocomplete]);
   colorThemeRef.current = colorTheme;
 
   const sendPastedText = useCallback((text: string): boolean => {
@@ -229,7 +241,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         autocompleteTimer = null;
       }
       if (autocompleteRef.current) {
-        updateAutocomplete(null);
+        closeAutocomplete();
       }
     };
 
@@ -439,6 +451,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // F11: 全屏切换；F2: 重命名（TabNav / ConfigNav / TerminalTabBar）
         // 返回 false 让这些键冒泡到 document，不被 xterm 消费
         if (e.type === 'keydown' && (e.key === 'F11' || e.key === 'F2')) return false;
+        // 应用内快捷键（导航开关/设置/新建/关闭标签）放行到 window 分发器,不被 xterm 消费;
+        // autocomplete 不在此列,由 capture 阶段 handleKeyDown 本地拦截
+        if (isAppHotkeyEvent(e)) return false;
         return true;
       });
 
@@ -789,52 +804,72 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         }
       });
 
+      // 计算补全面板锚点（光标位置），供自动弹出与快捷键唤起共用
+      const computeAutocompleteAnchors = () => {
+        const buffer = terminal.buffer.active;
+        const screenEl = terminal.element!.querySelector('.xterm-screen') as HTMLElement;
+        if (!screenEl) return null;
+        const screenRect = screenEl.getBoundingClientRect();
+        const cellW = screenRect.width / terminal.cols;
+        const cellH = screenRect.height / terminal.rows;
+        const anchorX = screenRect.left + buffer.cursorX * cellW;
+        const anchorBelowY = screenRect.top + (buffer.cursorY + 1) * cellH;
+        const anchorAboveY = screenRect.top + buffer.cursorY * cellH;
+        return {
+          x: anchorX,
+          y: anchorBelowY,
+          anchorX,
+          anchorBelowY,
+          anchorAboveY,
+          inlineX: anchorX,
+          inlineY: screenRect.top + buffer.cursorY * cellH,
+          inlineHeight: cellH,
+        };
+      };
+
+      // 打开补全面板。forceAll 时输入为空也显示全部命令（快捷键唤起，内置搜索框）
+      const openAutocomplete = (forceAll = false) => {
+        if (disposed) return;
+        if (!allowsTerminalAutocomplete(terminal)) {
+          clearAutocomplete();
+          return;
+        }
+        const input = getInputAtCursor(terminal) ?? '';
+        if (!input && !forceAll) {
+          updateAutocomplete(null);
+          return;
+        }
+        const searchable = forceAll;
+        // 搜索面板用全量模糊匹配（可滚动浏览）；自动弹出保持 8 条上限
+        const matches = searchable
+          ? (input ? getTerminalSuggestions(input) : getAllSuggestions())
+          : getCommandSuggestions(input);
+        if (matches.length === 0) {
+          updateAutocomplete(null);
+          return;
+        }
+        const anchors = computeAutocompleteAnchors();
+        if (!anchors) return;
+        if (searchable) setAutocompleteSearch(input);
+        updateAutocomplete({
+          items: matches,
+          // 搜索面板默认高亮第一条，Enter/Tab 直接插入
+          index: searchable ? 0 : -1,
+          selectionExplicit: false,
+          input,
+          // 空输入（全部命令）时无内联提示，避免首条命令整体浮现在光标处
+          inlineCompletion: input ? getAutocompleteCompletion(matches[0].command, input) : '',
+          ...anchors,
+          searchable: searchable || undefined,
+        });
+      };
+
       // Autocomplete: update suggestions on keypress
       terminal.onKey(() => {
         if (autocompleteTimer) clearTimeout(autocompleteTimer);
         autocompleteTimer = setTimeout(() => {
           autocompleteTimer = null;
-          if (disposed) return;
-          if (!allowsTerminalAutocomplete(terminal)) {
-            clearAutocomplete();
-            return;
-          }
-          const buffer = terminal.buffer.active;
-          const input = getInputAtCursor(terminal) ?? '';
-          if (!input || input.length < 1) {
-            updateAutocomplete(null);
-            return;
-          }
-          const matches = getCommandSuggestions(input);
-          if (matches.length === 0) {
-            updateAutocomplete(null);
-            return;
-          }
-          // Calculate popup position
-          const screenEl = terminal.element!.querySelector('.xterm-screen') as HTMLElement;
-          if (!screenEl) return;
-          const screenRect = screenEl.getBoundingClientRect();
-          const cellW = screenRect.width / terminal.cols;
-          const cellH = screenRect.height / terminal.rows;
-          const anchorX = screenRect.left + buffer.cursorX * cellW;
-          const anchorBelowY = screenRect.top + (buffer.cursorY + 1) * cellH;
-          const anchorAboveY = screenRect.top + buffer.cursorY * cellH;
-          const inlineCompletion = getAutocompleteCompletion(matches[0].command, input);
-          updateAutocomplete({
-            items: matches,
-            index: -1,
-            selectionExplicit: false,
-            input,
-            inlineCompletion,
-            inlineX: anchorX,
-            inlineY: screenRect.top + buffer.cursorY * cellH,
-            inlineHeight: cellH,
-            x: anchorX,
-            y: anchorBelowY,
-            anchorX,
-            anchorBelowY,
-            anchorAboveY,
-          });
+          openAutocomplete();
         }, 0);
       });
 
@@ -863,6 +898,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Capture-phase keydown — fires before xterm's internal textarea sees the event
       const handleKeyDown = (e: KeyboardEvent) => {
+        // 补全面板内部的按键（如搜索框）由面板自行处理，避免被终端快捷键逻辑截获
+        if ((e.target as HTMLElement | null)?.closest?.('.autocomplete-popup')) return;
         // ReadOnly mode: only allow copy (Ctrl+C) and search (Ctrl+F)
         if (readOnly) {
           if (e.key === 'c' && e.ctrlKey && !e.shiftKey) {
@@ -881,6 +918,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           // Block all other input in readOnly mode
           e.preventDefault();
           e.stopPropagation();
+          return;
+        }
+        // 补全面板快捷键：面板开→关、关→开（空输入时显示全部命令）
+        const autocompleteHotkey = getHotkey('autocomplete');
+        if (autocompleteHotkey && matchesHotkey(e, autocompleteHotkey)) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (autocompleteRef.current) {
+            closeAutocomplete();
+          } else {
+            openAutocomplete(true);
+          }
           return;
         }
         const autocompleteAllowed = allowsTerminalAutocomplete(terminal);
@@ -1309,12 +1358,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     const handleMouseDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       if (!target.closest('.autocomplete-popup')) {
-        updateAutocomplete(null);
+        closeAutocomplete();
       }
     };
     document.addEventListener('mousedown', handleMouseDown);
     return () => document.removeEventListener('mousedown', handleMouseDown);
-  }, [autocomplete]);
+  }, [autocomplete, closeAutocomplete]);
 
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
@@ -1403,12 +1452,55 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           {autocomplete.inlineCompletion}
         </div>
       )}
-      {autocomplete && autocomplete.items.length > 0 && (
+      {autocomplete && (autocomplete.items.length > 0 || autocomplete.searchable) && (
         <div
           ref={autocompletePopupRef}
-          className="autocomplete-popup"
+          className={`autocomplete-popup ${autocomplete.searchable ? 'has-search' : ''}`}
           style={{ left: autocomplete.x, top: autocomplete.y }}
         >
+          {autocomplete.searchable && (
+            <input
+              className="autocomplete-search"
+              type="text"
+              placeholder="搜索命令或说明..."
+              value={autocompleteSearch}
+              autoFocus
+              onChange={(e) => {
+                const query = e.target.value;
+                setAutocompleteSearch(query);
+                const items = query ? getTerminalSuggestions(query) : getAllSuggestions();
+                updateAutocomplete({ ...autocomplete, items, index: items.length > 0 ? 0 : -1 });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  closeAutocomplete();
+                  return;
+                }
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  if (autocomplete.items.length === 0) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const delta = e.key === 'ArrowDown' ? 1 : -1;
+                  const next = Math.min(Math.max(autocomplete.index + delta, 0), autocomplete.items.length - 1);
+                  updateAutocomplete({ ...autocomplete, index: next });
+                  return;
+                }
+                if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
+                  const item = autocomplete.items[autocomplete.index >= 0 ? autocomplete.index : 0];
+                  if (!item) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onOutputRef.current(terminalId, item.command);
+                  closeAutocomplete();
+                }
+              }}
+            />
+          )}
+          {autocomplete.items.length === 0 && (
+            <div className="autocomplete-empty">无匹配命令</div>
+          )}
           {autocomplete.items.map((cmd, i) => (
             <div
               key={cmd.command}
@@ -1417,15 +1509,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
                 const buffer = xtermRef.current?.buffer.active;
                 const term = xtermRef.current;
                 if (!buffer || !term || !allowsTerminalAutocomplete(term)) {
-                  updateAutocomplete(null);
+                  closeAutocomplete();
                   return;
                 }
                 const input = getInputAtCursor(term);
-                if (input) {
+                if (autocomplete.searchable || !input) {
+                  // 搜索面板或输入为空：整条插入命令
+                  onOutputRef.current(terminalId, cmd.command);
+                } else {
                   const completion = getAutocompleteCompletion(cmd.command, input);
                   if (completion) onOutputRef.current(terminalId, completion);
                 }
-                updateAutocomplete(null);
+                closeAutocomplete();
               }}
             >
               <span className="autocomplete-cmd">{cmd.command}</span>

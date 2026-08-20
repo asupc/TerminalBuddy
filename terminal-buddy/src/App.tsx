@@ -22,6 +22,7 @@ import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './
 import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
 import { initializeClaudeNotificationActions } from './services/claudeNotification';
+import { initAppHotkeys, registerHotkeyAction } from './services/hotkeys';
 import { restoreTabs, launchTerminalSession } from './services/sessionRestore';
 import { useExitConfirm } from './hooks/useExitConfirm';
 
@@ -480,6 +481,12 @@ function App() {
       start: (rows, cols) => startBlankTerminal(terminalType, rows, cols, undefined, name),
     });
   }, [addSession, resolveStartingSession]);
+
+  // 统一快捷键系统:注册应用内分发与全局快捷键;newTerminal 依赖 App 上下文,在此注册执行器
+  useEffect(() => {
+    registerHotkeyAction('newTerminal', () => { void handleStartBlankTerminal('powershell'); });
+    return initAppHotkeys();
+  }, [handleStartBlankTerminal]);
 
   const handleStartTextEditor = useCallback(() => {
     useAppStore.getState().openDraftSession();

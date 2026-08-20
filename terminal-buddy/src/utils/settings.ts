@@ -1,4 +1,5 @@
 import { readClientData, writeClientData } from '../services/tauri';
+import type { HotkeyActionId } from '../services/hotkeys';
 
 export type ThemeSkin = 'dark' | 'light' | 'cartoon' | 'starry' | 'cyber' | 'sakura';
 export type ThemeMode = ThemeSkin | 'system';
@@ -58,6 +59,7 @@ export interface AppSettings {
   singleInstance: boolean;
   rightClickPaste: boolean;
   doubleClickRunBat: boolean;
+  hotkeys: Partial<Record<HotkeyActionId, string>>;
   zhipuApiKey: string;
   qianfanCookie: string;
   deepseekApiKey: string;
@@ -104,6 +106,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   singleInstance: true,
   rightClickPaste: false,
   doubleClickRunBat: false,
+  hotkeys: {},
   zhipuApiKey: '',
   qianfanCookie: '',
   deepseekApiKey: '',
@@ -205,6 +208,12 @@ export const initAppSettings = async (): Promise<void> => {
         parsed.appOpacityBySkin = parsed.terminalBackgroundOpacityBySkin;
       }
       delete parsed.terminalBackgroundOpacityBySkin;
+      // 迁移上一轮未发布的 autocompleteHotkey 到统一 hotkeys 映射
+      const legacyHotkey = (parsed as Partial<AppSettings> & { autocompleteHotkey?: string }).autocompleteHotkey;
+      if (legacyHotkey !== undefined && parsed.hotkeys === undefined) {
+        parsed.hotkeys = { autocomplete: legacyHotkey };
+      }
+      delete (parsed as Partial<AppSettings> & { autocompleteHotkey?: string }).autocompleteHotkey;
       parsed.appOpacityBySkin = getAppOpacities({ ...DEFAULT_SETTINGS, ...parsed } as AppSettings);
       // 兼容旧版总开关：升级后保留用户此前关闭通知的选择。
       if (parsed.claudeCodeNotifications === false && parsed.claudeDecisionNotifications === undefined) {
@@ -227,6 +236,41 @@ export const saveAppSettings = (settings: AppSettings) => {
   applyAppOpacity(normalizedSettings);
   writeClientData('settings', JSON.stringify(normalizedSettings)).catch(() => {});
   window.dispatchEvent(new CustomEvent('app-settings-changed'));
+};
+
+// --- 补全面板快捷键 ---
+
+// 统一按键显示名：空格显示为 Space，单个字母大写，其余按键原样（如 /、F2）
+const normalizeHotkeyKey = (key: string): string => {
+  if (key === ' ') return 'Space';
+  if (/^[a-z]$/.test(key)) return key.toUpperCase();
+  return key;
+};
+
+// 将按键事件格式化为快捷键字符串（如 'Alt+/'）；裸修饰键或无修饰键组合返回 null
+export const formatHotkey = (e: KeyboardEvent): string | null => {
+  if (e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta') return null;
+  if (!e.ctrlKey && !e.altKey && !e.shiftKey) return null;
+  const parts = [
+    e.ctrlKey ? 'Ctrl' : null,
+    e.altKey ? 'Alt' : null,
+    e.shiftKey ? 'Shift' : null,
+    normalizeHotkeyKey(e.key),
+  ].filter(Boolean) as string[];
+  return parts.join('+');
+};
+
+// 判断按键事件是否命中已保存的快捷键字符串
+export const matchesHotkey = (e: KeyboardEvent, hotkey: string): boolean => {
+  if (!hotkey) return false;
+  const parts = hotkey.split('+');
+  const mods = parts.slice(0, -1);
+  const key = parts[parts.length - 1];
+  return normalizeHotkeyKey(e.key) === key
+    && e.ctrlKey === mods.includes('Ctrl')
+    && e.altKey === mods.includes('Alt')
+    && e.shiftKey === mods.includes('Shift')
+    && !e.metaKey;
 };
 
 let _cachedTheme: ThemeMode | null = null;

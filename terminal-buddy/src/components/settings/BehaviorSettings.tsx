@@ -1,7 +1,9 @@
 import { FC } from 'react';
 import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, type VsCodeTerminalSupport } from '../../services/tauri';
+import { getHotkey, HOTKEY_ACTIONS, type HotkeyActionId } from '../../services/hotkeys';
 import { BREATHING_LIGHT_COLORS } from '../../types';
-import type { AppSettings, BreathingLightColorMode } from '../../utils/settings';
+import { type AppSettings, type BreathingLightColorMode } from '../../utils/settings';
+import { HotkeyRecorder } from './HotkeyRecorder';
 
 interface BehaviorSettingsProps {
   settings: AppSettings;
@@ -207,6 +209,33 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <span>右键粘贴</span>
         </label>
         <p className="settings-desc">右键时若无选中文本，直接粘贴剪贴板内容到终端</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-label">快捷键</label>
+        <p className="settings-desc">点击按钮后按下组合键录制,按 Esc 取消</p>
+        {HOTKEY_ACTIONS.map((action) => {
+          const current = getHotkey(action.id);
+          // 与其他动作当前生效键重复时提示,不阻止保存
+          const duplicate = HOTKEY_ACTIONS.find(
+            other => other.id !== action.id && current !== '' && getHotkey(other.id) === current,
+          );
+          return (
+            <div key={action.id} className="hotkey-row">
+              <span className="hotkey-row-name">{action.name}</span>
+              <HotkeyRecorder
+                value={current}
+                onRecord={(hotkey) => {
+                  const next: Partial<Record<HotkeyActionId, string>> = { ...(settings.hotkeys ?? {}), [action.id]: hotkey };
+                  updateSetting('hotkeys', next);
+                }}
+              />
+              {duplicate && <span className="hotkey-duplicate">与「{duplicate.name}」重复</span>}
+              <p className="settings-desc hotkey-desc">
+                {action.desc}{action.id === 'showWindow' ? '（全局，后台也可用）' : ''}
+              </p>
+            </div>
+          );
+        })}
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
