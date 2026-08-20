@@ -1,7 +1,7 @@
 {
-  "version": "1.4.0",
-  "releaseDate": "2026-08-03",
+  "version": "1.4.1",
+  "releaseDate": "2026-08-20",
   "mandatory": false,
-  "changelogMd": "## 1.4.0\n\n### 🛠️ 组件与 UI\n\n- `open_in_explorer` 路径不存在时逐级向上查找已存在目录，避免打开到文档目录\n- `components` 重组为按域子目录结构\n- 终端内决策交互（在 xterm 中确认/拒绝文件操作）、桌面 Toast 通知、任务状态实时追踪\n\n### 🔧 清理与维护\n\n- 错误分类本地化（前端可读错误码）\n- `needsInput` 重启恢复与旧 attempt 归档",
-  "downloadUrl": "https://gitee.com/updateme/terminal-buddy/releases/tag/v1.4.0"
+  "changelogMd": "## 1.4.1\n\n### ⚠️ 重要变更\n\n- 完整移除 v1.4.0 引入的 AI 交付编排子系统，回归「终端 + 连接 + 配置」主线；`ai_delivery/` 数据目录保留，可手动删除\n\n### ⌨️ 快捷键系统\n\n- 统一快捷键存储与中央分发器，设置页支持应用内快捷键录制\n- 全局快捷键「后台唤起主窗口」、面板式唤起与关键字筛选执行\n\n### 🎨 外观与皮肤\n\n- 设置页新增 UI 样式切换（默认 / 侧边栏-VS Code 风格）\n- 终端跟随应用主题、呼吸灯颜色模式配置\n\n### 🚀 启动参数管理\n\n- 配置维度额外参数独立管理，支持新增 / 编辑 / 删除 / 拖拽排序\n- 终端记录启动参数快照，Web 端与 PC 端「以此配置新建终端」跨端一致\n\n### 🧱 模块重构\n\n- 后端 git / terminal / bot / claude_hook / ai_usage 模块按层拆分，删除死代码\n- 前端 `tauri.ts` 拆为按域目录、`appStore` 拆 6 个 Zustand 切片\n\n### 🛠️ 修复与稳定性\n\n- 修复 git 锁未释放导致的死锁、窗口 resize 终端同步、配置导航排序按钮无反应\n- WebView2 性能优化（禁用遮挡计算等特性）\n\n### 📌 升级建议\n\n- 从 v1.4.0 / v1.3.x 可直接覆盖安装，无需先卸载",
+  "downloadUrl": "https://gitee.com/updateme/terminal-buddy/releases/tag/v1.4.1"
 }
