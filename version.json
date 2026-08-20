@@ -2,6 +2,6 @@
   "version": "1.4.0",
   "releaseDate": "2026-08-03",
   "mandatory": false,
-  "changelogMd": "## 1.4.0\n\n### 🛠️ 组件与 UI\n\n- `open_in_explorer` 路径不存在时逐级向上查找已存在目录，避免打开到文档目录\n- `components` 重组为按域子目录结构\n- 终端内决策交互（在 xterm 中确认/拒绝文件操作）、桌面 Toast 通知、任务状态实时追踪\n\n### 🔧 清理与维护\n\n- 错误分类本地化（前端可读错误码）\n- `needsInput` 重启恢复与旧 attempt 归档",
+  "changelogMd": "## 1.4.1\n\n### 🛠️ 组件与 UI\n\n- `open_in_explorer` 路径不存在时逐级向上查找已存在目录，避免打开到文档目录\n- `components` 重组为按域子目录结构\n- 终端内决策交互（在 xterm 中确认/拒绝文件操作）、桌面 Toast 通知、任务状态实时追踪\n\n### 🔧 清理与维护\n\n- 错误分类本地化（前端可读错误码）\n- `needsInput` 重启恢复与旧 attempt 归档",
   "downloadUrl": "https://gitee.com/updateme/terminal-buddy/releases/tag/v1.4.0"
 }
