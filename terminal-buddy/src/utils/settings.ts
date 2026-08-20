@@ -1,4 +1,5 @@
 import { readClientData, writeClientData } from '../services/tauri';
+import type { HotkeyActionId } from '../services/hotkeys';
 
 export type ThemeSkin = 'dark' | 'light' | 'cartoon' | 'starry' | 'cyber' | 'sakura';
 export type ThemeMode = ThemeSkin | 'system';
@@ -58,7 +59,7 @@ export interface AppSettings {
   singleInstance: boolean;
   rightClickPaste: boolean;
   doubleClickRunBat: boolean;
-  autocompleteHotkey: string;
+  hotkeys: Partial<Record<HotkeyActionId, string>>;
   zhipuApiKey: string;
   qianfanCookie: string;
   deepseekApiKey: string;
@@ -105,7 +106,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   singleInstance: true,
   rightClickPaste: false,
   doubleClickRunBat: false,
-  autocompleteHotkey: 'Alt+/',
+  hotkeys: {},
   zhipuApiKey: '',
   qianfanCookie: '',
   deepseekApiKey: '',
@@ -207,6 +208,12 @@ export const initAppSettings = async (): Promise<void> => {
         parsed.appOpacityBySkin = parsed.terminalBackgroundOpacityBySkin;
       }
       delete parsed.terminalBackgroundOpacityBySkin;
+      // 迁移上一轮未发布的 autocompleteHotkey 到统一 hotkeys 映射
+      const legacyHotkey = (parsed as Partial<AppSettings> & { autocompleteHotkey?: string }).autocompleteHotkey;
+      if (legacyHotkey !== undefined && parsed.hotkeys === undefined) {
+        parsed.hotkeys = { autocomplete: legacyHotkey };
+      }
+      delete (parsed as Partial<AppSettings> & { autocompleteHotkey?: string }).autocompleteHotkey;
       parsed.appOpacityBySkin = getAppOpacities({ ...DEFAULT_SETTINGS, ...parsed } as AppSettings);
       // 兼容旧版总开关：升级后保留用户此前关闭通知的选择。
       if (parsed.claudeCodeNotifications === false && parsed.claudeDecisionNotifications === undefined) {

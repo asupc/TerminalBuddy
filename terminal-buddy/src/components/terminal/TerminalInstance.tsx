@@ -11,6 +11,7 @@ import { acknowledgeTerminalOutput, getTerminalLoadingMode, resizeTerminal, open
 import { ServerMonitor } from '../shared/ServerMonitor';
 import { listen } from '@tauri-apps/api/event';
 import { getAppSettings, matchesHotkey } from '../../utils/settings';
+import { getHotkey } from '../../services/hotkeys';
 import { getAllSuggestions, getTerminalSuggestions } from '../../data/commandTemplates';
 import { bootLog } from '../../utils/bootLog';
 import { useAppStore } from '../../stores/appStore';
@@ -917,7 +918,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           return;
         }
         // 补全面板快捷键：面板开→关、关→开（空输入时显示全部命令）
-        const autocompleteHotkey = getAppSettings().autocompleteHotkey;
+        const autocompleteHotkey = getHotkey('autocomplete');
         if (autocompleteHotkey && matchesHotkey(e, autocompleteHotkey)) {
           e.preventDefault();
           e.stopPropagation();

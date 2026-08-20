@@ -1,5 +1,6 @@
 import { FC, useEffect, useState } from 'react';
 import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, type VsCodeTerminalSupport } from '../../services/tauri';
+import { getHotkey } from '../../services/hotkeys';
 import { BREATHING_LIGHT_COLORS } from '../../types';
 import { formatHotkey, type AppSettings, type BreathingLightColorMode } from '../../utils/settings';
 
@@ -237,12 +238,12 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
             // Esc 取消录制由 window 捕获阶段监听统一处理（见上）
             const formatted = formatHotkey(e.nativeEvent);
             if (formatted) {
-              updateSetting('autocompleteHotkey', formatted);
+              updateSetting('hotkeys', { ...(settings.hotkeys ?? {}), autocomplete: formatted });
               setRecordingHotkey(false);
             }
           }}
         >
-          {recordingHotkey ? '请按下新快捷键…' : (settings.autocompleteHotkey || '未设置')}
+          {recordingHotkey ? '请按下新快捷键…' : (getHotkey('autocomplete') || '未设置')}
         </button>
         <p className="settings-desc">在终端中按下该快捷键可唤起或关闭命令补全面板（输入为空时显示全部命令）；点击按钮后按下组合键录制，Esc 取消</p>
       </div>
