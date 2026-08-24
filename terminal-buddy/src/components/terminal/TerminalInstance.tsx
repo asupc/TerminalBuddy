@@ -15,7 +15,7 @@ import { getHotkey, isAppHotkeyEvent } from '../../services/hotkeys';
 import { getAllSuggestions, getTerminalSuggestions } from '../../data/commandTemplates';
 import { bootLog } from '../../utils/bootLog';
 import { useAppStore } from '../../stores/appStore';
-import { isLightBackground, type TerminalColors } from '../../utils/terminalTheme';
+import { isLightBackground, normalizeAnsiForLightBackground, type TerminalColors } from '../../utils/terminalTheme';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
@@ -325,9 +325,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const currentTheme = colorThemeRef.current;
       const lightBackground = !!currentTheme?.lightOptimized
         || isLightBackground(currentTheme?.background || '#1e1e1e');
-      const renderedOutput = codexTuiRef.current
+      const tuiAdaptedOutput = codexTuiRef.current
         ? adaptCodexInputBackground(output, lightBackground)
         : output;
+      const renderedOutput = normalizeAnsiForLightBackground(tuiAdaptedOutput, lightBackground);
 
       term.write(renderedOutput, () => {
         if (!allowsTerminalAutocomplete(term)) {
