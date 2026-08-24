@@ -1,6 +1,6 @@
 [package]
 name = "terminal-buddy"
-version = "1.4.0"
+version = "1.4.1"
 description = "TerminalBuddy - 终端配置管理工具"
 authors = [""]
 edition = "2021"
@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-winrt-notification = "0.7.3"
 windows-registry = "0.6"

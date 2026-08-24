@@ -6,6 +6,8 @@ import {
   Database,
   FileX2,
   Globe2,
+  Keyboard,
+  Palette,
   Plug,
   Server,
   Settings,
@@ -28,6 +30,8 @@ import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import './SettingsPage.css';
 
 const BehaviorSettings = lazy(() => import('./BehaviorSettings').then(module => ({ default: module.BehaviorSettings })));
+const AppearanceSettings = lazy(() => import('./AppearanceSettings').then(module => ({ default: module.AppearanceSettings })));
+const HotkeySettings = lazy(() => import('./HotkeySettings').then(module => ({ default: module.HotkeySettings })));
 const DataSettings = lazy(() => import('./DataSettings').then(module => ({ default: module.DataSettings })));
 const ProfilesSettings = lazy(() => import('./ProfilesSettings').then(module => ({ default: module.ProfilesSettings })));
 const CommandsSettings = lazy(() => import('./CommandsSettings').then(module => ({ default: module.CommandsSettings })));
@@ -45,6 +49,8 @@ interface SettingsPageProps {
 
 type SettingsSectionId =
   | 'behavior'
+  | 'appearance'
+  | 'hotkeys'
   | 'data'
   | 'profiles'
   | 'commands'
@@ -64,6 +70,8 @@ interface SettingsSection {
 
 const SECTIONS: ReadonlyArray<SettingsSection> = [
   { id: 'behavior', label: '行为设置', icon: SlidersHorizontal },
+  { id: 'appearance', label: '外观设置', icon: Palette },
+  { id: 'hotkeys', label: '快捷键设置', icon: Keyboard },
   { id: 'data', label: '数据管理', icon: Database },
   { id: 'profiles', label: '连接管理', icon: Plug },
   { id: 'commands', label: '命令模板', icon: SquareTerminal },
@@ -187,6 +195,10 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
             vsCodeSupport={vsCodeSupport}
           />
         );
+      case 'appearance':
+        return <AppearanceSettings settings={settings} updateSetting={updateSetting} />;
+      case 'hotkeys':
+        return <HotkeySettings settings={settings} updateSetting={updateSetting} />;
       case 'data':
         return <DataSettings dataPath={dataPath} askConfirm={askConfirm} setConfirmDialog={setConfirmDialog} />;
       case 'profiles':

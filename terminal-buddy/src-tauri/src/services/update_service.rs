@@ -3,7 +3,8 @@ use std::cmp::Ordering;
 use crate::models::UpdateInfo;
 
 /// 仓库根 version.json 的 Gitee Raw 地址。
-pub const MANIFEST_URL: &str = "https://gitee.com/updateme/terminal-buddy/raw/main/version.json";
+/// 注意：Gitee 仓库默认分支是 master（无 main 分支），分支名改错会 404。
+pub const MANIFEST_URL: &str = "https://gitee.com/updateme/terminal-buddy/raw/master/version.json";
 
 /// 比较两个 semver 字符串（点分三段）。
 ///

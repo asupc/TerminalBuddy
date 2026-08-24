@@ -311,6 +311,7 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(TerminalService::new())
         .manage(SshSessionService::new())
         .manage(WebServiceState::new())
