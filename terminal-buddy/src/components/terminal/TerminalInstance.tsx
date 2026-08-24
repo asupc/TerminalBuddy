@@ -47,9 +47,9 @@ interface TerminalInstanceProps {
 // 半透明皮肤由 terminal-instance 外层统一绘制一次背景。xterm 画布保持透明，
 // 避免相同 rgba 在外层与画布上重复合成（例如 45% 两层叠加后视觉接近 70%）。
 const toXtermCanvasTheme = (colors: TerminalColors) => {
-  const { lightOptimized: _lightOptimized, ...theme } = colors;
+  const { lightOptimized: _lightOptimized, canvasBackground, ...theme } = colors;
   return colors.background.startsWith('rgba(')
-    ? { ...theme, background: 'rgba(0, 0, 0, 0)' }
+    ? { ...theme, background: canvasBackground ?? 'rgba(0, 0, 0, 0)' }
     : theme;
 };
 

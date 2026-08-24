@@ -188,6 +188,8 @@ export const normalizeAnsiForLightBackground = (data: string, lightBackground: b
 export interface TerminalColors {
   background: string;
   foreground: string;
+  /** 透明画布的 RGB 基色，用于让渲染器按实际皮肤背景计算文字对比度。 */
+  canvasBackground?: string;
   cursor?: string;
   cursorAccent?: string;
   selectionBackground?: string;
@@ -318,27 +320,28 @@ const CYBER_COLORS: TerminalColors = {
 
 const SAKURA_COLORS: TerminalColors = {
   background: 'rgba(255, 251, 241, 0)',
-  foreground: '#552D31',
+  canvasBackground: 'rgba(255, 253, 248, 0)',
+  foreground: '#453238',
   lightOptimized: true,
-  cursor: '#E45568',
-  cursorAccent: '#FFF9EE',
-  selectionBackground: '#F3C8C4',
-  black: '#552D31',
-  red: '#B93649',
-  green: '#507B34',
-  yellow: '#795117',
-  blue: '#276F9F',
-  magenta: '#985186',
-  cyan: '#397B7D',
-  white: '#9C7770',
-  brightBlack: '#79595A',
-  brightRed: '#D14859',
-  brightGreen: '#699744',
-  brightYellow: '#946823',
-  brightBlue: '#3F87B7',
-  brightMagenta: '#B56BA1',
-  brightCyan: '#518F91',
-  brightWhite: '#B8958D',
+  cursor: '#B94758',
+  cursorAccent: '#FFF9F5',
+  selectionBackground: '#D99EAA',
+  black: '#453238',
+  red: '#B23A4D',
+  green: '#4E7049',
+  yellow: '#755A25',
+  blue: '#426675',
+  magenta: '#76586D',
+  cyan: '#4E6E6B',
+  white: '#78666A',
+  brightBlack: '#735F64',
+  brightRed: '#BE4658',
+  brightGreen: '#5A7953',
+  brightYellow: '#80672E',
+  brightBlue: '#527382',
+  brightMagenta: '#87677C',
+  brightCyan: '#5A7773',
+  brightWhite: '#856F73',
 };
 
 const DECORATIVE_THEME_BACKGROUND_RGB: Record<DecorativeThemeSkin, readonly [number, number, number]> = {
