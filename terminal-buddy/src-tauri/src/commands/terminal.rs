@@ -33,6 +33,7 @@ const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 2 * 1024 * 1024;
 struct TerminalOutputBuffer {
     chunks: VecDeque<Arc<str>>,
     bytes: usize,
+    desktop_attached: bool,
 }
 
 impl TerminalOutputBuffer {
@@ -40,10 +41,13 @@ impl TerminalOutputBuffer {
         Self {
             chunks: VecDeque::new(),
             bytes: 0,
+            desktop_attached: false,
         }
     }
 
-    fn push(&mut self, output: Arc<str>) {
+    /// Store recent output for late Web clients and report whether the desktop
+    /// listener has completed its initial snapshot handshake.
+    fn push(&mut self, output: Arc<str>) -> bool {
         self.bytes += output.len();
         self.chunks.push_back(output);
         while self.chunks.len() > TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS
@@ -54,6 +58,7 @@ impl TerminalOutputBuffer {
             };
             self.bytes -= removed.len();
         }
+        self.desktop_attached
     }
 
     fn collect(&self) -> String {
@@ -64,10 +69,14 @@ impl TerminalOutputBuffer {
         output
     }
 
-    fn drain(&mut self) -> String {
+    /// Atomically split startup output from subsequent live events. Output
+    /// pushed before this call is returned in the snapshot and is not emitted
+    /// to the desktop; later output is emitted through the registered listener.
+    fn attach_desktop(&mut self) -> String {
         let output = self.collect();
         self.chunks.clear();
         self.bytes = 0;
+        self.desktop_attached = true;
         output
     }
 }
@@ -386,11 +395,13 @@ fn spawn_output_forwarder(
                 Err(_) => Arc::from(String::from_utf8_lossy(&batch).to_string()),
             };
             if !output.is_empty() {
-                {
+                let desktop_attached = {
                     let mut buffer = output_buffer.lock().unwrap_or_else(|e| e.into_inner());
-                    buffer.push(output.clone());
+                    buffer.push(output.clone())
+                };
+                if desktop_attached {
+                    let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
                 }
-                let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
                 let web_state = app.state::<crate::services::WebServiceState>();
                 web_state.broadcast(&terminal_id, &output);
             }
@@ -987,8 +998,9 @@ impl TerminalService {
     pub fn drain_terminal_output(&self, id: &str) -> Result<String, String> {
         let buf_arc = self.output_buffer_arc(id)?;
         let mut buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
-        // 统一消费：drain 清空缓冲并返回全部内容；消费后下一轮只拿到新输出，避免重复累积。
-        Ok(buffer.drain())
+        // This command is the desktop attachment handshake: the lock makes the
+        // returned startup snapshot and all later live events mutually exclusive.
+        Ok(buffer.attach_desktop())
     }
 
     pub fn peek_terminal_output(&self, id: &str) -> Result<String, String> {

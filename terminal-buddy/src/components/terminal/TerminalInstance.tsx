@@ -15,7 +15,7 @@ import { getHotkey, isAppHotkeyEvent } from '../../services/hotkeys';
 import { getAllSuggestions, getTerminalSuggestions } from '../../data/commandTemplates';
 import { bootLog } from '../../utils/bootLog';
 import { useAppStore } from '../../stores/appStore';
-import { isLightBackground, type TerminalColors } from '../../utils/terminalTheme';
+import { isLightBackground, normalizeAnsiForLightBackground, type TerminalColors } from '../../utils/terminalTheme';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
@@ -47,9 +47,9 @@ interface TerminalInstanceProps {
 // 半透明皮肤由 terminal-instance 外层统一绘制一次背景。xterm 画布保持透明，
 // 避免相同 rgba 在外层与画布上重复合成（例如 45% 两层叠加后视觉接近 70%）。
 const toXtermCanvasTheme = (colors: TerminalColors) => {
-  const { lightOptimized: _lightOptimized, ...theme } = colors;
+  const { lightOptimized: _lightOptimized, canvasBackground, ...theme } = colors;
   return colors.background.startsWith('rgba(')
-    ? { ...theme, background: 'rgba(0, 0, 0, 0)' }
+    ? { ...theme, background: canvasBackground ?? 'rgba(0, 0, 0, 0)' }
     : theme;
 };
 
@@ -228,6 +228,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const cleanupFns: (() => void)[] = [];
     const preOpenOutputBuffer: string[] = [];
+    const pendingLiveOutput: string[] = [];
+    let terminalOutputAttached = false;
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
     let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -323,9 +325,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const currentTheme = colorThemeRef.current;
       const lightBackground = !!currentTheme?.lightOptimized
         || isLightBackground(currentTheme?.background || '#1e1e1e');
-      const renderedOutput = codexTuiRef.current
+      const tuiAdaptedOutput = codexTuiRef.current
         ? adaptCodexInputBackground(output, lightBackground)
         : output;
+      const renderedOutput = normalizeAnsiForLightBackground(tuiAdaptedOutput, lightBackground);
 
       term.write(renderedOutput, () => {
         if (!allowsTerminalAutocomplete(term)) {
@@ -1239,21 +1242,38 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       cleanupFns.push(...unlisteners);
     });
 
-    // Register Tauri event listener, then drain buffered backend output
+    // Register the listener before attaching, but hold live events until the
+    // startup snapshot has been written. The backend handshake guarantees that
+    // snapshot output is never also emitted as a live event.
     (async () => {
       const tListener = performance.now();
       void bootLog(`initTerminal[${terminalId}]: registering onTerminalOutput listener`);
-      const unlisten = await onTerminalOutput(terminalId, handleOutput);
+      const handleLiveOutput = (output: string) => {
+        if (terminalOutputAttached) {
+          handleOutput(output);
+        } else if (output) {
+          pendingLiveOutput.push(output);
+        }
+      };
+      const unlisten = await onTerminalOutput(terminalId, handleLiveOutput);
       if (disposed) { unlisten(); return; }
       cleanupFns.push(unlisten);
       void bootLog(`initTerminal[${terminalId}]: onTerminalOutput registered in ${(performance.now() - tListener).toFixed(0)}ms`);
 
-      // Drain any output buffered in the backend before the listener was active
+      // Atomically attach and fetch everything produced before live delivery starts.
       try {
         const tDrain = performance.now();
         const drained = await drainTerminalOutput(terminalId);
         if (drained && !disposed) {
           handleOutput(drained);
+        }
+        if (!disposed) {
+          terminalOutputAttached = true;
+          if (pendingLiveOutput.length > 0) {
+            const pending = pendingLiveOutput.join('');
+            pendingLiveOutput.length = 0;
+            handleOutput(pending);
+          }
         }
         void bootLog(`initTerminal[${terminalId}]: drainTerminalOutput took ${(performance.now() - tDrain).toFixed(0)}ms, len=${drained?.length ?? 0}`);
       } catch (err) {
@@ -1280,6 +1300,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         workingFallback = null;
       }
       pendingPtyResize = null;
+      pendingLiveOutput.length = 0;
       cleanupFns.forEach(fn => fn());
       xtermRef.current?.dispose();
       xtermRef.current = null;

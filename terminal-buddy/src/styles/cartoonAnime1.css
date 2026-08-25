@@ -128,40 +128,40 @@
   color-scheme: light;
   --bg-primary: rgb(255 249 238 / var(--skin-app-opacity, 0));
   --bg-secondary: rgb(255 253 248 / var(--skin-app-opacity, 0));
-  --bg-tertiary: rgb(249 223 211 / var(--skin-app-opacity, 0));
-  --bg-elevated: #fffdf8;
+  --bg-tertiary: rgb(246 231 227 / var(--skin-app-opacity, 0));
+  --bg-elevated: #fffaf7;
   --bg-overlay: rgba(88, 42, 38, 0.42);
-  --text-primary: #552d31;
-  --text-secondary: #7d5755;
-  --text-tertiary: #98736c;
-  --accent: #e45568;
-  --accent-hover: #ca3f54;
+  --text-primary: #453238;
+  --text-secondary: #6e565a;
+  --text-tertiary: #866f72;
+  --accent: #b94758;
+  --accent-hover: #a3394b;
   --accent-contrast: #ffffff;
-  --border: #d9af92;
-  --border-subtle: #ead4c3;
+  --border: #d2b4a9;
+  --border-subtle: #e7d4cc;
   --accent-color: var(--accent);
   --border-color: var(--border);
-  --danger: #ba3448;
-  --success: #648f40;
-  --warning: #8d5e16;
-  --list-hover-bg: rgba(247, 218, 207, 0.66);
-  --list-active-bg: rgba(228, 85, 104, 0.18);
-  --list-active-fg: #873742;
+  --danger: #af3547;
+  --success: #4f714a;
+  --warning: #76571c;
+  --list-hover-bg: rgba(238, 219, 215, 0.72);
+  --list-active-bg: rgba(185, 71, 88, 0.14);
+  --list-active-fg: #823343;
   --list-active-border-color: var(--accent);
   --list-active-border-width: 0px;
   --scrollbar-bg: transparent;
-  --scrollbar-thumb: #d7ad99;
-  --scrollbar-thumb-hover: #bd806c;
+  --scrollbar-thumb: #c9a39b;
+  --scrollbar-thumb-hover: #ac746c;
   --shadow-menu: 0 12px 32px rgba(117, 67, 50, 0.17);
   --shadow-dialog: 0 24px 64px rgba(117, 67, 50, 0.24);
   --skin-canvas:
     url('../assets/skin-sakura-background.png') center bottom / cover no-repeat,
     #fff8ef;
   --skin-art-shadow: drop-shadow(0 18px 20px rgba(133, 73, 62, 0.18));
-  --skin-toolbar-surface: rgb(255 250 241 / var(--skin-app-opacity, 0));
-  --skin-control-surface: rgb(249 223 211 / var(--skin-app-opacity, 0));
-  --skin-toolbar-border: rgba(217, 175, 146, 0.62);
-  --skin-tab-active: rgba(248, 214, 207, 0.58);
+  --skin-toolbar-surface: rgb(255 251 247 / var(--skin-app-opacity, 0));
+  --skin-control-surface: rgb(246 231 227 / var(--skin-app-opacity, 0));
+  --skin-toolbar-border: rgba(197, 158, 147, 0.64);
+  --skin-tab-active: rgba(232, 198, 201, 0.58);
 }
 
 [data-skin] .app-container {
@@ -228,6 +228,11 @@
 [data-skin] .terminal-content,
 [data-skin] .terminal-content.split-grid .split-cell {
   background: transparent;
+}
+
+/* 空分屏没有 TerminalInstance 绘制表面，需与左侧面板使用同一透明度背景。 */
+[data-skin] .terminal-content.split-grid .split-blank {
+  background: var(--bg-secondary);
 }
 
 [data-skin] .terminal-empty,
