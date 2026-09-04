@@ -132,7 +132,9 @@ export function Dialog({
       const id = requestAnimationFrame(() => setPhase('open'));
       return () => cancelAnimationFrame(id);
     }
-    if (open === false && phase !== 'leave') {
+    // phase 只能用 ref 读：一旦进依赖数组，上面 rAF 的 enter→open 切换会让本 effect 重跑
+    // 并把 phase 打回 enter，形成每帧往复的死循环，入场动画被反复重启 → 弹窗闪烁
+    if (open === false && phaseRef.current !== 'leave') {
       setPhase('leave');
       leaveTimerRef.current = window.setTimeout(() => {
         setMounted(false);
@@ -140,7 +142,7 @@ export function Dialog({
         onExitRef.current?.();
       }, leaveDurationMs);
     }
-  }, [open, isControlled, leaveDurationMs, phase]);
+  }, [open, isControlled, leaveDurationMs]);
 
   // 非受控模式：mount 后下一帧切换到 open，触发入场动画
   useEffect(() => {

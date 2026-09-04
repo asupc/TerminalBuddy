@@ -9,7 +9,10 @@
   background: var(--bg-overlay);
 }
 
-.tb-dialog-overlay[data-state="enter"] {
+/* enter 与 open 共用同一动画：切到 open 时 animation-name 不变，动画才能连续播完；
+   若只写 enter，下一帧 open 会移除 animation，弹窗从 opacity 0 硬跳到 1（闪一下） */
+.tb-dialog-overlay[data-state="enter"],
+.tb-dialog-overlay[data-state="open"] {
   animation: tb-dialog-overlay-enter var(--motion-fast) var(--ease-standard) both;
 }
 
@@ -54,7 +57,8 @@
   box-shadow: var(--shadow-dialog);
 }
 
-.tb-dialog-surface[data-state="enter"] {
+.tb-dialog-surface[data-state="enter"],
+.tb-dialog-surface[data-state="open"] {
   animation: tb-dialog-surface-enter var(--motion-normal) var(--ease-enter) both;
 }
 
