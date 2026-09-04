@@ -32,7 +32,7 @@ export const createTransfersSlice = (
 	extraParamPresets: [],
 	addExtraParamPreset: (name, params, tagColor = null, commandMatch = null, mode = "append") =>
 		set((state) => {
-			const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params, mode, tagColor, commandMatch }];
+			const next = [...state.extraParamPresets, { id: crypto.randomUUID(), name, params, mode, tagColor, commandMatch, enabled: true }];
 			writeClientData("extra_param_presets", JSON.stringify(next)).catch(() => {});
 			return { extraParamPresets: next };
 		}),

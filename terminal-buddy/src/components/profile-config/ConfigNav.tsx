@@ -459,6 +459,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           }}>启动</div>
           {extraParamPresets
             .filter((preset) => {
+              if (!preset.enabled) return false;
               if (!preset.commandMatch) return true;
               const target = profiles.find((p) => p.id === contextMenu.profileId);
               const match = preset.commandMatch.toLowerCase();

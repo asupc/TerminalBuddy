@@ -440,6 +440,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     if (!contextMenu) return [];
     const profile = profiles.find((p) => p.id === contextMenu.profileId);
     return extraParamPresets.filter((preset) => {
+      if (preset.enabled === false) return false;
       if (!preset.commandMatch) return true;
       const match = preset.commandMatch.toLowerCase();
       return (profile?.startupCommands || []).some((cmd) => cmd.toLowerCase().includes(match));

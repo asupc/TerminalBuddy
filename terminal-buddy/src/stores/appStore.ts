@@ -105,6 +105,7 @@ export async function initExtraParamPresets() {
 				mode: p.mode === "independent" ? "independent" : "append",
 				tagColor: p.tagColor ?? null,
 				commandMatch: p.commandMatch ?? null,
+				enabled: p.enabled !== false,
 			}));
 			useAppStore.setState({ extraParamPresets: normalized });
 		}

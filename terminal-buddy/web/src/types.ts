@@ -105,6 +105,8 @@ export interface ExtraParamPreset {
   tagColor: string | null;
   /** 命令匹配（PC 端用，Web 端保留字段不做过滤） */
   commandMatch: string | null;
+  /** 是否启用（PC 端管理弹窗维护）：禁用的预设不出现在启动菜单 */
+  enabled?: boolean;
 }
 
 /** 终端主题色（与 PC 端 src/types/index.ts PRESET_THEMES 保持一致） */

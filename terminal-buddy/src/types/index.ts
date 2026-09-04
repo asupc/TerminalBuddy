@@ -168,6 +168,8 @@ export interface ExtraParamPreset {
   tagColor: string | null;
   // 命令匹配：仅当配置的启动命令包含此字符串时，右键菜单才显示该预设；为空表示对所有配置可用
   commandMatch: string | null;
+  // 是否启用：禁用后右键菜单不再显示该预设（数据保留，可随时重新启用）
+  enabled: boolean;
 }
 
 export interface RemoteFileEntry {

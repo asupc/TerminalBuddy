@@ -309,7 +309,7 @@ export const ExtraParamsManager: FC = () => {
           ) : (
             <div
               key={preset.id}
-              className={`extra-param-item${isDragging ? ' dragging' : ''}${dropClass}`}
+              className={`extra-param-item${preset.enabled ? '' : ' disabled'}${isDragging ? ' dragging' : ''}${dropClass}`}
               data-preset-id={preset.id}
             >
               <span
@@ -322,6 +322,17 @@ export const ExtraParamsManager: FC = () => {
               >
                 <GripVertical size={14} aria-hidden="true" />
               </span>
+              <label
+                className="extra-param-toggle"
+                title={preset.enabled ? '已启用，点击禁用（禁用后右键菜单不再显示）' : '已禁用，点击启用'}
+              >
+                <input
+                  type="checkbox"
+                  checked={preset.enabled}
+                  onChange={(e) => updateExtraParamPreset(preset.id, { enabled: e.target.checked })}
+                  aria-label={`启用 ${preset.name}`}
+                />
+              </label>
               <span
                 className="extra-param-tag-chip"
                 style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
