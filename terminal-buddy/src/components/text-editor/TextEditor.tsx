@@ -1,5 +1,5 @@
 import { CSSProperties, FC, KeyboardEvent, PointerEvent, useEffect, useRef, useState, useCallback } from 'react';
-import { BookOpen, FileWarning } from 'lucide-react';
+import { Columns2, Eye, FileCode2, FileWarning } from 'lucide-react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { editor as MonacoEditor, KeyMod, KeyCode } from 'monaco-editor';
 import { readFileContent, writeFileContent, remoteUpload, getFileMeta, onTransferProgress, onTransferError } from '../../services/tauri';
@@ -33,6 +33,19 @@ const MARKDOWN_PREVIEW_DEFAULT_WIDTH = 50;
 const MARKDOWN_PREVIEW_MIN_PANE_WIDTH = 240;
 const MARKDOWN_PREVIEW_RESIZER_WIDTH = 5;
 
+type MarkdownViewMode = 'source' | 'split' | 'preview';
+
+const MARKDOWN_VIEW_MODES: { mode: MarkdownViewMode; label: string; title: string; icon: typeof Columns2 }[] = [
+  { mode: 'source', label: '源码', title: '源码模式：只显示 Markdown 源文本', icon: FileCode2 },
+  { mode: 'split', label: '分屏', title: '分屏模式：源码与预览并排显示', icon: Columns2 },
+  { mode: 'preview', label: '预览', title: '预览模式：只显示渲染后的预览', icon: Eye },
+];
+
+/** 三态视图轮换顺序：源码 → 分屏 → 预览 → 源码 */
+function cycleMarkdownViewMode(current: MarkdownViewMode): MarkdownViewMode {
+  return current === 'source' ? 'split' : current === 'split' ? 'preview' : 'source';
+}
+
 function getEditorSourceLineAtTop(editor: MonacoEditor.IStandaloneCodeEditor): number {
   const model = editor.getModel();
   const firstVisiblePosition = editor.getVisibleRanges()[0]?.getStartPosition();
@@ -59,10 +72,11 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [conflictDialog, setConflictDialog] = useState<'overwrite' | 'discard' | null>(null);
   const [saveNotify, setSaveNotify] = useState<{ type: 'saving' | 'success' | 'error'; msg: string } | null>(null);
-  const [isMarkdownPreviewOpen, setIsMarkdownPreviewOpen] = useState(false);
+  const [markdownViewMode, setMarkdownViewMode] = useState<MarkdownViewMode>('source');
   const [markdownPreviewWidth, setMarkdownPreviewWidth] = useState(MARKDOWN_PREVIEW_DEFAULT_WIDTH);
   const [isMarkdownPreviewResizing, setIsMarkdownPreviewResizing] = useState(false);
   const [markdownPreviewToggleRight, setMarkdownPreviewToggleRight] = useState(112);
+  const prevMarkdownViewModeRef = useRef<MarkdownViewMode>('source');
   const saveNotifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markdownResizePointerRef = useRef<number | null>(null);
   const editorScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -203,21 +217,8 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   }, [isActive, filePath, loadFileContent, conflictDialog]);
 
   useEffect(() => {
-    if (!isMarkdown) setIsMarkdownPreviewOpen(false);
+    if (!isMarkdown) setMarkdownViewMode('source');
   }, [isMarkdown]);
-
-  useEffect(() => {
-    if (!editorRef.current) return;
-    const frame = requestAnimationFrame(() => {
-      const editor = editorRef.current;
-      if (!editor) return;
-      editor.layout();
-      if (isMarkdownPreviewOpen) {
-        markdownPreviewRef.current?.scrollToSourceLine(getEditorSourceLineAtTop(editor));
-      }
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [isMarkdownPreviewOpen, markdownPreviewWidth]);
 
   useEffect(() => {
     if (!isMarkdownPreviewResizing) return;
@@ -314,6 +315,28 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       endColumn: 1,
     }, MonacoEditor.ScrollType.Immediate);
   }, []);
+
+  // 视图模式切换后重新布局编辑器，并按切换方向同步一次滚动：
+  // 源码 → 分屏：预览跟随编辑器顶部；预览 → 分屏：编辑器跟随预览顶部。
+  useEffect(() => {
+    const prevMode = prevMarkdownViewModeRef.current;
+    prevMarkdownViewModeRef.current = markdownViewMode;
+    if (!editorRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.layout();
+      if (markdownViewMode === 'split') {
+        if (prevMode === 'preview') {
+          const line = markdownPreviewRef.current?.getCurrentSourceLine();
+          if (line !== null && line !== undefined) handleMarkdownPreviewScroll(line);
+        } else {
+          markdownPreviewRef.current?.scrollToSourceLine(getEditorSourceLineAtTop(editor));
+        }
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [markdownViewMode, markdownPreviewWidth, handleMarkdownPreviewScroll]);
 
   const handleEditorMount: OnMount = useCallback((editor) => {
     editorRef.current = editor;
@@ -445,10 +468,10 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
 
     if (isMarkdown) {
       editor.addAction({
-        id: 'toggle-markdown-preview',
-        label: '切换 Markdown 侧边预览',
+        id: 'cycle-markdown-view',
+        label: '切换 Markdown 视图（源码/分屏/预览）',
         keybindings: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyV],
-        run: () => setIsMarkdownPreviewOpen(current => !current),
+        run: () => setMarkdownViewMode(cycleMarkdownViewMode),
       });
     }
 
@@ -526,6 +549,14 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
     setConflictDialog(null);
   }, [loadFileContent, onDirtyChange]);
 
+  // 视图切换控件的位置：源码模式贴在编辑器右上角（避开 minimap/滚动条），
+  // 分屏模式同样对齐编辑器右缘，预览模式则贴在预览区右上角。
+  const viewToggleRight = markdownViewMode === 'source'
+    ? markdownPreviewToggleRight
+    : markdownViewMode === 'split'
+      ? `calc(var(--markdown-preview-width) + ${markdownPreviewToggleRight + MARKDOWN_PREVIEW_RESIZER_WIDTH}px)`
+      : 12;
+
   if (error) {
     return (
       <div className="text-editor-error">
@@ -542,7 +573,13 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
 
   return (
     <div
-      className={`text-editor-container${isMarkdownPreviewOpen ? ' markdown-preview-open' : ''}${isMarkdownPreviewResizing ? ' markdown-preview-resizing' : ''}`}
+      className={
+        `text-editor-container`
+        + (markdownViewMode === 'split' ? ' markdown-preview-open' : '')
+        + (markdownViewMode === 'preview' ? ' markdown-view-preview' : '')
+        + (markdownViewMode === 'source' ? ' markdown-view-source' : '')
+        + (isMarkdownPreviewResizing ? ' markdown-preview-resizing' : '')
+      }
       ref={containerRef}
       style={{ '--markdown-preview-width': `${markdownPreviewWidth}%` } as CSSProperties}
     >
@@ -569,45 +606,59 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
             if (value !== undefined) setContent(value);
           }}
         />
-        {isMarkdown && (
-          <button
-            type="button"
-            className={`markdown-preview-toggle${isMarkdownPreviewOpen ? ' active' : ''}`}
-            style={{ right: markdownPreviewToggleRight }}
-            onClick={() => setIsMarkdownPreviewOpen(current => !current)}
-            aria-label={isMarkdownPreviewOpen ? '关闭 Markdown 预览' : '打开 Markdown 侧边预览'}
-            aria-pressed={isMarkdownPreviewOpen}
-            title={isMarkdownPreviewOpen ? '关闭 Markdown 预览' : '打开 Markdown 侧边预览'}
-          >
-            <BookOpen aria-hidden="true" />
-          </button>
-        )}
       </div>
-      {isMarkdownPreviewOpen && (
+      {isMarkdown && (
+        <div
+          className="markdown-view-toggle"
+          role="group"
+          aria-label="Markdown 视图切换"
+          style={{ right: viewToggleRight }}
+        >
+          {MARKDOWN_VIEW_MODES.map(({ mode, label, title, icon: Icon }) => {
+            const active = markdownViewMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                className={`markdown-view-btn${active ? ' active' : ''}`}
+                onClick={() => setMarkdownViewMode(mode)}
+                aria-label={`${label}模式`}
+                aria-pressed={active}
+                title={title}
+              >
+                <Icon aria-hidden="true" />
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {isMarkdown && (
         <>
-          <div
-            className="markdown-preview-resizer"
-            role="separator"
-            aria-label="调整编辑区和预览区宽度"
-            aria-orientation="vertical"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(100 - markdownPreviewWidth)}
-            tabIndex={0}
-            title="拖动调整宽度，双击恢复等宽"
-            onPointerDown={handleMarkdownResizeStart}
-            onPointerMove={handleMarkdownResizeMove}
-            onPointerUp={handleMarkdownResizeEnd}
-            onPointerCancel={handleMarkdownResizeEnd}
-            onKeyDown={handleMarkdownResizeKeyDown}
-            onDoubleClick={() => setMarkdownPreviewWidth(MARKDOWN_PREVIEW_DEFAULT_WIDTH)}
-          />
+          {markdownViewMode === 'split' && (
+            <div
+              className="markdown-preview-resizer"
+              role="separator"
+              aria-label="调整编辑区和预览区宽度"
+              aria-orientation="vertical"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(100 - markdownPreviewWidth)}
+              tabIndex={0}
+              title="拖动调整宽度，双击恢复等宽"
+              onPointerDown={handleMarkdownResizeStart}
+              onPointerMove={handleMarkdownResizeMove}
+              onPointerUp={handleMarkdownResizeEnd}
+              onPointerCancel={handleMarkdownResizeEnd}
+              onKeyDown={handleMarkdownResizeKeyDown}
+              onDoubleClick={() => setMarkdownPreviewWidth(MARKDOWN_PREVIEW_DEFAULT_WIDTH)}
+            />
+          )}
           <div className="markdown-preview-pane">
             <MarkdownPreview
               ref={markdownPreviewRef}
               content={content}
               filePath={filePath}
-              onScrollSourceLine={handleMarkdownPreviewScroll}
+              onScrollSourceLine={markdownViewMode === 'split' ? handleMarkdownPreviewScroll : undefined}
             />
           </div>
         </>

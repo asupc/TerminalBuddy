@@ -72,48 +72,81 @@
   --md-code-variable: #001080;
 }
 
-.markdown-preview-toggle {
+.markdown-view-toggle {
   position: absolute;
   top: 8px;
   z-index: 20;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid transparent;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg-elevated) 84%, transparent);
   color: var(--text-secondary);
   box-shadow: none;
-  cursor: pointer;
   opacity: 0.82;
-  transition:
-    opacity var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard),
-    background-color var(--motion-fast) var(--ease-standard),
-    border-color var(--motion-fast) var(--ease-standard);
+  transition: opacity var(--motion-fast) var(--ease-standard);
 }
 
-.markdown-preview-toggle svg {
-  width: 17px;
-  height: 17px;
+.markdown-view-toggle:hover {
+  opacity: 1;
+}
+
+.markdown-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.markdown-view-btn svg {
+  width: 15px;
+  height: 15px;
   stroke-width: 1.7;
 }
 
-.markdown-preview-toggle:hover,
-.markdown-preview-toggle.active {
-  opacity: 1;
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+.markdown-view-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
-.markdown-preview-toggle:focus-visible {
-  opacity: 1;
+.markdown-view-btn.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
+}
+
+.markdown-view-btn:focus-visible {
   outline: 1px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: 0;
+}
+
+.markdown-view-preview .text-editor-source {
+  display: none;
+}
+
+.markdown-view-source .markdown-preview-pane {
+  display: none;
+}
+
+.markdown-view-preview .markdown-preview-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 预览模式全宽展示：内容列撑满容器（分屏模式保留 920px 阅读宽度限制） */
+.markdown-view-preview .markdown-preview-body {
+  width: 100%;
 }
 
 .markdown-preview-scroll {
@@ -318,13 +351,19 @@
     min-width: 0;
   }
 
+  /* 窄窗口下分屏退化为纯预览，视图切换控件改贴预览区右上角 */
+  .markdown-preview-open .markdown-view-toggle {
+    right: 12px !important;
+  }
+
   .markdown-preview-body {
     padding: 32px 24px 64px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .markdown-preview-toggle {
+  .markdown-view-toggle,
+  .markdown-view-btn {
     transition: none;
   }
 }

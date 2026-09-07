@@ -1,4 +1,4 @@
-﻿import { lazy, Suspense, useEffect, useState, useRef, useCallback } from 'react';
+﻿import { lazy, Suspense, useEffect, useState, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from "./components/shell/TitleBar";
@@ -15,6 +15,7 @@ import { GlobalDialogHost } from "./components/shared/GlobalDialogHost";
 import { Toast } from "./components/shared/Toast";
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
+import { flushPendingSaveTabs } from './stores/slices/sessionsSlice';
 import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
 import { APP_VERSION } from './version';
@@ -27,6 +28,23 @@ import { restoreTabs, launchTerminalSession } from './services/sessionRestore';
 import { useExitConfirm } from './hooks/useExitConfirm';
 
 const SettingsPage = lazy(() => import('./components/settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
+
+/**
+ * 启动恢复的单次初始化守卫：dev 与 prod 行为一致。
+ * - 模块级 Promise 只创建一次，React StrictMode 的 mount → unmount → remount
+ *   会共享同一次恢复，不会重复创建已恢复的终端；
+ * - 失败时把 Promise 清空，允许下一次完整应用启动重试，不会永久卡在半完成标记。
+ */
+let restoreTabsPromise: Promise<void> | null = null;
+function restoreTabsOnce(): Promise<void> {
+  if (!restoreTabsPromise) {
+    restoreTabsPromise = restoreTabs().catch((error) => {
+      console.error('Startup tab restore failed:', error);
+      restoreTabsPromise = null;
+    });
+  }
+  return restoreTabsPromise;
+}
 
 import type { ExtraParamMode, Profile } from './types';
 import { PRESET_THEMES } from './types';
@@ -54,7 +72,6 @@ function App() {
   const [enableTabNav, setEnableTabNav] = useState(true);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
-  const restoredRef = useRef(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(() => {
     const v = localStorage.getItem('appUpdate.lastCheckedAt');
@@ -213,9 +230,8 @@ function App() {
       initPersistedTemplates();
       await loadProfiles();
 
-      if (!import.meta.env.DEV && settings.restoreTabsOnStartup && !restoredRef.current) {
-        restoredRef.current = true;
-        await restoreTabs();
+      if (settings.restoreTabsOnStartup) {
+        await restoreTabsOnce();
         await useAppStore.getState().restoreDraftTabs();
       }
     })();
@@ -266,8 +282,14 @@ function App() {
   }, []);
 
   const { closeConfirm, requestExit, confirmExit, cancelExit } = useExitConfirm(async () => {
-    // 先保存 Claude 会话，然后再退出
+    // 先保存 Claude 会话，然后等 300ms 防抖保存立即落盘（读取退出时刻的最新快照），
+    // 最后才退出：不 await 的话未 settle 的 invoke 会随进程结束丢失最后一次变更。
     await saveClaudeSessionsBeforeExit();
+    try {
+      await flushPendingSaveTabs();
+    } catch (error) {
+      console.error('Failed to flush tabs before exit:', error);
+    }
     windowExitApp();
   });
 
@@ -338,10 +360,21 @@ function App() {
       requestExit();
     });
 
+    // 托盘不可用时 closeBehavior=tray 已降级为直接退出；给用户一次性的说明
+    const unlistenTrayFallback = listen('tray-unavailable-exit', () => {
+      import('./services/dialog').then(({ showAlert }) =>
+        showAlert(
+          '系统托盘不可用，「关闭时最小化到托盘」已临时失效。本次关闭将直接退出应用。',
+          '托盘不可用',
+        ),
+      ).catch(() => {});
+    });
+
     return () => {
       unlistenCreated.then((f) => f());
       unlistenClosed.then((f) => f());
       unlistenTrayExit.then((f) => f());
+      unlistenTrayFallback.then((f) => f());
     };
   }, []);
 

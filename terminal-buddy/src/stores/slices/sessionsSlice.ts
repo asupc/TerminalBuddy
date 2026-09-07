@@ -1,17 +1,34 @@
 import type { StoreApi } from "zustand";
 import type { AppState, TerminalActivityPhase } from "../appStore";
-import { saveTabsToStorage } from "../appStore";
+import { saveTabsToStorage, useAppStore } from "../appStore";
 import type { TabGroup, TerminalSession } from "../../types";
 import { deletePath, ensureDir, getDataPath, readClientData, updateTerminalDisplayName, writeClientData, writeFileContent } from "../../services/tauri";
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from "../../utils/terminalResizeEvent";
 
 let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
+/** 进行中的写入 promise：flush 时 await 它，保证退出前最后一次保存真正落盘。 */
+let _saveTabsInFlight: Promise<void> = Promise.resolve();
 
-function debouncedSaveTabs(sessions: any[], activeSessionId: string | null) {
+function debouncedSaveTabs() {
 	if (_saveTabsTimer) clearTimeout(_saveTabsTimer);
 	_saveTabsTimer = setTimeout(() => {
-		saveTabsToStorage(sessions, activeSessionId);
+		_saveTabsTimer = null;
+		flushPendingSaveTabs();
 	}, 300);
+}
+
+/**
+ * 取消未触发的定时保存并立刻用**当前 store 快照**落盘。
+ * 退出路径必须 await 本函数：闭包里的旧 sessions 会漏掉最后一次变更。
+ */
+export function flushPendingSaveTabs(): Promise<void> {
+	if (_saveTabsTimer) {
+		clearTimeout(_saveTabsTimer);
+		_saveTabsTimer = null;
+	}
+	const { sessions, activeSessionId } = useAppStore.getState();
+	_saveTabsInFlight = _saveTabsInFlight.then(() => saveTabsToStorage(sessions, activeSessionId));
+	return _saveTabsInFlight;
 }
 
 // --- Draft management ---
@@ -89,7 +106,7 @@ export const createSessionsSlice = (
 			};
 			const sessions = [...state.sessions, s];
 			if (!state._skipSaveTabs && !s.starting) {
-				debouncedSaveTabs(sessions, s.id);
+				debouncedSaveTabs();
 			}
 			return {
 				sessions,
@@ -108,7 +125,7 @@ export const createSessionsSlice = (
 			const activeSessionId = state.activeSessionId === startingId ? terminalId : state.activeSessionId;
 			const splitSlots = state.splitSlots.map((slot) => (slot.sessionId === startingId ? { ...slot, sessionId: terminalId } : slot));
 			if (!state._skipSaveTabs) {
-				debouncedSaveTabs(sessions, activeSessionId);
+				debouncedSaveTabs();
 			}
 			return {
 				sessions,
@@ -150,7 +167,7 @@ export const createSessionsSlice = (
 					activeSessionId = splitSlots.find((s) => s.sessionId !== null)?.sessionId ?? null;
 				}
 			}
-			debouncedSaveTabs(sessions, activeSessionId);
+			debouncedSaveTabs();
 			return {
 				sessions,
 				activeSessionId,
@@ -188,7 +205,7 @@ export const createSessionsSlice = (
 				}
 			}
 			if (!state._skipSaveTabs) {
-				debouncedSaveTabs(state.sessions, id);
+				debouncedSaveTabs();
 			}
 			return { activeSessionId: id, currentDirectory, activeSpecialTab: null };
 		}),
@@ -201,14 +218,14 @@ export const createSessionsSlice = (
 		}
 		set((state) => {
 			const newSessions = state.sessions.map((s) => (s.id === id ? { ...s, profileName: name } : s));
-			debouncedSaveTabs(newSessions, state.activeSessionId);
+			debouncedSaveTabs();
 			return { sessions: newSessions };
 		});
 	},
 	updateSession: (id, updates) =>
 		set((state) => {
 			const newSessions = state.sessions.map((s) => (s.id === id ? { ...s, ...updates } : s));
-			debouncedSaveTabs(newSessions, state.activeSessionId);
+			debouncedSaveTabs();
 			return { sessions: newSessions };
 		}),
 	ensureEditorGroup: () =>

@@ -51,6 +51,15 @@ export async function getDataPath(): Promise<string> {
   return invoke('get_data_path');
 }
 
+export interface DataPathStatus {
+  kind: 'default' | 'ok' | 'unavailable';
+  summary: string;
+}
+
+export async function getDataPathStatus(): Promise<DataPathStatus | null> {
+  return invoke('get_data_path_status');
+}
+
 export async function setDataPath(newPath: string): Promise<void> {
   return invoke('set_data_path', { newPath });
 }

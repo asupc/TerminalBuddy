@@ -27,7 +27,7 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh, isAct
   const [expanded, setExpanded] = useState(false);
   const [stats, setStats] = useState<ServerStats | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [interval, setInterval] = useState(() => getAppSettings().serverMonitorInterval);
+  const [pollingInterval, setPollingInterval] = useState(() => getAppSettings().serverMonitorInterval);
   const consecutiveErrorsRef = useRef(0);
   const connectedRef = useRef(false);
   const session = useAppStore(s => s.sessions.find(s => s.id === terminalId));
@@ -56,20 +56,20 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh, isAct
   }, [terminalId, session?.profileId]);
 
   useEffect(() => {
-    const syncInterval = () => setInterval(getAppSettings().serverMonitorInterval);
+    const syncInterval = () => setPollingInterval(getAppSettings().serverMonitorInterval);
     window.addEventListener('app-settings-changed', syncInterval);
     return () => window.removeEventListener('app-settings-changed', syncInterval);
   }, []);
 
   useEffect(() => {
-    if (!isSsh || !isActive || interval <= 0) return;
+    if (!isSsh || !isActive || pollingInterval <= 0) return;
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const scheduleNext = () => {
       if (cancelled) return;
-      timer = setTimeout(run, interval * 1000);
+      timer = setTimeout(run, pollingInterval * 1000);
     };
     const run = async () => {
       await fetchStats();
@@ -81,7 +81,7 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh, isAct
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [isActive, isSsh, interval, fetchStats]);
+  }, [isActive, isSsh, pollingInterval, fetchStats]);
 
   if (!isSsh) return null;
 
@@ -111,7 +111,7 @@ export const ServerMonitor: FC<ServerMonitorProps> = ({ terminalId, isSsh, isAct
           <span style={{ color: error ? '#f44747' : '#4ec9b0', marginRight: 4 }}>●</span>
           {!expanded && <span>{summary}</span>}
         </span>
-        {expanded && <span style={{ color: '#808080', fontSize: '11px' }}>刷新间隔: {interval > 0 ? `${interval} 秒` : '关闭'}</span>}
+        {expanded && <span style={{ color: '#808080', fontSize: '11px' }}>刷新间隔: {pollingInterval > 0 ? `${pollingInterval} 秒` : '关闭'}</span>}
       </div>
       {expanded && stats && (
         <div style={{ padding: '4px 12px 8px' }}>

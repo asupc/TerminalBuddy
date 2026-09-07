@@ -1,7 +1,13 @@
-import { FC, useState } from 'react';
+import { FC, useEffect, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { Download, FolderOpen, Upload } from 'lucide-react';
-import { setDataPath as setDataPathCmd, exportAllData, importAllData } from '../../services/tauri';
+import {
+  getDataPathStatus,
+  setDataPath as setDataPathCmd,
+  exportAllData,
+  importAllData,
+  type DataPathStatus,
+} from '../../services/tauri';
 import { showAlert } from '../../services/dialog';
 
 interface DataSettingsProps {
@@ -13,11 +19,21 @@ interface DataSettingsProps {
 export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setConfirmDialog }) => {
   const [pendingDataPath, setPendingDataPath] = useState('');
   const [isMigrating, setIsMigrating] = useState(false);
+  const [dirStatus, setDirStatus] = useState<DataPathStatus | null>(null);
+
+  useEffect(() => {
+    getDataPathStatus().then(setDirStatus).catch(() => {});
+  }, []);
 
   return (
     <div className="settings-general">
       <div className="settings-section">
         <label className="settings-label">数据存储路径</label>
+        {dirStatus?.kind === 'unavailable' && (
+          <p className="settings-desc" style={{ color: '#e5484d' }}>
+            {dirStatus.summary}
+          </p>
+        )}
         <div className="data-path-row">
           <input
             className="data-path-input"

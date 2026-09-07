@@ -25,6 +25,7 @@ interface MarkdownPreviewProps {
 
 export interface MarkdownPreviewHandle {
   scrollToSourceLine: (line: number) => void;
+  getCurrentSourceLine: () => number | null;
 }
 
 function escapeHtml(value: string): string {
@@ -175,20 +176,73 @@ function renderMarkdown(content: string, filePath: string): string {
   return document.body.innerHTML;
 }
 
-function doAfterImagesLoaded(root: HTMLElement, callback: () => void): void {
+/** 单张图片 settle 的超时上限：超时只解除滚动同步阻塞，不取消浏览器继续加载。 */
+const IMAGE_WAIT_TIMEOUT_MS = 3000;
+
+/**
+ * 等待容器内所有图片 settle（load / error / 超时三者竞速）。
+ * 返回清理函数：settle 后成对移除 load/error 监听器并清理 timer，
+ * 组件卸载或新滚动请求覆盖旧请求时调用，保证监听器与 timer 不累积。
+ * 永久 pending 的图片在超时后放行回调，滚动同步不会卡死。
+ */
+function whenImagesSettled(
+  root: HTMLElement,
+  onSettled: () => void,
+): () => void {
   const images = Array.from(root.getElementsByTagName('img'));
   if (images.length === 0) {
-    setTimeout(callback, 0);
-    return;
+    const timer = setTimeout(onSettled, 0);
+    return () => clearTimeout(timer);
   }
 
-  void Promise.all(images.map(image => {
-    if (image.complete) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      image.addEventListener('load', () => resolve(), { once: true });
-      image.addEventListener('error', () => resolve(), { once: true });
-    });
-  })).then(() => setTimeout(callback, 0));
+  let remaining = images.length + 1; // +1：底部无条件 settle 兜底「全部已 complete」的情况
+  let settled = false;
+  const cleanups: Array<() => void> = [];
+
+  const settle = () => {
+    if (settled) return;
+    remaining -= 1;
+    if (remaining > 0) return;
+    settled = true;
+    // 统一收尾：成对移除监听器、清理超时 timer，避免多次渲染后累积
+    for (const cleanup of cleanups) cleanup();
+    setTimeout(onSettled, 0);
+  };
+
+  for (const image of images) {
+    if (image.complete) {
+      remaining -= 1;
+      continue;
+    }
+    const handleLoad = () => {
+      cleanupForImage();
+      settle();
+    };
+    const handleError = () => {
+      cleanupForImage();
+      settle();
+    };
+    const timeout = setTimeout(handleError, IMAGE_WAIT_TIMEOUT_MS);
+    const cleanupForImage = () => {
+      clearTimeout(timeout);
+      image.removeEventListener('load', handleLoad);
+      image.removeEventListener('error', handleError);
+    };
+    cleanups.push(cleanupForImage);
+    image.addEventListener('load', handleLoad, { once: true });
+    image.addEventListener('error', handleError, { once: true });
+  }
+
+  // 兜底：全部图片都 complete 时 remaining 已减到 1，这里触发唯一一次 settle
+  settle();
+
+  return () => {
+    for (const cleanup of cleanups) cleanup();
+  };
+}
+
+function doAfterImagesLoaded(root: HTMLElement, callback: () => void): () => void {
+  return whenImagesSettled(root, callback);
 }
 
 export const MarkdownPreview = forwardRef<MarkdownPreviewHandle, MarkdownPreviewProps>(({
@@ -209,19 +263,30 @@ export const MarkdownPreview = forwardRef<MarkdownPreviewHandle, MarkdownPreview
     [deferredContent, filePath],
   );
 
+  const pendingImageWaitCleanupRef = useRef<(() => void) | null>(null);
+
   const scrollToSourceLine = useCallback((line: number) => {
     pendingSourceLineRef.current = line;
     const scrollContainer = scrollRef.current;
     if (!scrollContainer) return;
     const request = ++scrollRequestRef.current;
-    doAfterImagesLoaded(scrollContainer, () => {
+    // 旧请求的监听器/timer 必须先回收：新请求覆盖旧请求后，旧回调不再执行，
+    // 其挂着的图片监听器和超时 timer 也不能积累。
+    pendingImageWaitCleanupRef.current?.();
+    pendingImageWaitCleanupRef.current = doAfterImagesLoaded(scrollContainer, () => {
       if (request !== scrollRequestRef.current) return;
+      pendingImageWaitCleanupRef.current = null;
       scrollDisabledUntilRef.current = performance.now() + 50;
       scrollSyncRef.current?.scrollToRevealSourceLine(line);
     });
   }, []);
 
-  useImperativeHandle(ref, () => ({ scrollToSourceLine }), [scrollToSourceLine]);
+  const getCurrentSourceLine = useCallback((): number | null => {
+    const line = scrollSyncRef.current?.getEditorLineForScrollTop() ?? null;
+    return line === null || !Number.isFinite(line) ? null : line;
+  }, []);
+
+  useImperativeHandle(ref, () => ({ scrollToSourceLine, getCurrentSourceLine }), [scrollToSourceLine, getCurrentSourceLine]);
 
   useLayoutEffect(() => {
     const scrollContainer = scrollRef.current;
@@ -232,6 +297,8 @@ export const MarkdownPreview = forwardRef<MarkdownPreviewHandle, MarkdownPreview
 
   useEffect(() => () => {
     scrollRequestRef.current += 1;
+    pendingImageWaitCleanupRef.current?.();
+    pendingImageWaitCleanupRef.current = null;
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
   }, []);
 

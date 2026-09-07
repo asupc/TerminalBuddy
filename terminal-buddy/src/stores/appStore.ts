@@ -49,7 +49,7 @@ export function isTerminalWorking(activity: TerminalActivityState | undefined): 
 	return activity?.phase === "running";
 }
 
-export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: string | null) {
+export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: string | null): Promise<void> {
 	try {
 		const dirs = useAppStore.getState().sessionDirectories;
 		const claudeIds = useAppStore.getState().claudeSessionIds;
@@ -75,8 +75,54 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 		}));
 		const resolvedActiveIndex = activeSessionId ? persistedSessions.findIndex((s) => s.id === activeSessionId) : -1;
 		const activeIndex = resolvedActiveIndex >= 0 ? resolvedActiveIndex : 0;
-		writeClientData("saved_tabs", JSON.stringify({ tabs, activeIndex })).catch(() => {});
-	} catch {}
+		// 保存失败必须留痕：静默吞掉会让「重启后标签丢了」无从排查。
+		// 返回 Promise 让退出流程可以 await，避免 invoke 未 settle 进程就退出。
+		return writeClientData("saved_tabs", JSON.stringify({ tabs, activeIndex })).catch((error) => {
+			console.error("Failed to save tabs:", error);
+		});
+	} catch (error) {
+		console.error("Failed to serialize tabs:", error);
+		return Promise.resolve();
+	}
+}
+
+/**
+ * 最低字段校验 + 默认值归一化。磁盘数据可能来自旧版本或手工编辑，
+ * 畸形条目不能产生 NaN / undefined 渲染状态。
+ */
+function normalizeSavedTab(raw: unknown): SavedTab | null {
+	if (typeof raw !== "object" || raw === null) return null;
+	const tab = raw as Record<string, unknown>;
+	const profileId = typeof tab.profileId === "string" ? tab.profileId : "";
+	const profileName = typeof tab.profileName === "string" ? tab.profileName : "";
+	const terminalType = typeof tab.terminalType === "string" ? tab.terminalType : "";
+	// 三者皆空说明条目已损坏到无法恢复（至少要有类型或文件路径之一）
+	if (!terminalType && !profileId) return null;
+	const colorTheme =
+		typeof tab.colorTheme === "object" && tab.colorTheme !== null
+			? (tab.colorTheme as { background?: unknown; foreground?: unknown })
+			: {};
+	return {
+		profileId,
+		profileName,
+		terminalType,
+		colorTheme: {
+			background: typeof colorTheme.background === "string" ? colorTheme.background : "#1e1e1e",
+			foreground: typeof colorTheme.foreground === "string" ? colorTheme.foreground : "#d4d4d4",
+		},
+		tabColor: typeof tab.tabColor === "string" ? tab.tabColor : null,
+		groupId: typeof tab.groupId === "string" ? tab.groupId : "default",
+		groupName: typeof tab.groupName === "string" ? tab.groupName : undefined,
+		sessionType: tab.sessionType === "editor" || tab.sessionType === "terminal" ? tab.sessionType : undefined,
+		isDirty: typeof tab.isDirty === "boolean" ? tab.isDirty : undefined,
+		owner: tab.owner === "pc" || tab.owner === "web" ? tab.owner : undefined,
+		extraParams: typeof tab.extraParams === "string" ? tab.extraParams : undefined,
+		extraParamMode: tab.extraParamMode === "independent" ? "independent" : tab.extraParamMode === "append" ? "append" : undefined,
+		extraParamTag: typeof tab.extraParamTag === "string" ? tab.extraParamTag : undefined,
+		extraParamTagColor: typeof tab.extraParamTagColor === "string" ? tab.extraParamTagColor : null,
+		directory: typeof tab.directory === "string" ? tab.directory : undefined,
+		claudeSessionId: typeof tab.claudeSessionId === "string" ? tab.claudeSessionId : undefined,
+	};
 }
 
 export async function loadSavedTabs(): Promise<{ tabs: SavedTab[]; activeIndex: number }> {
@@ -84,11 +130,24 @@ export async function loadSavedTabs(): Promise<{ tabs: SavedTab[]; activeIndex: 
 		const raw = await readClientData("saved_tabs");
 		if (raw) {
 			const data = JSON.parse(raw);
-			const tabs: SavedTab[] = data.tabs || [];
-			const activeIndex = data.activeIndex ?? 0;
-			return { tabs, activeIndex: Math.min(activeIndex, Math.max(tabs.length - 1, 0)) };
+			// 根值必须是对象；tabs 必须是数组；逐条校验归一化
+			if (typeof data !== "object" || data === null || !Array.isArray(data.tabs)) {
+				return { tabs: [], activeIndex: 0 };
+			}
+			const tabs = data.tabs
+				.map(normalizeSavedTab)
+				.filter((tab: SavedTab | null): tab is SavedTab => tab !== null);
+			// activeIndex 必须是有限整数并 clamp 到有效范围，畸形值（"x"、NaN、1e9）一律安全降级
+			const rawActiveIndex = data.activeIndex;
+			const activeIndex =
+				typeof rawActiveIndex === "number" && Number.isFinite(rawActiveIndex) && Number.isInteger(rawActiveIndex)
+					? Math.min(Math.max(rawActiveIndex, 0), Math.max(tabs.length - 1, 0))
+					: 0;
+			return { tabs, activeIndex };
 		}
-	} catch {}
+	} catch (error) {
+		console.error("Failed to load saved tabs:", error);
+	}
 	return { tabs: [], activeIndex: 0 };
 }
 
