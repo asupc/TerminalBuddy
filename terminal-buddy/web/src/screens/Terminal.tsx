@@ -16,6 +16,9 @@ interface Props {
 export default function Terminal({ terminalId, profileName, loadingMode, owner }: Props) {
   const setView = useStore((s) => s.setView);
   const session = useStore((s) => s.sessions.find((x) => x.id === terminalId));
+  const connectionFatal = useStore((s) => s.connectionFatal);
+  const retryFailedConnection = useStore((s) => s.retryFailedConnection);
+  const token = useStore((s) => s.token);
   // 从 store 中按 session.profileId 查 profile；profiles 在「连接」tab 进入时已加载，
   // 这里若未加载则退回到默认主题；xterm 的色彩仍由 profile.colorTheme 决定。
   const profile = useStore((s) =>
@@ -103,12 +106,47 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
       )}
 
       <div className="term-body" style={{ background: theme.background }}>
-        {!exited && !connected && (
+        {!exited && !connected && !connectionFatal && (
           <div className="banner info">{everConnected ? '重连中…' : '连接中…'}</div>
         )}
         {exited && (
           <div className="overlay">
             <div>连接已结束</div>
+          </div>
+        )}
+        {/* 重试耗尽 / 登录过期的终态：给出明确原因和可操作入口，不再显示「正在重连」 */}
+        {connectionFatal && (
+          <div className="overlay">
+            <div className="fatal-panel">
+              <div className="fatal-title">
+                {connectionFatal.kind === 'expired' ? '登录已过期' : '连接失败'}
+              </div>
+              <div className="fatal-message">
+                {connectionFatal.kind === 'expired'
+                  ? '登录状态已过期，请重新登录。'
+                  : connectionFatal.message}
+              </div>
+              <div className="fatal-actions">
+                {connectionFatal.kind === 'expired' ? (
+                  <button className="fatal-button primary" onClick={goBack}>
+                    重新登录
+                  </button>
+                ) : (
+                  <button
+                    className="fatal-button primary"
+                    onClick={() => {
+                      if (token) retryFailedConnection();
+                      else goBack();
+                    }}
+                  >
+                    立即重试
+                  </button>
+                )}
+                <button className="fatal-button" onClick={goBack}>
+                  返回列表
+                </button>
+              </div>
+            </div>
           </div>
         )}
         <Xterm

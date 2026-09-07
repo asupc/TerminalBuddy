@@ -144,6 +144,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const setProfiles = useStore((state) => state.setProfiles);
   const sessions = useStore((state) => state.sessions);
   const metaOnline = useStore((state) => state.metaOnline);
+  const connectionFatal = useStore((state) => state.connectionFatal);
   const setView = useStore((state) => state.setView);
   const extraParamPresets = useStore((state) => state.extraParamPresets);
   const loadExtraParamPresets = useStore((state) => state.loadExtraParamPresets);
@@ -458,7 +459,15 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         </div>
         <div className={`status-pill ${metaOnline ? 'online' : 'offline'}`}>
           <span className="dot" aria-hidden="true" />
-          <span>{metaOnline ? '服务在线' : '等待连接'}</span>
+          <span>
+            {metaOnline
+              ? '服务在线'
+              : connectionFatal?.kind === 'expired'
+                ? '登录已过期'
+                : connectionFatal
+                  ? '连接失败'
+                  : '等待连接'}
+          </span>
         </div>
         <button
           className="icon-button nav-collapse-toggle"

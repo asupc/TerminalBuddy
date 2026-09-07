@@ -875,6 +875,51 @@ textarea:focus-visible {
   color: var(--text);
 }
 
+/* 连接终态面板：重试耗尽 / 登录过期 */
+
+.fatal-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  max-width: 320px;
+  text-align: center;
+}
+
+.fatal-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.fatal-message {
+  font-size: 13px;
+  color: var(--text-soft);
+  line-height: 1.6;
+}
+
+.fatal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.fatal-button {
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.fatal-button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06251a;
+  font-weight: 600;
+}
+
 /* Special keys toolbar */
 
 .special-keys {
