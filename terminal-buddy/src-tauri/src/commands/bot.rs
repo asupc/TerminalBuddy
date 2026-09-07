@@ -1,7 +1,7 @@
 use crate::commands::TerminalService;
 use crate::models::{
     BotChannelConfig, BotDecisionOption, BotDeliveryReport, BotNotificationRequest, BotSettings,
-    BridgeInboundMessage, DecisionBinding,
+    BridgeInboundMessage, DecisionBinding, TerminalActor,
 };
 use crate::services::bot_channel::{bot_client, dispatch_channel};
 use crate::services::{
@@ -553,7 +553,7 @@ pub fn process_bot_card_selection(
         }
         let arrow = if move_count >= 0 { "\x1b[B" } else { "\x1b[A" };
         let data = format!("{}\r", arrow.repeat(move_count.unsigned_abs() as usize));
-        terminal_service.write_to_terminal(&binding.terminal_id, &data)
+        terminal_service.write_to_terminal(&binding.terminal_id, &data, TerminalActor::Pc)
     })?;
     if binding.terminal_id == BOT_TEST_TERMINAL_ID {
         return Ok("测试决策回调成功".to_string());
@@ -640,7 +640,7 @@ pub fn process_bot_multi_selection(
         if !exists {
             return Err("对应终端已经关闭".to_string());
         }
-        terminal_service.write_to_terminal(&binding.terminal_id, &data)
+        terminal_service.write_to_terminal(&binding.terminal_id, &data, TerminalActor::Pc)
     })?;
     if binding.terminal_id == BOT_TEST_TERMINAL_ID {
         return Ok("测试多选决策回调成功".to_string());
@@ -739,7 +739,7 @@ pub fn process_bot_reply(
                     format!("{}\r{}", "\x1b[B".repeat(down_count as usize), custom_reply)
                 }
             };
-            terminal_service.write_to_terminal(&binding.terminal_id, &data)
+            terminal_service.write_to_terminal(&binding.terminal_id, &data, TerminalActor::Pc)
         },
     )?;
     let reply = parsed_reply.ok_or_else(|| "内部错误：回复解析结果缺失".to_string())?;

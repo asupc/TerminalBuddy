@@ -9,7 +9,9 @@ pub struct DatabaseService;
 
 impl DatabaseService {
     fn open() -> Result<Connection, String> {
-        let data_dir = PathService::get_data_dir();
+        // 数据库是持久写入方，必须走 require：自定义目录不可用时显式失败，
+        // 绝不能在默认目录另开一个数据库。
+        let data_dir = PathService::require_data_dir()?;
         fs::create_dir_all(&data_dir).map_err(|error| format!("创建数据库目录失败: {}", error))?;
         let mut connection = Connection::open(data_dir.join("terminal_buddy.db"))
             .map_err(|error| format!("打开 SQLite 数据库失败: {}", error))?;
@@ -77,7 +79,8 @@ impl DatabaseService {
             let transaction = connection
                 .transaction()
                 .map_err(|error| format!("开始命令历史迁移失败: {}", error))?;
-            let data_dir = PathService::get_data_dir();
+            // 读迁移：目录不可用时跳过这条迁移内容，不影响数据库本身打开
+            let data_dir = PathService::require_data_dir().unwrap_or_default();
             let client_data = data_dir.join("ClientData").join("command_history.json");
             let legacy_data = data_dir.join("command_history.json");
             let content = fs::read_to_string(&client_data)
@@ -103,10 +106,12 @@ impl DatabaseService {
             let transaction = connection
                 .transaction()
                 .map_err(|error| format!("开始机器人绑定迁移失败: {}", error))?;
-            let path = PathService::get_bots_dir().join("decision_bindings.json");
-            if let Ok(content) = fs::read_to_string(path) {
-                if let Ok(bindings) = serde_json::from_str::<Vec<DecisionBinding>>(&content) {
-                    Self::replace_bindings(&transaction, &bindings)?;
+            // 读迁移：目录不可用时跳过，迁移本身仍标记完成
+            if let Ok(path) = PathService::get_bots_dir().map(|dir| dir.join("decision_bindings.json")) {
+                if let Ok(content) = fs::read_to_string(path) {
+                    if let Ok(bindings) = serde_json::from_str::<Vec<DecisionBinding>>(&content) {
+                        Self::replace_bindings(&transaction, &bindings)?;
+                    }
                 }
             }
             Self::complete_migration(&transaction, "legacy-bot-bindings-v1")?;
@@ -119,35 +124,39 @@ impl DatabaseService {
             let transaction = connection
                 .transaction()
                 .map_err(|error| format!("开始微信状态迁移失败: {}", error))?;
-            let directory = PathService::get_bots_dir().join("weixin");
-            if let Ok(entries) = fs::read_dir(directory) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_none_or(|extension| extension != "json") {
-                        continue;
+            // 读迁移：目录不可用时跳过
+            if let Ok(directory) = PathService::get_bots_dir().map(|dir| dir.join("weixin")) {
+                if let Ok(entries) = fs::read_dir(directory) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().is_none_or(|extension| extension != "json") {
+                            continue;
+                        }
+                        let Some(encoded_id) =
+                            path.file_stem().and_then(|value| value.to_str())
+                        else {
+                            continue;
+                        };
+                        let Ok(account_id) = hex::decode(encoded_id)
+                            .ok()
+                            .and_then(|bytes| String::from_utf8(bytes).ok())
+                            .ok_or(())
+                        else {
+                            continue;
+                        };
+                        let Ok(content) = fs::read_to_string(path) else {
+                            continue;
+                        };
+                        if serde_json::from_str::<Value>(&content).is_err() {
+                            continue;
+                        }
+                        transaction
+                            .execute(
+                                "INSERT OR IGNORE INTO weixin_runtime_states (account_id, content, updated_at) VALUES (?1, ?2, ?3)",
+                                params![account_id, content, chrono::Utc::now().timestamp_millis()],
+                            )
+                            .map_err(|error| format!("迁移微信连接状态失败: {}", error))?;
                     }
-                    let Some(encoded_id) = path.file_stem().and_then(|value| value.to_str()) else {
-                        continue;
-                    };
-                    let Ok(account_id) = hex::decode(encoded_id)
-                        .ok()
-                        .and_then(|bytes| String::from_utf8(bytes).ok())
-                        .ok_or(())
-                    else {
-                        continue;
-                    };
-                    let Ok(content) = fs::read_to_string(path) else {
-                        continue;
-                    };
-                    if serde_json::from_str::<Value>(&content).is_err() {
-                        continue;
-                    }
-                    transaction
-                        .execute(
-                            "INSERT OR IGNORE INTO weixin_runtime_states (account_id, content, updated_at) VALUES (?1, ?2, ?3)",
-                            params![account_id, content, chrono::Utc::now().timestamp_millis()],
-                        )
-                        .map_err(|error| format!("迁移微信连接状态失败: {}", error))?;
                 }
             }
             Self::complete_migration(&transaction, "legacy-weixin-runtime-v1")?;

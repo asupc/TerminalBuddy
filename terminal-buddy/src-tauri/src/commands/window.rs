@@ -1,4 +1,4 @@
-﻿use tauri::{AppHandle, WebviewWindow};
+﻿use tauri::{AppHandle, Manager, WebviewWindow};
 
 /// Direct ntdll call — pure in-memory, no process spawn, takes microseconds.
 #[allow(non_snake_case)]
@@ -53,6 +53,13 @@ pub fn window_close(window: WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 pub fn window_exit_app(app: AppHandle) -> Result<(), String> {
+    // 退出前统一收尾所有终端：注销 hook token、关闭 SSH session 与 Web 订阅者，
+    // 并只向 PTY 发终止信号而不 wait，避免退出流程被 child.wait() 卡住。
+    app.state::<crate::commands::TerminalService>()
+        .shutdown_all_terminals(&app);
+    // 逐终端 unregister 之后兜底释放剩余 pending decision 的 receiver/sender，
+    // 退出时不遗留挂起的 hook 等待状态。
+    crate::services::ClaudeHookService::release_all_on_shutdown();
     app.exit(0);
     Ok(())
 }

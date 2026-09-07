@@ -237,13 +237,25 @@ pub(crate) async fn claude_hook(
     let ttl_minutes = bot_settings.decision_ttl_minutes.clamp(1, 1440);
     let occurred_at = next_hook_timestamp();
     let expires_at = occurred_at + Duration::minutes(ttl_minutes as i64).num_milliseconds();
-    let receiver = ClaudeHookService::insert_decision(
+    // 上限检查失败：不建通道、不发通知卡片，hook 请求立刻带原因失败，
+    // 不占用 HTTP 连接和 pending 资源。
+    let receiver = match ClaudeHookService::insert_decision(
         decision_id.clone(),
         terminal_id.to_string(),
         questions.clone(),
         expires_at,
         occurred_at,
-    );
+    ) {
+        Ok(receiver) => receiver,
+        Err(reject_reason) => {
+            eprintln!(
+                "[ClaudeHook] 决策请求被拒绝，terminal={}，原因：{}",
+                terminal_id,
+                reject_reason.message()
+            );
+            return (StatusCode::TOO_MANY_REQUESTS, reject_reason.message()).into_response();
+        }
+    };
     let event = ClaudeHookDecisionEvent {
         decision_id: decision_id.clone(),
         terminal_id: terminal_id.to_string(),
@@ -253,11 +265,12 @@ pub(crate) async fn claude_hook(
     };
     let _ = app.emit("claude-hook-decision", &event);
 
-    match tokio::time::timeout(
-        std::time::Duration::from_secs((ttl_minutes as u64) * 60),
-        receiver,
-    )
-    .await
+    // 业务 TTL（decisionTtlMinutes）决定决策在 pending 表的存活期；
+    // 单次 HTTP 连接的挂起时间另设上限，24 小时 TTL 不会把连接挂 24 小时。
+    // 连接先断时决策仍留在 pending 表，TTL 内可在桌面上继续回答。
+    let http_wait = std::time::Duration::from_secs((ttl_minutes as u64) * 60)
+        .min(ClaudeHookService::http_wait_cap());
+    match tokio::time::timeout(http_wait, receiver).await
     {
         Ok(Ok(ClaudeHookResolution::Answers(answers))) => {
             let _ = app.emit(

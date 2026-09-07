@@ -58,8 +58,13 @@ fn settings_lock() -> &'static Mutex<()> {
 pub struct BotSettingsService;
 
 impl BotSettingsService {
+    /// 读路径兜底：目录不可用时落到注定读不到的相对路径，read_stored 返回默认值，
+    /// 可用性状态由 PathService 缓存供 UI 展示。写路径在 save() 里显式失败。
     fn path() -> PathBuf {
-        PathService::get_bots_dir().join("channels.json")
+        PathService::require_data_dir()
+            .map(|dir| dir.join("Bots"))
+            .unwrap_or_else(|_| PathBuf::from("Bots"))
+            .join("channels.json")
     }
 
     fn read_stored() -> StoredBotSettings {
@@ -201,7 +206,8 @@ impl BotSettingsService {
         };
         let content = serde_json::to_string_pretty(&stored)
             .map_err(|error| format!("序列化机器人设置失败: {}", error))?;
-        let path = Self::path();
+        let dir = PathService::get_bots_dir()?;
+        let path = dir.join("channels.json");
         atomic_write(&path, content.as_bytes())
             .map_err(|error| format!("保存机器人设置失败: {}", error))?;
         drop(_guard);

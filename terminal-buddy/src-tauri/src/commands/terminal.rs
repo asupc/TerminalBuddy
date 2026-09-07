@@ -2,6 +2,13 @@ use crate::models::web_api::TerminalInfo;
 use crate::models::Profile;
 use crate::models::TerminalLoadingMode;
 use crate::models::TerminalOwner;
+use crate::models::{
+    filled_field, quote_cmd_argument, reject_control_chars, validate_docker_container,
+    validate_k8s_name, validate_ssh_host, validate_ssh_key_path, validate_ssh_user,
+};
+use crate::models::{
+    is_terminal_action_allowed, TerminalAccessError, TerminalAction, TerminalActor,
+};
 use crate::services::ssh_session_service::SshSessionService;
 use crate::services::ClaudeHookService;
 use crate::services::PathService;
@@ -15,7 +22,6 @@ use std::collections::VecDeque;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -72,30 +78,13 @@ impl TerminalOutputBuffer {
     /// Atomically split startup output from subsequent live events. Output
     /// pushed before this call is returned in the snapshot and is not emitted
     /// to the desktop; later output is emitted through the registered listener.
-    fn attach_desktop(&mut self) -> String {
-        let output = self.collect();
-        self.chunks.clear();
-        self.bytes = 0;
+    ///
+    /// 非破坏式：环形缓冲不清空，Web 客户端重连仍能取到完整滚动历史。
+    /// 边界仍然严格——`desktop_attached` 在同一把锁内翻转，快照里的分片
+    /// 不会再作为 live event 发一遍。
+    fn snapshot_and_attach(&mut self) -> String {
         self.desktop_attached = true;
-        output
-    }
-}
-
-/// 转义 shell 特殊字符，防止命令注入
-fn shell_escape(s: &str) -> String {
-    if s.contains(|c: char| {
-        c == ' '
-            || c == '"'
-            || c == '\''
-            || c == '&'
-            || c == '|'
-            || c == '>'
-            || c == '<'
-            || c == '^'
-    }) {
-        format!("\"{}\"", s.replace('"', "\\\""))
-    } else {
-        s.to_string()
+        self.collect()
     }
 }
 
@@ -137,8 +126,6 @@ pub struct TerminalInstance {
     output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
     current_rows: u16,
     current_cols: u16,
-    /// PTY 读取线程检测到 EOF 后置位；用于从 sessions 列表中剔除已退出的终端。
-    pub exited: AtomicBool,
 }
 
 impl TerminalInstance {
@@ -201,6 +188,19 @@ impl TerminalBackend {
         }
     }
 
+    /// 只发终止信号、不 wait。供应用退出等不能被阻塞的路径使用。
+    fn kill_without_wait(&mut self) {
+        match self {
+            Self::Default { child, writer, .. } => {
+                *writer = None;
+                child.kill().ok();
+            }
+            Self::VsCode(process) => {
+                process.kill().ok();
+            }
+        }
+    }
+
     fn process_id(&self) -> Option<u32> {
         match self {
             Self::Default { child, .. } => child.process_id(),
@@ -240,7 +240,11 @@ use std::sync::OnceLock;
 static DEBUG_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 fn log_debug(msg: &str) {
-    let log_path = DEBUG_LOG_PATH.get_or_init(|| PathService::get_debug_log_path());
+    // 写路径走 require：自定义数据目录不可用时不落日志（不退回默认目录），
+    // 但路径解析失败只应发生一次——OnceLock 不缓存 Err，下次调用会重试。
+    let log_path = DEBUG_LOG_PATH.get_or_init(|| {
+        PathService::get_debug_log_path().unwrap_or_else(|_| std::env::temp_dir().join("terminal-buddy-debug-fallback.log"))
+    });
     let ts = chrono::Utc::now().format("%H:%M:%S%.3f");
     let line = format!("[{}] {}\n", ts, msg);
     let _ = fs::OpenOptions::new()
@@ -411,22 +415,10 @@ fn spawn_output_forwarder(
             }
         }
         // PTY exited (SSH disconnect, `exit` command, child crash, etc.).
-        // 1. Notify desktop frontend (removeSession is idempotent → safe on intentional close).
-        let _ = app.emit("terminal-closed", &terminal_id);
-        // 2. Mark the instance exited so it drops out of the mobile sessions list.
-        {
-            let ts = app.state::<TerminalService>();
-            if let Some(inst) = ts.lock_instances().get_mut(&terminal_id)
-            {
-                inst.exited.store(true, Ordering::SeqCst);
-            }
-            // 3. Drop all output subscribers for this terminal → their recv() returns None →
-            //    the WS handler sends Exited to the mobile client.
-            app.state::<WebServiceState>().close_all(&terminal_id);
-            // 4. Push a sessions update so the mobile nav screen removes the dead entry.
-            ts.notify_sessions_changed();
-        }
-        ClaudeHookService::unregister_terminal(&terminal_id);
+        // 走统一 teardown：移除实例、关闭 SSH session / Web subscribers / hook token，
+        // 并只发一次 terminal-closed 与 session change。若用户已显式关闭，这里返回
+        // false，不重复发事件。
+        teardown_terminal(&app, &terminal_id, TerminalCloseReason::NaturalExit);
     });
 }
 
@@ -435,6 +427,176 @@ fn lock_instances_map(
     instances: &Mutex<HashMap<String, TerminalInstance>>,
 ) -> std::sync::MutexGuard<'_, HashMap<String, TerminalInstance>> {
     instances.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 终端进入 teardown 的原因。仅用于日志与语义区分，不影响清理动作本身。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalCloseReason {
+    /// 桌面端主动关闭标签页。
+    DesktopClose,
+    /// Web 端 `DELETE /api/terminals/{id}`。
+    WebClose,
+    /// PTY EOF：`exit`、SSH 断线、child crash。
+    NaturalExit,
+    /// 创建事务失败回滚。
+    StartupRollback,
+    /// 应用退出。
+    AppShutdown,
+}
+
+impl TerminalCloseReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::DesktopClose => "desktop-close",
+            Self::WebClose => "web-close",
+            Self::NaturalExit => "natural-exit",
+            Self::StartupRollback => "startup-rollback",
+            Self::AppShutdown => "app-shutdown",
+        }
+    }
+}
+
+/// teardown 与创建回滚共用的资源释放原语（不含事件发送）。
+/// 必须在 instances 锁外调用：`backend.close()` 会阻塞在 kill/wait 上。
+fn release_terminal_resources(
+    app: &AppHandle,
+    terminal_id: &str,
+    backend: Option<TerminalBackend>,
+    reason: TerminalCloseReason,
+) {
+    // hook token + pending decision + 待确认通知卡片，本身幂等。
+    ClaudeHookService::unregister_terminal(terminal_id);
+    // SSH 终端才有 session，其余为 no-op。
+    app.state::<SshSessionService>().close_session(terminal_id);
+    // 丢弃 Web 订阅者 → 各 WS 的 recv() 返回 None → 向手机端发送 Exited。
+    app.state::<WebServiceState>().close_all(terminal_id);
+    let Some(mut backend) = backend else {
+        return;
+    };
+    let terminal_id = terminal_id.to_string();
+    let _cleanup_task = tauri::async_runtime::spawn_blocking(move || {
+        let started = Instant::now();
+        backend.close();
+        log_debug(&format!(
+            "[teardown] backend closed, id={}, reason={}, elapsed_ms={}",
+            terminal_id,
+            reason.as_str(),
+            started.elapsed().as_millis(),
+        ));
+    });
+}
+
+/// 终端生命周期的唯一出口：显式关闭、Web 关闭、PTY EOF 全部走这里。
+///
+/// 语义：先从 `instances` 原子移除，只有拿到实例的那一次调用才拥有资源所有权并
+/// 发送事件；重复调用返回 `false` 且不做任何事，因此 `terminal-closed` /
+/// session change 对每个终端恰好发送一次。
+///
+/// 可以从 PTY 输出线程调用：阻塞的 kill/wait 被丢到阻塞线程池，本函数不 join
+/// 任何线程，不存在自死锁。
+pub fn teardown_terminal(app: &AppHandle, terminal_id: &str, reason: TerminalCloseReason) -> bool {
+    let service = app.state::<TerminalService>();
+    let instance = lock_instances_map(&service.instances).remove(terminal_id);
+    let Some(instance) = instance else {
+        // 已被其他路径接管（幂等收尾），不重复发事件。
+        return false;
+    };
+    log_debug(&format!(
+        "[teardown] start, id={}, reason={}",
+        terminal_id,
+        reason.as_str()
+    ));
+    release_terminal_resources(app, terminal_id, Some(instance.backend), reason);
+    // 桌面端 removeSession 幂等，但这里也只会收到一次。
+    let _ = app.emit("terminal-closed", terminal_id);
+    service.notify_sessions_changed();
+    true
+}
+
+/// 创建事务的回滚守卫：`commit()` 之前 drop 就回滚全部已获取资源。
+struct TerminalCreation {
+    terminal_id: String,
+    /// 仅用于失败日志定位，不含凭据。
+    terminal_type: String,
+    instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
+    app: AppHandle,
+    stage: &'static str,
+    hook_registered: bool,
+    backend: Option<TerminalBackend>,
+    reader: Option<Box<dyn Read + Send>>,
+    inserted: bool,
+    committed: bool,
+}
+
+impl TerminalCreation {
+    fn new(
+        terminal_id: &str,
+        terminal_type: &str,
+        instances: Arc<Mutex<HashMap<String, TerminalInstance>>>,
+        app: AppHandle,
+    ) -> Self {
+        Self {
+            terminal_id: terminal_id.to_string(),
+            terminal_type: terminal_type.to_string(),
+            instances,
+            app,
+            stage: "prepare",
+            hook_registered: false,
+            backend: None,
+            reader: None,
+            inserted: false,
+            committed: false,
+        }
+    }
+
+    /// 失败日志统一带上 id / type / 阶段；不得写入 env、token 或凭据。
+    fn fail(&self, error: &str) -> String {
+        log_debug(&format!(
+            "[create] FAILED, id={}, type={}, stage={}, error={}",
+            self.terminal_id, self.terminal_type, self.stage, error
+        ));
+        error.to_string()
+    }
+
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for TerminalCreation {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        log_debug(&format!(
+            "[teardown] start, id={}, reason={}, stage={}",
+            self.terminal_id,
+            TerminalCloseReason::StartupRollback.as_str(),
+            self.stage
+        ));
+        // 丢弃 reader（释放 PTY 读端），并取回 backend 的唯一所有权。
+        self.reader = None;
+        let mut backend = self.backend.take();
+        if self.inserted {
+            if let Some(instance) = lock_instances_map(&self.instances).remove(&self.terminal_id) {
+                backend = Some(instance.backend);
+            }
+        }
+        if !self.hook_registered {
+            // hook token 还没注册时不要调用 unregister，避免误清同 id 的其他状态。
+            if let Some(mut backend) = backend {
+                let _ = tauri::async_runtime::spawn_blocking(move || backend.close());
+            }
+            return;
+        }
+        release_terminal_resources(
+            &self.app,
+            &self.terminal_id,
+            backend,
+            TerminalCloseReason::StartupRollback,
+        );
+        // 回滚路径不发 terminal-closed / session change：创建成功事件从未发出。
+    }
 }
 
 /// 终端尺寸默认值：0/空值回退 24x80。
@@ -468,39 +630,31 @@ fn build_terminal_env(terminal_id: &str, extra_env: Option<&[(String, String)]>)
     env_vars
 }
 
-/// spawn 后端，失败时反注册 hook 并记录日志。
-fn spawn_backend_with_cleanup(
-    app: &AppHandle,
-    loading_mode: &TerminalLoadingMode,
+/// 一次终端创建事务的全部输入。
+///
+/// 所有可能失败的解析（`build_init_commands`、`resolve_pwsh_exe` 等）都必须在
+/// 构造本结构之前完成，事务内部只剩 spawn backend 与 insert instance 两个
+/// 需要回滚的步骤。
+struct NewTerminalSpec {
+    terminal_id: String,
+    profile_id: String,
+    display_name: String,
+    group_override: Option<String>,
+    owner: TerminalOwner,
+    extra_param_tag: Option<String>,
+    extra_param_tag_color: Option<String>,
+    extra_startup_params: Option<String>,
+    extra_startup_mode: Option<String>,
+    /// 仅用于失败日志定位，不含凭据。
+    terminal_type: String,
+    startup_path: Option<String>,
+    profile_env: Vec<(String, String)>,
+    /// 已解析完成的启动命令，事务内不再有失败点。
+    init_commands: Vec<String>,
     init_rows: u16,
     init_cols: u16,
-    startup_path: Option<&str>,
-    env_vars: &[(String, String)],
-    terminal_id: &str,
-    log_prefix: &str,
-) -> Result<
-    (
-        TerminalBackend,
-        Box<dyn Read + Send>,
-        TerminalOutputBufferMode,
-    ),
-    String,
-> {
-    let backend = spawn_terminal_backend(
-        app,
-        loading_mode,
-        init_rows,
-        init_cols,
-        startup_path,
-        env_vars,
-    )
-    .map_err(|error| {
-        ClaudeHookService::unregister_terminal(terminal_id);
-        log_debug(&format!("[{}] backend FAILED: {}", log_prefix, error));
-        error
-    })?;
-    crate::boot_log(format!("[terminal] backend ready mode={:?}", loading_mode));
-    Ok(backend)
+    log_prefix: &'static str,
+    boot_prefix: &'static str,
 }
 
 /// 延迟 300ms 向终端写入初始化命令（等待 cmd.exe 初始化完成，保留原有时序）。
@@ -561,90 +715,113 @@ fn finalize_terminal_creation(
 }
 
 /// 按终端类型构造启动命令；ssh/docker/k8s 需要 profile 连接参数。
+///
+/// 这里是命令进入 PTY 前的最后一道关口，不能只依赖保存时的字段校验：
+/// `Profiles/*.json` 可能由旧版本写入、被用户手工编辑，或经 `import_all_data`
+/// 直接落盘。因此连接字段在此重新走一遍字段级校验 + `quote_cmd_argument`，
+/// 最终所有命令行再统一过一次控制字符检查（同时覆盖 `startup_commands` 和
+/// `apply_extra_startup_params` 追加的文本）。
 fn build_init_commands(
     terminal_type: &str,
     startup_commands: Vec<String>,
     profile: Option<&Profile>,
 ) -> Result<Vec<String>, String> {
-    match terminal_type {
-        "cmd" => Ok(startup_commands),
+    let commands: Vec<String> = match terminal_type {
+        "cmd" => startup_commands,
         "powershell" => {
             let mut cmds = vec!["powershell.exe".to_string()];
             cmds.extend(startup_commands);
-            Ok(cmds)
+            cmds
         }
         "pwsh" => {
             let pwsh = resolve_pwsh_exe()?;
             let mut cmds = vec![pwsh];
             cmds.extend(startup_commands);
-            Ok(cmds)
+            cmds
         }
         "ssh" => {
-            let host = profile.and_then(|p| p.ssh_host.clone()).unwrap_or_default();
-            let port = profile.and_then(|p| p.ssh_port).unwrap_or(22);
-            let user = profile.and_then(|p| p.ssh_user.clone()).unwrap_or_default();
-            let auth_type = profile
-                .and_then(|p| p.ssh_auth_type.clone())
-                .unwrap_or_else(|| "key".to_string());
-            let key_path = profile
-                .and_then(|p| p.ssh_key_path.clone())
-                .unwrap_or_default();
-            let ssh_cmd = if auth_type == "key" && !key_path.is_empty() {
-                format!(
-                    "ssh -i {} -p {} {}@{}",
-                    shell_escape(&key_path),
-                    port,
-                    shell_escape(&user),
-                    shell_escape(&host)
-                )
-            } else {
-                format!(
-                    "ssh -p {} {}@{}",
-                    port,
-                    shell_escape(&user),
-                    shell_escape(&host)
-                )
-            };
-            Ok(vec![ssh_cmd])
+            let profile =
+                profile.ok_or("SSH 连接缺少配置信息，无法启动。请重新选择连接后重试。")?;
+            let host = filled_field(&profile.ssh_host)
+                .ok_or("SSH 连接未填写主机地址，请在连接配置中补全「主机」后重试。")?;
+            validate_ssh_host(host)?;
+            let port = profile.ssh_port.unwrap_or(22);
+            let auth_type = profile.ssh_auth_type.as_deref().unwrap_or("key");
+            let mut cmd = "ssh".to_string();
+            if auth_type == "key" {
+                if let Some(key_path) = filled_field(&profile.ssh_key_path) {
+                    validate_ssh_key_path(key_path)?;
+                    cmd.push_str(&format!(
+                        " -i {}",
+                        quote_cmd_argument("SSH 私钥路径", key_path)?
+                    ));
+                }
+            }
+            cmd.push_str(&format!(" -p {}", port));
+            // 用户名留空时只写主机：写成 `@host` 会被 ssh 当成「空用户名」而不是「用默认用户」。
+            match filled_field(&profile.ssh_user) {
+                Some(user) => {
+                    validate_ssh_user(user)?;
+                    cmd.push_str(&format!(
+                        " {}@{}",
+                        quote_cmd_argument("SSH 用户名", user)?,
+                        quote_cmd_argument("SSH 主机", host)?
+                    ));
+                }
+                None => cmd.push_str(&format!(" {}", quote_cmd_argument("SSH 主机", host)?)),
+            }
+            vec![cmd]
         }
         "docker" => {
             let container = profile
-                .and_then(|p| p.docker_container_name.clone())
-                .or_else(|| profile.and_then(|p| p.docker_container_id.clone()))
-                .unwrap_or_default();
-            Ok(vec![format!(
+                .and_then(|p| {
+                    filled_field(&p.docker_container_name)
+                        .or_else(|| filled_field(&p.docker_container_id))
+                })
+                .ok_or("Docker 连接未填写容器名或容器 ID，请在连接配置中补全后重试。")?;
+            validate_docker_container(container)?;
+            vec![format!(
                 "docker exec -it {} cmd.exe",
-                shell_escape(&container)
-            )])
+                quote_cmd_argument("Docker 容器", container)?
+            )]
         }
         "k8s" => {
-            let ns = profile
-                .and_then(|p| p.k8s_namespace.clone())
-                .unwrap_or_default();
-            let pod = profile
-                .and_then(|p| p.k8s_pod_name.clone())
-                .unwrap_or_default();
-            let container = profile
-                .and_then(|p| p.k8s_container_name.clone())
-                .unwrap_or_default();
-            let mut cmd = format!(
-                "kubectl exec -it -n {} {}",
-                shell_escape(&ns),
-                shell_escape(&pod)
-            );
-            if !container.is_empty() {
-                cmd = format!("{} -c {} -- cmd.exe", cmd, shell_escape(&container));
-            } else {
-                cmd = format!("{} -- cmd.exe", cmd);
+            let profile = profile
+                .ok_or("Kubernetes 连接缺少配置信息，无法启动。请重新选择连接后重试。")?;
+            let pod = filled_field(&profile.k8s_pod_name)
+                .ok_or("Kubernetes 连接未填写 Pod 名称，请在连接配置中补全后重试。")?;
+            validate_k8s_name("Kubernetes Pod", pod)?;
+            let mut cmd = "kubectl exec -it".to_string();
+            // 命名空间留空时必须整段省略 `-n`，否则 `-n` 会把后面的 pod 名当成自己的值，
+            // kubectl 就拿不到 pod 参数了。省略后 kubectl 使用当前 context 的命名空间。
+            if let Some(ns) = filled_field(&profile.k8s_namespace) {
+                validate_k8s_name("Kubernetes 命名空间", ns)?;
+                cmd.push_str(&format!(
+                    " -n {}",
+                    quote_cmd_argument("Kubernetes 命名空间", ns)?
+                ));
             }
-            Ok(vec![cmd])
+            cmd.push_str(&format!(" {}", quote_cmd_argument("Kubernetes Pod", pod)?));
+            if let Some(container) = filled_field(&profile.k8s_container_name) {
+                validate_k8s_name("Kubernetes 容器", container)?;
+                cmd.push_str(&format!(
+                    " -c {}",
+                    quote_cmd_argument("Kubernetes 容器", container)?
+                ));
+            }
+            cmd.push_str(" -- cmd.exe");
+            vec![cmd]
         }
         _ => {
             let mut cmds = vec!["powershell.exe".to_string()];
             cmds.extend(startup_commands);
-            Ok(cmds)
+            cmds
         }
+    };
+    for command in &commands {
+        reject_control_chars("启动命令", command)?;
     }
+    Ok(commands)
 }
 
 fn apply_extra_startup_params(
@@ -702,11 +879,48 @@ impl TerminalService {
         instances
             .get(id)
             .map(|inst| inst.output_buffer.clone())
-            .ok_or("Terminal not found".to_string())
+            .ok_or_else(|| TerminalAccessError::NotFound.to_string())
+    }
+
+    /// 判定某一侧能否对指定终端执行指定操作。REST / WebSocket / Tauri command 一律
+    /// 走这里，不允许各自硬编码 owner 比较（权限矩阵见 `models::terminal_access`）。
+    pub fn authorize(
+        &self,
+        id: &str,
+        actor: TerminalActor,
+        action: TerminalAction,
+    ) -> Result<(), TerminalAccessError> {
+        let owner = {
+            let instances = self.lock_instances();
+            instances
+                .get(id)
+                .map(|instance| instance.owner.clone())
+                .ok_or(TerminalAccessError::NotFound)?
+        };
+        // 每次都读一遍设置：共享开关在运行中被改动后，下一次操作立即生效。
+        if is_terminal_action_allowed(
+            actor,
+            &owner,
+            action,
+            SettingsService::share_sessions_enabled(),
+        ) {
+            Ok(())
+        } else {
+            Err(TerminalAccessError::Denied { actor, action })
+        }
+    }
+
+    /// 读取终端归属。仅供已经通过 `authorize` 的调用方判断「是否算接管 PC 终端」，
+    /// 不要用它自己拼权限判断。
+    pub fn terminal_owner(&self, id: &str) -> Option<TerminalOwner> {
+        self.lock_instances()
+            .get(id)
+            .map(|instance| instance.owner.clone())
     }
 
     /// 构建当前存活终端的列表（供 REST `GET /api/terminals`、Tauri 命令、meta WS 共用）。
-    /// 过滤掉 PTY 已退出的实例，并用 ProfileService 补全 profile 元数据。
+    /// 用 ProfileService 补全 profile 元数据。不做权限过滤，调用方按需使用
+    /// `list_terminals_info_for`。
     pub fn list_terminals_info(&self) -> Vec<TerminalInfo> {
         struct InstanceSnapshot {
             id: String,
@@ -724,7 +938,6 @@ impl TerminalService {
             let instances = self.lock_instances();
             instances
                 .values()
-                .filter(|inst| !inst.exited.load(Ordering::SeqCst))
                 .map(|inst| InstanceSnapshot {
                     id: inst.id.clone(),
                     profile_id: inst.profile_id.clone(),
@@ -779,6 +992,122 @@ impl TerminalService {
                 },
             )
             .collect()
+    }
+
+    /// 按发起方过滤后的终端列表：非共享模式下 Web 端拿不到 PC-owned terminal，
+    /// 直接用已知 id 连 WS 也会被 `authorize` 拦下，两处规则同源。
+    pub fn list_terminals_info_for(&self, actor: TerminalActor) -> Vec<TerminalInfo> {
+        let share_sessions = SettingsService::share_sessions_enabled();
+        self.list_terminals_info()
+            .into_iter()
+            .filter(|info| {
+                is_terminal_action_allowed(actor, &info.owner, TerminalAction::View, share_sessions)
+            })
+            .collect()
+    }
+
+    /// 终端创建的唯一事务入口。
+    ///
+    /// 任一步失败都由 `TerminalCreation` 守卫回滚：关闭已 spawn 的后端、丢弃
+    /// reader、从实例表移除、注销 Claude hook token，并且不发送任何创建成功
+    /// 事件。只有全部步骤成功后的 `commit()` 才提交。
+    fn spawn_terminal(&self, spec: NewTerminalSpec, app: AppHandle) -> Result<String, String> {
+        let NewTerminalSpec {
+            terminal_id,
+            profile_id,
+            display_name,
+            group_override,
+            owner,
+            extra_param_tag,
+            extra_param_tag_color,
+            extra_startup_params,
+            extra_startup_mode,
+            terminal_type,
+            startup_path,
+            profile_env,
+            init_commands,
+            init_rows,
+            init_cols,
+            log_prefix,
+            boot_prefix,
+        } = spec;
+        let mut creation = TerminalCreation::new(
+            &terminal_id,
+            &terminal_type,
+            self.instances.clone(),
+            app.clone(),
+        );
+
+        // 注册 hook token 之后就必须由守卫负责注销。
+        creation.stage = "register-hook";
+        let env_vars = build_terminal_env(&terminal_id, Some(&profile_env));
+        creation.hook_registered = true;
+
+        creation.stage = "spawn-backend";
+        let loading_mode = SettingsService::get_settings().terminal_loading_mode;
+        log_debug(&format!(
+            "[{}] spawning, id={}, type={}, path={:?}, commands={}, envs={}",
+            log_prefix,
+            terminal_id,
+            terminal_type,
+            startup_path,
+            init_commands.len(),
+            env_vars.len()
+        ));
+        let (backend, backend_reader, output_buffer_mode) = spawn_terminal_backend(
+            &app,
+            &loading_mode,
+            init_rows,
+            init_cols,
+            startup_path.as_deref(),
+            &env_vars,
+        )
+        .map_err(|error| creation.fail(&error))?;
+        crate::boot_log(format!("[terminal] backend ready mode={:?}", loading_mode));
+        creation.backend = Some(backend);
+        creation.reader = Some(backend_reader);
+
+        creation.stage = "insert-instance";
+        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
+        let backend = creation.backend.take().expect("backend 刚刚存入守卫");
+        self.insert_instance(TerminalInstance {
+            id: terminal_id.clone(),
+            profile_id,
+            display_name,
+            group_override,
+            owner,
+            extra_param_tag,
+            extra_param_tag_color,
+            extra_startup_params,
+            extra_startup_mode,
+            backend,
+            output_buffer: output_buffer.clone(),
+            current_rows: init_rows,
+            current_cols: init_cols,
+        });
+        creation.inserted = true;
+        creation.stage = "init-commands";
+        schedule_delayed_input(
+            self.instances.clone(),
+            terminal_id.clone(),
+            init_commands,
+            log_prefix,
+        );
+
+        creation.stage = "start-forwarder";
+        let backend_reader = creation.reader.take().expect("reader 刚刚存入守卫");
+        finalize_terminal_creation(
+            self,
+            backend_reader,
+            &terminal_id,
+            app,
+            output_buffer,
+            output_buffer_mode,
+            log_prefix,
+            boot_prefix,
+        );
+        creation.commit();
+        Ok(terminal_id)
     }
 
     pub fn create_terminal(
@@ -839,97 +1168,80 @@ impl TerminalService {
                     .collect()
             })
             .unwrap_or_default();
-        let env_vars = build_terminal_env(&terminal_id, Some(&profile_env));
-
-        log_debug(&format!(
-            "[create] type={}, path={:?}, commands={}, envs={}",
-            terminal_type,
-            startup_path,
-            startup_commands.len(),
-            env_vars.len()
-        ));
         crate::boot_log(format!(
             "[create_terminal] start type={} profile={}",
             terminal_type, profile_id
         ));
-
         let (init_rows, init_cols) = resolve_terminal_size(initial_rows, initial_cols);
-        let loading_mode = SettingsService::get_settings().terminal_loading_mode;
-        let (backend, backend_reader, output_buffer_mode) = spawn_backend_with_cleanup(
-            &app,
-            &loading_mode,
-            init_rows,
-            init_cols,
-            startup_path.as_deref(),
-            &env_vars,
-            &terminal_id,
-            "create",
-        )?;
+        // 先把可能失败的启动命令构造做完，再进入创建事务：失败时不存在已 spawn
+        // 的 PTY 或已插入的实例需要回滚。
+        let init_commands = build_init_commands(terminal_type, startup_commands, profile.as_ref())
+            .map_err(|error| {
+                log_debug(&format!(
+                    "[create] FAILED, id={}, type={}, stage=build-init-commands, error={}",
+                    terminal_id, terminal_type, error
+                ));
+                error
+            })?;
 
-        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
-
-        let instance = TerminalInstance {
-            id: terminal_id.clone(),
-            profile_id: profile_id.to_string(),
-            display_name,
-            group_override: None,
-            owner,
-            extra_param_tag: extra_param_tag.map(str::to_string),
-            extra_param_tag_color: extra_param_tag_color.map(str::to_string),
-            extra_startup_params: extra_startup_params.map(str::to_string),
-            extra_startup_mode: extra_startup_mode.map(str::to_string),
-            backend,
-            output_buffer: output_buffer.clone(),
-            current_rows: init_rows,
-            current_cols: init_cols,
-            exited: AtomicBool::new(false),
-        };
-        self.insert_instance(instance);
-
-        // Build init commands based on terminal type
-        let init_commands = build_init_commands(terminal_type, startup_commands, profile.as_ref())?;
-        schedule_delayed_input(
-            self.instances.clone(),
-            terminal_id.clone(),
-            init_commands,
-            "init-cmds",
-        );
-
-        // Output forwarding thread
-        finalize_terminal_creation(
-            self,
-            backend_reader,
-            &terminal_id,
+        self.spawn_terminal(
+            NewTerminalSpec {
+                terminal_id,
+                profile_id: profile_id.to_string(),
+                display_name,
+                group_override: None,
+                owner,
+                extra_param_tag: extra_param_tag.map(str::to_string),
+                extra_param_tag_color: extra_param_tag_color.map(str::to_string),
+                extra_startup_params: extra_startup_params.map(str::to_string),
+                extra_startup_mode: extra_startup_mode.map(str::to_string),
+                terminal_type: terminal_type.to_string(),
+                startup_path,
+                profile_env,
+                init_commands,
+                init_rows,
+                init_cols,
+                log_prefix: "create",
+                boot_prefix: "create_terminal",
+            },
             app,
-            output_buffer,
-            output_buffer_mode,
-            "create",
-            "create_terminal",
-        );
-
-        Ok(terminal_id)
+        )
     }
 
-    pub fn write_to_terminal(&self, id: &str, data: &str) -> Result<(), String> {
+    pub fn write_to_terminal(
+        &self,
+        id: &str,
+        data: &str,
+        actor: TerminalActor,
+    ) -> Result<(), String> {
+        self.authorize(id, actor, TerminalAction::Input)
+            .map_err(|error| error.to_string())?;
         let mut instances = self.lock_instances();
-        if let Some(instance) = instances.get_mut(id) {
-            instance.backend.write_input(data.as_bytes())
-        } else {
-            Err("Terminal not found".to_string())
-        }
+        instances
+            .get_mut(id)
+            .ok_or_else(|| TerminalAccessError::NotFound.to_string())?
+            .backend
+            .write_input(data.as_bytes())
     }
 
-    pub fn update_terminal_display_name(&self, id: &str, display_name: &str) -> Result<(), String> {
+    pub fn update_terminal_display_name(
+        &self,
+        id: &str,
+        display_name: &str,
+        actor: TerminalActor,
+    ) -> Result<(), String> {
         let display_name = display_name.trim();
         if display_name.is_empty() {
             return Err("终端名称不能为空".to_string());
         }
+        self.authorize(id, actor, TerminalAction::RenameMetadata)
+            .map_err(|error| error.to_string())?;
 
         let changed = {
             let mut instances = self.lock_instances();
             let instance = instances
                 .get_mut(id)
-                .ok_or("Terminal not found".to_string())?;
+                .ok_or_else(|| TerminalAccessError::NotFound.to_string())?;
             if instance.display_name == display_name {
                 false
             } else {
@@ -949,121 +1261,132 @@ impl TerminalService {
         rows: u16,
         cols: u16,
         allow_shrink: bool,
+        actor: TerminalActor,
     ) -> Result<(), String> {
+        self.authorize(id, actor, TerminalAction::Resize)
+            .map_err(|error| error.to_string())?;
         // 与 web/ws.rs 的 Resize 处理对齐：clamp 到 1..=500，避免 0 或异常尺寸
         // 传入 ConPTY 触发底层异常（前端在布局过渡帧可能短暂算出 0）。
         let rows = rows.clamp(1, 500);
         let cols = cols.clamp(1, 500);
         let mut instances = self.lock_instances();
-        if let Some(instance) = instances.get_mut(id) {
-            let (new_rows, new_cols) = if allow_shrink {
-                (rows, cols)
-            } else {
-                // Only grow — prevents a small web/mobile client from shrinking
-                // the PTY and affecting the desktop viewer.
-                (
-                    std::cmp::max(instance.current_rows, rows),
-                    std::cmp::max(instance.current_cols, cols),
-                )
-            };
-            if new_rows != instance.current_rows || new_cols != instance.current_cols {
-                instance.backend.resize(new_rows, new_cols)?;
-                instance.current_rows = new_rows;
-                instance.current_cols = new_cols;
-                log_debug(&format!(
-                    "[resize] id={} rows={} cols={} allow_shrink={}",
-                    id, new_rows, new_cols, allow_shrink
-                ));
-            }
-            Ok(())
-        } else {
-            Err("Terminal not found".to_string())
-        }
-    }
-
-    pub fn acknowledge_terminal_output(&self, id: &str, char_count: u32) -> Result<(), String> {
-        let mut instances = self.lock_instances();
         let instance = instances
             .get_mut(id)
-            .ok_or("Terminal not found".to_string())?;
-        instance.backend.acknowledge_output(char_count)
+            .ok_or_else(|| TerminalAccessError::NotFound.to_string())?;
+        let (new_rows, new_cols) = if allow_shrink {
+            (rows, cols)
+        } else {
+            // Only grow — prevents a small web/mobile client from shrinking
+            // the PTY and affecting the desktop viewer.
+            (
+                std::cmp::max(instance.current_rows, rows),
+                std::cmp::max(instance.current_cols, cols),
+            )
+        };
+        if new_rows != instance.current_rows || new_cols != instance.current_cols {
+            instance.backend.resize(new_rows, new_cols)?;
+            instance.current_rows = new_rows;
+            instance.current_cols = new_cols;
+            log_debug(&format!(
+                "[resize] id={} rows={} cols={} allow_shrink={}",
+                id, new_rows, new_cols, allow_shrink
+            ));
+        }
+        Ok(())
     }
 
-    pub fn terminal_loading_mode(&self, id: &str) -> Result<&'static str, String> {
+    /// 渲染流控回执。属于只读查看链路，因此按 `View` 授权：
+    /// 非共享模式下桌面端仍可只读观察 Web 终端，不能因为拿不到回执而卡住渲染。
+    pub fn acknowledge_terminal_output(
+        &self,
+        id: &str,
+        char_count: u32,
+        actor: TerminalActor,
+    ) -> Result<(), String> {
+        self.authorize(id, actor, TerminalAction::View)
+            .map_err(|error| error.to_string())?;
+        let mut instances = self.lock_instances();
+        instances
+            .get_mut(id)
+            .ok_or_else(|| TerminalAccessError::NotFound.to_string())?
+            .backend
+            .acknowledge_output(char_count)
+    }
+
+    pub fn terminal_loading_mode(
+        &self,
+        id: &str,
+        actor: TerminalActor,
+    ) -> Result<&'static str, String> {
+        self.authorize(id, actor, TerminalAction::View)
+            .map_err(|error| error.to_string())?;
         let instances = self.lock_instances();
-        let instance = instances.get(id).ok_or("Terminal not found".to_string())?;
+        let instance = instances
+            .get(id)
+            .ok_or_else(|| TerminalAccessError::NotFound.to_string())?;
         Ok(instance.backend.loading_mode())
     }
 
-    pub fn drain_terminal_output(&self, id: &str) -> Result<String, String> {
+    pub fn drain_terminal_output(&self, id: &str, actor: TerminalActor) -> Result<String, String> {
+        self.authorize(id, actor, TerminalAction::View)
+            .map_err(|error| error.to_string())?;
         let buf_arc = self.output_buffer_arc(id)?;
         let mut buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
         // This command is the desktop attachment handshake: the lock makes the
         // returned startup snapshot and all later live events mutually exclusive.
-        Ok(buffer.attach_desktop())
+        Ok(buffer.snapshot_and_attach())
     }
 
-    pub fn peek_terminal_output(&self, id: &str) -> Result<String, String> {
+    pub fn peek_terminal_output(&self, id: &str, actor: TerminalActor) -> Result<String, String> {
+        self.authorize(id, actor, TerminalAction::View)
+            .map_err(|error| error.to_string())?;
         let buf_arc = self.output_buffer_arc(id)?;
         let buffer = buf_arc.lock().unwrap_or_else(|e| e.into_inner());
         Ok(buffer.collect())
     }
 
-    /// 检查 PC 端是否有权限操作指定终端
-    /// 在不共享模式下，PC 端不能操作 Web 端创建的终端
-    pub fn check_pc_permission(&self, id: &str) -> Result<(), String> {
-        let settings = SettingsService::get_settings();
-        if !settings.web_api_share_sessions {
-            let instances = self.lock_instances();
-            if let Some(terminal) = instances.get(id) {
-                if terminal.owner == TerminalOwner::Web {
-                    return Err("终端由 Web 端管理，PC 端只读".to_string());
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn close_terminal(&self, id: &str) -> Result<(), String> {
-        self.close_terminal_with_check(id, None)
-    }
-
-    pub fn close_terminal_with_check(
+    /// 关闭终端的唯一入口（含授权）。成功后由 `teardown_terminal` 释放资源，
+    /// 并对每个终端恰好发送一次 `terminal-closed` 与 session change。
+    ///
+    /// `NotFound` 的呈现由调用方决定：桌面端视为幂等成功，REST 映射为 404。
+    pub fn close_terminal(
         &self,
+        app: &AppHandle,
         id: &str,
-        required_owner: Option<TerminalOwner>,
-    ) -> Result<(), String> {
-        let instance = {
-            let mut instances = self.lock_instances();
-            let instance = instances.get(id).ok_or("Terminal not found".to_string())?;
-            if let Some(expected) = required_owner {
-                if instance.owner != expected {
-                    return Err("无权限关闭此终端".to_string());
-                }
-            }
-            instances
-                .remove(id)
-                .ok_or("Terminal not found".to_string())?
-        };
-        self.schedule_terminal_cleanup(id, instance);
+        actor: TerminalActor,
+        reason: TerminalCloseReason,
+    ) -> Result<(), TerminalAccessError> {
+        self.authorize(id, actor, TerminalAction::Close)?;
+        // teardown 幂等：并发的自然退出可能已经先收尾，那同样算关闭成功。
+        teardown_terminal(app, id, reason);
         Ok(())
     }
 
-    fn schedule_terminal_cleanup(&self, id: &str, mut instance: TerminalInstance) {
-        ClaudeHookService::unregister_terminal(id);
-        self.notify_sessions_changed();
-        log_debug(&format!("[close] detached, id={}", id));
-
-        let terminal_id = id.to_string();
-        let _cleanup_task = tauri::async_runtime::spawn_blocking(move || {
-            let started = Instant::now();
-            instance.backend.close();
-            log_debug(&format!(
-                "[close] cleanup DONE, id={}, elapsed_ms={}",
-                terminal_id,
-                started.elapsed().as_millis(),
-            ));
-        });
+    /// 应用退出：原子取走全部实例，随后在锁外只发终止信号而不 wait，
+    /// 保证退出流程不会被 `child.wait()` 阻塞。
+    ///
+    /// 窗口即将销毁，因此不发送 `terminal-closed` / session change。
+    pub fn shutdown_all_terminals(&self, app: &AppHandle) {
+        let instances: Vec<TerminalInstance> = {
+            let mut map = self.lock_instances();
+            map.drain().map(|(_, instance)| instance).collect()
+        };
+        if instances.is_empty() {
+            return;
+        }
+        log_debug(&format!(
+            "[teardown] start, count={}, reason={}",
+            instances.len(),
+            TerminalCloseReason::AppShutdown.as_str()
+        ));
+        let web_state = app.state::<WebServiceState>();
+        let ssh_service = app.state::<SshSessionService>();
+        for mut instance in instances {
+            ClaudeHookService::unregister_terminal(&instance.id);
+            ssh_service.close_session(&instance.id);
+            web_state.close_all(&instance.id);
+            instance.backend.kill_without_wait();
+        }
     }
 
     pub fn create_blank_terminal(
@@ -1109,75 +1432,47 @@ impl TerminalService {
                 _ => "PowerShell".to_string(),
             });
         let (init_rows, init_cols) = resolve_terminal_size(initial_rows, initial_cols);
-        let loading_mode = SettingsService::get_settings().terminal_loading_mode;
-        let env_vars = build_terminal_env(&terminal_id, None);
-        let (backend, backend_reader, output_buffer_mode) = spawn_backend_with_cleanup(
-            &app,
-            &loading_mode,
-            init_rows,
-            init_cols,
-            startup_path.as_deref(),
-            &env_vars,
-            &terminal_id,
-            "create-blank",
-        )?;
-
-        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
-
-        let instance = TerminalInstance {
-            id: terminal_id.clone(),
-            profile_id: String::new(),
-            display_name,
-            group_override: group_override
-                .map(str::trim)
-                .filter(|group| !group.is_empty())
-                .map(str::to_string),
-            owner,
-            backend,
-            output_buffer: output_buffer.clone(),
-            current_rows: init_rows,
-            current_cols: init_cols,
-            exited: AtomicBool::new(false),
-            extra_param_tag: None,
-            extra_param_tag_color: None,
-            extra_startup_params: None,
-            extra_startup_mode: None,
+        // For "cmd" type: cmd.exe is already the base shell, no command needed.
+        // For "powershell" type: start powershell.exe (Windows PowerShell 5.x).
+        // For "pwsh" type: need to start pwsh.exe (PowerShell 7.x) — 定位可能失败，
+        // 因此必须在进入创建事务之前完成，避免回滚已 spawn 的 PTY。
+        let init_commands = match effective_type {
+            "cmd" => Vec::new(),
+            "pwsh" => vec![resolve_pwsh_exe().map_err(|error| {
+                log_debug(&format!(
+                    "[create-blank] FAILED, id={}, type={}, stage=resolve-pwsh, error={}",
+                    terminal_id, effective_type, error
+                ));
+                error
+            })?],
+            _ => vec!["powershell.exe".to_string()],
         };
-        self.insert_instance(instance);
 
-        // For "cmd" type: cmd.exe is already the base shell, no need to start another one
-        // For "powershell" type: need to start powershell.exe
-        // For "pwsh" type: need to start pwsh.exe (PowerShell 7.x)
-        let shell_cmd = match effective_type {
-            "cmd" => String::new(),
-            "pwsh" => resolve_pwsh_exe()?,
-            _ => "powershell.exe".to_string(),
-        };
-        let init_commands = if shell_cmd.is_empty() {
-            Vec::new()
-        } else {
-            vec![shell_cmd]
-        };
-        schedule_delayed_input(
-            self.instances.clone(),
-            terminal_id.clone(),
-            init_commands,
-            "init-blank",
-        );
-
-        // Output forwarding thread
-        finalize_terminal_creation(
-            self,
-            backend_reader,
-            &terminal_id,
+        self.spawn_terminal(
+            NewTerminalSpec {
+                terminal_id,
+                profile_id: String::new(),
+                display_name,
+                group_override: group_override
+                    .map(str::trim)
+                    .filter(|group| !group.is_empty())
+                    .map(str::to_string),
+                owner,
+                extra_param_tag: None,
+                extra_param_tag_color: None,
+                extra_startup_params: None,
+                extra_startup_mode: None,
+                terminal_type: effective_type.to_string(),
+                startup_path,
+                profile_env: Vec::new(),
+                init_commands,
+                init_rows,
+                init_cols,
+                log_prefix: "create-blank",
+                boot_prefix: "create_blank_terminal",
+            },
             app,
-            output_buffer,
-            output_buffer_mode,
-            "create-blank",
-            "create_blank_terminal",
-        );
-
-        Ok(terminal_id)
+        )
     }
 }
 
@@ -1221,7 +1516,7 @@ pub fn update_terminal_display_name(
     display_name: String,
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
-    terminal_service.update_terminal_display_name(&id, &display_name)
+    terminal_service.update_terminal_display_name(&id, &display_name, TerminalActor::Pc)
 }
 
 #[command]
@@ -1230,8 +1525,7 @@ pub fn write_to_terminal(
     data: String,
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
-    terminal_service.check_pc_permission(&id)?;
-    terminal_service.write_to_terminal(&id, &data)
+    terminal_service.write_to_terminal(&id, &data, TerminalActor::Pc)
 }
 
 #[command]
@@ -1242,12 +1536,11 @@ pub fn resize_terminal(
     terminal_service: State<TerminalService>,
     web_service_state: State<WebServiceState>,
 ) -> Result<(), String> {
-    terminal_service.check_pc_permission(&id)?;
     if web_service_state.get_subscriber_count(&id) > 0 {
         return Ok(());
     }
     // Without an active Web takeover, the desktop remains the primary viewer.
-    terminal_service.resize_terminal(&id, rows, cols, true)
+    terminal_service.resize_terminal(&id, rows, cols, true, TerminalActor::Pc)
 }
 
 #[command]
@@ -1256,7 +1549,7 @@ pub fn acknowledge_terminal_output(
     char_count: u32,
     terminal_service: State<TerminalService>,
 ) -> Result<(), String> {
-    terminal_service.acknowledge_terminal_output(&id, char_count)
+    terminal_service.acknowledge_terminal_output(&id, char_count, TerminalActor::Pc)
 }
 
 #[command]
@@ -1265,19 +1558,26 @@ pub fn get_terminal_loading_mode(
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
     terminal_service
-        .terminal_loading_mode(&id)
+        .terminal_loading_mode(&id, TerminalActor::Pc)
         .map(str::to_string)
 }
 
 #[command]
 pub fn close_terminal(
     id: String,
+    app: AppHandle,
     terminal_service: State<TerminalService>,
-    ssh_service: State<SshSessionService>,
 ) -> Result<(), String> {
-    terminal_service.check_pc_permission(&id)?;
-    ssh_service.close_session(&id);
-    terminal_service.close_terminal(&id)
+    match terminal_service.close_terminal(
+        &app,
+        &id,
+        TerminalActor::Pc,
+        TerminalCloseReason::DesktopClose,
+    ) {
+        // 关闭幂等：终端可能刚好自然退出，桌面端不需要看到错误。
+        Ok(()) | Err(TerminalAccessError::NotFound) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 #[command]
@@ -1285,7 +1585,7 @@ pub fn drain_terminal_output(
     id: String,
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.drain_terminal_output(&id)
+    terminal_service.drain_terminal_output(&id, TerminalActor::Pc)
 }
 
 #[command]
@@ -1293,15 +1593,16 @@ pub fn peek_terminal_output(
     id: String,
     terminal_service: State<TerminalService>,
 ) -> Result<String, String> {
-    terminal_service.peek_terminal_output(&id)
+    terminal_service.peek_terminal_output(&id, TerminalActor::Pc)
 }
 
-/// 列出当前所有存活终端（含 profile 元数据）。供桌面端将来同步展示，亦被 web 层复用。
+/// 列出桌面端可见的存活终端（含 profile 元数据）。非共享模式下也能只读看到
+/// Web 端创建的终端，写操作由 `authorize` 单独拦截。
 #[command]
 pub fn list_terminals(
     terminal_service: State<TerminalService>,
 ) -> Result<Vec<TerminalInfo>, String> {
-    Ok(terminal_service.list_terminals_info())
+    Ok(terminal_service.list_terminals_info_for(TerminalActor::Pc))
 }
 
 #[command]

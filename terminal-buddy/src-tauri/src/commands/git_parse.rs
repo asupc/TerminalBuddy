@@ -1,4 +1,5 @@
-//! git 输出解析层：历史图 refs/提交记录、status/numstat/diff、pathspec 归一化。
+//! git 输出解析层：历史图 refs/提交记录、status/numstat/diff、pathspec 归一化，
+//! 以及 ref / revision 参数的集中构造与失败原因分类。
 //! 与执行层（`super::git` 的 `run_git_*`）分离，纯解析函数可独立测试。
 
 use super::git::{
@@ -6,6 +7,212 @@ use super::git::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+// ---------------------------------------------------------------------------
+// 参数边界：ref / revision 参数的集中构造
+//
+// git 参数不经过 shell（`Command::args` 直接给 argv），所以这里防的不是 shell 注入，
+// 而是 **git 自己的选项解析**：ref 名允许以 `-` 开头（`git update-ref
+// refs/heads/--output=x HEAD` 会被接受），而 `git log --output=<file>` 会覆盖该文件、
+// `git push --receive-pack=<prog>` 会执行本地程序。因此凡是把不可信 branch/ref 拼进
+// 参数的地方，必须走本节的构造函数，不允许调用点自行 `format!`。
+//
+// 两种防线，按命令形态选用：
+// 1. **完整 ref**（`refs/heads/...`、`refs/remotes/...`）——首字符是 `r`，永远不可能
+//    被解析成选项。优先使用。
+// 2. `--end-of-options`（gitcli(7)，Git ≥ 2.24）——其后一律按 revision / pathspec 解析。
+//    但它要求所有选项都在它前面：`git log <rev> --not <ref>` 这种「选项跟在 revision
+//    之后」的写法与它互斥（实测报 `fatal: option '--not' must come before non-option
+//    arguments`），那种场景只能靠完整 ref。`git rev-parse --symbolic-full-name` 也不能
+//    用——非 `--verify` 模式会把 `--end-of-options` 当成待解析的参数原样回显。
+// ---------------------------------------------------------------------------
+
+/// git 选项终止符。放在所有选项之后、所有 revision / pathspec 之前。
+pub(crate) const END_OF_OPTIONS: &str = "--end-of-options";
+
+/// 拒绝会被 git 解析成选项的参数值。所有 revision / ref 参数落地前的最后一道闸。
+pub(crate) fn ensure_not_option_like(field_label: &str, value: &str) -> Result<(), String> {
+    if value.starts_with('-') {
+        return Err(format!(
+            "「{}」不能以「-」开头：git 会把它当成命令选项而不是引用（例如 --output= 会覆盖文件、\
+             --receive-pack= 会执行本地程序）。当前值：{}",
+            field_label, value
+        ));
+    }
+    Ok(())
+}
+
+/// 校验分支 / ref 名，确保它能安全地拼进 `refs/heads/<name>`、`<a>..<b>`、`<rev>:<path>`。
+///
+/// 这些字符本来就被 `git check-ref-format` 拒绝，但 ref 可以被直接写进
+/// `.git/packed-refs` 绕过校验，所以读到的名字仍要自己验一遍。
+fn validate_ref_name(field_label: &str, value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("「{}」不能为空。", field_label));
+    }
+    if let Some(bad) = value.chars().find(|c| c.is_control() || c.is_whitespace()) {
+        return Err(format!(
+            "「{}」不能包含控制字符或空白（检测到 U+{:04X}）。当前值：{}",
+            field_label, bad as u32, value
+        ));
+    }
+    if let Some(bad) = value
+        .chars()
+        .find(|c| matches!(c, ':' | '?' | '*' | '[' | '\\' | '~' | '^'))
+    {
+        return Err(format!(
+            "「{}」不能包含字符 {:?}：它在 git 引用语法里有特殊含义。当前值：{}",
+            field_label, bad, value
+        ));
+    }
+    if value.contains("..") || value.contains("@{") {
+        return Err(format!(
+            "「{}」不能包含「..」或「@{{」：它们会把引用改写成版本区间。当前值：{}",
+            field_label, value
+        ));
+    }
+    if value.starts_with('/') || value.ends_with('/') || value.ends_with('.') {
+        return Err(format!(
+            "「{}」不能以「/」开头、以「/」或「.」结尾。当前值：{}",
+            field_label, value
+        ));
+    }
+    Ok(())
+}
+
+/// 分支名 → 完整本地 ref。已是完整 ref（`refs/...`）时原样返回。
+pub(crate) fn local_branch_ref(branch: &str) -> Result<String, String> {
+    let branch = branch.trim();
+    validate_ref_name("本地分支名", branch)?;
+    let full = if branch.starts_with("refs/") {
+        branch.to_string()
+    } else {
+        format!("refs/heads/{}", branch)
+    };
+    ensure_not_option_like("本地分支引用", &full)?;
+    Ok(full)
+}
+
+/// `<remote>` + `<remote_branch>` → 远端跟踪 ref `refs/remotes/<remote>/<branch>`。
+pub(crate) fn remote_tracking_ref(remote: &str, remote_branch: &str) -> Result<String, String> {
+    let remote = remote.trim();
+    validate_ref_name("远端名称", remote)?;
+    let branch = remote_branch
+        .trim()
+        .strip_prefix("refs/heads/")
+        .unwrap_or_else(|| remote_branch.trim())
+        .trim_matches('/');
+    validate_ref_name("远端分支名", branch)?;
+    let full = format!("refs/remotes/{}/{}", remote, branch);
+    ensure_not_option_like("远端跟踪引用", &full)?;
+    Ok(full)
+}
+
+/// `git for-each-ref` 用的远端 ref 前缀。
+pub(crate) fn remote_refs_prefix(remote: &str) -> Result<String, String> {
+    let remote = remote.trim();
+    validate_ref_name("远端名称", remote)?;
+    Ok(format!("refs/remotes/{}", remote))
+}
+
+/// `git push` refspec：两端都写成完整 ref，避免整个 refspec 被当成选项。
+pub(crate) fn push_refspec(local_branch: &str, remote_branch: &str) -> Result<String, String> {
+    let local = local_branch_ref(local_branch)?;
+    let remote = remote_branch.trim();
+    validate_ref_name("远端分支名", remote)?;
+    let remote_full = if remote.starts_with("refs/") {
+        remote.to_string()
+    } else {
+        format!("refs/heads/{}", remote)
+    };
+    let refspec = format!("{}:{}", local, remote_full);
+    ensure_not_option_like("推送 refspec", &refspec)?;
+    Ok(refspec)
+}
+
+/// 前端传入的 revision（提交哈希、`HEAD`、空树哈希等）。不能像分支名那样按 ref 语法
+/// 收紧（区间和 `^` 是合法 revision 语法），但必须非空、无控制字符、不像选项。
+pub(crate) fn ensure_revision_arg(field_label: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("「{}」不能为空。", field_label));
+    }
+    if let Some(bad) = value.chars().find(|c| c.is_control()) {
+        return Err(format!(
+            "「{}」不能包含控制字符（检测到 U+{:04X}）。",
+            field_label, bad as u32
+        ));
+    }
+    ensure_not_option_like(field_label, value)
+}
+
+/// `<from>..<to>` 版本区间。
+pub(crate) fn revision_range(from: &str, to: &str) -> Result<String, String> {
+    ensure_revision_arg("起始版本", from)?;
+    ensure_revision_arg("目标版本", to)?;
+    Ok(format!("{}..{}", from, to))
+}
+
+/// `<revision>:<path>` 对象定位符 —— revision 与 path 同时出现时唯一无歧义的写法，
+/// 不需要（也不能）再用 `--` 去分隔。revision 内不允许出现 `:`，否则会被重新切分。
+pub(crate) fn revision_object_spec(revision: &str, path: &str) -> Result<String, String> {
+    ensure_revision_arg("版本", revision)?;
+    if revision.contains(':') {
+        return Err(format!(
+            "「版本」不能包含「:」：它会让 git 把后面的内容当成路径。当前值：{}",
+            revision
+        ));
+    }
+    if path.trim().is_empty() {
+        return Err("「文件路径」不能为空。".to_string());
+    }
+    if let Some(bad) = path.chars().find(|c| c.is_control()) {
+        return Err(format!(
+            "「文件路径」不能包含控制字符（检测到 U+{:04X}）。",
+            bad as u32
+        ));
+    }
+    Ok(format!("{}:{}", revision, path))
+}
+
+/// `git show <rev>:<path>` 的失败原因。只有「该版本里确实没有这个路径」可以当成空内容。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GitShowFailure {
+    /// git 明确报出「路径不在该 revision 中」。
+    PathMissingInRevision,
+    /// 其余一切：git 不可执行、revision 不存在、对象损坏、权限不足、超时、取消。
+    Other,
+}
+
+/// 按 git 的原文逐行匹配失败原因。
+///
+/// git 的两条原文（2.x）：
+/// - `fatal: path 'a.txt' does not exist in 'HEAD'`
+/// - `fatal: path 'a.txt' exists on disk, but not in 'HEAD'`
+///
+/// 必须按整行结构匹配，不能在整段输出里搜 `Path` / `not found` 这类裸子串：
+/// `fatal: invalid object name 'xxx'`（revision 不存在）、
+/// `error: object file ... is empty`（对象损坏）、权限错误都可能带上同样的词，
+/// 一并吞成「空内容」会把真实故障显示成空 diff。旧版本 git 首字母大写，故大小写不敏感。
+pub(crate) fn classify_git_show_failure(message: &str) -> GitShowFailure {
+    for line in message.lines() {
+        let line = line.trim();
+        let line = line
+            .strip_prefix("fatal:")
+            .or_else(|| line.strip_prefix("error:"))
+            .unwrap_or(line)
+            .trim();
+        let lower = line.to_ascii_lowercase();
+        if !lower.starts_with("path '") {
+            continue;
+        }
+        if lower.contains("' does not exist in '")
+            || lower.contains("' exists on disk, but not in '")
+        {
+            return GitShowFailure::PathMissingInRevision;
+        }
+    }
+    GitShowFailure::Other
+}
 
 fn history_ref_kind(full_name: &str) -> &'static str {
     if full_name == "HEAD" {
@@ -179,6 +386,10 @@ pub(crate) fn history_log_revisions(
 
 /// VS Code persists the selected branch base in this Git config key. It is
 /// only a graph base when it differs from the current branch's upstream.
+///
+/// 这里的值来自仓库自己的 `.git/config`，属于不可信输入：`rev-parse
+/// --symbolic-full-name` 不能加 `--end-of-options`（非 `--verify` 模式会把它当成待解析
+/// 参数原样多输出一行），所以先用 `ensure_not_option_like` 把像选项的值挡掉。
 pub(crate) fn mark_configured_history_base_ref(
     root: &Path,
     current_branch: Option<&str>,
@@ -190,6 +401,8 @@ pub(crate) fn mark_configured_history_base_ref(
     let configured_ref = run_git(root, &["config", "--get", &config_key])
         .ok()
         .filter(|value| !value.is_empty())?;
+    // 配置值非法时静默忽略这个 base：它只影响历史图的过滤范围，缺失不影响主流程。
+    ensure_revision_arg("历史图基线引用", &configured_ref).ok()?;
     let full_name = run_git(
         root,
         &["rev-parse", "--symbolic-full-name", &configured_ref],
@@ -201,9 +414,13 @@ pub(crate) fn mark_configured_history_base_ref(
         return None;
     }
 
-    let revision = run_git(root, &["rev-parse", "--verify", &configured_ref])
-        .ok()
-        .filter(|value| !value.is_empty())?;
+    let revision = run_git(
+        root,
+        &["rev-parse", "--verify", END_OF_OPTIONS, &configured_ref],
+    )
+    .ok()
+    .filter(|value| !value.is_empty())?;
+
     let base_ref = refs
         .iter_mut()
         .find(|git_ref| git_ref.full_name == full_name && git_ref.revision == revision)?;
@@ -491,6 +708,11 @@ pub(crate) fn parse_history_files(
     files
 }
 
+/// 读取某个 revision 下单个文件的内容。
+///
+/// `Ok(None)` 只代表「该 revision 中确实没有这个路径」（新增/删除文件的另一侧）。
+/// 其余失败——git 不可执行、revision 不存在、对象损坏、权限不足、超时/取消——一律
+/// 向上返回 `Err`，否则界面会把真实故障显示成「空文件」。
 pub(crate) fn git_show_revision_file(
     root: &Path,
     revision: &str,
@@ -500,19 +722,14 @@ pub(crate) fn git_show_revision_file(
         return Ok(None);
     }
 
-    let spec = format!("{}:{}", revision, path);
-    match run_git_stdout_raw(root, &["show", spec.as_str()]) {
+    // `<rev>:<path>` 本身就是无歧义写法，`--end-of-options` 保证它不会被当成选项。
+    let spec = revision_object_spec(revision, path)?;
+    match run_git_stdout_raw(root, &["show", END_OF_OPTIONS, spec.as_str()]) {
         Ok(output) => Ok(Some(output)),
-        Err(err)
-            if err.contains("does not exist")
-                || err.contains("exists on disk")
-                || err.contains("Invalid object name")
-                || err.contains("Path")
-                || err.contains("not found") =>
-        {
-            Ok(None)
-        }
-        Err(err) => Err(err),
+        Err(err) => match classify_git_show_failure(&err) {
+            GitShowFailure::PathMissingInRevision => Ok(None),
+            GitShowFailure::Other => Err(err),
+        },
     }
 }
 
@@ -670,7 +887,10 @@ pub(crate) fn normalize_commit_pathspec(root: &Path, base: &Path, raw_path: &str
 #[cfg(test)]
 mod tests {
     use super::{
-        history_log_revisions, normalize_commit_pathspec, parse_git_status, GitHistoryRef,
+        classify_git_show_failure, ensure_not_option_like, ensure_revision_arg,
+        history_log_revisions, local_branch_ref, normalize_commit_pathspec, parse_git_status,
+        push_refspec, remote_refs_prefix, remote_tracking_ref, revision_object_spec,
+        revision_range, GitHistoryRef, GitShowFailure,
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -815,5 +1035,185 @@ mod tests {
         .unwrap();
 
         assert_eq!(normalized, inner_relative_path);
+    }
+
+    // ---- 参数边界 ----------------------------------------------------------
+
+    #[test]
+    fn ensure_not_option_like_rejects_leading_dash() {
+        assert!(ensure_not_option_like("分支名", "--output=audit-output.txt").is_err());
+        assert!(ensure_not_option_like("分支名", "-v").is_err());
+        assert!(ensure_not_option_like("分支名", "feat/-dash").is_ok());
+    }
+
+    #[test]
+    fn local_branch_ref_wraps_short_name_and_keeps_full_ref() {
+        assert_eq!(local_branch_ref("main").unwrap(), "refs/heads/main");
+        assert_eq!(local_branch_ref("  feat/a  ").unwrap(), "refs/heads/feat/a");
+        assert_eq!(
+            local_branch_ref("refs/heads/main").unwrap(),
+            "refs/heads/main"
+        );
+    }
+
+    /// 恶意 ref 可以被直接写进 `.git/packed-refs`，所以读到的名字必须自己再验一遍。
+    #[test]
+    fn local_branch_ref_rejects_option_shaped_and_revision_syntax() {
+        // `git update-ref refs/heads/--output=audit-output.txt HEAD` 造出来的名字：
+        // 包成完整 ref 后首字符是 `r`，不再可能被解析成选项。
+        assert_eq!(
+            local_branch_ref("--output=audit-output.txt").unwrap(),
+            "refs/heads/--output=audit-output.txt"
+        );
+        for bad in [
+            "",
+            "a b",
+            "a\tb",
+            "a\nb",
+            "a..b",
+            "a:b",
+            "a^",
+            "a~1",
+            "a?",
+            "a*",
+            "a[b",
+            "a\\b",
+            "HEAD@{1}",
+            "/main",
+            "main/",
+            "main.",
+        ] {
+            assert!(
+                local_branch_ref(bad).is_err(),
+                "应拒绝非法分支名：{:?}",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn remote_tracking_ref_builds_full_ref_and_strips_heads_prefix() {
+        assert_eq!(
+            remote_tracking_ref("origin", "main").unwrap(),
+            "refs/remotes/origin/main"
+        );
+        assert_eq!(
+            remote_tracking_ref("origin", "refs/heads/feat/a").unwrap(),
+            "refs/remotes/origin/feat/a"
+        );
+        assert!(remote_tracking_ref("origin", "").is_err());
+        assert!(remote_tracking_ref("", "main").is_err());
+        assert!(remote_tracking_ref("ori gin", "main").is_err());
+    }
+
+    #[test]
+    fn remote_refs_prefix_validates_remote_name() {
+        assert_eq!(remote_refs_prefix("origin").unwrap(), "refs/remotes/origin");
+        assert!(remote_refs_prefix("orig:in").is_err());
+    }
+
+    /// `--receive-pack=<prog>` 形状的远端分支名会让 git push 执行本地程序，
+    /// 全 ref refspec 必须把它变成普通引用名。
+    #[test]
+    fn push_refspec_neutralizes_option_shaped_branch_names() {
+        assert_eq!(
+            push_refspec("main", "main").unwrap(),
+            "refs/heads/main:refs/heads/main"
+        );
+        assert_eq!(
+            push_refspec("main", "--receive-pack=calc.exe").unwrap(),
+            "refs/heads/main:refs/heads/--receive-pack=calc.exe"
+        );
+        assert_eq!(
+            push_refspec("refs/heads/a", "refs/heads/b").unwrap(),
+            "refs/heads/a:refs/heads/b"
+        );
+        assert!(push_refspec("main", "a:b").is_err());
+        assert!(push_refspec("a b", "main").is_err());
+    }
+
+    #[test]
+    fn revision_range_and_object_spec_reject_option_like_input() {
+        assert_eq!(revision_range("abc", "def").unwrap(), "abc..def");
+        assert!(revision_range("--output=x", "def").is_err());
+        assert!(revision_range("abc", "--output=x").is_err());
+        assert!(revision_range("", "def").is_err());
+
+        assert_eq!(
+            revision_object_spec("HEAD", "src/a.rs").unwrap(),
+            "HEAD:src/a.rs"
+        );
+        assert!(revision_object_spec("--output=x", "src/a.rs").is_err());
+        // revision 里再带 `:` 会让 git 重新切分 path。
+        assert!(revision_object_spec("HEAD:evil", "src/a.rs").is_err());
+        assert!(revision_object_spec("HEAD", "  ").is_err());
+    }
+
+    #[test]
+    fn ensure_revision_arg_allows_revision_syntax_but_not_options() {
+        assert!(ensure_revision_arg("版本", "HEAD~2").is_ok());
+        assert!(ensure_revision_arg("版本", "a..b").is_ok());
+        assert!(ensure_revision_arg("版本", "-n1").is_err());
+        assert!(ensure_revision_arg("版本", "").is_err());
+        assert!(ensure_revision_arg("版本", "a\nb").is_err());
+    }
+
+    // ---- 错误分类 ----------------------------------------------------------
+
+    /// git 原文（2.x）：只有这两条代表「该 revision 中没有这个路径」。
+    #[test]
+    fn classify_git_show_failure_detects_missing_path() {
+        assert_eq!(
+            classify_git_show_failure(
+                "fatal: path 'nope.txt' does not exist in 'refs/heads/main'"
+            ),
+            GitShowFailure::PathMissingInRevision
+        );
+        assert_eq!(
+            classify_git_show_failure(
+                "fatal: path 'ondisk.txt' exists on disk, but not in 'refs/heads/main'"
+            ),
+            GitShowFailure::PathMissingInRevision
+        );
+        // 旧版本 git 首字母大写。
+        assert_eq!(
+            classify_git_show_failure("fatal: Path 'a.txt' does not exist in 'HEAD'"),
+            GitShowFailure::PathMissingInRevision
+        );
+    }
+
+    /// 这些以前会被裸 contains 吞成 Ok(None)，界面显示成空文件而不是真实错误。
+    #[test]
+    fn classify_git_show_failure_keeps_real_errors() {
+        for message in [
+            "fatal: invalid object name 'refs/heads/zzz'.",
+            "fatal: not a git repository (or any of the parent directories): .git",
+            "error: object file .git/objects/ab/cdef is empty",
+            "error: inflate: data stream error (incorrect header check)",
+            "fatal: unable to read tree abcdef",
+            "无法运行 git：program not found",
+            "git [\"show\"] 执行超时（300 秒），已终止",
+            "系统正在退出，已取消 Git 操作",
+            // 只是提到 path / not found，并非 git 的「路径不存在于该版本」原文。
+            "fatal: unable to access remote: Path not found",
+        ] {
+            assert_eq!(
+                classify_git_show_failure(message),
+                GitShowFailure::Other,
+                "不应把这条错误当成缺失路径：{}",
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn classify_git_show_failure_matches_line_start_only() {
+        // 提交信息等任意文本混进 stderr 时不能误判。
+        assert_eq!(
+            classify_git_show_failure(
+                "fatal: invalid object name 'x'.\nnote: the path 'a' does not exist in 'y'"
+            ),
+            GitShowFailure::Other
+        );
     }
 }

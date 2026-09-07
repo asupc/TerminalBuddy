@@ -1,9 +1,11 @@
 use crate::commands::git_parse::{
-    file_extension, find_history_ref, git_show_revision_file, git_status_entries,
-    history_log_revisions, history_status_code, history_status_label, lookup_numstat,
-    mark_configured_history_base_ref, normalize_commit_pathspec, normalize_history_revision,
-    numstat_map, parse_commits, parse_history_files, parse_history_numstats, parse_history_refs,
-    push_ref_if_missing, refs_by_revision, status_label, GitStatusEntry,
+    ensure_not_option_like, ensure_revision_arg, file_extension, find_history_ref,
+    git_show_revision_file, git_status_entries, history_log_revisions, history_status_code,
+    history_status_label, local_branch_ref, lookup_numstat, mark_configured_history_base_ref,
+    normalize_commit_pathspec, normalize_history_revision, numstat_map, parse_commits,
+    parse_history_files, parse_history_numstats, parse_history_refs, push_ref_if_missing,
+    push_refspec, refs_by_revision, remote_refs_prefix, remote_tracking_ref, revision_range,
+    status_label, GitStatusEntry, END_OF_OPTIONS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -13,9 +15,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{command, Emitter};
 
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -242,19 +246,97 @@ struct GitRunOutput {
     combined: String,
 }
 
-/// 终止 git 进程树：Windows 下 taskkill /T /F（git 会派生 ssh/git-remote-https 等子进程，
-/// 仅 kill 直接子进程会留下孤儿）；其余平台回退 child.kill()。
-fn kill_git_process_tree(child: &mut std::process::Child) {
+/// git 子进程树的生命周期控制。
+///
+/// git 会派生 ssh / git-remote-https / credential helper 等后代进程，它们继承了
+/// stdout/stderr 管道写端：只 kill 直接子进程，管道不会关闭，reader 线程就永远读不到
+/// EOF。此前用 `taskkill /PID <pid> /T /F` 按 PID 杀树，而 PID 在子进程退出后会被系统
+/// 复用——父进程先退出时 `/T` 会沿着已复用的 PID 找错对象，可能杀掉无关进程。
+///
+/// Windows 改用 Job Object：spawn 后立刻把子进程加入 job，`TerminateJobObject` 一次性
+/// 结束整棵树，`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 保证 Drop 关闭句柄时残留后代也被
+/// 回收（管道随之关闭，detach 的 reader 线程能退出）。已知固有窗口：spawn 到
+/// AssignProcessToJobObject 之间派生的后代会逃出 job；消除它需要 CREATE_SUSPENDED +
+/// 恢复主线程的额外机制，这里按可接受的残余风险处理。
+struct GitProcessTree {
     #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+    job: Option<windows::Win32::Foundation::HANDLE>,
+}
+
+impl GitProcessTree {
+    /// spawn 之后立即调用。失败（老系统、权限受限）时退化为 `child.kill()`。
+    fn attach(child: &std::process::Child) -> Self {
+        #[cfg(windows)]
+        {
+            use windows::Win32::System::JobObjects::{
+                AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+                JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            };
+
+            let job = unsafe { CreateJobObjectW(None, None) }.ok();
+            let Some(job) = job else {
+                return Self { job: None };
+            };
+
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let configured = unsafe {
+                SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const std::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                )
+            }
+            .is_ok();
+            // Windows 8 起支持嵌套 job，子进程已在别的 job 里也能加入成功。
+            let assigned = unsafe {
+                AssignProcessToJobObject(
+                    job,
+                    windows::Win32::Foundation::HANDLE(child.as_raw_handle()),
+                )
+            }
+            .is_ok();
+
+            if configured && assigned {
+                Self { job: Some(job) }
+            } else {
+                unsafe {
+                    let _ = windows::Win32::Foundation::CloseHandle(job);
+                }
+                Self { job: None }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = child;
+            Self {}
+        }
     }
-    #[cfg(not(windows))]
-    {
+
+    /// 终止整棵进程树。
+    fn terminate(&self, child: &mut std::process::Child) {
+        #[cfg(windows)]
+        if let Some(job) = self.job {
+            use windows::Win32::System::JobObjects::TerminateJobObject;
+            if unsafe { TerminateJobObject(job, 1) }.is_ok() {
+                return;
+            }
+        }
         let _ = child.kill();
+    }
+}
+
+impl Drop for GitProcessTree {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if let Some(job) = self.job.take() {
+            // KILL_ON_JOB_CLOSE：最后一个句柄关闭即回收所有仍存活的后代。
+            unsafe {
+                let _ = windows::Win32::Foundation::CloseHandle(job);
+            }
+        }
     }
 }
 
@@ -262,6 +344,29 @@ fn kill_git_process_tree(child: &mut std::process::Child) {
 enum GitChunk {
     Stdout(String),
     Stderr(String),
+}
+
+fn accept_git_chunk(
+    chunk: GitChunk,
+    stdout: &mut String,
+    stderr: &mut String,
+    combined: &mut String,
+    on_chunk: &mut Option<&dyn Fn(&str)>,
+) {
+    let text = match &chunk {
+        GitChunk::Stdout(text) => {
+            stdout.push_str(text);
+            text
+        }
+        GitChunk::Stderr(text) => {
+            stderr.push_str(text);
+            text
+        }
+    };
+    combined.push_str(text);
+    if let Some(callback) = on_chunk.as_deref() {
+        callback(text);
+    }
 }
 
 fn drain_git_channel(
@@ -272,19 +377,49 @@ fn drain_git_channel(
     on_chunk: &mut Option<&dyn Fn(&str)>,
 ) {
     while let Ok(chunk) = rx.try_recv() {
-        let text = match &chunk {
-            GitChunk::Stdout(text) => {
-                stdout.push_str(text);
-                text
-            }
-            GitChunk::Stderr(text) => {
-                stderr.push_str(text);
-                text
-            }
-        };
-        combined.push_str(text);
-        if let Some(callback) = on_chunk.as_deref() {
-            callback(text);
+        accept_git_chunk(chunk, stdout, stderr, combined, on_chunk);
+    }
+}
+
+/// reader 收尾等待的上限。git 已退出，剩下的只是把管道里的残留读完；超过这个时间说明
+/// 还有后代进程握着管道写端。
+const GIT_READER_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
+
+enum GitDrainOutcome {
+    /// 两个 reader 都结束（通道全部发送端已释放）。
+    Completed,
+    TimedOut,
+    Cancelled,
+}
+
+/// 有上限地等待 reader 线程读完。
+///
+/// 不能用 `JoinHandle::join()`：git 主进程退出后，握着 stdout/stderr 写端的后代进程
+/// （ssh、credential helper）会让 reader 阻塞在 read 上，join 就是无上限等待，请求线程
+/// 随之永久挂住。父进程未克隆保留 `tx`（一份 clone 给 stdout、原件 move 给 stderr），
+/// 所以 `Disconnected` 精确等价于「两个 reader 都退出了」。
+fn drain_git_channel_until(
+    rx: &mpsc::Receiver<GitChunk>,
+    timeout: Duration,
+    stdout: &mut String,
+    stderr: &mut String,
+    combined: &mut String,
+    on_chunk: &mut Option<&dyn Fn(&str)>,
+) -> GitDrainOutcome {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if GIT_COMMANDS_STOPPED.load(Ordering::Acquire) {
+            return GitDrainOutcome::Cancelled;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return GitDrainOutcome::TimedOut;
+        }
+        // 单次等待封顶 100ms，保证退出开关能被及时轮询到。
+        match rx.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            Ok(chunk) => accept_git_chunk(chunk, stdout, stderr, combined, on_chunk),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return GitDrainOutcome::Completed,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     }
 }
@@ -312,16 +447,16 @@ fn run_git_process(
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     let mut child = cmd.spawn().map_err(|e| format!("无法运行 git：{}", e))?;
+    let process_tree = GitProcessTree::attach(&child);
     let (tx, rx) = mpsc::channel::<GitChunk>();
-    let mut readers = Vec::new();
     if let Some(stdout) = child.stdout.take() {
-        readers.push(spawn_git_output_reader(stdout, tx.clone(), GitChunk::Stdout));
+        spawn_git_output_reader(stdout, tx.clone(), GitChunk::Stdout);
     }
     if let Some(stderr) = child.stderr.take() {
-        readers.push(spawn_git_output_reader(stderr, tx, GitChunk::Stderr));
+        spawn_git_output_reader(stderr, tx, GitChunk::Stderr);
     }
 
-    let started_at = std::time::Instant::now();
+    let started_at = Instant::now();
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut combined = String::new();
@@ -336,7 +471,7 @@ fn run_git_process(
         if GIT_COMMANDS_STOPPED.load(Ordering::Acquire)
             || started_at.elapsed() >= GIT_COMMAND_TIMEOUT
         {
-            kill_git_process_tree(&mut child);
+            process_tree.terminate(&mut child);
             let _ = child.wait();
             return Err(if GIT_COMMANDS_STOPPED.load(Ordering::Acquire) {
                 "系统正在退出，已取消 Git 操作".to_string()
@@ -350,10 +485,34 @@ fn run_git_process(
         }
         std::thread::sleep(Duration::from_millis(50));
     };
-    for reader in readers {
-        let _ = reader.join();
+
+    // git 已退出，但后代进程可能还握着管道写端。等待有上限；超时/取消时终止整棵进程树
+    // 并返回错误——此时输出必然是截断的，而调用方会去解析它，静默给出半截数据比明确
+    // 报错更危险。
+    match drain_git_channel_until(
+        &rx,
+        GIT_READER_DRAIN_TIMEOUT,
+        &mut stdout,
+        &mut stderr,
+        &mut combined,
+        &mut on_chunk,
+    ) {
+        GitDrainOutcome::Completed => {}
+        GitDrainOutcome::Cancelled => {
+            process_tree.terminate(&mut child);
+            return Err("系统正在退出，已取消 Git 操作".to_string());
+        }
+        GitDrainOutcome::TimedOut => {
+            process_tree.terminate(&mut child);
+            return Err(format!(
+                "git {:?} 已结束，但仍有子进程占用输出管道超过 {} 秒，输出不完整。\
+                 已终止相关进程，请重试；若持续出现，请检查是否有 ssh 或凭据助手进程卡住。",
+                args,
+                GIT_READER_DRAIN_TIMEOUT.as_secs()
+            ));
+        }
     }
-    drain_git_channel(&rx, &mut stdout, &mut stderr, &mut combined, &mut on_chunk);
+
     Ok(GitRunOutput {
         status,
         stdout,
@@ -431,12 +590,13 @@ fn emit_git_push_chunk(app: &tauri::AppHandle, operation_id: Option<&str>, chunk
     );
 }
 
+/// 读线程只负责把管道内容送进通道，不再返回 JoinHandle：收尾等待改由
+/// `drain_git_channel_until` 通过通道断开来判定，避免无上限 join。
 fn spawn_git_output_reader<R>(
     mut reader: R,
     tx: mpsc::Sender<GitChunk>,
     variant: fn(String) -> GitChunk,
-) -> std::thread::JoinHandle<()>
-where
+) where
     R: Read + Send + 'static,
 {
     std::thread::spawn(move || {
@@ -451,7 +611,7 @@ where
                 Err(_) => break,
             }
         }
-    })
+    });
 }
 
 /// 流式执行结果转 push 输出：成功返回归一化全文，失败带完整输出或退出码。
@@ -692,19 +852,27 @@ fn git_checkout_branch_impl(path: String, branch: String) -> Result<String, Stri
         run_git(&root, &["branch", "-r", "--format=%(refname:short)"]).unwrap_or_default();
     let is_remote = remote_output.lines().any(|line| line.trim() == branch);
 
+    // `git switch` 只接受分支短名（给完整 ref 会报 `fatal: a branch is expected`），
+    // 因此这里用 `--` 终止选项解析；实测 `--end-of-options` 与 switch 不兼容
+    // （`fatal: only one reference expected`）。
     if is_remote {
         let local_name = branch
             .split_once('/')
             .map(|(_, name)| name)
             .unwrap_or(branch);
-        let local_ref = format!("refs/heads/{}", local_name);
-        if run_git(&root, &["show-ref", "--verify", "--quiet", &local_ref]).is_ok() {
-            run_git(&root, &["switch", local_name])
+        let local_ref = local_branch_ref(local_name)?;
+        if run_git(
+            &root,
+            &["show-ref", "--verify", "--quiet", END_OF_OPTIONS, &local_ref],
+        )
+        .is_ok()
+        {
+            run_git(&root, &["switch", "--", local_name])
         } else {
-            run_git(&root, &["switch", "--track", branch])
+            run_git(&root, &["switch", "--track", "--", branch])
         }
     } else {
-        run_git(&root, &["switch", branch])
+        run_git(&root, &["switch", "--", branch])
     }
 }
 
@@ -721,13 +889,15 @@ fn git_pull_impl(path: String) -> Result<GitPullResult, String> {
     let new_head = head_hash(&root);
     let updated_commits = match (old_head.as_deref(), new_head.as_deref()) {
         (Some(old), Some(new)) if old != new => {
-            let range = format!("{}..{}", old, new);
+            // old/new 都是 head_hash 拿到的 SHA，仍走统一构造保证格式。
+            let range = revision_range(old, new)?;
             git_log_commits(
                 &root,
                 &[
                     "log",
                     "--date=short",
                     "--pretty=format:%H%x1f%h%x1f%P%x1f%D%x1f%an%x1f%ad%x1f%s%x1e",
+                    END_OF_OPTIONS,
                     &range,
                 ],
             )
@@ -769,7 +939,12 @@ fn build_push_args(
     remote: &str,
     local_branch: &str,
     remote_branch: &str,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
+    // refspec 两端都用完整 ref，再加 `--end-of-options`：否则 `--receive-pack=<prog>`
+    // 这类选项形状的分支名会被 git 当成选项，直接执行本地程序。
+    let refspec = push_refspec(local_branch, remote_branch)?;
+    ensure_not_option_like("远端名称", remote)?;
+
     let mut args: Vec<String> = vec![
         "push".to_string(),
         "-v".to_string(),
@@ -784,24 +959,26 @@ fn build_push_args(
     if options.force_with_lease {
         args.push("--force-with-lease".to_string());
     }
+    args.push(END_OF_OPTIONS.to_string());
     args.push(remote.to_string());
-    args.push(format!("{}:{}", local_branch, remote_branch));
-    args
+    args.push(refspec);
+    Ok(args)
 }
 
 fn push_command_preview(args: &[String]) -> String {
     format!("git.exe {}", args.join(" "))
 }
 
-fn remote_tracking_ref(remote: &str, remote_branch: &str) -> String {
-    let branch = remote_branch
-        .strip_prefix("refs/heads/")
-        .unwrap_or(remote_branch)
-        .trim_matches('/');
-    format!("refs/remotes/{}/{}", remote, branch)
-}
-
-fn push_log_args(local_branch: &str, target_ref: &str, target_exists: bool) -> Vec<String> {
+/// 待推送提交列表的 log 参数。
+///
+/// 这里只能靠完整 ref 防选项注入：调用方随后会追加 `--not <远端 refs>`，而
+/// `--end-of-options` 要求所有选项前置，实测会报
+/// `fatal: option '--not' must come before non-option arguments`。
+fn push_log_args(
+    local_ref: &str,
+    target_ref: &str,
+    target_exists: bool,
+) -> Result<Vec<String>, String> {
     let mut args = vec![
         "log".to_string(),
         "-n100".to_string(),
@@ -809,43 +986,60 @@ fn push_log_args(local_branch: &str, target_ref: &str, target_exists: bool) -> V
         "--pretty=format:%H%x1f%h%x1f%P%x1f%D%x1f%an%x1f%ad%x1f%s%x1e".to_string(),
     ];
     if target_exists {
-        args.push(format!("{}..{}", target_ref, local_branch));
+        args.push(revision_range(target_ref, local_ref)?);
     } else {
-        args.push(local_branch.to_string());
+        ensure_revision_arg("本地分支引用", local_ref)?;
+        args.push(local_ref.to_string());
     }
-    args
+    Ok(args)
 }
 
 fn preview_push_impl(options: GitPushOptions) -> Result<GitPushPreview, String> {
     let root = require_repo_root(&options.path)?;
     let (remote, local_branch, remote_branch) = normalize_push_options(&options)?;
 
+    // 本地分支统一转成完整 ref 后再交给 git；`rev-parse --verify` 用 `--end-of-options`
+    // 兜底（实测这里不能用 `--`，`rev-parse --verify --quiet -- main` 会直接失败）。
+    let local_ref = local_branch_ref(&local_branch)?;
     run_git(
         &root,
-        &["rev-parse", "--verify", "--quiet", local_branch.as_str()],
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            END_OF_OPTIONS,
+            local_ref.as_str(),
+        ],
     )
     .map_err(|_| format!("本地分支不存在：{}", local_branch))?;
 
-    let args = build_push_args(&options, &remote, &local_branch, &remote_branch);
-    let target_ref = remote_tracking_ref(&remote, &remote_branch);
+    let args = build_push_args(&options, &remote, &local_branch, &remote_branch)?;
+    let target_ref = remote_tracking_ref(&remote, &remote_branch)?;
     let target_exists = run_git(
         &root,
-        &["rev-parse", "--verify", "--quiet", target_ref.as_str()],
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            END_OF_OPTIONS,
+            target_ref.as_str(),
+        ],
     )
     .is_ok();
 
     let mut warning = None;
     let commits = if target_exists {
-        git_log_commits(&root, &push_log_args(&local_branch, &target_ref, true))?
+        git_log_commits(&root, &push_log_args(&local_ref, &target_ref, true)?)?
     } else {
         warning = Some("远端分支尚未在本地缓存中找到，将按新分支推送预览。".to_string());
-        let remote_refs_prefix = format!("refs/remotes/{}", remote);
+        let refs_prefix = remote_refs_prefix(&remote)?;
         let remote_refs = run_git(
             &root,
             &[
                 "for-each-ref",
                 "--format=%(refname)",
-                remote_refs_prefix.as_str(),
+                END_OF_OPTIONS,
+                refs_prefix.as_str(),
             ],
         )
         .unwrap_or_default();
@@ -856,7 +1050,7 @@ fn preview_push_impl(options: GitPushOptions) -> Result<GitPushPreview, String> 
             .map(str::to_string)
             .collect::<Vec<_>>();
 
-        let mut log_args = push_log_args(&local_branch, &target_ref, false);
+        let mut log_args = push_log_args(&local_ref, &target_ref, false)?;
         if refs.is_empty() {
             warning =
                 Some("本地没有该远端的引用缓存，预览显示本地分支最近 100 条提交。".to_string());
@@ -903,7 +1097,7 @@ fn git_push_with_options_impl(
         &preview.remote,
         &preview.local_branch,
         &preview.remote_branch,
-    );
+    )?;
     let command = push_command_preview(&args);
     let arg_refs: Vec<&str> = args.iter().map(|value| value.as_str()).collect();
     let output = run_git_process(
@@ -976,7 +1170,11 @@ fn git_get_history_files_impl(
     if to_revision.is_empty() {
         return Err("目标版本不能为空".to_string());
     }
+    ensure_revision_arg("起始版本", &from_revision)?;
+    ensure_revision_arg("目标版本", &to_revision)?;
 
+    // `--end-of-options` 之后是两个 revision，末尾 `--` 之后是 pathspec（此处为空）：
+    // 两个分隔符各司其职，不能用 `--` 代替选项终止符。
     let name_status = run_git(
         &root,
         &[
@@ -985,6 +1183,7 @@ fn git_get_history_files_impl(
             "-z",
             "-M",
             "-C",
+            END_OF_OPTIONS,
             from_revision.as_str(),
             to_revision.as_str(),
             "--",
@@ -997,6 +1196,7 @@ fn git_get_history_files_impl(
             "--numstat",
             "-M",
             "-C",
+            END_OF_OPTIONS,
             from_revision.as_str(),
             to_revision.as_str(),
             "--",
@@ -1252,6 +1452,9 @@ fn build_history_log_args(
     if let Some(skip) = skip.filter(|value| *value > 0) {
         log_args.push(format!("--skip={}", skip));
     }
+    // revision 全部来自 git 自己输出的 objectname，仍统一加选项终止符：这里不追加
+    // `--not`，`--end-of-options` 可用。
+    log_args.push(END_OF_OPTIONS.to_string());
     log_args.extend(history_log_revisions(head, upstream_ref, base_ref));
     log_args
 }
@@ -1319,4 +1522,132 @@ fn git_get_history_impl(
         ahead,
         behind,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_push_args, drain_git_channel_until, push_log_args, GitDrainOutcome, GitPushOptions,
+    };
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    fn push_options() -> GitPushOptions {
+        GitPushOptions {
+            path: String::new(),
+            remote: "origin".to_string(),
+            local_branch: "main".to_string(),
+            remote_branch: "main".to_string(),
+            set_upstream: false,
+            follow_tags: false,
+            force_with_lease: false,
+            operation_id: None,
+        }
+    }
+
+    #[test]
+    fn build_push_args_puts_end_of_options_before_remote_and_refspec() {
+        let args = build_push_args(&push_options(), "origin", "main", "main").unwrap();
+        assert_eq!(
+            args,
+            vec![
+                "push",
+                "-v",
+                "--progress",
+                "--end-of-options",
+                "origin",
+                "refs/heads/main:refs/heads/main",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_push_args_keeps_options_ahead_of_the_terminator() {
+        let mut options = push_options();
+        options.set_upstream = true;
+        options.follow_tags = true;
+        options.force_with_lease = true;
+        let args = build_push_args(&options, "origin", "feat/a", "feat/a").unwrap();
+        let terminator = args.iter().position(|arg| arg == "--end-of-options").unwrap();
+        for flag in ["-u", "--follow-tags", "--force-with-lease"] {
+            let index = args.iter().position(|arg| arg == flag).unwrap();
+            assert!(index < terminator, "{} 必须排在选项终止符之前", flag);
+        }
+        assert_eq!(args[terminator + 1], "origin");
+        assert_eq!(args[terminator + 2], "refs/heads/feat/a:refs/heads/feat/a");
+    }
+
+    /// `--receive-pack=<prog>` 形状的分支名会让 git push 执行本地程序。
+    #[test]
+    fn build_push_args_neutralizes_option_shaped_branch_names() {
+        let args = build_push_args(&push_options(), "origin", "main", "--receive-pack=calc.exe")
+            .unwrap();
+        assert!(args.iter().all(|arg| arg != "--receive-pack=calc.exe"));
+        assert_eq!(
+            args.last().unwrap(),
+            "refs/heads/main:refs/heads/--receive-pack=calc.exe"
+        );
+        let bad_remote = build_push_args(&push_options(), "--upload-pack=calc.exe", "main", "main");
+        assert!(bad_remote.is_err());
+    }
+
+    /// 这里必须用完整 ref 而不是 `--end-of-options`：调用方随后追加 `--not`，
+    /// 实测 git 会报 `option '--not' must come before non-option arguments`。
+    #[test]
+    fn push_log_args_uses_full_refs_without_option_terminator() {
+        let args = push_log_args("refs/heads/main", "refs/remotes/origin/main", true).unwrap();
+        assert!(args.iter().all(|arg| arg != "--end-of-options"));
+        assert_eq!(args.last().unwrap(), "refs/remotes/origin/main..refs/heads/main");
+
+        let args = push_log_args("refs/heads/main", "refs/remotes/origin/main", false).unwrap();
+        assert_eq!(args.last().unwrap(), "refs/heads/main");
+
+        let bad_local =
+            push_log_args("--output=audit-output.txt", "refs/remotes/origin/main", false);
+        assert!(bad_local.is_err());
+    }
+
+    #[test]
+    fn drain_completes_when_all_readers_exit() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(super::GitChunk::Stdout("hello".to_string())).unwrap();
+        drop(tx);
+
+        let (mut out, mut err, mut all) = (String::new(), String::new(), String::new());
+        let outcome = drain_git_channel_until(
+            &rx,
+            Duration::from_secs(5),
+            &mut out,
+            &mut err,
+            &mut all,
+            &mut None,
+        );
+
+        assert!(matches!(outcome, GitDrainOutcome::Completed));
+        assert_eq!(out, "hello");
+        assert_eq!(all, "hello");
+    }
+
+    /// 后代进程握着管道写端时 reader 永远读不到 EOF；等待必须有上限，
+    /// 不能像旧实现那样无上限 join 把请求线程挂死。
+    #[test]
+    fn drain_times_out_while_a_reader_still_holds_the_pipe() {
+        let (tx, rx) = mpsc::channel::<super::GitChunk>();
+        let started = Instant::now();
+
+        let (mut out, mut err, mut all) = (String::new(), String::new(), String::new());
+        let outcome = drain_git_channel_until(
+            &rx,
+            Duration::from_millis(200),
+            &mut out,
+            &mut err,
+            &mut all,
+            &mut None,
+        );
+
+        assert!(matches!(outcome, GitDrainOutcome::TimedOut));
+        assert!(started.elapsed() >= Duration::from_millis(200));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(tx);
+    }
 }

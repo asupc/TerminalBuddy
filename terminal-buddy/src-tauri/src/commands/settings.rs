@@ -1,4 +1,7 @@
-use crate::models::{AppSettings, CloseBehavior, LaunchWindowMode, TerminalLoadingMode};
+use crate::models::{
+    validate_profile_connection_fields, AppSettings, CloseBehavior, LaunchWindowMode, Profile,
+    TerminalLoadingMode,
+};
 use crate::services::{
     copy_dir_recursive, PathService, SettingsService, VsCodeTerminalProcess, VsCodeTerminalSupport,
 };
@@ -154,6 +157,23 @@ pub fn get_data_path() -> String {
     PathService::get_current_data_path()
 }
 
+/// 数据目录当前可用性状态，供设置页与启动横幅展示。
+/// `null` 表示进程尚未解析过数据目录（极早期）。
+#[tauri::command]
+pub fn get_data_path_status() -> serde_json::Value {
+    match PathService::get_data_dir_status() {
+        Some(status) => serde_json::json!({
+            "kind": match status {
+                crate::services::DataDirStatus::Default => "default",
+                crate::services::DataDirStatus::Ok { .. } => "ok",
+                crate::services::DataDirStatus::Unavailable { .. } => "unavailable",
+            },
+            "summary": status.summary(),
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
 #[tauri::command]
 pub fn set_data_path(new_path: String) -> Result<(), String> {
     let validated = PathService::validate_data_path(&new_path)?;
@@ -164,6 +184,8 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
         return Ok(());
     }
 
+    // 目标在源内部、目录链接环路都由 copy_dir_recursive 拒绝；任一子目录
+    // 复制失败立即中止，不写 settings.json，当前数据目录保持原样。
     for subdir in &["Profiles", "Workspaces", "ClientData", "Bots"] {
         let src = old_dir.join(subdir);
         let dst = new_dir.join(subdir);
@@ -370,6 +392,19 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
 
     let data_dir = PathService::get_data_dir();
     fs::create_dir_all(&data_dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
+
+    // 这条路径直接把 JSON 原样写进 Profiles/，不经过 ProfileService，所以必须在这里
+    // 自行校验连接字段，否则备份文件就能绕过保存时的校验把非法值放上磁盘。
+    // 反序列化失败的条目跳过校验：旧版本备份可能缺字段，而缺字段的 JSON 本来也不会被
+    // ProfileService 读成 Profile，进不了命令行。
+    if let Some(obj) = data.get("Profiles").and_then(|v| v.as_object()) {
+        for value in obj.values() {
+            if let Ok(profile) = serde_json::from_value::<Profile>(value.clone()) {
+                validate_profile_connection_fields(&profile)
+                    .map_err(|e| format!("连接「{}」导入失败：{}", profile.name, e))?;
+            }
+        }
+    }
 
     // Restore subdirectory data
     for subdir in &["Profiles", "Workspaces", "ClientData", "Bots"] {

@@ -31,6 +31,18 @@ impl SettingsService {
         settings
     }
 
+    /// 只读单个布尔字段，避免权限判定热路径上整体 clone `AppSettings`。
+    pub fn share_sessions_enabled() -> bool {
+        {
+            if let Ok(cache) = CACHED_SETTINGS.read() {
+                if let Some(ref settings) = *cache {
+                    return settings.web_api_share_sessions;
+                }
+            }
+        }
+        Self::get_settings().web_api_share_sessions
+    }
+
     fn read_settings_from_disk() -> AppSettings {
         let path = Self::get_settings_path();
         if let Ok(content) = fs::read_to_string(&path) {
