@@ -35,7 +35,7 @@ cd src-tauri && cargo check  # Rust compilation check
 
 Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (business logic) → **models** (data structures), plus a **web** module for the HTTP/WebSocket API.
 
-**Command modules** (`commands/`): profile, terminal, settings, workspace, templates, fs, clipboard, window, ai_usage, web, remote_file, server_monitor, client_data. All re-exported via `mod.rs`. Registered in `lib.rs` `invoke_handler![]`.
+**Command modules** (`commands/`): profile, terminal, settings, templates, fs, clipboard, window, ai_usage, web, remote_file, server_monitor, client_data. All re-exported via `mod.rs`. Registered in `lib.rs` `invoke_handler![]` — registry kept in lockstep with frontend invokes via `scripts/check-invoke-coverage.py`. Workspace commands (`commands/workspace.rs`) exist in the backend but are **not registered** (no desktop UI consumes them; the service layer and `Workspaces/*.json` storage remain).
 
 **Service modules** (`services/`): Each service manages a JSON file or subsystem:
 - `profile_service` — CRUD for `Profiles/*.json`
@@ -46,16 +46,17 @@ Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (b
 - `web_service` — Pub/sub state for broadcasting terminal output to WebSocket clients
 - `ssh_session_service` — Direct SSH session management
 - `client_data_service` — Client-side data persistence
-- `TerminalService` (in `commands/terminal.rs`) — Managed state holding `HashMap<String, TerminalInstance>`. Each instance has an `owner` field (`TerminalOwner::Pc` or `TerminalOwner::Web`) tracking its origin. Uses `cmd.exe` as base PTY, injects PowerShell/SSH/Docker/K8s/MSTSC commands. Output forwarded via Tauri events `terminal_output_{id}`. Permission checks via `check_pc_permission()` enforce session isolation when `web_api_share_sessions` is false.
+- `TerminalService` (in `commands/terminal.rs`) — Managed state holding `HashMap<String, TerminalInstance>`. Each instance has an `owner` field (`TerminalOwner::Pc` or `TerminalOwner::Web`) tracking its origin. Uses `cmd.exe` as base PTY, injects PowerShell/SSH/Docker/K8s/MSTSC commands. Output forwarded via Tauri events `terminal_output_{id}`. Every read/write method takes a `TerminalActor` and calls `TerminalService::authorize()`, which delegates to the single permission matrix in `models/terminal_access.rs` (no hard-coded owner comparisons anywhere else). Terminal creation is transactional (`NewTerminalSpec` + `spawn_terminal`, rollback via the `TerminalCreation` RAII guard); teardown has one entry point (`teardown_terminal` with a `TerminalCloseReason`) that emits `terminal-closed` exactly once.
 
 **Web module** (`web/`): Embedded axum HTTP server for remote terminal access:
-- `server.rs` — Axum router: REST API + WebSocket + embedded SPA serving
+- `server.rs` — Axum router: REST API + WebSocket + embedded SPA serving. Hand-rolled accept loop (not `axum::serve`) so hyper gets a `TokioTimer` and idle connections time out via `header_read_timeout`; `TimeoutLayer` (30s per request), `DefaultBodyLimit` (2MB), CORS closed in release (same-origin SPA), vite origins only in debug. Login brute-force protection: `rate_limit.rs` does per-IP failure counting with exponential ban backoff, plus a global bcrypt concurrency semaphore (429 + `Retry-After`).
 - `auth.rs` — JWT generation/verification with bcrypt password hashing
-- `ws.rs` — WebSocket handler for terminal I/O (JSON protocol: Input/Resize/Output/Exited/Error). Enforces session isolation: non-shared mode blocks Web clients from PC terminals.
-- `error.rs` — Error types
-- `handlers/` — REST handlers: `auth_handler.rs`, `profile_handler.rs`, `terminal_handler.rs`
+- `rate_limit.rs` — `LoginThrottle` (per-IP failure window + ban rounds) and `acquire_password_verify_slot`, unit-tested with injectable clock
+- `ws.rs` — WebSocket handler for terminal I/O (JSON protocol: Input/Resize/Output/Exited/Error). Authorizes **before** `on_upgrade` (404 unknown / 403 unauthorized), so an attacker who guesses a terminal ID still cannot subscribe or peek history. Re-checks authorization per message and every 5s, closing connections that lose permission after the share switch is turned off.
+- `error.rs` — Error types (`ApiError::TooManyRequests` sets `Retry-After`)
+- `handlers/` — REST handlers: `auth_handler.rs`, `profile_handler.rs`, `terminal_handler.rs`, plus bot/claude-hook handlers
 
-**Models** (`models/`): `Profile` (with SSH/Docker/K8s/MSTSC fields), `AppSettings` (close_behavior, data_path, web_api settings including `web_api_share_sessions`, ssh_download_dir, server_monitor_interval), `Workspace` (groups, terminals), `TerminalOwner` (Pc/Web enum), `ssh_types` (SSH session types), `web_api.rs` (LoginRequest, WsClientMessage, WsServerMessage with Error variant, TerminalInfo with owner field, etc.).
+**Models** (`models/`): `Profile` (with SSH/Docker/K8s/MSTSC fields), `AppSettings` (close_behavior, data_path, web_api settings including `web_api_share_sessions`, ssh_download_dir, server_monitor_interval), `Workspace` (groups, terminals), `TerminalOwner` (Pc/Web enum), `terminal_access` (`TerminalActor` × `TerminalAction` × `TerminalOwner` permission matrix, `TerminalAccessError`, Chinese denial messages — the single source of truth, unit-tested), `ssh_types` (SSH session types), `web_api.rs` (LoginRequest, WsClientMessage, WsServerMessage with Error variant, TerminalInfo with owner field, etc.).
 
 **App setup** (`lib.rs`): System tray with "打开窗口"/"退出", close-to-tray behavior, single instance (tauri-plugin-single-instance), window close interception, Web API server startup.
 
@@ -109,8 +110,13 @@ Embedded in the Rust binary via `include_dir!` in release mode; served from `web
 - Frontend uses Chinese (Simplified) for all UI text
 - Theme system: CSS custom properties toggled via `data-theme` attribute on `<html>`
 - Web API uses JWT for auth, bcrypt for password hashing, WebSocket for terminal I/O
-- Web clients can only grow the PTY size (never shrink) to protect the desktop viewer
-- Session isolation: when `webApiShareSessions` is false (default), Web clients can only see/operate Web-created terminals; PC clients can see Web-created terminals but cannot write/resize/close them
+- Web clients may shrink the PTY (`allow_shrink=true`) so narrow phone screens don't overflow TUIs; the desktop view re-flows and is restored via `terminal-web-takeover-ended`
+- Session isolation (matrix lives in `models/terminal_access.rs`, enforced by `TerminalService::authorize`):
+  - `webApiShareSessions=false` (default): Web sees/operates only Web-created terminals — PC terminals are absent from the list *and* rejected at the WS handshake (403); PC can read-only view Web terminals but cannot input/resize/rename/close them
+  - `webApiShareSessions=true`: both sides can view/input/resize/rename each other's terminals
+  - Regardless of the switch, Web can never close a PC terminal ("take over" ≠ "close")
+  - Turning the switch off mid-session drops in-flight Web connections to PC terminals within ~5s
 - Custom frameless window (`decorations: false` in tauri.conf.json), TitleBar.tsx provides window controls
 - `tauri-plugin-dialog` for native file/folder dialogs
-- No CI or test framework exists, but `bot_binding_service.rs` contains `#[cfg(test)]` unit tests runnable via `cargo test`; frontend has no tests
+- **Tests:** no frontend tests; the Rust lib has 100+ `#[cfg(test)]` unit tests across ~10 files (`models/terminal_access.rs`, `models/profile_validation.rs`, `commands/git_parse.rs`, `commands/git.rs`, `commands/fs.rs`, `services/atomic_file.rs`, `services/path_service.rs`, `services/claude_hook_service.rs`, `services/web_service.rs`, `services/crypto_service.rs`, `web/rate_limit.rs`, …) runnable via `cd src-tauri && cargo test --lib`. Keep pure validation/permission/parameter-building logic in testable Rust modules.
+- **Command registry hygiene:** frontend `invoke()` calls must stay a subset of the `invoke_handler![]` registrations. Verify with `python scripts/check-invoke-coverage.py` from `terminal-buddy/`; registered commands without a desktop caller need a written reason (AI usage commands are invoked from `services/aiUsage.ts`, web-layer service methods are used by `web/` handlers).

@@ -118,6 +118,13 @@ pub fn list_terminals(service: State<TerminalService>) -> Result<Vec<TerminalInf
 - 手机端所有读写/关闭**跳过** `check_pc_permission`（共享模式，不做 PC/Web 隔离）。
 - 旧 `webApiShareSessions` 隔离逻辑随旧 web 层删除而作废；设置项保留但不再影响手机端。
 
+> **⚠️ 本节已于 2026-09-06 作废（`TB-P0-01`）**：`webApiShareSessions` 已重新生效，
+> 且默认为 `false`。权限判定统一由 `src-tauri/src/models/terminal_access.rs` 的
+> `TerminalActor × TerminalAction × TerminalOwner × share_sessions` 矩阵负责，
+> `check_pc_permission` 已删除。手机端新建终端的 `owner` 现为 `TerminalOwner::Web`，
+> `owner` 字段参与权限判定。当前矩阵见 `CLAUDE.md` 与
+> `docs/完整使用与配置指南.md` §17.4。
+
 ## 6. 前端设计（新 SPA）
 
 技术栈：**React + Vite + TS + xterm.js**（与旧 web/ 工具链一致），构建到 `web/dist/`。无 react-router，用极简 `view` 状态切换两个界面：

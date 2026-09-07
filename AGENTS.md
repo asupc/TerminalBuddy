@@ -60,7 +60,7 @@ All user data is JSON files under `%APPDATA%/TerminalBuddy/`: `Profiles/*.json`,
 
 ## Web API
 
-Embedded axum server for remote terminal access. JWT auth, bcrypt passwords. WebSocket protocol for terminal I/O. Session isolation between PC and Web clients controlled by `webApiShareSessions` setting.
+Embedded axum server for remote terminal access. JWT auth, bcrypt passwords. WebSocket protocol for terminal I/O. Session isolation between PC and Web clients is controlled by the `webApiShareSessions` setting and enforced through one permission matrix in `src-tauri/src/models/terminal_access.rs` — never hard-code `owner` comparisons in handlers; call `TerminalService::authorize(id, actor, action)` instead.
 
 <!-- CODEGRAPH_START -->
 ## CodeGraph
