@@ -22,6 +22,7 @@ static EMBEDDED_VSCODE_TERMINAL: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/resources/vscode-terminal");
 static EXTRACTED_VSCODE_TERMINAL: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 static COMPATIBLE_NODE: OnceLock<Mutex<Option<Result<(PathBuf, NodeProbeResult), String>>>> = OnceLock::new();
+static HOST_EXE_COPY_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +68,8 @@ impl VsCodeTerminalProcess {
     ) -> Result<(Self, Box<dyn Read + Send>), String> {
         let host_path = resolve_plugin_host(app)?;
         let (node_path, _) = resolve_compatible_node_cached(&host_path)?;
+        // Windows 下用专属进程名启动宿主，避免全机按映像名清理 node 时连带团灭终端。
+        let host_exe = dedicated_host_exe(&node_path);
         let env = env_vars
             .iter()
             .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -83,7 +86,7 @@ impl VsCodeTerminalProcess {
                 .map_err(|error| format!("序列化 VS Code 终端配置失败: {}", error))?,
         );
 
-        let mut command = Command::new(&node_path);
+        let mut command = Command::new(&host_exe);
         command
             .arg(&host_path)
             .arg(encoded_config)
@@ -100,7 +103,7 @@ impl VsCodeTerminalProcess {
         let mut child = command.spawn().map_err(|error| {
             format!(
                 "启动 VS Code 终端插件失败 ({}): {}",
-                node_path.display(),
+                host_exe.display(),
                 error
             )
         })?;
@@ -214,6 +217,18 @@ impl VsCodeTerminalProcess {
             .wait()
             .map(|_| ())
             .map_err(|error| format!("等待 VS Code 终端插件退出失败: {}", error))
+    }
+
+    /// 关闭并返回观测到的退出码：已退出直接取自然退出码，仍在运行先发 KILL 再等待。
+    pub fn close(&mut self) -> Option<u32> {
+        if let Ok(Some(status)) = self.child.try_wait() {
+            return status.code().map(|code| code as u32);
+        }
+        let _ = self.kill();
+        self.child
+            .wait()
+            .ok()
+            .and_then(|status| status.code().map(|code| code as u32))
     }
 
     pub fn is_running(&mut self) -> bool {
@@ -361,6 +376,71 @@ fn extracted_plugin_is_complete(directory: &Path, version: &str) -> bool {
         && std::fs::read_to_string(directory.join(".complete"))
             .map(|value| value == version)
             .unwrap_or(false)
+}
+
+/// Windows 上把 node.exe 复制为专属进程名 `tb-terminal-host.exe` 再启动终端宿主：
+/// 全机按映像名清理 node 的操作（如 `taskkill /f /im node.exe`）不会再连带杀掉
+/// 所有终端（2026-09-14 终端团灭事故的根因）。复制失败时回退原 node 路径，
+/// 终端功能不受影响，只是失去这层隔离。
+fn dedicated_host_exe(node_path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let host_exe = dirs::data_local_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("TerminalBuddy")
+            .join("runtime")
+            .join("tb-terminal-host.exe");
+        match ensure_host_exe_copy(node_path, &host_exe) {
+            Ok(()) => host_exe,
+            Err(error) => {
+                crate::boot_log(format!(
+                    "VS Code 终端宿主专属进程名不可用（{}），回退 node.exe：{}",
+                    error,
+                    node_path.display()
+                ));
+                node_path.to_path_buf()
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        node_path.to_path_buf()
+    }
+}
+
+/// 确保目标位置存在与源一致的 node 副本；源 size/mtime 变化（node 升级/切换）时重新复制。
+/// 先写临时文件再原子替换；sidecar `.meta` 记录复制时的源指纹，避免同大小不同内容的漏刷新。
+fn ensure_host_exe_copy(source: &Path, target: &Path) -> std::io::Result<()> {
+    let _guard = HOST_EXE_COPY_GUARD
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    let source_meta = std::fs::metadata(source)?;
+    let modified_nanos = source_meta
+        .modified()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let fingerprint = format!("{}:{}", source_meta.len(), modified_nanos);
+
+    let meta_path = target.with_extension("meta");
+    let target_len_matches = std::fs::metadata(target)
+        .map(|meta| meta.len() == source_meta.len())
+        .unwrap_or(false);
+    if target_len_matches && std::fs::read_to_string(&meta_path).is_ok_and(|v| v == fingerprint) {
+        return Ok(());
+    }
+
+    let parent = target.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "宿主进程副本路径缺少父目录")
+    })?;
+    std::fs::create_dir_all(parent)?;
+    let temp = target.with_extension("tmp");
+    std::fs::copy(source, &temp)?;
+    std::fs::rename(&temp, target)?;
+    std::fs::write(&meta_path, fingerprint)?;
+    Ok(())
 }
 
 fn resolve_compatible_node(host_path: &Path) -> Result<(PathBuf, NodeProbeResult), String> {

@@ -174,17 +174,20 @@ impl TerminalBackend {
         }
     }
 
-    fn close(&mut self) {
+    /// 关闭后端并返回观测到的退出码：进程已退出时直接取自然退出码
+    /// （供日志定性：0x40010004=系统终止，0x1=taskkill，0x0=正常退出），
+    /// 仍在运行才发 kill，此时返回的是被终止的退出码。
+    fn close(&mut self) -> Option<u32> {
         match self {
             Self::Default { child, writer, .. } => {
                 *writer = None;
+                if let Ok(Some(status)) = child.try_wait() {
+                    return Some(status.exit_code());
+                }
                 child.kill().ok();
-                let _ = child.wait();
+                child.wait().ok().map(|status| status.exit_code())
             }
-            Self::VsCode(process) => {
-                process.kill().ok();
-                let _ = process.wait();
-            }
+            Self::VsCode(process) => process.close(),
         }
     }
 
@@ -245,13 +248,22 @@ fn log_debug(msg: &str) {
     let log_path = DEBUG_LOG_PATH.get_or_init(|| {
         PathService::get_debug_log_path().unwrap_or_else(|_| std::env::temp_dir().join("terminal-buddy-debug-fallback.log"))
     });
-    let ts = chrono::Utc::now().format("%H:%M:%S%.3f");
+    // 本地时区 + 完整日期：UTC 且无日期的旧格式会把不同天的同刻记录混在一起。
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
     let line = format!("[{}] {}\n", ts, msg);
     let _ = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(log_path)
         .and_then(|mut f| f.write_all(line.as_bytes()));
+}
+
+/// 退出码按 Windows 惯例记 16 进制，便于和 NTSTATUS/taskkill 语义对照。
+fn format_exit_code(code: Option<u32>) -> String {
+    match code {
+        Some(code) => format!("{:#x}", code),
+        None => "unknown".to_string(),
+    }
 }
 
 fn spawn_terminal_backend(
@@ -476,11 +488,12 @@ fn release_terminal_resources(
     let terminal_id = terminal_id.to_string();
     let _cleanup_task = tauri::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
-        backend.close();
+        let exit_code = backend.close();
         log_debug(&format!(
-            "[teardown] backend closed, id={}, reason={}, elapsed_ms={}",
+            "[teardown] backend closed, id={}, reason={}, exit_code={}, elapsed_ms={}",
             terminal_id,
             reason.as_str(),
+            format_exit_code(exit_code),
             started.elapsed().as_millis(),
         ));
     });
