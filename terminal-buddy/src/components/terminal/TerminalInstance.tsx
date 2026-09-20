@@ -120,7 +120,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const sendPastedText = useCallback((text: string): boolean => {
     if (!text) return false;
     if (text.includes('\n') || text.includes('\r')) {
-      const sanitized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      // 粘贴行尾必须写 CR：ConPTY 会把输入流里的 LF 当成带 Ctrl 修饰的 Enter，
+      // 在开启 kitty 键盘协议的 TUI（如 pi）里被编码成 CSI 13;5u（Ctrl+Enter=提交），
+      // 导致粘贴内容被逐行提交、或 CSI-u 序列被字面插进消息文本。
+      const sanitized = text.replace(/\r?\n/g, '\r');
       onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
     } else {
       onOutputRef.current(terminalId, text);
@@ -795,12 +798,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
             }
           }
           if (inner.includes('\n')) {
-            onOutputRef.current(terminalId, data);
+            // 同 sendPastedText：行尾归一化为 CR，避免 ConPTY 把 LF 当 Ctrl+Enter 上报
+            onOutputRef.current(terminalId, `\x1b[200~${inner.replace(/\r?\n/g, '\r')}\x1b[201~`);
           } else {
             chunkedSend(data);
           }
         } else if (data.length > 1 && /[\r\n]/.test(data)) {
-          const sanitized = data.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+          // 同 sendPastedText：行尾归一化为 CR，避免 ConPTY 把 LF 当 Ctrl+Enter 上报
+          const sanitized = data.replace(/\r?\n/g, '\r');
           onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
         } else {
           onOutputRef.current(terminalId, data);
