@@ -51,4 +51,10 @@ export const createWindowSlice = (
 			toast: { id: Date.now() + Math.random(), message, type },
 		}),
 	dismissToast: (id) => set((state) => (state.toast?.id === id ? { toast: null } : {})),
+
+	// Settings version (app-settings-changed 时自增，触发依赖它的 TabNav/TabBar 重渲染；
+	// 此前只有类型声明没有任何实现，监听器一触发就抛 TypeError)
+	settingsVersion: 0,
+	incrementSettingsVersion: () =>
+		set((state) => ({ settingsVersion: state.settingsVersion + 1 })),
 });
