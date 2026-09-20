@@ -11,3 +11,5 @@ target
 !/terminal-buddy/src-tauri/resources/vscode-terminal/.gitkeep
 .claude
 /.idea
+/.codex
+/.playwright-mcp
