@@ -1,0 +1,15 @@
+node_modules
+target
+/.idea/.gitignore
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/terminal-buddy.iml
+/.idea/vcs.xml
+/terminal-buddy/web/dist
+/terminal-buddy/dist
+/terminal-buddy/src-tauri/resources/vscode-terminal/*
+!/terminal-buddy/src-tauri/resources/vscode-terminal/.gitkeep
+.claude
+/.idea
+/.codex
+/.playwright-mcp
