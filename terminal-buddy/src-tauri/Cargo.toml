@@ -1,6 +1,6 @@
 [package]
 name = "terminal-buddy"
-version = "1.4.1"
+version = "1.5.0"
 description = "TerminalBuddy - 终端配置管理工具"
 authors = [""]
 edition = "2021"
