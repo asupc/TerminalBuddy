@@ -1,0 +1,14 @@
+<!-- 方案 E「提示符气泡 Prompt Bubble」
+     对话气泡里装着 >_ ：气泡是 buddy（有事问我），
+     提示符是终端（说句话就执行）——把终端重新描述成一场对话。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#14161C"/>
+  <!-- 气泡 -->
+  <rect x="104" y="98" width="304" height="232" rx="48" fill="#FF6B6B"/>
+  <!-- 气泡尾巴 -->
+  <path d="M152 322 H236 L148 408 Z" fill="#FF6B6B" stroke="#FF6B6B" stroke-width="12" stroke-linejoin="round"/>
+  <!-- 提示符 >_ . -->
+  <path d="M176 168 L224 214 L176 260" fill="none" stroke="#14161C" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="250" y="238" width="86" height="28" rx="14" fill="#14161C"/>
+  <circle cx="372" cy="252" r="14" fill="#14161C"/>
+</svg>

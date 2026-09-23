@@ -1,0 +1,33 @@
+<!-- 方案 F「琥珀磷光 Amber Phosphor」
+     向琥珀色磷光 CRT 致敬：暗屏、扫描线、带辉光的 >_ █ 。
+     用终端自己的视觉行话（DEC 磷光、块状光标），气质偏硬核专业。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="f-crt" cx="50%" cy="42%" r="75%">
+      <stop offset="0" stop-color="#12201A"/>
+      <stop offset="1" stop-color="#050A07"/>
+    </radialGradient>
+    <filter id="f-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#f-crt)"/>
+  <!-- 屏幕内框 -->
+  <rect x="80" y="104" width="352" height="304" rx="20" fill="#0A120D" stroke="#FFB000" stroke-opacity="0.22" stroke-width="3"/>
+  <!-- 磷光提示符 >_ █ -->
+  <g filter="url(#f-glow)">
+    <path d="M138 196 L202 256 L138 316" fill="none" stroke="#FFB000" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="234" y="286" width="88" height="28" rx="14" fill="#FFB000"/>
+    <rect x="340" y="280" width="34" height="40" rx="4" fill="#FFB000"/>
+  </g>
+  <!-- 扫描线（压在辉光之上，模拟 CRT） -->
+  <g fill="#000000" opacity="0.32">
+    <rect x="80" y="170" width="352" height="4"/>
+    <rect x="80" y="238" width="352" height="4"/>
+    <rect x="80" y="306" width="352" height="4"/>
+  </g>
+</svg>

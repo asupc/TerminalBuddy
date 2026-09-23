@@ -1,0 +1,13 @@
+<!-- 方案 C「光标小兽 Cursor Critter」
+     整个身体就是终端里那颗块状光标，切成 8-bit 像素圆角，
+     挖出两只方眼睛和一个像素笑——从命令行里跳出来的吉祥物。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#1E2530"/>
+  <!-- 像素光标身体（10u 见方，2u 像素圆角） -->
+  <path d="M160 96 H352 V128 H384 V160 H416 V352 H384 V384 H352 V416 H160 V384 H128 V352 H96 V160 H128 V128 H160 Z" fill="#FFB000"/>
+  <!-- 眼睛（挖空感：与底色同色） -->
+  <rect x="160" y="176" width="64" height="64" fill="#1E2530"/>
+  <rect x="288" y="176" width="64" height="64" fill="#1E2530"/>
+  <!-- 像素笑 -->
+  <path d="M192 288 H224 V320 H288 V288 H320 V352 H192 Z" fill="#1E2530"/>
+</svg>

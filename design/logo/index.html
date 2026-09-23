@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TerminalBuddy 标志提案</title>
+<style>
+  :root {
+    --bg: #101218;
+    --card: #1A1E27;
+    --line: #2A3040;
+    --ink: #E8EAF0;
+    --dim: #8B93A7;
+    --prompt: #FFB000;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    line-height: 1.7;
+    padding: 32px 24px 64px;
+  }
+  .mono { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; }
+
+  .sheet { max-width: 1080px; margin: 0 auto; }
+
+  /* 顶部：伪装成一次终端会话 */
+  .promptline {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 14px;
+    color: var(--dim);
+    margin-bottom: 28px;
+    word-break: break-all;
+  }
+  .promptline .sigil { color: var(--prompt); }
+  .promptline .caret {
+    display: inline-block;
+    width: 8px; height: 16px;
+    background: var(--prompt);
+    vertical-align: -3px;
+    margin-left: 2px;
+  }
+
+  header.sheet-head { margin-bottom: 40px; }
+  header.sheet-head h1 {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: clamp(26px, 4vw, 38px);
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+  header.sheet-head h1 .buddy { color: var(--prompt); }
+  header.sheet-head .sub {
+    color: var(--dim);
+    font-size: 14px;
+    margin-top: 8px;
+  }
+
+  /* 方案卡片 */
+  .card {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 28px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 24px;
+    scroll-margin-top: 24px;
+  }
+  @media (max-width: 860px) {
+    .card { grid-template-columns: 1fr; }
+  }
+
+  /* 左：明暗底展示台 */
+  .stage { display: flex; flex-direction: column; gap: 12px; }
+  .plate {
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 12px;
+    padding: 22px;
+  }
+  .plate.light { background: #EEF1F6; }
+  .plate.dark  { background: #0B0D12; }
+  .plate svg.hero { width: 200px; height: 200px; display: block; }
+
+  /* 右：信息区 */
+  .info h2 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .info h2 .en {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--dim);
+    margin-left: 10px;
+  }
+  .chip {
+    display: inline-block;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+    color: var(--prompt);
+    border: 1px solid var(--prompt);
+    border-radius: 999px;
+    padding: 1px 10px;
+    margin-bottom: 10px;
+  }
+  .pitch { color: var(--dim); font-size: 14px; margin: 10px 0 16px; }
+  .pitch code {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    color: var(--ink);
+    background: #232838;
+    border-radius: 4px;
+    padding: 0 5px;
+    font-size: 12px;
+  }
+
+  .palette { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; }
+  .swatch { display: flex; align-items: center; gap: 7px; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; color: var(--dim); }
+  .swatch i { width: 18px; height: 18px; border-radius: 5px; border: 1px solid rgba(255,255,255,.15); }
+
+  .sizes {
+    display: flex; align-items: flex-end; gap: 18px;
+    background: #0B0D12;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  .sizes .lbl {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 11px; color: var(--dim);
+    align-self: center;
+    writing-mode: vertical-rl;
+    letter-spacing: 2px;
+    height: 56px;
+  }
+  .sizes svg { display: block; }
+  .sizes figcaption {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 10px; color: var(--dim);
+    text-align: center; margin-top: 6px;
+  }
+  .sizes figure { margin: 0; }
+
+  .lockup {
+    display: flex; align-items: center; gap: 14px;
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+  }
+  .lockup svg { width: 46px; height: 46px; display: block; }
+  .wordmark {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 24px; font-weight: 700; letter-spacing: -0.5px;
+  }
+
+  footer.sheet-foot {
+    color: var(--dim);
+    font-size: 13px;
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+    margin-top: 8px;
+  }
+  footer.sheet-foot code {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    color: var(--prompt);
+    font-size: 12px;
+  }
+  a { color: var(--prompt); }
+</style>
+</head>
+<body>
+<!-- 全部标志符号（与 design/logo/svg/ 下的单文件一致） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="a-bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5E57"/>
+    </linearGradient>
+    <linearGradient id="b-bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1C2434"/><stop offset="1" stop-color="#0D121B"/>
+    </linearGradient>
+    <radialGradient id="f-crt" cx="50%" cy="42%" r="75%">
+      <stop offset="0" stop-color="#12201A"/><stop offset="1" stop-color="#050A07"/>
+    </radialGradient>
+    <filter id="f-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <symbol id="logo-a" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="112" fill="url(#a-bg)"/>
+    <path d="M132 246 L176 202 L220 246" fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M292 246 L336 202 L380 246" fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="166" y="300" width="180" height="36" rx="18" fill="#FFFFFF"/>
+    <circle cx="396" cy="318" r="22" fill="#FFE66D"/>
+  </symbol>
+
+  <symbol id="logo-b" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="112" fill="url(#b-bg)"/>
+    <rect x="106" y="126" width="250" height="190" rx="40" fill="#38BDF8"/>
+    <rect x="156" y="186" width="250" height="190" rx="40" fill="#273244"/>
+    <path d="M222 253 L258 285 L222 317" fill="none" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="278" y="302" width="72" height="18" rx="9" fill="#FFFFFF"/>
+  </symbol>
+
+  <symbol id="logo-c" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="112" fill="#1E2530"/>
+    <path d="M160 96 H352 V128 H384 V160 H416 V352 H384 V384 H352 V416 H160 V384 H128 V352 H96 V160 H128 V128 H160 Z" fill="#FFB000"/>
+    <rect x="160" y="176" width="64" height="64" fill="#1E2530"/>
+    <rect x="288" y="176" width="64" height="64" fill="#1E2530"/>
+    <path d="M192 288 H224 V320 H288 V288 H320 V352 H192 Z" fill="#1E2530"/>
+  </symbol>
+
+  <symbol id="logo-d" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="112" fill="#0F766E"/>
+    <path d="M188 140 H140 V372 H188" fill="none" stroke="#99F6E4" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M324 140 H372 V372 H324" fill="none" stroke="#99F6E4" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="256" cy="256" r="42" fill="#FFD166"/>
+  </symbol>
+
+  <symbol id="logo-e" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="112" fill="#14161C"/>
+    <rect x="104" y="98" width="304" height="232" rx="48" fill="#FF6B6B"/>
+    <path d="M152 322 H236 L148 408 Z" fill="#FF6B6B" stroke="#FF6B6B" stroke-width="12" stroke-linejoin="round"/>
+    <path d="M176 168 L224 214 L176 260" fill="none" stroke="#14161C" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="250" y="238" width="86" height="28" rx="14" fill="#14161C"/>
+    <circle cx="372" cy="252" r="14" fill="#14161C"/>
+  </symbol>
+
+  <symbol id="logo-f" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="112" fill="url(#f-crt)"/>
+    <rect x="80" y="104" width="352" height="304" rx="20" fill="#0A120D" stroke="#FFB000" stroke-opacity="0.22" stroke-width="3"/>
+    <g filter="url(#f-glow)">
+      <path d="M138 196 L202 256 L138 316" fill="none" stroke="#FFB000" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="234" y="286" width="88" height="28" rx="14" fill="#FFB000"/>
+      <rect x="340" y="280" width="34" height="40" rx="4" fill="#FFB000"/>
+    </g>
+    <g fill="#000000" opacity="0.32">
+      <rect x="80" y="170" width="352" height="4"/>
+      <rect x="80" y="238" width="352" height="4"/>
+      <rect x="80" y="306" width="352" height="4"/>
+    </g>
+  </symbol>
+</svg>
+
+<div class="sheet">
+  <div class="promptline">
+    <span class="sigil">PS</span> D:\TerminalBuddy&gt; design\logo\present --all<span class="caret"></span>
+  </div>
+
+  <header class="sheet-head">
+    <h1>Terminal<span class="buddy">Buddy</span> 标志提案</h1>
+    <div class="sub">六个方向 · 从软萌吉祥物到硬核专业 · 2026-09-22 · 每个方案含明暗底、尺寸递减、字标组合</div>
+  </header>
+
+  <!-- 方案 A -->
+  <article class="card" id="A">
+    <div class="stage">
+      <div class="plate light"><svg class="hero"><use href="#logo-a"/></svg></div>
+      <div class="plate dark"><svg class="hero"><use href="#logo-a"/></svg></div>
+    </div>
+    <div class="info">
+      <div class="chip">方案 A</div>
+      <h2>提示符笑脸<span class="en">Prompt Buddy</span></h2>
+      <p class="pitch">
+        把旧版的 <code>&gt;</code> <code>_</code> <code>·</code> 三个提示符元素重排成颜文字 <code>^_^</code>——
+        闭眼笑的双眼就是两个提示符折角，嘴巴是下划线，右侧黄点是闪烁的光标。
+        终端的行话，恰好拼成一张笑脸：这就是 TerminalBuddy。保留旧图标基因最多的方向。
+      </p>
+      <div class="palette">
+        <span class="swatch"><i style="background:#FFB347"></i>#FFB347 日落橙</span>
+        <span class="swatch"><i style="background:#FF5E57"></i>#FF5E57 珊瑚红</span>
+        <span class="swatch"><i style="background:#FFE66D"></i>#FFE66D 光标黄</span>
+      </div>
+      <div class="sizes">
+        <span class="lbl">SIZE</span>
+        <figure><svg width="128" height="128" viewBox="0 0 512 512"><use href="#logo-a"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="64" height="64" viewBox="0 0 512 512"><use href="#logo-a"/></svg><figcaption>64</figcaption></figure>
+        <figure><svg width="32" height="32" viewBox="0 0 512 512"><use href="#logo-a"/></svg><figcaption>32</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 512 512"><use href="#logo-a"/></svg><figcaption>16</figcaption></figure>
+      </div>
+      <div class="lockup">
+        <svg viewBox="0 0 512 512"><use href="#logo-a"/></svg>
+        <span class="wordmark">Terminal<span style="color:#FF8A5B">Buddy</span></span>
+      </div>
+    </div>
+  </article>
+
+  <!-- 方案 B -->
+  <article class="card" id="B">
+    <div class="stage">
+      <div class="plate light"><svg class="hero"><use href="#logo-b"/></svg></div>
+      <div class="plate dark"><svg class="hero"><use href="#logo-b"/></svg></div>
+    </div>
+    <div class="info">
+      <div class="chip">方案 B</div>
+      <h2>双窗结伴<span class="en">Companion Panes</span></h2>
+      <p class="pitch">
+        两张层叠的终端卡片：后面是同伴（天青色），前面是终端（石板色 + <code>&gt;_</code>）。
+        既是「buddy 结伴」，也对应应用管理多个会话、标签、工作区的能力。
+        轮廓简单，16px 下仍是清晰的双层方块。六个方案里最「工具理性」的一个。
+      </p>
+      <div class="palette">
+        <span class="swatch"><i style="background:#38BDF8"></i>#38BDF8 天青</span>
+        <span class="swatch"><i style="background:#273244"></i>#273244 石板</span>
+        <span class="swatch"><i style="background:#0D121B"></i>#0D121B 墨蓝黑</span>
+      </div>
+      <div class="sizes">
+        <span class="lbl">SIZE</span>
+        <figure><svg width="128" height="128" viewBox="0 0 512 512"><use href="#logo-b"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="64" height="64" viewBox="0 0 512 512"><use href="#logo-b"/></svg><figcaption>64</figcaption></figure>
+        <figure><svg width="32" height="32" viewBox="0 0 512 512"><use href="#logo-b"/></svg><figcaption>32</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 512 512"><use href="#logo-b"/></svg><figcaption>16</figcaption></figure>
+      </div>
+      <div class="lockup">
+        <svg viewBox="0 0 512 512"><use href="#logo-b"/></svg>
+        <span class="wordmark">Terminal<span style="color:#38BDF8">Buddy</span></span>
+      </div>
+    </div>
+  </article>
+
+  <!-- 方案 C -->
+  <article class="card" id="C">
+    <div class="stage">
+      <div class="plate light"><svg class="hero"><use href="#logo-c"/></svg></div>
+      <div class="plate dark"><svg class="hero"><use href="#logo-c"/></svg></div>
+    </div>
+    <div class="info">
+      <div class="chip">方案 C</div>
+      <h2>光标小兽<span class="en">Cursor Critter</span></h2>
+      <p class="pitch">
+        整个身体就是你终端里那颗块状光标，切成 8-bit 像素圆角，再挖出两只方眼睛和一个像素笑。
+        像从命令行里跳出来的吉祥物。像素直角让它在一堆圆角应用图标里一眼可辨——
+        风险也在这里：更偏玩具感，适合想把「Buddy」做成 IP 的路线。
+      </p>
+      <div class="palette">
+        <span class="swatch"><i style="background:#FFB000"></i>#FFB000 琥珀</span>
+        <span class="swatch"><i style="background:#1E2530"></i>#1E2530 石墨</span>
+      </div>
+      <div class="sizes">
+        <span class="lbl">SIZE</span>
+        <figure><svg width="128" height="128" viewBox="0 0 512 512"><use href="#logo-c"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="64" height="64" viewBox="0 0 512 512"><use href="#logo-c"/></svg><figcaption>64</figcaption></figure>
+        <figure><svg width="32" height="32" viewBox="0 0 512 512"><use href="#logo-c"/></svg><figcaption>32</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 512 512"><use href="#logo-c"/></svg><figcaption>16</figcaption></figure>
+      </div>
+      <div class="lockup">
+        <svg viewBox="0 0 512 512"><use href="#logo-c"/></svg>
+        <span class="wordmark">Terminal<span style="color:#FFB000">Buddy</span></span>
+      </div>
+    </div>
+  </article>
+
+  <!-- 方案 D -->
+  <article class="card" id="D">
+    <div class="stage">
+      <div class="plate light"><svg class="hero"><use href="#logo-d"/></svg></div>
+      <div class="plate dark"><svg class="hero"><use href="#logo-d"/></svg></div>
+    </div>
+    <div class="info">
+      <div class="chip">方案 D</div>
+      <h2>括号拥抱<span class="en">Bracket Hug</span></h2>
+      <p class="pitch">
+        一对加粗的方括号像双臂环抱着中间的光标圆点：括号是代码与终端，环抱是 buddy。
+        负形干净克制，不卖萌也不冰冷；剪影（两个 C 形夹一个点）在任务栏缩到 16px 依然成立。
+      </p>
+      <div class="palette">
+        <span class="swatch"><i style="background:#0F766E"></i>#0F766E 深青</span>
+        <span class="swatch"><i style="background:#99F6E4"></i>#99F6E4 薄荷</span>
+        <span class="swatch"><i style="background:#FFD166"></i>#FFD166 芥末黄</span>
+      </div>
+      <div class="sizes">
+        <span class="lbl">SIZE</span>
+        <figure><svg width="128" height="128" viewBox="0 0 512 512"><use href="#logo-d"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="64" height="64" viewBox="0 0 512 512"><use href="#logo-d"/></svg><figcaption>64</figcaption></figure>
+        <figure><svg width="32" height="32" viewBox="0 0 512 512"><use href="#logo-d"/></svg><figcaption>32</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 512 512"><use href="#logo-d"/></svg><figcaption>16</figcaption></figure>
+      </div>
+      <div class="lockup">
+        <svg viewBox="0 0 512 512"><use href="#logo-d"/></svg>
+        <span class="wordmark">Terminal<span style="color:#5EEAD4">Buddy</span></span>
+      </div>
+    </div>
+  </article>
+
+  <!-- 方案 E -->
+  <article class="card" id="E">
+    <div class="stage">
+      <div class="plate light"><svg class="hero"><use href="#logo-e"/></svg></div>
+      <div class="plate dark"><svg class="hero"><use href="#logo-e"/></svg></div>
+    </div>
+    <div class="info">
+      <div class="chip">方案 E</div>
+      <h2>提示符气泡<span class="en">Prompt Bubble</span></h2>
+      <p class="pitch">
+        对话气泡里装着 <code>&gt;_</code>：气泡是「buddy」（有事问我），提示符是终端（说句话就执行）。
+        把终端重新描述成一场对话——这也是应用里命令模板、补全、远程 Web 端正在做的事。
+        六个方案里对「Buddy」语义表达最直白的一个。
+      </p>
+      <div class="palette">
+        <span class="swatch"><i style="background:#FF6B6B"></i>#FF6B6B 珊瑚</span>
+        <span class="swatch"><i style="background:#14161C"></i>#14161C 墨黑</span>
+      </div>
+      <div class="sizes">
+        <span class="lbl">SIZE</span>
+        <figure><svg width="128" height="128" viewBox="0 0 512 512"><use href="#logo-e"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="64" height="64" viewBox="0 0 512 512"><use href="#logo-e"/></svg><figcaption>64</figcaption></figure>
+        <figure><svg width="32" height="32" viewBox="0 0 512 512"><use href="#logo-e"/></svg><figcaption>32</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 512 512"><use href="#logo-e"/></svg><figcaption>16</figcaption></figure>
+      </div>
+      <div class="lockup">
+        <svg viewBox="0 0 512 512"><use href="#logo-e"/></svg>
+        <span class="wordmark">Terminal<span style="color:#FF6B6B">Buddy</span></span>
+      </div>
+    </div>
+  </article>
+
+  <!-- 方案 F -->
+  <article class="card" id="F">
+    <div class="stage">
+      <div class="plate light"><svg class="hero"><use href="#logo-f"/></svg></div>
+      <div class="plate dark"><svg class="hero"><use href="#logo-f"/></svg></div>
+    </div>
+    <div class="info">
+      <div class="chip">方案 F</div>
+      <h2>琥珀磷光<span class="en">Amber Phosphor</span></h2>
+      <p class="pitch">
+        向琥珀色磷光 CRT 致敬：暗屏、扫描线、带辉光的 <code>&gt;_ █</code>。
+        用的是终端自己的视觉行话（DEC 磷光、块状光标），气质偏硬核专业，「Buddy」感最弱、
+        「行家懂的都懂」感最强。想更经典可以换绿色磷光（#33FF66）。
+      </p>
+      <div class="palette">
+        <span class="swatch"><i style="background:#FFB000"></i>#FFB000 琥珀磷光</span>
+        <span class="swatch"><i style="background:#0A0C0B"></i>#0A0C0B 荧幕黑</span>
+      </div>
+      <div class="sizes">
+        <span class="lbl">SIZE</span>
+        <figure><svg width="128" height="128" viewBox="0 0 512 512"><use href="#logo-f"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="64" height="64" viewBox="0 0 512 512"><use href="#logo-f"/></svg><figcaption>64</figcaption></figure>
+        <figure><svg width="32" height="32" viewBox="0 0 512 512"><use href="#logo-f"/></svg><figcaption>32</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 512 512"><use href="#logo-f"/></svg><figcaption>16</figcaption></figure>
+      </div>
+      <div class="lockup">
+        <svg viewBox="0 0 512 512"><use href="#logo-f"/></svg>
+        <span class="wordmark">Terminal<span style="color:#FFB000">Buddy</span></span>
+      </div>
+    </div>
+  </article>
+
+  <footer class="sheet-foot">
+    <p>回复方案编号（A–F）即可进入落地：用 <code>npm run tauri icon</code> 生成 ico / icns / 全尺寸 PNG，替换标题栏、托盘、安装包与网页端图标。</p>
+    <p>也可在选定方向上继续迭代：换配色（如绿色磷光）、调圆角、简化/加细节、出透明底与单色版。矢量源文件在 <code>design/logo/svg/</code>。</p>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,12 @@
+<!-- 方案 D「括号拥抱 Bracket Hug」
+     一对加粗方括号像双臂环抱中间的光标圆点：
+     括号是代码与终端，环抱是 buddy。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#0F766E"/>
+  <!-- 左括号 -->
+  <path d="M188 140 H140 V372 H188" fill="none" stroke="#99F6E4" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 右括号 -->
+  <path d="M324 140 H372 V372 H324" fill="none" stroke="#99F6E4" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 被环抱的光标点 -->
+  <circle cx="256" cy="256" r="42" fill="#FFD166"/>
+</svg>
