@@ -1,0 +1,223 @@
+.ai-usage-tooltip {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 20px;
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-menu);
+  z-index: 1000;
+  white-space: nowrap;
+  pointer-events: none;
+  width: 252px;
+  min-width: unset;
+}
+
+.ai-usage-provider-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.ai-usage-provider-header {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-usage-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: ai-usage-spin 0.6s linear infinite;
+}
+
+@keyframes ai-usage-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-usage-text {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.ai-usage-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.ai-usage-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-usage-tier {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.ai-usage-tier-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  width: 36px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.ai-usage-bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.ai-usage-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width var(--motion-normal) var(--ease-standard);
+  min-width: 2px;
+}
+
+.ai-usage-pct {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  width: 32px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.ai-usage-countdown {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  width: 36px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.ai-usage-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+
+/* DeepSeek card style */
+.ds-card {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.ds-bonus {
+  font-size: 9px;
+  color: #38bdf8;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 8px 5px 10px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--border);
+}
+
+/* 浅色模式：白色叠加在浅底上不可见，改为黑色低透明度，保留分区底色区分 */
+.ds-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ds-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.ds-date {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+  font-weight: 400;
+}
+
+.ds-request {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.ds-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  min-width: 24px;
+}
+
+.ds-val {
+  font-size: 11px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ds-cache {
+  display: inline-block;
+  font-size: 9px;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  padding: 0 3px;
+  border-radius: 3px;
+  margin-left: 3px;
+  font-weight: 600;
+}
+
+.ds-cost {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.ds-balance-amount {
+  font-size: 10px;
+  color: #f59e0b;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-token {
+  color: #a78bfa;
+  font-weight: 600;
+}
+

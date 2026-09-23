@@ -1,0 +1,181 @@
+.about-dialog {
+  width: 480px;
+}
+
+.about-header {
+  min-height: 96px;
+  flex-basis: auto;
+  padding: 20px;
+  background: var(--bg-secondary);
+}
+
+.about-header-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.about-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+}
+
+.about-title-section {
+  flex: 1;
+}
+
+.about-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.about-version {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+
+.about-content {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.about-description {
+  margin: 0 0 20px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.about-features h3,
+.about-tech h3,
+.about-links h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.about-features ul {
+  margin: 0;
+  padding: 0 0 0 20px;
+  list-style: none;
+}
+
+.about-features li {
+  position: relative;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.about-features li::before {
+  content: '•';
+  position: absolute;
+  left: -16px;
+  color: var(--accent-color);
+}
+
+.tech-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tech-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.links-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.about-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 13px;
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+}
+
+.about-link svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  color: var(--text-secondary);
+  stroke-width: 1.8;
+}
+
+.about-link:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-color);
+}
+
+.about-footer {
+  justify-content: space-between;
+}
+
+.about-copyright {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.about-close-btn {
+  min-height: var(--control-height-md);
+  padding: 0 16px;
+  background: var(--accent-color);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard);
+}
+
+.about-close-btn:hover {
+  background: var(--accent-hover);
+}
+
+/* 滚动条样式 */
+.about-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.about-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.about-content::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+.about-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}

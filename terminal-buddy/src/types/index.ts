@@ -1,4 +1,5 @@
-export type TerminalType = 'powershell' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
+export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
+export type ExtraParamMode = 'append' | 'independent';
 
 export interface Profile {
   id: string;
@@ -29,6 +30,7 @@ export interface Profile {
   mstscResolution?: string;
   createdAt: string;
   lastUsedAt: string | null;
+  pinned?: boolean;
 }
 
 export interface ColorTheme {
@@ -36,18 +38,6 @@ export interface ColorTheme {
   name: string;
   background: string;
   foreground: string;
-}
-
-export interface CustomTheme extends ColorTheme {
-  cursor: string;
-  black: string;
-  red: string;
-  green: string;
-  yellow: string;
-  blue: string;
-  magenta: string;
-  cyan: string;
-  white: string;
 }
 
 export const PRESET_THEMES: ColorTheme[] = [
@@ -108,11 +98,20 @@ export interface TerminalSession {
   colorTheme: { background: string; foreground: string };
   tabColor: string | null;
   groupId: string;
+  groupName?: string;
   sessionType?: 'terminal' | 'editor';
   isDirty?: boolean;
   sshRemotePath?: string;
   sshTerminalId?: string;
   owner?: 'pc' | 'web';
+  extraParams?: string;
+  extraParamMode?: ExtraParamMode;
+  // 启动参数预设的 tag / tagColor（启动时快照下来，预设被删除/改名也不影响历史 tab）
+  extraParamTag?: string;
+  extraParamTagColor?: string | null;
+  claudeSessionId?: string;
+  createdAt?: number;   // 启动时间戳；addSession 时默认 Date.now()
+  starting?: boolean;   // 后端 PTY 尚在创建；此时仅展示占位页签，不挂载 xterm
 }
 
 export interface Workspace {
@@ -163,6 +162,14 @@ export interface ExtraParamPreset {
   id: string;
   name: string;
   params: string;
+  // 追加到配置的启动命令，或作为不依赖原启动命令的独立命令执行
+  mode: ExtraParamMode;
+  // tag 底色，取自 TAB_COLORS；为空表示使用主题默认色（预设名直接作为 tab 上的 tag 显示）
+  tagColor: string | null;
+  // 命令匹配：仅当配置的启动命令包含此字符串时，右键菜单才显示该预设；为空表示对所有配置可用
+  commandMatch: string | null;
+  // 是否启用：禁用后右键菜单不再显示该预设（数据保留，可随时重新启用）
+  enabled: boolean;
 }
 
 export interface RemoteFileEntry {
@@ -214,6 +221,7 @@ export type TransferDirection = 'upload' | 'download';
 export interface TransferItem {
   id: string;
   terminalId: string;
+  profileId: string;
   direction: TransferDirection;
   remotePath: string;
   localPath: string;

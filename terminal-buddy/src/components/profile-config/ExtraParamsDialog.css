@@ -1,0 +1,373 @@
+.extra-params-dialog {
+  width: min(1100px, calc(100vw - 48px));
+}
+
+.extra-params-dialog-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.extra-params-input-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.extra-params-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.extra-params-empty {
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+  padding: 20px 0;
+}
+
+.extra-param-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 6px;
+  position: relative;
+  transition: box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.extra-param-item.dragging {
+  opacity: 0.4;
+}
+
+.extra-param-item.disabled {
+  opacity: 0.55;
+}
+
+/* 行内启用/禁用开关（视觉同 settings-toggle，小一号） */
+.extra-param-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.extra-param-toggle input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  width: 28px;
+  height: 16px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+}
+
+.extra-param-toggle input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+}
+
+.extra-param-toggle input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.extra-param-toggle input[type="checkbox"]:checked::after {
+  background: #fff;
+  transform: translateX(12px);
+}
+
+.extra-param-toggle input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.extra-param-item.drop-before::before,
+.extra-param-item.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  background: var(--accent-color);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.extra-param-item.drop-before::before {
+  top: -2px;
+}
+
+.extra-param-item.drop-after::after {
+  bottom: -2px;
+}
+
+.extra-param-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  color: var(--text-secondary);
+  cursor: grab;
+  flex-shrink: 0;
+  border-radius: 3px;
+  opacity: 0.6;
+  transition: opacity var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+}
+
+.extra-param-drag-handle:hover,
+.extra-param-drag-handle:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: none;
+}
+
+.extra-param-drag-handle:active {
+  cursor: grabbing;
+}
+
+.extra-param-item.editing {
+  padding: 6px;
+  background: var(--bg-secondary);
+}
+
+.extra-param-tag-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  max-width: 140px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #fff;
+  background: var(--accent);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extra-param-params {
+  flex: 1;
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.extra-param-edit,
+.extra-param-delete {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+}
+
+.extra-param-edit:hover {
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+
+.extra-param-delete:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+
+.extra-param-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.extra-param-input {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  outline: none;
+  min-width: 80px;
+  flex-shrink: 1;
+}
+
+.extra-param-input:focus {
+  border-color: var(--accent-color);
+}
+
+.extra-param-input-params {
+  flex: 1;
+  min-width: 160px;
+}
+
+.extra-param-input-name {
+  width: 120px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.extra-param-input-match {
+  width: 130px;
+  flex-shrink: 0;
+}
+
+.extra-param-mode-select {
+  width: 96px;
+  height: 30px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.extra-param-mode-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.extra-param-mode-badge.independent {
+  color: var(--accent-color);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.extra-param-match {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text-secondary);
+  padding: 1px 6px;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.extra-param-action {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.extra-param-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.extra-params-color-picker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.extra-params-color-swatch {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+}
+
+.extra-params-color-swatch:hover {
+  border-color: var(--accent-color);
+  transform: scale(1.05);
+}
+
+.extra-params-color-swatch.theme-default {
+  background: linear-gradient(135deg, var(--accent) 50%, var(--bg-tertiary) 50%);
+}
+
+.extra-params-color-menu {
+  position: fixed;
+  z-index: 11000;
+  padding: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  display: grid;
+  grid-template-columns: repeat(6, 22px);
+  gap: 6px;
+}
+
+.extra-params-color-cell {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  background: var(--accent);
+  transition: transform var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.extra-params-color-cell:hover {
+  transform: scale(1.12);
+}
+
+.extra-params-color-cell.selected {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+
+.extra-params-color-cell.theme-default {
+  background: linear-gradient(135deg, var(--accent) 50%, var(--bg-tertiary) 50%);
+}
+
+@media (max-width: 600px) {
+  .extra-param-item:not(.editing) {
+    flex-wrap: wrap;
+  }
+
+  .extra-param-item:not(.editing) .extra-param-params {
+    order: 1;
+    flex-basis: 100%;
+  }
+
+  .extra-param-item:not(.editing) .extra-param-match {
+    order: 2;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

@@ -1,6 +1,14 @@
-import { FC, useState } from 'react';
+import { FC, useEffect, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { setDataPath as setDataPathCmd, exportAllData, importAllData } from '../../services/tauri';
+import { Download, FolderOpen, Upload } from 'lucide-react';
+import {
+  getDataPathStatus,
+  setDataPath as setDataPathCmd,
+  exportAllData,
+  importAllData,
+  type DataPathStatus,
+} from '../../services/tauri';
+import { showAlert } from '../../services/dialog';
 
 interface DataSettingsProps {
   dataPath: string;
@@ -11,11 +19,21 @@ interface DataSettingsProps {
 export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setConfirmDialog }) => {
   const [pendingDataPath, setPendingDataPath] = useState('');
   const [isMigrating, setIsMigrating] = useState(false);
+  const [dirStatus, setDirStatus] = useState<DataPathStatus | null>(null);
+
+  useEffect(() => {
+    getDataPathStatus().then(setDirStatus).catch(() => {});
+  }, []);
 
   return (
     <div className="settings-general">
       <div className="settings-section">
         <label className="settings-label">数据存储路径</label>
+        {dirStatus?.kind === 'unavailable' && (
+          <p className="settings-desc" style={{ color: '#e5484d' }}>
+            {dirStatus.summary}
+          </p>
+        )}
         <div className="data-path-row">
           <input
             className="data-path-input"
@@ -32,7 +50,10 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
                 if (selected) setPendingDataPath(selected as string);
               } catch {}
             }}
-          >浏览</button>
+          >
+            <FolderOpen size={15} aria-hidden="true" />
+            浏览
+          </button>
           {pendingDataPath && pendingDataPath !== dataPath && (
             <button
               className="btn-primary"
@@ -45,7 +66,7 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
                     await setDataPathCmd(pendingDataPath);
                     setPendingDataPath('');
                   } catch (err) {
-                    alert('迁移失败: ' + String(err));
+                    void showAlert('迁移失败: ' + String(err), '迁移失败');
                   }
                   setIsMigrating(false);
                 });
@@ -66,12 +87,15 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
               });
               if (selected) {
                 await exportAllData(selected as string);
-                alert('数据导出成功');
+                void showAlert('数据导出成功', '导出完成');
               }
             } catch (err) {
-              alert('导出失败: ' + String(err));
+              void showAlert('导出失败: ' + String(err), '导出失败');
             }
-          }}>导出全部数据</button>
+          }}>
+            <Download size={15} aria-hidden="true" />
+            导出全部数据
+          </button>
           <button className="btn-secondary" onClick={async () => {
             try {
               const selected = await open({
@@ -84,16 +108,19 @@ export const DataSettings: FC<DataSettingsProps> = ({ dataPath, askConfirm, setC
                   setConfirmDialog(null);
                   try {
                     await importAllData(selected as string);
-                    alert('数据导入成功，部分设置需要重启后生效');
+                    void showAlert('数据导入成功，部分设置需要重启后生效', '导入完成');
                   } catch (err) {
-                    alert('导入失败: ' + String(err));
+                    void showAlert('导入失败: ' + String(err), '导入失败');
                   }
                 });
               }
             } catch (err) {
-              alert('导入失败: ' + String(err));
+              void showAlert('导入失败: ' + String(err), '导入失败');
             }
-          }}>导入全部数据</button>
+          }}>
+            <Upload size={15} aria-hidden="true" />
+            导入全部数据
+          </button>
         </div>
         <p className="settings-desc">将所有数据（连接、主题、命令模板等）导出为单个 JSON 文件，导入时同理</p>
       </div>

@@ -1,5 +1,6 @@
 import { FC } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { FolderOpen } from 'lucide-react';
 import { saveSshDownloadDir, saveServerMonitorInterval } from '../../services/tauri';
 import type { AppSettings } from '../../utils/settings';
 
@@ -31,7 +32,10 @@ export const SshSettings: FC<SshSettingsProps> = ({ settings, updateSetting }) =
                 }
               } catch {}
             }}
-          >浏览</button>
+          >
+            <FolderOpen size={15} aria-hidden="true" />
+            浏览
+          </button>
         </div>
         <p className="settings-desc">SSH 远程文件下载的本地保存目录，默认为系统下载文件夹</p>
       </div>

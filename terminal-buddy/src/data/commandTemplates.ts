@@ -1,5 +1,6 @@
 import * as tauriService from '../services/tauri';
 import { readClientData, writeClientData } from '../services/tauri';
+import { getVSCodeStyleTerminalSuggestions } from './terminalSuggestions';
 
 export interface CommandItem {
   name: string;
@@ -87,7 +88,15 @@ export function getEffectiveTemplates(): CommandTemplate[] {
 export interface SuggestionItem {
   command: string;
   desc: string;
+  kind?: 'command' | 'subcommand' | 'option' | 'argument' | 'template';
+  source?: string;
 }
+
+const BUILTIN_COMMAND_SUGGESTIONS: SuggestionItem[] = [
+  { command: 'claude --dangerously-skip-permissions', desc: 'Claude Code 跳过权限确认启动' },
+  { command: 'git clean -fd', desc: '删除未跟踪的文件和目录(不可恢复)' },
+  { command: 'git reset --hard HEAD', desc: '丢弃已跟踪文件的未提交变更(不可恢复)' },
+];
 
 let suggestionsCache: SuggestionItem[] | null = null;
 let suggestionsDirty = true;
@@ -101,6 +110,10 @@ export function getAllSuggestions(): SuggestionItem[] {
   if (!suggestionsDirty && suggestionsCache) return suggestionsCache;
 
   const tplMap = new Map<string, SuggestionItem>();
+
+  for (const suggestion of BUILTIN_COMMAND_SUGGESTIONS) {
+    tplMap.set(suggestion.command, suggestion);
+  }
 
   for (const cat of getEffectiveTemplates()) {
     for (const c of cat.commands) {
@@ -116,6 +129,60 @@ export function getAllSuggestions(): SuggestionItem[] {
   suggestionsCache = result;
   suggestionsDirty = false;
   return result;
+}
+
+// 子序列模糊匹配：query 的每个字符按顺序出现在 text 中即可命中（如 ns 匹配 netstat）
+const isSubsequence = (query: string, text: string): boolean => {
+  let index = 0;
+  for (const ch of text) {
+    if (ch === query[index]) {
+      index += 1;
+      if (index === query.length) return true;
+    }
+  }
+  return false;
+};
+
+export function getTerminalSuggestions(input: string): SuggestionItem[] {
+  const query = input.trimStart().toLowerCase();
+  if (!query) return [];
+
+  const ranked = new Map<string, { item: SuggestionItem; score: number; order: number }>();
+  let order = 0;
+
+  const add = (item: SuggestionItem, score: number) => {
+    const key = item.command.trim();
+    const existing = ranked.get(key);
+    if (!existing || score < existing.score) {
+      ranked.set(key, { item, score, order: existing?.order ?? order++ });
+    }
+  };
+
+  for (const suggestion of getVSCodeStyleTerminalSuggestions(input)) {
+    add(suggestion, 0);
+  }
+
+  for (const suggestion of getAllSuggestions()) {
+    const command = suggestion.command.toLowerCase();
+    const desc = suggestion.desc.toLowerCase();
+    if (command === query) continue;
+    // 命令与说明均支持子序列模糊匹配；命令命中（10）优先于说明命中（30）
+    if (isSubsequence(query, command)) {
+      add({ ...suggestion, kind: suggestion.kind ?? 'template' }, 10);
+    } else if (isSubsequence(query, desc)) {
+      add({ ...suggestion, kind: suggestion.kind ?? 'template' }, 30);
+    }
+  }
+
+  return [...ranked.values()]
+    .sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      if (a.item.command.length !== b.item.command.length) {
+        return a.item.command.length - b.item.command.length;
+      }
+      return a.order - b.order;
+    })
+    .map(({ item }) => item);
 }
 
 export async function initPersistedTemplates(): Promise<void> {
@@ -278,11 +345,19 @@ export const COMMAND_TEMPLATES: CommandTemplate[] = [
       { name: 'git stash pop', command: 'git stash pop', desc: '恢复暂存工作区' },
       { name: 'git reset --soft', command: 'git reset --soft HEAD~1', desc: '撤销上次提交(保留变更)' },
       { name: 'git reset --hard', command: 'git reset --hard HEAD~1', desc: '撤销上次提交(丢弃变更)' },
+      { name: 'git clean -fd', command: 'git clean -fd', desc: '删除未跟踪的文件和目录(不可恢复)' },
+      { name: 'git reset --hard HEAD', command: 'git reset --hard HEAD', desc: '丢弃已跟踪文件的未提交变更(不可恢复)' },
       { name: 'git fetch', command: 'git fetch --all', desc: '获取远程更新(不合并)' },
       { name: 'git remote -v', command: 'git remote -v', desc: '查看远程仓库地址' },
       { name: 'git tag', command: 'git tag ', desc: '创建标签' },
       { name: 'git cherry-pick', command: 'git cherry-pick ', desc: '挑选提交应用' },
       { name: 'git revert', command: 'git revert ', desc: '撤销指定提交' },
+    ],
+  },
+  {
+    category: 'AI 助手',
+    commands: [
+      { name: 'claude --dangerously-skip-permissions', command: 'claude --dangerously-skip-permissions', desc: 'Claude Code 跳过权限确认启动' },
     ],
   },
   {

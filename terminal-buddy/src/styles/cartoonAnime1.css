@@ -1,0 +1,358 @@
+.cartoon-anime1-overlay {
+  display: none;
+}
+
+/* Anime skins keep the application's existing component geometry and only
+   replace semantic colors, canvas texture, and non-interactive artwork. */
+[data-skin="cartoon"] {
+  color-scheme: light;
+  --bg-primary: rgb(255 249 252 / var(--skin-app-opacity, 0));
+  --bg-secondary: rgb(255 253 251 / var(--skin-app-opacity, 0));
+  --bg-tertiary: rgb(255 234 244 / var(--skin-app-opacity, 0));
+  --bg-elevated: #fffdfc;
+  --bg-overlay: rgba(102, 59, 79, 0.42);
+  --text-primary: #573b4d;
+  --text-secondary: #805d71;
+  --text-tertiary: #9b778b;
+  --accent: #f174aa;
+  --accent-hover: #dc5d96;
+  --accent-contrast: #ffffff;
+  --border: #efb0c9;
+  --border-subtle: #f7d3e0;
+  --accent-color: var(--accent);
+  --border-color: var(--border);
+  --danger: #c93f69;
+  --success: #4f853f;
+  --warning: #96600d;
+  --list-hover-bg: rgba(255, 228, 240, 0.78);
+  --list-active-bg: rgba(239, 111, 155, 0.18);
+  --list-active-fg: #9f3f62;
+  --list-active-border-color: var(--accent);
+  --list-active-border-width: 0px;
+  --scrollbar-bg: transparent;
+  --scrollbar-thumb: #e8a9bf;
+  --scrollbar-thumb-hover: #cf7898;
+  --shadow-menu: 0 12px 32px rgba(137, 77, 108, 0.18);
+  --shadow-dialog: 0 24px 64px rgba(137, 77, 108, 0.22);
+  --skin-canvas:
+    url('../assets/cartoon-anime1-background.png') center / cover no-repeat,
+    #fff7fb;
+  --skin-art-shadow: drop-shadow(0 12px 22px rgba(196, 91, 139, 0.18));
+  --skin-toolbar-surface: rgb(255 250 252 / var(--skin-app-opacity, 0));
+  --skin-control-surface: rgb(255 235 245 / var(--skin-app-opacity, 0));
+  --skin-toolbar-border: rgba(239, 176, 201, 0.58);
+  --skin-tab-active: rgba(255, 226, 239, 0.52);
+}
+
+[data-skin="starry"] {
+  color-scheme: dark;
+  --bg-primary: rgb(22 24 81 / var(--skin-app-opacity, 0));
+  --bg-secondary: rgb(28 31 91 / var(--skin-app-opacity, 0));
+  --bg-tertiary: rgb(47 48 119 / var(--skin-app-opacity, 0));
+  --bg-elevated: #292c72;
+  --bg-overlay: rgba(5, 7, 37, 0.66);
+  --text-primary: #fff9ff;
+  --text-secondary: #d0c7f2;
+  --text-tertiary: #aaa0d4;
+  --accent: #c08aff;
+  --accent-hover: #d4adff;
+  --accent-contrast: #1d1647;
+  --border: #665da8;
+  --border-subtle: #46427f;
+  --accent-color: var(--accent);
+  --border-color: var(--border);
+  --danger: #ff829f;
+  --success: #9edd70;
+  --warning: #ffe08a;
+  --list-hover-bg: rgba(108, 89, 204, 0.3);
+  --list-active-bg: rgba(192, 138, 255, 0.24);
+  --list-active-fg: #fff9ff;
+  --list-active-border-color: var(--accent);
+  --list-active-border-width: 0px;
+  --scrollbar-bg: transparent;
+  --scrollbar-thumb: #625aa7;
+  --scrollbar-thumb-hover: #8276ca;
+  --shadow-menu: 0 12px 34px rgba(6, 8, 43, 0.48);
+  --shadow-dialog: 0 24px 68px rgba(6, 8, 43, 0.58);
+  --skin-canvas:
+    url('../assets/skin-starry-background.png') center bottom / cover no-repeat,
+    #17184d;
+  --skin-art-shadow: drop-shadow(0 0 26px rgba(137, 125, 255, 0.3));
+  --skin-toolbar-surface: rgb(27 29 88 / var(--skin-app-opacity, 0));
+  --skin-control-surface: rgb(47 48 119 / var(--skin-app-opacity, 0));
+  --skin-toolbar-border: rgba(102, 93, 168, 0.7);
+  --skin-tab-active: rgba(91, 74, 154, 0.58);
+}
+
+[data-skin="cyber"] {
+  color-scheme: dark;
+  --bg-primary: rgb(3 5 16 / var(--skin-app-opacity, 0));
+  --bg-secondary: rgb(6 8 24 / var(--skin-app-opacity, 0));
+  --bg-tertiary: rgb(11 13 38 / var(--skin-app-opacity, 0));
+  --bg-elevated: #11142f;
+  --bg-overlay: rgba(0, 0, 0, 0.72);
+  --text-primary: #f8e9ff;
+  --text-secondary: #cbb3d8;
+  --text-tertiary: #a58bb4;
+  --accent: #ff2dba;
+  --accent-hover: #ff68d1;
+  --accent-contrast: #160713;
+  --border: #6e2b65;
+  --border-subtle: #3b1a3c;
+  --accent-color: var(--accent);
+  --border-color: var(--border);
+  --danger: #ff5b7f;
+  --success: #9ceb50;
+  --warning: #ffd95d;
+  --list-hover-bg: rgba(255, 28, 188, 0.12);
+  --list-active-bg: rgba(255, 45, 186, 0.2);
+  --list-active-fg: #f8e9ff;
+  --list-active-border-color: var(--accent);
+  --list-active-border-width: 0px;
+  --scrollbar-bg: transparent;
+  --scrollbar-thumb: #5d285f;
+  --scrollbar-thumb-hover: #8b337d;
+  --shadow-menu: 0 12px 34px rgba(0, 0, 0, 0.54);
+  --shadow-dialog: 0 24px 70px rgba(0, 0, 0, 0.64);
+  --skin-canvas:
+    url('../assets/skin-cyber-background.png') center bottom / cover no-repeat,
+    #02030b;
+  --skin-art-shadow: drop-shadow(0 0 25px rgba(255, 45, 186, 0.28));
+  --skin-toolbar-surface: rgb(4 6 20 / var(--skin-app-opacity, 0));
+  --skin-control-surface: rgb(15 17 47 / var(--skin-app-opacity, 0));
+  --skin-toolbar-border: rgba(110, 43, 101, 0.72);
+  --skin-tab-active: rgba(70, 17, 65, 0.68);
+}
+
+[data-skin="sakura"] {
+  color-scheme: light;
+  --bg-primary: rgb(255 249 238 / var(--skin-app-opacity, 0));
+  --bg-secondary: rgb(255 253 248 / var(--skin-app-opacity, 0));
+  --bg-tertiary: rgb(246 231 227 / var(--skin-app-opacity, 0));
+  --bg-elevated: #fffaf7;
+  --bg-overlay: rgba(88, 42, 38, 0.42);
+  --text-primary: #453238;
+  --text-secondary: #6e565a;
+  --text-tertiary: #866f72;
+  --accent: #b94758;
+  --accent-hover: #a3394b;
+  --accent-contrast: #ffffff;
+  --border: #d2b4a9;
+  --border-subtle: #e7d4cc;
+  --accent-color: var(--accent);
+  --border-color: var(--border);
+  --danger: #af3547;
+  --success: #4f714a;
+  --warning: #76571c;
+  --list-hover-bg: rgba(238, 219, 215, 0.72);
+  --list-active-bg: rgba(185, 71, 88, 0.14);
+  --list-active-fg: #823343;
+  --list-active-border-color: var(--accent);
+  --list-active-border-width: 0px;
+  --scrollbar-bg: transparent;
+  --scrollbar-thumb: #c9a39b;
+  --scrollbar-thumb-hover: #ac746c;
+  --shadow-menu: 0 12px 32px rgba(117, 67, 50, 0.17);
+  --shadow-dialog: 0 24px 64px rgba(117, 67, 50, 0.24);
+  --skin-canvas:
+    url('../assets/skin-sakura-background.png') center bottom / cover no-repeat,
+    #fff8ef;
+  --skin-art-shadow: drop-shadow(0 18px 20px rgba(133, 73, 62, 0.18));
+  --skin-toolbar-surface: rgb(255 251 247 / var(--skin-app-opacity, 0));
+  --skin-control-surface: rgb(246 231 227 / var(--skin-app-opacity, 0));
+  --skin-toolbar-border: rgba(197, 158, 147, 0.64);
+  --skin-tab-active: rgba(232, 198, 201, 0.58);
+}
+
+[data-skin] .app-container {
+  position: relative;
+  isolation: isolate;
+  background: var(--skin-canvas);
+}
+
+[data-skin] .main-content {
+  z-index: 1;
+  background: transparent;
+}
+
+/* 侧栏面板的通用进入动画会从 opacity: 0 淡入。半透明皮肤下这会让
+   面板短暂露出完整背景，看起来像不透明度先归零再恢复。 */
+[data-skin] .ui-style-sidebar .nav-panel-slot.active > * {
+  animation: none;
+}
+
+[data-skin] .activity-bar,
+[data-skin] .config-nav {
+  background: var(--bg-secondary);
+}
+
+[data-skin] .tab-nav {
+  background: var(--bg-secondary);
+}
+
+[data-skin] .file-nav {
+  --file-nav-surface: var(--bg-secondary);
+  --file-nav-toolbar: transparent;
+  --file-nav-control: var(--skin-control-surface);
+}
+
+[data-skin] .file-nav > .panel-titlebar,
+[data-skin] .file-nav-filter,
+[data-skin] .tab-nav > .panel-titlebar {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+[data-skin] .tab-nav-search,
+[data-skin] .tab-nav-rename-input {
+  background: var(--skin-control-surface);
+}
+
+[data-skin] .file-nav-content {
+  background: transparent;
+}
+
+[data-skin] .terminal-tab-bar {
+  /* A backdrop filter here turns this scrolling element into the containing
+     block for its fixed context menu, causing the menu to be clipped. */
+  background: var(--bg-secondary);
+  border-bottom-color: var(--skin-toolbar-border);
+}
+
+[data-skin] .terminal-tab.active {
+  background: var(--skin-tab-active);
+}
+
+[data-skin] .terminal-panel,
+[data-skin] .terminal-content,
+[data-skin] .terminal-content.split-grid .split-cell {
+  background: transparent;
+}
+
+/* 空分屏没有 TerminalInstance 绘制表面，需与左侧面板使用同一透明度背景。 */
+[data-skin] .terminal-content.split-grid .split-blank {
+  background: var(--bg-secondary);
+}
+
+[data-skin] .terminal-empty,
+[data-skin] .terminal-starting,
+[data-skin] .lazy-panel-loading {
+  background: var(--bg-secondary);
+}
+
+[data-skin] .cartoon-anime1-overlay {
+  position: absolute;
+  z-index: 0;
+  inset: 36px 0 0;
+  display: block;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+[data-skin] .cartoon-anime1-left,
+[data-skin] .cartoon-anime1-center,
+[data-skin] .cartoon-anime1-hero {
+  position: absolute;
+  bottom: 0;
+  display: block;
+  background-position: bottom center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  filter: var(--skin-art-shadow);
+  opacity: 0.78;
+}
+
+[data-skin] .cartoon-anime1-left {
+  left: 1%;
+  width: min(22%, 340px);
+  height: min(38%, 374px);
+  opacity: 0.68;
+}
+
+[data-skin] .cartoon-anime1-center {
+  left: 24%;
+  width: min(23%, 356px);
+  height: min(42%, 424px);
+  opacity: 0.62;
+}
+
+[data-skin] .cartoon-anime1-hero {
+  right: 0.4%;
+  width: min(42%, 650px);
+  height: min(58%, 590px);
+}
+
+[data-skin="cartoon"] .cartoon-anime1-left {
+  display: none;
+}
+
+[data-skin="cartoon"] .cartoon-anime1-center {
+  display: none;
+}
+
+[data-skin="cartoon"] .cartoon-anime1-hero {
+  width: min(36%, 590px);
+  height: min(54%, 550px);
+  background-image: url('../assets/cartoon-anime1-hero.png');
+  filter: drop-shadow(0 12px 24px rgba(196, 91, 139, 0.28)) saturate(1.12) contrast(1.05);
+  opacity: 0.94;
+}
+
+[data-skin="starry"] .cartoon-anime1-left {
+  background-image: url('../assets/skin-starry-left.png');
+}
+
+[data-skin="starry"] .cartoon-anime1-center {
+  display: none;
+}
+
+[data-skin="starry"] .cartoon-anime1-hero {
+  background-image: url('../assets/skin-starry-hero.png');
+}
+
+[data-skin="cyber"] .cartoon-anime1-left {
+  background-image: url('../assets/skin-cyber-left.png');
+  mix-blend-mode: screen;
+}
+
+[data-skin="cyber"] .cartoon-anime1-center {
+  background-image: url('../assets/skin-cyber-center.png');
+  mix-blend-mode: screen;
+}
+
+[data-skin="cyber"] .cartoon-anime1-hero {
+  width: min(38%, 590px);
+  height: min(64%, 650px);
+  background-image: url('../assets/skin-cyber-hero.png');
+}
+
+[data-skin="sakura"] .cartoon-anime1-left {
+  background-image: url('../assets/skin-sakura-left.png');
+  mix-blend-mode: multiply;
+}
+
+[data-skin="sakura"] .cartoon-anime1-center {
+  background-image: url('../assets/skin-sakura-center.png');
+  mix-blend-mode: multiply;
+}
+
+[data-skin="sakura"] .cartoon-anime1-hero {
+  width: min(40%, 565px);
+  height: min(56%, 560px);
+  background-image: url('../assets/skin-sakura-hero.png');
+  filter: drop-shadow(0 18px 22px rgba(133, 73, 62, 0.26)) saturate(1.08) contrast(1.06);
+  opacity: 0.94;
+}
+
+@media (max-width: 900px) {
+  [data-skin] .cartoon-anime1-left,
+  [data-skin] .cartoon-anime1-center {
+    opacity: 0.42;
+  }
+
+  [data-skin] .cartoon-anime1-hero {
+    opacity: 0.56;
+  }
+}

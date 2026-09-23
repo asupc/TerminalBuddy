@@ -180,6 +180,10 @@ const EXTENSION_TO_LANGUAGE: Record<string, string> = {
   '.log': 'plaintext', '.txt': 'plaintext', '.text': 'plaintext',
 };
 
+const MARKDOWN_EXTENSIONS = new Set([
+  '.md', '.markdown', '.mdown', '.mkdn', '.mkd', '.mdwn',
+]);
+
 export function isTextFile(filePath: string): boolean {
   const dotIndex = filePath.lastIndexOf('.');
   if (dotIndex === -1) return false;
@@ -192,6 +196,12 @@ export function getMonacoLanguage(filePath: string): string {
   if (dotIndex === -1) return 'plaintext';
   const ext = filePath.slice(dotIndex).toLowerCase();
   return EXTENSION_TO_LANGUAGE[ext] || 'plaintext';
+}
+
+export function isMarkdownFile(filePath: string): boolean {
+  const dotIndex = filePath.lastIndexOf('.');
+  if (dotIndex === -1) return false;
+  return MARKDOWN_EXTENSIONS.has(filePath.slice(dotIndex).toLowerCase());
 }
 
 export function getFileName(filePath: string): string {

@@ -10,30 +10,84 @@ body {
 }
 
 :root {
-  /* Dark theme (default) */
-  --bg-primary: #1e1e1e;
-  --bg-secondary: #252526;
-  --bg-tertiary: #2d2d2d;
-  --text-primary: #cccccc;
-  --text-secondary: #858585;
-  --accent: #0078d4;
-  --border: #3c3c3c;
-  --scrollbar-bg: #2d2d2d;
-  --scrollbar-thumb: #5a5a5a;
-  --scrollbar-thumb-hover: #7a7a7a;
+  color-scheme: dark;
+
+  /* 基础色阶：终端是画布，应用外壳保持安静、低对比。 */
+  --bg-primary: #181a1d;
+  --bg-secondary: #202226;
+  --bg-tertiary: #2a2d31;
+  --bg-elevated: #25282c;
+  --bg-overlay: rgba(10, 12, 14, 0.66);
+  --text-primary: #e3e5e8;
+  --text-secondary: #9aa0a8;
+  --text-tertiary: #6f767f;
+  --accent: #4b95e9;
+  --accent-hover: #62a4ed;
+  --accent-contrast: #ffffff;
+  --border: #34383d;
+  --border-subtle: #2b2f33;
+  --accent-color: var(--accent);
+  --border-color: var(--border);
+  --danger: #ef6b73;
+  --success: #55b988;
+  --warning: #d9a441;
+  /* List item hover/selection (tree views: ConfigNav, FileNav) */
+  --list-hover-bg: #292c30;
+  --list-active-bg: color-mix(in srgb, var(--accent) 17%, transparent);
+  --list-active-fg: #edf5ff;
+  --list-active-border-color: var(--accent);
+  --list-active-border-width: 0px;
+  --scrollbar-bg: transparent;
+  --scrollbar-thumb: #454a51;
+  --scrollbar-thumb-hover: #5a6069;
+
+  /* 通用尺寸与动效。组件只从这组令牌取值。 */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --control-height-sm: 28px;
+  --control-height-md: 32px;
+  --panel-header-height: 40px;
+  --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.28);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.42);
+  --motion-instant: 90ms;
+  --motion-fast: 140ms;
+  --motion-normal: 180ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 [data-theme="light"] {
-  --bg-primary: #f5f5f5;
+  color-scheme: light;
+  --bg-primary: #f3f4f6;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #e8e8e8;
-  --text-primary: #333333;
-  --text-secondary: #666666;
-  --accent: #0078d4;
-  --border: #d0d0d0;
-  --scrollbar-bg: #e8e8e8;
-  --scrollbar-thumb: #b0b0b0;
-  --scrollbar-thumb-hover: #999999;
+  --bg-tertiary: #e9ebee;
+  --bg-elevated: #ffffff;
+  --bg-overlay: rgba(22, 26, 31, 0.46);
+  --text-primary: #24272c;
+  --text-secondary: #626870;
+  --text-tertiary: #8a9098;
+  --accent: #176fbd;
+  --accent-hover: #0d62aa;
+  --accent-contrast: #ffffff;
+  --border: #d6d9de;
+  --border-subtle: #e4e6e9;
+  --accent-color: var(--accent);
+  --border-color: var(--border);
+  --danger: #c9434d;
+  --success: #23845b;
+  --warning: #9a6b12;
+  --list-hover-bg: #edf0f3;
+  --list-active-bg: color-mix(in srgb, var(--accent) 11%, #ffffff);
+  --list-active-fg: #125f9f;
+  --list-active-border-color: var(--accent);
+  --list-active-border-width: 0px;
+  --scrollbar-bg: transparent;
+  --scrollbar-thumb: #b7bcc3;
+  --scrollbar-thumb-hover: #969ca5;
+  --shadow-menu: 0 10px 30px rgba(24, 30, 38, 0.16);
+  --shadow-dialog: 0 24px 64px rgba(24, 30, 38, 0.22);
 }
 
 html, body, #root {
@@ -43,16 +97,37 @@ html, body, #root {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
-  transition: background-color 0.2s ease, color 0.2s ease;
+  font-size: 13px;
+  transition: background-color var(--motion-normal) var(--ease-standard), color var(--motion-normal) var(--ease-standard);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  letter-spacing: 0;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:not(.app-container):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 78%, white);
+  outline-offset: -2px;
 }
 
 /* Scrollbar styles */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -61,7 +136,9 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
-  border-radius: 5px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -90,81 +167,137 @@ body {
   min-width: 0;
 }
 
-/* Confirm dialog */
-.confirm-dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
+.nav-panel-slot {
+  display: contents;
 }
 
-.confirm-dialog {
-  background: var(--bg-secondary);
-  border-radius: 8px;
-  padding: 24px;
-  min-width: 280px;
-  border: 1px solid var(--border);
+.ui-style-sidebar .nav-panel-slot.active > * {
+  animation: tb-panel-enter var(--motion-fast) var(--ease-enter);
 }
 
-.confirm-dialog-title {
-  font-size: 16px;
-  font-weight: 500;
-  margin-bottom: 12px;
+.ui-style-sidebar .nav-panel-slot:not(.active) {
+  display: none;
 }
 
-.confirm-dialog-message {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-bottom: 20px;
+.ui-style-sidebar.panels-hidden .activity-bar {
+  display: none;
 }
 
-.confirm-dialog-buttons {
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
-}
-
-.confirm-dialog-buttons button {
-  padding: 8px 16px;
-  border-radius: 4px;
+.btn-primary,
+.btn-secondary,
+.btn-danger {
+  min-height: var(--control-height-md);
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), opacity var(--motion-fast) var(--ease-standard);
 }
 
-.confirm-dialog-buttons .btn-secondary {
-  background: var(--bg-tertiary);
+.btn-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.btn-primary:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
   border: 1px solid var(--border);
+  background: var(--bg-tertiary);
   color: var(--text-primary);
 }
 
-/* Shared panel titlebar (FileTree, ConfigPanel, TabSidebar) */
+.btn-secondary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text-secondary) 62%, var(--border));
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-tertiary));
+}
+
+.btn-danger {
+  border: 1px solid color-mix(in srgb, var(--danger) 70%, var(--border));
+  background: transparent;
+  color: var(--danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.btn-danger:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.context-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}
+
+.context-menu {
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-menu);
+}
+
+.context-menu-item {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+.context-menu-item:hover,
+.context-menu-item.highlighted {
+  background: var(--list-hover-bg);
+  color: var(--text-primary);
+}
+
+.context-menu-item.danger {
+  color: var(--danger);
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border-subtle);
+}
+
+/* Shared panel titlebar (FileNav, ConfigNav, TabNav) */
 .panel-titlebar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  min-height: var(--panel-header-height);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
 .panel-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
+  letter-spacing: 0;
 }
 
 .panel-title-count {
   font-size: 11px;
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  padding: 1px 6px;
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-secondary) 13%, transparent);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
   min-width: 20px;
   text-align: center;
 }
@@ -179,4 +312,70 @@ body {
   background: #0078d4;
   border: none;
   color: white;
+}
+/* ===== Toast ===== */
+.tb-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 10000;
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  animation: tb-toast-in 0.18s ease-out;
+  pointer-events: none;
+  max-width: 80vw;
+}
+.tb-toast-info {
+  background: #2d2d2d;
+  border: 1px solid #555;
+}
+.tb-toast-success {
+  background: #1a3a1a;
+  border: 1px solid #2ea043;
+}
+.tb-toast-error {
+  background: #3a1a1a;
+  border: 1px solid #f44747;
+}
+@keyframes tb-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Panels hidden mode (F11) */
+.panels-hidden .config-nav,
+.panels-hidden .file-nav,
+.panels-hidden .remote-file-tree,
+.panels-hidden .tab-nav {
+  display: none !important;
+}
+
+/* Split toggle button active state in the title bar */
+.titlebar-split-btn.split-active {
+  color: var(--accent);
+}
+
+@keyframes tb-panel-enter {
+  from { opacity: 0; transform: translateX(-4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes tb-dialog-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
