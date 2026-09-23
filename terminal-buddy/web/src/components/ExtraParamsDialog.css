@@ -1,0 +1,273 @@
+/* 启动参数预设管理弹框（移植自 PC 端，适配 Web CSS 变量） */
+
+.web-dialog-surface.extra-params-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.extra-params-dialog-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.extra-params-input-section {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.extra-params-list-label {
+  font-size: 13px;
+  color: var(--text-soft);
+  margin-bottom: 8px;
+}
+
+.extra-params-list {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.extra-params-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 20px 0;
+}
+
+.extra-param-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  margin-bottom: 6px;
+}
+
+.extra-param-item.editing {
+  padding: 10px;
+  background: var(--surface);
+}
+
+.extra-param-tag-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  max-width: 120px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #fff;
+  background: var(--accent);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extra-param-params {
+  flex: 1;
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.extra-param-match {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.extra-param-edit,
+.extra-param-delete {
+  color: var(--text-soft);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.extra-param-edit:hover {
+  color: var(--accent);
+  background: rgba(101, 213, 165, 0.12);
+}
+
+.extra-param-delete:hover {
+  color: var(--danger);
+  background: rgba(240, 120, 120, 0.12);
+}
+
+/* 编辑器：字段行 / 颜色行 / 按钮行 */
+.extra-param-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.extra-param-editor-fields {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.extra-param-editor-color {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.extra-param-editor-color-label {
+  font-size: 12px;
+  color: var(--text-soft);
+  padding-top: 5px;
+  flex-shrink: 0;
+}
+
+.extra-param-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.extra-param-input {
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  outline: none;
+  min-width: 80px;
+  flex: 1;
+  min-width: 140px;
+}
+
+.extra-param-input:focus {
+  border-color: var(--accent);
+}
+
+.extra-param-input-name {
+  flex: 0 0 140px;
+  min-width: 140px;
+  font-weight: 600;
+}
+
+.extra-param-input-match {
+  flex: 0 0 150px;
+  min-width: 120px;
+  font-family: monospace;
+}
+
+.extra-param-mode-select {
+  height: 34px;
+  flex: 0 0 106px;
+  min-width: 106px;
+  cursor: pointer;
+}
+
+.extra-param-mode-badge {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.extra-param-mode-badge.independent {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.extra-param-action {
+  height: 34px;
+  padding: 0 16px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+/* 颜色选择器：inline 平铺 */
+.extra-params-color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.extra-params-color-cell {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: var(--accent);
+  transition: transform var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.extra-params-color-cell:hover {
+  transform: scale(1.15);
+}
+
+.extra-params-color-cell.selected {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text);
+}
+
+.extra-params-color-cell.theme-default {
+  background: linear-gradient(135deg, var(--accent) 50%, var(--surface-raised) 50%);
+}
+
+/* 移动端窄屏：字段纵向 */
+@media (max-width: 520px) {
+  .extra-param-item:not(.editing) {
+    flex-wrap: wrap;
+  }
+  .extra-param-item:not(.editing) .extra-param-params {
+    order: 1;
+    flex-basis: 100%;
+  }
+  .extra-param-item:not(.editing) .extra-param-match {
+    order: 2;
+    max-width: 100%;
+  }
+  .extra-param-input-name {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .extra-param-input {
+    flex: 1 1 100%;
+  }
+  .extra-param-mode-select {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .extra-param-action {
+    flex: 1;
+  }
+}
