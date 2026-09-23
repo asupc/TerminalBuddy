@@ -4,9 +4,52 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TerminalBuddy</title>
+    <style>
+      /* 内联启动样式：HTML 解析首帧即为深色，消除 WebView2 在 CSS/JS 加载期间的白屏。
+         React createRoot().render() 挂载时会自动替换 #root 内容，无需手动清理。 */
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #1e1e1e;
+      }
+      #app-boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #1e1e1e;
+        color: #cccccc;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        z-index: 9999;
+      }
+      #app-boot .boot-spinner {
+        width: 34px;
+        height: 34px;
+        border: 3px solid #3c3c3c;
+        border-top-color: #0078d4;
+        border-radius: 50%;
+        animation: app-boot-spin 0.8s linear infinite;
+      }
+      #app-boot .boot-title {
+        font-size: 14px;
+        letter-spacing: 2px;
+        color: #858585;
+      }
+      @keyframes app-boot-spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="app-boot">
+        <div class="boot-spinner"></div>
+        <div class="boot-title">TerminalBuddy</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

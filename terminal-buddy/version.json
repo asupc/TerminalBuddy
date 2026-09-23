@@ -1,0 +1,7 @@
+{
+  "version": "1.5.0",
+  "releaseDate": "2026-09-23",
+  "mandatory": false,
+  "changelogMd": "## 1.5.0\n\n### 🔐 Web 安全与会话隔离\n\n- Web 终端会话隔离与权限矩阵：默认 Web 仅可见 / 可操作 Web 自建终端，PC 终端不出现在列表且 WebSocket 握手直接 403；PC 端可只读查看 Web 终端，但不能输入 / 缩放 / 改名 / 关闭\n- WebSocket 升级前完成鉴权，按消息及每 5 秒复检权限，共享开关关闭后约 5 秒内切断在途连接；Web 永远不能关闭 PC 终端\n- 登录暴力破解防护：按 IP 失败计数 + 指数封禁退避，bcrypt 校验并发限流（429 + Retry-After）\n\n### 🛡️ 终端修复\n\n- 粘贴行尾统一为 CR：修复 ConPTY 把 LF 当 Ctrl+Enter、pi 等 kitty 协议 TUI 下多行粘贴乱码与逐行误提交\n- debug 日志增加日期与退出码；VS Code 终端宿主改用专属进程名，避免被误杀\n- 修复启动 bug\n\n### ⚙️ 设置与参数预设\n\n- 补上 settingsVersion 实现，修复设置变更时报错与标签栏不刷新\n- 参数预设新增启用 / 禁用开关，禁用后不再出现在右键启动菜单\n\n### ⌨️ 快捷键\n\n- 修复全局快捷键注册始终提示被占用的问题\n\n### 🎨 外观与 UI\n\n- 应用图标焕新：全新「双窗结伴」Logo\n- 修复皮肤背景色色块问题并完成皮肤适配\n- 修复弹窗打开时闪烁\n\n### 📌 升级提示\n\n- 从 v1.4.x 可直接覆盖安装；升级后 Web 端默认看不到 PC 终端，如需共享请在设置中开启「会话共享」",
+  "downloadUrl": "https://gitee.com/updateme/terminal-buddy/releases/tag/v1.5.0"
+}

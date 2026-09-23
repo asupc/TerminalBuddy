@@ -1,0 +1,11 @@
+{
+  "id": "vscode-terminal",
+  "name": "VS Code Terminal",
+  "version": "1.0.0",
+  "protocolVersion": 1,
+  "engine": {
+    "node": ">=18 (system)",
+    "nodePty": "1.2.0-beta.13",
+    "conpty": "1.25.260303002"
+  }
+}
