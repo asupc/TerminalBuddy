@@ -1,2 +1,13 @@
 [build]
-rustc-wrapper = "sccache"
+# rustc-wrapper = "sccache"
+
+[target.x86_64-pc-windows-msvc]
+# tauri 窗口/菜单/对话框系统静态导入 comctl32 v6 的 TaskDialogIndirect。
+# cargo test 的 lib unit-test 二进制没有应用 manifest（cargo:rustc-link-arg-lib 对 test 变体不生效），
+# 加载时按 v5 绑定 → STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)。
+# 用 /DELAYLOAD 把 comctl32 改为延迟绑定：加载不再解析其入口点（测试中该调用链不会被实际执行），
+# 生产构建有 tauri 自己的 Common-Controls v6 manifest，延迟绑定无任何影响。
+rustflags = [
+    "-C", "link-arg=/DELAYLOAD:comctl32.dll",
+    "-C", "link-arg=delayimp.lib",
+]

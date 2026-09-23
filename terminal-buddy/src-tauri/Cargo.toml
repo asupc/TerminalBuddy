@@ -1,6 +1,6 @@
 [package]
 name = "terminal-buddy"
-version = "1.0.0"
+version = "1.5.0"
 description = "TerminalBuddy - 终端配置管理工具"
 authors = [""]
 edition = "2021"
@@ -13,9 +13,12 @@ crate-type = ["rlib", "cdylib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
+tauri-winrt-notification = "0.7.3"
+windows-registry = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "macros", "sync", "time"] }
@@ -24,10 +27,17 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 portable-pty = "0.9"
 clipboard-win = { version = "5.4.1", features = ["std"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "multipart"] }
 axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "timeout"] }
+hyper-util = { version = "0.1", features = [
+    "server-auto",
+    "server-graceful",
+    "service",
+    "tokio",
+] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
 tokio-tungstenite = "0.26"
 jsonwebtoken = "9"
 bcrypt = "0.17"
@@ -35,10 +45,15 @@ futures-util = "0.3"
 include_dir = "0.7"
 hex = "0.4"
 rand = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+base64 = "0.22"
+urlencoding = "2"
 ssh2 = "0.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_Registry", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_Graphics_Gdi"] }
-
+lark-channel = { version = "0.4", features = ["websocket"] }
+shell-words = "1.1"
+zip = "2"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem"] }
 
 [patch.crates-io]
 portable-pty = { path = "portable-pty-patched" }

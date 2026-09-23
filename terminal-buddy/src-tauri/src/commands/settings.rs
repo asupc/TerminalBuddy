@@ -1,19 +1,28 @@
+use crate::models::{
+    validate_profile_connection_fields, AppSettings, CloseBehavior, LaunchWindowMode, Profile,
+    TerminalLoadingMode,
+};
+use crate::services::{
+    copy_dir_recursive, PathService, SettingsService, VsCodeTerminalProcess, VsCodeTerminalSupport,
+};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use crate::models::{AppSettings, CloseBehavior};
-use crate::services::{SettingsService, PathService, copy_dir_recursive};
-use serde_json::{json, Value};
+use tauri::AppHandle;
 
 fn to_wide(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 fn set_autostart_registry(enabled: bool) -> Result<(), String> {
-    use windows::Win32::System::Registry::*;
     use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::*;
 
     let key_wide = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
     let name_wide = to_wide("TerminalBuddy");
@@ -32,8 +41,8 @@ fn set_autostart_registry(enabled: bool) -> Result<(), String> {
         }
 
         if enabled {
-            let exe_path = std::env::current_exe()
-                .map_err(|e| format!("获取程序路径失败: {}", e))?;
+            let exe_path =
+                std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
             let path_str = format!("\"{}\"", exe_path.to_string_lossy());
             let wide = to_wide(&path_str);
             let bytes: Vec<u8> = wide.iter().flat_map(|w| w.to_le_bytes()).collect();
@@ -60,8 +69,8 @@ fn set_autostart_registry(enabled: bool) -> Result<(), String> {
 }
 
 fn read_autostart_registry() -> bool {
-    use windows::Win32::System::Registry::*;
     use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::*;
 
     let key_wide = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
     let name_wide = to_wide("TerminalBuddy");
@@ -113,8 +122,56 @@ pub fn save_close_behavior(behavior: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn save_launch_window_mode(mode: String) -> Result<(), String> {
+    let mode = match mode.as_str() {
+        "windowed" => LaunchWindowMode::Windowed,
+        "maximized" => LaunchWindowMode::Maximized,
+        _ => return Err(format!("无效的启动窗口模式: {}", mode)),
+    };
+    SettingsService::mutate_settings(|s| s.launch_window_mode = mode)
+}
+
+#[tauri::command]
+pub fn get_vscode_terminal_support(app: AppHandle) -> VsCodeTerminalSupport {
+    VsCodeTerminalProcess::probe_support(&app)
+}
+
+#[tauri::command]
+pub fn save_terminal_loading_mode(mode: String, app: AppHandle) -> Result<(), String> {
+    let mode = match mode.as_str() {
+        "default" => TerminalLoadingMode::Default,
+        "vsCode" => {
+            let support = VsCodeTerminalProcess::probe_support(&app);
+            if !support.available {
+                return Err(support.reason);
+            }
+            TerminalLoadingMode::VsCode
+        }
+        _ => return Err(format!("无效的终端加载方案: {}", mode)),
+    };
+    SettingsService::mutate_settings(|settings| settings.terminal_loading_mode = mode)
+}
+
+#[tauri::command]
 pub fn get_data_path() -> String {
     PathService::get_current_data_path()
+}
+
+/// 数据目录当前可用性状态，供设置页与启动横幅展示。
+/// `null` 表示进程尚未解析过数据目录（极早期）。
+#[tauri::command]
+pub fn get_data_path_status() -> serde_json::Value {
+    match PathService::get_data_dir_status() {
+        Some(status) => serde_json::json!({
+            "kind": match status {
+                crate::services::DataDirStatus::Default => "default",
+                crate::services::DataDirStatus::Ok { .. } => "ok",
+                crate::services::DataDirStatus::Unavailable { .. } => "unavailable",
+            },
+            "summary": status.summary(),
+        }),
+        None => serde_json::Value::Null,
+    }
 }
 
 #[tauri::command]
@@ -127,7 +184,9 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
         return Ok(());
     }
 
-    for subdir in &["Profiles", "Themes", "Workspaces", "ClientData"] {
+    // 目标在源内部、目录链接环路都由 copy_dir_recursive 拒绝；任一子目录
+    // 复制失败立即中止，不写 settings.json，当前数据目录保持原样。
+    for subdir in &["Profiles", "Workspaces", "ClientData", "Bots"] {
         let src = old_dir.join(subdir);
         let dst = new_dir.join(subdir);
         if src.exists() {
@@ -151,6 +210,20 @@ pub fn save_enable_tab_navigation(enabled: bool) -> Result<(), String> {
 pub fn save_tab_sidebar_width(width: u32) -> Result<(), String> {
     let mut settings = SettingsService::get_settings();
     settings.tab_sidebar_width = width.clamp(150, 400);
+    SettingsService::save_settings(&settings)
+}
+
+#[tauri::command]
+pub fn save_config_nav_width(width: u32) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.config_nav_width = width.clamp(150, 400);
+    SettingsService::save_settings(&settings)
+}
+
+#[tauri::command]
+pub fn save_file_nav_width(width: u32) -> Result<(), String> {
+    let mut settings = SettingsService::get_settings();
+    settings.file_nav_width = width.clamp(150, 500);
     SettingsService::save_settings(&settings)
 }
 
@@ -209,7 +282,8 @@ fn read_json_files(dir: &PathBuf) -> Result<HashMap<String, Value>, String> {
         if path.extension().map(|e| e == "json").unwrap_or(false) {
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
             let content = fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
-            let value: Value = serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
+            let value: Value =
+                serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
             map.insert(name, value);
         }
     }
@@ -221,7 +295,8 @@ fn read_json_file(path: &PathBuf) -> Result<Option<Value>, String> {
         return Ok(None);
     }
     let content = fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
+    let value: Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
     Ok(Some(value))
 }
 
@@ -234,8 +309,8 @@ pub fn export_all_data(file_path: String) -> Result<(), String> {
         "exportTime": chrono::Utc::now().to_rfc3339(),
     });
 
-    // Collect subdirectory data (Profiles, Themes, Workspaces)
-    for subdir in &["Profiles", "Themes", "Workspaces", "ClientData"] {
+    // Collect subdirectory data
+    for subdir in &["Profiles", "Workspaces", "ClientData", "Bots"] {
         let dir = data_dir.join(subdir);
         match read_json_files(&dir) {
             Ok(map) => {
@@ -248,20 +323,25 @@ pub fn export_all_data(file_path: String) -> Result<(), String> {
     }
 
     // Collect single-file data
-    for filename in &["command_history.json", "command_templates.json", "settings.json"] {
+    for filename in &[
+        "command_history.json",
+        "command_templates.json",
+        "settings.json",
+    ] {
         let path = data_dir.join(filename);
         let stem = filename.trim_end_matches(".json");
         match read_json_file(&path) {
-            Ok(Some(value)) => { export[stem] = value; }
+            Ok(Some(value)) => {
+                export[stem] = value;
+            }
             Ok(None) => {}
             Err(e) => return Err(e),
         }
     }
 
-    let json_str = serde_json::to_string_pretty(&export)
-        .map_err(|e| format!("序列化JSON失败: {}", e))?;
-    fs::write(&file_path, json_str)
-        .map_err(|e| format!("写入文件失败: {}", e))?;
+    let json_str =
+        serde_json::to_string_pretty(&export).map_err(|e| format!("序列化JSON失败: {}", e))?;
+    fs::write(&file_path, json_str).map_err(|e| format!("写入文件失败: {}", e))?;
 
     Ok(())
 }
@@ -270,10 +350,9 @@ fn write_json_files(dir: &PathBuf, map: &HashMap<String, Value>) -> Result<(), S
     fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {}", e))?;
     for (name, value) in map {
         let path = dir.join(format!("{}.json", name));
-        let content = serde_json::to_string_pretty(value)
-            .map_err(|e| format!("序列化JSON失败: {}", e))?;
-        fs::write(&path, content)
-            .map_err(|e| format!("写入文件失败: {}", e))?;
+        let content =
+            serde_json::to_string_pretty(value).map_err(|e| format!("序列化JSON失败: {}", e))?;
+        fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))?;
     }
     Ok(())
 }
@@ -285,10 +364,8 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
         return Err("导入文件不存在".to_string());
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("读取文件失败: {}", e))?;
-    let data: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("解析JSON失败: {}", e))?;
+    let content = fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+    let data: Value = serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {}", e))?;
 
     // 验证顶层结构必须是 Object
     if !data.is_object() {
@@ -296,8 +373,17 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     }
 
     // 验证可识别的 key
-    let valid_keys: &[&str] = &["Profiles", "Themes", "Workspaces", "ClientData",
-                                 "command_history", "command_templates", "settings"];
+    // Themes is accepted for backward compatibility with older backups, but is no longer restored.
+    let valid_keys: &[&str] = &[
+        "Profiles",
+        "Themes",
+        "Workspaces",
+        "ClientData",
+        "Bots",
+        "command_history",
+        "command_templates",
+        "settings",
+    ];
     for key in data.as_object().unwrap().keys() {
         if !valid_keys.contains(&key.as_str()) {
             return Err(format!("导入文件包含未知数据类型: {}", key));
@@ -307,8 +393,21 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     let data_dir = PathService::get_data_dir();
     fs::create_dir_all(&data_dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
 
+    // 这条路径直接把 JSON 原样写进 Profiles/，不经过 ProfileService，所以必须在这里
+    // 自行校验连接字段，否则备份文件就能绕过保存时的校验把非法值放上磁盘。
+    // 反序列化失败的条目跳过校验：旧版本备份可能缺字段，而缺字段的 JSON 本来也不会被
+    // ProfileService 读成 Profile，进不了命令行。
+    if let Some(obj) = data.get("Profiles").and_then(|v| v.as_object()) {
+        for value in obj.values() {
+            if let Ok(profile) = serde_json::from_value::<Profile>(value.clone()) {
+                validate_profile_connection_fields(&profile)
+                    .map_err(|e| format!("连接「{}」导入失败：{}", profile.name, e))?;
+            }
+        }
+    }
+
     // Restore subdirectory data
-    for subdir in &["Profiles", "Themes", "Workspaces", "ClientData"] {
+    for subdir in &["Profiles", "Workspaces", "ClientData", "Bots"] {
         if let Some(obj) = data.get(subdir).and_then(|v| v.as_object()) {
             let mut map = HashMap::new();
             for (key, value) in obj {
@@ -324,8 +423,7 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
             let path = data_dir.join(format!("{}.json", filename));
             let content = serde_json::to_string_pretty(value)
                 .map_err(|e| format!("序列化JSON失败: {}", e))?;
-            fs::write(&path, content)
-                .map_err(|e| format!("写入文件失败: {}", e))?;
+            fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))?;
         }
     }
 

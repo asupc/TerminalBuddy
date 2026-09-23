@@ -31,6 +31,18 @@ impl SettingsService {
         settings
     }
 
+    /// 只读单个布尔字段，避免权限判定热路径上整体 clone `AppSettings`。
+    pub fn share_sessions_enabled() -> bool {
+        {
+            if let Ok(cache) = CACHED_SETTINGS.read() {
+                if let Some(ref settings) = *cache {
+                    return settings.web_api_share_sessions;
+                }
+            }
+        }
+        Self::get_settings().web_api_share_sessions
+    }
+
     fn read_settings_from_disk() -> AppSettings {
         let path = Self::get_settings_path();
         if let Ok(content) = fs::read_to_string(&path) {
@@ -61,10 +73,9 @@ impl SettingsService {
 
     pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
         let path = Self::get_settings_path();
-        let content = serde_json::to_string_pretty(settings)
-            .map_err(|e| format!("序列化设置失败: {}", e))?;
-        fs::write(&path, content)
-            .map_err(|e| format!("写入设置文件失败: {}", e))?;
+        let content =
+            serde_json::to_string_pretty(settings).map_err(|e| format!("序列化设置失败: {}", e))?;
+        fs::write(&path, content).map_err(|e| format!("写入设置文件失败: {}", e))?;
         // Update memory cache
         if let Ok(mut cache) = CACHED_SETTINGS.write() {
             *cache = Some(settings.clone());

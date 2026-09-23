@@ -4,8 +4,8 @@
   "identifier": "com.terminalbuddy.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build && cd web && npm run build",
+    "devUrl": "http://127.0.0.1:1450",
+    "beforeBuildCommand": "npm run prepare:vscode-terminal && npm run build && cd web && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -16,18 +16,33 @@
         "title": "TerminalBuddy",
         "width": 1200,
         "height": 800,
+        "center": true,
+        "maximized": false,
         "resizable": true,
         "fullscreen": false,
-        "decorations": false
+        "visible": false,
+        "backgroundColor": "#1e1e1e",
+        "decorations": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion"
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/**",
+          "$APPDATA/**",
+          "$APPLOCALDATA/**"
+        ]
+      }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

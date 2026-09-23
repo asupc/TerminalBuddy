@@ -1,10 +1,17 @@
-use windows::Win32::Foundation::{HLOCAL, LocalFree};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
+use windows::Win32::Foundation::{LocalFree, HLOCAL};
 use windows::Win32::Security::Cryptography::{
-    CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+    CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
 
 /// Encrypt plaintext using Windows DPAPI (per-user scope).
 /// Returns encrypted bytes, or error string on failure.
+///
+/// Safety：`CRYPT_INTEGER_BLOB.pbData` 在 Win32 契约中是**只读输入**
+/// （CryptProtectData / CryptUnprotectData 不会写这块缓冲），所以把
+/// `&[u8]` 的指针转成 `*mut u8` 传进去是安全的；输出缓冲的指针由 API
+/// 分配、用 `LocalFree` 释放。
 pub fn dpapi_encrypt(plaintext: &[u8]) -> Result<Vec<u8>, String> {
     if plaintext.is_empty() {
         return Ok(Vec::new());
@@ -36,6 +43,8 @@ pub fn dpapi_encrypt(plaintext: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Decrypt DPAPI-encrypted bytes back to plaintext.
 /// Returns decrypted bytes, or error string on failure.
+///
+/// Safety 注释同 [`dpapi_encrypt`]。
 pub fn dpapi_decrypt(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     if ciphertext.is_empty() {
         return Ok(Vec::new());
@@ -68,7 +77,7 @@ pub fn dpapi_decrypt(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
 /// Encrypt a string to a Base64-encoded DPAPI blob.
 pub fn encrypt_string(plaintext: &str) -> Result<String, String> {
     let encrypted = dpapi_encrypt(plaintext.as_bytes())?;
-    Ok(base64_encode(&encrypted))
+    Ok(BASE64_STANDARD.encode(encrypted))
 }
 
 /// Decrypt a Base64-encoded DPAPI blob back to a string.
@@ -76,79 +85,46 @@ pub fn decrypt_string(encoded: &str) -> Result<String, String> {
     if encoded.is_empty() {
         return Ok(String::new());
     }
-    let decrypted = dpapi_decrypt(&base64_decode(encoded)?)?;
+    let decrypted = dpapi_decrypt(&BASE64_STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("Base64 decode failed: {}", e))?)?;
     String::from_utf8(decrypted).map_err(|e| format!("UTF-8 decode failed: {}", e))
 }
 
-/// Check if a string is a DPAPI-encrypted value (Base64 encoded, not empty).
-pub fn is_encrypted(value: &str) -> bool {
-    if value.is_empty() {
-        return false;
-    }
-    // DPAPI encrypted values are Base64 encoded and typically longer than plaintext
-    // Heuristic: try to decrypt and see if it succeeds
-    base64_decode(value).is_ok()
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-// Minimal Base64 encode/decode (no external dependency)
-const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-fn base64_encode(data: &[u8]) -> String {
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        result.push(BASE64_CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(BASE64_CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            result.push(BASE64_CHARS[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-        if chunk.len() > 2 {
-            result.push(BASE64_CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
+    /// 标准 Base64、padding、空值行为明确。
+    #[test]
+    fn base64_round_trip_and_empty_values() {
+        // 空字符串：encrypt 返回空密文（无 Base64 内容），decrypt 空串得到空串
+        assert_eq!(encrypt_string("").unwrap(), "");
+        assert_eq!(decrypt_string("").unwrap(), "");
+        // 可打印 ASCII / 中文 / 含换行制表符的内容都能往返
+        for plaintext in ["hello world", "中文密码！@#", "line\nbreak\ttab"] {
+            let encoded = encrypt_string(plaintext).unwrap();
+            assert_eq!(decrypt_string(&encoded).unwrap(), plaintext);
         }
     }
-    result
-}
 
-fn base64_decode(encoded: &str) -> Result<Vec<u8>, String> {
-    let encoded = encoded.trim_end_matches('=');
-    if encoded.is_empty() {
-        return Ok(Vec::new());
+    /// 长度 1（非法 4k 余 1）、错误 padding、非法字符全部返回 Err（严格解码器）。
+    #[test]
+    fn strict_base64_rejects_malformed_input() {
+        assert!(decrypt_string("a").is_err(), "len%4==1 必须被拒绝");
+        assert!(decrypt_string("abc=d").is_err(), "中间 padding 必须被拒绝");
+        assert!(decrypt_string("ab&&").is_err(), "非法字符必须被拒绝");
+        assert!(decrypt_string("!!!!").is_err(), "全非法字符必须被拒绝");
     }
 
-    let mut lookup = [255u8; 256];
-    for (i, &c) in BASE64_CHARS.iter().enumerate() {
-        lookup[c as usize] = i as u8;
+    /// DPAPI 加密/解密正常往返（per-user scope，本用户进程内可解）。
+    #[test]
+    fn dpapi_round_trip() {
+        let plaintext = b"dpapi-round-trip-secret";
+        let encrypted = dpapi_encrypt(plaintext).unwrap();
+        assert_ne!(encrypted, plaintext.to_vec());
+        assert_eq!(dpapi_decrypt(&encrypted).unwrap(), plaintext.to_vec());
+        assert_eq!(dpapi_encrypt(b"").unwrap(), Vec::<u8>::new());
+        assert_eq!(dpapi_decrypt(b"").unwrap(), Vec::<u8>::new());
     }
-
-    let mut result = Vec::with_capacity(encoded.len() * 3 / 4);
-    let bytes = encoded.as_bytes();
-    for chunk in bytes.chunks(4) {
-        let mut buf = [0u8; 4];
-        for (i, &b) in chunk.iter().enumerate() {
-            buf[i] = lookup[b as usize];
-            if buf[i] == 255 {
-                return Err("Invalid Base64 character".to_string());
-            }
-        }
-        let b0 = (buf[0] as u32) << 18;
-        let b1 = (buf[1] as u32) << 12;
-        let b2 = (buf.get(2).copied().unwrap_or(0) as u32) << 6;
-        let b3 = buf.get(3).copied().unwrap_or(0) as u32;
-        let triple = b0 | b1 | b2 | b3;
-        result.push((triple >> 16) as u8);
-        if chunk.len() > 2 {
-            result.push((triple >> 8) as u8);
-        }
-        if chunk.len() > 3 {
-            result.push(triple as u8);
-        }
-    }
-    Ok(result)
 }

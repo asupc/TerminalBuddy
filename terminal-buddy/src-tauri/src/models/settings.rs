@@ -7,12 +7,42 @@ pub enum CloseBehavior {
     Tray,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum LaunchWindowMode {
+    Windowed,
+    Maximized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum TerminalLoadingMode {
+    Default,
+    VsCode,
+}
+
 fn default_close_behavior() -> CloseBehavior {
     CloseBehavior::Exit
 }
 
+fn default_launch_window_mode() -> LaunchWindowMode {
+    LaunchWindowMode::Windowed
+}
+
+fn default_terminal_loading_mode() -> TerminalLoadingMode {
+    TerminalLoadingMode::Default
+}
+
 fn default_tab_sidebar_width() -> u32 {
     200
+}
+
+fn default_config_nav_width() -> u32 {
+    250
+}
+
+fn default_file_nav_width() -> u32 {
+    250
 }
 
 fn default_enable_tab_navigation() -> bool {
@@ -28,10 +58,18 @@ fn default_single_instance() -> bool {
 pub struct AppSettings {
     #[serde(default = "default_close_behavior")]
     pub close_behavior: CloseBehavior,
+    #[serde(default = "default_launch_window_mode")]
+    pub launch_window_mode: LaunchWindowMode,
+    #[serde(default = "default_terminal_loading_mode")]
+    pub terminal_loading_mode: TerminalLoadingMode,
     #[serde(default)]
     pub data_path: Option<String>,
     #[serde(default = "default_tab_sidebar_width")]
     pub tab_sidebar_width: u32,
+    #[serde(default = "default_config_nav_width")]
+    pub config_nav_width: u32,
+    #[serde(default = "default_file_nav_width")]
+    pub file_nav_width: u32,
     #[serde(default = "default_enable_tab_navigation")]
     pub enable_tab_navigation: bool,
     #[serde(default = "default_single_instance")]
@@ -52,14 +90,20 @@ pub struct AppSettings {
     pub web_api_share_sessions: bool,
     #[serde(default = "default_launch_at_login")]
     pub launch_at_login: bool,
+    #[serde(default)]
+    pub claude_hook_config_dir: Option<String>,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             close_behavior: CloseBehavior::Exit,
+            launch_window_mode: LaunchWindowMode::Windowed,
+            terminal_loading_mode: TerminalLoadingMode::Default,
             data_path: None,
             tab_sidebar_width: 200,
+            config_nav_width: 250,
+            file_nav_width: 250,
             enable_tab_navigation: true,
             single_instance: true,
             web_api_enabled: false,
@@ -70,6 +114,7 @@ impl Default for AppSettings {
             server_monitor_interval: 3,
             web_api_share_sessions: false,
             launch_at_login: false,
+            claude_hook_config_dir: None,
         }
     }
 }
