@@ -275,6 +275,38 @@ textarea:focus-visible,
 }
 
 /* Shared panel titlebar (FileNav, ConfigNav, TabNav) */
+/* 会话活动指示灯（tab-nav-dot / terminal-tab-dot 共用，状态机见 utils/claudeIndicator.ts） */
+.tab-nav-dot.led-running,
+.terminal-tab-dot.led-running,
+.tab-nav-dot.led-attention,
+.terminal-tab-dot.led-attention {
+  animation: working-pulse 1.2s ease-in-out infinite;
+}
+
+.tab-nav-dot.led-failed,
+.terminal-tab-dot.led-failed {
+  /* StopFailure 长红：不闪、不渐灭，点击清除 */
+  box-shadow: 0 0 5px color-mix(in srgb, #f14c4c 70%, transparent);
+}
+
+.tab-nav-dot.led-completed,
+.terminal-tab-dot.led-completed {
+  animation: led-done-fade 3s ease-out forwards;
+}
+
+@keyframes led-done-fade {
+  from { opacity: 1; }
+  to { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-nav-dot.led-running, .terminal-tab-dot.led-running,
+  .tab-nav-dot.led-attention, .terminal-tab-dot.led-attention,
+  .tab-nav-dot.led-completed, .terminal-tab-dot.led-completed {
+    animation: none;
+  }
+}
+
 .panel-titlebar {
   display: flex;
   align-items: center;

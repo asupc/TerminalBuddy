@@ -1,9 +1,9 @@
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
-import { FileText, GitBranch, X } from 'lucide-react';
+import { FileText, GitBranch, History, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
-import { getWorkingDotColor } from '../../utils/tabColor';
+import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
 import { ConfirmDialog } from '../shared/Dialog';
 import './TerminalTabBar.css';
 
@@ -20,6 +20,9 @@ export const TerminalTabBar: FC = () => {
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
+  const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
+  const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
+  const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
@@ -227,12 +230,21 @@ export const TerminalTabBar: FC = () => {
         >
           {session.sessionType === 'editor' ? (
             <FileText className="tab-file-icon" aria-hidden="true" />
-          ) : (
-            <span
-              className={`terminal-tab-dot${isTerminalWorking(terminalActivities[session.id]) ? ' working' : ''}`}
-              style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
-            />
-          )}
+          ) : (() => {
+            const light = getIndicatorLight(terminalActivities[session.id]);
+            return (
+              <span
+                className={`terminal-tab-dot${getIndicatorClassName(light)}`}
+                style={{ background: getIndicatorColor(light, session.tabColor) }}
+                title={getIndicatorTitle(light) || undefined}
+                onClick={(e) => {
+                  if (light !== 'failed' && light !== 'attention') return;
+                  e.stopPropagation();
+                  if (light === 'failed') useAppStore.getState().clearClaudeFailure(session.id);
+                }}
+              />
+            );
+          })()}
           {session.isDirty && <span className="tab-dirty-dot" />}
           {renamingSessionId === session.id ? (
             <input
@@ -305,6 +317,25 @@ export const TerminalTabBar: FC = () => {
             }}
             title="关闭"
             aria-label="关闭 Git 历史记录"
+          ><X aria-hidden="true" /></button>
+        </div>
+      )}
+      {claudeReplayTab && (
+        <div
+          className={`terminal-tab ${activeSpecialTab === 'claude-replay' ? 'active' : ''}`}
+          onClick={() => openClaudeReplayTab(claudeReplayTab)}
+          title={`${claudeReplayTab.title} - 会话回放`}
+        >
+          <History className="terminal-tab-history-icon" aria-hidden="true" />
+          <span className="terminal-tab-name">会话回放</span>
+          <button
+            className="terminal-tab-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              closeClaudeReplayTab();
+            }}
+            title="关闭"
+            aria-label="关闭会话回放"
           ><X aria-hidden="true" /></button>
         </div>
       )}

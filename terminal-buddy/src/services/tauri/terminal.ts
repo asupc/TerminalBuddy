@@ -40,8 +40,27 @@ export async function onClaudeNotificationActivated(callback: (terminalId: strin
   return listenTauri<string>('claude-notification-activated', callback);
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string): Promise<string> {
-  return invoke('start_blank_terminal', { terminalType, displayName: displayName || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null });
+export async function startBlankTerminal(terminalType: 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string, initialCommand?: string): Promise<string> {
+  return invoke('start_blank_terminal', { terminalType, displayName: displayName || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, initialCommand: initialCommand || null });
+}
+
+/** 后端存活终端（与 Rust `TerminalInfo` 的 camelCase 序列化一致）。 */
+export interface BackendTerminalInfo {
+  id: string;
+  profileId: string;
+  profileName: string;
+  group: string;
+  /** 无 profile 的会话（默认终端 handoff、空白终端）为空串。 */
+  terminalType: string;
+  loadingMode: string;
+  owner: 'pc' | 'web';
+  extraParamTag?: string;
+  extraParamTagColor?: string;
+}
+
+/** 列出后端当前存活的终端会话，供桌面端启动后与页签对账。 */
+export async function listTerminals(): Promise<BackendTerminalInfo[]> {
+  return invoke('list_terminals');
 }
 
 export async function writeToTerminal(id: string, data: string): Promise<void> {

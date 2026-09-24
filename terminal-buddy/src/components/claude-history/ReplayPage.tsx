@@ -1,0 +1,203 @@
+import { FC, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  getClaudeReplay,
+  deleteClaudeSessionRecord,
+  type ClaudeReplayMessage,
+} from '../../services/tauri';
+import type { ClaudeReplayTab } from '../../stores/appStore';
+import { useAppStore } from '../../stores/appStore';
+import { ConfirmDialog } from '../shared/Dialog';
+import { ClaudeExportDialog } from './ClaudeExportDialog';
+import { resumeClaudeSession } from './resumeClaudeSession';
+import './ReplayPage.css';
+
+const PAGE_SIZE = 50;
+
+interface ClaudeReplayTabProps {
+  tab: ClaudeReplayTab;
+  onClose: () => void;
+}
+
+function formatTime(millis: number | null): string {
+  if (!millis) return '';
+  return new Date(millis).toLocaleString('zh-CN', { hour12: false });
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  user: '你',
+  assistant: 'Claude',
+  tool: '工具结果',
+};
+
+/** 会话回放（特殊标签页）：JSONL 渲染成对话流，分页加载，可锚定搜索命中。 */
+export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
+  const showToast = useAppStore(s => s.showToast);
+  const [messages, setMessages] = useState<ClaudeReplayMessage[]>([]);
+  const [total, setTotal] = useState(0);
+  const [title, setTitle] = useState(tab.title);
+  const [projectDir, setProjectDir] = useState('');
+  const [model, setModel] = useState<string | null>(null);
+  const [inputTokens, setInputTokens] = useState(0);
+  const [outputTokens, setOutputTokens] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [exportOpen, setExportOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const loadingRef = useRef(false);
+
+  // 载入下一页（offset = 当前已载入条数）；focusSeq 存在时循环载入直到覆盖该条
+  const loadPage = useCallback(async (offset: number, autoCoverSeq?: number): Promise<void> => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setLoading(true);
+    try {
+      let currentOffset = offset;
+      let first = true;
+      for (;;) {
+        const page = await getClaudeReplay(tab.sessionId, currentOffset, PAGE_SIZE);
+        setTotal(page.total);
+        setTitle(page.title);
+        setProjectDir(page.projectDir);
+        setModel(page.model);
+        setInputTokens(page.inputTokens);
+        setOutputTokens(page.outputTokens);
+        setMessages(prev => first ? page.messages : [...prev, ...page.messages]);
+        first = false;
+        currentOffset += page.messages.length;
+        const lastSeq = page.messages[page.messages.length - 1]?.seq ?? -1;
+        const needMore = autoCoverSeq !== undefined
+          && page.messages.length > 0
+          && currentOffset < page.total
+          && lastSeq < autoCoverSeq;
+        if (!needMore) break;
+      }
+      setError('');
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
+    }
+  }, [tab.sessionId]);
+
+  useEffect(() => {
+    setMessages([]);
+    setTotal(0);
+    void loadPage(0, tab.focusSeq);
+  }, [tab.sessionId, tab.focusSeq, loadPage]);
+
+  // 搜索命中锚定滚动
+  useEffect(() => {
+    if (tab.focusSeq === undefined || messages.length === 0) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.seq < tab.focusSeq) return;
+    const el = document.getElementById(`claude-replay-msg-${tab.focusSeq}`);
+    el?.scrollIntoView({ block: 'center' });
+  }, [tab.focusSeq, messages]);
+
+  const handleDelete = useCallback(async () => {
+    try {
+      await deleteClaudeSessionRecord(tab.sessionId);
+      showToast('会话记录已移入回收目录', 'success');
+      onClose();
+    } catch (error) {
+      showToast(`删除失败: ${String(error)}`, 'error');
+    }
+  }, [tab.sessionId, onClose, showToast]);
+
+  const tokens = inputTokens + outputTokens;
+
+  return (
+    <div className="claude-replay">
+      <div className="claude-replay-head">
+        <button type="button" className="claude-replay-back" onClick={onClose}>← 关闭</button>
+        <div className="claude-replay-title-block">
+          <div className="claude-replay-title">{title}</div>
+          <div className="claude-replay-sub">
+            {projectDir && <span className="claude-replay-dir">{projectDir}</span>}
+            {model && ` · ${model}`}
+            {` · ${total || messages.length} 条消息`}
+            {tokens > 0 && ` · ${tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : tokens} tok`}
+          </div>
+        </div>
+        <div className="claude-replay-actions">
+          <button
+            type="button"
+            className="claude-replay-action primary"
+            onClick={() => void resumeClaudeSession({
+              sessionId: tab.sessionId,
+              title,
+              projectDir,
+            }).catch(err => showToast(`恢复会话失败: ${String(err)}`, 'error'))}
+          >
+            ▶ 恢复此会话
+          </button>
+          <button type="button" className="claude-replay-action" onClick={() => setExportOpen(true)}>⤓ 导出</button>
+          <button type="button" className="claude-replay-action danger" onClick={() => setDeleteOpen(true)}>🗑</button>
+        </div>
+      </div>
+
+      <div className="claude-replay-body">
+        {error && <div className="claude-replay-error">{error}</div>}
+        {!error && !loading && messages.length === 0 && (
+          <div className="claude-replay-empty">会话内容为空</div>
+        )}
+        {messages.map(message => (
+          <div
+            key={message.seq}
+            id={`claude-replay-msg-${message.seq}`}
+            className={`claude-replay-msg role-${message.role}${tab.focusSeq === message.seq ? ' focused' : ''}`}
+          >
+            <div className="claude-replay-msg-head">
+              <span className="claude-replay-role">● {ROLE_LABEL[message.role] ?? message.role}</span>
+              {formatTime(message.timestamp) && <span className="claude-replay-time">{formatTime(message.timestamp)}</span>}
+              {message.toolName && <span className="claude-replay-toolname">{message.toolName}</span>}
+            </div>
+            {message.role === 'tool' ? (
+              <details className="claude-replay-tool-result">
+                <summary>工具结果{message.toolName ? ` · ${message.toolName}` : ''}</summary>
+                <pre className="claude-replay-text">{message.text}</pre>
+              </details>
+            ) : (
+              <>
+                {message.text && <div className="claude-replay-text">{message.text}</div>}
+                {message.tools.map((tool, index) => (
+                  <div key={`${message.seq}-tool-${index}`} className="claude-replay-tool">
+                    ▸ {tool.name}{tool.summary ? ` · ${tool.summary}` : ''}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        ))}
+        {messages.length < total && (
+          <button
+            type="button"
+            className="claude-replay-more"
+            disabled={loading}
+            onClick={() => void loadPage(messages.length)}
+          >
+            {loading ? '加载中…' : `加载更多（已显示 ${messages.length} / ${total}）`}
+          </button>
+        )}
+      </div>
+
+      {exportOpen && (
+        <ClaudeExportDialog
+          sessionId={tab.sessionId}
+          title={title}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
+      {deleteOpen && (
+        <ConfirmDialog
+          title="删除会话记录"
+          message={`「${title}」的记录文件将移入回收目录（dataPath/Trash），索引同步清理。确定删除吗？`}
+          confirmText="删除"
+          onClose={() => setDeleteOpen(false)}
+          onConfirm={() => void handleDelete()}
+        />
+      )}
+    </div>
+  );
+};

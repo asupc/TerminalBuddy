@@ -1,8 +1,8 @@
 import { FC } from 'react';
 import { ChevronRight, X } from 'lucide-react';
-import { isTerminalWorking, useAppStore } from '../../stores/appStore';
+import { useAppStore } from '../../stores/appStore';
 import { formatDuration } from '../../utils/formatDuration';
-import { getWorkingDotColor } from '../../utils/tabColor';
+import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName, type IndicatorLight } from '../../utils/claudeIndicator';
 import type { TreeItem } from '../file-explorer/TreeView';
 import type { TerminalSession } from '../../types';
 
@@ -75,7 +75,29 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
     );
   };
 
-  const workingStateOf = (id: string) => isTerminalWorking(terminalActivities[id]);
+  // 灯点击语义：failed 长红点击清除；attention 点击跳终端处理
+  const onLedClick = (e: React.MouseEvent, id: string, light: IndicatorLight) => {
+    if (light !== 'failed' && light !== 'attention') return;
+    e.stopPropagation();
+    const store = useAppStore.getState();
+    if (light === 'failed') {
+      store.clearClaudeFailure(id);
+    } else {
+      store.setActiveSession(id);
+    }
+  };
+
+  const renderLedDot = (id: string, tabColor?: string | null) => {
+    const light = getIndicatorLight(terminalActivities[id]);
+    return (
+      <span
+        className={`tab-nav-dot${getIndicatorClassName(light)}`}
+        style={{ background: getIndicatorColor(light, tabColor) }}
+        title={getIndicatorTitle(light) || undefined}
+        onClick={(e) => onLedClick(e, id, light)}
+      />
+    );
+  };
 
   return (
     <div>
@@ -116,12 +138,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
           <div key={child.id}>
             {renamingSessionId === child.id ? (
               <div className="tree-item" style={{ paddingLeft: `${indent + 12}px` }}>
-                {child.icon || (
-                  <span
-                    className={`tab-nav-dot${workingStateOf(child.id) ? ' working' : ''}`}
-                    style={{ background: getWorkingDotColor(workingStateOf(child.id), (child.data as any)?.tabColor) }}
-                  />
-                )}
+                {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
                 <input
                   ref={renameInputRef}
                   className="tree-rename-input"
@@ -159,12 +176,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                 onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onCloseSession(child.id); } }}
                 onContextMenu={(e) => onContextMenu(e, child.id)}
               >
-                {child.icon || (
-                  <span
-                    className={`tab-nav-dot${workingStateOf(child.id) ? ' working' : ''}`}
-                    style={{ background: getWorkingDotColor(workingStateOf(child.id), (child.data as any)?.tabColor) }}
-                  />
-                )}
+                {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
                 <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
                   {child.label}
                   {(() => {

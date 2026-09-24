@@ -31,6 +31,9 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
+  const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
+  const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
+  const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const removeSession = useAppStore(s => s.removeSession);
   const removeSessions = useAppStore(s => s.removeSessions);
@@ -69,10 +72,10 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'F2') return;
       if (!isActive) return;
-      // 仅在 region 是 'tab' 或尚未初始化（null）时响应。
-      // ConfigNav 的 React onMouseDown / 原生 mousedown 会把 region 设为 'config'，从而屏蔽此处。
+      // 仅在 region 是 'tab' 或尚未初始化（null）时响应；
+      // 'config'/'history' 等其他面板会把 region 设成自己的值，从而屏蔽此处。
       const region = useAppStore.getState().lastClickRegion;
-      if (region === 'config') return;
+      if (region && region !== 'tab') return;
       if (!activeSessionId) return;
       const session = sessions.find(s => s.id === activeSessionId);
       if (session && session.sessionType !== 'editor') {
@@ -532,6 +535,27 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
               }}
               title="关闭"
               aria-label="关闭 Git 历史记录"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        )}
+        {claudeReplayTab && (
+          <div
+            className={`tab-nav-settings-btn ${activeSpecialTab === 'claude-replay' ? 'active' : ''}`}
+            onClick={() => openClaudeReplayTab(claudeReplayTab)}
+            title={`${claudeReplayTab.title} - 会话回放`}
+          >
+            <span className="tab-nav-dot" style={{ background: '#4b95e9' }} />
+            <span className="tab-nav-name">会话回放</span>
+            <button
+              className="tree-item-close"
+              onClick={(event) => {
+                event.stopPropagation();
+                closeClaudeReplayTab();
+              }}
+              title="关闭"
+              aria-label="关闭会话回放"
             >
               <X aria-hidden="true" />
             </button>

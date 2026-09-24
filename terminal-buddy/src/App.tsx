@@ -5,6 +5,7 @@ import { TitleBar } from "./components/shell/TitleBar";
 import { ConfigNav } from "./components/profile-config/ConfigNav";
 import { TerminalPanel } from "./components/terminal/TerminalPanel";
 import { FileNav } from "./components/file-explorer/FileNav";
+import { HistoryPanel } from "./components/claude-history/HistoryPanel";
 import { TabNav } from "./components/shell/TabNav";
 import { ActivityBar, type SidebarPanel } from "./components/shell/ActivityBar";
 import { ConfigEditDialog } from "./components/profile-config/ConfigEditDialog";
@@ -24,7 +25,7 @@ import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
 import { initializeClaudeNotificationActions } from './services/claudeNotification';
 import { initAppHotkeys, registerHotkeyAction } from './services/hotkeys';
-import { restoreTabs, launchTerminalSession } from './services/sessionRestore';
+import { restoreTabs, launchTerminalSession, reconcileBackendSessions } from './services/sessionRestore';
 import { useExitConfirm } from './hooks/useExitConfirm';
 
 const SettingsPage = lazy(() => import('./components/settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
@@ -57,8 +58,10 @@ function App() {
   const setCurrentDirectory = useAppStore(s => s.setCurrentDirectory);
   const configPanelVisible = useAppStore(s => s.configPanelVisible);
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
+  const historyPanelVisible = useAppStore(s => s.historyPanelVisible);
   const toggleConfigPanel = useAppStore(s => s.toggleConfigPanel);
   const toggleFileTree = useAppStore(s => s.toggleFileTree);
+  const toggleHistoryPanel = useAppStore(s => s.toggleHistoryPanel);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const settingsDialogOpen = useAppStore(s => s.settingsDialogOpen);
   const closeSettingsDialog = useAppStore(s => s.closeSettingsDialog);
@@ -72,6 +75,9 @@ function App() {
   const [enableTabNav, setEnableTabNav] = useState(true);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
+  // 侧栏风格下面板互斥：历史 / Claude 面板首次点开才挂载（挂载后常驻，保留编辑态）。
+  // 两者一挂载就会扫 ~/.claude 与历史索引库，不该压在启动路径上。
+  const [everOpened, setEverOpened] = useState({ history: false });
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(() => {
     const v = localStorage.getItem('appUpdate.lastCheckedAt');
@@ -218,22 +224,29 @@ function App() {
         useAppStore.setState({
           configPanelVisible: synced.configPanelAutoExpand,
           fileTreeVisible: synced.fileTreeAutoExpand,
+          historyPanelVisible: synced.historyPanelAutoExpand,
         });
       } catch {
         setEnableTabNav(settings.enableTabNavigation);
         useAppStore.setState({
           configPanelVisible: settings.configPanelAutoExpand,
           fileTreeVisible: settings.fileTreeAutoExpand,
+          historyPanelVisible: settings.historyPanelAutoExpand,
         });
       }
 
       initPersistedTemplates();
       await loadProfiles();
 
-      if (settings.restoreTabsOnStartup) {
+      // dev（Vite 开发服务器）下不自动恢复：改代码重启频繁，恢复会连带拉起一堆
+      // claude --resume 会话。设置项语义不变，发布版照旧按开关执行。
+      if (settings.restoreTabsOnStartup && !import.meta.env.DEV) {
         await restoreTabsOnce();
         await useAppStore.getState().restoreDraftTabs();
       }
+      // 恢复完成后补一次账：启动期间（WebView 就绪前）建立的会话没有 terminal-created
+      // 事件可收，默认终端 handoff 冷启动就属于这一类。
+      await reconcileBackendSessions();
     })();
   }, []);
 
@@ -307,8 +320,8 @@ function App() {
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
-    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; groupId?: string; groupName?: string; extraParamTag?: string; extraParamTagColor?: string }>('terminal-created', (event) => {
-      const { id, profileId, profileName, terminalType, owner, groupId, groupName } = event.payload;
+    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; groupId?: string; groupName?: string; extraParamTag?: string; extraParamTagColor?: string; activate?: boolean }>('terminal-created', (event) => {
+      const { id, profileId, profileName, terminalType, owner, groupId, groupName, activate } = event.payload;
       const store = useAppStore.getState();
       let resolvedGroupId = groupId || 'default';
       if (groupId && groupName) {
@@ -336,8 +349,8 @@ function App() {
         });
         return;
       }
-      // Add session but do NOT auto-switch active tab — the terminal was
-      // opened from the web, so the user is looking at the web, not here.
+      // Web 端创建的终端不抢焦点（用户在看手机）；默认终端 handoff 会话
+      // （activate=true）是用户刚发起的本地动作，建 tab 后立即激活。
       store.addSession({
         id,
         profileId,
@@ -348,7 +361,7 @@ function App() {
         groupId: resolvedGroupId,
         groupName,
         owner,
-      }, true);
+      }, !activate);
     });
 
     const unlistenClosed = listen<string>('terminal-closed', (event) => {
@@ -548,8 +561,13 @@ function App() {
   }, []);
 
   const handleSidebarPanel = useCallback((panel: SidebarPanel) => {
+    if (panel === 'history') {
+      setEverOpened(prev => (prev[panel] ? prev : { ...prev, [panel]: true }));
+    }
     if (panel === 'config' || panel === 'tabs') {
       useAppStore.getState().setLastClickRegion(panel === 'config' ? 'config' : 'tab');
+    } else if (panel === 'history') {
+      useAppStore.getState().setLastClickRegion('history');
     } else {
       useAppStore.getState().setLastClickRegion(null);
     }
@@ -563,10 +581,17 @@ function App() {
         useAppStore.getState().toggleFileTree();
         return panel;
       }
+      if (panel === 'history' && !useAppStore.getState().historyPanelVisible) {
+        useAppStore.getState().toggleHistoryPanel();
+        return panel;
+      }
       if (current === panel) return null;
       return panel;
     });
   }, []);
+
+  // 默认风格下会话历史是常驻列，没有「点开」这一步，因此照旧立即挂载。
+  const slowPanelMounted = () => uiStyle !== 'sidebar' || everOpened.history;
 
   return (
     <div className={`app-container ui-style-${uiStyle}${windowMode === 'panels-hidden' ? ' panels-hidden' : ''}`} tabIndex={0}>
@@ -575,8 +600,10 @@ function App() {
         onSettings={handleSettings}
         configPanelVisible={configPanelVisible}
         fileTreeVisible={fileTreeVisible}
+        historyPanelVisible={historyPanelVisible}
         onToggleConfigPanel={toggleConfigPanel}
         onToggleFileTree={toggleFileTree}
+        onToggleHistoryPanel={toggleHistoryPanel}
         updateInfo={updateInfo}
         onUpdateDismiss={() => setUpdateInfo(null)}
         onPromoteToUpdate={handlePromoteToUpdate}
@@ -605,6 +632,15 @@ function App() {
         </div>
         <div className={`nav-panel-slot nav-panel-files${sidebarPanel === 'files' ? ' active' : ''}`}>
           <FileNav isSidebarMode={uiStyle === 'sidebar'} />
+        </div>
+        <div className={`nav-panel-slot nav-panel-history${sidebarPanel === 'history' ? ' active' : ''}`}>
+          {slowPanelMounted() && (
+            <HistoryPanel
+              isSidebarMode={uiStyle === 'sidebar'}
+              isActive={windowMode !== 'panels-hidden'
+                && (uiStyle === 'sidebar' ? sidebarPanel === 'history' : historyPanelVisible)}
+            />
+          )}
         </div>
         {enableTabNav && (
           <div className={`nav-panel-slot nav-panel-tabs${sidebarPanel === 'tabs' ? ' active' : ''}`}>

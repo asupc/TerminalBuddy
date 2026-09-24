@@ -1,7 +1,8 @@
-import { closeTerminal, getFileSize, startBlankTerminal, startTerminal, writeToTerminal } from './tauri';
+import { closeTerminal, getFileSize, listTerminals, startBlankTerminal, startTerminal, writeToTerminal } from './tauri';
 import { loadSavedTabs, saveTabsToStorage, useAppStore } from '../stores/appStore';
 import { getAppSettings } from '../utils/settings';
 import { showAlert } from './dialog';
+import { PRESET_THEMES } from '../types';
 import type { TerminalSession } from '../types';
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
@@ -170,6 +171,45 @@ export async function restoreTabs() {
     useAppStore.setState({ _skipSaveTabs: false });
     const { sessions, activeSessionId } = useAppStore.getState();
     saveTabsToStorage(sessions, activeSessionId);
+  }
+}
+
+/**
+ * 与后端存活会话对账，补建前端缺失的页签。
+ *
+ * 桌面端建页签只由 `terminal-created` 事件驱动，而默认终端 handoff 会话往往建得更早：
+ * COM 类在 setup 里注册，OpenConsole 的激活调用（约 rust+340ms）可以早于 WebView
+ * 加载完成（约 rust+415ms）。事件发进还没有监听器的窗口就被丢弃，双击的 bat 于是
+ * 在一间看不见的会话里跑完。启动流程末尾按后端真实存活列表补一次账。
+ */
+export async function reconcileBackendSessions() {
+  let terminals;
+  try {
+    terminals = await listTerminals();
+  } catch (error) {
+    console.error('Failed to list backend terminals:', error);
+    return;
+  }
+  for (const terminal of terminals) {
+    const store = useAppStore.getState();
+    // 占位会话还没回填成真实 terminalId，此时补建会和它撞成两个页签。
+    if (store.sessions.some(session => session.starting)) return;
+    if (store.sessions.some(session => session.id === terminal.id)) continue;
+    const profile = store.profiles.find(item => item.id === terminal.profileId);
+    const theme = PRESET_THEMES.find(item => item.id === profile?.colorTheme) || PRESET_THEMES[0];
+    // 无活动页签时必须把补建的页签选上，否则用户看到的还是空窗口（与 handoff
+    // 事件路径 activate=true 的语义一致）；已有活动页签则不抢焦点。
+    const keepActive = store.activeSessionId !== null;
+    store.addSession({
+      id: terminal.id,
+      profileId: terminal.profileId,
+      profileName: terminal.profileName,
+      terminalType: terminal.terminalType as TerminalSession['terminalType'],
+      colorTheme: { background: theme.background, foreground: theme.foreground },
+      tabColor: profile?.tabColor || null,
+      groupId: 'default',
+      owner: terminal.owner,
+    }, keepActive);
   }
 }
 

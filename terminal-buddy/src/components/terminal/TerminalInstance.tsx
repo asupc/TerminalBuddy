@@ -19,6 +19,7 @@ import { isLightBackground, normalizeAnsiForLightBackground, type TerminalColors
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
+import { PasteImageDialog } from '../claude-images/PasteImageDialog';
 import { RIGHT_CLICK_PASTE_DEDUPE_MS, RIGHT_CLICK_NATIVE_PASTE_SUPPRESS_MS, resolveSplitFontSize, adaptCodexInputBackground, recolorCodexInputBuffer } from './instance-utils';
 import {
   TerminalContextMenuState, AutocompleteState, RightClickPasteState,
@@ -82,6 +83,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     visible: false,
   });
   const [searchVisible, setSearchVisible] = useState(false);
+  const [pasteImageOpen, setPasteImageOpen] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
   const searchAddonRef = useRef<SearchAddon | null>(null);
@@ -130,6 +132,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     }
     return true;
   }, [terminalId]);
+
+  // 图片粘贴辅助的插入回调：引用文本走粘贴规范（CR + 括号粘贴），发送时补 \r
+  const handlePasteImageInsert = useCallback((text: string, submit: boolean) => {
+    sendPastedText(text);
+    if (submit) onOutputRef.current(terminalId, '\r');
+    xtermRef.current?.focus();
+  }, [sendPastedText, terminalId]);
 
   const adjustTerminalContextMenuPosition = useCallback(() => {
     if (!contextMenu.visible) return;
@@ -1462,7 +1471,24 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           <div className="context-menu-item" onClick={() => handleContextMenuAction('paste')}>
             粘贴
           </div>
+          <div
+            className={`context-menu-item${isSsh || readOnly ? ' disabled' : ''}`}
+            title={isSsh ? 'SSH 远程会话读不到本地图片路径' : '剪贴板图片转为 @路径 引用（Claude Code）'}
+            onClick={() => {
+              if (isSsh || readOnly) return;
+              setPasteImageOpen(true);
+              setContextMenu({ x: 0, y: 0, anchorX: 0, anchorY: 0, visible: false });
+            }}
+          >
+            粘贴图片…
+          </div>
         </div>
+      )}
+      {pasteImageOpen && (
+        <PasteImageDialog
+          onClose={() => setPasteImageOpen(false)}
+          onInsert={handlePasteImageInsert}
+        />
       )}
       {autocomplete?.inlineCompletion && (
         <div

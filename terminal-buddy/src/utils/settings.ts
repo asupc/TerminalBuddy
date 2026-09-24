@@ -52,6 +52,7 @@ export interface AppSettings {
   restoreTabsOnStartup: boolean;
   configPanelAutoExpand: boolean;
   fileTreeAutoExpand: boolean;
+  historyPanelAutoExpand: boolean;
   closeBehavior: 'exit' | 'tray';
   launchWindowMode: LaunchWindowMode;
   terminalLoadingMode: TerminalLoadingMode;
@@ -99,6 +100,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   restoreTabsOnStartup: true,
   configPanelAutoExpand: true,
   fileTreeAutoExpand: true,
+  historyPanelAutoExpand: true,
   closeBehavior: 'exit',
   launchWindowMode: 'windowed',
   terminalLoadingMode: 'default',

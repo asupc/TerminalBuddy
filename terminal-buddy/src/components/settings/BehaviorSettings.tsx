@@ -1,5 +1,6 @@
-import { FC } from 'react';
-import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, type VsCodeTerminalSupport } from '../../services/tauri';
+import { FC, useEffect, useState } from 'react';
+import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, getDefaultTerminalStatus, setDefaultTerminalEnabled, type VsCodeTerminalSupport, type DefaultTerminalStatus } from '../../services/tauri';
+import { showAlert } from '../../services/dialog';
 import { type AppSettings } from '../../utils/settings';
 
 interface BehaviorSettingsProps {
@@ -10,6 +11,20 @@ interface BehaviorSettingsProps {
 
 export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSetting, vsCodeSupport }) => {
   const vsCodeAvailable = vsCodeSupport?.available === true;
+  // 默认终端状态自管（不进 localStorage 镜像）：注册表是唯一权威来源。
+  const [defaultTerminal, setDefaultTerminal] = useState<DefaultTerminalStatus | null>(null);
+  useEffect(() => {
+    getDefaultTerminalStatus().then(setDefaultTerminal).catch(console.error);
+  }, []);
+  const toggleDefaultTerminal = async (value: boolean) => {
+    try {
+      setDefaultTerminal(await setDefaultTerminalEnabled(value));
+    } catch (error) {
+      await showAlert(String(error), '默认终端');
+      // 开关写入失败：重新拉真实状态回滚 UI
+      getDefaultTerminalStatus().then(setDefaultTerminal).catch(console.error);
+    }
+  };
   return (
     <div className="settings-general">
       <div className="settings-section">
@@ -130,6 +145,17 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         <label className="settings-toggle">
           <input
             type="checkbox"
+            checked={settings.historyPanelAutoExpand}
+            onChange={(e) => updateSetting('historyPanelAutoExpand', e.target.checked)}
+          />
+          <span>启动时展开会话历史面板</span>
+        </label>
+        <p className="settings-desc">默认风格下启动即显示会话历史列，标题栏按钮可随时切换</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
             checked={settings.closeBehavior === 'tray'}
             onChange={(e) => {
               const value = e.target.checked ? 'tray' : 'exit';
@@ -212,6 +238,24 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <span>开机自动启动</span>
         </label>
         <p className="settings-desc">登录 Windows 时自动启动 TerminalBuddy</p>
+      </div>
+      <div className="settings-section">
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={defaultTerminal?.enabled ?? false}
+            onChange={(e) => {
+              toggleDefaultTerminal(e.target.checked);
+            }}
+          />
+          <span>默认终端（实验）</span>
+        </label>
+        <p className="settings-desc">
+          开启后，双击 .bat、Win+R 运行 cmd 等新的控制台程序将在 TerminalBuddy 新标签页中打开。
+          可用 Win+R 运行 cmd.exe 验证接管效果。需已安装 Windows Terminal；不会出现在
+          Windows 设置的「默认终端」下拉列表中。关闭后恢复先前设置。
+        </p>
+        <p className="settings-desc">当前状态：{defaultTerminal?.description ?? '检测中…'}</p>
       </div>
     </div>
   );

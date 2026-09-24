@@ -1,0 +1,210 @@
+.claude-replay {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.claude-replay-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  flex-wrap: wrap;
+}
+
+.claude-replay-back {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  padding: 3px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.claude-replay-back:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.claude-replay-title-block {
+  min-width: 0;
+  flex: 1;
+}
+
+.claude-replay-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-replay-sub {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-replay-dir {
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+
+.claude-replay-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.claude-replay-action {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  padding: 4px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.claude-replay-action.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.claude-replay-action.danger {
+  color: #f14c4c;
+}
+
+.claude-replay-action:hover {
+  border-color: var(--accent);
+}
+
+.claude-replay-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 22px 32px;
+  /* 全局 body 是 user-select: none，回放正文要能选中复制 */
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.claude-replay-error {
+  color: #f14c4c;
+  padding: 16px;
+  font-size: 13px;
+}
+
+.claude-replay-empty {
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 40px 0;
+  font-size: 13px;
+}
+
+.claude-replay-msg {
+  margin-bottom: 16px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-subtle);
+}
+
+.claude-replay-msg.role-user {
+  border-left-color: var(--accent);
+}
+
+.claude-replay-msg.role-assistant {
+  border-left-color: #3d5a48;
+}
+
+.claude-replay-msg.role-tool {
+  border-left-color: var(--border);
+}
+
+.claude-replay-msg.focused {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 4px;
+}
+
+.claude-replay-msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+}
+
+.claude-replay-role {
+  font-weight: 600;
+}
+
+.claude-replay-time {
+  color: var(--text-tertiary);
+}
+
+.claude-replay-toolname {
+  color: var(--text-tertiary);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+}
+
+.claude-replay-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 2px 0;
+}
+
+.claude-replay-tool-result {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 4px 10px;
+  margin-top: 4px;
+}
+
+.claude-replay-tool-result summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+  user-select: none;
+}
+
+.claude-replay-tool {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  padding: 3px 8px;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-replay-more {
+  display: block;
+  margin: 12px auto 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  padding: 5px 16px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.claude-replay-more:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}

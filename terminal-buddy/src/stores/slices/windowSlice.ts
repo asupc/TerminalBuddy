@@ -22,6 +22,7 @@ export const createWindowSlice = (
 					previousPanelState: {
 						configPanelVisible: state.configPanelVisible,
 						fileTreeVisible: state.fileTreeVisible,
+						historyPanelVisible: state.historyPanelVisible,
 						enableTabNavigation: settings.enableTabNavigation,
 					},
 				};
@@ -41,6 +42,7 @@ export const createWindowSlice = (
 				previousPanelState: null,
 				configPanelVisible: prev?.configPanelVisible ?? state.configPanelVisible,
 				fileTreeVisible: prev?.fileTreeVisible ?? state.fileTreeVisible,
+				historyPanelVisible: prev?.historyPanelVisible ?? state.historyPanelVisible,
 			};
 		}),
 

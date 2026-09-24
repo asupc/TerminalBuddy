@@ -248,7 +248,12 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
     cancelClaudeActivityExpiry(event.terminalId);
     return;
   }
-  if (!store.applyClaudeHookActivity(event.terminalId, event.phase, event.occurredAt)) return;
+  // 事件摘要进活动态（总览面板 / 指示灯 tooltip）；Stop/StopFailure 带 taskTitle/summary
+  const details = {
+    taskTitle: event.taskTitle,
+    summary: event.summary ?? event.message,
+  };
+  if (!store.applyClaudeHookActivity(event.terminalId, event.phase, event.occurredAt, details)) return;
   if (event.sessionId) store.setClaudeSessionId(event.terminalId, event.sessionId);
   if (event.phase === 'running') {
     cancelPendingClaudeCompletion(event.terminalId);
@@ -288,7 +293,9 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
     onClaudeHookDecision(decision => {
       if (!isActiveRuntime()) return;
       const store = useAppStore.getState();
-      if (!store.applyClaudeHookActivity(decision.terminalId, 'attention', decision.occurredAt)) return;
+      if (!store.applyClaudeHookActivity(decision.terminalId, 'attention', decision.occurredAt, {
+        summary: decision.questions[0]?.question,
+      })) return;
       cancelPendingClaudeCompletion(decision.terminalId);
       cancelClaudeActivityExpiry(decision.terminalId);
       scheduleStructuredDecision(decision);
@@ -307,6 +314,7 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
         payload.terminalId,
         phase,
         payload.occurredAt,
+        payload.resolution === 'continueInTerminal' ? { summary: '决策转回终端处理' } : undefined,
       )) return;
       if (payload.resolution !== 'continueInTerminal') {
         scheduleClaudeActivityExpiry(payload.terminalId, payload.occurredAt);

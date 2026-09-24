@@ -372,9 +372,9 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       if (e.key !== 'F2') return;
       if (!isActive) return;
       const region = useAppStore.getState().lastClickRegion;
-      // 仅在 region 是 'config' 或尚未初始化（null）时响应。
-      // TabNav 的 React onClick / 原生 mousedown 会把 region 设为 'tab'，从而屏蔽此处。
-      if (region === 'tab') return;
+      // 仅在 region 是 'config' 或尚未初始化（null）时响应；
+      // 'tab'/'history' 等其他面板会把 region 设成自己的值，从而屏蔽此处。
+      if (region && region !== 'config') return;
       if (!selectedProfileId) return;
       const item = findTreeItemById(treeItems, selectedProfileId);
       if (item?.isGroup || (item?.children && item.children.length > 0)) {

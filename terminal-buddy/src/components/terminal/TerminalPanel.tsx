@@ -32,12 +32,15 @@ import './TerminalPanel.css';
 const TerminalInstance = lazy(() => import('./TerminalInstance').then(m => ({ default: m.TerminalInstance })));
 const TextEditor = lazy(() => import('../text-editor/TextEditor').then(m => ({ default: m.TextEditor })));
 const GitHistoryPage = lazy(() => import('../git/GitHistoryPage').then(m => ({ default: m.GitHistoryPage })));
+const ClaudeReplayPage = lazy(() => import('../claude-history/ReplayPage').then(m => ({ default: m.ReplayPage })));
 
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
+  const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
+  const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const updateSession = useAppStore(s => s.updateSession);
   const profiles = useAppStore(s => s.profiles);
@@ -284,7 +287,7 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
-      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab) && (
+      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || claudeReplayTab) && (
         <TerminalTabBar />
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
@@ -296,6 +299,16 @@ export const TerminalPanel: FC = () => {
                 repoRoot={gitHistoryTab.repoRoot}
                 branch={gitHistoryTab.branch}
                 onClose={closeGitHistoryTab}
+              />
+            </Suspense>
+          </div>
+        )}
+        {claudeReplayTab && activeSpecialTab === 'claude-replay' && (
+          <div className="git-history-tab-content claude-replay-tab-content">
+            <Suspense fallback={<div className="lazy-panel-loading">加载会话回放…</div>}>
+              <ClaudeReplayPage
+                tab={claudeReplayTab}
+                onClose={closeClaudeReplayTab}
               />
             </Suspense>
           </div>

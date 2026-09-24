@@ -357,7 +357,7 @@ export const createSessionsSlice = (
 				},
 			};
 		}),
-	applyClaudeHookActivity: (sessionId, phase, updatedAt) => {
+	applyClaudeHookActivity: (sessionId, phase, updatedAt, details) => {
 		let applied = false;
 		set((state) => {
 			const current = state.terminalActivities[sessionId];
@@ -366,7 +366,16 @@ export const createSessionsSlice = (
 			return {
 				terminalActivities: {
 					...state.terminalActivities,
-					[sessionId]: { runtimeKind: "claude", source: "hook", phase, updatedAt, lastHookAt: updatedAt },
+					[sessionId]: {
+						runtimeKind: "claude",
+						source: "hook",
+						phase,
+						updatedAt,
+						lastHookAt: updatedAt,
+						// 未带摘要的事件沿用上一条（如 UserPromptSubmit 后的 running 保留提示词标题）
+						taskTitle: details?.taskTitle ?? current?.taskTitle,
+						summary: details?.summary ?? current?.summary,
+					},
 				},
 			};
 		});
@@ -390,19 +399,26 @@ export const createSessionsSlice = (
 	expireClaudeHookActivity: (sessionId, expectedUpdatedAt) =>
 		set((state) => {
 			const current = state.terminalActivities[sessionId];
+			// 30min 过期只兜底卡死的 running；failed 长红不归这里管
 			if (current?.runtimeKind !== "claude" || current.phase !== "running" || current.updatedAt !== expectedUpdatedAt) {
 				return state;
 			}
 			return {
 				terminalActivities: {
 					...state.terminalActivities,
-					[sessionId]: {
-						...current,
-						runtimeKind: "shell",
-						source: "legacy",
-						phase: "idle",
-						updatedAt: Date.now(),
-					},
+					// 保留 claude 会话在场（runtimeKind），仅退出执行中
+					[sessionId]: { ...current, phase: "idle", updatedAt: Date.now() },
+				},
+			};
+		}),
+	clearClaudeFailure: (sessionId) =>
+		set((state) => {
+			const current = state.terminalActivities[sessionId];
+			if (current?.phase !== "failed") return state;
+			return {
+				terminalActivities: {
+					...state.terminalActivities,
+					[sessionId]: { ...current, phase: "idle", updatedAt: Date.now() },
 				},
 			};
 		}),

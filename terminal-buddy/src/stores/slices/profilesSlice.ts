@@ -23,6 +23,7 @@ export const createProfilesSlice = (
 	// UI State
 	configPanelVisible: true,
 	fileTreeVisible: true,
+	historyPanelVisible: true,
 	toggleConfigPanel: () =>
 		set((state) => {
 			const next = !state.configPanelVisible;
@@ -37,11 +38,19 @@ export const createProfilesSlice = (
 			saveAppSettings({ ...s, fileTreeAutoExpand: next });
 			return { fileTreeVisible: next };
 		}),
+	toggleHistoryPanel: () =>
+		set((state) => {
+			const next = !state.historyPanelVisible;
+			const s = getAppSettings();
+			saveAppSettings({ ...s, historyPanelAutoExpand: next });
+			return { historyPanelVisible: next };
+		}),
 	configSearchQuery: "",
 	setConfigSearchQuery: (query) => set({ configSearchQuery: query }),
 
 	settingsDialogOpen: false,
 	gitHistoryTab: null,
+	claudeReplayTab: null,
 	activeSpecialTab: null,
 	openSettingsDialog: () => set({ settingsDialogOpen: true }),
 	closeSettingsDialog: () => set({ settingsDialogOpen: false }),
@@ -50,6 +59,12 @@ export const createProfilesSlice = (
 		set((state) => ({
 			gitHistoryTab: null,
 			activeSpecialTab: state.activeSpecialTab === "git-history" ? null : state.activeSpecialTab,
+		})),
+	openClaudeReplayTab: (tab) => set({ claudeReplayTab: tab, activeSpecialTab: "claude-replay" }),
+	closeClaudeReplayTab: () =>
+		set((state) => ({
+			claudeReplayTab: null,
+			activeSpecialTab: state.activeSpecialTab === "claude-replay" ? null : state.activeSpecialTab,
 		})),
 	setActiveSpecialTab: (tab) => set({ activeSpecialTab: tab }),
 

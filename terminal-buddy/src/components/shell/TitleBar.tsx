@@ -9,6 +9,7 @@ import {
   Folder,
   Grid2X2,
   Heart,
+  History,
   Info,
   Minus,
   Moon,
@@ -61,8 +62,10 @@ interface TitleBarProps {
   onSettings: () => void;
   configPanelVisible: boolean;
   fileTreeVisible: boolean;
+  historyPanelVisible: boolean;
   onToggleConfigPanel: () => void;
   onToggleFileTree: () => void;
+  onToggleHistoryPanel: () => void;
   updateInfo: UpdateInfo | null;
   onUpdateDismiss: () => void;
   onPromoteToUpdate: (info: UpdateInfo) => void;
@@ -90,8 +93,10 @@ export const TitleBar: FC<TitleBarProps> = ({
   onSettings,
   configPanelVisible,
   fileTreeVisible,
+  historyPanelVisible,
   onToggleConfigPanel,
   onToggleFileTree,
+  onToggleHistoryPanel,
   updateInfo,
   onUpdateDismiss,
   onPromoteToUpdate,
@@ -315,6 +320,15 @@ export const TitleBar: FC<TitleBarProps> = ({
                 aria-pressed={fileTreeVisible}
               >
                 <Folder aria-hidden="true" />
+              </button>
+              <button
+                className={`titlebar-nav-btn ${historyPanelVisible ? 'active' : ''}`}
+                onClick={onToggleHistoryPanel}
+                title={historyPanelVisible ? '隐藏会话历史' : '显示会话历史'}
+                aria-label={historyPanelVisible ? '隐藏会话历史' : '显示会话历史'}
+                aria-pressed={historyPanelVisible}
+              >
+                <History aria-hidden="true" />
               </button>
             </>
           )}

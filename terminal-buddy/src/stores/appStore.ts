@@ -32,10 +32,22 @@ export interface GitHistoryTab {
 	branch: string;
 }
 
-export type WorkspaceSpecialTab = "git-history" | null;
+export interface ClaudeReplayTab {
+	sessionId: string;
+	title: string;
+	/** 从全文检索命中跳入时，锚定到该条消息 */
+	focusSeq?: number;
+}
+
+export type WorkspaceSpecialTab = "git-history" | "claude-replay" | null;
 
 export type TerminalRuntimeKind = "shell" | "claude";
 export type TerminalActivityPhase = "idle" | "running" | "attention" | "completed" | "failed";
+
+export interface TerminalActivityDetails {
+	taskTitle?: string;
+	summary?: string;
+}
 
 export interface TerminalActivityState {
 	runtimeKind: TerminalRuntimeKind;
@@ -43,6 +55,9 @@ export interface TerminalActivityState {
 	phase: TerminalActivityPhase;
 	updatedAt: number;
 	lastHookAt?: number;
+	/** 最近一次 hook 事件的任务摘要（总览面板 / 指示灯 tooltip 用） */
+	taskTitle?: string;
+	summary?: string;
 }
 
 export function isTerminalWorking(activity: TerminalActivityState | undefined): boolean {
@@ -209,8 +224,10 @@ export interface AppState {
 	// UI State
 	configPanelVisible: boolean;
 	fileTreeVisible: boolean;
+	historyPanelVisible: boolean;
 	toggleConfigPanel: () => void;
 	toggleFileTree: () => void;
+	toggleHistoryPanel: () => void;
 
 	// Config panel search
 	configSearchQuery: string;
@@ -223,6 +240,9 @@ export interface AppState {
 	gitHistoryTab: GitHistoryTab | null;
 	openGitHistoryTab: (tab: GitHistoryTab) => void;
 	closeGitHistoryTab: () => void;
+	claudeReplayTab: ClaudeReplayTab | null;
+	openClaudeReplayTab: (tab: ClaudeReplayTab) => void;
+	closeClaudeReplayTab: () => void;
 	activeSpecialTab: WorkspaceSpecialTab;
 	setActiveSpecialTab: (tab: WorkspaceSpecialTab) => void;
 
@@ -286,10 +306,12 @@ export interface AppState {
 	terminalWebTakeovers: Record<string, boolean>;
 	setTerminalWebTakeover: (sessionId: string, active: boolean) => void;
 	setTerminalFallbackWorking: (sessionId: string, working: boolean) => void;
-	applyClaudeHookActivity: (sessionId: string, phase: TerminalActivityPhase, updatedAt: number) => boolean;
+	applyClaudeHookActivity: (sessionId: string, phase: TerminalActivityPhase, updatedAt: number, details?: TerminalActivityDetails) => boolean;
 	endClaudeHookSession: (sessionId: string, updatedAt: number) => boolean;
 	expireClaudeHookActivity: (sessionId: string, expectedUpdatedAt: number) => void;
 	handleTerminalInputActivity: (sessionId: string) => void;
+	/** 手动清除 StopFailure 长红（回到会话在场·空闲） */
+	clearClaudeFailure: (sessionId: string) => void;
 
 	// Split Screen mode
 	splitMode: "off" | "2x1" | "2x2";
@@ -303,7 +325,7 @@ export interface AppState {
 
 	// Window mode (F11 cycle)
 	windowMode: "normal" | "panels-hidden";
-	previousPanelState: { configPanelVisible: boolean; fileTreeVisible: boolean; enableTabNavigation: boolean } | null;
+	previousPanelState: { configPanelVisible: boolean; fileTreeVisible: boolean; historyPanelVisible: boolean; enableTabNavigation: boolean } | null;
 	cycleWindowMode: () => void;
 
 	// Toast (transient notifications, e.g. "split grid full")
@@ -331,8 +353,8 @@ export interface AppState {
 	reorderExtraParamPresets: (fromId: string, toId: string, position: "before" | "after") => void;
 
 	// Last click region for F2 routing
-	lastClickRegion: "config" | "tab" | null;
-	setLastClickRegion: (region: "config" | "tab" | null) => void;
+	lastClickRegion: "config" | "tab" | "history" | null;
+	setLastClickRegion: (region: "config" | "tab" | "history" | null) => void;
 
 	// Remote file cache (per session)
 	remoteFileCache: Record<string, { files: RemoteFileEntry[]; currentPath: string }>;

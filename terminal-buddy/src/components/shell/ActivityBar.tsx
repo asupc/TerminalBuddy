@@ -1,8 +1,8 @@
 import type { FC } from 'react';
-import { Files, ListTree, Server, Settings } from 'lucide-react';
+import { Files, History, ListTree, Server, Settings } from 'lucide-react';
 import './ActivityBar.css';
 
-export type SidebarPanel = 'config' | 'files' | 'tabs';
+export type SidebarPanel = 'config' | 'files' | 'tabs' | 'history';
 
 interface ActivityBarProps {
   activePanel: SidebarPanel | null;
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { id: 'config', label: '配置', icon: Server },
   { id: 'files', label: '文件', icon: Files },
   { id: 'tabs', label: '选项卡', icon: ListTree },
+  { id: 'history', label: '会话历史', icon: History },
 ] as const;
 
 export const ActivityBar: FC<ActivityBarProps> = ({
