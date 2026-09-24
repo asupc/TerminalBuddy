@@ -32,5 +32,8 @@
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": false
-  }
+  },
+  "disabledMcpjsonServers": [
+    "codegraph"
+  ]
 }
