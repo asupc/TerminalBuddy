@@ -1,5 +1,6 @@
 use clipboard_win::raw;
-use std::path::PathBuf;
+use crate::services::PathService;
+use std::path::{Path, PathBuf};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
 };
@@ -25,9 +26,30 @@ pub fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
 /// Read clipboard image data (e.g. from PrintScreen) and save as PNG to temp dir.
 #[tauri::command]
 pub fn read_clipboard_image_as_file() -> Result<String, String> {
+    let temp_dir = std::env::temp_dir().join("TerminalBuddy");
+    let filename = format!(
+        "clipboard_{}.png",
+        chrono::Local::now().format("%Y%m%d_%H%M%S")
+    );
+    save_clipboard_dib_as_png(&temp_dir, &filename)
+}
+
+/// 剪贴板图片存入数据目录（Claude 图片引用辅助）：
+/// `@<path>` 引用要求 Claude 之后仍能读到该文件，TEMP 会被系统清理，故落到 dataPath。
+#[tauri::command]
+pub fn save_clipboard_image_to_claude_cache() -> Result<String, String> {
+    let dir = PathService::require_data_dir()?
+        .join("ClientData")
+        .join("claude-images");
+    let filename = format!("img_{}.png", chrono::Utc::now().timestamp_millis());
+    save_clipboard_dib_as_png(&dir, &filename)
+}
+
+/// 读取剪贴板 CF_DIB 位图并保存为 PNG 到指定目录。
+fn save_clipboard_dib_as_png(dest_dir: &Path, filename: &str) -> Result<String, String> {
     unsafe {
         if IsClipboardFormatAvailable(CF_DIB).is_err() {
-            return Err("No image in clipboard".to_string());
+            return Err("剪贴板中没有图片".to_string());
         }
 
         OpenClipboard(None).map_err(|e| format!("Failed to open clipboard: {}", e))?;
@@ -58,7 +80,7 @@ pub fn read_clipboard_image_as_file() -> Result<String, String> {
             let palette_colors = if bi_bit_count <= 8 {
                 1u32 << bi_bit_count
             } else {
-                0u32
+                0
             };
             let palette_offset = (40 + palette_colors * 4) as usize;
 
@@ -106,9 +128,9 @@ pub fn read_clipboard_image_as_file() -> Result<String, String> {
                         for x in 0..bi_width as usize {
                             let si = src_row * row_stride + x * 3;
                             let di = (y * bi_width as usize + x) * 4;
-                            rgba[di] = pixel_data[si + 2];
-                            rgba[di + 1] = pixel_data[si + 1];
-                            rgba[di + 2] = pixel_data[si];
+                            rgba[di] = pixel_data[si + 2]; // R
+                            rgba[di + 1] = pixel_data[si + 1]; // G
+                            rgba[di + 2] = pixel_data[si]; // B
                             rgba[di + 3] = 255;
                         }
                     }
@@ -124,14 +146,9 @@ pub fn read_clipboard_image_as_file() -> Result<String, String> {
             let img = image::RgbaImage::from_raw(bi_width, abs_height, rgba)
                 .ok_or("Failed to create image buffer")?;
 
-            let temp_dir = std::env::temp_dir().join("TerminalBuddy");
-            std::fs::create_dir_all(&temp_dir)
-                .map_err(|e| format!("Failed to create temp dir: {}", e))?;
-
-            let file_path = temp_dir.join(format!(
-                "clipboard_{}.png",
-                chrono::Local::now().format("%Y%m%d_%H%M%S")
-            ));
+            std::fs::create_dir_all(dest_dir)
+                .map_err(|e| format!("Failed to create dir: {}", e))?;
+            let file_path = dest_dir.join(filename);
 
             img.save(&file_path)
                 .map_err(|e| format!("Failed to save PNG: {}", e))?;

@@ -11,6 +11,7 @@ use crate::models::{
 };
 use crate::services::ssh_session_service::SshSessionService;
 use crate::services::ClaudeHookService;
+use crate::services::HandoffPty;
 use crate::services::PathService;
 use crate::services::ProfileService;
 use crate::services::SettingsService;
@@ -142,6 +143,8 @@ enum TerminalBackend {
         writer: Option<Box<dyn Write + Send>>,
     },
     VsCode(VsCodeTerminalProcess),
+    /// 默认终端 handoff：管道/句柄由 COM 移交（`EstablishPtyHandoff`），无自有 spawn。
+    Handoff(HandoffPty),
 }
 
 impl TerminalBackend {
@@ -157,6 +160,7 @@ impl TerminalBackend {
                     .map_err(|error| format!("Write failed: {}", error))
             }
             Self::VsCode(process) => process.write_input(data),
+            Self::Handoff(process) => process.write_input(data),
         }
     }
 
@@ -171,6 +175,7 @@ impl TerminalBackend {
                 })
                 .map_err(|error| format!("Resize failed: {}", error)),
             Self::VsCode(process) => process.resize(rows, cols),
+            Self::Handoff(process) => process.resize(rows, cols),
         }
     }
 
@@ -188,6 +193,7 @@ impl TerminalBackend {
                 child.wait().ok().map(|status| status.exit_code())
             }
             Self::VsCode(process) => process.close(),
+            Self::Handoff(process) => process.close(),
         }
     }
 
@@ -201,6 +207,7 @@ impl TerminalBackend {
             Self::VsCode(process) => {
                 process.kill().ok();
             }
+            Self::Handoff(process) => process.kill_without_wait(),
         }
     }
 
@@ -208,6 +215,7 @@ impl TerminalBackend {
         match self {
             Self::Default { child, .. } => child.process_id(),
             Self::VsCode(process) => process.process_id(),
+            Self::Handoff(process) => process.process_id(),
         }
     }
 
@@ -215,6 +223,7 @@ impl TerminalBackend {
         match self {
             Self::Default { .. } => Ok(()),
             Self::VsCode(process) => process.acknowledge_output(char_count),
+            Self::Handoff(process) => process.acknowledge_output(),
         }
     }
 
@@ -222,6 +231,7 @@ impl TerminalBackend {
         match self {
             Self::Default { .. } => "default",
             Self::VsCode(_) => "vsCode",
+            Self::Handoff(_) => "default",
         }
     }
 }
@@ -242,7 +252,7 @@ pub struct TerminalService {
 use std::sync::OnceLock;
 static DEBUG_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
-fn log_debug(msg: &str) {
+pub(crate) fn log_debug(msg: &str) {
     // 写路径走 require：自定义数据目录不可用时不落日志（不退回默认目录），
     // 但路径解析失败只应发生一次——OnceLock 不缓存 Err，下次调用会重试。
     let log_path = DEBUG_LOG_PATH.get_or_init(|| {
@@ -1410,6 +1420,8 @@ impl TerminalService {
         initial_rows: u16,
         initial_cols: u16,
         startup_path: Option<&str>,
+        // 排在 shell 启动命令之后、同一批次写入的额外命令（如 `claude --resume`）。
+        initial_command: Option<&str>,
         app: AppHandle,
         owner: TerminalOwner,
     ) -> Result<String, String> {
@@ -1449,7 +1461,7 @@ impl TerminalService {
         // For "powershell" type: start powershell.exe (Windows PowerShell 5.x).
         // For "pwsh" type: need to start pwsh.exe (PowerShell 7.x) — 定位可能失败，
         // 因此必须在进入创建事务之前完成，避免回滚已 spawn 的 PTY。
-        let init_commands = match effective_type {
+        let mut init_commands = match effective_type {
             "cmd" => Vec::new(),
             "pwsh" => vec![resolve_pwsh_exe().map_err(|error| {
                 log_debug(&format!(
@@ -1460,6 +1472,15 @@ impl TerminalService {
             })?],
             _ => vec!["powershell.exe".to_string()],
         };
+        // 额外命令与 shell 启动命令走同一批次延迟写入：单独 writeToTerminal 会抢在
+        // powershell.exe 之前落到 cmd 基座上，等 TUI 接管后残余文本就打进输入框了。
+        if let Some(command) = initial_command
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+        {
+            reject_control_chars("启动命令", command)?;
+            init_commands.push(command.to_string());
+        }
 
         self.spawn_terminal(
             NewTerminalSpec {
@@ -1486,6 +1507,67 @@ impl TerminalService {
             },
             app,
         )
+    }
+
+    /// 默认终端 handoff 会话的唯一创建入口（`EstablishPtyHandoff` 回调进）。
+    ///
+    /// 后端管道/句柄已就绪，无 profile、无 init_commands、不注册 Claude hook
+    /// （客户端不是我们 spawn 的）。创建路径只剩 insert + 起转发，无 spawn 失败点，
+    /// 不再走 `TerminalCreation` 守卫。
+    pub fn create_handoff_terminal(
+        &self,
+        handoff: HandoffPty,
+        reader: Box<dyn Read + Send>,
+        display_name: &str,
+        init_rows: u16,
+        init_cols: u16,
+        app: AppHandle,
+    ) -> Result<String, String> {
+        let terminal_id = Uuid::new_v4().to_string();
+        log_debug(&format!(
+            "[create-handoff] start, id={}, name={}, size={}x{}",
+            terminal_id, display_name, init_cols, init_rows
+        ));
+        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
+        self.insert_instance(TerminalInstance {
+            id: terminal_id.clone(),
+            profile_id: String::new(),
+            display_name: display_name.to_string(),
+            group_override: None,
+            owner: TerminalOwner::Pc,
+            extra_param_tag: None,
+            extra_param_tag_color: None,
+            extra_startup_params: None,
+            extra_startup_mode: None,
+            backend: TerminalBackend::Handoff(handoff),
+            output_buffer: output_buffer.clone(),
+            current_rows: init_rows,
+            current_cols: init_cols,
+        });
+        finalize_terminal_creation(
+            self,
+            reader,
+            &terminal_id,
+            app.clone(),
+            output_buffer,
+            TerminalOutputBufferMode::Default,
+            "create-handoff",
+            "create_handoff_terminal",
+        );
+        // 通知前端建 tab 并激活（activate=true：handoff 是用户刚发起的本地动作，
+        // 与 Web 端建终端「不抢焦点」的行为区分开）。
+        let _ = app.emit(
+            "terminal-created",
+            serde_json::json!({
+                "id": terminal_id,
+                "profileId": "",
+                "profileName": display_name,
+                "terminalType": "cmd",
+                "owner": "pc",
+                "activate": true,
+            }),
+        );
+        Ok(terminal_id)
     }
 }
 
@@ -1625,6 +1707,7 @@ pub async fn start_blank_terminal(
     initial_rows: u16,
     initial_cols: u16,
     startup_path: Option<String>,
+    initial_command: Option<String>,
     app: AppHandle,
     terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
@@ -1637,6 +1720,7 @@ pub async fn start_blank_terminal(
             initial_rows,
             initial_cols,
             startup_path.as_deref(),
+            initial_command.as_deref(),
             app,
             TerminalOwner::Pc,
         )

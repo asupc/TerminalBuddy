@@ -21,6 +21,16 @@ pub enum TerminalLoadingMode {
     VsCode,
 }
 
+/// 默认终端开关开启前的委托注册表旧值备份（None = 当时不存在，关闭时删除恢复）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultTerminalBackup {
+    #[serde(default)]
+    pub delegation_console: Option<String>,
+    #[serde(default)]
+    pub delegation_terminal: Option<String>,
+}
+
 fn default_close_behavior() -> CloseBehavior {
     CloseBehavior::Exit
 }
@@ -92,6 +102,11 @@ pub struct AppSettings {
     pub launch_at_login: bool,
     #[serde(default)]
     pub claude_hook_config_dir: Option<String>,
+    #[serde(default)]
+    pub default_terminal_enabled: bool,
+    /// 开启接管时备份的旧委托值；仅在 None 时写入，保证开→关→开→关回到最初值。
+    #[serde(default)]
+    pub default_terminal_backup: Option<DefaultTerminalBackup>,
 }
 
 impl Default for AppSettings {
@@ -115,6 +130,8 @@ impl Default for AppSettings {
             web_api_share_sessions: false,
             launch_at_login: false,
             claude_hook_config_dir: None,
+            default_terminal_enabled: false,
+            default_terminal_backup: None,
         }
     }
 }

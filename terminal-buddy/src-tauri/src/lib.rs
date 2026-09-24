@@ -9,12 +9,27 @@ use crate::web::handlers::claude_hook_handler::{
     get_pending_claude_hook_decisions, send_claude_hook_decision_notification,
 };
 use commands::{
-    acknowledge_terminal_output, check_app_update, close_terminal, connect_ssh_session,
+    acknowledge_terminal_output, check_app_update,
+    claude_history_delete,
+    claude_history_export, claude_history_get_replay, claude_history_list,
+    claude_history_rename, claude_history_rescan, claude_history_search,
+    claude_history_set_flags,
+    // Claude 配置 / 资产库 / MCP（三期）
+    list_claude_projects, list_claude_memory_files, read_claude_memory_file,
+    write_claude_memory_file, create_claude_memory_file, delete_claude_memory_file,
+    read_claude_md, write_claude_md,
+    list_claude_assets, deploy_claude_asset, undeploy_claude_asset, sync_claude_asset,
+    import_claude_asset, list_importable_claude_assets, delete_claude_asset,
+    create_claude_asset, read_claude_asset, write_claude_asset,
+    list_claude_mcp_servers, save_claude_mcp_server, delete_claude_mcp_server,
+    get_claude_mcp_config_path, probe_claude_mcp,
+    close_terminal, connect_ssh_session,
     create_profile, delete_path, delete_profile,
     drain_terminal_output, ensure_dir, export_all_data, fetch_ark_usage,
     fetch_deepseek_usage, fetch_minimax_usage, fetch_qianfan_usage, get_all_profiles,
     get_app_settings, get_claude_sessions_for_terminals,
-    get_command_templates, get_data_path, get_data_path_status, get_downloads_directory,
+    get_command_templates, get_data_path, get_data_path_status, get_default_terminal_status,
+    get_downloads_directory,
     get_file_meta, get_file_size,
     get_git_repository_status, get_profile, get_server_stats, get_ssh_home_dir,
     get_ssh_temp_directory, get_terminal_loading_mode,
@@ -23,16 +38,17 @@ use commands::{
     git_commit_paths, git_get_changed_files, git_get_history, git_get_history_file_diff,
     git_get_history_files, git_list_branches, git_preview_push, git_pull, git_push_with_options,
     import_all_data,
-    init_command_templates, list_directory, open_in_explorer, open_path,
+    init_command_templates, list_directory, list_terminals, open_in_explorer, open_path,
     read_client_data, read_clipboard_file_paths,
     read_clipboard_image_as_file, read_file_content, remote_chmod, remote_copy, remote_create_dir,
     remote_create_file, remote_download, remote_download_dir, remote_list_dir, remote_move,
     remote_remove, remote_rename, remote_upload, rename_path, resize_terminal, restart_web_server,
+    save_clipboard_image_to_claude_cache,
     save_close_behavior, save_config_nav_width, save_enable_tab_navigation,
     save_file_nav_width, save_launch_at_login, save_launch_window_mode,
     save_server_monitor_interval, save_single_instance, save_ssh_download_dir,
     save_tab_sidebar_width, save_terminal_loading_mode, save_web_api_settings,
-    set_data_path, show_claude_code_notification,
+    set_data_path, set_default_terminal_enabled, show_claude_code_notification,
     start_blank_terminal, start_mstsc, start_terminal, sync_launch_at_login, update_profile,
     update_profile_last_used, update_terminal_display_name, window_close,
     window_exit_app, window_minimize, window_toggle_maximize, write_client_data,
@@ -344,7 +360,9 @@ pub fn run() {
         .manage(WebServiceState::new())
         .manage(MonitorCache::new());
 
-    if settings.single_instance {
+    // COM 激活冷启动（LocalServer32 传 -Embedding）不能走单实例转发：转发后本进程
+    // 立即退出会令 COM 激活失败。已运行实例靠 REGCLS_MULTIPLEUSE 直连，不拉新进程。
+    if settings.single_instance && !crate::services::handoff_server::is_embedding_launch() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_main_window(app);
         }));
@@ -369,6 +387,14 @@ pub fn run() {
             // 托盘构建失败只降级，不阻止主窗口启动
             bootstrap_tray(app);
             prepare_startup_window(app);
+
+            // 默认终端 handoff：注册 COM 类对象（注册 ≠ 生效，是否被委派由注册表
+            // 决定）。失败只记日志——未被委派时无影响，被委派则 conhost 自动回退。
+            crate::services::handoff_server::set_app_handle(app.handle().clone());
+            match crate::services::handoff_server::bootstrap_com_server() {
+                Ok(()) => boot_log("default-terminal COM server registered"),
+                Err(error) => boot_log(format!("default-terminal COM server failed: {}", error)),
+            }
 
             // Sync launch_at_login setting with Windows Registry
             let _ = commands::sync_launch_at_login();
@@ -419,6 +445,18 @@ pub fn run() {
             start_terminal,
             start_mstsc,
             get_claude_sessions_for_terminals,
+            claude_history_rescan, claude_history_list, claude_history_search,
+            claude_history_get_replay, claude_history_rename, claude_history_set_flags,
+            claude_history_delete, claude_history_export,
+            // Claude 配置 / 资产库 / MCP（三期）
+            list_claude_projects, list_claude_memory_files, read_claude_memory_file,
+            write_claude_memory_file, create_claude_memory_file, delete_claude_memory_file,
+            read_claude_md, write_claude_md,
+            list_claude_assets, deploy_claude_asset, undeploy_claude_asset, sync_claude_asset,
+            import_claude_asset, list_importable_claude_assets, delete_claude_asset,
+            create_claude_asset, read_claude_asset, write_claude_asset,
+            list_claude_mcp_servers, save_claude_mcp_server, delete_claude_mcp_server,
+            get_claude_mcp_config_path, probe_claude_mcp,
             show_claude_code_notification,
             check_app_update,
             get_bot_settings,
@@ -448,6 +486,7 @@ pub fn run() {
             close_terminal,
             start_blank_terminal,
             drain_terminal_output,
+            list_terminals,
             list_directory,
             open_path,
             open_in_explorer,
@@ -477,7 +516,10 @@ pub fn run() {
             remote_upload,
             read_clipboard_file_paths,
             read_clipboard_image_as_file,
+            save_clipboard_image_to_claude_cache,
             get_app_settings,
+            get_default_terminal_status,
+            set_default_terminal_enabled,
             get_vscode_terminal_support,
             save_close_behavior,
             save_launch_window_mode,

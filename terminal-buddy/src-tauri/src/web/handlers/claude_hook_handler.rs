@@ -113,6 +113,12 @@ fn task_content(
     request: &ClaudeHookRequest,
 ) -> (Option<String>, Option<String>) {
     match request.hook_event_name.as_str() {
+        "UserPromptSubmit" => (
+            compact_hook_text(request.prompt.as_deref(), 72)
+                .or_else(|| ClaudeHookService::recent_prompt(terminal_id, &request.session_id)
+                    .and_then(|prompt| compact_hook_text(Some(&prompt), 72))),
+            None,
+        ),
         "Stop" => (
             ClaudeHookService::recent_prompt(terminal_id, &request.session_id)
                 .and_then(|prompt| compact_hook_text(Some(&prompt), 72)),

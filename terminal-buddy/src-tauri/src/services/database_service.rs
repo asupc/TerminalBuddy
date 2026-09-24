@@ -8,7 +8,7 @@ use std::time::Duration;
 pub struct DatabaseService;
 
 impl DatabaseService {
-    fn open() -> Result<Connection, String> {
+    pub(crate) fn open() -> Result<Connection, String> {
         // 数据库是持久写入方，必须走 require：自定义目录不可用时显式失败，
         // 绝不能在默认目录另开一个数据库。
         let data_dir = PathService::require_data_dir()?;
@@ -163,6 +163,30 @@ impl DatabaseService {
             transaction
                 .commit()
                 .map_err(|error| format!("提交微信状态迁移失败: {}", error))?;
+        }
+
+        if !Self::has_migration(connection, "claude-history-v1")? {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| format!("开始 Claude 历史索引迁移失败: {}", error))?;
+            crate::services::claude_history_service::init_claude_schema(&transaction)?;
+            Self::complete_migration(&transaction, "claude-history-v1")?;
+            transaction
+                .commit()
+                .map_err(|error| format!("提交 Claude 历史索引迁移失败: {}", error))?;
+        }
+
+        // 建表只在 v1 跑过一次，后续往 init_claude_schema 里加表必须再来一档，
+        // 否则老库永远拿不到新表（init_claude_schema 全部是 IF NOT EXISTS，可重复执行）。
+        if !Self::has_migration(connection, "claude-history-v2")? {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| format!("开始 Claude 索引状态表迁移失败: {}", error))?;
+            crate::services::claude_history_service::init_claude_schema(&transaction)?;
+            Self::complete_migration(&transaction, "claude-history-v2")?;
+            transaction
+                .commit()
+                .map_err(|error| format!("提交 Claude 索引状态表迁移失败: {}", error))?;
         }
         Ok(())
     }
