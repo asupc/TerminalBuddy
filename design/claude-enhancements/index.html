@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TerminalBuddy · Claude Code 增强 · 效果预览</title>
+<style>
+  :root {
+    --bg: #101218;
+    --card: #1A1E27;
+    --line: #2A3040;
+    --ink: #E8EAF0;
+    --dim: #8B93A7;
+    --prompt: #FFB000;
+    /* 应用内 UI 配色（对齐 src/styles/global.css 默认暗色） */
+    --ui-bg: #181a1d;
+    --ui-bg2: #202226;
+    --ui-bg3: #2a2d31;
+    --ui-elev: #25282c;
+    --ui-ink: #e3e5e8;
+    --ui-dim: #9aa0a8;
+    --ui-dim2: #6f767f;
+    --ui-accent: #4b95e9;
+    --ui-line: #34383e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    line-height: 1.7;
+    padding: 32px 24px 80px;
+  }
+  .mono { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; }
+  .sheet { max-width: 1120px; margin: 0 auto; }
+
+  /* ---------- 页头（沿用 design/logo 预览页风格） ---------- */
+  .promptline {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 14px;
+    color: var(--dim);
+    margin-bottom: 24px;
+    word-break: break-all;
+  }
+  .promptline .sigil { color: var(--prompt); }
+  .promptline .caret {
+    display: inline-block;
+    width: 8px; height: 16px;
+    background: var(--prompt);
+    vertical-align: -3px;
+    margin-left: 2px;
+    animation: blink 1.1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  header h1 {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: clamp(24px, 4vw, 36px);
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+  header h1 .buddy { color: var(--prompt); }
+  header .sub { color: var(--dim); font-size: 14px; margin: 8px 0 28px; }
+  header .sub a { color: var(--ui-accent); text-decoration: none; }
+
+  /* ---------- 目录 ---------- */
+  .toc {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 36px;
+  }
+  .toc a {
+    color: var(--dim); text-decoration: none;
+    font-size: 13px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 3px 12px;
+    transition: all .15s;
+  }
+  .toc a:hover { color: var(--ink); border-color: var(--prompt); }
+
+  /* ---------- 章节卡片 ---------- */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 26px 28px;
+    margin-bottom: 34px;
+  }
+  .card > h2 {
+    font-size: 20px;
+    margin-bottom: 6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .card > h2 .no {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    color: var(--prompt);
+    font-size: 15px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1px 8px;
+  }
+  .card > .desc { color: var(--dim); font-size: 14px; margin-bottom: 18px; }
+  .notes { margin-top: 16px; font-size: 13.5px; color: var(--dim); }
+  .notes li { margin-left: 20px; margin-top: 5px; }
+  .notes b, .card .desc b { color: var(--ink); font-weight: 600; }
+  .tag {
+    display: inline-block;
+    font-size: 11px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 6px;
+    color: var(--dim);
+    vertical-align: 2px;
+  }
+  .tag.ok { color: #7ec699; border-color: #3d5a48; }
+  .tag.warn { color: var(--prompt); border-color: #5a4a2a; }
+
+  /* ---------- 应用窗口 mock 通用 ---------- */
+  .win {
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-line);
+    border-radius: 10px;
+    overflow: hidden;
+    color: var(--ui-ink);
+    font-size: 13px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.45);
+  }
+  .win-titlebar {
+    display: flex; align-items: center;
+    height: 34px;
+    padding: 0 8px 0 14px;
+    background: var(--ui-bg2);
+    border-bottom: 1px solid var(--ui-line);
+    font-size: 12px;
+    color: var(--ui-dim);
+  }
+  .win-titlebar .app-name { color: var(--ui-ink); font-weight: 600; }
+  .win-titlebar .grow { flex: 1; }
+  .win-ctrl { display: flex; gap: 2px; }
+  .win-ctrl span {
+    width: 34px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 4px; color: var(--ui-dim);
+    font-size: 11px;
+  }
+  .win-ctrl span.close:hover { background: #c42b1c; color: #fff; }
+  .win-body { display: flex; min-height: 300px; }
+  .ab {
+    width: 44px;
+    background: var(--ui-bg2);
+    border-right: 1px solid var(--ui-line);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 8px 0; gap: 4px;
+  }
+  .ab .spacer { flex: 1; }
+  .ab-btn {
+    width: 34px; height: 34px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    color: var(--ui-dim2);
+    cursor: pointer;
+    position: relative;
+  }
+  .ab-btn.active { color: var(--ui-ink); background: var(--ui-bg3); }
+  .ab-btn.active::before {
+    content: "";
+    position: absolute; left: -5px; top: 6px; bottom: 6px;
+    width: 2px; border-radius: 2px;
+    background: var(--ui-accent);
+  }
+  .ab-btn svg { width: 19px; height: 19px; }
+  .side {
+    width: 272px;
+    background: var(--ui-bg2);
+    border-right: 1px solid var(--ui-line);
+    display: flex; flex-direction: column;
+  }
+  .side-head {
+    padding: 10px 12px 6px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: var(--ui-dim);
+  }
+  .side-pad { padding: 0 10px 10px; }
+  .term-area {
+    flex: 1;
+    display: flex; flex-direction: column;
+    background: var(--ui-bg);
+  }
+  .tabbar {
+    display: flex; gap: 2px;
+    padding: 6px 8px 0;
+    background: var(--ui-bg2);
+    border-bottom: 1px solid var(--ui-line);
+  }
+  .tab {
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 14px;
+    border-radius: 6px 6px 0 0;
+    background: var(--ui-bg);
+    color: var(--ui-ink);
+    font-size: 12.5px;
+  }
+  .tab.inactive { background: var(--ui-bg2); color: var(--ui-dim); }
+  .term-body {
+    flex: 1;
+    padding: 14px 16px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--ui-ink);
+    background: var(--ui-bg);
+  }
+  .term-body .c-dim { color: var(--ui-dim2); }
+  .term-body .c-acc { color: var(--ui-accent); }
+  .term-body .c-grn { color: #7ec699; }
+
+  /* ---------- 指示灯 ---------- */
+  .led { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .led.off   { background: var(--ui-dim2); opacity: .5; }
+  .led.run   { background: #56d364; box-shadow: 0 0 6px #56d36488; animation: blink 1s steps(1) infinite; }
+  .led.att   { background: var(--prompt); box-shadow: 0 0 6px #ffb00088; animation: blink 1.2s steps(1) infinite; }
+  .led.done  { background: #56d364; }
+  .led.fail  { background: #f14c4c; box-shadow: 0 0 6px #f14c4c99; }
+  .led.end   { background: transparent; border: 1px solid var(--ui-dim2); }
+
+  /* ---------- 表单/列表 mock 小组件 ---------- */
+  .searchbox {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-line);
+    border-radius: 5px;
+    padding: 5px 9px;
+    color: var(--ui-dim);
+    font-size: 12.5px;
+  }
+  .searchbox.focus { border-color: var(--ui-accent); color: var(--ui-ink); }
+  .chipbar { display: flex; gap: 6px; margin-top: 8px; font-size: 11.5px; color: var(--ui-dim); align-items: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--ui-line);
+    background: var(--ui-bg3);
+    color: var(--ui-ink);
+    border-radius: 5px;
+    padding: 3px 11px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn.primary { background: var(--ui-accent); border-color: var(--ui-accent); color: #fff; }
+  .btn.ghost { background: transparent; }
+  .group-label {
+    font-size: 11.5px;
+    color: var(--ui-dim);
+    border-top: 1px solid var(--ui-line);
+    padding: 8px 2px 4px;
+    margin-top: 6px;
+  }
+  .sess {
+    padding: 7px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .sess:hover { background: var(--ui-bg3); }
+  .sess.sel { background: var(--ui-bg3); outline: 1px solid var(--ui-accent); }
+  .sess .t { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  .sess .m { font-size: 11px; color: var(--ui-dim2); margin-left: 15px; margin-top: 1px; }
+  .sess .badge {
+    font-size: 10px; color: #7ec699;
+    border: 1px solid #3d5a48; border-radius: 3px;
+    padding: 0 4px;
+  }
+  .sess .star { color: var(--prompt); }
+
+  /* ---------- 右键菜单 ---------- */
+  .ctx {
+    position: absolute;
+    z-index: 30;
+    min-width: 176px;
+    background: var(--ui-elev);
+    border: 1px solid var(--ui-line);
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgba(0,0,0,.5);
+    padding: 5px;
+    font-size: 13px;
+    display: none;
+  }
+  .ctx.show { display: block; }
+  .ctx .item { padding: 6px 12px; border-radius: 5px; color: var(--ui-ink); white-space: nowrap; }
+  .ctx .item:hover { background: var(--ui-accent); color: #fff; }
+  .ctx .sep { border-top: 1px solid var(--ui-line); margin: 5px 8px; }
+
+  /* ---------- 对话框 mock ---------- */
+  .overlay {
+    background: rgba(10,12,14,.66);
+    border: 1px solid var(--ui-line);
+    border-radius: 10px;
+    padding: 44px 24px;
+    display: flex; justify-content: center;
+  }
+  .dialog {
+    width: 420px; max-width: 95%;
+    background: var(--ui-elev);
+    border: 1px solid var(--ui-line);
+    border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(0,0,0,.55);
+    color: var(--ui-ink);
+    font-size: 13px;
+  }
+  .dialog .d-title {
+    padding: 13px 18px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--ui-line);
+  }
+  .dialog .d-body { padding: 16px 18px; }
+  .dialog .d-foot {
+    padding: 12px 18px;
+    border-top: 1px solid var(--ui-line);
+    display: flex; justify-content: flex-end; gap: 8px;
+  }
+  .radio { display: flex; gap: 8px; align-items: baseline; margin: 8px 0; cursor: pointer; }
+  .radio .dot {
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 1.5px solid var(--ui-dim);
+    display: inline-block; flex: none; position: relative; top: 2px;
+  }
+  .radio.on .dot { border-color: var(--ui-accent); }
+  .radio.on .dot::after {
+    content: ""; position: absolute; inset: 2px;
+    border-radius: 50%; background: var(--ui-accent);
+  }
+  .radio small { color: var(--ui-dim); }
+  .field {
+    display: flex; gap: 8px; align-items: center;
+    margin-top: 12px; font-size: 12.5px;
+  }
+  .input {
+    flex: 1;
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-line);
+    border-radius: 5px;
+    padding: 5px 9px;
+    color: var(--ui-ink);
+  }
+
+  /* ---------- 面板双栏（Memory / 技能 / MCP …） ---------- */
+  .split { display: flex; gap: 0; min-height: 260px; border-top: 1px solid var(--ui-line); }
+  .split-l { width: 42%; border-right: 1px solid var(--ui-line); padding: 8px; }
+  .split-r { flex: 1; padding: 12px 14px; overflow: hidden; }
+  .fileitem {
+    padding: 5px 8px; border-radius: 5px;
+    font-size: 12.5px; color: var(--ui-dim);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .fileitem.on { background: var(--ui-bg3); color: var(--ui-ink); }
+  .ftag { font-size: 10px; border: 1px solid var(--ui-line); border-radius: 3px; padding: 0 4px; color: var(--ui-dim2); }
+  .ftag.project { color: #b39df3; border-color: #4a4270; }
+  .ftag.feedback { color: var(--prompt); border-color: #5a4a2a; }
+
+  .editor {
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-line);
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--ui-ink);
+    white-space: pre-wrap;
+  }
+  .editor .h { color: var(--ui-accent); }
+  .editor .link { color: var(--prompt); text-decoration: underline dotted; cursor: pointer; }
+
+  /* ---------- 表格 mock ---------- */
+  table.mock {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    margin-top: 4px;
+  }
+  table.mock th {
+    text-align: left;
+    color: var(--ui-dim);
+    font-weight: 500;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--ui-line);
+    font-size: 11.5px;
+  }
+  table.mock td {
+    padding: 7px 8px;
+    border-bottom: 1px solid var(--ui-line);
+    vertical-align: top;
+  }
+  table.mock tr:hover td { background: var(--ui-bg3); }
+  .mono-cell { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; color: var(--ui-dim); }
+  .status-ok { color: #7ec699; }
+  .status-warn { color: var(--prompt); }
+  .status-bad { color: #f14c4c; }
+
+  .segmented { display: inline-flex; border: 1px solid var(--ui-line); border-radius: 6px; overflow: hidden; }
+  .segmented button {
+    background: transparent; border: none;
+    color: var(--ui-dim);
+    font-size: 12px; padding: 4px 13px;
+    cursor: pointer;
+  }
+  .segmented button.on { background: var(--ui-bg3); color: var(--ui-ink); }
+  .segmented button + button { border-left: 1px solid var(--ui-line); }
+
+  /* ---------- 流程条 ---------- */
+  .flow {
+    display: flex; align-items: stretch; gap: 0;
+    flex-wrap: wrap;
+    margin-top: 6px;
+  }
+  .flow .step {
+    flex: 1; min-width: 150px;
+    background: var(--ui-bg2);
+    border: 1px solid var(--ui-line);
+    padding: 12px 14px;
+    font-size: 12.5px;
+    color: var(--ui-ink);
+  }
+  .flow .step:first-child { border-radius: 8px 0 0 8px; }
+  .flow .step:last-child { border-radius: 0 8px 8px 0; }
+  .flow .step + .step { border-left: none; }
+  .flow .step .k { color: var(--prompt); font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
+  .flow .step small { display: block; color: var(--ui-dim); margin-top: 3px; }
+
+  /* ---------- 指示灯图例 ---------- */
+  .led-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px;
+    margin: 14px 0;
+  }
+  .led-card {
+    background: var(--ui-bg2);
+    border: 1px solid var(--ui-line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12.5px;
+  }
+  .led-card .top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .led-card small { color: var(--ui-dim); display: block; }
+
+  .kbd {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 0 6px;
+    color: var(--ink);
+    background: var(--bg);
+  }
+
+  /* 决策记录 */
+  .dec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .dec-card {
+    background: var(--ui-bg2);
+    border: 1px solid var(--ui-line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 13px;
+  }
+  .dec-card h4 { margin-bottom: 6px; font-size: 14px; }
+  .dec-card p { color: var(--ui-dim); font-size: 12.5px; }
+  footer {
+    color: var(--dim);
+    font-size: 12.5px;
+    text-align: center;
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="promptline mono"><span class="sigil">PS</span> D:\gitee\TerminalBuddy&gt; design/claude-enhancements/index.html<span class="caret"></span></div>
+  <header>
+    <h1>TerminalBuddy <span class="buddy">Claude 增强</span> 效果预览</h1>
+    <div class="sub">
+      v1 草案 · 2026-09-24 · 12 项功能 + 会话活动指示灯优化 ·
+      配套计划 <a href="../../docs/superpowers/plans/2026-09-24-claude-enhancements.md">docs/superpowers/plans/2026-09-24-claude-enhancements.md</a>
+      · 窗口内 UI 配色与 <span class="mono">src/styles/global.css</span> 默认暗色一致
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#s0">⓪ 总体布局</a>
+    <a href="#s1">① 会话历史</a>
+    <a href="#s2">② 双击恢复</a>
+    <a href="#s3">③ 全文检索</a>
+    <a href="#s4">④ 回放视图</a>
+    <a href="#s5">⑤ 导出</a>
+    <a href="#s6">⑥ 会话总览</a>
+    <a href="#s7">⑦ 图片粘贴</a>
+    <a href="#s8">⑧ Memory</a>
+    <a href="#s9">⑨ CLAUDE.md</a>
+    <a href="#s10">⑩ 技能 / 代理 / 命令</a>
+    <a href="#s11">⑪ MCP</a>
+    <a href="#s12">⑫ 活动指示灯</a>
+    <a href="#dec">决策记录 · 分期</a>
+  </nav>
+
+  <!-- ================= ⓪ 总体布局 ================= -->
+  <section class="card" id="s0">
+    <h2><span class="no">⓪</span>总体布局：Activity Bar 新增 2 个面板</h2>
+    <p class="desc">会话历史（清单 ①–⑥）与 Claude 管理（清单 ⑥⑧⑨⑩⑪）各占一个侧边栏图标；回放视图走特殊标签页（同 Git 历史页）。只手动打开：<b>图标点击 / <span class="kbd">Ctrl+Shift+H</span> / 通知「查看会话记录」/ 欢迎页入口</b>，不自动弹出。</p>
+
+    <div class="win">
+      <div class="win-titlebar">
+        <span class="app-name">TerminalBuddy</span>&nbsp;—&nbsp;claude-enhancements
+        <span class="grow"></span>
+        <span class="win-ctrl"><span>─</span><span>□</span><span class="close">✕</span></span>
+      </div>
+      <div class="win-body">
+        <div class="ab">
+          <div class="ab-btn" title="配置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="17" r="1" fill="currentColor"/></svg></div>
+          <div class="ab-btn" title="文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></div>
+          <div class="ab-btn" title="选项卡"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h10M4 18h13"/></svg></div>
+          <div class="ab-btn active" title="会话历史（新）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div>
+          <div class="ab-btn" title="Claude 管理（新）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/><path d="M18 15l.9 2.6L21 18.5l-2.1.9L18 22l-.9-2.6-2.1-.9 2.1-.9Z"/></svg></div>
+          <div class="spacer"></div>
+          <div class="ab-btn" title="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L14.2 3h-4l-.4 2.7a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2 1.2l.4 2.7h4l.4-2.7a7 7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z"/></svg></div>
+        </div>
+
+        <!-- 历史面板 -->
+        <div class="side" style="position:relative" id="hist-mock">
+          <div class="side-head">会话历史</div>
+          <div class="side-pad">
+            <div class="searchbox"><span>🔍</span><span>搜索全部会话内容…</span></div>
+            <div class="chipbar">
+              <span class="btn ghost" style="padding:1px 8px">☑ 显示已归档</span>
+              <span class="btn ghost" style="padding:1px 8px">↻ 刷新索引</span>
+            </div>
+            <div class="group-label">— 今天 —</div>
+            <div class="group-label" style="border:none;padding:2px 2px 0;margin:0">📁 D:\gitee\TerminalBuddy</div>
+            <div class="sess sel" data-name="给侧边栏加重构计划">
+              <div class="t"><span class="star">✳</span>给侧边栏加重构计划 <span class="badge">进行中</span><span class="led run" style="margin-left:auto"></span></div>
+              <div class="m">14:32 · 42 条 · 128k tok · claude-opus</div>
+            </div>
+            <div class="sess" data-name="修复粘贴换行 bug">
+              <div class="t"><span style="width:9px;display:inline-block"></span>修复粘贴换行 bug <span class="led done" style="margin-left:auto" title="任务完成"></span></div>
+              <div class="m">昨天 22:10 · 18 条 · 64k tok</div>
+            </div>
+            <div class="group-label">— 昨天 —</div>
+            <div class="group-label" style="border:none;padding:2px 2px 0;margin:0">📁 C:\work\demo</div>
+            <div class="sess" data-name="搭建登录页">
+              <div class="t"><span style="width:9px;display:inline-block"></span>搭建登录页 <span class="led fail" style="margin-left:auto" title="错误停止"></span></div>
+              <div class="m">昨天 18:03 · 30 条 · StopFailure</div>
+            </div>
+          </div>
+          <!-- 右键菜单（右键会话项可弹出/收起） -->
+          <div class="ctx" id="ctx-menu">
+            <div class="item">▶&nbsp; 恢复会话&nbsp;<span style="color:var(--ui-dim2)">（双击）</span></div>
+            <div class="item">👁&nbsp; 查看详情 / 回放</div>
+            <div class="item">⤓&nbsp; 导出…</div>
+            <div class="sep"></div>
+            <div class="item">✎&nbsp; 重命名…</div>
+            <div class="item">★&nbsp; 收藏 / 取消收藏</div>
+            <div class="item">📦&nbsp; 归档 / 取消归档</div>
+            <div class="item" style="color:#f14c4c">🗑&nbsp; 删除记录…</div>
+            <div class="sep"></div>
+            <div class="item">⧉&nbsp; 复制会话 ID</div>
+            <div class="item">📂&nbsp; 打开所在文件夹</div>
+          </div>
+        </div>
+
+        <!-- 终端区 -->
+        <div class="term-area">
+          <div class="tabbar">
+            <div class="tab"><span class="led run"></span>App 重构</div>
+            <div class="tab inactive"><span class="led fail"></span>登录页</div>
+            <div class="tab inactive"><span class="led att"></span>web-api</div>
+          </div>
+          <div class="term-body">
+            <div><span class="c-acc">❯</span> claude --resume 4f2a9c1e-…</div>
+            <div class="c-dim">╭──────────────────────────────────────╮</div>
+            <div class="c-dim">│ &nbsp;Claude Code · 给侧边栏加重构计划&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│</div>
+            <div class="c-dim">╰──────────────────────────────────────╯</div>
+            <div>&nbsp;</div>
+            <div><span class="c-grn">●</span> 我先看现有布局，侧边栏目前有配置 / 文件 / 选项卡三个面板…</div>
+            <div class="c-dim">&nbsp;&nbsp;▸ Bash · cargo check</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <ul class="notes">
+      <li><b>④ 历史面板</b>：列表 + 全文检索二态（见 ①③）；双击恢复（见 ②）；右键菜单（图中已展开，可在上方 mock 里<b>再右键会话项</b>体验）。</li>
+      <li><b>⑤ Claude 面板</b>：内部分段 总览 | Memory | CLAUDE.md | 技能 | MCP（见 ⑥–⑪）。</li>
+      <li><b>标签页小灯</b>：会话活动指示灯（见 ⑫），绿闪=执行中 / 黄闪=等待确认 / 红长=错误停止。</li>
+    </ul>
+  </section>
+
+  <!-- ================= ① 会话历史 ================= -->
+  <section class="card" id="s1">
+    <h2><span class="no">①</span>会话历史面板 <span class="tag">+ ⑥ 右键管理操作</span></h2>
+    <p class="desc">数据源：<span class="mono">~/.claude/projects/&lt;路径编码&gt;/*.jsonl</span>（官方 transcript），SQLite 增量索引（FTS5）。按项目分组、时间倒序；运行中会话标「进行中」并置顶。删除进回收站（<span class="mono">dataPath/Trash</span>）不硬删。</p>
+    <div class="flow">
+      <div class="step"><span class="k">双击</span>恢复会话<small>已运行则聚焦原终端，不重复 resume</small></div>
+      <div class="step"><span class="k">右键 → 回放</span>特殊标签页<small>宽屏阅读 + 定位（④）</small></div>
+      <div class="step"><span class="k">右键 → 导出</span>Markdown / JSON<small>原生保存对话框（⑤）</small></div>
+      <div class="step"><span class="k">右键 → 管理</span>重命名 / 收藏 / 归档 / 删除<small>元数据侧车 claude_session_meta</small></div>
+    </div>
+    <ul class="notes">
+      <li>重命名 / 收藏 / 归档写入侧车表 <span class="mono">claude_session_meta</span>，不动 Claude Code 的 JSONL。</li>
+      <li>「打开所在文件夹」定位到该会话的 <span class="mono">*.jsonl</span>；「复制会话 ID」供 <span class="mono">claude --resume</span> 使用。</li>
+    </ul>
+  </section>
+
+  <!-- ================= ② 双击恢复 ================= -->
+  <section class="card" id="s2">
+    <h2><span class="no">②</span>双击一键恢复（resume）</h2>
+    <p class="desc">复用 <span class="mono">sessionRestore.ts</span> 的 <span class="mono">--resume</span> 注入经验；注入 PTY 一律 <b>行尾 CR</b>（LF 会被 ConPTY 当 Ctrl+Enter，memory 已记坑）。</p>
+    <div class="flow">
+      <div class="step"><span class="k">1 · 双击会话</span><small>检查 sessionId ↔ 终端映射</small></div>
+      <div class="step"><span class="k">2a · 已在跑</span><small>聚焦 / 切分屏位，不新开</small></div>
+      <div class="step"><span class="k">2b · 未运行</span><small>新终端 startupPath = 会话 cwd</small></div>
+      <div class="step"><span class="k">3 · 注入</span>claude --resume &lt;id&gt;<small>writeToTerminal(… + "\r")</small></div>
+      <div class="step"><span class="k">4 · 灯亮</span><small>首个 hook 事件 → 会话在场（⑫）</small></div>
+    </div>
+    <ul class="notes">
+      <li>可选设置：「恢复时使用的 Profile」（带自定义模型/参数的 Claude 启动配置），默认空白终端直启 <span class="mono">claude</span>。</li>
+    </ul>
+  </section>
+
+  <!-- ================= ③ 全文检索 ================= -->
+  <section class="card" id="s3">
+    <h2><span class="no">③</span>全文检索（跨全部历史会话）</h2>
+    <p class="desc">搜索范围是<b>所有项目的全部会话内容</b>，不是单会话内查找。FTS5 索引 user/assistant 正文 + 工具名与文件路径；tool_result 截断 4KB 防日志爆炸。点击命中 → 打开回放并滚动锚定到该条消息。</p>
+    <div class="win" style="max-width:560px">
+      <div class="win-body" style="min-height:0">
+        <div class="side" style="width:100%;border-right:none">
+          <div class="side-head">会话历史 · 检索态</div>
+          <div class="side-pad">
+            <div class="searchbox focus"><span>🔍</span><span>paste newline</span><span style="margin-left:auto;color:var(--ui-accent)">全文</span></div>
+            <div class="group-label" style="border:none">全文搜索「paste newline」· 命中 3 个会话</div>
+            <div class="sess sel">
+              <div class="t">修复粘贴换行 bug</div>
+              <div class="m" style="color:var(--ui-ink)">…把粘贴行尾从 LF 改成 <b style="color:var(--prompt)">CR</b>，ConPTY 会把 LF 当…</div>
+              <div class="m">昨天 · 第 18 条消息 · 点击跳转回放定位</div>
+            </div>
+            <div class="sess">
+              <div class="t">给侧边栏加重构计划</div>
+              <div class="m" style="color:var(--ui-ink)">…注意粘贴必须 CR 不能 LF（<b style="color:var(--prompt)">paste</b>-newline-must-be-cr）…</div>
+              <div class="m">今天 · 第 5 条消息 · 点击跳转回放定位</div>
+            </div>
+            <div class="sess">
+              <div class="t">pi kitty 协议适配</div>
+              <div class="m" style="color:var(--ui-ink)">…kitty 协议下 LF 变成 CSI 13;5u 乱码，逐行误提交…</div>
+              <div class="m">09-20 · 第 61 条消息 · 点击跳转回放定位</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="notes">
+      <li>列表过滤（标题/项目）与全文检索共用一个搜索框：输入 ≥2 字符出现「全文」切换，或直接回车进全文模式。</li>
+    </ul>
+  </section>
+
+  <!-- ================= ④ 回放视图 ================= -->
+  <section class="card" id="s4">
+    <h2><span class="no">④</span>会话详情 / 回放视图 <span class="tag">右键打开 · 特殊标签页</span></h2>
+    <p class="desc">把 JSONL 渲染成可读对话流：工具调用默认折叠，顶部聚合 usage，长转录按条分页加载。来自 ③ 的搜索命中会滚动锚定到对应消息。</p>
+    <div class="win">
+      <div class="win-titlebar">
+        <span class="app-name">TerminalBuddy</span>&nbsp;—&nbsp;会话回放
+        <span class="grow"></span>
+        <span class="win-ctrl"><span>─</span><span>□</span><span class="close">✕</span></span>
+      </div>
+      <div class="tabbar">
+        <div class="tab">📄 会话回放</div>
+        <div class="tab inactive">App 重构</div>
+      </div>
+      <div style="padding:14px 18px 6px;border-bottom:1px solid var(--ui-line);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="btn ghost">← 列表</span>
+        <b style="font-size:14px">给侧边栏加重构计划</b>
+        <span style="color:var(--ui-dim);font-size:12px">D:\gitee\TerminalBuddy</span>
+        <span style="margin-left:auto;display:flex;gap:8px">
+          <span class="btn primary">▶ 恢复此会话</span>
+          <span class="btn">⤓ 导出</span>
+          <span class="btn" style="color:#f14c4c">🗑</span>
+        </span>
+      </div>
+      <div style="padding:6px 18px;color:var(--ui-dim);font-size:11.5px;border-bottom:1px solid var(--ui-line)">
+        2026-09-24 14:02 · claude-opus · 42 条消息 · in 96k / out 8k tok · 3 次工具调用
+      </div>
+      <div style="padding:14px 18px;font-size:13px;line-height:1.8;min-height:220px">
+        <div style="color:var(--ui-dim);font-size:11.5px">● 你 &nbsp;14:02</div>
+        <div style="margin:2px 0 14px">给侧边栏加上 VSCode 风格的重构计划，考虑会话历史放哪儿…</div>
+        <div style="color:var(--ui-dim);font-size:11.5px">● Claude &nbsp;14:02</div>
+        <div style="margin:2px 0 14px">我先看现有布局。侧边栏目前有配置 / 文件 / 选项卡三个面板，建议在 Activity Bar 上新增…</div>
+        <div class="sess" style="border:1px solid var(--ui-line);margin-bottom:8px"><div class="t">▸ Bash · <span class="mono-cell">cargo check</span><span style="margin-left:auto;color:var(--ui-dim2)">展开</span></div></div>
+        <div class="sess" style="border:1px solid var(--ui-line);margin-bottom:8px"><div class="t">▸ Edit · <span class="mono-cell">src/App.tsx</span> &nbsp;<span style="color:#7ec699">+12</span> <span style="color:#f14c4c">-3</span><span style="margin-left:auto;color:var(--ui-dim2)">展开</span></div></div>
+        <div style="color:var(--ui-dim);font-size:11.5px">● 你 &nbsp;14:15</div>
+        <div style="margin-top:2px">把历史面板宽度做成可拖拽。</div>
+      </div>
+    </div>
+    <ul class="notes">
+      <li>消息类型渲染：user/assistant 正文（markdown 简渲染）；tool_use 折叠块「工具名 · 入参摘要」；tool_result 折叠在对应工具块下。</li>
+    </ul>
+  </section>
+
+  <!-- ================= ⑤ 导出 ================= -->
+  <section class="card" id="s5">
+    <h2><span class="no">⑤</span>导出 <span class="tag">右键菜单</span></h2>
+    <p class="desc">一期支持 Markdown（对话正文 + 工具调用摘要，可贴文档/周报）与 JSON（原始转录保真）。HTML 等要了再加。</p>
+    <div class="overlay">
+      <div class="dialog">
+        <div class="d-title">导出会话</div>
+        <div class="d-body">
+          <div class="radio on"><span class="dot"></span><span><b>Markdown</b><br><small>对话正文 + 工具调用摘要列表</small></span></div>
+          <div class="radio"><span class="dot"></span><span><b>JSON</b><br><small>原始转录（逐条保真）</small></span></div>
+          <div class="field"><span>文件名</span><div class="input mono">给侧边栏加重构计划_0924.md</div></div>
+        </div>
+        <div class="d-foot"><span class="btn">取消</span><span class="btn primary">导出</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ⑥ 会话总览 ================= -->
+  <section class="card" id="s6">
+    <h2><span class="no">⑥</span>会话总览面板 <span class="tag">Claude 面板 · 总览段</span></h2>
+    <p class="desc">所有标签页的 Claude 状态一屏管。数据 = 现有 <span class="mono">terminalActivities</span> + hook 事件流，零新后端。</p>
+    <div class="win" style="max-width:640px">
+      <div class="win-body" style="min-height:0">
+        <div class="ab">
+          <div class="ab-btn active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/></svg></div>
+          <div class="spacer"></div>
+        </div>
+        <div class="side" style="width:100%;border-right:none">
+          <div class="side-pad" style="padding-top:12px">
+            <div class="segmented" style="margin-bottom:10px">
+              <button class="on">总览</button><button>Memory</button><button>CLAUDE.md</button><button>技能</button><button>MCP</button>
+            </div>
+            <div class="sess sel">
+              <div class="t"><span class="led run"></span>App 重构 &nbsp;<span style="color:var(--ui-dim2);font-size:11px">12:03 起</span><span style="margin-left:auto;display:flex;gap:6px"><span class="btn ghost" style="padding:1px 8px">跳转</span><span class="btn ghost" style="padding:1px 8px">回放</span></span></div>
+              <div class="m">给侧边栏加重构计划…</div>
+            </div>
+            <div class="sess">
+              <div class="t"><span class="led att"></span>web-api &nbsp;<span style="color:var(--ui-dim2);font-size:11px">09:41 起</span><span style="margin-left:auto"><span class="btn ghost" style="padding:1px 8px">跳转</span></span></div>
+              <div class="m">权限请求：写入 settings.json</div>
+            </div>
+            <div class="sess">
+              <div class="t"><span class="led fail"></span>登录页 &nbsp;<span style="color:var(--ui-dim2);font-size:11px">昨天 22:10</span><span style="margin-left:auto;display:flex;gap:6px"><span class="btn ghost" style="padding:1px 8px">跳转</span><span class="btn ghost" style="padding:1px 8px">清除</span></span></div>
+              <div class="m">StopFailure: process exited with code 1</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ⑦ 图片粘贴 ================= -->
+  <section class="card" id="s7">
+    <h2><span class="no">⑦</span>图片粘贴辅助</h2>
+    <p class="desc">ConPTY + xterm.js 的剪贴板只有文本，图片进不了 PTY。方案：<b>图片 → 文件 → <span class="mono">@path</span> 引用</b>。入口：终端右键「粘贴图片」/ 工具栏图标 / <span class="kbd">Ctrl+Shift+V</span>。</p>
+    <div class="overlay">
+      <div class="dialog">
+        <div class="d-title">粘贴图片</div>
+        <div class="d-body">
+          <div style="display:flex;gap:14px;align-items:center">
+            <div style="width:120px;height:80px;border:1px dashed var(--ui-line);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--ui-dim2);font-size:22px">🖼</div>
+            <div style="font-size:12.5px;color:var(--ui-dim)">剪贴板图片预览<br><b style="color:var(--ui-ink)">512×384 · PNG</b></div>
+          </div>
+          <div class="field"><span>备注</span><div class="input">这是报错截图</div></div>
+          <div style="margin-top:12px;font-size:11.5px;color:var(--ui-dim)">输入行将插入：<span class="mono" style="color:var(--prompt)">@…\ClientData\claude-images\img_0924_1530.png</span></div>
+        </div>
+        <div class="d-foot"><span class="btn">取消</span><span class="btn">插入引用</span><span class="btn primary">插入并发送</span></div>
+      </div>
+    </div>
+    <ul class="notes">
+      <li>「插入引用」只进输入行不回车；「插入并发送」追加 <b>\r</b>（CR 约束）。备注文本作为第二行随引用插入。</li>
+      <li>SSH 远程会话禁用该按钮（本地路径 Claude 读不到）。图片存 <span class="mono">&lt;dataPath&gt;/ClientData/claude-images/</span>。</li>
+    </ul>
+  </section>
+
+  <!-- ================= ⑧ Memory ================= -->
+  <section class="card" id="s8">
+    <h2><span class="no">⑧</span>Memory 浏览器 <span class="tag">Claude 面板 · Memory 段</span></h2>
+    <p class="desc">数据源 <span class="mono">~/.claude/projects/&lt;编码&gt;/memory/</span>（MEMORY.md + 条目文件）。<span class="mono">[[链接]]</span> 可点击跳转；条目按 frontmatter 模板新建。</p>
+    <div class="win" style="max-width:720px">
+      <div class="win-body" style="min-height:0">
+        <div class="side" style="width:100%;border-right:none">
+          <div class="side-pad" style="padding-top:12px">
+            <div class="segmented" style="margin-bottom:10px">
+              <button>总览</button><button class="on">Memory</button><button>CLAUDE.md</button><button>技能</button><button>MCP</button>
+            </div>
+            <div class="chipbar" style="margin:0 0 8px">
+              <span>项目:</span><span class="btn" style="padding:1px 8px">TerminalBuddy ▾</span>
+              <span style="margin-left:auto"><span class="btn ghost" style="padding:1px 8px">新建记忆</span> <span class="btn ghost" style="padding:1px 8px">刷新</span></span>
+            </div>
+            <div class="split" style="min-height:220px">
+              <div class="split-l">
+                <div class="fileitem on">📄 MEMORY.md <span class="ftag">index</span></div>
+                <div class="fileitem">📄 paste-newline-must-be-cr <span class="ftag feedback">feedback</span></div>
+                <div class="fileitem">📄 logo-proposals-2026-09-22 <span class="ftag project">project</span></div>
+                <div class="fileitem">📄 bug-audit-2026-09-04 <span class="ftag project">project</span></div>
+                <div class="fileitem">📄 bot-notification-… <span class="ftag">reference</span></div>
+              </div>
+              <div class="split-r">
+                <div class="editor"><span class="h"># Memory Index</span>
+
+- [粘贴行尾必须 CR 不能 LF](paste-newline-must-be-cr)
+- [logo 已选定 B 并落地](logo-proposals-2026-09-22)
+- [2026-09-04 BUG 审计清单](bug-audit-2026-09-04)
+
+关联: <span class="link">[[paste-newline-must-be-cr]]</span></div>
+                <div style="margin-top:10px;display:flex;gap:8px"><span class="btn">编辑</span><span class="btn primary">保存</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ⑨ CLAUDE.md ================= -->
+  <section class="card" id="s9">
+    <h2><span class="no">⑨</span>CLAUDE.md 管理器 <span class="tag">Claude 面板 · CLAUDE.md 段</span></h2>
+    <p class="desc">全局（<span class="mono">~/.claude/CLAUDE.md</span>）与项目（<span class="mono">&lt;root&gt;/CLAUDE.md</span>）两级编辑；「插入片段」放常用段落模板。复用 TextEditor。</p>
+    <div class="win" style="max-width:720px">
+      <div class="win-body" style="min-height:0">
+        <div class="side" style="width:100%;border-right:none">
+          <div class="side-pad" style="padding-top:12px">
+            <div class="segmented" style="margin-bottom:10px">
+              <button>总览</button><button>Memory</button><button class="on">CLAUDE.md</button><button>技能</button><button>MCP</button>
+            </div>
+            <div class="chipbar" style="margin:0 0 8px">
+              <span class="btn primary" style="padding:1px 10px">● 全局 ~/.claude/CLAUDE.md</span>
+              <span class="btn" style="padding:1px 10px">○ 项目 TerminalBuddy/CLAUDE.md</span>
+              <span style="margin-left:auto"><span class="btn ghost" style="padding:1px 8px">插入片段 ▾</span> <span class="btn" style="padding:1px 8px">保存 ●</span></span>
+            </div>
+            <div class="editor" style="min-height:170px"><span class="h"># CLAUDE.md</span>
+Behavioral guidelines to reduce common LLM coding mistakes…
+
+<span class="h">## 1. Think Before Coding</span>
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+<span class="h">## 与用户沟通</span>
+与用户的所有交流一律使用**中文**…</div>
+            <div style="margin-top:10px;font-size:11.5px;color:var(--ui-dim)">ⓘ 项目 CLAUDE.md 与全局叠加生效，同名指令项目优先</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ⑩ 技能 ================= -->
+  <section class="card" id="s10">
+    <h2><span class="no">⑩</span>Skills / Subagents / Commands 管理器 <span class="tag ok">资产库 + 部署（已确认深化方案）</span></h2>
+    <p class="desc">不做 <span class="mono">.disabled</span> 改名，升级为<b>资产库 + 部署</b>模型：库是唯一编辑处，启用=复制到目标、停用=从目标移除，hash 漂移检测防两处不一致。</p>
+
+    <div class="win" style="max-width:760px">
+      <div class="win-body" style="min-height:0">
+        <div class="side" style="width:100%;border-right:none">
+          <div class="side-pad" style="padding-top:12px">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+              <div class="segmented"><button class="on">技能</button><button>子代理</button><button>命令</button></div>
+              <div class="segmented"><button class="on">全部</button><button>已部署</button><button>未部署</button></div>
+              <span style="margin-left:auto"><span class="btn primary" style="padding:1px 10px">＋ 新建</span> <span class="btn ghost" style="padding:1px 8px">从目录导入…</span></span>
+            </div>
+            <table class="mock">
+              <tr><th>名称</th><th>描述</th><th>部署状态</th></tr>
+              <tr><td class="mono-cell">git-commit-helper</td><td>git commit 智能助手</td><td><span class="ftag">用户</span> <span class="ftag project">T-Buddy</span></td></tr>
+              <tr><td class="mono-cell">deploy</td><td>部署到测试环境</td><td><span class="ftag project">demo</span> <span class="status-warn">⚠ 已偏离</span></td></tr>
+              <tr><td class="mono-cell">reviewer</td><td>PR 审查子代理</td><td><span style="color:var(--ui-dim2)">未部署</span></td></tr>
+            </table>
+            <div class="ctx show" style="position:relative;display:inline-block;margin-top:14px;vertical-align:top">
+              <div class="item">✎ 编辑（库）</div>
+              <div class="item">▶ 启用到… &nbsp;<span style="color:var(--ui-dim2)">用户级 / 项目</span></div>
+              <div class="item">⏸ 停用于… &nbsp;<span style="color:var(--ui-dim2)">移除部署</span></div>
+              <div class="item">⟳ 同步… &nbsp;<span style="color:var(--ui-dim2)">覆盖部署 / 从目标回库</span></div>
+              <div class="sep"></div>
+              <div class="item" style="color:#f14c4c">🗑 删除库项</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="editor mono" style="margin-top:16px;max-width:760px"><span class="h">资产库工作流</span>
+
+&lt;dataPath&gt;/ClaudeAssets/          <span class="c-dim">（库 = 唯一编辑处）</span>
+├─ skills/git-commit-helper/
+├─ skills/deploy/
+├─ agents/reviewer.md
+└─ commands/deploy.md
+
+启用到…  → 复制 → ~/.claude/skills/  或  &lt;proj&gt;/.claude/skills/
+停用于…  → 目标处移除（先备份到 &lt;dataPath&gt;/Trash/）
+⚠ 已偏离 → 部署副本 hash ≠ 库 → [覆盖部署 | 从目标回库]
+从…导入  → 现有 .claude/ 目录收编进库（skills/agents/commands 同模型）</div>
+  </section>
+
+  <!-- ================= ⑪ MCP ================= -->
+  <section class="card" id="s11">
+    <h2><span class="no">⑪</span>MCP 管理器 <span class="tag ok">claude mcp list 连通探测（已确认）</span></h2>
+    <p class="desc"><b>用户级</b>（<span class="mono">~/.claude.json</span> 的 mcpServers）与<b>项目级</b>（<span class="mono">&lt;proj&gt;/.mcp.json</span> + 项目条目覆盖）严格区分：行内强制作用域徽章 + 页头作用域切换。点「检测连通」运行真实 <span class="mono">claude mcp list</span> 按行解析（该命令无 <span class="mono">--json</span>）。</p>
+
+    <div class="win" style="max-width:760px">
+      <div class="win-body" style="min-height:0">
+        <div class="side" style="width:100%;border-right:none">
+          <div class="side-pad" style="padding-top:12px">
+            <div class="segmented" style="margin-bottom:10px">
+              <button>总览</button><button>Memory</button><button>CLAUDE.md</button><button>技能</button><button class="on">MCP</button>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+              <div class="segmented" id="mcp-scope">
+                <button class="on" data-scope="user">用户级</button>
+                <button data-scope="project">项目级 [TerminalBuddy ▾]</button>
+              </div>
+              <span style="margin-left:auto"><span class="btn primary" style="padding:1px 10px">⟳ 检测连通</span> <span class="btn ghost" style="padding:1px 8px">＋ 新增</span></span>
+            </div>
+            <table class="mock" id="mcp-user">
+              <tr><th>名称</th><th>传输</th><th>命令 / URL</th><th>状态</th></tr>
+              <tr><td class="mono-cell">codegraph</td><td>stdio</td><td class="mono-cell">codegraph serve --mcp</td><td class="status-ok">✔ Connected</td></tr>
+              <tr><td class="mono-cell">playwright</td><td>stdio</td><td class="mono-cell">cmd /c npx @playwright/mcp@latest</td><td class="status-ok">✔ Connected</td></tr>
+              <tr><td class="mono-cell">dbhub</td><td>http</td><td class="mono-cell">http://192.168.77.24:8484/mcp</td><td class="status-ok">✔ Connected</td></tr>
+            </table>
+            <table class="mock" id="mcp-project" style="display:none">
+              <tr><th>名称</th><th>传输</th><th>命令 / URL</th><th>状态</th></tr>
+              <tr><td class="mono-cell">playwright</td><td>stdio</td><td class="mono-cell">cmd /c npx @playwright/mcp@latest</td><td class="status-warn">⏸ Pending approval</td></tr>
+              <tr><td class="mono-cell">demo-sse</td><td>sse</td><td class="mono-cell">http://localhost:3001/sse</td><td class="status-bad">✖ Failed</td></tr>
+            </table>
+            <div style="margin-top:10px;display:flex;gap:8px;font-size:12px;color:var(--ui-dim);flex-wrap:wrap">
+              <span class="btn ghost">编辑</span>
+              <span class="btn ghost">删除</span>
+              <span class="btn ghost">复制到另一作用域</span>
+              <span class="btn ghost">在资源管理器显示配置</span>
+              <span style="align-self:center">状态取自 <span class="mono">claude mcp list</span>（✔ Connected / ⏸ Pending approval / ✖ Failed）</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="notes">
+      <li>探测按需触发（该命令会逐个 health-check，有延迟）+ 结果缓存带时间戳；新增向导按 stdio / sse / http 分表单，另留「JSON 高级编辑」。</li>
+    </ul>
+  </section>
+
+  <!-- ================= ⑫ 指示灯 ================= -->
+  <section class="card" id="s12">
+    <h2><span class="no">⑫</span>会话活动指示灯优化 <span class="tag ok">首个事件语义（已确认）</span></h2>
+    <p class="desc">标签页小灯与总览卡片灯共用一套状态机。<b>首个 hook 事件（无论类型，含 permission_prompt）点亮「会话在场」</b>；StopFailure <b>长红</b>保持到下次任务开始或点击灯手动清除，不受 30min stale 计时器影响。</p>
+    <div class="led-grid">
+      <div class="led-card"><div class="top"><span class="led off"></span><b>灰 · 空闲</b></div><small>无 Claude 会话 / 已结束</small></div>
+      <div class="led-card"><div class="top"><span class="led run"></span><b>绿闪 · 执行中</b></div><small>UserPromptSubmit 起 · tooltip「Claude 执行中」</small></div>
+      <div class="led-card"><div class="top"><span class="led att"></span><b>黄闪 · 等待确认</b></div><small>permission_prompt / 决策 · 点击处理</small></div>
+      <div class="led-card"><div class="top"><span class="led done"></span><b>绿亮→渐灭 · 完成</b></div><small>Stop · tooltip「任务完成」</small></div>
+      <div class="led-card"><div class="top"><span class="led fail"></span><b>红长 · 错误停止</b></div><small>StopFailure · 点击灯清除</small></div>
+      <div class="led-card"><div class="top"><span class="led end"></span><b>灭 · 会话结束</b></div><small>SessionEnd / 终端关闭</small></div>
+    </div>
+    <div class="editor mono" style="max-width:760px">事件 → 状态映射
+
+首个 hook 事件（permission_prompt / UserPromptSubmit / …）→ 点亮「会话在场」
+UserPromptSubmit  → 绿闪  「Claude 执行中」
+permission_prompt → 黄闪  「等待你的确认」
+Stop              → 绿亮渐灭  「任务完成」
+StopFailure       → 红长亮  「错误停止（点击清除）」
+SessionEnd/关闭   → 灭</div>
+  </section>
+
+  <!-- ================= 决策记录 · 分期 ================= -->
+  <section class="card" id="dec">
+    <h2><span class="no">✔</span>决策记录 · 实施分期</h2>
+    <div class="dec-grid">
+      <div class="dec-card">
+        <h4>1 · 指示灯语义 <span class="tag ok">已确认</span></h4>
+        <p>「会话在场」由<b>首个 hook 事件</b>点亮（含 permission_prompt），不设单独的"开始"信号。</p>
+      </div>
+      <div class="dec-card">
+        <h4>2 · 技能启停 <span class="tag ok">已确认深化</span></h4>
+        <p>采用<b>资产库 + 部署</b>：库唯一编辑处、启用复制 / 停用移除（Trash 备份）、hash 漂移检测、支持用户级与项目级目标、可从现有 .claude/ 目录收编导入。</p>
+      </div>
+      <div class="dec-card">
+        <h4>3 · MCP 连通探测 <span class="tag ok">已确认</span></h4>
+        <p>运行 <span class="mono">claude mcp list</span> 按行解析（无 --json）。实测输出：<span class="mono">codegraph / playwright / dbhub - ✔ Connected</span>；状态词：✔ Connected / ⏸ Pending approval / ✖ Failed。</p>
+      </div>
+    </div>
+    <div class="flow" style="margin-top:18px">
+      <div class="step"><span class="k">一期</span>数据层 + ①–⑥<small>SQLite 索引 / 历史 / 恢复 / 检索 / 回放 / 导出</small></div>
+      <div class="step"><span class="k">二期</span>⑥ 总览 + ⑫ 指示灯 + ⑦ 图片<small>复用 hook 事件流</small></div>
+      <div class="step"><span class="k">三期</span>⑧ → ⑨ → ⑩ → ⑪<small>Memory → CLAUDE.md → 技能 → MCP</small></div>
+    </div>
+  </section>
+
+  <footer>
+    TerminalBuddy · Claude Code 增强功能效果预览 v1 · 2026-09-24 ·
+    布局与配色对齐 src/styles/global.css 默认暗色主题
+  </footer>
+</div>
+
+<script>
+  // 会话历史右键菜单（演示）
+  (function () {
+    var menu = document.getElementById('ctx-menu');
+    var mock = document.getElementById('hist-mock');
+    if (!menu || !mock) return;
+    mock.querySelectorAll('.sess').forEach(function (el) {
+      el.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        mock.querySelectorAll('.sess').forEach(function (s) { s.classList.remove('sel'); });
+        el.classList.add('sel');
+        var rect = mock.getBoundingClientRect();
+        menu.style.left = (e.clientX - rect.left) + 'px';
+        menu.style.top = (e.clientY - rect.top) + 'px';
+        menu.classList.add('show');
+      });
+    });
+    document.addEventListener('click', function () { menu.classList.remove('show'); });
+  })();
+
+  // MCP 作用域切换（演示）
+  (function () {
+    var bar = document.getElementById('mcp-scope');
+    if (!bar) return;
+    var user = document.getElementById('mcp-user');
+    var proj = document.getElementById('mcp-project');
+    bar.querySelectorAll('button').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        bar.querySelectorAll('button').forEach(function (b) { b.classList.remove('on'); });
+        btn.classList.add('on');
+        var isUser = btn.dataset.scope === 'user';
+        user.style.display = isUser ? '' : 'none';
+        proj.style.display = isUser ? 'none' : '';
+      });
+    });
+  })();
+</script>
+</body>
+</html>
