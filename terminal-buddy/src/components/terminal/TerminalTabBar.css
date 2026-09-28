@@ -10,6 +10,8 @@
   scrollbar-width: thin;
 }
 
+.terminal-replay-group-label { align-self: center; flex-shrink: 0; padding: 0 9px; color: var(--text-tertiary); font-size: 11px; border-left: 1px solid var(--border-subtle); }
+
 .terminal-tab-bar::-webkit-scrollbar {
   height: 3px;
 }

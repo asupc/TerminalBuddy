@@ -21,6 +21,7 @@ export const TerminalTabBar: FC = () => {
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
+  const claudeReplayTabs = useAppStore(s => s.claudeReplayTabs);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
@@ -320,25 +321,16 @@ export const TerminalTabBar: FC = () => {
           ><X aria-hidden="true" /></button>
         </div>
       )}
-      {claudeReplayTab && (
-        <div
-          className={`terminal-tab ${activeSpecialTab === 'claude-replay' ? 'active' : ''}`}
-          onClick={() => openClaudeReplayTab(claudeReplayTab)}
-          title={`${claudeReplayTab.title} - 会话回放`}
-        >
+      {claudeReplayTabs.length > 0 && <span className="terminal-replay-group-label">会话详情</span>}
+      {claudeReplayTabs.map(tab => (
+        <div key={tab.sessionId} className={`terminal-tab ${activeSpecialTab === 'claude-replay' && claudeReplayTab?.sessionId === tab.sessionId ? 'active' : ''}`}
+          onClick={() => openClaudeReplayTab(tab)} title={tab.title}>
           <History className="terminal-tab-history-icon" aria-hidden="true" />
-          <span className="terminal-tab-name">会话回放</span>
-          <button
-            className="terminal-tab-close"
-            onClick={(e) => {
-              e.stopPropagation();
-              closeClaudeReplayTab();
-            }}
-            title="关闭"
-            aria-label="关闭会话回放"
-          ><X aria-hidden="true" /></button>
+          <span className="terminal-tab-name">{tab.title}</span>
+          <button className="terminal-tab-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId); }}
+            title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>
         </div>
-      )}
+      ))}
       {contextMenu && (
         <>
           <div className="context-menu-overlay" onClick={() => setContextMenu(null)} />

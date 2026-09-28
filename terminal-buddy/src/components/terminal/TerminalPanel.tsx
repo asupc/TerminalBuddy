@@ -307,8 +307,9 @@ export const TerminalPanel: FC = () => {
           <div className="git-history-tab-content claude-replay-tab-content">
             <Suspense fallback={<div className="lazy-panel-loading">加载会话回放…</div>}>
               <ClaudeReplayPage
+                key={claudeReplayTab.sessionId}
                 tab={claudeReplayTab}
-                onClose={closeClaudeReplayTab}
+                onClose={() => closeClaudeReplayTab(claudeReplayTab.sessionId)}
               />
             </Suspense>
           </div>
