@@ -9,7 +9,7 @@ import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { buildGroupTree, type GroupNode } from '../../utils/groupTree';
-import type { Profile } from '../../types';
+import type { ExtraParamMode, Profile } from '../../types';
 import { SessionTreeItem } from './SessionTreeItem';
 import { TabContextMenu } from './TabContextMenu';
 import { NewTerminalMenu } from './NewTerminalMenu';
@@ -19,19 +19,21 @@ interface TabSidebarProps {
   isActive: boolean;
   isSidebarMode: boolean;
   profiles: Profile[];
-  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null) => void;
+  onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
   onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd') => void;
   onStartTextEditor: () => void;
 }
 
 export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
   const sessions = useAppStore(s => s.sessions);
+  const projects = useAppStore(s => s.projects);
   const tabGroups = useAppStore(s => s.groups);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
   const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
+  const claudeReplayTabs = useAppStore(s => s.claudeReplayTabs);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
@@ -243,27 +245,36 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     return items;
   }, [sessions, profiles, tabGroups, terminalActivities, settingsVersion]);
 
-  // Build submenu tree: PowerShell/CMD always visible, then groups collapsed (hierarchical)
+  // Mirror the project/profile grouping in the configuration navigation.
   const submenuTree = useMemo(() => {
-    const tree = buildGroupTree(profiles, p => p.group || '默认');
-
-    const toTreeItems = (nodes: GroupNode<Profile>[]): TreeItem[] =>
-      nodes.map(node => ({
-        id: node.path,
-        label: node.name,
-        isGroup: true,
-        children: [
-          ...toTreeItems(node.children),
-          ...node.items.map(p => ({
-            id: p.id,
-            label: p.name,
-            data: p,
-          })),
-        ],
-      }));
-
-    return toTreeItems(tree);
-  }, [profiles]);
+    const profileItem = (profile: Profile): TreeItem => ({
+      id: profile.id,
+      label: profile.name,
+      data: profile,
+    });
+    const normalProfiles = profiles.filter(profile => !profile.pinned);
+    const items: TreeItem[] = projects.map(project => ({
+      id: project.name,
+      label: project.name,
+      isGroup: true,
+      children: normalProfiles.filter(profile => profile.group === project.name).map(profileItem),
+    }));
+    for (const group of new Set(normalProfiles.map(profile => profile.group || '默认'))) {
+      if (!items.some(item => item.id === group)) {
+        items.push({
+          id: group,
+          label: group,
+          isGroup: true,
+          children: normalProfiles.filter(profile => (profile.group || '默认') === group).map(profileItem),
+        });
+      }
+    }
+    const pinned = profiles.filter(profile => profile.pinned);
+    if (pinned.length > 0) {
+      items.unshift({ id: '__pinned__', label: '置顶', isGroup: true, children: pinned.map(profileItem) });
+    }
+    return items;
+  }, [profiles, projects]);
 
   // Flatten expanded items for keyboard nav (recursive for nested groups)
   const visibleSubmenuItems = useMemo(() => {
@@ -499,12 +510,12 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   // Scroll highlighted item into view
   useEffect(() => {
     if (highlightedIndex < 0 || !submenuRef.current) return;
-    const items = submenuRef.current.querySelectorAll('.submenu-item, .submenu-tree .tree-item');
+    const items = submenuRef.current.querySelectorAll('.submenu-tree .tree-item');
     const el = items[highlightedIndex] as HTMLElement;
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlightedIndex]);
 
-  if (sessions.length === 0 && !gitHistoryTab) return null;
+  if (sessions.length === 0 && !gitHistoryTab && claudeReplayTabs.length === 0) return null;
 
   const handleRenameSubmit = (sessionId: string, currentLabel: string) => {
     const trimmed = renameValue.trim();
@@ -540,27 +551,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
             </button>
           </div>
         )}
-        {claudeReplayTab && (
-          <div
-            className={`tab-nav-settings-btn ${activeSpecialTab === 'claude-replay' ? 'active' : ''}`}
-            onClick={() => openClaudeReplayTab(claudeReplayTab)}
-            title={`${claudeReplayTab.title} - 会话回放`}
-          >
-            <span className="tab-nav-dot" style={{ background: '#4b95e9' }} />
-            <span className="tab-nav-name">会话回放</span>
-            <button
-              className="tree-item-close"
-              onClick={(event) => {
-                event.stopPropagation();
-                closeClaudeReplayTab();
-              }}
-              title="关闭"
-              aria-label="关闭会话回放"
-            >
-              <X aria-hidden="true" />
-            </button>
-          </div>
-        )}
+
       </div>
       <div
         className={`tab-nav-content${dropActive ? ' drop-target' : ''}`}
@@ -583,6 +574,27 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           setDragProfileId(null);
         }}
       >
+        {claudeReplayTabs.length > 0 && (
+          <div className="tab-nav-group">
+            <div className="tab-nav-group-header" onClick={() => setCollapsedGroups(prev => {
+              const next = new Set(prev);
+              if (next.has("replay-group")) next.delete("replay-group"); else next.add("replay-group");
+              return next;
+            })} role="button" tabIndex={0} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.click(); } }}>
+              <span className={`tab-nav-group-arrow${collapsedGroups.has("replay-group") ? " collapsed" : ""}`}>▾</span>
+              <span className="tab-nav-group-name">会话详情</span>
+              <span className="tab-nav-group-count">{claudeReplayTabs.length}</span>
+            </div>
+            {!collapsedGroups.has("replay-group") && claudeReplayTabs.map(tab => (
+              <div key={tab.sessionId} className={`tab-nav-settings-btn tab-nav-replay-item ${activeSpecialTab === "claude-replay" && claudeReplayTab?.sessionId === tab.sessionId ? "active" : ""}`}
+                onClick={() => openClaudeReplayTab(tab)} title={tab.title}>
+                <span className="tab-nav-name">{tab.title}</span>
+                <button type="button" className="tree-item-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId); }}
+                  title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>
+              </div>
+            ))}
+          </div>
+        )}
         {sessionTree.map((group) => (
           <SessionTreeItem
             key={group.id}

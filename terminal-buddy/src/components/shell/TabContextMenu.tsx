@@ -1,3 +1,5 @@
+import { useAppStore } from '../../stores/appStore';
+import { effectiveProfilePath } from '../../utils/projectPath';
 import { FC } from 'react';
 import { openInExplorer } from '../../services/tauri';
 import type { ExtraParamMode, Profile, TerminalSession } from '../../types';
@@ -62,17 +64,18 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
       {(() => {
         if (!profile) return null;
         const isLocal = profile.terminalType === 'powershell' || profile.terminalType === 'pwsh' || profile.terminalType === 'cmd';
-        const hasPath = !!profile.startupPath && profile.startupPath.trim() !== '';
+        const path = effectiveProfilePath(profile, useAppStore.getState().projects);
+        const hasPath = !!path;
         if (!isLocal || !hasPath) return null;
         return (
           <>
             <div className="context-menu-item" onClick={async () => {
               onClose();
-              try { await openInExplorer(profile.startupPath!); }
+              try { await openInExplorer(path); }
               catch (err) { console.error(err); }
             }}>打开目录</div>
             <div className="context-menu-item" onClick={() => {
-              navigator.clipboard.writeText(profile.startupPath!).catch(() => {});
+              navigator.clipboard.writeText(path).catch(() => {});
               onClose();
             }}>复制启动路径</div>
           </>
