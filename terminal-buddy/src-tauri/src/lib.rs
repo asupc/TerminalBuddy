@@ -26,7 +26,7 @@ use commands::{
     close_terminal, connect_ssh_session,
     create_profile, delete_path, delete_profile,
     drain_terminal_output, ensure_dir, export_all_data, fetch_ark_usage,
-    fetch_deepseek_usage, fetch_minimax_usage, fetch_qianfan_usage, get_all_profiles,
+    fetch_deepseek_usage, fetch_minimax_usage, fetch_qianfan_usage, get_all_profiles, get_projects, save_projects,
     get_app_settings, get_claude_sessions_for_terminals,
     get_command_templates, get_data_path, get_data_path_status, get_default_terminal_status,
     get_downloads_directory,
@@ -433,7 +433,7 @@ pub fn run() {
         })
 
         .invoke_handler(tauri::generate_handler![
-            get_all_profiles,
+            get_all_profiles, get_projects, save_projects,
             get_profile,
             get_ssh_temp_directory,
             get_ssh_home_dir,

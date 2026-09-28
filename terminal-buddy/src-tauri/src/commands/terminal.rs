@@ -291,6 +291,14 @@ fn spawn_terminal_backend(
     ),
     String,
 > {
+    if let Some(path) = startup_path {
+        if !std::path::Path::new(path).is_dir() {
+            return Err(format!(
+                "终端启动目录不存在或不可访问：{}。请在连接配置中修正启动路径。",
+                path
+            ));
+        }
+    }
     if *mode == TerminalLoadingMode::VsCode {
         let (process, reader) =
             VsCodeTerminalProcess::spawn(app, rows, cols, startup_path, env_vars)?;
@@ -1163,13 +1171,7 @@ impl TerminalService {
         let terminal_type = profile
             .as_ref()
             .map_or("powershell", |p| p.terminal_type.as_str());
-        let profile_startup_path = profile.as_ref().and_then(|p| {
-            if p.startup_path.is_empty() {
-                None
-            } else {
-                Some(p.startup_path.clone())
-            }
-        });
+        let profile_startup_path = profile.as_ref().and_then(ProfileService::effective_startup_path);
         let startup_path_override = startup_path_override
             .map(str::trim)
             .filter(|path| !path.is_empty())
