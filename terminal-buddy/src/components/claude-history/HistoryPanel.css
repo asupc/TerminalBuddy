@@ -214,6 +214,7 @@
 }
 
 .claude-hist-group-count {
+  margin-left: auto;
   flex: none;
   color: var(--text-tertiary);
   font-size: 10.5px;
@@ -456,3 +457,6 @@
   color: var(--text-secondary);
   margin-top: 2px;
 }
+
+.claude-hist-bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 5px 8px; font-size: 11px; color: var(--text-secondary); }
+.claude-hist-bulk-bar button { border: 1px solid var(--border); border-radius: 4px; background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; }

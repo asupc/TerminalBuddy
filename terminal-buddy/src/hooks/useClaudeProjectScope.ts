@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { effectiveProfilePath } from '../utils/projectPath';
 import { isClaudeLaunchProfile } from '../utils/claudeLaunch';
 
 /**
@@ -29,6 +30,7 @@ export function useClaudeProjectScope(): string | undefined {
   const activeSessionId = useAppStore(state => state.activeSessionId);
   const sessions = useAppStore(state => state.sessions);
   const profiles = useAppStore(state => state.profiles);
+  const projects = useAppStore(state => state.projects);
   const sessionDirectories = useAppStore(state => state.sessionDirectories);
   const activity = useAppStore(state =>
     state.activeSessionId ? state.terminalActivities[state.activeSessionId] : undefined,
@@ -52,6 +54,6 @@ export function useClaudeProjectScope(): string | undefined {
     }
     const recorded = sessionDirectories[activeSessionId];
     if (recorded) return recorded;
-    return profile?.startupPath || undefined;
-  }, [activeSessionId, activity, claudeSessionId, sessionDirectories, sessions, profiles]);
+    return profile ? effectiveProfilePath(profile, projects) || undefined : undefined;
+  }, [activeSessionId, activity, claudeSessionId, sessionDirectories, sessions, profiles, projects]);
 }

@@ -56,6 +56,7 @@ export const ClaudePanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const terminalActivities = useAppStore(s => s.terminalActivities);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
+  const sessionDirectories = useAppStore(s => s.sessionDirectories);
   const clearClaudeFailure = useAppStore(s => s.clearClaudeFailure);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
 
@@ -143,6 +144,7 @@ export const ClaudePanel: FC = () => {
                     onClick={() => openClaudeReplayTab({
                       sessionId: card.claudeSessionId!,
                       title: card.name,
+                      projectDir: sessionDirectories[card.terminalId],
                     })}
                   >
                     回放

@@ -1,5 +1,6 @@
 import { startBlankTerminal, startTerminal, updateProfileLastUsed } from '../../services/tauri';
 import { launchTerminalSession } from '../../services/sessionRestore';
+import { effectiveProfilePath, normalizeProjectPath, projectForDirectory } from '../../utils/projectPath';
 import { isClaudeLaunchProfile } from '../../utils/claudeLaunch';
 import { PRESET_THEMES, type Profile } from '../../types';
 import { useAppStore } from '../../stores/appStore';
@@ -18,7 +19,7 @@ export interface ResumeLaunchPreset {
 }
 
 function normalizeDir(path: string): string {
-  return path.trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+  return normalizeProjectPath(path).replace(/\//g, '\\');
 }
 
 /**
@@ -29,16 +30,23 @@ function normalizeDir(path: string): string {
 export function pickClaudeProfile(profiles: Profile[], projectDir: string): Profile | undefined {
   const dir = normalizeDir(projectDir);
   if (!dir) return undefined;
-  const covering = profiles.filter(profile => {
-    const base = normalizeDir(profile.startupPath);
-    return isClaudeLaunchProfile(profile) && (base === dir || dir.startsWith(`${base}\\`));
+  const projects = useAppStore.getState().projects;
+  const project = projectForDirectory(projects, projectDir);
+  const candidates = profiles.filter(profile => {
+    if (!isClaudeLaunchProfile(profile)) return false;
+    if (project) return profile.group === project.name;
+    const base = normalizeDir(effectiveProfilePath(profile, projects));
+    return Boolean(base && (base === dir || dir.startsWith(`${base}\\`)));
   });
-  return covering.reduce<Profile | undefined>(
-    (best, profile) => (!best
-      || normalizeDir(profile.startupPath).length > normalizeDir(best.startupPath).length
-      ? profile : best),
-    undefined,
-  );
+  // Prefer an explicit matching working directory; otherwise a Claude config belonging
+  // to this project (never borrow credentials from another project).
+  return candidates.sort((a, b) => {
+    const score = (profile: Profile) => {
+      const base = normalizeDir(effectiveProfilePath(profile, projects));
+      return base && (base === dir || dir.startsWith(`${base}\\`)) ? base.length : -1;
+    };
+    return score(b) - score(a);
+  })[0];
 }
 
 /** 聚焦已有终端（分屏模式下先落位），总览面板「跳转」与恢复复用。 */
@@ -79,6 +87,7 @@ export async function resumeClaudeSession(
     .filter(Boolean)
     .join(' ');
   const profile = pickClaudeProfile(store.profiles, session.projectDir);
+  const project = projectForDirectory(store.projects, session.projectDir);
   const base = {
     addSession: store.addSession,
     resolveStartingSession: store.resolveStartingSession,
@@ -98,6 +107,7 @@ export async function resumeClaudeSession(
         colorTheme: { background: theme.background, foreground: theme.foreground },
         tabColor: profile.tabColor || null,
         groupId: 'default',
+        groupName: project?.name,
         owner: 'pc',
         extraParams,
         extraParamMode: 'append',
@@ -136,6 +146,7 @@ export async function resumeClaudeSession(
       colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
       tabColor: null,
       groupId: 'default',
+      groupName: project?.name,
       owner: 'pc',
       starting: true,
     }),

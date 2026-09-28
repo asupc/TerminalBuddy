@@ -6,6 +6,7 @@ import {
 } from '../../services/tauri';
 import type { ClaudeReplayTab } from '../../stores/appStore';
 import { useAppStore } from '../../stores/appStore';
+import { projectForDirectory } from '../../utils/projectPath';
 import { ConfirmDialog } from '../shared/Dialog';
 import { ClaudeExportDialog } from './ClaudeExportDialog';
 import { resumeClaudeSession } from './resumeClaudeSession';
@@ -32,6 +33,7 @@ const ROLE_LABEL: Record<string, string> = {
 /** 会话回放（特殊标签页）：JSONL 渲染成对话流，分页加载，可锚定搜索命中。 */
 export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
   const showToast = useAppStore(s => s.showToast);
+  const projects = useAppStore(s => s.projects);
   const [messages, setMessages] = useState<ClaudeReplayMessage[]>([]);
   const [total, setTotal] = useState(0);
   const [title, setTitle] = useState(tab.title);
@@ -44,6 +46,7 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
   const [exportOpen, setExportOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const loadingRef = useRef(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   // 载入下一页（offset = 当前已载入条数）；focusSeq 存在时循环载入直到覆盖该条
   const loadPage = useCallback(async (offset: number, autoCoverSeq?: number): Promise<void> => {
@@ -52,7 +55,7 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
     setLoading(true);
     try {
       let currentOffset = offset;
-      let first = true;
+      let first = offset === 0;
       for (;;) {
         const page = await getClaudeReplay(tab.sessionId, currentOffset, PAGE_SIZE);
         setTotal(page.total);
@@ -86,6 +89,15 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
     void loadPage(0, tab.focusSeq);
   }, [tab.sessionId, tab.focusSeq, loadPage]);
 
+  // 自动填充未占满的可视区域；滚动接近底部时继续加载下一页。
+  const loadIfNearBottom = useCallback(() => {
+    const body = bodyRef.current;
+    if (!body || loadingRef.current || messages.length >= total || !messages.length) return;
+    if (body.scrollHeight - body.scrollTop - body.clientHeight < 240) void loadPage(messages.length);
+  }, [messages.length, total, loadPage]);
+
+  useEffect(() => { loadIfNearBottom(); }, [loadIfNearBottom, loading]);
+
   // 搜索命中锚定滚动
   useEffect(() => {
     if (tab.focusSeq === undefined || messages.length === 0) return;
@@ -114,7 +126,9 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
         <div className="claude-replay-title-block">
           <div className="claude-replay-title">{title}</div>
           <div className="claude-replay-sub">
-            {projectDir && <span className="claude-replay-dir">{projectDir}</span>}
+            {projectDir && <span className="claude-replay-dir" title={projectDir}>
+              {projectForDirectory(projects, projectDir)?.name ?? projectDir}
+            </span>}
             {model && ` · ${model}`}
             {` · ${total || messages.length} 条消息`}
             {tokens > 0 && ` · ${tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : tokens} tok`}
@@ -137,7 +151,7 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
         </div>
       </div>
 
-      <div className="claude-replay-body">
+      <div className="claude-replay-body" ref={bodyRef} onScroll={loadIfNearBottom}>
         {error && <div className="claude-replay-error">{error}</div>}
         {!error && !loading && messages.length === 0 && (
           <div className="claude-replay-empty">会话内容为空</div>
@@ -160,7 +174,12 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
               </details>
             ) : (
               <>
-                {message.text && <div className="claude-replay-text">{message.text}</div>}
+                {message.text && (message.text.length > 1200 || message.text.split("\n").length > 18 ? (
+                  <details className="claude-replay-long-text">
+                    <summary>{message.text.slice(0, 180).replace(/\s+/g, " ")}… <span>展开完整内容（{message.text.length} 字）</span></summary>
+                    <div className="claude-replay-text">{message.text}</div>
+                  </details>
+                ) : <div className="claude-replay-text">{message.text}</div>)}
                 {message.tools.map((tool, index) => (
                   <div key={`${message.seq}-tool-${index}`} className="claude-replay-tool">
                     ▸ {tool.name}{tool.summary ? ` · ${tool.summary}` : ''}

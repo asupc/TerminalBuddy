@@ -165,6 +165,10 @@
   margin: 2px 0;
 }
 
+.claude-replay-long-text summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.claude-replay-long-text summary span { color: var(--accent); white-space: nowrap; }
+.claude-replay-long-text[open] summary { margin-bottom: 8px; }
+
 .claude-replay-tool-result {
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
