@@ -71,6 +71,26 @@ impl ProfileService {
         Ok(profiles)
     }
 
+    /// Resolve an optional per-profile override against its project's required base path.
+    pub fn effective_startup_path(profile: &Profile) -> Option<String> {
+        let base = std::fs::read(PathService::get_data_dir().join("projects.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Vec<serde_json::Value>>(&bytes).ok())
+            .and_then(|projects| projects.into_iter().find(|project| {
+                project["name"].as_str() == Some(if profile.group.trim().is_empty() { "默认" } else { profile.group.as_str() })
+            }))
+            .and_then(|project| project["path"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        let override_path = profile.startup_path.trim();
+        if override_path.is_empty() {
+            return if base.is_empty() { None } else { Some(base) };
+        }
+        let path = std::path::Path::new(override_path);
+        if path.is_absolute() { Some(override_path.to_string()) }
+        else if base.is_empty() { None }
+        else { Some(std::path::Path::new(&base).join(path).to_string_lossy().to_string()) }
+    }
+
     pub fn get_profile(id: &str) -> Result<Profile, String> {
         let profiles = Self::get_all_profiles()?;
         profiles
