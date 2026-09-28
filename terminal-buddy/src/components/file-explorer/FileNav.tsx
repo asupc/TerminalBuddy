@@ -3,6 +3,8 @@ import { ArrowDown, ArrowUp, Folder, FolderPlus, ListChevronsDownUp, Plus, Refre
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { listDirectory, openPath, openInExplorer, deletePath, renamePath, saveConfigNavWidth, saveFileNavWidth, getBackendAppSettings } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
+import { useActiveTabProjectDirectory } from '../../hooks/useActiveTabProjectDirectory';
+import { effectiveProfilePath } from '../../utils/projectPath';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
@@ -25,9 +27,13 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const fileSortDir = useAppStore(s => s.fileSortDir);
   const setFileSort = useAppStore(s => s.setFileSort);
   const activeSessionId = useAppStore(s => s.activeSessionId);
+  const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
+  const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
+  const tabProjectDirectory = useActiveTabProjectDirectory();
   const sessionDirectories = useAppStore(s => s.sessionDirectories);
   const sessions = useAppStore(s => s.sessions);
   const profiles = useAppStore(s => s.profiles);
+  const projects = useAppStore(s => s.projects);
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
   const fileRoots = useAppStore(s => s.fileRoots);
   const addFileRoot = useAppStore(s => s.addFileRoot);
@@ -39,6 +45,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const [gitTargetOverride, setGitTargetOverride] = useState<string | null>(null);
   const [showRootPicker, setShowRootPicker] = useState(false);
   const [focusedRootPath, setFocusedRootPath] = useState<string | null>(null);
+  const [autoExpandedRootPath, setAutoExpandedRootPath] = useState<string | null>(null);
   const [rootRefreshVersion, setRootRefreshVersion] = useState(0);
   const [rootCollapseVersion, setRootCollapseVersion] = useState(0);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -58,19 +65,20 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const isSsh = activeSession?.terminalType === 'ssh';
   const configuredDirectories = useMemo(() => {
     const uniquePaths = new Map<string, string>();
+    for (const project of projects) {
+      const path = normalizeConfiguredPath(project.path);
+      if (path) uniquePaths.set(path.toLowerCase(), path);
+    }
     for (const profile of profiles) {
-      if (profile.terminalType !== 'powershell' && profile.terminalType !== 'pwsh' && profile.terminalType !== 'cmd') continue;
-      const path = normalizeConfiguredPath(profile.startupPath || '');
-      if (!path) continue;
-      const key = path.toLowerCase();
-      if (!uniquePaths.has(key)) uniquePaths.set(key, path);
+      const path = normalizeConfiguredPath(effectiveProfilePath(profile, projects));
+      if (path && !uniquePaths.has(path.toLowerCase())) uniquePaths.set(path.toLowerCase(), path);
     }
     return [...uniquePaths.values()];
-  }, [profiles]);
+  }, [profiles, projects]);
 
   const rootDirectories = useMemo(() => {
     const seen = new Set<string>();
-    return fileRoots
+    return [...fileRoots, ...projects.map(project => project.path), ...(tabProjectDirectory ? [tabProjectDirectory] : [])]
       .map(normalizeConfiguredPath)
       .filter(path => {
         const key = path.toLowerCase();
@@ -78,7 +86,19 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
         seen.add(key);
         return true;
       });
-  }, [fileRoots]);
+  }, [fileRoots, projects, tabProjectDirectory]);
+  const activeProjectRoot = useMemo(() => tabProjectDirectory && rootDirectories.find(
+    path => normalizeConfiguredPath(path).toLowerCase() === normalizeConfiguredPath(tabProjectDirectory).toLowerCase(),
+  ), [tabProjectDirectory, rootDirectories]);
+
+  useEffect(() => {
+    setFocusedRootPath(activeProjectRoot || null);
+    setAutoExpandedRootPath(activeProjectRoot || null);
+    setSelectedPath(activeProjectRoot || null);
+    setGitTargetOverride(null);
+    setFilterQuery('');
+    contentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [activeSessionId, activeSpecialTab, claudeReplayTab?.sessionId, activeProjectRoot]);
 
   const fileRootKeys = useMemo(
     () => new Set(rootDirectories.map(path => path.toLowerCase())),
@@ -96,10 +116,11 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     if (trackedDirectory) return trackedDirectory;
     const session = sessions.find(item => item.id === activeSessionId);
     if (!session) return '';
-    return profiles.find(profile => profile.id === session.profileId)?.startupPath?.trim() || '';
-  }, [activeSessionId, profiles, sessionDirectories, sessions]);
+    return (() => { const profile = profiles.find(p => p.id === session.profileId); return profile ? effectiveProfilePath(profile, projects) : ''; })();
+  }, [activeSessionId, profiles, projects, sessionDirectories, sessions]);
 
   const gitTargetDirectory = gitTargetOverride
+    || tabProjectDirectory
     || activeSessionDirectory
     || (!activeSessionId ? currentDirectory : '');
 
@@ -237,12 +258,14 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
 
   const handleCollapseAll = useCallback(() => {
     setFocusedRootPath(null);
+    setAutoExpandedRootPath(null);
     setRootCollapseVersion(version => version + 1);
     contentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }, []);
 
   const handleRootExpandedChange = useCallback((path: string, expanded: boolean) => {
     setFocusedRootPath(expanded ? path : null);
+    setAutoExpandedRootPath(null);
     if (expanded) {
       setSelectedPath(path);
       activateTreeDirectory(path);
@@ -606,6 +629,9 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
           <ConfiguredFileRoot
             key={path.toLowerCase()}
             path={path}
+            initiallyExpanded={autoExpandedRootPath?.toLowerCase() === path.toLowerCase()}
+            autoExpandToken={autoExpandedRootPath?.toLowerCase() === path.toLowerCase()
+              ? `${activeSpecialTab ?? activeSessionId}:${claudeReplayTab?.sessionId ?? ''}` : undefined}
             refreshVersion={rootRefreshVersion}
             collapseVersion={rootCollapseVersion}
             sortBy={fileSortBy}

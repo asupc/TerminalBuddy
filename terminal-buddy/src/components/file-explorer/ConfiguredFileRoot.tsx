@@ -8,6 +8,8 @@ import { useAppStore } from '../../stores/appStore';
 
 export interface ConfiguredFileRootProps {
   path: string;
+  initiallyExpanded?: boolean;
+  autoExpandToken?: string;
   refreshVersion: number;
   collapseVersion: number;
   sortBy: 'name' | 'size' | 'modified';
@@ -26,6 +28,8 @@ export interface ConfiguredFileRootProps {
 
 export const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   path,
+  initiallyExpanded = false,
+  autoExpandToken,
   refreshVersion,
   collapseVersion,
   sortBy,
@@ -42,18 +46,27 @@ export const ConfiguredFileRoot: FC<ConfiguredFileRootProps> = ({
   setRenamingPath,
 }) => {
   const exclusionPatterns = useAppStore(s => s.exclusionPatterns);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [nodes, setNodes] = useState<FileNode[]>([]);
   const [visibleNodeCount, setVisibleNodeCount] = useState(DIRECTORY_RENDER_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const [pathError, setPathError] = useState(false);
   const itemRef = useRef<HTMLDivElement>(null);
   const pinToTopAfterLoadRef = useRef(false);
+  const mountedRef = useRef(false);
 
   useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
     pinToTopAfterLoadRef.current = false;
     setExpanded(false);
   }, [collapseVersion]);
+
+  useEffect(() => {
+    if (autoExpandToken) setExpanded(true);
+  }, [autoExpandToken]);
 
   useEffect(() => {
     if (!expanded) {
