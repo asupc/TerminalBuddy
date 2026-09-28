@@ -1,3 +1,4 @@
+import { effectiveProfilePath } from '../../utils/projectPath';
 import type { StoreApi } from "zustand";
 import type { AppState, TerminalActivityPhase } from "../appStore";
 import { saveTabsToStorage, useAppStore } from "../appStore";
@@ -198,8 +199,8 @@ export const createSessionsSlice = (
 					const session = state.sessions.find((s) => s.id === id);
 					if (session) {
 						const profile = state.profiles.find((p) => p.id === session.profileId);
-						if (profile?.startupPath) {
-							currentDirectory = profile.startupPath;
+						if (profile) {
+							currentDirectory = effectiveProfilePath(profile, state.projects);
 						}
 					}
 				}

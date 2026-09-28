@@ -35,6 +35,7 @@ export interface GitHistoryTab {
 export interface ClaudeReplayTab {
 	sessionId: string;
 	title: string;
+	projectDir?: string;
 	/** 从全文检索命中跳入时，锚定到该条消息 */
 	focusSeq?: number;
 }
@@ -214,6 +215,8 @@ export async function initFileTreeNav() {
 export interface AppState {
 	// Profiles
 	profiles: Profile[];
+	projects: import("../types").Project[];
+	setProjects: (projects: import("../types").Project[]) => void;
 	selectedProfileId: string | null;
 	setProfiles: (profiles: Profile[]) => void;
 	addProfile: (profile: Profile) => void;
@@ -241,8 +244,9 @@ export interface AppState {
 	openGitHistoryTab: (tab: GitHistoryTab) => void;
 	closeGitHistoryTab: () => void;
 	claudeReplayTab: ClaudeReplayTab | null;
+	claudeReplayTabs: ClaudeReplayTab[];
 	openClaudeReplayTab: (tab: ClaudeReplayTab) => void;
-	closeClaudeReplayTab: () => void;
+	closeClaudeReplayTab: (sessionId?: string) => void;
 	activeSpecialTab: WorkspaceSpecialTab;
 	setActiveSpecialTab: (tab: WorkspaceSpecialTab) => void;
 

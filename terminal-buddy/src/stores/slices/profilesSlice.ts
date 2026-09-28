@@ -7,6 +7,8 @@ export const createProfilesSlice = (
 ): Partial<AppState> => ({
 	// Profiles
 	profiles: [],
+	projects: [],
+	setProjects: (projects) => set({ projects }),
 	selectedProfileId: null,
 	setProfiles: (profiles) => set({ profiles }),
 	addProfile: (profile) => set((state) => ({ profiles: [...state.profiles, profile] })),
@@ -51,6 +53,7 @@ export const createProfilesSlice = (
 	settingsDialogOpen: false,
 	gitHistoryTab: null,
 	claudeReplayTab: null,
+	claudeReplayTabs: [],
 	activeSpecialTab: null,
 	openSettingsDialog: () => set({ settingsDialogOpen: true }),
 	closeSettingsDialog: () => set({ settingsDialogOpen: false }),
@@ -60,12 +63,24 @@ export const createProfilesSlice = (
 			gitHistoryTab: null,
 			activeSpecialTab: state.activeSpecialTab === "git-history" ? null : state.activeSpecialTab,
 		})),
-	openClaudeReplayTab: (tab) => set({ claudeReplayTab: tab, activeSpecialTab: "claude-replay" }),
-	closeClaudeReplayTab: () =>
-		set((state) => ({
-			claudeReplayTab: null,
-			activeSpecialTab: state.activeSpecialTab === "claude-replay" ? null : state.activeSpecialTab,
-		})),
+	openClaudeReplayTab: (tab) => set((state) => ({
+		claudeReplayTabs: state.claudeReplayTabs.some(item => item.sessionId === tab.sessionId)
+			? state.claudeReplayTabs.map(item => item.sessionId === tab.sessionId ? tab : item)
+			: [...state.claudeReplayTabs, tab],
+		claudeReplayTab: tab,
+		activeSpecialTab: "claude-replay",
+	})),
+	closeClaudeReplayTab: (sessionId) => set((state) => {
+		const target = sessionId ?? state.claudeReplayTab?.sessionId;
+		const remaining = state.claudeReplayTabs.filter(item => item.sessionId !== target);
+		const wasActive = state.claudeReplayTab?.sessionId === target;
+		return {
+			claudeReplayTabs: remaining,
+			claudeReplayTab: wasActive ? (remaining[remaining.length - 1] ?? null) : state.claudeReplayTab,
+			activeSpecialTab: wasActive && remaining.length === 0 && state.activeSpecialTab === "claude-replay"
+				? null : state.activeSpecialTab,
+		};
+	}),
 	setActiveSpecialTab: (tab) => set({ activeSpecialTab: tab }),
 
 	exclusionPatterns: ["node_modules", ".git"],

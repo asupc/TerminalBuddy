@@ -8,6 +8,7 @@ import { FileNav } from "./components/file-explorer/FileNav";
 import { HistoryPanel } from "./components/claude-history/HistoryPanel";
 import { TabNav } from "./components/shell/TabNav";
 import { ActivityBar, type SidebarPanel } from "./components/shell/ActivityBar";
+import { effectiveProfilePath } from './utils/projectPath';
 import { ConfigEditDialog } from "./components/profile-config/ConfigEditDialog";
 import { ExtraParamsDialog } from "./components/profile-config/ExtraParamsDialog";
 import { ClaudeDecisionDialog } from "./components/shared/ClaudeDecisionDialog";
@@ -17,7 +18,7 @@ import { Toast } from "./components/shared/Toast";
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
 import { flushPendingSaveTabs } from './stores/slices/sessionsSlice';
-import { getAllProfiles, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
+import { getAllProfiles, getProjects, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
 import { APP_VERSION } from './version';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
@@ -52,6 +53,7 @@ import { PRESET_THEMES } from './types';
 
 function App() {
   const setProfiles = useAppStore(s => s.setProfiles);
+  const setProjects = useAppStore(s => s.setProjects);
   const addSession = useAppStore(s => s.addSession);
   const resolveStartingSession = useAppStore(s => s.resolveStartingSession);
   const setSessionDirectory = useAppStore(s => s.setSessionDirectory);
@@ -407,10 +409,11 @@ function App() {
     try {
       const data = await getAllProfiles();
       setProfiles(data);
+      setProjects(await getProjects());
     } catch (err) {
       console.error('Failed to load profiles:', err);
     }
-  }, [setProfiles]);
+  }, [setProfiles, setProjects]);
 
   const handleStartTerminal = useCallback(async (profile: Profile, extraParams?: string, _presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => {
     if (profile.terminalType === 'mstsc') {
@@ -447,9 +450,10 @@ function App() {
       start: (rows, cols) => startTerminal(profile.id, extraParams, rows, cols, resolvedTabName, undefined, presetTag, presetTagColor ?? null, extraParamMode),
       onStarted: (terminalId) => {
         void updateProfileLastUsed(profile.id).catch(err => console.error('Failed to update profile last used:', err));
-        if (profile.startupPath) {
-          setSessionDirectory(terminalId, profile.startupPath);
-          setCurrentDirectory(profile.startupPath);
+        const path = effectiveProfilePath(profile, useAppStore.getState().projects);
+        if (path) {
+          setSessionDirectory(terminalId, path);
+          setCurrentDirectory(path);
         }
       },
     });

@@ -1,6 +1,11 @@
 export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
 export type ExtraParamMode = 'append' | 'independent';
 
+export interface Project {
+  name: string;
+  path: string;
+}
+
 export interface Profile {
   id: string;
   name: string;
