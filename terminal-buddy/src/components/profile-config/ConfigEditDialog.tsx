@@ -6,8 +6,9 @@ import { createProfile, updateProfile, deleteProfile } from '../../services/taur
 import { showAlert } from '../../services/dialog';
 import { PRESET_THEMES, TAB_COLORS, type Profile } from '../../types';
 import { COMMAND_TEMPLATES } from '../../data/commandTemplates';
-import { GroupCascader } from './GroupCascader';
+import { useAppStore } from '../../stores/appStore';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
+import { ProjectPicker } from './ProjectPicker';
 import './ConfigEditDialog.css';
 
 interface ConfigEditDialogProps {
@@ -32,12 +33,12 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   onClose,
   onSave,
   defaultGroup,
-  profiles,
 }) => {
+  const projects = useAppStore(state => state.projects);
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormData>({
     defaultValues: {
       name: profile?.name || '',
-      group: defaultGroup || profile?.group || '默认',
+      group: defaultGroup || profile?.group || projects[0]?.name || '',
       terminalType: profile?.terminalType || 'powershell',
       startupPath: profile?.startupPath || '',
       colorTheme: profile?.colorTheme || 'dark-default',
@@ -174,6 +175,9 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
   const onSubmit = async (data: FormData) => {
     try {
       setSaveError(null);
+      if (!projects.some(p => p.name === data.group && p.path.trim())) {
+        setSaveError('请先添加项目并设置项目路径'); return;
+      }
       const commands = startupCommands.filter(c => c.trim() !== '');
       if (profile) {
         await updateProfile({
@@ -285,12 +289,14 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
               {errors.name && <span className="error">{errors.name.message}</span>}
             </div>
             <div className="form-group">
-              <label>分组</label>
-              <GroupCascader
+              <label>项目 *</label>
+              <input type="hidden" {...register('group', { required: true })} />
+              <ProjectPicker
+                projects={projects}
                 value={watch('group')}
-                onChange={(val) => setValue('group', val)}
-                profiles={profiles}
+                onChange={name => setValue('group', name, { shouldValidate: true })}
               />
+              {errors.group && <span className="error">请选择项目</span>}
             </div>
           </div>
 
@@ -412,9 +418,9 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
           </div>
 
           <div className="form-group">
-            <label>起始路径</label>
+            <label>起始路径（可选，留空继承项目路径；可填相对路径）</label>
             <div className="input-with-button">
-              <input {...register('startupPath')} placeholder="C:\Projects" />
+              <input {...register('startupPath')} placeholder={projects.find(p => p.name === watch('group'))?.path || '.\\subfolder'} />
               <button type="button" className="browse-btn" onClick={handleBrowsePath}>
                 浏览
               </button>

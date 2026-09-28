@@ -6,8 +6,11 @@ import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
-import { ConfirmDialog } from '../shared/Dialog';
-import { buildGroupTree, renameGroupInPath } from '../../utils/groupTree';
+import { ConfirmDialog, Dialog } from '../shared/Dialog';
+import { open as openDirectory } from '@tauri-apps/plugin-dialog';
+import { saveProjects } from '../../services/tauri';
+import type { Project } from '../../types';
+import { effectiveProfilePath, normalizeProjectPath } from '../../utils/projectPath';
 import './ConfigNav.css';
 
 const TYPE_ICONS: Record<string, string> = {
@@ -37,6 +40,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   onManageExtraParams,
 }) => {
   const profiles = useAppStore(s => s.profiles);
+  const projects = useAppStore(s => s.projects);
+  const setProjects = useAppStore(s => s.setProjects);
   const selectedProfileId = useAppStore(s => s.selectedProfileId);
   const selectProfile = useAppStore(s => s.selectProfile);
   const removeProfile = useAppStore(s => s.removeProfile);
@@ -84,13 +89,16 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const [blankContextMenu, setBlankContextMenu] = useState<{
     x: number; y: number;
   } | null>(null);
-  const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
-  const [newGroupName, setNewGroupName] = useState('');
   const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null);
   const [renamingProfileName, setRenamingProfileName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmDeleteProject, setConfirmDeleteProject] = useState<string | null>(null);
+  const [editingProject, setEditingProject] = useState<Project | null | undefined>();
+  const [projectName, setProjectName] = useState('');
+  const [projectPath, setProjectPath] = useState('');
+  const [projectError, setProjectError] = useState('');
 
-  // Build tree items: hierarchical groups -> profiles
+  // Build project nodes and their profiles
   const treeItems = useMemo(() => {
     let filtered = profiles;
 
@@ -111,20 +119,20 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       data: p,
     });
 
-    const tree = buildGroupTree<Profile>(normalItems, p => p.group || '默认');
-
-    const toTreeItems = (nodes: ReturnType<typeof buildGroupTree<Profile>>): TreeItem[] =>
-      nodes.map((node): TreeItem => ({
-        id: node.path,
-        label: node.name,
-        isGroup: true,
-        children: [
-          ...toTreeItems(node.children),
-          ...node.items.map(toLeaf),
-        ],
+    // Projects are flat entities; unlike legacy groups their names are not slash-separated paths.
+    const result: TreeItem[] = projects
+      .filter(project => !configSearchQuery.trim() || normalItems.some(p => p.group === project.name))
+      .map(project => ({
+        id: project.name, label: project.name, isGroup: true,
+        children: normalItems.filter(p => p.group === project.name).map(toLeaf),
       }));
-
-    const result = toTreeItems(tree);
+    // Keep legacy groups visible until their project path has been configured.
+    for (const group of new Set(normalItems.map(p => p.group || '默认'))) {
+      if (!result.some(item => item.id === group)) {
+        result.push({ id: group, label: group, isGroup: true,
+          children: normalItems.filter(p => (p.group || '默认') === group).map(toLeaf) });
+      }
+    }
 
     // 置顶分组永远在最前
     if (pinnedItems.length > 0) {
@@ -137,7 +145,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     }
 
     return result;
-  }, [profiles, configSearchQuery]);
+  }, [profiles, projects, configSearchQuery]);
 
   const handleToggle = (groupId: string) => {
     setExpandedGroups(prev => {
@@ -184,7 +192,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   };
 
   const isLocalProfile = (p: Profile) => p.terminalType === 'powershell' || p.terminalType === 'pwsh' || p.terminalType === 'cmd';
-  const hasStartupPath = (p: Profile) => !!p.startupPath && p.startupPath.trim() !== '';
+  const hasStartupPath = (p: Profile) => !!effectiveProfilePath(p, projects);
 
   const adjustContextMenuPosition = useCallback(() => {
     const menu = contextMenuRef.current;
@@ -256,31 +264,45 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     }
   };
 
-  const handleStartRename = (groupPath: string) => {
-    if (groupPath === PINNED_GROUP_ID) return;
-    setRenamingGroup(groupPath);
-    setNewGroupName(groupPath);
-    setGroupContextMenu(null);
+  const editProject = (name?: string) => {
+    const project = projects.find(p => p.name === name) || null;
+    setEditingProject(project);
+    setProjectName(project?.name || name || '');
+    setProjectPath(project?.path || '');
+    setProjectError('');
+    closeContextMenu();
   };
 
-  const handleFinishRename = async (oldPath: string) => {
-    const trimmed = newGroupName.trim();
-    setRenamingGroup(null);
-    if (!trimmed || trimmed === oldPath) return;
-    const newPath = trimmed.includes('/') ? trimmed : trimmed;
-    try {
-      for (const p of profiles) {
-        const group = p.group || '默认';
-        const newGroup = renameGroupInPath(group, oldPath, newPath);
-        if (newGroup !== group) {
-          await updateProfile({ ...p, group: newGroup });
-        }
-      }
-      const data = await getAllProfiles();
-      setProfiles(data);
-    } catch (err) {
-      console.error('Failed to rename group:', err);
+  const saveProject = async () => {
+    const name = projectName.trim();
+    const path = projectPath.trim();
+    if (!name || !/^(?:[a-z]:[\\/]|\\\\|\/)/i.test(path)) {
+      setProjectError('请输入项目名称和绝对路径'); return;
     }
+    if (projects.some(p => p.name.toLowerCase() === name.toLowerCase() && p.name !== editingProject?.name)) {
+      setProjectError('项目名称已存在'); return;
+    }
+    const updated = [...projects.filter(p => p.name !== editingProject?.name), { name, path }];
+    // Legacy projects with no inferred path remain visible until edited; only persist valid paths.
+    try {
+      await saveProjects(updated.filter(p => p.path.trim()));
+      if (editingProject) {
+        let changed = false;
+        for (const profile of profiles.filter(p => (p.group || '默认') === editingProject.name)) {
+          // Legacy profiles had their group's path copied into startupPath. Convert
+          // only exact matches to inheritance; other directories remain overrides.
+          const inherits = editingProject.path &&
+            normalizeProjectPath(profile.startupPath) === normalizeProjectPath(editingProject.path);
+          if (profile.group !== name || inherits) {
+            await updateProfile({ ...profile, group: name, startupPath: inherits ? '' : profile.startupPath });
+            changed = true;
+          }
+        }
+        if (changed) setProfiles(await getAllProfiles());
+      }
+      setProjects(updated);
+      setEditingProject(undefined);
+    } catch (error) { setProjectError(String(error)); }
   };
 
   const handleFinishRenameProfile = async () => {
@@ -378,7 +400,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       if (!selectedProfileId) return;
       const item = findTreeItemById(treeItems, selectedProfileId);
       if (item?.isGroup || (item?.children && item.children.length > 0)) {
-        handleStartRename(selectedProfileId);
+        editProject(selectedProfileId);
       } else if (item?.data) {
         const profile = item.data as Profile;
         setRenamingProfileId(profile.id);
@@ -400,6 +422,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       <div className="panel-titlebar">
         <span className="panel-title">配置</span>
         <span className="panel-title-count">{profiles.length}</span>
+        <button type="button" className="config-nav-add-project" title="添加项目" onClick={() => editProject()}>+ 项目</button>
       </div>
       <div className="config-nav-search-bar">
         <input
@@ -425,11 +448,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           onSelect={handleSelect}
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleItemContextMenu}
-          renamingId={renamingGroup}
-          renameValue={newGroupName}
-          onRenameValueChange={setNewGroupName}
-          onRenameSubmit={(id) => handleFinishRename(id)}
-          onRenameCancel={() => setRenamingGroup(null)}
           renamingProfileId={renamingProfileId}
           renamingProfileValue={renamingProfileName}
           onRenamingProfileChange={setRenamingProfileName}
@@ -445,7 +463,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           }}
           onItemDragEnd={() => setDragProfileId(null)}
         />
-        {profiles.length === 0 && (
+        {projects.length === 0 && profiles.length === 0 && (
           <div className="empty-state">暂无配置，点击新建</div>
         )}
       </div>
@@ -483,7 +501,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             closeContextMenu();
             if (target) {
-              try { await openTerminalInDir(target.startupPath?.trim() || undefined); }
+              try { await openTerminalInDir(effectiveProfilePath(target, projects) || undefined); }
               catch (err) { console.error(err); }
             }
           }}>命令行</div>
@@ -501,13 +519,13 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                   const t = profiles.find((p) => p.id === contextMenu.profileId);
                   closeContextMenu();
                   if (t) {
-                    try { await openInExplorer(t.startupPath!); }
+                    try { await openInExplorer(effectiveProfilePath(t, projects)); }
                     catch (err) { console.error(err); }
                   }
                 }}>打开目录</div>
                 <div className="context-menu-item" onClick={() => {
                   const t = profiles.find((p) => p.id === contextMenu.profileId);
-                  if (t) navigator.clipboard.writeText(t.startupPath!).catch(() => {});
+                  if (t) navigator.clipboard.writeText(effectiveProfilePath(t, projects)).catch(() => {});
                   closeContextMenu();
                 }}>复制启动路径</div>
               </>
@@ -548,26 +566,71 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
             添加配置
           </div>
-          <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group + '/新分组'); closeContextMenu(); }}>
-            添加子分组
+          <div className="context-menu-item" onClick={() => editProject(groupContextMenu.group)}>
+            编辑项目
           </div>
-          <div className="context-menu-item" onClick={() => handleStartRename(groupContextMenu.group)}>
-            重命名分组
-          </div>
+          {!profiles.some(p => p.group === groupContextMenu.group) && (
+            <div className="context-menu-item danger" onClick={() => {
+              setConfirmDeleteProject(groupContextMenu.group); closeContextMenu();
+            }}>删除项目</div>
+          )}
         </div>
       )}
 
       {blankContextMenu && (
         <div ref={contextMenuRef} className="context-menu" style={{ left: blankContextMenu.x, top: blankContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
-          <div className="context-menu-item" onClick={() => { onAddProfile('默认'); closeContextMenu(); }}>
+          <div className="context-menu-item" onClick={() => { onAddProfile(projects[0]?.name); closeContextMenu(); }}>
             添加配置
           </div>
+          <div className="context-menu-item" onClick={() => editProject()}>添加项目</div>
           <div className="context-menu-item" onClick={() => { onManageExtraParams(); closeContextMenu(); }}>
             启动参数管理
           </div>
         </div>
       )}
 
+      {editingProject !== undefined && (
+        <Dialog
+          title={editingProject ? '编辑项目' : '新建项目'}
+          className="project-edit-dialog"
+          onClose={() => setEditingProject(undefined)}
+          footer={(
+            <>
+              <button type="button" className="btn-secondary" onClick={() => setEditingProject(undefined)}>取消</button>
+              <button type="submit" form="project-edit-form" className="btn-primary">保存</button>
+            </>
+          )}
+        >
+          <form id="project-edit-form" onSubmit={event => { event.preventDefault(); void saveProject(); }}>
+            <div className="form-group">
+              <label htmlFor="project-edit-name">项目名称 *</label>
+              <input id="project-edit-name" value={projectName} onChange={event => { setProjectName(event.target.value); setProjectError(''); }} placeholder="项目名称" autoFocus />
+            </div>
+            <div className="form-group">
+              <label htmlFor="project-edit-path">项目路径 *</label>
+              <div className="input-with-button">
+                <input id="project-edit-path" value={projectPath} onChange={event => { setProjectPath(event.target.value); setProjectError(''); }} placeholder={'C:\\Projects\\MyProject'} />
+                <button type="button" className="browse-btn" onClick={() => void openDirectory({ directory: true, multiple: false }).then(path => {
+                  if (typeof path === 'string') { setProjectPath(path); setProjectError(''); }
+                }).catch(error => setProjectError('浏览目录失败：' + String(error)))}>浏览</button>
+              </div>
+            </div>
+            {projectError && <div className="error" role="alert">{projectError}</div>}
+          </form>
+        </Dialog>
+      )}
+      {confirmDeleteProject && (
+        <ConfirmDialog title="删除项目" message={`确定删除项目「${confirmDeleteProject}」吗？`}
+          onClose={() => setConfirmDeleteProject(null)}
+          onConfirm={() => void (async () => {
+            const updated = projects.filter(p => p.name !== confirmDeleteProject);
+            try {
+              await saveProjects(updated.filter(p => p.path.trim()));
+              setProjects(updated);
+              setConfirmDeleteProject(null);
+            } catch (error) { console.error('删除项目失败:', error); }
+          })()} confirmText="删除" />
+      )}
       {confirmDelete && (
         <ConfirmDialog
           title="确认删除"

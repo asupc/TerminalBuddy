@@ -154,3 +154,46 @@
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
+
+.config-nav-add-project { margin-left: auto; background: none; border: 0; color: var(--text-secondary); cursor: pointer; font-size: 12px; }
+
+/* 项目表单与配置编辑器使用相同的输入框和按钮视觉规范。 */
+.project-edit-dialog { width: min(480px, calc(100vw - 48px)); }
+.project-edit-dialog .form-group:last-of-type { margin-bottom: 0; }
+.project-edit-dialog .form-group input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height-md);
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+.project-edit-dialog .form-group input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.project-edit-dialog .input-with-button { display: flex; gap: 8px; }
+.project-edit-dialog .input-with-button input { flex: 1; }
+.project-edit-dialog .browse-btn { flex: 0 0 auto; }
+.project-edit-dialog .error { margin-top: 10px; color: var(--danger); font-size: 12px; }
+
+.project-edit-dialog .form-group { margin-bottom: 16px; }
+.project-edit-dialog .form-group label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.project-edit-dialog .browse-btn {
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.project-edit-dialog .browse-btn:hover { background: var(--accent); border-color: var(--accent); }

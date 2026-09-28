@@ -7,6 +7,7 @@ import {
   updateProfile,
 } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
+import { effectiveProfilePath } from '../../utils/projectPath';
 import type { Profile } from '../../types';
 import { ConfigEditDialog } from '../profile-config/ConfigEditDialog';
 import { showAlert } from '../../services/dialog';
@@ -18,6 +19,7 @@ interface ProfilesSettingsProps {
 
 export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismissConfirm }) => {
   const profiles = useAppStore(state => state.profiles);
+  const projects = useAppStore(state => state.projects);
   const setProfiles = useAppStore(state => state.setProfiles);
   const [search, setSearch] = useState('');
   const [groupTab, setGroupTab] = useState('');
@@ -138,7 +140,7 @@ export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismis
               {profile.terminalType === 'ssh' ? (profile.sshHost || '未配置主机') :
                profile.terminalType === 'docker' ? (profile.dockerContainerName || '未配置容器') :
                profile.terminalType === 'k8s' ? (profile.k8sNamespace || '未配置命名空间') :
-               (profile.startupPath || 'C:\\')}
+               (effectiveProfilePath(profile, projects) || '未设置项目路径')}
             </span>
             <div className="cmd-cat-actions visible-actions">
               <button className="cmd-action-btn" type="button" title="编辑" aria-label={`编辑连接 ${profile.name}`} onClick={() => openEditor(profile)}>

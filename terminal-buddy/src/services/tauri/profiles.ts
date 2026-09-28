@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Profile } from '../../types';
+import type { Profile, Project } from '../../types';
 
 // Profile Commands
 export async function getAllProfiles(): Promise<Profile[]> {
@@ -28,4 +28,12 @@ export async function deleteProfile(id: string): Promise<void> {
 
 export async function updateProfileLastUsed(id: string): Promise<void> {
   return invoke('update_profile_last_used', { id });
+}
+
+export async function getProjects(): Promise<Project[]> {
+  return invoke('get_projects');
+}
+
+export async function saveProjects(projects: Project[]): Promise<void> {
+  return invoke('save_projects', { projects });
 }
