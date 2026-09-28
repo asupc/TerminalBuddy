@@ -969,7 +969,8 @@ fn list_sessions_in(
          FROM claude_sessions s
          LEFT JOIN claude_session_meta m ON m.session_id = s.session_id
          WHERE (?1 = 1 OR COALESCE(m.archived, 0) = 0)
-           AND (?2 IS NULL OR {indexed} = {wanted})
+           AND (?2 IS NULL OR {indexed} = {wanted}
+                OR substr({indexed}, 1, length({wanted}) + 1) = {wanted} || '/')
          ORDER BY s.updated_at DESC",
         indexed = normalized_dir_expr("s.project_dir"),
         wanted = normalized_dir_expr("?2"),
@@ -1062,7 +1063,8 @@ fn search_in(
          JOIN claude_sessions s ON s.session_id = m.session_id
          LEFT JOIN claude_session_meta meta ON meta.session_id = m.session_id
          WHERE m.content LIKE ?1 ESCAPE '\\'
-           AND (?3 IS NULL OR {indexed} = {wanted})
+           AND (?3 IS NULL OR {indexed} = {wanted}
+                OR substr({indexed}, 1, length({wanted}) + 1) = {wanted} || '/')
          LIMIT ?2",
         indexed = normalized_dir_expr("s.project_dir"),
         wanted = normalized_dir_expr("?3"),
@@ -1658,6 +1660,28 @@ mod tests {
             .is_empty());
         // 不传目录 = 全局视图
         assert_eq!(list_sessions_in(&conn, false, None).expect("全局").len(), 1);
+
+        conn.execute(
+            "INSERT INTO claude_sessions (session_id, project_dir, file_path, file_mtime, file_size, updated_at, indexed_at)
+             VALUES ('child', 'D:\\gitee\\TerminalBuddy\\src', 'child.jsonl', 0, 0, 0, 0),
+                    ('sibling', 'D:\\gitee\\TerminalBuddyExtra', 'sibling.jsonl', 0, 0, 0, 0)",
+            [],
+        ).expect("插入子目录和同名前缀目录");
+        let scoped = list_sessions_in(&conn, false, Some(r"D:\gitee\TerminalBuddy"))
+            .expect("按项目包含子目录");
+        assert_eq!(scoped.len(), 2);
+        assert!(scoped.iter().any(|item| item.session_id == "child"));
+        assert!(scoped.iter().all(|item| item.session_id != "sibling"));
+        conn.execute(
+            "INSERT INTO claude_messages (session_id, seq, role, content)
+             VALUES ('child', 0, 'user', 'scope-check'),
+                    ('sibling', 0, 'user', 'scope-check')",
+            [],
+        ).expect("插入检索消息");
+        let hits = search_in(&conn, "scope-check", Some(r"D:\gitee\TerminalBuddy"))
+            .expect("全文检索按项目过滤");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "child");
 
         let _ = fs::remove_dir_all(&root);
     }
