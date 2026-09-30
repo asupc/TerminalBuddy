@@ -55,6 +55,8 @@ pub fn import_all_profiles(path: String) -> Result<Vec<Profile>, String> {
 pub struct Project {
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub startup_command: String,
 }
 
 fn projects_file() -> Result<std::path::PathBuf, String> {
@@ -75,6 +77,7 @@ pub fn get_projects() -> Result<Vec<Project>, String> {
         if !projects.iter().any(|p| p.name == name) {
             projects.push(Project {
                 name: name.to_string(),
+                startup_command: String::new(),
                 path: if Path::new(&profile.startup_path).is_absolute() {
                     profile.startup_path.clone()
                 } else { String::new() },
