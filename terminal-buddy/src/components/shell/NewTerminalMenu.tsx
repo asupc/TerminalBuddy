@@ -40,6 +40,7 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
   onClose,
 }) => {
   const presets = useAppStore(state => state.extraParamPresets);
+  const [submenuLeft, setSubmenuLeft] = useState(x);
   const [hoveredProfile, setHoveredProfile] = useState<{ profile: Profile; x: number; y: number } | null>(null);
   const matchingPresets = (profile: Profile) => presets.filter(preset =>
     preset.enabled && (!preset.commandMatch || profile.startupCommands.some(command =>
@@ -92,16 +93,19 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
         <div className="context-menu-item" onClick={() => { onStartTextEditor(); onClose(); }}>
           文本编辑器
         </div>
-        <div className={`context-menu-item has-submenu${hoveredProfile ? ' submenu-active' : ''}`}>
+        <div
+          className={`context-menu-item has-submenu${hoveredProfile ? ' submenu-active' : ''}`}
+          onMouseEnter={event => setSubmenuLeft(event.currentTarget.getBoundingClientRect().right)}
+        >
           <span>新建配置终端</span>
           <span className="submenu-arrow">›</span>
           <div
             className="context-submenu new-terminal-profile-menu"
             ref={submenuRef}
+            style={{ left: submenuLeft }}
           >
             <div
               className="new-terminal-profile-scroll"
-              style={{ maxHeight: `${Math.max(80, Math.min(window.innerHeight * 0.7, window.innerHeight - y - 120))}px` }}
               onMouseOver={handleProfileHover}
               onScroll={() => setHoveredProfile(null)}
             >

@@ -269,6 +269,8 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
         });
       }
     }
+    // 与配置导航保持一致：项目按名称自然排序，置顶分组仍在最前。
+    items.sort((a, b) => a.label.localeCompare(b.label, 'zh-CN', { numeric: true, sensitivity: 'base' }));
     const pinned = profiles.filter(profile => profile.pinned);
     if (pinned.length > 0) {
       items.unshift({ id: '__pinned__', label: '置顶', isGroup: true, children: pinned.map(profileItem) });
