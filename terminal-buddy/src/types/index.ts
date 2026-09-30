@@ -4,6 +4,7 @@ export type ExtraParamMode = 'append' | 'independent';
 export interface Project {
   name: string;
   path: string;
+  startupCommand?: string;
 }
 
 export interface Profile {

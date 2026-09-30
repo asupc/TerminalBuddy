@@ -96,6 +96,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const [editingProject, setEditingProject] = useState<Project | null | undefined>();
   const [projectName, setProjectName] = useState('');
   const [projectPath, setProjectPath] = useState('');
+  const [projectStartupCommand, setProjectStartupCommand] = useState('');
   const [projectError, setProjectError] = useState('');
 
   // Build project nodes and their profiles
@@ -133,6 +134,9 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           children: normalItems.filter(p => (p.group || '默认') === group).map(toLeaf) });
       }
     }
+
+    // 项目（含旧分组）按名称自然排序，项目内配置保持原有顺序。
+    result.sort((a, b) => a.label.localeCompare(b.label, 'zh-CN', { numeric: true, sensitivity: 'base' }));
 
     // 置顶分组永远在最前
     if (pinnedItems.length > 0) {
@@ -269,6 +273,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     setEditingProject(project);
     setProjectName(project?.name || name || '');
     setProjectPath(project?.path || '');
+    setProjectStartupCommand(project?.startupCommand || '');
     setProjectError('');
     closeContextMenu();
   };
@@ -282,7 +287,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     if (projects.some(p => p.name.toLowerCase() === name.toLowerCase() && p.name !== editingProject?.name)) {
       setProjectError('项目名称已存在'); return;
     }
-    const updated = [...projects.filter(p => p.name !== editingProject?.name), { name, path }];
+    const updated = [...projects.filter(p => p.name !== editingProject?.name), { name, path, startupCommand: projectStartupCommand.trim() }];
     // Legacy projects with no inferred path remain visible until edited; only persist valid paths.
     try {
       await saveProjects(updated.filter(p => p.path.trim()));
@@ -303,6 +308,21 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       setProjects(updated);
       setEditingProject(undefined);
     } catch (error) { setProjectError(String(error)); }
+  };
+
+  const startProject = async (project: Project, preset?: typeof extraParamPresets[number]) => {
+    closeContextMenu();
+    const command = preset?.mode === 'independent'
+      ? preset.params
+      : [project.startupCommand?.trim(), preset?.params].filter(Boolean).join(' ');
+    try {
+      await openTerminalInDir(project.path, {
+        command, name: project.name, groupName: project.name,
+        presetTag: preset?.name, presetTagColor: preset?.tagColor,
+      });
+    } catch (error) {
+      useAppStore.getState().showToast('启动项目失败：' + String(error), 'error');
+    }
   };
 
   const handleFinishRenameProfile = async () => {
@@ -563,6 +583,22 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
 
       {groupContextMenu && (
         <div ref={contextMenuRef} className="context-menu" style={{ left: groupContextMenu.x, top: groupContextMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+          {(() => {
+            const project = projects.find(item => item.name === groupContextMenu.group);
+            if (!project?.path) return null;
+            const command = project.startupCommand?.trim() || '';
+            return <>
+              <div className="context-menu-item" onClick={() => void startProject(project)}>启动项目</div>
+              {command && extraParamPresets.filter(preset => preset.enabled && (
+                !preset.commandMatch || command.toLowerCase().includes(preset.commandMatch.toLowerCase())
+              )).map(preset => (
+                <div key={preset.id} className="context-menu-item" onClick={() => void startProject(project, preset)}>
+                  启动<span className="config-nav-preset-chip" style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}>{preset.name}</span>
+                </div>
+              ))}
+              <div className="context-menu-separator" />
+            </>;
+          })()}
           <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
             添加配置
           </div>
@@ -614,6 +650,11 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                   if (typeof path === 'string') { setProjectPath(path); setProjectError(''); }
                 }).catch(error => setProjectError('浏览目录失败：' + String(error)))}>浏览</button>
               </div>
+            </div>
+            <div className="form-group">
+              <label htmlFor="project-edit-command">启动命令</label>
+              <input id="project-edit-command" value={projectStartupCommand} onChange={event => setProjectStartupCommand(event.target.value)} placeholder="例如 claude 或 npm run dev" />
+              <small>在项目目录的 PowerShell 中执行；右键菜单根据此命令匹配启动参数。留空仅打开终端。</small>
             </div>
             {projectError && <div className="error" role="alert">{projectError}</div>}
           </form>
