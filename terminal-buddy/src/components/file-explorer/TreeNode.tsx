@@ -7,6 +7,7 @@ import { listDirectory, openPath, getFileSize } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { getAppSettings } from '../../utils/settings';
 import { showAlert } from '../../services/dialog';
+import { loadGitRepositoryStatus } from '../../services/gitStatusCache';
 
 export interface TreeNodeProps {
   node: FileNode;
@@ -49,6 +50,9 @@ export const TreeNode: FC<TreeNodeProps> = ({ node, depth, parentPath, selectedP
     if (!node.is_directory) return;
     pinToTopAfterLoadRef.current = false;
     if (!expanded) {
+      // 展开子目录也算进入目录：提前缓存 Git 归属，不等到文件右键时再检测。
+      void loadGitRepositoryStatus(node.path, { exact: true })
+        .catch(error => console.error('Failed to prefetch expanded directory Git status:', error));
       setLoading(true);
       listDirectory(node.path, exclusionPatterns).then((entries) => {
         setChildren(entries);

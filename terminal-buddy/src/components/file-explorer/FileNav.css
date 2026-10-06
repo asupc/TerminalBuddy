@@ -99,6 +99,29 @@
 	color: var(--text-secondary);
 }
 
+.file-nav .file-git-menu-item {
+	width: 100%;
+	border: none;
+	background: transparent;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.file-nav .file-git-menu-item:focus-visible {
+	outline: 1px solid var(--accent);
+	outline-offset: -1px;
+}
+
+.file-nav .context-menu-item.disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.file-nav .context-menu-item.disabled:hover {
+	background: transparent;
+}
+
 @container (max-width: 205px) {
 	.file-nav-actions .file-nav-sort-field {
 		display: none;
@@ -918,6 +941,30 @@
 	color: var(--text-secondary);
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+.git-operation-status {
+	flex-shrink: 1;
+	min-width: 0;
+	max-width: 60px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	padding: 2px 4px;
+	border: none;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--accent) 12%, transparent);
+	color: var(--text-primary);
+	font-size: 10px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.git-operation-status:hover {
+	background: var(--list-hover-bg);
+}
+
+.git-operation-status:focus-visible {
+	outline: 1px solid var(--accent);
 }
 
 .git-actions {

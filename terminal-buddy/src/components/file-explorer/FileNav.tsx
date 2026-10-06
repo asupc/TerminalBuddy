@@ -1,4 +1,4 @@
-import { FC, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
+import { FC, useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, useSyncExternalStore } from 'react';
 import { ArrowDown, ArrowUp, Folder, FolderPlus, ListChevronsDownUp, Plus, RefreshCw } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { listDirectory, openPath, openInExplorer, deletePath, renamePath, saveConfigNavWidth, saveFileNavWidth, getBackendAppSettings } from '../../services/tauri';
@@ -9,7 +9,9 @@ import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { showAlert } from '../../services/dialog';
-import { GitNavBar } from '../git/GitNavBar';
+import { GitOperationsHost, type GitContextAction, type GitOperationsHostHandle } from '../git/GitOperationsHost';
+import { getGitOperation, subscribeGitOperations } from '../../services/gitOperationState';
+import { getCachedGitRepositoryStatus, loadGitRepositoryStatus, subscribeGitRepositoryStatus } from '../../services/gitStatusCache';
 import { RemoteFileTree } from './RemoteFileTree';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import './FileNav.css';
@@ -19,6 +21,14 @@ import { sortLabel, directoryName, normalizeConfiguredPath, isPathEqualOrInside,
 
 interface FileNavProps {
   isSidebarMode: boolean;
+}
+
+function parentDirectoryPath(path: string): string {
+  const normalized = normalizeConfiguredPath(path);
+  const separator = normalized.lastIndexOf('\\');
+  if (separator < 0) return normalized;
+  if (separator === 2 && /^[a-zA-Z]:\\/.test(normalized)) return normalized.slice(0, 3);
+  return normalized.slice(0, separator) || '\\';
 }
 
 export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
@@ -50,6 +60,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const [rootCollapseVersion, setRootCollapseVersion] = useState(0);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path?: string; isDir?: boolean; dir?: string; root?: boolean } | null>(null);
+  const gitNavRef = useRef<GitOperationsHostHandle>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [customPathInput, setCustomPathInput] = useState('');
@@ -90,12 +101,38 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const activeProjectRoot = useMemo(() => tabProjectDirectory && rootDirectories.find(
     path => normalizeConfiguredPath(path).toLowerCase() === normalizeConfiguredPath(tabProjectDirectory).toLowerCase(),
   ), [tabProjectDirectory, rootDirectories]);
+  const gitContextTarget = ctxMenu
+    ? ctxMenu.path
+      ? ctxMenu.isDir ? ctxMenu.path : parentDirectoryPath(ctxMenu.path)
+      : ctxMenu.dir || null
+    : null;
+
+  // 右键首帧直接读取已在进入目录时准备好的缓存，不清空后等待异步重查。
+  const contextGitEntry = useSyncExternalStore(
+    subscribeGitRepositoryStatus,
+    useCallback(() => gitContextTarget
+      ? getCachedGitRepositoryStatus(gitContextTarget, { exact: true })
+      : undefined, [gitContextTarget]),
+  );
+  const contextGitStatus = contextGitEntry?.status;
+  const contextOperation = useSyncExternalStore(
+    subscribeGitOperations,
+    useCallback(() => contextGitStatus ? getGitOperation(contextGitStatus.repoRoot) : null, [contextGitStatus?.repoRoot]),
+  );
+
+  useEffect(() => {
+    // 未进入过的目录兜底检测一次；已缓存的仓库和非仓库都不发起请求。
+    if (!gitContextTarget || contextGitEntry) return;
+    void loadGitRepositoryStatus(gitContextTarget, { exact: true })
+      .catch(error => console.error('Failed to inspect Git context menu target:', error));
+  }, [gitContextTarget, contextGitEntry]);
 
   useEffect(() => {
     setFocusedRootPath(activeProjectRoot || null);
     setAutoExpandedRootPath(activeProjectRoot || null);
     setSelectedPath(activeProjectRoot || null);
     setGitTargetOverride(null);
+    setCtxMenu(null);
     setFilterQuery('');
     contentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }, [activeSessionId, activeSpecialTab, claudeReplayTab?.sessionId, activeProjectRoot]);
@@ -137,6 +174,23 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     const focusedRoot = rootDirectories.find(path => path.toLowerCase() === focusedRootPath.toLowerCase());
     return focusedRoot ? [focusedRoot] : visibleConfiguredDirectories;
   }, [focusedRootPath, rootDirectories, visibleConfiguredDirectories]);
+  useEffect(() => {
+    if (!fileTreeVisible || isSsh) return;
+    let cancelled = false;
+    // 可见根目录提前检测，串行预热避免大量项目同时创建 git.exe 进程。
+    void (async () => {
+      for (const path of displayedRootDirectories) {
+        if (cancelled) return;
+        try {
+          await loadGitRepositoryStatus(path, { exact: true });
+        } catch (error) {
+          if (!cancelled) console.error('Failed to prefetch Git repository status:', error);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [displayedRootDirectories, fileTreeVisible, isSsh]);
+
   const selectedVisibleRoot = useMemo(() => {
     if (!selectedPath) return null;
     return [...displayedRootDirectories]
@@ -154,8 +208,11 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   }, [rootDirectories]);
 
   useEffect(() => {
-    if (!fileTreeVisible) setShowRootPicker(false);
-  }, [fileTreeVisible]);
+    if (!fileTreeVisible || isSsh) {
+      setShowRootPicker(false);
+      setCtxMenu(null);
+    }
+  }, [fileTreeVisible, isSsh]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {
@@ -181,6 +238,9 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
 
   const activateTreeDirectory = useCallback((path: string) => {
     setGitTargetOverride(path);
+    // 单击/展开/进入目录时即开始检测；工具栏和右键菜单共用缓存与在途请求。
+    void loadGitRepositoryStatus(path, { exact: true })
+      .catch(error => console.error('Failed to load directory Git status:', error));
   }, []);
 
   const cycleSortField = useCallback(() => {
@@ -255,6 +315,14 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const handleRefresh = useCallback(() => {
     setRootRefreshVersion(version => version + 1);
   }, []);
+
+  const handleManualRefresh = useCallback((directory: string = gitTargetDirectory) => {
+    handleRefresh();
+    if (!directory) return;
+    // 用户主动刷新时重新检测，支持目录在外部 git init 或移除仓库之后更新缓存。
+    void loadGitRepositoryStatus(directory, { force: true, exact: true })
+      .catch(error => console.error('Failed to refresh directory Git status:', error));
+  }, [gitTargetDirectory, handleRefresh]);
 
   const handleCollapseAll = useCallback(() => {
     setFocusedRootPath(null);
@@ -360,7 +428,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     e.preventDefault();
     e.stopPropagation();
     setSelectedPath(path);
-    if (isDir) activateTreeDirectory(path);
+    activateTreeDirectory(isDir ? path : parentDirectoryPath(path));
     setCtxMenu({ x: e.clientX, y: e.clientY, path, isDir });
   }, [activateTreeDirectory]);
 
@@ -412,6 +480,27 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     setRenamingPath(ctxMenu.path);
   }, [ctxMenu]);
 
+  const runGitContextAction = (action: GitContextAction) => {
+    if (!contextGitStatus) return;
+    // 仓库身份取菜单快照，不依赖浏览目录变化后“当前工具栏”的引用。
+    const repoRoot = contextGitStatus.repoRoot;
+    setCtxMenu(null);
+    gitNavRef.current?.runAction(repoRoot, action);
+  };
+
+  const renderGitContextItem = (action: GitContextAction, label: string, needsRemote = false) => {
+    const disabled = action !== 'operation' && (Boolean(contextOperation) || (needsRemote && !contextGitStatus?.hasRemote));
+    const title = contextOperation && action !== 'operation'
+      ? '当前仓库正在执行 Git 操作，请等待完成'
+      : needsRemote && !contextGitStatus?.hasRemote ? '当前仓库未配置远端' : undefined;
+    return (
+      <button type="button" className={`context-menu-item file-git-menu-item${disabled ? ' disabled' : ''}`}
+        disabled={disabled} aria-disabled={disabled} title={title} onClick={() => runGitContextAction(action)}>
+        {label}
+      </button>
+    );
+  };
+
   const handleRenameInline = useCallback(async (path: string, newName: string) => {
     try {
       await renamePath(path, newName);
@@ -455,7 +544,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   useLayoutEffect(() => {
     if (!ctxMenu) return;
     adjustCtxMenuPosition();
-  }, [ctxMenu, adjustCtxMenuPosition]);
+  }, [ctxMenu, contextGitStatus, adjustCtxMenuPosition]);
 
   useEffect(() => {
     if (!ctxMenu) return;
@@ -463,14 +552,11 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     return () => window.removeEventListener('resize', adjustCtxMenuPosition);
   }, [ctxMenu, adjustCtxMenuPosition]);
 
-  if (isSsh && activeSession) {
-    return <RemoteFileTree terminalId={activeSession.id} />;
-  }
-
   return (
-    <div ref={containerRef} className={`file-nav${isSidebarMode ? ' sidebar-mode' : ''} ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width }}>
+    <>
+    <div ref={containerRef} className={`file-nav${isSidebarMode ? ' sidebar-mode' : ''} ${!fileTreeVisible ? 'collapsed' : ''}`} style={{ width, display: isSsh ? 'none' : undefined }}>
       <div className="panel-titlebar">
-        <span className="panel-title">文件</span>
+        <span className="panel-title">文件与 Git</span>
         <div className="file-nav-actions">
           <button
             type="button"
@@ -486,7 +572,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
           <button type="button" onClick={handleCollapseAll} title="全部折叠" aria-label="折叠所有目录" disabled={rootDirectories.length === 0}>
             <ListChevronsDownUp aria-hidden="true" />
           </button>
-          <button type="button" onClick={handleRefresh} title="刷新" aria-label="刷新文件列表" disabled={rootDirectories.length === 0}>
+          <button type="button" onClick={() => handleManualRefresh()} title="刷新" aria-label="刷新文件列表" disabled={rootDirectories.length === 0}>
             <RefreshCw aria-hidden="true" />
           </button>
           <button type="button" className="file-nav-sort-direction" onClick={toggleSortDir} title={`方向：${fileSortDir === 'asc' ? '升序' : '降序'}（点击翻转）`} aria-label={`切换为${fileSortDir === 'asc' ? '降序' : '升序'}`} disabled={rootDirectories.length === 0}>
@@ -582,15 +668,13 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
           </div>
         </Dialog>
       )}
-      {/* Git 状态只服务于当前打开的目录。文件导航隐藏时一并卸载状态栏并停止轮询，
-          避免为所有已配置目录持续创建 git.exe 进程。 */}
-      {fileTreeVisible && rootDirectories.length > 0 && (
-        <GitNavBar
-          key={gitTargetDirectory.toLowerCase() || 'none'}
-          currentDirectory={gitTargetDirectory}
-          onRepositoryChanged={handleRefresh}
-        />
-      )}
+      {/* 控制器按仓库常驻；面板隐藏仅隐藏工具栏，不丢失进行中的任务与结果。 */}
+      <GitOperationsHost
+        ref={gitNavRef}
+        currentDirectory={isSsh ? '' : gitTargetDirectory}
+        visible={fileTreeVisible && rootDirectories.length > 0 && !isSsh}
+        onRepositoryChanged={handleRefresh}
+      />
       {rootDirectories.length > 0 && !focusedRootPath && (
         <div className="file-nav-filter">
           <input
@@ -609,7 +693,8 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
           const target = e.target as HTMLElement;
           if (target.closest('.tree-item')) return;
           e.preventDefault();
-          setCtxMenu({ x: e.clientX, y: e.clientY, dir: selectedVisibleRoot || undefined });
+          const contextDirectory = selectedVisibleRoot || (rootDirectories.length > 0 ? gitTargetDirectory : '');
+          setCtxMenu({ x: e.clientX, y: e.clientY, dir: contextDirectory || undefined });
         }}
       >
         {rootDirectories.length === 0 && (
@@ -661,9 +746,21 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="context-menu-item" onClick={() => { setCtxMenu(null); handleRefresh(); }}>
+          <div className="context-menu-item" onClick={() => { setCtxMenu(null); handleManualRefresh(gitContextTarget || gitTargetDirectory); }}>
             刷新
           </div>
+          {contextGitStatus && (
+            <>
+              <div className="context-menu-separator" />
+              {renderGitContextItem('refresh', '刷新 Git 状态')}
+              {renderGitContextItem('branches', '切换分支…')}
+              {renderGitContextItem('commit', '提交变更…')}
+              {renderGitContextItem('pull', '拉取最新代码', true)}
+              {renderGitContextItem('push', '推送…', true)}
+              {renderGitContextItem('history', 'Git 历史记录')}
+              {contextOperation && renderGitContextItem('operation', '查看 Git 操作进度…')}
+            </>
+          )}
           {!ctxMenu.path && ctxMenu.dir && (
             <>
               <div className="context-menu-separator" />
@@ -718,7 +815,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
         </div>
       )}
 
-      {confirmDelete && (
+      {confirmDelete && !isSsh && (
         <ConfirmDialog
           title="确认删除"
           message={`确定删除 "${confirmDelete}" 吗？`}
@@ -728,5 +825,7 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
         />
       )}
     </div>
+    {isSsh && activeSession && <RemoteFileTree terminalId={activeSession.id} />}
+    </>
   );
 };
