@@ -110,6 +110,8 @@ export interface TerminalSession {
   sshRemotePath?: string;
   sshTerminalId?: string;
   owner?: 'pc' | 'web';
+  // 无配置终端的启动目录快照；sessionDirectories 会随 cd 改变。
+  startupPath?: string;
   extraParams?: string;
   extraParamMode?: ExtraParamMode;
   // 启动参数预设的 tag / tagColor（启动时快照下来，预设被删除/改名也不影响历史 tab）

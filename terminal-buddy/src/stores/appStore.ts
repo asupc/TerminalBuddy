@@ -19,6 +19,7 @@ interface SavedTab {
 	sessionType?: "terminal" | "editor";
 	isDirty?: boolean;
 	owner?: "pc" | "web";
+	startupPath?: string;
 	extraParams?: string;
 	extraParamMode?: "append" | "independent";
 	extraParamTag?: string;
@@ -82,6 +83,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 			sessionType: s.sessionType,
 			isDirty: s.sessionType === "editor" ? false : undefined,
 			owner: s.owner,
+			startupPath: s.startupPath,
 			extraParams: s.extraParams,
 			extraParamMode: s.extraParamMode,
 			extraParamTag: s.extraParamTag,
@@ -132,6 +134,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 		sessionType: tab.sessionType === "editor" || tab.sessionType === "terminal" ? tab.sessionType : undefined,
 		isDirty: typeof tab.isDirty === "boolean" ? tab.isDirty : undefined,
 		owner: tab.owner === "pc" || tab.owner === "web" ? tab.owner : undefined,
+		startupPath: typeof tab.startupPath === "string" ? tab.startupPath : undefined,
 		extraParams: typeof tab.extraParams === "string" ? tab.extraParams : undefined,
 		extraParamMode: tab.extraParamMode === "independent" ? "independent" : tab.extraParamMode === "append" ? "append" : undefined,
 		extraParamTag: typeof tab.extraParamTag === "string" ? tab.extraParamTag : undefined,

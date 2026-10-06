@@ -326,7 +326,7 @@ export const applyTheme = (theme: ThemeMode) => {
 };
 
 /**
- * 根据设置应用列表选中样式（连接导航 / 文件导航的 .tree-item.selected 背景与文字色）。
+ * 根据设置应用列表选中样式（“项目与命令” / “文件与 Git”面板的 .tree-item.selected 背景与文字色）。
  * 内置样式随当前主题切换；自定义样式始终使用用户指定的配色。
  */
 export const applyListSelectionStyle = (s: AppSettings) => {

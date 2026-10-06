@@ -189,7 +189,7 @@ export const createSessionsSlice = (
 	},
 	setActiveSession: (id) =>
 		set((state) => {
-			// 文件导航跟随当前连接：优先使用会话内已记录的目录（用户浏览或 cd 过的）；
+			// 文件与 Git 面板跟随当前连接：优先使用会话内已记录的目录（用户浏览或 cd 过的）；
 			// 若无记录，则回退到 profile 设置的启动目录（startupPath）。
 			let currentDirectory = state.currentDirectory;
 			if (id) {

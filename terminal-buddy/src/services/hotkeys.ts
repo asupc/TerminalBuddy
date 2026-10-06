@@ -18,8 +18,8 @@ export interface HotkeyActionMeta {
 
 export const HOTKEY_ACTIONS: HotkeyActionMeta[] = [
   { id: 'showWindow', name: '呼出程序窗口', desc: '全局快捷键，应用在托盘或后台时按下可唤出窗口', defaultHotkey: 'Ctrl+Alt+T' },
-  { id: 'toggleConfigNav', name: '配置导航开关', desc: '显示或隐藏左侧配置（连接）面板', defaultHotkey: 'Ctrl+Shift+C' },
-  { id: 'toggleFileNav', name: '文件导航开关', desc: '显示或隐藏左侧文件面板', defaultHotkey: 'Ctrl+Shift+E' },
+  { id: 'toggleConfigNav', name: '项目与命令面板开关', desc: '显示或隐藏左侧项目与命令面板', defaultHotkey: 'Ctrl+Shift+C' },
+  { id: 'toggleFileNav', name: '文件与 Git 面板开关', desc: '显示或隐藏左侧文件与 Git 面板', defaultHotkey: 'Ctrl+Shift+E' },
   { id: 'openSettings', name: '打开设置', desc: '打开设置弹窗', defaultHotkey: 'Ctrl+,' },
   { id: 'newTerminal', name: '新建终端', desc: '新建一个 PowerShell 终端', defaultHotkey: 'Ctrl+Shift+N' },
   { id: 'closeTab', name: '关闭当前标签', desc: '关闭当前激活的终端标签', defaultHotkey: 'Ctrl+W' },

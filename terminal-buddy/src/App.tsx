@@ -594,7 +594,7 @@ function App() {
     });
   }, []);
 
-  // 默认风格下会话历史是常驻列，没有「点开」这一步，因此照旧立即挂载。
+  // 默认风格下 Claude Code 会话是常驻列，没有「点开」这一步，因此照旧立即挂载。
   const slowPanelMounted = () => uiStyle !== 'sidebar' || everOpened.history;
 
   return (
