@@ -24,7 +24,7 @@ import {
   searchClaudeHistory,
   renameClaudeSessionRecord,
   setClaudeSessionFlags,
-  deleteClaudeSessionRecord,
+  deleteClaudeSessionRecords,
   openInExplorer,
   getBackendAppSettings,
   saveConfigNavWidth,
@@ -128,7 +128,7 @@ const MenuItem: FC<MenuItemProps> = ({ icon: Icon, label, hint, danger, preset, 
   </div>
 );
 
-/** 会话历史面板：列表 + 全文检索 + 右键管理 + 双击恢复。 */
+/** Claude Code 会话面板：列表 + 全文检索 + 右键管理 + 双击恢复。 */
 export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isActive = true }) => {
   const showToast = useAppStore(s => s.showToast);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
@@ -247,7 +247,7 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
       setItems(nextItems);
       setLoaded(true);
     } catch (error) {
-      if (request === loadRequestRef.current) showToast(`加载会话历史失败: ${String(error)}`, 'error');
+      if (request === loadRequestRef.current) showToast(`加载 Claude Code 会话失败: ${String(error)}`, 'error');
     } finally {
       if (request === loadRequestRef.current) setLoading(false);
     }
@@ -429,12 +429,11 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
 
   const handleDelete = useCallback(async (targets: ClaudeSessionItem[]) => {
     try {
-      const results = await Promise.allSettled(targets.map(item => deleteClaudeSessionRecord(item.sessionId)));
-      const failures = results.filter(result => result.status === 'rejected');
+      await deleteClaudeSessionRecords(targets.map(item => item.sessionId));
       setDeleteTarget([]);
       setSelectedIds(new Set());
       setSelectedId(null);
-      showToast(failures.length ? `删除完成，${failures.length} 条失败` : `已删除 ${targets.length} 条记录`, failures.length ? 'error' : 'success');
+      showToast('已删除 ' + targets.length + ' 条记录', 'success');
       await load(false);
     } catch (error) { showToast(`删除失败: ${String(error)}`, 'error'); }
   }, [load, showToast]);
@@ -548,7 +547,7 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
       style={{ width }}
     >
       <div className="panel-titlebar">
-        <span className="panel-title">会话历史</span>
+        <span className="panel-title">Claude Code 会话</span>
         <span className="panel-title-count">{items.length}</span>
       </div>
       <div className="claude-hist-toolbar">
@@ -627,12 +626,12 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
       </div>
 
       {selectedItems.length > 1 && <div className="claude-hist-bulk-bar">
-        已选 {selectedItems.length} 条
+        <span className="claude-hist-bulk-count">已选 {selectedItems.length} 条</span>
         <button type="button" onClick={() => void handleBulkFlag(selectedItems, { starred: true })}>收藏</button>
         <button type="button" onClick={() => void handleBulkFlag(selectedItems, { starred: false })}>取消收藏</button>
         <button type="button" onClick={() => void handleBulkFlag(selectedItems, { archived: true })}>归档</button>
         <button type="button" onClick={() => void handleBulkFlag(selectedItems, { archived: false })}>取消归档</button>
-        <button type="button" onClick={() => setDeleteTarget(selectedItems)}>删除</button>
+        <button type="button" className="danger" onClick={() => setDeleteTarget(selectedItems)}>删除所选</button>
         <button type="button" onClick={() => { setSelectedIds(new Set()); setSelectedId(null); }}>取消选择</button>
       </div>}
       <div className="claude-hist-list">

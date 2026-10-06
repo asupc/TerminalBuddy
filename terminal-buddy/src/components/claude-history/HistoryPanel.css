@@ -17,7 +17,7 @@
   max-width: 400px;
 }
 
-/* 标题栏「显示/隐藏会话历史」在默认风格下把列收零宽（与 .file-nav.collapsed 同款） */
+/* 标题栏「显示/隐藏 Claude Code 会话」在默认风格下把列收零宽（与 .file-nav.collapsed 同款） */
 .claude-hist.collapsed {
   width: 0 !important;
   min-width: 0 !important;
@@ -458,5 +458,54 @@
   margin-top: 2px;
 }
 
-.claude-hist-bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 5px 8px; font-size: 11px; color: var(--text-secondary); }
-.claude-hist-bulk-bar button { border: 1px solid var(--border); border-radius: 4px; background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; }
+.claude-hist-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--accent);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.claude-hist-bulk-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  white-space: nowrap;
+}
+
+.claude-hist-bulk-bar button {
+  min-height: 27px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.claude-hist-bulk-bar button:hover {
+  border-color: var(--accent);
+  background: var(--bg-primary);
+}
+
+.claude-hist-bulk-bar button.danger {
+  border-color: #c93838;
+  background: #c93838;
+  color: #fff;
+}
+
+.claude-hist-bulk-bar button.danger:hover {
+  border-color: #e04b4b;
+  background: #e04b4b;
+}

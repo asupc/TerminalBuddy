@@ -23,7 +23,7 @@ export function pickScopedProject<T extends { dir: string }>(
 /**
  * 当前激活的 Claude Code 终端所属项目目录，作为各 Claude 面板的作用域。
  * 目录取会话内记录的（用户浏览或 cd 过），无记录时回退 profile 的启动目录 ——
- * 与 setActiveSession 给文件导航用的同一套判据。
+ * 与 setActiveSession 给“文件与 Git”面板使用的同一套判据。
  * 没有激活终端、或激活的不是 claude 终端时返回 undefined，即回落全局视图。
  */
 export function useClaudeProjectScope(): string | undefined {

@@ -101,6 +101,10 @@ export function deleteClaudeSessionRecord(sessionId: string): Promise<void> {
   return invoke('claude_history_delete', { sessionId });
 }
 
+export function deleteClaudeSessionRecords(sessionIds: string[]): Promise<void> {
+  return invoke('claude_history_delete_many', { sessionIds });
+}
+
 export function exportClaudeSession(
   sessionId: string,
   format: 'markdown' | 'jsonl',
