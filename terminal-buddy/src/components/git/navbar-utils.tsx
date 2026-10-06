@@ -32,6 +32,7 @@ export interface PushDialogState {
 }
 export interface GitNavBarProps {
   currentDirectory: string;
+  showToolbar?: boolean;
   onRepositoryChanged?: () => void | Promise<void>;
 }
 export function GitToolbarIcon({ name }: { name: GitToolbarIconName }) {

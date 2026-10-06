@@ -1,4 +1,4 @@
-import { FC, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { CircleSlash2, GitBranch as GitBranchIcon, TriangleAlert } from 'lucide-react';
 import {
   gitCheckoutBranch,
@@ -23,15 +23,34 @@ import { useAppStore } from '../../stores/appStore';
 import { showAlert } from '../../services/dialog';
 import { GitPopover, GitAction, PullDialogState, PushDialogState, GitNavBarProps, GitToolbarIcon, compactOutput, buildStatusTitle, parseUpstream, buildPushCommandPreview } from './navbar-utils';
 import { CommitDialog, PullDialog, PushDialog } from "./GitDialogs";
+import { finishGitOperation, getGitOperation, gitRepositoryKey, subscribeGitOperations, tryBeginGitOperation } from '../../services/gitOperationState';
 
-export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryChanged }) => {
+export interface GitNavBarHandle {
+  refreshStatus: () => Promise<GitRepositoryStatus | null>;
+  loadBranches: () => Promise<void>;
+  startPull: () => Promise<void>;
+  openCommitDialog: () => void;
+  openPushDialog: () => void;
+  loadHistory: () => Promise<void>;
+  showOperationDialog: () => void;
+}
+
+export const GitNavBar = forwardRef<GitNavBarHandle, GitNavBarProps>(
+  ({ currentDirectory, showToolbar = true, onRepositoryChanged }, ref) => {
   const openGitHistoryTab = useAppStore(s => s.openGitHistoryTab);
-  const initialCachedStatus = getCachedGitRepositoryStatus(currentDirectory);
-  const [status, setStatus] = useState<GitRepositoryStatus | null>(initialCachedStatus?.status ?? null);
+  const initialCachedStatus = getCachedGitRepositoryStatus(currentDirectory, { exact: true });
+  const initialStatus = initialCachedStatus?.status;
+  const [status, setStatus] = useState<GitRepositoryStatus | null>(initialStatus
+    && gitRepositoryKey(initialStatus.repoRoot) === gitRepositoryKey(currentDirectory) ? initialStatus : null);
   const [statusResolved, setStatusResolved] = useState(Boolean(initialCachedStatus));
   const [loadError, setLoadError] = useState('');
   const [popover, setPopover] = useState<GitPopover>(null);
-  const [action, setAction] = useState<GitAction>(null);
+  const operation = useSyncExternalStore(
+    subscribeGitOperations,
+    useCallback(() => getGitOperation(currentDirectory), [currentDirectory]),
+  );
+  const action: GitAction = operation?.action ?? null;
+  const [lastOperation, setLastOperation] = useState<GitAction>(null);
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
@@ -43,7 +62,11 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   const [commitError, setCommitError] = useState('');
   const [commitNotice, setCommitNotice] = useState('');
   const [pullDialog, setPullDialog] = useState<PullDialogState | null>(null);
+  const [pullDialogVisible, setPullDialogVisible] = useState(false);
   const [pushDialog, setPushDialog] = useState<PushDialogState | null>(null);
+  const [pushDialogVisible, setPushDialogVisible] = useState(false);
+  const lastStatusRef = useRef(status);
+  if (status) lastStatusRef.current = status;
   const rootRef = useRef<HTMLDivElement>(null);
   const pushLogRef = useRef<HTMLPreElement>(null);
   const currentDirectoryRef = useRef(currentDirectory);
@@ -51,28 +74,31 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
 
   useEffect(() => {
     let cancelled = false;
-    const cached = getCachedGitRepositoryStatus(currentDirectory);
+    const cached = getCachedGitRepositoryStatus(currentDirectory, { exact: true });
 
     setPopover(null);
     setBranches([]);
     setLoadError('');
-    setStatus(cached?.status ?? null);
+    setStatus(cached?.status && gitRepositoryKey(cached.status.repoRoot) === gitRepositoryKey(currentDirectory)
+      ? cached.status : null);
     setStatusResolved(Boolean(cached));
     if (!currentDirectory) {
       return;
     }
 
     const applyCachedStatus = () => {
-      const nextCached = getCachedGitRepositoryStatus(currentDirectory);
+      const nextCached = getCachedGitRepositoryStatus(currentDirectory, { exact: true });
       if (!nextCached || cancelled) return;
-      setStatus(nextCached.status);
+      // 旧的嵌套仓库被移除后，不能把其父仓库状态塞进旧控制器并误执行操作。
+      setStatus(nextCached.status && gitRepositoryKey(nextCached.status.repoRoot) === gitRepositoryKey(currentDirectory)
+        ? nextCached.status : null);
       setStatusResolved(true);
       setLoadError('');
     };
     const unsubscribe = subscribeGitRepositoryStatus(applyCachedStatus);
 
     if (!cached) {
-      loadGitRepositoryStatus(currentDirectory)
+      loadGitRepositoryStatus(currentDirectory, { exact: true })
         .then(() => applyCachedStatus())
         .catch((err) => {
           if (!cancelled) {
@@ -119,12 +145,13 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     const requestedDirectory = currentDirectory;
     if (currentDirectoryRef.current === requestedDirectory) setLoadError('');
     try {
-      const next = await loadGitRepositoryStatus(requestedDirectory, { force: true });
+      const next = await loadGitRepositoryStatus(requestedDirectory, { force: true, exact: true });
+      const matchingStatus = next && gitRepositoryKey(next.repoRoot) === gitRepositoryKey(requestedDirectory) ? next : null;
       if (currentDirectoryRef.current === requestedDirectory) {
-        setStatus(next);
+        setStatus(matchingStatus);
         setStatusResolved(true);
       }
-      return next;
+      return matchingStatus;
     } catch (err) {
       console.error('Failed to refresh git status:', err);
       if (currentDirectoryRef.current === requestedDirectory) {
@@ -135,14 +162,16 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   }, [currentDirectory]);
 
   const runAction = useCallback(async (
-    nextAction: GitAction,
+    nextAction: Exclude<GitAction, null>,
     label: string,
     fn: (repoRoot: string) => Promise<string>,
     shouldRefreshFiles = false,
   ) => {
     if (!status) return false;
 
-    setAction(nextAction);
+    const token = tryBeginGitOperation(status.repoRoot, nextAction);
+    if (!token) return false;
+    setLastOperation(nextAction);
     try {
       const output = await fn(status.repoRoot);
       await refreshStatus();
@@ -157,16 +186,19 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       void showAlert(`${label}失败：${String(err)}`, `${label}失败`);
       return false;
     } finally {
-      setAction(null);
+      finishGitOperation(token);
     }
   }, [onRepositoryChanged, refreshStatus, status]);
 
   const startPull = useCallback(async () => {
-    if (!status) return;
+    if (!status || !status.hasRemote) return;
+    const token = tryBeginGitOperation(status.repoRoot, 'pull');
+    if (!token) return;
 
     const command = 'git.exe pull -v --progress';
     setPopover(null);
-    setAction('pull');
+    setLastOperation('pull');
+    setPullDialogVisible(true);
     setPullDialog({
       phase: 'running',
       command,
@@ -199,14 +231,15 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
           }
         : current);
     } finally {
-      setAction(null);
+      finishGitOperation(token);
     }
   }, [onRepositoryChanged, refreshStatus, status]);
 
   const openPushDialog = useCallback(() => {
-    if (!status || !status.hasRemote) return;
+    if (!status || !status.hasRemote || getGitOperation(status.repoRoot)) return;
 
     setPopover(null);
+    setPushDialogVisible(true);
     const localBranch = status.branch;
     const parsed = parseUpstream(status.upstream);
     const remote = parsed ? parsed.remote : 'origin';
@@ -234,7 +267,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   }, [status]);
 
   useEffect(() => {
-    if (!status || !pushDialog || pushDialog.phase !== 'form') return;
+    if (!status || !pushDialog || !pushDialogVisible || pushDialog.phase !== 'form') return;
 
     const remote = pushDialog.remote.trim();
     const localBranch = pushDialog.localBranch.trim();
@@ -302,6 +335,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     pushDialog?.remote,
     pushDialog?.remoteBranch,
     pushDialog?.setUpstream,
+    pushDialogVisible,
     status,
   ]);
 
@@ -311,10 +345,10 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     if (element) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [pushDialog?.output, pushDialog?.phase]);
+  }, [pushDialog?.output, pushDialog?.phase, pushDialogVisible]);
 
   const submitPushDialog = useCallback(async () => {
-    if (!status || !pushDialog) return;
+    if (!status || !pushDialog || !status.hasRemote || pushDialog.phase === 'running') return;
 
     const remote = pushDialog.remote.trim();
     const localBranch = pushDialog.localBranch.trim();
@@ -343,26 +377,26 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     const commandPreview = buildPushCommandPreview(pushDialog);
     let unlistenPushOutput: (() => void) | null = null;
 
-    if (operationId) {
-      unlistenPushOutput = await listenGitPushOutput(operationId, (chunk) => {
-        setPushDialog((current) => current?.operationId === operationId
-          ? { ...current, output: `${current.output}${chunk}` }
-          : current);
-      });
-    }
-
-    setAction('push');
+    const token = tryBeginGitOperation(status.repoRoot, 'push');
+    if (!token) return;
+    setLastOperation('push');
+    setPushDialogVisible(true);
     setPushDialog({
-      ...pushDialog,
-      phase: 'running',
-      error: '',
-      output: `${commandPreview}\n\n正在推送...\n`,
-      command: commandPreview,
-      result: null,
-      operationId,
+      ...pushDialog, phase: 'running', error: '',
+      output: `${commandPreview}\n\n正在推送...\n`, command: commandPreview,
+      result: null, operationId,
     });
 
     try {
+      // 输出监听也属于任务启动阶段：先取得互斥令牌，再执行第一个 await。
+      if (operationId) {
+        unlistenPushOutput = await listenGitPushOutput(operationId, (chunk) => {
+          setPushDialog((current) => current?.operationId === operationId
+            ? { ...current, output: `${current.output}${chunk}` }
+            : current);
+        });
+      }
+
       const result = await gitPushWithOptions(options);
       await refreshStatus();
       await onRepositoryChanged?.();
@@ -392,13 +426,13 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
           }
         : current);
     } finally {
-      unlistenPushOutput?.();
-      setAction(null);
+      try { unlistenPushOutput?.(); }
+      finally { finishGitOperation(token); }
     }
   }, [onRepositoryChanged, pushDialog, refreshStatus, status]);
 
   const loadBranches = useCallback(async () => {
-    if (!status) return;
+    if (!status || getGitOperation(status.repoRoot)) return;
     setPopover((current) => current === 'branches' ? null : 'branches');
     setBranchesLoading(true);
     setBranches([]);
@@ -412,7 +446,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   }, [status]);
 
   const loadHistory = useCallback(async () => {
-    if (!status) return;
+    if (!status || getGitOperation(status.repoRoot)) return;
     setPopover(null);
     openGitHistoryTab({ repoRoot: status.repoRoot, branch: status.branch });
   }, [openGitHistoryTab, status]);
@@ -442,13 +476,14 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
   }, [status]);
 
   const openCommitDialog = useCallback(() => {
+    if (!status || getGitOperation(status.repoRoot)) return;
     setPopover(null);
     setCommitDialogOpen(true);
     setCommitMessage('');
     setCommitError('');
     setCommitNotice('');
     loadChangedFiles();
-  }, [loadChangedFiles]);
+  }, [loadChangedFiles, status]);
 
   const checkoutBranch = useCallback(async (branch: GitBranch) => {
     if (branch.isCurrent) {
@@ -520,7 +555,9 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
       return;
     }
 
-    setAction('commit');
+    const token = tryBeginGitOperation(status.repoRoot, 'commit');
+    if (!token) return;
+    setLastOperation('commit');
     setCommitError('');
     setCommitNotice('');
     try {
@@ -533,7 +570,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     } catch (err) {
       setCommitError(String(err));
     } finally {
-      setAction(null);
+      finishGitOperation(token);
     }
   }, [
     commitMessage,
@@ -615,6 +652,61 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     );
   };
 
+  const showOperationDialog = useCallback(() => {
+    const kind = getGitOperation(currentDirectory)?.action ?? lastOperation;
+    if (kind === 'pull' && pullDialog) setPullDialogVisible(true);
+    else if (kind === 'push' && pushDialog) setPushDialogVisible(true);
+    else if (kind === 'commit') setCommitDialogOpen(true);
+    else if (kind === 'checkout') void showAlert('当前仓库正在切换分支，请等待操作完成。', 'Git 操作进度');
+  }, [currentDirectory, lastOperation, pullDialog, pushDialog]);
+
+  useImperativeHandle(ref, () => ({
+    refreshStatus,
+    loadBranches,
+    startPull,
+    openCommitDialog,
+    openPushDialog,
+    loadHistory,
+    showOperationDialog,
+  }), [refreshStatus, loadBranches, startPull, openCommitDialog, openPushDialog, loadHistory, showOperationDialog]);
+
+  const busy = action !== null;
+  const dialogStatus = status ?? lastStatusRef.current;
+  const operationDialogs = dialogStatus && (
+    <>
+      {commitDialogOpen && (
+        <CommitDialog
+          status={dialogStatus} commitMessage={commitMessage} setCommitMessage={setCommitMessage}
+          commitError={commitError} setCommitError={setCommitError}
+          commitNotice={commitNotice} setCommitNotice={setCommitNotice}
+          visibleChangedFiles={visibleChangedFiles} changesLoading={changesLoading}
+          selectedChangePaths={selectedChangePaths} setSelectedChangePaths={setSelectedChangePaths}
+          onClose={() => setCommitDialogOpen(false)}
+          onSubmit={submitCommitDialog}
+          onToggleAllVisibleChanges={toggleAllVisibleChanges} onAddSignedOffBy={addSignedOffBy}
+          action={action} showUntracked={showUntracked} setShowUntracked={setShowUntracked}
+          selectedVisibleCount={selectedVisibleCount} toggleChangePath={toggleChangePath}
+          loadChangedFiles={loadChangedFiles}
+        />
+      )}
+      {pullDialog && pullDialogVisible && (
+        <PullDialog
+          pullDialog={pullDialog} setPullDialog={setPullDialog} status={dialogStatus} busy={busy} startPull={startPull}
+          onClose={() => setPullDialogVisible(false)}
+        />
+      )}
+      {pushDialog && pushDialogVisible && (
+        <PushDialog
+          pushDialog={pushDialog} setPushDialog={setPushDialog} pushCommandPreview={pushCommandPreview} pushStatusText={pushStatusText} pushLogRef={pushLogRef} submitPushDialog={submitPushDialog} renderPushCommitPreview={renderPushCommitPreview}
+          status={dialogStatus} onClose={() => setPushDialogVisible(false)}
+        />
+      )}
+    </>
+  );
+
+  // 隐藏的仓库只隐藏工具栏，不卸载任务或清除结果；Dialog 通过 portal 独立展示。
+  if (!showToolbar) return <>{operationDialogs}</>;
+
   if (!status) {
     const state = !currentDirectory
         ? { kind: 'empty', label: '请选择目录以检查 Git 仓库', icon: CircleSlash2 }
@@ -626,6 +718,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
     const StateIcon = state.icon;
 
     return (
+      <>
       <div
         ref={rootRef}
         className={`git-nav-bar git-nav-state ${state.kind}`}
@@ -636,10 +729,11 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
         <StateIcon className="git-nav-state-icon" aria-hidden="true" />
         <span>{state.label}</span>
       </div>
+      {operationDialogs}
+      </>
     );
   }
 
-  const busy = action !== null;
   const hasChanges = status.changedCount > 0;
 
   return (
@@ -661,7 +755,12 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
           {status.changedCount}
         </span>
       )}
-      {syncLabel && <span className="git-sync-meta" title={buildStatusTitle(status)}>{syncLabel}</span>}
+      {(action || lastOperation === 'pull' || lastOperation === 'push' || lastOperation === 'commit') && (
+        <button type="button" className="git-operation-status" onClick={showOperationDialog} title="查看 Git 操作进度或上次结果">
+          {action ? `${({ pull: '拉取', push: '推送', commit: '提交', checkout: '切换' })[action]}中…` : '操作结果'}
+        </button>
+      )}
+      {syncLabel && !action && <span className="git-sync-meta" title={buildStatusTitle(status)}>{syncLabel}</span>}
       <div className="git-actions">
         <button
           className="git-icon-btn pull"
@@ -674,6 +773,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
         <button
           className="git-icon-btn commit"
           onClick={openCommitDialog}
+          disabled={busy}
           title="提交（打开后重新检测变更）"
         >
           <GitToolbarIcon name="commit" />
@@ -707,6 +807,7 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
                 key={`${branch.isRemote ? 'remote' : 'local'}:${branch.name}`}
                 className={`git-list-row ${branch.isCurrent ? 'current' : ''}`}
                 onClick={() => checkoutBranch(branch)}
+                disabled={busy}
                 title={branch.upstream ? `${branch.name} → ${branch.upstream}` : branch.name}
               >
                 <span className="git-list-name">{branch.isCurrent ? `✓ ${branch.name}` : branch.name}</span>
@@ -717,34 +818,10 @@ export const GitNavBar: FC<GitNavBarProps> = ({ currentDirectory, onRepositoryCh
         </div>
       )}
 
-      {commitDialogOpen && (
-        <CommitDialog
-          status={status} commitMessage={commitMessage} setCommitMessage={setCommitMessage}
-          commitError={commitError} setCommitError={setCommitError}
-          commitNotice={commitNotice} setCommitNotice={setCommitNotice}
-          visibleChangedFiles={visibleChangedFiles} changesLoading={changesLoading}
-          selectedChangePaths={selectedChangePaths} setSelectedChangePaths={setSelectedChangePaths}
-          onClose={() => setCommitDialogOpen(false)}
-          onSubmit={submitCommitDialog}
-          onToggleAllVisibleChanges={toggleAllVisibleChanges} onAddSignedOffBy={addSignedOffBy}
-          action={action} showUntracked={showUntracked} setShowUntracked={setShowUntracked}
-          selectedVisibleCount={selectedVisibleCount} toggleChangePath={toggleChangePath}
-          loadChangedFiles={loadChangedFiles}
-        />
-      )}
-
-      {pullDialog && (
-        <PullDialog
-          pullDialog={pullDialog} setPullDialog={setPullDialog} status={status} busy={busy} startPull={startPull}
-        />
-      )}
-
-      {pushDialog && (
-        <PushDialog
-          pushDialog={pushDialog} setPushDialog={setPushDialog} pushCommandPreview={pushCommandPreview} pushStatusText={pushStatusText} pushLogRef={pushLogRef} submitPushDialog={submitPushDialog} renderPushCommitPreview={renderPushCommitPreview}
-          status={status}
-        />
-      )}
+      {operationDialogs}
     </div>
   );
-};
+  },
+);
+
+GitNavBar.displayName = 'GitNavBar';

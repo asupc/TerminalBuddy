@@ -10,7 +10,12 @@ export interface CachedGitRepositoryStatus {
   updatedAt: number;
 }
 
-interface LoadGitRepositoryStatusOptions {
+interface GitRepositoryCacheOptions {
+  /** 仅复用已检测过的目录，不把父仓库当作嵌套仓库的检测结果。 */
+  exact?: boolean;
+}
+
+interface LoadGitRepositoryStatusOptions extends GitRepositoryCacheOptions {
   force?: boolean;
 }
 
@@ -65,22 +70,34 @@ function notifyStatusListeners(): void {
   }
 }
 
-export function getCachedGitRepositoryStatus(path: string): CachedGitRepositoryStatus | undefined {
+export function getCachedGitRepositoryStatus(
+  path: string,
+  options: GitRepositoryCacheOptions = {},
+): CachedGitRepositoryStatus | undefined {
   const key = normalizePath(path);
   if (!key) return undefined;
 
   const exact = statusCache.get(key);
+  // 非仓库也缓存；明确检测过的空结果不能被父目录的旧仓库状态覆盖。
+  if (exact?.status === null) return exact;
+  if (options.exact) {
+    if (!exact?.status) return exact;
+    // 目录归属已确认后，分支/远端/变更等状态跟随仓库根目录的最新缓存。
+    return statusCache.get(normalizePath(exact.status.repoRoot)) ?? exact;
+  }
+
   let newest: CachedGitRepositoryStatus | undefined;
   let longestRepoRoot = -1;
   for (const entry of statusCache.values()) {
     if (!entry.status) continue;
     const repoRoot = normalizePath(entry.status.repoRoot);
-    if (!isPathInside(key, repoRoot)) continue;
+    const current = statusCache.get(repoRoot) ?? entry;
+    if (!current.status || !isPathInside(key, repoRoot)) continue;
     if (repoRoot.length > longestRepoRoot) {
-      newest = entry;
+      newest = current;
       longestRepoRoot = repoRoot.length;
-    } else if (repoRoot.length === longestRepoRoot && (!newest || entry.updatedAt > newest.updatedAt)) {
-      newest = entry;
+    } else if (repoRoot.length === longestRepoRoot && (!newest || current.updatedAt > newest.updatedAt)) {
+      newest = current;
     }
   }
   return newest ?? exact;
@@ -98,12 +115,13 @@ export async function loadGitRepositoryStatus(
   const key = normalizePath(path);
   if (!key) return null;
 
-  const cached = getCachedGitRepositoryStatus(path);
+  const cached = getCachedGitRepositoryStatus(path, options);
   if (!options.force && cached) {
     return cached.status;
   }
 
-  const requestKey = cached?.status ? normalizePath(cached.status.repoRoot) : key;
+  // 检测按实际目录去重，避免父仓库的在途请求误充当嵌套目录的检测结果。
+  const requestKey = key;
   const pending = pendingRequests.get(requestKey);
   if (pending) {
     if (!options.force) return pending;

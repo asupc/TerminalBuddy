@@ -211,10 +211,11 @@ interface PullDialogProps {
   status: GitRepositoryStatus;
   busy: boolean | null;
   startPull: () => void;
+  onClose: () => void;
 }
 
 export const PullDialog: FC<PullDialogProps> = ({
-  pullDialog, setPullDialog, status, busy, startPull,
+  pullDialog, setPullDialog, status, busy, startPull, onClose,
 }) => {
   return (
   <Dialog
@@ -230,7 +231,7 @@ export const PullDialog: FC<PullDialogProps> = ({
     titleClassName="git-pull-title"
     closeButtonClassName="git-pull-window-close"
     bodyClassName="git-dialog-layout"
-    onClose={() => setPullDialog(null)}
+    onClose={onClose}
   >
       <div className="git-pull-body">
         <div className="git-pull-top">
@@ -346,7 +347,7 @@ export const PullDialog: FC<PullDialogProps> = ({
             拉取(P)
           </button>
           <button
-            onClick={() => setPullDialog(null)}
+            onClick={onClose}
             disabled={pullDialog.phase === 'running'}
           >
             关闭
@@ -366,11 +367,12 @@ interface PushDialogProps {
   pushStatusText: string;
   pushLogRef: React.RefObject<HTMLPreElement | null>;
   submitPushDialog: (e: FormEvent) => void;
+  onClose: () => void;
   renderPushCommitPreview: (compact?: boolean) => React.ReactNode;
 }
 
 export const PushDialog: FC<PushDialogProps> = ({
-  pushDialog, setPushDialog, status, pushCommandPreview, pushStatusText, pushLogRef, submitPushDialog, renderPushCommitPreview,
+  pushDialog, setPushDialog, status, pushCommandPreview, pushStatusText, pushLogRef, submitPushDialog, renderPushCommitPreview, onClose,
 }) => {
   return (
   <Dialog
@@ -386,7 +388,7 @@ export const PushDialog: FC<PushDialogProps> = ({
     titleClassName="git-push-title"
     closeButtonClassName="git-push-window-close"
     bodyClassName="git-dialog-layout"
-    onClose={() => setPushDialog(null)}
+    onClose={onClose}
   >
       <div className="git-push-body">
         {pushDialog.phase === 'form' ? (
@@ -500,7 +502,7 @@ export const PushDialog: FC<PushDialogProps> = ({
               >
                 推送(P)
               </button>
-              <button onClick={() => setPushDialog(null)}>取消</button>
+              <button onClick={onClose}>取消</button>
             </>
           )}
           {pushDialog.phase === 'running' && (
@@ -512,7 +514,7 @@ export const PushDialog: FC<PushDialogProps> = ({
           {pushDialog.phase === 'success' && (
             <>
               <button onClick={submitPushDialog}>再次推送(R)</button>
-              <button onClick={() => setPushDialog(null)}>关闭</button>
+              <button onClick={onClose}>关闭</button>
             </>
           )}
           {pushDialog.phase === 'error' && (
@@ -520,7 +522,7 @@ export const PushDialog: FC<PushDialogProps> = ({
               <button onClick={() => setPushDialog({ ...pushDialog, phase: 'form', error: '' })}>
                 返回修改参数
               </button>
-              <button onClick={() => setPushDialog(null)}>关闭</button>
+              <button onClick={onClose}>关闭</button>
             </>
           )}
         </div>
