@@ -1,5 +1,7 @@
 import { useAppStore } from '../../stores/appStore';
 import { effectiveProfilePath } from '../../utils/projectPath';
+import { openTerminalInDir } from '../../utils/openTerminalInDir';
+import { projectStartupCommand } from '../../utils/startupPresets';
 import { FC } from 'react';
 import { openInExplorer } from '../../services/tauri';
 import type { ExtraParamMode, Profile, TerminalSession } from '../../types';
@@ -35,23 +37,43 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
   const profile = session && session.sessionType !== 'editor'
     ? profiles.find(p => p.id === session.profileId)
     : undefined;
+  const isProjectSession = !!session && session.sessionType !== 'editor'
+    && !session.profileId && !!session.groupName && session.terminalType === 'powershell';
 
   return (
     <div className="context-menu" style={{ left: x, top: y }}>
       <div className="context-menu-item" onClick={() => { onRename(session); onClose(); }}>
         重命名
       </div>
-      {session && session.sessionType !== 'editor' && profile && (
+      {session && session.sessionType !== 'editor' && (profile || isProjectSession) && (
         <div className="context-menu-item" onClick={() => {
-          onStartTerminal(
-            profile,
-            session.extraParams,
-            session.extraParamTag,
-            session.profileName,
-            session.extraParamTag,
-            session.extraParamTagColor,
-            session.extraParamMode,
-          );
+          if (profile) {
+            onStartTerminal(
+              profile,
+              session.extraParams,
+              session.extraParamTag,
+              session.profileName,
+              session.extraParamTag,
+              session.extraParamTagColor,
+              session.extraParamMode,
+            );
+          } else {
+            const state = useAppStore.getState();
+            // 兼容尚未记录启动快照的旧项目会话，优先使用会话保存的命令和目录。
+            const project = state.projects.find(item => item.name === session.groupName);
+            const preset = session.extraParamTag
+              ? state.extraParamPresets.find(item => item.name === session.extraParamTag)
+              : undefined;
+            const path = session.startupPath ?? (project?.path || state.sessionDirectories[sessionId]);
+            const command = session.extraParams ?? (project ? projectStartupCommand(project, preset) : undefined);
+            void openTerminalInDir(path, {
+              command,
+              name: session.profileName,
+              groupName: session.groupName,
+              presetTag: session.extraParamTag,
+              presetTagColor: session.extraParamTagColor,
+            }).catch(error => useAppStore.getState().showToast('启动终端失败：' + String(error), 'error'));
+          }
           onClose();
         }}>以此配置新建终端</div>
       )}
@@ -62,11 +84,14 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
         }}>复制配置名</div>
       )}
       {(() => {
-        if (!profile) return null;
-        const isLocal = profile.terminalType === 'powershell' || profile.terminalType === 'pwsh' || profile.terminalType === 'cmd';
-        const path = effectiveProfilePath(profile, useAppStore.getState().projects);
-        const hasPath = !!path;
-        if (!isLocal || !hasPath) return null;
+        if (!session || session.sessionType === 'editor') return null;
+        // 无 profile 的会话（项目右键/文件与 Git 面板打开的空白终端）回退到会话记录目录
+        const terminalType = profile?.terminalType || session.terminalType;
+        const isLocal = terminalType === 'powershell' || terminalType === 'pwsh' || terminalType === 'cmd';
+        const state = useAppStore.getState();
+        const path = (profile && effectiveProfilePath(profile, state.projects))
+          || state.sessionDirectories[sessionId];
+        if (!isLocal || !path) return null;
         return (
           <>
             <div className="context-menu-item" onClick={async () => {

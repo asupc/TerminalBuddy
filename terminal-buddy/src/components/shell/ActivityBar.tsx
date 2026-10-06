@@ -12,10 +12,10 @@ interface ActivityBarProps {
 }
 
 const NAV_ITEMS = [
-  { id: 'config', label: '配置', icon: Server },
-  { id: 'files', label: '文件', icon: Files },
-  { id: 'tabs', label: '选项卡', icon: ListTree },
-  { id: 'history', label: '会话历史', icon: History },
+  { id: 'config', label: '项目与命令', icon: Server },
+  { id: 'files', label: '文件与 Git', icon: Files },
+  { id: 'tabs', label: '会话标签', icon: ListTree },
+  { id: 'history', label: 'Claude Code 会话', icon: History },
 ] as const;
 
 export const ActivityBar: FC<ActivityBarProps> = ({
@@ -37,7 +37,7 @@ export const ActivityBar: FC<ActivityBarProps> = ({
             type="button"
             onClick={() => onSelectPanel(item.id)}
             disabled={isDisabled}
-            title={isDisabled ? '选项卡导航已在设置中关闭' : item.label}
+            title={isDisabled ? '会话标签导航已在设置中关闭' : item.label}
             aria-label={item.label}
             aria-pressed={isActive}
           >

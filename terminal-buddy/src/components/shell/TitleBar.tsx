@@ -306,8 +306,8 @@ export const TitleBar: FC<TitleBarProps> = ({
               <button
                 className={`titlebar-nav-btn ${configPanelVisible ? 'active' : ''}`}
                 onClick={onToggleConfigPanel}
-                title={configPanelVisible ? '隐藏连接导航' : '显示连接导航'}
-                aria-label={configPanelVisible ? '隐藏连接导航' : '显示连接导航'}
+                title={configPanelVisible ? '隐藏项目与命令' : '显示项目与命令'}
+                aria-label={configPanelVisible ? '隐藏项目与命令' : '显示项目与命令'}
                 aria-pressed={configPanelVisible}
               >
                 <PanelLeft aria-hidden="true" />
@@ -315,8 +315,8 @@ export const TitleBar: FC<TitleBarProps> = ({
               <button
                 className={`titlebar-nav-btn ${fileTreeVisible ? 'active' : ''}`}
                 onClick={onToggleFileTree}
-                title={fileTreeVisible ? '隐藏文件导航' : '显示文件导航'}
-                aria-label={fileTreeVisible ? '隐藏文件导航' : '显示文件导航'}
+                title={fileTreeVisible ? '隐藏文件与 Git' : '显示文件与 Git'}
+                aria-label={fileTreeVisible ? '隐藏文件与 Git' : '显示文件与 Git'}
                 aria-pressed={fileTreeVisible}
               >
                 <Folder aria-hidden="true" />
@@ -324,8 +324,8 @@ export const TitleBar: FC<TitleBarProps> = ({
               <button
                 className={`titlebar-nav-btn ${historyPanelVisible ? 'active' : ''}`}
                 onClick={onToggleHistoryPanel}
-                title={historyPanelVisible ? '隐藏会话历史' : '显示会话历史'}
-                aria-label={historyPanelVisible ? '隐藏会话历史' : '显示会话历史'}
+                title={historyPanelVisible ? '隐藏 Claude Code 会话' : '显示 Claude Code 会话'}
+                aria-label={historyPanelVisible ? '隐藏 Claude Code 会话' : '显示 Claude Code 会话'}
                 aria-pressed={historyPanelVisible}
               >
                 <History aria-hidden="true" />
