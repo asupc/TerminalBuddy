@@ -34,7 +34,7 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
             <span>侧边栏</span>
           </label>
         </div>
-        <p className="settings-desc">侧边栏样式参考 VS Code，将配置、文件、选项卡和设置入口集中到左侧</p>
+        <p className="settings-desc">侧边栏样式参考 VS Code，将项目与命令、文件与 Git、会话标签、Claude Code 会话和设置入口集中到左侧</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
@@ -201,7 +201,7 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
             <span>示例选中条目</span>
           </div>
         </div>
-        <p className="settings-desc">连接导航与文件导航中，被选中列表条目的配色（上方为实时预览）</p>
+        <p className="settings-desc">项目与命令、文件与 Git 面板中被选中列表条目的配色（上方为实时预览）</p>
       </div>
       <div className="settings-section">
         <label className="settings-label">终端字号</label>

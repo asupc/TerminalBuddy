@@ -15,7 +15,7 @@ export const ExclusionSettings: FC<ExclusionSettingsProps> = ({ askConfirm, setC
 
   return (
     <div className="settings-general">
-      <p className="settings-desc">配置文件导航中需要屏蔽的文件和文件夹规则</p>
+      <p className="settings-desc">项目文件列表中需要屏蔽的文件和文件夹规则</p>
       <div className="exclusion-list">
         {exclusionPatterns.map((pattern, idx) => (
           <div key={idx} className="cmd-cat-item" onContextMenu={(e) => {

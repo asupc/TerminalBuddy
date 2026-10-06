@@ -126,9 +126,9 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
             checked={settings.configPanelAutoExpand}
             onChange={(e) => updateSetting('configPanelAutoExpand', e.target.checked)}
           />
-          <span>启动时展开连接面板</span>
+          <span>启动时展开项目与命令面板</span>
         </label>
-        <p className="settings-desc">启动时自动展开左侧连接面板</p>
+        <p className="settings-desc">启动时自动展开左侧项目与命令面板</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
@@ -137,9 +137,9 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
             checked={settings.fileTreeAutoExpand}
             onChange={(e) => updateSetting('fileTreeAutoExpand', e.target.checked)}
           />
-          <span>启动时展开文件面板</span>
+          <span>启动时展开文件与 Git 面板</span>
         </label>
-        <p className="settings-desc">启动时自动展开左侧文件面板</p>
+        <p className="settings-desc">启动时自动展开左侧文件与 Git 面板</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
@@ -148,9 +148,9 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
             checked={settings.historyPanelAutoExpand}
             onChange={(e) => updateSetting('historyPanelAutoExpand', e.target.checked)}
           />
-          <span>启动时展开会话历史面板</span>
+          <span>启动时展开 Claude Code 会话面板</span>
         </label>
-        <p className="settings-desc">默认风格下启动即显示会话历史列，标题栏按钮可随时切换</p>
+        <p className="settings-desc">默认风格下启动即显示 Claude Code 会话列，标题栏按钮可随时切换</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
@@ -179,9 +179,9 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
               window.dispatchEvent(new CustomEvent('tab-navigation-changed'));
             }}
           />
-          <span>纵向选项卡</span>
+          <span>纵向会话标签</span>
         </label>
-        <p className="settings-desc">勾选时选项卡显示在左侧面板（纵向），未勾选时显示在终端上方（横向）</p>
+        <p className="settings-desc">勾选时会话标签显示在左侧面板（纵向），未勾选时显示在终端上方（横向）</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
@@ -207,7 +207,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           />
           <span>双击运行 .bat 文件</span>
         </label>
-        <p className="settings-desc">开启后，在文件导航中双击 .bat 文件将直接运行（等同于“在系统中打开”）；关闭时双击在编辑器中打开</p>
+        <p className="settings-desc">开启后，在“文件与 Git”面板中双击 .bat 文件将直接运行（等同于“在系统中打开”）；关闭时双击在编辑器中打开</p>
       </div>
       <div className="settings-section">
         <label className="settings-toggle">
