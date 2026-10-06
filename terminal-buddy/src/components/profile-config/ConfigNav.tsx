@@ -1,7 +1,8 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
-import { openTerminalInDir } from '../../utils/openTerminalInDir';
+import { openProjectTerminal, openTerminalInDir } from '../../utils/openTerminalInDir';
+import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { ExtraParamMode, Profile } from '../../types';
@@ -231,7 +232,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   useLayoutEffect(() => {
     if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
     adjustContextMenuPosition();
-  }, [contextMenu, groupContextMenu, blankContextMenu, adjustContextMenuPosition]);
+  }, [contextMenu, groupContextMenu, blankContextMenu, adjustContextMenuPosition, extraParamPresets, projects, profiles]);
 
   useEffect(() => {
     if (!contextMenu && !groupContextMenu && !blankContextMenu) return;
@@ -312,17 +313,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
 
   const startProject = async (project: Project, preset?: typeof extraParamPresets[number]) => {
     closeContextMenu();
-    const command = preset?.mode === 'independent'
-      ? preset.params
-      : [project.startupCommand?.trim(), preset?.params].filter(Boolean).join(' ');
-    try {
-      await openTerminalInDir(project.path, {
-        command, name: project.name, groupName: project.name,
-        presetTag: preset?.name, presetTagColor: preset?.tagColor,
-      });
-    } catch (error) {
-      useAppStore.getState().showToast('启动项目失败：' + String(error), 'error');
-    }
+    await openProjectTerminal(project, preset);
   };
 
   const handleFinishRenameProfile = async () => {
@@ -440,7 +431,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
       onClick={closeContextMenu}
     >
       <div className="panel-titlebar">
-        <span className="panel-title">配置</span>
+        <span className="panel-title">项目与命令</span>
         <span className="panel-title-count">{profiles.length}</span>
         <button type="button" className="config-nav-add-project" title="添加项目" onClick={() => editProject()}>+ 项目</button>
       </div>
@@ -495,14 +486,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             if (target) onStartTerminal(target);
             closeContextMenu();
           }}>启动</div>
-          {extraParamPresets
-            .filter((preset) => {
-              if (!preset.enabled) return false;
-              if (!preset.commandMatch) return true;
-              const target = profiles.find((p) => p.id === contextMenu.profileId);
-              const match = preset.commandMatch.toLowerCase();
-              return (target?.startupCommands || []).some((cmd) => cmd.toLowerCase().includes(match));
-            })
+          {matchingStartupPresets(extraParamPresets,
+            profiles.find(p => p.id === contextMenu.profileId)?.startupCommands || [])
             .map((preset) => (
             <div key={preset.id} className="context-menu-item" onClick={() => {
               const target = profiles.find((p) => p.id === contextMenu.profileId);
@@ -589,9 +574,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             const command = project.startupCommand?.trim() || '';
             return <>
               <div className="context-menu-item" onClick={() => void startProject(project)}>启动项目</div>
-              {command && extraParamPresets.filter(preset => preset.enabled && (
-                !preset.commandMatch || command.toLowerCase().includes(preset.commandMatch.toLowerCase())
-              )).map(preset => (
+              {matchingStartupPresets(extraParamPresets, [command]).map(preset => (
                 <div key={preset.id} className="context-menu-item" onClick={() => void startProject(project, preset)}>
                   启动<span className="config-nav-preset-chip" style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}>{preset.name}</span>
                 </div>
