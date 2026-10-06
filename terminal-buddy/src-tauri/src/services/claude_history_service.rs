@@ -1243,44 +1243,159 @@ pub fn set_flags(session_id: &str, starred: Option<bool>, archived: Option<bool>
     Ok(())
 }
 
-/// 跨盘移动失败时退化为复制 + 删除
-fn move_to_trash(path: &Path, trash_dir: &Path) -> Result<(), String> {
+/// 跨盘移动失败时退化为复制 + 删除。
+fn move_to_trash(path: &Path, trash_dir: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(trash_dir).map_err(|error| format!("创建回收目录失败: {}", error))?;
-    let target = trash_dir.join(format!(
-        "{}-{}.jsonl",
-        path.file_stem().and_then(|value| value.to_str()).unwrap_or("session"),
-        chrono::Utc::now().timestamp_millis()
-    ));
+    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("session");
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let mut suffix = 0_u32;
+    let target = loop {
+        let name = if suffix == 0 {
+            format!("{}-{}.jsonl", stem, timestamp)
+        } else {
+            format!("{}-{}-{}.jsonl", stem, timestamp, suffix)
+        };
+        let candidate = trash_dir.join(name);
+        if !candidate.exists() {
+            break candidate;
+        }
+        suffix = suffix.saturating_add(1);
+    };
     match fs::rename(path, &target) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(target),
         Err(_) => {
             fs::copy(path, &target).map_err(|error| format!("备份会话记录失败: {}", error))?;
-            fs::remove_file(path).map_err(|error| format!("移除会话记录失败: {}", error))
+            if let Err(error) = fs::remove_file(path) {
+                let _ = fs::remove_file(&target);
+                return Err(format!("移除会话记录失败: {}", error));
+            }
+            Ok(target)
         }
     }
 }
 
-/// 删除会话记录：JSONL 移入回收目录，索引行清理
-pub fn delete_session(session_id: &str) -> Result<(), String> {
-    let conn = DatabaseService::open()?;
-    let file_path: Option<String> = conn
-        .query_row(
-            "SELECT file_path FROM claude_sessions WHERE session_id = ?1",
-            [session_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| format!("查询 Claude 会话失败: {}", error))?;
-    if let Some(file_path) = file_path {
-        let path = PathBuf::from(file_path);
-        if path.exists() {
-            let trash = PathService::require_data_dir()?
-                .join("Trash")
-                .join("claude-sessions");
-            move_to_trash(&path, &trash)?;
+fn restore_from_trash(trash_path: &Path, original_path: &Path) -> Result<(), String> {
+    if original_path.exists() {
+        return Err(format!("原路径已存在: {}", original_path.display()));
+    }
+    if let Some(parent) = original_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("恢复目录失败: {}", error))?;
+    }
+    match fs::rename(trash_path, original_path) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            fs::copy(trash_path, original_path).map_err(|error| format!("复制回原位置失败: {}", error))?;
+            fs::remove_file(trash_path).map_err(|error| format!("清理回收文件失败: {}", error))
         }
     }
-    delete_index_rows(&conn, session_id)
+}
+
+fn restore_moved_files(moved_files: &[(PathBuf, PathBuf)]) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for (original_path, trash_path) in moved_files.iter().rev() {
+        if trash_path.exists() {
+            if let Err(error) = restore_from_trash(trash_path, original_path) {
+                errors.push(format!("{}: {}", original_path.display(), error));
+            }
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+fn with_file_restore_error(error: String, moved_files: &[(PathBuf, PathBuf)]) -> String {
+    match restore_moved_files(moved_files) {
+        Ok(()) => error,
+        Err(restore_error) => format!("{}；同时恢复会话文件失败：{}", error, restore_error),
+    }
+}
+
+/// 批量删除会话记录：所有索引表在一个 SQLite 事务内提交，JSONL 文件移入回收目录。
+pub fn delete_sessions(session_ids: &[String]) -> Result<(), String> {
+    let mut unique_session_ids = Vec::new();
+    let mut seen_session_ids = HashSet::new();
+    for session_id in session_ids {
+        if !session_id.is_empty() && seen_session_ids.insert(session_id.as_str()) {
+            unique_session_ids.push(session_id.as_str());
+        }
+    }
+    if unique_session_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut conn = DatabaseService::open()?;
+    let file_paths = {
+        let mut statement = conn
+            .prepare("SELECT file_path FROM claude_sessions WHERE session_id = ?1")
+            .map_err(|error| format!("准备查询 Claude 会话失败: {}", error))?;
+        let mut seen_paths = HashSet::new();
+        let mut paths = Vec::new();
+        for session_id in &unique_session_ids {
+            let file_path: Option<String> = statement
+                .query_row([*session_id], |row| row.get(0))
+                .optional()
+                .map_err(|error| format!("查询 Claude 会话失败: {}", error))?;
+            if let Some(file_path) = file_path {
+                let path = PathBuf::from(file_path);
+                if seen_paths.insert(path.clone()) {
+                    paths.push(path);
+                }
+            }
+        }
+        paths
+    };
+
+    let trash_dir = PathService::require_data_dir()?
+        .join("Trash")
+        .join("claude-sessions");
+    let mut moved_files = Vec::new();
+    for path in file_paths {
+        if !path.exists() {
+            continue;
+        }
+        match move_to_trash(&path, &trash_dir) {
+            Ok(trash_path) => moved_files.push((path, trash_path)),
+            Err(error) => return Err(with_file_restore_error(error, &moved_files)),
+        }
+    }
+
+    let transaction = match conn.transaction() {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            return Err(with_file_restore_error(
+                format!("开启 Claude 会话批量删除事务失败: {}", error),
+                &moved_files,
+            ));
+        }
+    };
+    for session_id in &unique_session_ids {
+        if let Err(error) = delete_index_rows(&transaction, session_id) {
+            let rollback_error = transaction
+                .rollback()
+                .err()
+                .map(|error| format!("；回滚数据库事务失败: {}", error))
+                .unwrap_or_default();
+            return Err(with_file_restore_error(
+                format!("{}{}", error, rollback_error),
+                &moved_files,
+            ));
+        }
+    }
+    if let Err(error) = transaction.commit() {
+        return Err(with_file_restore_error(
+            format!("提交 Claude 会话批量删除事务失败: {}", error),
+            &moved_files,
+        ));
+    }
+    Ok(())
+}
+
+/// 删除单条会话记录，复用批量事务实现。
+pub fn delete_session(session_id: &str) -> Result<(), String> {
+    delete_sessions(&[session_id.to_string()])
 }
 
 /// 导出：markdown 渲染 / jsonl 原样复制

@@ -10,7 +10,7 @@ use crate::web::handlers::claude_hook_handler::{
 };
 use commands::{
     acknowledge_terminal_output, check_app_update,
-    claude_history_delete,
+    claude_history_delete, claude_history_delete_many,
     claude_history_export, claude_history_get_replay, claude_history_list,
     claude_history_rename, claude_history_rescan, claude_history_search,
     claude_history_set_flags,
@@ -447,7 +447,7 @@ pub fn run() {
             get_claude_sessions_for_terminals,
             claude_history_rescan, claude_history_list, claude_history_search,
             claude_history_get_replay, claude_history_rename, claude_history_set_flags,
-            claude_history_delete, claude_history_export,
+            claude_history_delete, claude_history_delete_many, claude_history_export,
             // Claude 配置 / 资产库 / MCP（三期）
             list_claude_projects, list_claude_memory_files, read_claude_memory_file,
             write_claude_memory_file, create_claude_memory_file, delete_claude_memory_file,

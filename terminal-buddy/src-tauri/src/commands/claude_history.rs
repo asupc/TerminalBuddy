@@ -59,6 +59,11 @@ pub async fn claude_history_delete(session_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn claude_history_delete_many(session_ids: Vec<String>) -> Result<(), String> {
+    claude_task(move || claude_history_service::delete_sessions(&session_ids)).await
+}
+
+#[tauri::command]
 pub async fn claude_history_export(
     session_id: String,
     format: String,
