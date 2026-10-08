@@ -31,21 +31,24 @@ export const createProfilesSlice = (
 			const next = !state.configPanelVisible;
 			const s = getAppSettings();
 			saveAppSettings({ ...s, configPanelAutoExpand: next });
-			return { configPanelVisible: next };
+			// bump 布局版本，驱动 TerminalPanel 派发 TERMINAL_RESIZE_EVENT 强制 fit：
+			// 面板显隐会改变终端区宽度，但 ResizeObserver 走 force=false，TUI 下会被
+			// alt-buffer 守卫拦下不重排，故这里走与 F11 同款的确定性修复链路。
+			return { configPanelVisible: next, terminalLayoutVersion: state.terminalLayoutVersion + 1 };
 		}),
 	toggleFileTree: () =>
 		set((state) => {
 			const next = !state.fileTreeVisible;
 			const s = getAppSettings();
 			saveAppSettings({ ...s, fileTreeAutoExpand: next });
-			return { fileTreeVisible: next };
+			return { fileTreeVisible: next, terminalLayoutVersion: state.terminalLayoutVersion + 1 };
 		}),
 	toggleHistoryPanel: () =>
 		set((state) => {
 			const next = !state.historyPanelVisible;
 			const s = getAppSettings();
 			saveAppSettings({ ...s, historyPanelAutoExpand: next });
-			return { historyPanelVisible: next };
+			return { historyPanelVisible: next, terminalLayoutVersion: state.terminalLayoutVersion + 1 };
 		}),
 	configSearchQuery: "",
 	setConfigSearchQuery: (query) => set({ configSearchQuery: query }),

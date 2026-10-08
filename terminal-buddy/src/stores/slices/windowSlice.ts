@@ -46,6 +46,11 @@ export const createWindowSlice = (
 			};
 		}),
 
+	// 主动 bump 布局版本：侧栏模式切换/隐藏导航面板等不经过 toggle 的布局变更，
+	// 借此驱动 TerminalPanel 派发 TERMINAL_RESIZE_EVENT，让 TUI 下的终端也能强制重排。
+	bumpTerminalLayout: () =>
+		set((state) => ({ terminalLayoutVersion: state.terminalLayoutVersion + 1 })),
+
 	// Toast (transient notifications, e.g. "split grid full")
 	toast: null,
 	showToast: (message, type = "info") =>

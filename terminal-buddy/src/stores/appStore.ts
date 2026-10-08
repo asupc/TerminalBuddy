@@ -334,6 +334,9 @@ export interface AppState {
 	windowMode: "normal" | "panels-hidden";
 	previousPanelState: { configPanelVisible: boolean; fileTreeVisible: boolean; historyPanelVisible: boolean; enableTabNavigation: boolean } | null;
 	cycleWindowMode: () => void;
+	// 主动 bump 布局版本，触发 TerminalPanel 派发 TERMINAL_RESIZE_EVENT 强制 fit。
+	// 用于不经过 store toggle 的布局变更（如侧栏模式切换/隐藏导航面板）。
+	bumpTerminalLayout: () => void;
 
 	// Toast (transient notifications, e.g. "split grid full")
 	toast: { id: number; message: string; type: "info" | "success" | "error" } | null;

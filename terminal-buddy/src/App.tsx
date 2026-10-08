@@ -1,4 +1,4 @@
-﻿import { lazy, Suspense, useEffect, useState, useCallback } from 'react';
+﻿import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { TitleBar } from "./components/shell/TitleBar";
@@ -319,6 +319,18 @@ function App() {
     window.addEventListener('app-settings-changed', handler);
     return () => window.removeEventListener('app-settings-changed', handler);
   }, []);
+
+  // 侧栏模式下切换/隐藏导航面板只改本地 sidebarPanel，不经过 store toggle，
+  // 终端区宽度随之变化但 TUI 下 ResizeObserver 不重排。这里 bump 布局版本，
+  // 走与 F11/分屏同款的强制 fit 链路。首帧跳过，避免干扰初始布局。
+  const sidebarLayoutMountedRef = useRef(false);
+  useEffect(() => {
+    if (!sidebarLayoutMountedRef.current) {
+      sidebarLayoutMountedRef.current = true;
+      return;
+    }
+    useAppStore.getState().bumpTerminalLayout();
+  }, [sidebarPanel, uiStyle]);
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
