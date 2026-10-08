@@ -55,6 +55,10 @@ shell-words = "1.1"
 zip = "2"
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_Graphics_Gdi", "Win32_System_Diagnostics_ToolHelp", "Win32_Storage_FileSystem"] }
 
+# WebView2 原生设置（关闭浏览器加速键），版本与 tauri 依赖树中的 webview2-com-sys 对齐
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+
 [patch.crates-io]
 portable-pty = { path = "portable-pty-patched" }
 

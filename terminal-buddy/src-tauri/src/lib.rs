@@ -151,6 +151,53 @@ fn prepare_startup_window(app: &tauri::App) {
     }
 }
 
+/// 关闭 WebView2 的浏览器级快捷键与手势：F5 / Ctrl+R 刷新、Ctrl+F 查找栏、Ctrl+P 打印、
+/// Ctrl±缩放、F12 / Ctrl+Shift+C DevTools、前进后退滑动等。
+///
+/// 刷新会重建整个前端页面，所有终端会话与未保存状态都会丢失，因此必须在 WebView2 层关掉；
+/// 应用自身的快捷键（services/hotkeys.ts）由页面自行分发，不受该设置影响。
+/// 微软文档指出该设置在「下一次导航后」生效，故前端另有 browserKeys.ts 做同页兜底拦截。
+#[cfg(windows)]
+fn disable_webview_browser_keys(app: &tauri::App) {
+    #[cfg(not(debug_assertions))]
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings6;
+    use windows::core::Interface;
+
+    for (label, webview) in app.webview_windows() {
+        let applied = webview.with_webview(|platform| {
+            // SAFETY: controller 由 tauri 在 UI 线程交出，此处仅读写 WebView2 自身的设置项，
+            // 不持有跨线程引用，也不释放任何对象。
+            unsafe {
+                let Ok(core) = platform.controller().CoreWebView2() else {
+                    return;
+                };
+                let Ok(settings) = core.Settings() else {
+                    return;
+                };
+                // Ctrl+滚轮 / 触控板捏合缩放
+                let _ = settings.SetIsZoomControlEnabled(false);
+                // DevTools（F12 / Ctrl+Shift+I）开发期还要用，故加速键只在发布版关闭；
+                // 开发版的刷新键由前端 browserKeys.ts 拦截。
+                #[cfg(not(debug_assertions))]
+                if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
+                    let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+                }
+                if let Ok(s6) = settings.cast::<ICoreWebView2Settings6>() {
+                    let _ = s6.SetIsSwipeNavigationEnabled(false);
+                }
+            }
+        });
+        match applied {
+            Ok(()) => boot_log(format!("webview browser keys disabled: {}", label)),
+            Err(e) => boot_log(format!(
+                "disable webview browser keys failed ({}): {}",
+                label, e
+            )),
+        }
+    }
+}
+
 /// 展示主窗口：取消最小化 + 显示 + 聚焦（托盘/单实例回调共用）。
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -387,6 +434,8 @@ pub fn run() {
             // 托盘构建失败只降级，不阻止主窗口启动
             bootstrap_tray(app);
             prepare_startup_window(app);
+            #[cfg(windows)]
+            disable_webview_browser_keys(app);
 
             // 默认终端 handoff：注册 COM 类对象（注册 ≠ 生效，是否被委派由注册表
             // 决定）。失败只记日志——未被委派时无影响，被委派则 conhost 自动回退。

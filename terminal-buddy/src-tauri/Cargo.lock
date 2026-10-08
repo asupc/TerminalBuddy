@@ -4900,6 +4900,7 @@ dependencies = [
  "tower-http",
  "urlencoding",
  "uuid",
+ "webview2-com",
  "windows",
  "windows-registry",
  "zip",
