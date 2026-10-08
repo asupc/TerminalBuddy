@@ -104,6 +104,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     suppressNativePasteUntil: 0,
     lastText: '',
     lastTextAt: 0,
+    gestureHandled: false,
   });
   const updateAutocomplete = useCallback((val: typeof autocomplete) => {
     autocompleteRef.current = val;
@@ -1129,10 +1130,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       const handleRightMouseDown = (e: MouseEvent) => {
-        if (e.button !== 2 || !shouldAutoPasteOnRightClick()) return;
+        if (e.button !== 2) return;
+        // 每次右键手势开始时先复位，保证 mousedown/contextmenu 只粘贴一次
+        rightClickPasteRef.current.gestureHandled = false;
+        if (!shouldAutoPasteOnRightClick()) return;
 
         // Handle auto paste before xterm moves/focuses its hidden textarea for
         // the native context menu; otherwise a later paste path can join in.
+        rightClickPasteRef.current.gestureHandled = true;
         suppressRightClickEvent(e);
         requestRightClickPaste();
       };
@@ -1160,6 +1165,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // In readOnly mode, block paste but still allow copy from context menu
         if (shouldAutoPasteOnRightClick()) {
           suppressRightClickEvent(e);
+          // mousedown 已为本次手势触发过粘贴则不再重复；否则作为兜底触发一次
+          if (rightClickPasteRef.current.gestureHandled) {
+            rightClickPasteRef.current.gestureHandled = false;
+            return;
+          }
           requestRightClickPaste();
           return;
         }

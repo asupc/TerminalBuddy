@@ -63,6 +63,9 @@ export type RightClickPasteState = {
   suppressNativePasteUntil: number;
   lastText: string;
   lastTextAt: number;
+  // 本次右键手势是否已触发过自动粘贴：mousedown 与 contextmenu 都会请求粘贴，
+  // 靠这个确定性标记去重，避免右键按住超过去重时间窗时粘贴两次。
+  gestureHandled: boolean;
 };
 
 export function fitFloatingElementToViewport(
