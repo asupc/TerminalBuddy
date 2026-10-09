@@ -1208,32 +1208,6 @@
 	font-size: 12px;
 }
 
-.git-history-window-close {
-	width: 28px;
-	height: 26px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	padding: 0;
-	background: transparent;
-	border: none;
-	border-radius: 3px;
-	color: #969696;
-	cursor: pointer;
-	font-size: 18px;
-	line-height: 1;
-}
-
-.git-history-window-close:hover:not(:disabled) {
-	background: rgba(239, 68, 68, 0.18);
-	color: #ef4444;
-}
-
-.git-history-window-close:disabled {
-	opacity: 0.35;
-	cursor: default;
-}
-
 .git-history-toolbar {
 	height: 30px;
 	display: flex;

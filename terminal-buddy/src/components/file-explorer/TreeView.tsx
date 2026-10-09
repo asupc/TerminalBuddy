@@ -91,14 +91,17 @@ const TreeNode: FC<{
         onDragStart={itemDraggable && onItemDragStart ? (e) => onItemDragStart(e, item) : undefined}
         onDragEnd={itemDraggable && onItemDragEnd ? (e) => onItemDragEnd(e, item) : undefined}
       >
-        {isGroup && (
+        {isGroup && (hasChildren ? (
           <span
             className={`tree-arrow${isExpanded ? ' expanded' : ''}`}
             onClick={(e) => { e.stopPropagation(); onToggle(item.id); }}
           >
             ▶
           </span>
-        )}
+        ) : (
+          // 没有子项的分组（如未挂任何命令的项目）不显示折叠箭头，用占位符保持名称对齐
+          <span className="tree-arrow-placeholder" />
+        ))}
         {item.icon && <span className="tree-icon">{item.icon}</span>}
         {renamingId === item.id ? (
           <input
