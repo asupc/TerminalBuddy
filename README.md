@@ -9,381 +9,483 @@
 [![React](https://img.shields.io/badge/React-19-blue)](terminal-buddy/package.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+<br />
+
+<img src="docs/images/01-overview-main.png" alt="TerminalBuddy 主界面全景" width="100%" />
+
+*高颜值深色质感 · VS Code 风格活动栏 · 多级层级分组 · 毫秒级 PTY 响应 · 现代 Windows 终端体验*
+
 </div>
 
 ---
 
-## ✨ 功能概览
+## 目录
+
+- [一、核心操作动态演示](#一核心操作动态演示)
+- [二、应用界面全景图解](#二应用界面全景图解)
+- [三、基础配置全流程指南](#三基础配置全流程指南)
+  - [1. 终端配置管理与多级层级分组](#1-终端配置管理与多级层级分组)
+  - [2. 启动参数预设体系（ExtraParams）](#2-启动参数预设体系extraparams)
+  - [3. 常用命令模板库与自定义快捷指令](#3-常用命令模板库与自定义快捷指令)
+  - [4. 多平台机器人通知接入（飞书 / 钉钉）](#4-多平台机器人通知接入飞书--钉钉)
+- [四、日常使用与深度体验指南](#四日常使用与深度体验指南)
+  - [1. 多终端多任务分屏网格（左右 2×1 与四格 2×2）](#1-多终端多任务分屏网格左右-21-与四格-22)
+  - [2. 本地工程文件树与内置 Monaco 编辑器](#2-本地工程文件树与内置-monaco-编辑器)
+  - [3. Markdown 实时双向滚动同步分屏预览](#3-markdown-实时双向滚动同步分屏预览)
+  - [4. 可视化 Git 历史图谱与代码 Diff 审查](#4-可视化-git-历史图谱与代码-diff-审查)
+  - [5. SSH 远程运维与服务器实时监控仪表盘](#5-ssh-远程运维与服务器实时监控仪表盘)
+  - [6. Claude Code 会话历史管理与交互回放](#6-claude-code-会话历史管理与交互回放)
+  - [7. AI 多模型 Token 用量与额度监控](#7-ai-多模型-token-用量与额度监控)
+  - [8. Web 远程管理与手机扫码免密连接](#8-web-远程管理与手机扫码免密连接)
+  - [9. 全局设置中心与 16 色 ANSI 调色板定制](#9-全局设置中心与-16-色-ansi-调色板定制)
+- [五、常用快捷键速查表](#五常用快捷键速查表)
+- [六、技术架构与分层](#六技术架构与分层)
+- [七、系统要求与安装使用](#七系统要求与安装使用)
+- [八、安全与隐私设计](#八安全与隐私设计)
+- [九、开源协议与致谢](#九开源协议与致谢)
+
+---
+
+## 一、核心操作动态演示
+
+为直观展现 TerminalBuddy 的流畅体验与多功能联动，以下通过原生录制动图展示日常核心交互：
 
 <table>
 <tr>
-<td width="50%">
-
-### 🔧 多终端支持
-- PowerShell、CMD、SSH、Docker、K8s、MSTSC 远程桌面
-- 自定义启动路径、启动命令、环境变量
-- 颜色标签 + 层级分组（多级级联选择器）
-
-### 🗂️ 标签页与分屏
-- 垂直侧边栏 / 水平标签栏双模式，F2 快速重命名
-- 标签分组、拖拽排序、呼吸灯效果
-- 终端面板分割 + 工作区保存与恢复
-- VSCode Activity Bar 风格侧边栏（文件树 / 配置 / Git 面板）
-
-### 🌐 远程访问
-- SSH 远程文件管理器（面包屑导航、上传/下载/chmod/删除）
-- 服务器实时监控（CPU、内存、磁盘、网络、运行时间）
-- 嵌入式 Web API（axum + WebSocket），移动端友好
-- JWT + bcrypt 认证，PC/Web 会话隔离
-
-### 🤖 Claude Code 集成
-- 终端内决策交互（直接在 xterm 中确认/拒绝文件操作）
-- 桌面 Toast 通知（决策通知与完成通知独立拆分）
-- 决议通道枚举模型（原生通知 / 终端 / 两者）
-- 任务状态实时追踪（busy/idle/error）
-
+<td width="50%" align="center">
+<b>⚡ 终端启动、标签切换与左右分屏协同</b><br />
+<img src="docs/images/demo-terminal-workflow.gif" alt="终端启动与多标签分屏协同" width="100%" />
+<br />
+<p align="left"><sub><b>流程详解：</b><br />
+1. 秒级拉起已配置的本地与远程终端会话；<br />
+2. 点击多色指示灯标签页，在多个工程与服务器环境间零延迟平滑切换；<br />
+3. 点击标题栏分屏按钮，瞬间进入左右 2x1 独立分屏网格，两套终端独立运行、协同监视。</sub></p>
 </td>
-<td width="50%">
-
-### 🔔 机器人通知
-- 飞书、钉钉多平台消息推送，可与终端事件绑定
-- 飞书 WebSocket 长连接（低延迟消息推送）
-- 扫码授权流程（二维码 + 设备码 OAuth，凭证自动保存）
-- 任务完成检测（spinner 帧识别 + 提示符追踪 + 忙碌证据校验）
-
-### 📝 开发辅助
-- 智能命令补全（模板 + 历史模糊匹配）
-- 100+ 命令模板库（网络、进程、文件、系统、Git、Docker 等 10 个分类）
-- Monaco Editor（语法高亮、查找替换、格式化）
-- 命令历史全文搜索 + 结构化备注 + 导入/导出
-
-### 🎨 界面设计
-- lucide-react 图标系统（2000+ 图标统一风格）
-- 设计系统令牌化色板，亮/暗双主题无缝切换
-- 8 款内置主题 + 自定义 16 色 ANSI 调色板
-- 无障碍标注（aria-label + focus 态）
-
-### ⚙️ 设置体验
-- 8 大设置分区，自动保存（即时持久化）
-- 右键粘贴、拖拽文件路径到终端
-- Ctrl+F 终端内搜索 + Web 链接检测
-
-### 🚀 系统特性
-- 系统托盘（最小化到托盘）+ 单实例模式
-- 无边框自定义标题栏
-- 启动性能优化（异步 PTY 创建 + 并发标签恢复）
-- MSTSC 凭据安全存储（Win32 CredWriteW API）
-
+<td width="50%" align="center">
+<b>🗂️ 全能工作区与多功能侧栏联动</b><br />
+<img src="docs/images/demo-sidebar-features.gif" alt="全能工作区与多功能侧栏联动" width="100%" />
+<br />
+<p align="left"><sub><b>流程详解：</b><br />
+1. 从「项目与命令」树形分组面板查看所有服务；<br />
+2. 点击 Activity Bar 无缝切换至「文件与 Git」浏览工程结构；<br />
+3. 打开 <code>App.vue</code> 在内嵌 Monaco Editor 中享受语法高亮；<br />
+4. 切入 Git 历史查看多分支拓扑图谱与变更详情；<br />
+5. 唤起全局设置中心调校主题色彩与偏好。</sub></p>
 </td>
 </tr>
 </table>
 
 ---
 
-## 🛠️ 技术栈
+## 二、应用界面全景图解
 
-| 层 | 技术 |
-|---|---|
-| **桌面框架** | Tauri 2.x |
-| **后端** | Rust (edition 2021) + portable-pty (ConPTY) |
-| **桌面前端** | React 19 + TypeScript + Zustand 5 + xterm.js 6 |
-| **Web API** | axum 0.8 + tower-http + JWT + bcrypt |
-| **Web 前端** | React 19 + Zustand 5 + xterm.js + axios |
-| **编辑器** | Monaco Editor |
-| **图标** | lucide-react |
-| **构建工具** | Vite 8 + NSIS 安装包 |
+TerminalBuddy 融合了现代代码编辑器与专业终端模拟器的优秀界面范式，布局清晰、信息紧凑、视觉精致：
+
+<div align="center">
+  <img src="docs/images/01-overview-main.png" alt="TerminalBuddy 主界面全景结构" width="100%" />
+</div>
+
+### 界面结构解剖：
+
+1. **无边框沉浸式标题栏（TitleBar）**
+   - **左侧**：TerminalBuddy 品牌图标与当前版本号，提供面板显隐控制按钮；
+   - **右侧**：集成状态动作群——**检查更新**、**AI 用量浮窗**、**一键分屏（单屏/双分屏/四分屏）**、**调色板主题切换**、**关于对话框**以及原生的 Windows 窗口最小化、最大化和关闭控制。
+2. **VS Code 风格活动栏（Activity Bar）**
+   - 位于界面最左侧，包含 4 大核心视图切换：**项目与命令**（`Server` 图标）、**文件与 Git**（`Files` 图标）、**会话标签**（`ListTree` 图标）、**Claude Code 会话**（`History` 图标），以及底部的**全局设置**齿轮入口。
+3. **项目与命令导航侧栏（ConfigNav）**
+   - **快速过滤**：顶部搜索框实时检索配置与命令；
+   - **置顶分组**：高频使用的关键服务一键置顶显示；
+   - **层级树形展示**：支持多级层级折叠（如 `前端工程/商城业务`、`后端架构/核心微服务`），每个配置带有鲜明的终端类型徽标（`PS`、`CMD`、`SSH`、`K8S`、`DK`、`RDP`）。
+4. **多色彩指示灯标签栏（TerminalTabBar）**
+   - 展示所有已打开的终端或编辑器会话；
+   - 每个标签拥有独立的**会话类型图标**与**彩色呼吸灯/状态圆点**（24 色点阵支持），一眼区分生产与开发；
+   - 支持 **F2** 快捷重命名、鼠标中键一键关闭、拖拽调整顺序。
+5. **高性能 xterm.js 终端主体**
+   - 基于 ConPTY 原生驱动与 WebGL 加速渲染，支持完整 24 位真彩色 ANSI 语法高亮与 ASCII 字符图形；
+   - 内置智能命令补全浮窗，根据模板库与历史记录提供即敲即现的建议列表。
 
 ---
 
-## 📋 系统要求
+## 三、基础配置全流程指南
+
+### 1. 终端配置管理与多级层级分组
+
+在项目开发中，通常需要同时管理多个前后端服务、多台跳板机或容器环境。TerminalBuddy 提供了强大的配置模型（Profile）：
+
+<div align="center">
+  <img src="docs/images/02-config-profile-edit.png" alt="终端配置编辑与分组" width="90%" />
+</div>
+
+#### 配置参数详解：
+
+- **终端类型（Terminal Type）**：
+  - `PowerShell`：Windows 原生 PowerShell 环境；
+  - `pwsh`：跨平台的现代 PowerShell 7+；
+  - `CMD`：传统命令提示符，执行批处理更轻量；
+  - `SSH`：直接建立远端 Linux SSH 安全会话（支持密码及密钥认证）；
+  - `Docker`：一键自动执行 `docker exec -it` 进入指定容器；
+  - `K8s`：直接连接 Kubernetes 指定 Namespace 下的 Pod 容器；
+  - `MSTSC`：调用 Windows 原生远程桌面连接，凭证安全存储于系统凭据管理器。
+- **项目/分组（GroupCascader 级联选择器）**：
+  - 支持使用英文斜杠 `/` 进行多级层级分组，如 `前端工程/商城业务` 或 `运维集群/云服务器`；
+  - 侧栏将自动渲染为层级折叠树，层次分明，逻辑清晰。
+- **启动路径与启动命令**：
+  - **起始路径**：终端启动时的默认工作目录；
+  - **启动命令队列**：支持配置单条或多条命令（如 `pnpm run dev` 或 `mvn spring-boot:run`），启动后自动顺序输入执行。
+- **环境变量注入**：支持为单个配置独立注入专有环境变量（如 `NODE_ENV=development`、`PORT=5173`），不污染系统全局变量。
+- **Tab 标签颜色选择（24 色彩调色盘）**：
+  - 支持从 24 种设计系统色板中选择标签指示灯颜色（红色、深橙、明黄、翠绿、天蓝、靛蓝、紫罗兰等），为高危生产环境与日常开发环境提供强烈的视觉区分。
+
+---
+
+### 2. 启动参数预设体系（ExtraParams）
+
+同一个服务经常需要根据不同场景携带不同参数启动（例如：以开发模式启动、以预发布测试模式启动、追加远程调试端口或附加实时监控选项）。**启动参数预设**正是为此而生：
+
+<div align="center">
+  <img src="docs/images/03-config-extra-params.png" alt="启动参数预设管理" width="90%" />
+</div>
+
+#### 参数预设核心功能说明：
+
+- **预设参数快速注入**：
+  - **预设名称**：作为右键菜单项及 Tab 标签上的 Tag 标识（如 `DEV`、`STG`、`DBG`、`WATCH`）；
+  - **附加参数**：具体的命令行参数，如 `--mode staging --mock=false` 或 `-Xdebug -Xrunjdwp:...`。
+- **执行方式模式切换**：
+  - **追加参数（Append）**：自动拼接到配置原有的启动命令之后；
+  - **独立命令（Independent）**：忽略原启动命令，将预设内容作为完整命令直接执行。
+- **命令正则匹配过滤规则（Command Match）**：
+  - 支持通过正则表达式指定该预设仅对哪些命令生效（例如 `pnpm|npm|yarn|vite` 仅匹配 Node 前端，`mvn|java|spring-boot` 仅匹配 Java 后端，`kubectl` 仅匹配云原生）；
+  - 在配置项上右键启动时，系统自动根据配置的命令进行智能匹配，避免无关预设造成视觉干扰。
+- **专属彩色徽标（Tag & Tag Color）**：
+  - 每个预设可指定专有底色（如 `DEV` 绿色、`STG` 蓝色、`DBG` 红色、`WATCH` 紫色）；
+  - 启动后该 Tag 徽标将固化展示在标签栏上，随时提醒开发者当前终端的运行模式。
+
+---
+
+### 3. 常用命令模板库与自定义快捷指令
+
+日常运维与开发充斥着大量繁杂的长命令（如查看端口占用、强杀进程、Docker 容器清理、Git 回滚等）。TerminalBuddy 内置了分类完备的命令模板库，并支持完全自定义：
+
+<div align="center">
+  <img src="docs/images/10-config-command-templates.png" alt="常用命令模板库与自定义快捷指令" width="90%" />
+</div>
+
+#### 模板库核心功能：
+
+- **10 大预设分类**：包含网络与端口、进程与服务、文件与目录、系统管理、PowerShell 运维、Git 操作、Docker 容器、Node.js、Python 及 .NET 等 100+ 常用工程指令；
+- **智能模糊搜索**：输入关键字（如 `端口`、`netstat`、`kill`）即可实时检索目标命令及中文用途说明；
+- **自定义命令扩展**：支持点击「+ 自定义」随时添加团队专属脚本或长命令参数；
+- **命令别名与隐藏**：可随时修改命令描述或将不常用的预置命令一键隐藏；
+- **与终端输入框联动**：模板库与终端内的输入建议无缝打通，在终端键入命令前缀时即会自动弹出匹配的模板建议。
+
+---
+
+### 4. 多平台机器人通知接入（飞书 / 钉钉）
+
+为了让长时间运行的构建、自动化测试或部署任务不再需要人工守候，TerminalBuddy 提供了机器人主动通知体系，尤其针对 Claude Code 智能体深度优化：
+
+<div align="center">
+  <img src="docs/images/15-config-bot-notifications.png" alt="多平台机器人通知配置" width="90%" />
+</div>
+
+#### 机器人通知能力：
+
+- **多平台通道支持**：支持飞书应用机器人（提供低延迟 WebSocket 长连接）、钉钉 Webhook 机器人及企业微信等多通道并行推送；
+- **双向交互决策通知**：当 Claude Code 在终端中遇到需要确认文件修改或回答问题时，机器人自动将决策卡片推送到手机或群聊，开发者直接在群聊中引用回复即可将指令送回终端；
+- **任务完成自动汇报**：通过终端 Spinner 帧识别与提示符追踪算法，在耗时构建或脚本执行完毕后自动推送完成提示；
+- **通道状态实时侦测**：带有长连接状态指示灯（绿色 `长连接` 徽标），支持单向与双向通道独立测试连通性。
+
+---
+
+## 四、日常使用与深度体验指南
+
+### 1. 多终端多任务分屏网格（左右 2×1 与四格 2×2）
+
+分屏功能让开发者可以在一个屏幕内并行观察多个服务的运行输出，免去频繁切换窗口的烦恼。TerminalBuddy 提供了业界顶级的多终端网格布局体验：
+
+<table>
+<tr>
+<td width="50%" align="center">
+<b>左右双分屏模式（2×1 Split）</b><br />
+<img src="docs/images/04-usage-terminal-split.png" alt="左右双分屏模式" width="100%" />
+<br />
+<sub>左侧前端 Vite 热更新日志，右侧 Linux SSH 生产跳板机，双屏并排监视</sub>
+</td>
+<td width="50%" align="center">
+<b>四格矩阵分屏模式（2×2 Grid）</b><br />
+<img src="docs/images/09-usage-split-2x2.png" alt="四格矩阵分屏模式" width="100%" />
+<br />
+<sub>前端、跳板机、K8s 集群与 SpringCloud 微服务同屏四网格并行运转</sub>
+</td>
+</tr>
+</table>
+
+#### 分屏操作技巧：
+
+- **一键切换布局**：点击标题栏分屏按钮（或快捷键），即可在 **单屏模式** ➔ **左右双分屏（2×1）** ➔ **四格分屏（2×2）** 之间循环切换。
+- **会话自由调度**：
+  - 在分屏状态下，点击顶部标签栏的任意终端，该终端即刻置入当前聚焦的分屏槽位；
+  - 拖拽分屏槽位头部的拖拽手柄，可在网格之间直接**对调位置**；
+  - 每个分屏网格拥有独立的关闭按钮，关闭槽位不影响后台会话。
+- **独立分屏字号优化**：针对双分屏、四分屏空间紧凑的特点，设置中心支持独立配置不同分屏下的字号大小（如单屏 14px、双屏 12px、四屏 11px），保障各终端排版美观、文字清晰不折行。
+
+---
+
+### 2. 本地工程文件树与内置 Monaco 编辑器
+
+TerminalBuddy 内置了轻量级开发工作台，查看配置文件与修改源码无需拉起外部臃肿编辑器：
+
+<div align="center">
+  <img src="docs/images/05-usage-file-editor.png" alt="文件树与 Monaco 代码编辑" width="90%" />
+</div>
+
+#### 特色能力介绍：
+
+- **工程文件树快速导航**：
+  - 点击活动栏的「文件与 Git」图标展开工程目录树；
+  - 智能识别常见文件格式并渲染专属扩展名图标；
+  - 支持排除规则（在设置中定义过滤 `node_modules`、`.git`、`dist` 等大目录）。
+- **VS Code 同款 Monaco Editor 体验**：
+  - 双击文件树中的源码文件，在工作区以新标签页秒级打开；
+  - 拥有完整的语法高亮、代码缩进参考线、行号、括号色彩匹配与右侧代码缩略图（Minimap）；
+  - 完整的常用快捷键支持：`Ctrl+F` 查找、`Ctrl+H` 替换、`Shift+Alt+F` 格式化文档。
+- **磁盘版本冲突防护**：当检测到外部编辑器修改了当前文件时，顶部弹出优雅横幅并支持并排 Diff 对比合并，防止代码被意外覆盖。
+
+---
+
+### 3. Markdown 实时双向滚动同步分屏预览
+
+在编写项目说明、接口文档或变更日志时，无需打开浏览器即可实时预览渲染效果：
+
+<div align="center">
+  <img src="docs/images/13-usage-markdown-preview.png" alt="Markdown 实时双向滚动同步分屏预览" width="90%" />
+</div>
+
+#### Markdown 编写体验：
+
+- **三态视图自由切换**：右上角提供「源码模式」、「分屏模式」与「纯预览模式」一键切换；
+- **双向滚动同步（Scroll Sync）**：左侧 Monaco 编辑器滚动时光标所在的章节，右侧预览区域精准跟随同步；右侧滚动时左侧代码光标亦同步跟随；
+- **现代美观渲染引擎**：支持 GitHub 风格 Markdown、语法高亮代码块、表格、任务清单与 Emoji 徽章，排版清晰美观。
+
+---
+
+### 4. 可视化 Git 历史图谱与代码 Diff 审查
+
+内置原生的 Git 版本控制图形化视图，将复杂的提交分支历史变为直观的拓扑图谱：
+
+<div align="center">
+  <img src="docs/images/06-usage-git-history.png" alt="可视化 Git 提交拓扑图谱" width="90%" />
+</div>
+
+#### Git 视图亮点：
+
+- **多分支 SVG Commit-Graph 拓扑树**：
+  - 主干分支（黄色）、特性分支（紫色/青色）与合并节点（双圆环）清晰分明；
+  - 完整的连线逻辑生动展现分支的分离与 Merge 合并全过程。
+- **分支 Ref 状态标记**：
+  - 直观标注当前本地分支（`main`）、远程追踪分支（`origin/main`）及各类特性分支徽标；
+  - 一目了然查看本地超前（ahead）与落后（behind）提交数。
+- **规范化提交信息与代码审查**：
+  - 列表清晰展示提交哈希、提交说明（Message）、作者邮箱与提交时间；
+  - 点击提交项展开变更文件列表，并支持接入 Monaco DiffEditor 进行绿色新增、红色删除的逐行代码差异比对。
+
+---
+
+### 5. SSH 远程运维与服务器实时监控仪表盘
+
+连接生产环境或云服务器跳板机时，TerminalBuddy 能够即时变身全能运维驾驶舱：
+
+<div align="center">
+  <img src="docs/images/07-usage-server-monitor.png" alt="SSH 远程管理与服务器实时监控" width="90%" />
+</div>
+
+#### 运维管理核心特性：
+
+- **真彩 SSH 会话**：ConPTY 底层完美支持 xterm-256color 及 24 位真彩色，CentOS、Ubuntu 的 Fastfetch / Neofetch ASCII Logo、系统高亮提示、htop 界面完美渲染无乱码。
+- **顶部实时服务器监视条（ServerMonitor）**：
+  - 针对 SSH 终端，顶部常驻实时性能指标小条：`● CPU 29% | Mem 55% | Disk 40% | ↑180.0 KB/s ↓450.0 KB/s`；
+  - 点击展开即呈现详尽的双行服务器仪表盘卡片：
+    - 🖥️ **CPU 负载**：多核实时占用率百分比；
+    - 💾 **内存与 Swap**：物理内存（已用/总量/使用率）与 Swap 交换分区；
+    - 💽 **磁盘多挂载点**：根分区 `/` 与数据分区 `/data` 的空间余量；
+    - 🌐 **实时网络流量**：网卡实时上行（Net ↑）与下行（Net ↓）吞吐速率；
+    - ⏱️ **系统运行时间（Uptime）**：服务器持续在线运行天数。
+
+---
+
+### 6. Claude Code 会话历史管理与交互回放
+
+针对重度使用 Claude Code 智能体进行软件研发的开发者，TerminalBuddy 深度打通了会话元数据层：
+
+<div align="center">
+  <img src="docs/images/14-usage-claude-history.png" alt="Claude Code 会话历史管理" width="90%" />
+</div>
+
+#### 会话管理特性：
+
+- **按工程目录自动聚合**：自动扫描并解析 `~/.claude` 目录历史，按当前工程目录自动过滤分组呈现；
+- **重要会话金星收藏**：支持为关键重构任务点亮金星收藏，并支持标记归档会话；
+- **全方位指标统计**：实时显示每场会话的交互轮数（Message Count）、消耗的 Input/Output Token 数量与所使用的模型版本（如 `claude-3-7-sonnet`）；
+- **全文检索与一键恢复（Resume）**：支持在历史会话中搜索关键词并快速定位，右键点击即可自动在项目目录下执行 `claude --resume <id>` 恢复上下文。
+
+---
+
+### 7. AI 多模型 Token 用量与额度监控
+
+集中化的大模型 API 用量中心，告别在多个云厂商控制台之间繁琐登录：
+
+<div align="center">
+  <img src="docs/images/11-usage-ai-usage.png" alt="AI 多模型 Token 用量监控" width="90%" />
+</div>
+
+#### 监控与管理项：
+
+- **支持主流大模型服务商**：集中管理智谱 GLM API、百度千帆平台、DeepSeek 官方平台、MiniMax 以及火山方舟（ByteDance Ark）；
+- **用量与余额直观呈现**：标题栏点击统计图表按钮即可弹出用量浮窗，清晰展示当日请求次数、输入/输出 Token 统计、Prompt 缓存命中率与调用费用估算；
+- **凭据安全密文脱敏**：Key 与 Cookie 提供一键显隐查看功能，密文加密保存在本地配置中。
+
+---
+
+### 8. Web 远程管理与手机扫码免密连接
+
+无需安装额外客户端，内置的嵌入式 axum Web API 让任意设备（手机、平板、异地电脑）通过浏览器即可直接接管终端：
+
+<div align="center">
+  <img src="docs/images/12-usage-web-management.png" alt="Web 远程管理与手机扫码免密连接" width="90%" />
+</div>
+
+#### Web 远程连接优势：
+
+- **轻量嵌入式服务**：基于 Rust axum 打造的高性能轻量 Web 服务，资源开销几乎为零；
+- **局域网自动寻址与二维码生成**：自动识别本机局域网 IP（如 `http://192.168.10.88:9600`）并生成大尺寸高清二维码，手机相机扫码即可秒级免密接入；
+- **移动端优先的交互设计**：远程前端提供专属虚拟方向键、特殊控制键栏与触屏手势缩放支持；
+- **PC / Web 严格会话隔离**：通过底层状态机实现物理隔离（`webApiShareSessions`），保障桌面本地私密终端不被外部意外窃视。
+
+---
+
+### 9. 全局设置中心与 16 色 ANSI 调色板定制
+
+设置中心采用现代化的多分区侧栏结构，所有修改即时生效并自动持久化：
+
+<div align="center">
+  <img src="docs/images/08-usage-settings-theme.png" alt="全局设置与外观定制" width="90%" />
+</div>
+
+#### 设置分区与个性化配置项：
+
+- **行为设置**：
+  - **启动时恢复选项卡**：下次打开程序自动恢复上次打开的所有终端会话；
+  - **开机自启动**与**启动窗口模式**（窗口化 / 最大化）；
+  - **关闭行为**：选择点击关闭按钮是直接退出还是最小化到系统托盘。
+- **外观设置**：
+  - **UI 样式双模式**：支持经典全开展开模式与现代 VS Code 风格侧边栏模式；
+  - **列表选中风格**：支持 IDEA 经典蓝（`#4d7db9`）与现代默认灰样式实时切换；
+  - **分屏终端字号阶梯**：单屏、双分屏、四分屏字号独立调校。
+- **主题设置与 16 色调色板**：
+  - 内置 8 款经典主题：深色默认、黑客绿、海洋蓝、PS深色、浅色、Solarized暗、Solarized亮、复古绿屏；
+  - 提供 16 色标准 ANSI 调色板编辑器（黑、红、绿、黄、蓝、洋红、青、白及其高亮对应色），所见即所得实时预览。
+
+---
+
+## 五、常用快捷键速查表
+
+| 按键 / 快捷键 | 作用区域 | 功能说明 |
+|---|---|---|
+| `F2` | 标签栏 / 配置树 | 快速内联重命名当前选中的终端标签或配置 |
+| `F11` | 全局窗口 | 快速切换工作区全屏与窗口化模式 |
+| `Ctrl + F` | 终端 / 编辑器 | 唤起终端搜索条 / 编辑器查找替换浮窗 |
+| `Ctrl + Shift + F` | Monaco 编辑器 | 代码查找与替换 |
+| `Shift + Alt + F` | Monaco 编辑器 | 对当前打开的代码文档进行自动格式化 |
+| `鼠标中键单击` | 标签栏 | 直接关闭目标标签页会话 |
+| `鼠标右键长按` | 终端区域 | 触发右键快捷粘贴（内置去重与智能过滤） |
+| `拖拽文件` | 终端区域 | 将文件路径自动转换为适合当前 Shell 格式的路径文本 |
+| `Ctrl + 滚轮` | 终端区域 | 快速缩放当前终端字号大小 |
+
+---
+
+## 六、技术架构与分层
+
+TerminalBuddy 采用了现代桌面软件的高性能分层架构，兼顾了底层系统资源的高效调度与上层界面的高颜值响应：
+
+```
+┌────────────────────────────────────────────────────────┐
+│               React 19 前端 (Zustand 状态机)             │
+│   (ActivityBar / ConfigNav / TerminalPanel / Monaco)   │
+├────────────────────────────────────────────────────────┤
+│                 Tauri IPC 命令桥 (JSON)                 │
+├────────────────────────────────────────────────────────┤
+│                      Rust 服务层                       │
+│  (ProfileService / GitService / SshService / FsService) │
+├────────────────────────────────────────────────────────┤
+│      ConPTY / Win32 API / axum HTTP Server / libssh2   │
+└────────────────────────────────────────────────────────┘
+```
+
+- **桌面前端**：React 19 + TypeScript + Zustand 5 + xterm.js 6，利用轻量级状态切片（Slices）管理会话、标签与文件树；
+- **IPC 桥接层**：强类型安全的 Tauri Invoke 桥接通道，数据采用标准的 camelCase 序列化；
+- **底层后端**：Rust (edition 2021)，通过 `portable-pty` 直接与 Windows 内部的 ConPTY 虚拟终端通信；基于 Win32 原生 API 保证密码凭证安全；
+- **网络与服务**：内置基于 axum 的高性能异步 Web API，支持移动端/跨终端无缝连接。
+
+---
+
+## 七、系统要求与安装使用
+
+### 系统要求
 
 | 项目 | 最低配置 | 推荐配置 |
 |---|---|---|
-| 操作系统 | Windows 10 (1903+) | Windows 11 |
-| 架构 | x86-64 | x86-64 / ARM64 |
-| 内存 | 4 GB | 8 GB+ |
-| 磁盘 | 200 MB | 500 MB+ |
-| 分辨率 | 1280×720 | 1920×1080 |
+| 操作系统 | Windows 10 (1903+) | Windows 11 (64位) |
+| 处理器 | 双核 2.0 GHz | 四核 3.0 GHz 及以上 |
+| 运行内存 | 4 GB | 8 GB 及以上 |
+| 存储空间 | 200 MB 可用空间 | 500 MB 可用空间 |
+| 分辨率 | 1280 × 720 | 1920 × 1080 及以上 |
 
----
+### 安装程序下载
 
-## 📦 安装
+前往项目的 [Releases 发行页面](https://gitee.com/updateme/terminal-buddy/releases) 下载最新发行版：
 
-从 [Releases](https://gitee.com/updateme/terminal-buddy/releases) 页面下载最新版本：
+- `TerminalBuddy_Setup.exe` — Windows NSIS 极速安装包（推荐，自动创建桌面快捷方式）
+- `TerminalBuddy_Portable.zip` — 免安装绿色便携版（解压即用）
 
-- `TerminalBuddy_1.4.0_x64-setup.exe` — NSIS 安装包（推荐）
-- `TerminalBuddy_1.4.0_x64.zip` — 便携版压缩包
+### 本地编译与开发构建
 
----
-
-## 🧑‍💻 开发
-
-### 环境准备
-
-- [Node.js](https://nodejs.org/) v18+
-- [Rust](https://www.rust-lang.org/tools/install) stable
-- [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)
-
-### 常用命令
+如果你希望自行构建或参与开发：
 
 ```bash
-cd terminal-buddy
+# 1. 克隆代码仓库
+git clone https://gitee.com/updateme/terminal-buddy.git
+cd terminal-buddy/terminal-buddy
 
-# 安装依赖
+# 2. 安装前端依赖
 npm install
 
-# 全栈开发模式（Tauri + 前端）
+# 3. 启动开发模式（Tauri 桌面容器 + 前端热更新）
 npm run tauri dev
 
-# 仅前端开发（Vite 开发服务器，端口 1420）
-npm run dev
-
-# TypeScript 类型检查
-npx tsc --noEmit
-
-# Rust 编译检查
-cd src-tauri && cargo check
-
-# 生产构建
+# 4. 编译生产环境安装包
 npm run tauri build
 ```
 
 ---
 
-## 🏗️ 项目结构
+## 八、安全与隐私设计
 
-```
-terminal-buddy/
-├── src/                          # Desktop frontend (React/TypeScript)
-│   ├── App.tsx  # Root component
-│   ├── components/
-│   │   ├── TitleBar.tsx  # Custom frameless title bar
-│   │   ├── ConfigNav.tsx  # Profile list panel with hierarchical groups
-│   │   ├── ConfigEditDialog.tsx  # Profile create/edit modal with GroupCascader
-│   │   ├── GroupCascader.tsx  # Multi-level group cascade selector
-│   │   ├── FileNav.tsx  # Local file browser (bookmarks, inline rename) + embedded Git bar
-│   │   ├── GitNavBar.tsx  # Git operations toolbar (status, branch, pull, commit, push)
-│   │   ├── GitHistoryPage.tsx  # Commit history page with SVG graph
-│   │   ├── GitHistoryDiffPreview.tsx  # Historical file diff preview
-│   │   ├── HistoryGraphSvg.tsx  # SVG commit-graph renderer
-│   │   ├── RemoteFileTree.tsx  # SSH remote file browser with upload/download/chmod
-│   │   ├── ServerMonitor.tsx  # Real-time SSH server monitoring panel
-│   │   ├── ChmodDialog.tsx  # Remote file permission editor
-│   │   ├── ExtraParamsDialog.tsx  # SSH parameter presets
-│   │   ├── TransferPanel.tsx  # Remote file transfer queue/progress
-│   │   ├── TerminalInstance.tsx  # xterm.js terminal with addons
-│   │   ├── TerminalPanel.tsx  # Terminal routing, split layout, hosts GitHistoryPage
-│   │   ├── TerminalTab.tsx  # Individual tab component
-│   │   ├── TabNav.tsx  # Vertical tab navigation
-│   │   ├── TerminalTabBar.tsx  # Horizontal tab bar
-│   │   ├── TreeView.tsx  # Reusable tree view component
-│   │   ├── SettingsPage.tsx  # Settings overlay (IntersectionObserver side-nav)
-│   │   ├── TextEditor.tsx  # Monaco Editor text editor
-│   │   ├── AiUsagePanel.tsx  # AI usage hover panel (5 providers)
-│   │   ├── WebManageDialog.tsx  # Web remote-management dialog (start/stop, QR code)
-│   │   ├── AboutDialog.tsx  # About / version dialog
-│   │   └── Toast.tsx  # Global toast notifications
-│   ├── stores/appStore.ts  # Zustand state management
-│   ├── services/tauri.ts  # Typed Tauri invoke wrappers
-│   ├── services/aiUsage.ts  # AI API usage fetching (5 providers)
-│   ├── data/commandTemplates.ts  # Template definitions & history
-│   ├── data/terminalSuggestions.ts  # VS Code-style prompt suggestions
-│   ├── utils/  # Utility modules
-│   │   ├── settings.ts  # Frontend settings (localStorage)
-│   │   ├── contextMenu.ts  # Edge-aware context-menu positioning
-│   │   ├── terminalTheme.ts  # Terminal theme helpers
-│   │   ├── terminalResizeEvent.ts  # Terminal resize events
-│   │   ├── openTerminalInDir.ts  # Open terminal in directory
-│   │   ├── fileExtensions.ts  # File extension mapping
-│   │   ├── groupHierarchy.ts  # Group hierarchy utilities
-│   │   ├── groupTree.ts  # Group tree building
-│   │   ├── tabColor.ts  # Tab color utilities
-│   │   ├── formatDuration.ts  # Duration formatting
-│   │   ├── migration.ts  # Data migration helpers
-│   │   └── bootLog.ts  # Boot logging
-│   └── types/index.ts  # TypeScript types & presets
-├── src-tauri/                    # Backend (Rust/Tauri)
-│   └── src/
-│       ├── lib.rs  # App setup, tray, single instance, Web API
-│       ├── commands/  # Tauri command handlers
-│       │   ├── terminal.rs  # PTY management (TerminalService)
-│       │   ├── profile.rs  # Profile CRUD + export/import
-│       │   ├── settings.rs  # App settings, data path, Web API settings
-│       │   ├── git.rs  # Git GUI backend (status, branch, pull, push, commit, history, diff)
-│       │   ├── window.rs  # Window controls (minimize/maximize/close)
-│       │   ├── remote_file.rs  # SSH remote file operations
-│       │   ├── server_monitor.rs  # SSH server stats monitoring
-│       │   ├── client_data.rs  # Client-side data persistence
-│       │   ├── ai_usage.rs  # AI API usage (Qianfan, Deepseek, Minimax, Ark)
-│       │   ├── clipboard.rs  # Clipboard operations
-│       │   ├── fs.rs  # Local filesystem operations
-│       │   ├── templates.rs  # Command templates management
-│       │   ├── web.rs  # Web API server control
-│       │   └── workspace.rs  # Workspace CRUD
-│       ├── services/  # Business logic
-│       │   ├── profile_service.rs  # Profile JSON I/O
-│       │   ├── settings_service.rs  # Settings JSON I/O
-│       │   ├── template_service.rs  # Template JSON I/O
-│       │   ├── workspace_service.rs  # Workspace JSON I/O
-│       │   ├── web_service.rs  # Terminal output pub/sub for WebSocket
-│       │   ├── path_service.rs  # Data directory resolution & migration
-│       │   ├── ssh_session_service.rs  # SSH session management
-│       │   ├── client_data_service.rs  # Client data persistence
-│       │   └── crypto_service.rs  # Encryption helpers
-│       ├── models/  # Data structures (Profile, AppSettings, etc.)
-│       ├── web/  # Web API module (axum)
-│       │   ├── server.rs  # Axum router & SPA serving
-│       │   ├── auth.rs  # JWT authentication
-│       │   ├── ws.rs  # WebSocket terminal I/O
-│       │   ├── error.rs  # Error types
-│       │   └── handlers/  # REST handlers (auth, profiles, terminals)
-│       └── portable-pty-patched/  # Local patch for portable-pty
-└── web/  # Web frontend (separate React SPA)
-    └── src/
-        ├── screens/  # Login, Nav, Terminal
-        ├── components/  # Xterm (mobile-friendly), InputBar
-        ├── api.ts  # Auth + REST client
-        ├── hooks/useMetaWs.ts  # Meta channel (profile/terminal lists, session events)
-        └── hooks/useTerminalWs.ts  # Per-terminal WebSocket I/O
-```
-
-### 架构分层
-
-```
-┌──────────────────────────────────┐
-│  React 前端 (Zustand 状态管理)     │  ← 桌面 UI + Web UI
-├──────────────────────────────────┤
-│  Tauri 命令桥 (IPC)                │  ← JSON 序列化，camelCase
-├──────────────────────────────────┤
-│  Rust 服务层                      │  ← 业务逻辑、JSON 持久化
-├──────────────────────────────────┤
-│  PTY / SSH / axum / Win32 API    │  ← 底层能力
-└──────────────────────────────────┘
-```
-
-### 数据存储
-
-所有用户数据以 JSON 文件存储在 `%APPDATA%/TerminalBuddy/`：
-
-```
-%APPDATA%/TerminalBuddy/
-├── Profiles/                  # Terminal profiles
-├── Workspaces/                # Saved workspaces
-├── command_history.json       # Command history with notes
-├── command_templates.json     # Command templates
-└── settings.json              # App settings
-```
+- **PC / Web 会话物理隔离**：Web 远程访问默认与桌面会话严格隔离（`webApiShareSessions: false`），防止外部未经授权查看桌面终端输出。
+- **系统级凭据安全保护**：远端主机密码通过 Windows 原生 `CredWriteW` API 加密存储于系统的凭据管理器（Credential Manager），杜绝在进程命令行或明文文件中泄漏。
+- **高安全 HTTP 认证**：内置 Web API 采用 JWT 令牌认证与自适应 Bcrypt 密码哈希，具备防暴力破解限流机制。
 
 ---
 
-| Section | Description |
-|---------|-------------|
-| General | Restore tabs, close behavior, launch window mode, launch at login, tab navigation, theme mode, list selection style, data path, import/export |
-| Profiles | Create, edit, delete, copy, group profiles |
-| Commands | 10 categories of templates, custom commands, show/hide, edit descriptions |
-| History | Search, edit commands and notes, clear |
-| Exclusions | File tree exclusion patterns (exact name, `*.ext`, `**/*.ext`) |
-| AI Usage | Zhipu GLM API key, Baidu Qianfan cookie, DeepSeek API key, Minimax API key, Volcano Ark (火山方舟) cookie |
-| Web Management | Enable/disable Web API, port, credentials, server control, session sharing |
+## 九、开源协议与致谢
 
-| 分区 | 内容 |
-|---|---|
-| **通用** | 恢复标签页、关闭行为、启动窗口模式、开机启动、标签导航、主题模式、数据路径、导入/导出 |
-| **配置** | 终端配置文件创建、编辑、复制、删除、分组管理 |
-| **命令** | 10 个分类的命令模板、自定义命令、显示/隐藏、编辑描述 |
-| **主题** | 8 款内置主题 + 自定义 16 色 ANSI 编辑器，实时预览 |
-| **历史** | 搜索历史命令、编辑命令和备注、清空 |
-| **排除** | 文件树排除规则（精确名称、`*.ext` 通配符、`**/*.ext` 递归） |
-| **AI 用量** | 智谱 GLM / 百度千帆 / DeepSeek / Minimax / 火山方舟 API 用量监控 |
-| **Web 管理** | Web API 开关、端口、认证凭据、服务器控制、会话共享 |
+本项目基于 [MIT 许可证](LICENSE) 开源。
 
----
+特别鸣谢以下优秀开源项目为 TerminalBuddy 提供的强力支撑：
 
-## 🔐 安全
-
-- Web 远程访问与桌面终端**会话隔离**（`webApiShareSessions` 可配置）
-- JWT Token + bcrypt 密码哈希认证
-- 凭据通过 Win32 `CredWriteW` API 存储，不暴露在进程命令行中
-
----
-
-## 📄 许可证
-
-本项目采用 [MIT 许可证](LICENSE) 开源。
-
----
-
-## 📝 版本历史
-
-### v1.4.0 (2026-08-03) — 当前版本
-
-**🛠️ 组件与 UI**
-- `open_in_explorer` 路径不存在时逐级向上查找已存在目录
-- `components` 重组为按域子目录结构
-
-**🔧 资源与稳定性**
-- 锁机制重构为 RAII 守卫，资源清理与超时多路加固
-- 事件文件按条数与体积滚动清理 + 事件列表查看全部/搜索/分页统一组件
-- Watchdog 超时可配置并按 80% 提前告警 `approachingTimeout`
-- 错误分类本地化、banner 重试、轮询失败可见
-
-### v1.3.0 (2026-07-20)
-
-**🎯 启动参数预设体系（ExtraParamsPreset）**
-- 后端新增启动参数预设 REST 接口，终端实例挂载 `tag` 字段
-- 桌面端支持预设命令模糊匹配过滤、Dialog 受控离场动画
-- 桌面/Web 双向对齐：`terminal-created` 事件补齐 `extraParamTag/Color`，预设支持 tag 颜色并在 tab 上展示
-
-**🌐 Web 端能力补齐**
-- Nav 复用 PC `TreeView` 类名重构，新增会话右键菜单，Terminal 主题色随 profile 切换
-- Nav 重构为"会话 / 连接"双 tab，新增 profile 属性面板与会话分组折叠/关闭入口
-- 命令历史 REST 接口打通，与 PC 端 `ClientData` 共享；接入终端主题色类型
-- 自定义 Host 改为内联输入；InputBar 快捷键面板重排，方向键靠前
-- 修复网页端启动乱码问题
-
-**🔤 分屏终端字号可配置**
-- `AppSettings` 新增分屏终端三档字号字段（off / 2x1 / 2x2）
-- 行为页新增终端字号配置入口
-- 分屏/单屏字号改读设置并响应 `app-settings-changed` 事件
-- 字号空输入回退到行默认值（对齐 spec §6）
-
-**⚡ 终端性能与稳定性**
-- 新增启动中占位会话，避免 PTY 创建过程页签跳变
-- WebGL 渲染器延迟挂载，减少新建页签掉帧
-- 批量关闭终端减少状态更新次数，关闭卡顿修复
-- 终端偶现乱码修复
-
-**🤖 机器人与 Hook 体系**
-- 新增微信 ClawBot 机器人支持
-- Hook 全部迁移为 HTTP 模式，简化集成链路
-
-**🛠️ 文件模块与 UI**
-- 文件模块支持多项目，重构文件管理交互
-- 统一弹框组件，优化手机端访问体验
-- 配置编辑对话框字段顺序优化，`GroupCascader` 支持失焦提交
-- 修复切换黑白主题输入框背景不适配、分屏切换显示异常、web 管理手机端布局等多项 UI 问题
-
-> 📄 完整更新说明：[RELEASE_NOTES_v1.3.0.md](./RELEASE_NOTES_v1.3.0.md)
-
-### v1.2.0 (2026-07-15)
-
-- 设计系统全局刷新：令牌化色板 + lucide 图标组件化 + 无障碍标注
-- Claude Hook 终端内决策交互，桌面 Toast 通知体系
-- 多平台机器人通知（飞书/钉钉），飞书长连接 WebSocket，扫码授权流程
-- VSCode Activity Bar 风格侧边栏，设置页重构与自动保存
-- Git 信息缓存复用 + 历史记录树形展示
-- MSTSC 凭据安全升级（Win32 `CredWriteW` API）
-- 启动性能优化（异步 PTY + 并发标签恢复）
-
-> 📄 完整更新说明：[RELEASE_NOTES_v1.2.0.md](./RELEASE_NOTES_v1.2.0.md)
-
----
-
-## 🙏 致谢
-
-- [Tauri](https://tauri.app/) — 桌面应用框架
-- [xterm.js](https://xtermjs.org/) — 终端渲染引擎
-- [React](https://react.dev/) — UI 框架
-- [Monaco Editor](https://microsoft.github.io/monaco-editor/) — 代码编辑器
-- [portable-pty](https://github.com/wez/portable-pty) — PTY 管理
-- [lucide](https://lucide.dev/) — 图标库
+- [Tauri](https://tauri.app/) — 现代、轻量、安全的桌面应用框架
+- [xterm.js](https://xtermjs.org/) — 工业级 Web 终端模拟核心
+- [React](https://react.dev/) — 声明式组件化用户界面构建库
+- [Monaco Editor](https://microsoft.github.io/monaco-editor/) — 微软出品的桌面级代码编辑引擎
+- [portable-pty](https://github.com/wez/portable-pty) — 跨平台 PTY 管理库
+- [lucide-react](https://lucide.dev/) — 优雅、统一的现代化矢量图标库

@@ -56,11 +56,13 @@ No lint, formatter, or test suites exist. TypeScript strict mode enforces `noUnu
 
 ## Data model
 
-All user data is JSON files under `%APPDATA%/TerminalBuddy/`: `Profiles/*.json`, `Workspaces/*.json`, `settings.json`, `command_templates.json`, `command_history.json`. No database.
+All user data is JSON files under `%APPDATA%/TerminalBuddy/`: `Profiles/*.json`, `Workspaces/*.json`, `settings.json`, `command_templates.json`, `command_history.json`, `projects.json` (registered projects). Claude session history is indexed into a SQLite DB (`terminal_buddy.db`, rusqlite, schema migrations).
 
 ## Web API
 
 Embedded axum server for remote terminal access. JWT auth, bcrypt passwords. WebSocket protocol for terminal I/O. Session isolation between PC and Web clients is controlled by the `webApiShareSessions` setting and enforced through one permission matrix in `src-tauri/src/models/terminal_access.rs` — never hard-code `owner` comparisons in handlers; call `TerminalService::authorize(id, actor, action)` instead.
+
+The REST surface also covers project launch (with startup-param presets), Claude session history (list/detail/search/rename/star/archive/delete/export/batch-delete + replay), a read-only project file tree, and Git status/branch/operations. File-tree and Git access is gated by `handlers::ensure_project_scope` (registered project dirs only, 403 outside); long Git ops are fire-and-poll with per-repo mutual exclusion (409 when busy). Web terminal creation reuses the desktop paths (`create_terminal` / `create_blank_terminal`).
 
 <!-- CODEGRAPH_START -->
 ## CodeGraph
