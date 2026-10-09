@@ -1,6 +1,7 @@
 import { closeTerminal, getFileSize, listTerminals, startBlankTerminal, startTerminal, writeToTerminal } from './tauri';
 import { loadSavedTabs, saveTabsToStorage, useAppStore } from '../stores/appStore';
 import { getAppSettings } from '../utils/settings';
+import { isClaudeCommand } from '../utils/claudeLaunch';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { TerminalSession } from '../types';
@@ -67,7 +68,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     : paramsWithoutResume.replace(/\s+/g, ' ').trim();
   // 构建启动参数：临时追加 --resume（不存入 session，避免下次叠加）
   let launchParams = baseParams;
-  if (tab.claudeSessionId && tab.profileId) {
+  if (tab.claudeSessionId) {
     const settings = getAppSettings();
     if (settings.autoResumeClaudeSession) {
       const resumeParam = `--resume ${tab.claudeSessionId}`;
@@ -77,9 +78,26 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   const startupPath = tab.directory && isLocalShellTerminal(tab.terminalType)
     ? tab.directory
     : undefined;
+  // 空白终端（项目右键启动等）的 extraParams 保存的是完整启动命令，恢复时重跑：
+  // - 命令跑 claude → 连同 --resume 一起恢复会话
+  // - 命令不含 claude 但记录了会话（当时手动敲的 claude）→ 只重跑原命令，
+  //   追加 --resume 会把原命令拼坏
+  // - 没保存命令（纯手动敲 claude 的空白终端）→ 直接 claude --resume
+  const blankCommand = !tab.profileId
+    ? (baseParams
+      ? (isClaudeCommand(baseParams) ? launchParams : baseParams)
+      : (launchParams ? `claude ${launchParams}` : undefined))
+    : undefined;
   const terminalId = tab.profileId
     ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath, undefined, undefined, tab.extraParamMode)
-    : await startBlankTerminal(tab.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s', estRows, estCols, startupPath, tab.profileName);
+    : await startBlankTerminal(
+      tab.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s',
+      estRows,
+      estCols,
+      startupPath,
+      tab.profileName,
+      blankCommand,
+    );
   store.addSession({
     id: terminalId,
     profileId: tab.profileId,
