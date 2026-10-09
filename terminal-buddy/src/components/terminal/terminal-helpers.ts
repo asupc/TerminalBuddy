@@ -186,9 +186,31 @@ export const SUGGESTION_KIND_LABEL: Record<NonNullable<SuggestionItem['kind']>, 
   template: '模板',
 };
 
+// 在输入区行内自下而上扫描反显（inverse）单元格：Ink 类 TUI（如 Claude Code）
+// 常把真实 VT 光标停在帧末尾，但会用反显块画出视觉光标，找到即可用作 IME 锚点。
+function findInverseCursorCell(
+  terminal: Terminal,
+  inputTopY: number,
+  lastInputY: number
+): { x: number; y: number } | null {
+  const buffer = terminal.buffer.active;
+  for (let y = lastInputY; y >= inputTopY; y--) {
+    const line = buffer.getLine(buffer.viewportY + y);
+    if (!line) continue;
+    for (let x = 0; x < terminal.cols; x++) {
+      if (line.getCell(x)?.isInverse()) {
+        return { x, y };
+      }
+    }
+  }
+  return null;
+}
+
 export function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null {
   const buffer = terminal.buffer.active;
   const horizontalRules: number[] = [];
+  // cursorY 相对 baseY，输入区行号相对 viewportY，回滚时需换算到同一坐标系
+  const cursorViewportY = buffer.cursorY + buffer.baseY - buffer.viewportY;
 
   for (let y = 0; y < terminal.rows; y++) {
     const line = buffer.getLine(buffer.viewportY + y);
@@ -220,6 +242,33 @@ export function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null
         }
         break;
       }
+    }
+
+    // 真实光标落在输入区内（如 Claude Code 输入框内移动光标）→ 锚点跟随光标
+    if (cursorViewportY >= y && cursorViewportY <= inputBottomY) {
+      return {
+        x: Math.min(buffer.cursorX, terminal.cols - 1),
+        y: cursorViewportY,
+        widthCells: 1,
+        inputTopY: y,
+        inputBottomY,
+        cols: terminal.cols,
+        rows: terminal.rows,
+      };
+    }
+
+    // 光标在输入区外（Ink 常停在帧末尾）→ 扫描 TUI 用反显块画的视觉光标
+    const pseudoCursor = findInverseCursorCell(terminal, y, anchorY);
+    if (pseudoCursor) {
+      return {
+        x: pseudoCursor.x,
+        y: pseudoCursor.y,
+        widthCells: 1,
+        inputTopY: y,
+        inputBottomY,
+        cols: terminal.cols,
+        rows: terminal.rows,
+      };
     }
 
     const anchorLine = buffer.getLine(buffer.viewportY + anchorY);

@@ -38,7 +38,6 @@ export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
-  const closeGitHistoryTab = useAppStore(s => s.closeGitHistoryTab);
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
@@ -298,7 +297,6 @@ export const TerminalPanel: FC = () => {
               <GitHistoryPage
                 repoRoot={gitHistoryTab.repoRoot}
                 branch={gitHistoryTab.branch}
-                onClose={closeGitHistoryTab}
               />
             </Suspense>
           </div>
