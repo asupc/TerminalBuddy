@@ -1,4 +1,5 @@
-﻿import React from 'react';
+﻿import './mock/setupMock';
+import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { installBrowserKeyGuard } from './services/browserKeys';

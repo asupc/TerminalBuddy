@@ -87,6 +87,20 @@ function App() {
   });
 
   useEffect(() => {
+    const onOpenEdit = (e: any) => {
+      setEditingProfile(e.detail?.profile || profiles[0] || null);
+      setShowEditDialog(true);
+    };
+    const onOpenExtra = () => setShowExtraParamsDialog(true);
+    window.addEventListener('mock-open-profile-edit', onOpenEdit);
+    window.addEventListener('mock-open-extra-params', onOpenExtra);
+    return () => {
+      window.removeEventListener('mock-open-profile-edit', onOpenEdit);
+      window.removeEventListener('mock-open-extra-params', onOpenExtra);
+    };
+  }, [profiles]);
+
+  useEffect(() => {
     checkAppUpdate()
       .then(info => {
         const now = Date.now();
