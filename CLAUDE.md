@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TerminalBuddy is a Tauri 2.x + React 18 desktop terminal emulator for Windows. It uses `portable-pty` (ConPTY) for PTY management, `xterm.js` for rendering, and persists all data as JSON files in the user data directory. It also includes an embedded Web API (axum) for remote terminal access via browser.
+TerminalBuddy is a Tauri 2.x + React 18 desktop terminal emulator for Windows. It uses `portable-pty` (ConPTY) for PTY management, `xterm.js` for rendering, and persists all data as JSON files in the user data directory. It also includes an embedded Web API (axum) plus a web SPA served from the same binary for browser/phone access: remote terminals, project launch with startup-parameter presets, Claude session history/replay, and a read-only project file tree with Git operations.
 
 **Note:** The actual project files are in the `terminal-buddy/` subdirectory.
 
@@ -27,6 +27,10 @@ npx tsc --noEmit     # TypeScript type check without emitting
 
 # Rust check
 cd src-tauri && cargo check  # Rust compilation check
+
+# Web SPA (remote access frontend, separate package.json)
+cd web && npm run build      # Build web SPA (embedded via include_dir in release builds)
+cd web && npx tsc --noEmit   # Type check web SPA
 ```
 
 ## Architecture
@@ -48,13 +52,14 @@ Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (b
 - `client_data_service` — Client-side data persistence
 - `TerminalService` (in `commands/terminal.rs`) — Managed state holding `HashMap<String, TerminalInstance>`. Each instance has an `owner` field (`TerminalOwner::Pc` or `TerminalOwner::Web`) tracking its origin. Uses `cmd.exe` as base PTY, injects PowerShell/SSH/Docker/K8s/MSTSC commands. Output forwarded via Tauri events `terminal_output_{id}`. Every read/write method takes a `TerminalActor` and calls `TerminalService::authorize()`, which delegates to the single permission matrix in `models/terminal_access.rs` (no hard-coded owner comparisons anywhere else). Terminal creation is transactional (`NewTerminalSpec` + `spawn_terminal`, rollback via the `TerminalCreation` RAII guard); teardown has one entry point (`teardown_terminal` with a `TerminalCloseReason`) that emits `terminal-closed` exactly once.
 
-**Web module** (`web/`): Embedded axum HTTP server for remote terminal access:
-- `server.rs` — Axum router: REST API + WebSocket + embedded SPA serving. Hand-rolled accept loop (not `axum::serve`) so hyper gets a `TokioTimer` and idle connections time out via `header_read_timeout`; `TimeoutLayer` (30s per request), `DefaultBodyLimit` (2MB), CORS closed in release (same-origin SPA), vite origins only in debug. Login brute-force protection: `rate_limit.rs` does per-IP failure counting with exponential ban backoff, plus a global bcrypt concurrency semaphore (429 + `Retry-After`).
+**Web module** (`web/`): Embedded axum HTTP server serving the web SPA and a REST/WS API:
+- `server.rs` — Axum router: REST API + WebSocket + embedded SPA serving. REST resource groups: `/api/auth`, `/api/profiles`, `/api/projects`, `/api/extra-param-presets`, `/api/command-history`, `/api/terminals`, `/api/claude-history/*`, `/api/fs/list`, `/api/git/*`, plus bot callback routes. Hand-rolled accept loop (not `axum::serve`) so hyper gets a `TokioTimer` and idle connections time out via `header_read_timeout`; `TimeoutLayer` (30s per request), `DefaultBodyLimit` (2MB), CORS closed in release (same-origin SPA), vite origins only in debug. Login brute-force protection: `rate_limit.rs` does per-IP failure counting with exponential ban backoff, plus a global bcrypt concurrency semaphore (429 + `Retry-After`).
 - `auth.rs` — JWT generation/verification with bcrypt password hashing
 - `rate_limit.rs` — `LoginThrottle` (per-IP failure window + ban rounds) and `acquire_password_verify_slot`, unit-tested with injectable clock
-- `ws.rs` — WebSocket handler for terminal I/O (JSON protocol: Input/Resize/Output/Exited/Error). Authorizes **before** `on_upgrade` (404 unknown / 403 unauthorized), so an attacker who guesses a terminal ID still cannot subscribe or peek history. Re-checks authorization per message and every 5s, closing connections that lose permission after the share switch is turned off.
-- `error.rs` — Error types (`ApiError::TooManyRequests` sets `Retry-After`)
-- `handlers/` — REST handlers: `auth_handler.rs`, `profile_handler.rs`, `terminal_handler.rs`, plus bot/claude-hook handlers
+- `ws.rs` — WebSocket handlers: `ws/terminal/{id}` for terminal I/O (JSON protocol: Input/Resize/Output/Exited/Error) and `ws/meta` for session-list push. Terminal WS authorizes **before** `on_upgrade` (404 unknown / 403 unauthorized), so an attacker who guesses a terminal ID still cannot subscribe or peek history. Re-checks authorization per message and every 5s, closing connections that lose permission after the share switch is turned off.
+- `error.rs` — Error types (`ApiError::TooManyRequests` sets `Retry-After`; `ApiError::Conflict` = 409 for busy Git repo)
+- `handlers/` — REST handlers: `auth_handler.rs`, `profile_handler.rs` (profiles + projects), `terminal_handler.rs`, `claude_history_handler.rs`, `fs_handler.rs`, `git_handler.rs`, `preset_handler.rs`, `history_handler.rs`, plus bot/claude-hook handlers. Heavy work (transcript indexing/reads, directory listing, git) goes through `tokio::task::spawn_blocking`; services are shared with the desktop Tauri commands (e.g. `claude_history_service`, `commands::git` impls, `commands::fs::list_directory`).
+- File tree / Git access is gated by `handlers::ensure_project_scope` — only paths inside registered project directories (from `projects.json`) are allowed (403 otherwise). Git long operations (checkout/commit/pull/push) are fire-and-poll: POST starts a background task (409 if the same repo is already running one), `GET /api/git/operation` is polled for status/output — they would otherwise exceed the 30s REST timeout. Web commit is `git add -A` (whole-repo); file-level commits and advanced push options are desktop-only.
 
 **Models** (`models/`): `Profile` (with SSH/Docker/K8s/MSTSC fields), `AppSettings` (close_behavior, data_path, web_api settings including `web_api_share_sessions`, ssh_download_dir, server_monitor_interval), `Workspace` (groups, terminals), `TerminalOwner` (Pc/Web enum), `terminal_access` (`TerminalActor` × `TerminalAction` × `TerminalOwner` permission matrix, `TerminalAccessError`, Chinese denial messages — the single source of truth, unit-tested), `ssh_types` (SSH session types), `web_api.rs` (LoginRequest, WsClientMessage, WsServerMessage with Error variant, TerminalInfo with owner field, etc.).
 
@@ -70,11 +75,15 @@ Three-layer architecture: **commands** (thin Tauri wrappers) → **services** (b
 
 ### Web Frontend — `web/`
 
-Separate React SPA in `web/src/` for browser-based remote terminal access:
-- `LoginPage.tsx`, `MainLayout.tsx`, `Sidebar.tsx`, `ProfileList.tsx`, `ProfileDialog.tsx`
-- `TabBar.tsx`, `TerminalView.tsx`, `MobileInputBar.tsx` (mobile-friendly input)
-- API client in `api/` (auth, profiles, terminals)
-- `hooks/useTerminal.ts` — WebSocket-based terminal I/O hook
+Separate React SPA in `web/src/` for browser/phone access (own package.json / vite config; no Tauri APIs, talks to the backend over REST + WebSocket only):
+- `screens/Nav.tsx` — main navigation, four tabs: 会话 / 项目与命令 / 历史 (Claude sessions) / 文件, plus a collapsed activity bar. The 项目与命令 tab shows profiles grouped by `group`; a group matching a registered project (name + path + startupCommand) gets a ⚡ launch menu (启动项目 + `commandMatch`-filtered presets, mirroring desktop `openProjectTerminal`). Context menus use right-click on hover devices and long-press on touch.
+- `screens/Terminal.tsx` + `components/Xterm.tsx` — terminal screen (xterm.js + per-terminal WS; touch-scroll bridging, iPad-aware wheel sign, ConPTY buildNumber from UA, ConPTY-aware paste: line endings normalized to CR, same as desktop `TerminalInstance`). `components/InputBar.tsx` — special-key chips for mobile.
+- `screens/ClaudeHistory.tsx` — Claude session history: project-grouped list, title filter + full-text search (hits anchor-jump into replay), multi-select batch delete, rename/star/archive/delete/export via context menu, "resume" launches a blank PowerShell + `claude --resume <id>` in the session's projectDir.
+- `screens/ClaudeReplay.tsx` — full-screen replay: paginated message loading with scroll-to-load-more, tool-call folding, long-text folding, export as browser download (Markdown/JSONL).
+- `screens/Files.tsx` — read-only project file tree (lazy directory loading, roots = registered projects) + per-repo Git panel (branch/ahead-behind/counts, branch-switch dialog, commit-all dialog, pull/push with operation polling).
+- `screens/Login.tsx` — login screen.
+- `api.ts` — typed REST client (token header injection, 401 auto-logout); `store.ts` — Zustand store (auth persisted, view/profiles/projects/sessions/presets not persisted); `types.ts` — shared types with backend models.
+- `hooks/` — `useTerminalWs.ts` (per-terminal WS with exponential-backoff reconnect + auth-expiry probe), `useMetaWs.ts` (session-list push), `useMediaQuery.ts`, `useVisualViewport.ts`.
 
 Embedded in the Rust binary via `include_dir!` in release mode; served from `web/dist/` in dev mode.
 
@@ -86,7 +95,7 @@ Embedded in the Rust binary via `include_dir!` in release mode; served from `web
 4. Output: PTY reader thread → Tauri event `terminal_output_{id}` → xterm.js write
 5. Input: xterm.js `onData` → `writeToTerminal(id, data)` → PTY writer
 6. Autocomplete: current input line parsed from xterm buffer → matched against `getAllSuggestions()` (templates + history with notes)
-7. Web API: axum server → REST for profiles → WebSocket for terminal I/O → JWT auth
+7. Web API: axum server → REST (profiles/projects/presets/terminals/claude-history/fs/git) → WebSocket for terminal I/O + session-list meta → JWT auth
 
 ### Data Model
 
@@ -110,6 +119,9 @@ Embedded in the Rust binary via `include_dir!` in release mode; served from `web
 - Frontend uses Chinese (Simplified) for all UI text
 - Theme system: CSS custom properties toggled via `data-theme` attribute on `<html>`
 - Web API uses JWT for auth, bcrypt for password hashing, WebSocket for terminal I/O
+- Web file tree / Git REST is whitelisted to registered project directories (`ensure_project_scope` in `web/handlers/mod.rs`); Git long operations are fire-and-poll with per-repo mutual exclusion (409 when busy)
+- `commands/fs.rs::FileNode` serializes **snake_case** (no `rename_all`) — the one exception to the camelCase rule; web `types.ts` matches this
+- Web terminal creation reuses the desktop paths: `create_terminal` for profiles, `create_blank_terminal` for project launch and `claude --resume` (empty `profileId` in `StartTerminalRequest` selects the blank path)
 - Web clients may shrink the PTY (`allow_shrink=true`) so narrow phone screens don't overflow TUIs; the desktop view re-flows and is restored via `terminal-web-takeover-ended`
 - Session isolation (matrix lives in `models/terminal_access.rs`, enforced by `TerminalService::authorize`):
   - `webApiShareSessions=false` (default): Web sees/operates only Web-created terminals — PC terminals are absent from the list *and* rejected at the WS handshake (403); PC can read-only view Web terminals but cannot input/resize/rename/close them
