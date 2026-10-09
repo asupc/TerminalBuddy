@@ -72,7 +72,6 @@
   color: var(--danger);
 }
 
-.git-history-window-close svg,
 .git-history-preview-close svg {
   width: 14px;
   height: 14px;

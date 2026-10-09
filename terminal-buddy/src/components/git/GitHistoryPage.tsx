@@ -29,7 +29,6 @@ const GitHistoryDiffPreview = lazy(() =>
 interface GitHistoryPageProps {
   repoRoot: string;
   branch: string;
-  onClose: () => void;
 }
 
 interface HistoryRange {
@@ -175,7 +174,7 @@ function historyFileIndent(viewModel: HistoryGraphViewModel): number {
   return 10 + SWIMLANE_WIDTH * (laneCount + 1) + 20;
 }
 
-export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch, onClose }) => {
+export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch }) => {
   const [historyResult, setHistoryResult] = useState<GitHistoryResult | null>(null);
   const [selectedHistoryHash, setSelectedHistoryHash] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -439,9 +438,6 @@ export const GitHistoryPage: FC<GitHistoryPageProps> = ({ repoRoot, branch, onCl
     <div className="git-history-page" aria-label="Git 历史记录">
       <div className="git-history-titlebar">
         <div className="git-history-title">{repoRoot} - 历史记录</div>
-        <button className="git-history-window-close" onClick={onClose} title="关闭历史记录" aria-label="关闭历史记录">
-          <X aria-hidden="true" />
-        </button>
       </div>
 
       <div className="git-history-toolbar">
