@@ -1,12 +1,11 @@
 import { CSSProperties, FC, KeyboardEvent, PointerEvent, useEffect, useRef, useState, useCallback } from 'react';
-import { Columns2, Eye, FileCode2, FileWarning } from 'lucide-react';
-import Editor, { OnMount } from '@monaco-editor/react';
+import { Columns2, Eye, FileCode2, FileWarning, TriangleAlert, X } from 'lucide-react';
+import Editor, { DiffEditor, OnMount } from '@monaco-editor/react';
 import { editor as MonacoEditor, KeyMod, KeyCode } from 'monaco-editor';
 import { readFileContent, writeFileContent, remoteUpload, getFileMeta, onTransferProgress, onTransferError } from '../../services/tauri';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '../../stores/appStore';
 import { getMonacoLanguage, isMarkdownFile } from '../../utils/fileExtensions';
-import { Dialog } from '../shared/Dialog';
 import { MarkdownPreview, MarkdownPreviewHandle } from './MarkdownPreview';
 import { showAlert } from '../../services/dialog';
 import './TextEditor.css';
@@ -70,7 +69,8 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
-  const [conflictDialog, setConflictDialog] = useState<'overwrite' | 'discard' | null>(null);
+  const [conflictNotice, setConflictNotice] = useState(false);
+  const [diffDiskContent, setDiffDiskContent] = useState<string | null>(null);
   const [saveNotify, setSaveNotify] = useState<{ type: 'saving' | 'success' | 'error'; msg: string } | null>(null);
   const [markdownViewMode, setMarkdownViewMode] = useState<MarkdownViewMode>('source');
   const [markdownPreviewWidth, setMarkdownPreviewWidth] = useState(MARKDOWN_PREVIEW_DEFAULT_WIDTH);
@@ -82,35 +82,52 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   const editorScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingEditorSourceLineRef = useRef(0);
   const previewDrivingEditorUntilRef = useRef(0);
-  const diskModTimeRef = useRef<number>(0);
+  const diskMetaRef = useRef<{ lastModified: number; size: number }>({ lastModified: 0, size: 0 });
   const isDirtyRef = useRef(isDirty);
   const lastLoadedContentRef = useRef<string | null>(null);
   const isInternalUpdateRef = useRef(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 已提示过冲突的磁盘版本（关闭提示后不再为同一版本重弹，直到磁盘出现新变化）
+  const notifiedModTimeRef = useRef(0);
+  const diffDiskContentRef = useRef<string | null>(null);
   const isMarkdown = isMarkdownFile(filePath);
 
   isDirtyRef.current = isDirty;
+  diffDiskContentRef.current = diffDiskContent;
 
   const loadFileContent = useCallback(async (forceReload = false) => {
     try {
+      // 先取 meta 再读内容：若文件在两步之间被外部修改，记录的 mtime 落后于磁盘，
+      // 下次轮询仍会发现并重载；反过来（记新 mtime 留旧内容）会造成漏检。
       const meta = await getFileMeta(filePath);
-      if (!forceReload && diskModTimeRef.current !== 0 && meta.lastModified === diskModTimeRef.current) {
+      if (!forceReload && diskMetaRef.current.lastModified !== 0
+        && meta.lastModified === diskMetaRef.current.lastModified && meta.size === diskMetaRef.current.size) {
         return;
       }
       const text = await readFileContent(filePath);
-      diskModTimeRef.current = meta.lastModified;
+      diskMetaRef.current = meta;
       lastLoadedContentRef.current = text;
 
-      isInternalUpdateRef.current = true;
       setContent(text);
       setError(null);
 
       if (editorRef.current) {
         const model = editorRef.current.getModel();
         if (model && model.getValue() !== text) {
+          // isInternalUpdateRef 只在真正会触发 change 事件的 setValue 前置位，
+          // 否则标志滞留会吞掉用户下一次编辑的 dirty 标记。
+          isInternalUpdateRef.current = true;
+          // 静默重载时保持光标与滚动位置
+          const viewState = editorRef.current.saveViewState();
           model.setValue(text);
+          if (viewState) editorRef.current.restoreViewState(viewState);
         }
       }
+
+      // 磁盘内容已成为当前内容，冲突随之解除
+      setConflictNotice(false);
+      setDiffDiskContent(null);
+      notifiedModTimeRef.current = 0;
     } catch (err) {
       setError(String(err));
       setContent(null);
@@ -130,7 +147,7 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       if (current !== null && current !== lastLoadedContentRef.current) {
         writeFileContent(filePath, current).then(() => {
           lastLoadedContentRef.current = current;
-          getFileMeta(filePath).then(meta => { diskModTimeRef.current = meta.lastModified; }).catch(() => {});
+          getFileMeta(filePath).then(meta => { diskMetaRef.current = meta; }).catch(() => {});
         }).catch(console.error);
       }
     };
@@ -143,48 +160,43 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
     };
   }, [isDraft, filePath]);
 
-  // Initial load
+  // Initial load（走 loadFileContent，保证“先取 meta 后读内容”的防漏检顺序）
   useEffect(() => {
-    let cancelled = false;
-    readFileContent(filePath)
-      .then((text) => {
-        if (!cancelled) {
-          setContent(text);
-          setError(null);
-          lastLoadedContentRef.current = text;
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(String(err));
-          setContent(null);
-        }
-      });
-    getFileMeta(filePath)
-      .then((meta) => {
-        if (!cancelled) diskModTimeRef.current = meta.lastModified;
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
+    void loadFileContent(true);
   }, [filePath]);
+
+  // 切到对比视图时源码编辑器被卸载，清空引用，避免对已 dispose 的 model 操作
+  useEffect(() => {
+    if (diffDiskContent !== null) editorRef.current = null;
+  }, [diffDiskContent]);
+
+  // 磁盘变化检查：未修改时静默重载；有未保存修改时提示冲突。
+  // 同一磁盘版本只提示一次，用户关闭提示后不再重弹，直到磁盘出现新变化。
+  const checkDiskChange = useCallback(async () => {
+    try {
+      const meta = await getFileMeta(filePath);
+      if (meta.lastModified === diskMetaRef.current.lastModified && meta.size === diskMetaRef.current.size) return;
+
+      if (!isDirtyRef.current) {
+        await loadFileContent(true);
+        return;
+      }
+      if (meta.lastModified !== notifiedModTimeRef.current) {
+        notifiedModTimeRef.current = meta.lastModified;
+        setConflictNotice(true);
+        // 对比视图打开期间磁盘又变了，刷新左侧的磁盘版本
+        if (diffDiskContentRef.current !== null) {
+          readFileContent(filePath).then(setDiffDiskContent).catch(() => {});
+        }
+      }
+    } catch {}
+  }, [filePath, loadFileContent]);
 
   // Re-read file when switching to this tab
   useEffect(() => {
     if (!isActive) return;
-    const checkForChanges = async () => {
-      try {
-        const meta = await getFileMeta(filePath);
-        if (meta.lastModified === diskModTimeRef.current) return;
-
-        if (!isDirtyRef.current) {
-          await loadFileContent(true);
-        } else {
-          setConflictDialog('overwrite');
-        }
-      } catch {}
-    };
-    checkForChanges();
-  }, [isActive, filePath, loadFileContent]);
+    void checkDiskChange();
+  }, [isActive, checkDiskChange]);
 
   // Poll for external changes when active
   useEffect(() => {
@@ -195,26 +207,14 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       }
       return;
     }
-    const poll = async () => {
-      try {
-        const meta = await getFileMeta(filePath);
-        if (meta.lastModified === diskModTimeRef.current) return;
-
-        if (!isDirtyRef.current) {
-          await loadFileContent(true);
-        } else if (!conflictDialog) {
-          setConflictDialog('overwrite');
-        }
-      } catch {}
-    };
-    pollTimerRef.current = setInterval(poll, 3000);
+    pollTimerRef.current = setInterval(checkDiskChange, 3000);
     return () => {
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
       }
     };
-  }, [isActive, filePath, loadFileContent, conflictDialog]);
+  }, [isActive, checkDiskChange]);
 
   useEffect(() => {
     if (!isMarkdown) setMarkdownViewMode('source');
@@ -457,8 +457,12 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
           }
           onDirtyChange(false);
           const meta = await getFileMeta(savePath).catch(() => null);
-          if (meta) diskModTimeRef.current = meta.lastModified;
+          if (meta) diskMetaRef.current = meta;
           lastLoadedContentRef.current = value;
+          // 本地内容已写入磁盘，冲突解除
+          setConflictNotice(false);
+          setDiffDiskContent(null);
+          notifiedModTimeRef.current = 0;
         } catch (err) {
           console.error('Failed to save file:', err);
           showSaveNotify('error', '保存失败');
@@ -486,7 +490,8 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
 
     editor.onDidChangeModelContent(() => {
       if (!isInternalUpdateRef.current) {
-        onDirtyChange(true);
+        // 与最后加载/保存的内容比较，undo 回到原样时 dirty 也随之恢复为 false
+        onDirtyChange(editor.getValue() !== lastLoadedContentRef.current);
       }
       isInternalUpdateRef.current = false;
     });
@@ -516,8 +521,9 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
   }, []);
 
   const handleOverwriteSave = useCallback(async () => {
-    if (editorRef.current) {
-      const value = editorRef.current.getValue();
+    // 对比视图下源码编辑器已卸载，改用受控的 content state
+    const value = editorRef.current?.getValue() ?? content;
+    if (value !== null) {
       try {
         await writeFileContent(filePath, value);
         const session = useAppStore.getState().sessions.find(
@@ -534,20 +540,30 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
         }
         onDirtyChange(false);
         const meta = await getFileMeta(filePath).catch(() => null);
-        if (meta) diskModTimeRef.current = meta.lastModified;
+        if (meta) diskMetaRef.current = meta;
         lastLoadedContentRef.current = value;
       } catch (err) {
         console.error('Failed to save file:', err);
       }
     }
-    setConflictDialog(null);
-  }, [filePath, onDirtyChange]);
+    setConflictNotice(false);
+    setDiffDiskContent(null);
+    notifiedModTimeRef.current = 0;
+  }, [filePath, content, onDirtyChange]);
 
   const handleDiscard = useCallback(async () => {
     await loadFileContent(true);
     onDirtyChange(false);
-    setConflictDialog(null);
   }, [loadFileContent, onDirtyChange]);
+
+  const openDiffView = useCallback(async () => {
+    try {
+      const text = await readFileContent(filePath);
+      setDiffDiskContent(text);
+    } catch (err) {
+      void showAlert(String(err), '读取磁盘文件失败');
+    }
+  }, [filePath]);
 
   // 视图切换控件的位置：源码模式贴在编辑器右上角（避开 minimap/滚动条），
   // 分屏模式同样对齐编辑器右缘，预览模式则贴在预览区右上角。
@@ -583,84 +599,114 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
       ref={containerRef}
       style={{ '--markdown-preview-width': `${markdownPreviewWidth}%` } as CSSProperties}
     >
-      <div className="text-editor-source" onContextMenu={handleContextMenu}>
-        <Editor
-          height="100%"
-          language={getMonacoLanguage(filePath)}
-          value={content}
-          onMount={handleEditorMount}
-          theme="vs-dark"
-          options={{
-            fontSize: 14,
-            minimap: { enabled: true },
-            automaticLayout: true,
-            scrollBeyondLastLine: false,
-            wordWrap: 'on',
-            tabSize: 4,
-            insertSpaces: true,
-            lineNumbers: 'on',
-            folding: true,
-            renderWhitespace: 'selection',
-          }}
-          onChange={(value) => {
-            if (value !== undefined) setContent(value);
-          }}
-        />
-      </div>
-      {isMarkdown && (
-        <div
-          className="markdown-view-toggle"
-          role="group"
-          aria-label="Markdown 视图切换"
-          style={{ right: viewToggleRight }}
-        >
-          {MARKDOWN_VIEW_MODES.map(({ mode, label, title, icon: Icon }) => {
-            const active = markdownViewMode === mode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                className={`markdown-view-btn${active ? ' active' : ''}`}
-                onClick={() => setMarkdownViewMode(mode)}
-                aria-label={`${label}模式`}
-                aria-pressed={active}
-                title={title}
-              >
-                <Icon aria-hidden="true" />
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {isMarkdown && (
-        <>
-          {markdownViewMode === 'split' && (
-            <div
-              className="markdown-preview-resizer"
-              role="separator"
-              aria-label="调整编辑区和预览区宽度"
-              aria-orientation="vertical"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(100 - markdownPreviewWidth)}
-              tabIndex={0}
-              title="拖动调整宽度，双击恢复等宽"
-              onPointerDown={handleMarkdownResizeStart}
-              onPointerMove={handleMarkdownResizeMove}
-              onPointerUp={handleMarkdownResizeEnd}
-              onPointerCancel={handleMarkdownResizeEnd}
-              onKeyDown={handleMarkdownResizeKeyDown}
-              onDoubleClick={() => setMarkdownPreviewWidth(MARKDOWN_PREVIEW_DEFAULT_WIDTH)}
-            />
-          )}
-          <div className="markdown-preview-pane">
-            <MarkdownPreview
-              ref={markdownPreviewRef}
-              content={content}
-              filePath={filePath}
-              onScrollSourceLine={markdownViewMode === 'split' ? handleMarkdownPreviewScroll : undefined}
+      {diffDiskContent !== null ? (
+        <div className="text-editor-diff">
+          <div className="text-editor-diff-header">
+            <span>磁盘版本（左）</span>
+            <span className="text-editor-diff-vs">对比</span>
+            <span>当前修改（右）</span>
+          </div>
+          <div className="text-editor-diff-body">
+            <DiffEditor
+              height="100%"
+              language={getMonacoLanguage(filePath)}
+              original={diffDiskContent}
+              modified={content}
+              theme="vs-dark"
+              options={{
+                fontSize: 14,
+                readOnly: true,
+                renderSideBySide: true,
+                automaticLayout: true,
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                renderOverviewRuler: false,
+              }}
             />
           </div>
+        </div>
+      ) : (
+        <>
+          <div className="text-editor-source" onContextMenu={handleContextMenu}>
+            <Editor
+              height="100%"
+              language={getMonacoLanguage(filePath)}
+              value={content}
+              onMount={handleEditorMount}
+              theme="vs-dark"
+              options={{
+                fontSize: 14,
+                minimap: { enabled: true },
+                automaticLayout: true,
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                tabSize: 4,
+                insertSpaces: true,
+                lineNumbers: 'on',
+                folding: true,
+                renderWhitespace: 'selection',
+              }}
+              onChange={(value) => {
+                if (value !== undefined) setContent(value);
+              }}
+            />
+          </div>
+          {isMarkdown && (
+            <div
+              className="markdown-view-toggle"
+              role="group"
+              aria-label="Markdown 视图切换"
+              style={{ right: viewToggleRight }}
+            >
+              {MARKDOWN_VIEW_MODES.map(({ mode, label, title, icon: Icon }) => {
+                const active = markdownViewMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`markdown-view-btn${active ? ' active' : ''}`}
+                    onClick={() => setMarkdownViewMode(mode)}
+                    aria-label={`${label}模式`}
+                    aria-pressed={active}
+                    title={title}
+                  >
+                    <Icon aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {isMarkdown && (
+            <>
+              {markdownViewMode === 'split' && (
+                <div
+                  className="markdown-preview-resizer"
+                  role="separator"
+                  aria-label="调整编辑区和预览区宽度"
+                  aria-orientation="vertical"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(100 - markdownPreviewWidth)}
+                  tabIndex={0}
+                  title="拖动调整宽度，双击恢复等宽"
+                  onPointerDown={handleMarkdownResizeStart}
+                  onPointerMove={handleMarkdownResizeMove}
+                  onPointerUp={handleMarkdownResizeEnd}
+                  onPointerCancel={handleMarkdownResizeEnd}
+                  onKeyDown={handleMarkdownResizeKeyDown}
+                  onDoubleClick={() => setMarkdownPreviewWidth(MARKDOWN_PREVIEW_DEFAULT_WIDTH)}
+                />
+              )}
+              <div className="markdown-preview-pane">
+                <MarkdownPreview
+                  ref={markdownPreviewRef}
+                  content={content}
+                  filePath={filePath}
+                  onScrollSourceLine={markdownViewMode === 'split' ? handleMarkdownPreviewScroll : undefined}
+                />
+              </div>
+            </>
+          )}
         </>
       )}
       {saveNotify && (
@@ -690,27 +736,36 @@ export const TextEditor: FC<TextEditorProps> = ({ filePath, isDirty, onDirtyChan
           </div>
         </>
       )}
-      {conflictDialog && (
-        <Dialog
-          title="文件已被外部修改"
-          role="alertdialog"
-          className="editor-conflict-dialog"
-          bodyClassName="editor-conflict-message"
-          footerClassName="editor-conflict-actions"
-          onClose={() => setConflictDialog(null)}
-          footer={(
-            <>
-              <button className="editor-conflict-btn overwrite" onClick={handleOverwriteSave}>
-                覆盖保存
+      {conflictNotice && (
+        <div className="editor-conflict-banner" role="alert">
+          <TriangleAlert className="editor-conflict-banner-icon" aria-hidden="true" />
+          <span className="editor-conflict-banner-text">文件已在磁盘上被修改，编辑器中的更改尚未保存</span>
+          <div className="editor-conflict-banner-actions">
+            {diffDiskContent === null ? (
+              <button className="editor-conflict-btn ghost" onClick={openDiffView}>
+                对比差异
               </button>
-              <button className="editor-conflict-btn discard" onClick={handleDiscard}>
-                放弃修改
+            ) : (
+              <button className="editor-conflict-btn ghost" onClick={() => setDiffDiskContent(null)}>
+                返回编辑
               </button>
-            </>
-          )}
-        >
-          此文件在编辑器外已被修改，且您有未保存的更改。
-        </Dialog>
+            )}
+            <button className="editor-conflict-btn overwrite" onClick={handleOverwriteSave}>
+              覆盖保存
+            </button>
+            <button className="editor-conflict-btn discard" onClick={handleDiscard}>
+              还原磁盘版本
+            </button>
+          </div>
+          <button
+            className="editor-conflict-banner-close"
+            aria-label="暂不处理"
+            title="暂不处理，磁盘再次变化时重新提示"
+            onClick={() => setConflictNotice(false)}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
       )}
     </div>
   );
