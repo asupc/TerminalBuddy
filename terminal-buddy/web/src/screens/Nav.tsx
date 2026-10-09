@@ -12,6 +12,8 @@ import {
   Box,
   ChevronRight,
   Command,
+  FolderGit2,
+  History,
   KeyRound,
   ListTree,
   Monitor,
@@ -20,6 +22,7 @@ import {
   Server,
   SquareTerminal,
   X,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
@@ -28,7 +31,9 @@ import { Dialog } from '../components/Dialog';
 import { useMetaWs } from '../hooks/useMetaWs';
 import { useHasHover } from '../hooks/useMediaQuery';
 import { useStore } from '../store';
-import type { ExtraParamPreset, Profile, TerminalInfo, TerminalType } from '../types';
+import ClaudeHistory from './ClaudeHistory';
+import Files from './Files';
+import type { ExtraParamPreset, Profile, Project, TerminalInfo, TerminalType } from '../types';
 
 const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
   powershell: { icon: SquareTerminal, label: 'PowerShell' },
@@ -142,6 +147,8 @@ interface ContextMenuState {
 export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen' | 'sidebar' }) {
   const profiles = useStore((state) => state.profiles);
   const setProfiles = useStore((state) => state.setProfiles);
+  const projects = useStore((state) => state.projects);
+  const setProjects = useStore((state) => state.setProjects);
   const sessions = useStore((state) => state.sessions);
   const metaOnline = useStore((state) => state.metaOnline);
   const connectionFatal = useStore((state) => state.connectionFatal);
@@ -153,11 +160,13 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const toggleNavCollapsed = useStore((state) => state.toggleNavCollapsed);
   const hasHover = useHasHover();
 
-  const [tab, setTab] = useState<'sessions' | 'profiles'>('sessions');
+  const [tab, setTab] = useState<'sessions' | 'profiles' | 'history' | 'files'>('sessions');
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  // 项目分组启动菜单（⚡ 按钮或分组右键打开）
+  const [groupMenu, setGroupMenu] = useState<{ projectName: string; x: number; y: number } | null>(null);
   // 会话行右键菜单
   const [sessionContextMenu, setSessionContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   // 「连接」tab 中各 profile 的属性面板展开状态，默认全部折叠
@@ -184,10 +193,14 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     }
   }, [setProfiles]);
 
-  // 进入「连接」tab 时加载 profiles
+  // 进入「项目与命令」/「历史」/「文件」tab 时加载 profiles 与项目列表
+  // （项目加载失败仅降级为不显示启动入口，不打扰主流程）
   useEffect(() => {
-    if (tab === 'profiles') void loadProfiles();
-  }, [tab, loadProfiles]);
+    if (tab === 'profiles' || tab === 'history' || tab === 'files') {
+      if (tab === 'profiles') void loadProfiles();
+      api.getProjects().then(setProjects).catch((err) => console.error('加载项目列表失败', err));
+    }
+  }, [tab, loadProfiles, setProjects]);
 
   useMetaWs();
 
@@ -421,10 +434,11 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
   // 点击外部 / 滚动 关闭菜单
   useEffect(() => {
-    if (!contextMenu && !sessionContextMenu) return;
+    if (!contextMenu && !sessionContextMenu && !groupMenu) return;
     const close = () => {
       setContextMenu(null);
       setSessionContextMenu(null);
+      setGroupMenu(null);
     };
     document.addEventListener('mousedown', close);
     document.addEventListener('touchstart', close, { passive: true });
@@ -434,19 +448,74 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       document.removeEventListener('touchstart', close);
       window.removeEventListener('scroll', close, true);
     };
-  }, [contextMenu, sessionContextMenu]);
+  }, [contextMenu, sessionContextMenu, groupMenu]);
 
   // 启动参数预设匹配（commandMatch：预设的匹配串被某条启动命令包含才显示）
+  // 与 PC 端 matchingStartupPresets 同规则，配置与项目共用
+  const matchPresets = useCallback(
+    (commands: string[]) =>
+      extraParamPresets.filter((preset) => {
+        if (preset.enabled === false) return false;
+        if (!preset.commandMatch) return true;
+        const match = preset.commandMatch.toLowerCase();
+        return commands.some((cmd) => cmd.toLowerCase().includes(match));
+      }),
+    [extraParamPresets],
+  );
+
   const matchingPresets = useMemo(() => {
     if (!contextMenu) return [];
     const profile = profiles.find((p) => p.id === contextMenu.profileId);
-    return extraParamPresets.filter((preset) => {
-      if (preset.enabled === false) return false;
-      if (!preset.commandMatch) return true;
-      const match = preset.commandMatch.toLowerCase();
-      return (profile?.startupCommands || []).some((cmd) => cmd.toLowerCase().includes(match));
-    });
-  }, [contextMenu, profiles, extraParamPresets]);
+    return matchPresets(profile?.startupCommands || []);
+  }, [contextMenu, profiles, matchPresets]);
+
+  // ===== 项目启动 =====
+  // 与 PC 端 projectForItem 一致：同名项目且配了目录与启动命令，分组才可按项目启动
+  const projectForGroup = useCallback(
+    (groupName: string) =>
+      projects.find((p) => p.name === groupName && p.path && p.startupCommand?.trim()),
+    [projects],
+  );
+
+  // 与 PC 端 projectStartupCommand 一致：independent 直接替换，否则拼接项目启动命令
+  const launchProject = useCallback(
+    async (project: Project, preset?: ExtraParamPreset) => {
+      setBusyId(`project:${project.name}`);
+      setError('');
+      try {
+        const startupCommand = preset?.mode === 'independent'
+          ? preset.params
+          : [project.startupCommand?.trim(), preset?.params].filter(Boolean).join(' ');
+        const info = await api.createTerminal('', {
+          displayName: project.name,
+          startupPath: project.path,
+          startupGroup: project.name,
+          startupCommand,
+          extraParamTag: preset?.name,
+          extraParamTagColor: preset?.tagColor,
+        });
+        setView({
+          screen: 'terminal',
+          terminalId: info.id,
+          profileName: info.profileName || project.name,
+          loadingMode: info.loadingMode,
+          owner: 'web',
+        });
+      } catch (launchError) {
+        setError(launchError instanceof Error ? launchError.message : '启动项目失败');
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [setView],
+  );
+
+  const showGroupMenu = useCallback((projectName: string, x: number, y: number) => {
+    // 防止菜单溢出视口右下边缘
+    const clampedX = Math.min(x, window.innerWidth - 220);
+    const clampedY = Math.min(y, window.innerHeight - 240);
+    setGroupMenu({ projectName, x: Math.max(8, clampedX), y: Math.max(8, clampedY) });
+  }, []);
 
   const menuProfile = contextMenu ? profiles.find((p) => p.id === contextMenu.profileId) : null;
 
@@ -499,7 +568,25 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           className={`nav-tab${tab === 'profiles' ? ' active' : ''}`}
           onClick={() => setTab('profiles')}
         >
-          连接
+          项目与命令
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'history'}
+          className={`nav-tab${tab === 'history' ? ' active' : ''}`}
+          onClick={() => setTab('history')}
+        >
+          历史
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'files'}
+          className={`nav-tab${tab === 'files' ? ' active' : ''}`}
+          onClick={() => setTab('files')}
+        >
+          文件
         </button>
       </div>
 
@@ -623,7 +710,8 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                   })}
                 </div>
               )
-            : profiles.length === 0
+            : tab === 'profiles'
+              ? profiles.length === 0
               ? (
                 <div className="session-empty-state">
                   <Server aria-hidden="true" />
@@ -635,6 +723,8 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                 <div className="profile-tree" aria-label="所有连接">
                   {profileGroups.map((group) => {
                     const isGroupCollapsed = collapsedProfileGroups.has(group.name);
+                    const project = projectForGroup(group.name);
+                    const isGroupBusy = busyId === `project:${group.name}`;
                     return (
                       <div className="tree-node" key={group.name}>
                         <div
@@ -644,6 +734,11 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                           tabIndex={0}
                           aria-expanded={!isGroupCollapsed}
                           onClick={() => toggleProfileGroup(group.name)}
+                          onContextMenu={(e) => {
+                            if (!project) return;
+                            e.preventDefault();
+                            showGroupMenu(project.name, e.clientX, e.clientY);
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault();
@@ -665,7 +760,22 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                           </button>
                           <span className="tree-name">{group.name}</span>
                           <span className="tree-item-end">
+                            {isGroupBusy && <span className="tree-item-count">连接中…</span>}
                             <span className="tree-item-count">{group.items.length}</span>
+                            {project && (
+                              <button
+                                type="button"
+                                className="tree-item-launch"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  showGroupMenu(project.name, e.clientX, e.clientY);
+                                }}
+                                aria-label={`启动项目 ${project.name}`}
+                                title={`启动项目 ${project.name}`}
+                              >
+                                <Zap size={13} aria-hidden="true" />
+                              </button>
+                            )}
                           </span>
                         </div>
                         {!isGroupCollapsed && (
@@ -728,7 +838,10 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                     );
                   })}
                 </div>
-              )}
+              )
+              : tab === 'files'
+                ? <Files />
+                : <ClaudeHistory />}
         </div>
       </main>
 
@@ -770,6 +883,50 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           ))}
         </div>
       )}
+
+      {groupMenu && (() => {
+        const project = projects.find((p) => p.name === groupMenu.projectName);
+        if (!project) return null;
+        const presets = matchPresets([project.startupCommand || '']);
+        return (
+          <div
+            className="profile-context-menu"
+            style={{ left: groupMenu.x, top: groupMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="context-menu-item"
+              onClick={() => {
+                void launchProject(project);
+                setGroupMenu(null);
+              }}
+            >
+              启动项目
+            </button>
+            {presets.map((preset) => (
+              <button
+                type="button"
+                key={preset.id}
+                className="context-menu-item context-menu-item-preset"
+                onClick={() => {
+                  void launchProject(project, preset);
+                  setGroupMenu(null);
+                }}
+              >
+                启动
+                <span
+                  className="context-menu-tag-chip"
+                  style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
+                >
+                  {preset.name}
+                </span>
+              </button>
+            ))}
+          </div>
+        );
+      })()}
 
       {sessionContextMenu && (() => {
         const session = sessions.find((s) => s.id === sessionContextMenu.sessionId);
@@ -859,8 +1016,20 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
             },
             {
               key: 'profiles' as const,
-              label: '连接',
+              label: '项目与命令',
               icon: Server,
+              badge: 0,
+            },
+            {
+              key: 'history' as const,
+              label: 'Claude 历史',
+              icon: History,
+              badge: 0,
+            },
+            {
+              key: 'files' as const,
+              label: '文件与 Git',
+              icon: FolderGit2,
               badge: 0,
             },
           ]

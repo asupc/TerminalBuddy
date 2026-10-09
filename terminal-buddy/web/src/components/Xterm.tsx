@@ -170,7 +170,20 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
     const ro = new ResizeObserver(() => doFit());
     ro.observe(containerRef.current);
 
-    term.onData((d) => sendInput(d));
+    term.onData((d) => {
+      // 粘贴行尾必须写 CR：ConPTY 会把输入流里的 LF 当成带 Ctrl 修饰的 Enter，
+      // 在开启 kitty 键盘协议的 TUI（如 pi）里被编码成 CSI 13;5u（Ctrl+Enter=提交），
+      // 导致粘贴内容被逐行提交、或 CSI-u 序列被字面插进消息文本。
+      // 与 PC 端 TerminalInstance 的 onData 同步维护。
+      if (d.startsWith('\x1b[200~')) {
+        const inner = d.slice(6, -5);
+        sendInput(inner.includes('\n') ? `\x1b[200~${inner.replace(/\r?\n/g, '\r')}\x1b[201~` : d);
+      } else if (d.length > 1 && /[\r\n]/.test(d)) {
+        sendInput(`\x1b[200~${d.replace(/\r?\n/g, '\r')}\x1b[201~`);
+      } else {
+        sendInput(d);
+      }
+    });
 
     termRef.current = term;
     fitRef.current = fit;

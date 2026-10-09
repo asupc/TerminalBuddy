@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from './api';
-import type { ExtraParamMode, ExtraParamPreset, Profile, TerminalInfo, TerminalLoadingMode } from './types';
+import type { ExtraParamMode, ExtraParamPreset, Profile, Project, TerminalInfo, TerminalLoadingMode } from './types';
 
 export type View =
   | { screen: 'nav' }
@@ -11,6 +11,14 @@ export type View =
       profileName: string;
       loadingMode: TerminalLoadingMode;
       owner: 'pc' | 'web';
+    }
+  | { screen: 'claudeHistory' }
+  | {
+      screen: 'claudeReplay';
+      sessionId: string;
+      title?: string;
+      /** 全文检索命中锚定跳转的消息 seq */
+      focusSeq?: number;
     };
 
 /** 连接的终态：重试耗尽或登录过期后停止自动重连，UI 给出可操作入口。 */
@@ -24,6 +32,8 @@ interface AppState {
   username: string | null;
   // 导航数据（不持久化）
   profiles: Profile[];
+  /** 项目列表（项目与命令 / Claude 历史分组共用） */
+  projects: Project[];
   sessions: TerminalInfo[];
   metaOnline: boolean;
   /** WS 重试耗尽 / 登录过期的终态；非 null 时 UI 显示重试/重登入口。 */
@@ -41,6 +51,7 @@ interface AppState {
   setAuth: (token: string, username: string) => void;
   logout: () => void;
   setProfiles: (p: Profile[]) => void;
+  setProjects: (p: Project[]) => void;
   setSessions: (s: TerminalInfo[]) => void;
   setMetaOnline: (b: boolean) => void;
   setConnectionFatal: (fatal: ConnectionFatal | null) => void;
@@ -62,6 +73,7 @@ export const useStore = create<AppState>()(
       token: null,
       username: null,
       profiles: [],
+      projects: [],
       sessions: [],
       metaOnline: false,
       connectionFatal: null,
@@ -73,8 +85,9 @@ export const useStore = create<AppState>()(
       setAuth: (token, username) => set({ token, username }),
       // 仅供 api.ts 的 401 handler 调用以清除过期 token；UI 已下线
       logout: () =>
-        set({ token: null, username: null, profiles: [], sessions: [], extraParamPresets: [], view: { screen: 'nav' }, connectionFatal: null }),
+        set({ token: null, username: null, profiles: [], projects: [], sessions: [], extraParamPresets: [], view: { screen: 'nav' }, connectionFatal: null }),
       setProfiles: (profiles) => set({ profiles }),
+      setProjects: (projects) => set({ projects }),
       setSessions: (sessions) => set({ sessions }),
       setMetaOnline: (metaOnline) => set({ metaOnline }),
       setConnectionFatal: (connectionFatal) => set({ connectionFatal }),

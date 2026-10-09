@@ -2,6 +2,14 @@ export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k
 export type TerminalLoadingMode = 'default' | 'vsCode';
 export type ExtraParamMode = 'append' | 'independent';
 
+/** 项目（与后端 commands/profile.rs Project 同构，来自 GET /api/projects） */
+export interface Project {
+  name: string;
+  path: string;
+  /** 自定义启动命令（如 claude）；空串表示仅进入目录 */
+  startupCommand: string;
+}
+
 /** 连接配置（与后端 Profile 同构，仅取 Web 端会用到的字段；其余字段均视作可选以兼容精简场景） */
 export interface Profile {
   id: string;
@@ -132,4 +140,106 @@ export const DEFAULT_THEME_ID = 'dark-default';
 
 export function resolveTheme(themeId?: string): ColorTheme {
   return PRESET_THEMES.find((t) => t.id === themeId) ?? PRESET_THEMES[0];
+}
+
+// ----- Claude 历史会话（与后端 services/claude_history_service.rs 同构）-----
+
+export interface ClaudeSessionItem {
+  sessionId: string;
+  projectDir: string;
+  filePath: string;
+  title: string;
+  customTitle: string | null;
+  startedAt: number | null;
+  updatedAt: number;
+  messageCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  model: string | null;
+  starred: boolean;
+  archived: boolean;
+}
+
+export interface ClaudeSearchHit {
+  sessionId: string;
+  title: string;
+  projectDir: string;
+  snippet: string;
+  seq: number;
+  timestamp: number | null;
+  updatedAt: number;
+}
+
+export interface ClaudeReplayTool {
+  name: string;
+  summary: string;
+}
+
+export interface ClaudeReplayMessage {
+  seq: number;
+  role: 'user' | 'assistant' | 'tool';
+  timestamp: number | null;
+  text: string;
+  tools: ClaudeReplayTool[];
+  toolName: string | null;
+}
+
+export interface ClaudeReplayPage {
+  total: number;
+  messages: ClaudeReplayMessage[];
+  title: string;
+  projectDir: string;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  startedAt: number | null;
+  updatedAt: number;
+}
+
+export interface ClaudeHistoryScanResult {
+  scanned: number;
+  updated: number;
+  total: number;
+  /** 本批之后仍需索引的会话数；>0 表示后台补齐任务还在跑 */
+  pending: number;
+}
+
+// ----- Web 端文件树 / Git（与后端 commands/fs.rs、commands/git.rs 同构）-----
+
+/** 注意：后端 FileNode 未做 camelCase 重命名，保持 snake_case */
+export interface FileNode {
+  name: string;
+  path: string;
+  is_directory: boolean;
+  size: number;
+  last_modified: number;
+}
+
+export interface GitRepositoryStatus {
+  repoRoot: string;
+  branch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  changedCount: number;
+  stagedCount: number;
+  unstagedCount: number;
+  untrackedCount: number;
+  hasRemote: boolean;
+}
+
+export interface GitBranch {
+  name: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  upstream: string | null;
+}
+
+export interface GitOperationStatus {
+  action: string;
+  /** running | done | failed | idle */
+  status: 'running' | 'done' | 'failed' | 'idle';
+  output: string;
+  startedAt: number;
+  finishedAt: number | null;
 }

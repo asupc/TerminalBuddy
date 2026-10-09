@@ -1,5 +1,19 @@
 import { useStore } from './store';
-import type { ExtraParamMode, ExtraParamPreset, Profile, TerminalInfo } from './types';
+import type {
+  ClaudeHistoryScanResult,
+  ClaudeReplayPage,
+  ClaudeSearchHit,
+  ClaudeSessionItem,
+  ExtraParamMode,
+  ExtraParamPreset,
+  FileNode,
+  GitBranch,
+  GitOperationStatus,
+  GitRepositoryStatus,
+  Profile,
+  Project,
+  TerminalInfo,
+} from './types';
 
 const BASE = '/api';
 
@@ -89,10 +103,19 @@ export interface CreateTerminalOptions {
   extraStartupMode?: ExtraParamMode;
   extraParamTag?: string;
   extraParamTagColor?: string | null;
+  /** 自定义标签名（与 PC 端 startTerminal 的 displayName 对齐） */
+  displayName?: string;
+  /** 覆盖启动目录 */
+  startupPath?: string;
+  /** 空白终端（profileId 传空串）的归属分组 */
+  startupGroup?: string;
+  /** 空白终端注入的启动命令（项目启动命令 / claude --resume） */
+  startupCommand?: string;
 }
 
 export const api = {
   getProfiles: () => req<Profile[]>('/profiles'),
+  getProjects: () => req<Project[]>('/projects'),
   getTerminals: () => req<TerminalInfo[]>('/terminals'),
   createTerminal: (profileId: string, options?: CreateTerminalOptions) =>
     req<TerminalInfo>('/terminals', {
@@ -107,7 +130,102 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(presets),
     }),
+  // ----- Claude 历史会话 -----
+  getClaudeHistory: (includeArchived: boolean, projectDir?: string) =>
+    req<ClaudeSessionItem[]>(
+      `/claude-history?includeArchived=${includeArchived}` +
+        (projectDir ? `&projectDir=${encodeURIComponent(projectDir)}` : ''),
+    ),
+  searchClaudeHistory: (query: string, projectDir?: string) =>
+    req<ClaudeSearchHit[]>(
+      `/claude-history/search?query=${encodeURIComponent(query)}` +
+        (projectDir ? `&projectDir=${encodeURIComponent(projectDir)}` : ''),
+    ),
+  rescanClaudeHistory: () =>
+    req<ClaudeHistoryScanResult>('/claude-history/rescan', { method: 'POST' }),
+  getClaudeReplay: (sessionId: string, offset: number, limit: number) =>
+    req<ClaudeReplayPage>(
+      `/claude-history/${encodeURIComponent(sessionId)}/replay?offset=${offset}&limit=${limit}`,
+    ),
+  renameClaudeSession: (sessionId: string, title: string) =>
+    req<{ renamed: boolean }>(`/claude-history/${encodeURIComponent(sessionId)}/rename`, {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    }),
+  setClaudeSessionFlags: (
+    sessionId: string,
+    options: { starred?: boolean; archived?: boolean },
+  ) =>
+    req<{ updated: boolean }>(`/claude-history/${encodeURIComponent(sessionId)}/flags`, {
+      method: 'POST',
+      body: JSON.stringify({ starred: options.starred ?? null, archived: options.archived ?? null }),
+    }),
+  deleteClaudeSession: (sessionId: string) =>
+    req<{ deleted: boolean }>(`/claude-history/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    }),
+  deleteClaudeSessions: (sessionIds: string[]) =>
+    req<{ deleted: number }>('/claude-history/delete-batch', {
+      method: 'POST',
+      body: JSON.stringify({ sessionIds }),
+    }),
+  // ----- 项目文件树 / Git -----
+  getFsList: (path: string) =>
+    req<FileNode[]>(`/fs/list?path=${encodeURIComponent(path)}`),
+  getGitStatus: (repo: string) =>
+    req<GitRepositoryStatus | null>(`/git/status?repo=${encodeURIComponent(repo)}`),
+  getGitBranches: (repo: string) =>
+    req<GitBranch[]>(`/git/branches?repo=${encodeURIComponent(repo)}`),
+  getGitOperation: (repo: string) =>
+    req<GitOperationStatus>(`/git/operation?repo=${encodeURIComponent(repo)}`),
+  gitCheckout: (repo: string, branch: string) =>
+    req<{ started: boolean }>('/git/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ repo, branch }),
+    }),
+  gitCommit: (repo: string, message: string) =>
+    req<{ started: boolean }>('/git/commit', {
+      method: 'POST',
+      body: JSON.stringify({ repo, message }),
+    }),
+  gitPull: (repo: string) =>
+    req<{ started: boolean }>('/git/pull', {
+      method: 'POST',
+      body: JSON.stringify({ repo }),
+    }),
+  gitPush: (repo: string) =>
+    req<{ started: boolean }>('/git/push', {
+      method: 'POST',
+      body: JSON.stringify({ repo }),
+    }),
 };
+
+/** 导出会话内容为文本（不走 req()：响应是纯文本不是 JSON），前端生成 Blob 下载 */
+export async function exportClaudeSessionContent(
+  sessionId: string,
+  format: 'markdown' | 'jsonl',
+): Promise<string> {
+  const token = useStore.getState().token;
+  const res = await fetch(
+    BASE + `/claude-history/${encodeURIComponent(sessionId)}/export?format=${format}`,
+    { headers: token ? { authorization: 'Bearer ' + token } : undefined },
+  );
+  if (res.status === 401) {
+    handle401();
+    throw new Error('登录已过期，请重新登录');
+  }
+  if (!res.ok) {
+    let msg = `导出失败 (${res.status})`;
+    try {
+      const j = await res.json();
+      if (j.message) msg = j.message;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.text();
+}
 
 /**
  * 受控 REST 探测：WS 握手失败后区分「未授权」（服务在，token 坏）与「暂时离线」

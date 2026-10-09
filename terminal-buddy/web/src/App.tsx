@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useStore } from './store';
 import { useDualPane } from './hooks/useMediaQuery';
 import { useVisualViewport } from './hooks/useVisualViewport';
+import ClaudeReplay from './screens/ClaudeReplay';
 import Login from './screens/Login';
 import Nav from './screens/Nav';
 import Terminal from './screens/Terminal';
@@ -63,6 +64,8 @@ export default function App() {
               loadingMode={view.loadingMode}
               owner={view.owner}
             />
+          ) : view.screen === 'claudeReplay' ? (
+            <ClaudeReplay sessionId={view.sessionId} title={view.title} focusSeq={view.focusSeq} />
           ) : (
             <div className="main-placeholder">
               <span>选择左侧的连接开始</span>
@@ -92,6 +95,9 @@ export default function App() {
         owner={view.owner}
       />
     );
+  }
+  if (view.screen === 'claudeReplay') {
+    return <ClaudeReplay sessionId={view.sessionId} title={view.title} focusSeq={view.focusSeq} />;
   }
   return <Nav />;
 }
