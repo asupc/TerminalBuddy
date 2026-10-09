@@ -17,21 +17,6 @@
   flex-wrap: wrap;
 }
 
-.claude-replay-back {
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--text-secondary);
-  padding: 3px 10px;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-
-.claude-replay-back:hover {
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-
 .claude-replay-title-block {
   min-width: 0;
   flex: 1;

@@ -122,7 +122,6 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
   return (
     <div className="claude-replay">
       <div className="claude-replay-head">
-        <button type="button" className="claude-replay-back" onClick={onClose}>← 关闭</button>
         <div className="claude-replay-title-block">
           <div className="claude-replay-title">{title}</div>
           <div className="claude-replay-sub">
