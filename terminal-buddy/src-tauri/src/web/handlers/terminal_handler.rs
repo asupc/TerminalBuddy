@@ -1,7 +1,6 @@
 use crate::commands::{TerminalCloseReason, TerminalService};
 use crate::models::web_api::{StartTerminalRequest, TerminalInfo};
 use crate::models::{TerminalAccessError, TerminalActor, TerminalOwner};
-use crate::services::ProfileService;
 use crate::web::auth::ClaimsFromRequest;
 use crate::web::error::ApiError;
 use crate::web::server::AppState;
@@ -23,46 +22,52 @@ pub async fn list(
 }
 
 /// 新建终端：归属 Web（手机）池，与 PC 端互不共享，避免不同尺寸视图抢一个 PTY。
+/// profile_id 为空时走项目启动路径：PowerShell 空白终端 + 启动目录 + 注入启动命令，
+/// 与 PC 端 openProjectTerminal 的 startBlankTerminal 链路一致。
 pub async fn start(
     State(state): State<AppState>,
     _claims: ClaimsFromRequest,
     Json(req): Json<StartTerminalRequest>,
 ) -> Result<Json<TerminalInfo>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
-    let terminal_id = ts
-        .create_terminal(
-            &req.profile_id,
-            None,
-            req.extra_startup_params.as_deref(),
-            req.extra_startup_mode.as_deref(),
+    let terminal_id = if req.profile_id.trim().is_empty() {
+        ts.create_blank_terminal(
+            "powershell",
+            req.display_name.as_deref(),
+            req.startup_group.as_deref(),
             req.rows.unwrap_or(0),
             req.cols.unwrap_or(0),
-            None,
+            req.startup_path.as_deref(),
+            req.startup_command.as_deref(),
             req.extra_param_tag.as_deref(),
             req.extra_param_tag_color.as_deref(),
             state.app_handle.clone(),
             TerminalOwner::Web,
         )
-        .map_err(ApiError::Internal)?;
+    } else {
+        ts.create_terminal(
+            &req.profile_id,
+            req.display_name.as_deref(),
+            req.extra_startup_params.as_deref(),
+            req.extra_startup_mode.as_deref(),
+            req.rows.unwrap_or(0),
+            req.cols.unwrap_or(0),
+            req.startup_path.as_deref(),
+            req.extra_param_tag.as_deref(),
+            req.extra_param_tag_color.as_deref(),
+            state.app_handle.clone(),
+            TerminalOwner::Web,
+        )
+    }
+    .map_err(ApiError::Internal)?;
 
-    let profile = ProfileService::get_profile(&req.profile_id).map_err(ApiError::Internal)?;
-    let loading_mode = ts
-        .terminal_loading_mode(&terminal_id, TerminalActor::Web)
-        .map_err(ApiError::Internal)?
-        .to_string();
-    let info = TerminalInfo {
-        id: terminal_id,
-        profile_id: req.profile_id,
-        profile_name: profile.name,
-        group: profile.group,
-        terminal_type: profile.terminal_type,
-        loading_mode,
-        owner: TerminalOwner::Web,
-        extra_param_tag: req.extra_param_tag,
-        extra_param_tag_color: req.extra_param_tag_color,
-        extra_startup_params: req.extra_startup_params,
-        extra_startup_mode: req.extra_startup_mode,
-    };
+    // 两种创建路径统一从实例表取 TerminalInfo：空白终端没有 profile，
+    // 手工拼装会在这里分叉两份字段映射，list_terminals_info 已是唯一权威来源。
+    let info = ts
+        .list_terminals_info()
+        .into_iter()
+        .find(|info| info.id == terminal_id)
+        .ok_or_else(|| ApiError::Internal("终端已创建但查询信息失败".to_string()))?;
     let _ = state.app_handle.emit("terminal-created", info.clone());
     Ok(Json(info))
 }

@@ -14,6 +14,8 @@ pub enum ApiError {
         message: String,
         retry_after_secs: u64,
     },
+    /// 资源忙碌（如同一仓库已有 Git 操作在执行），409
+    Conflict(String),
     Internal(String),
 }
 
@@ -39,6 +41,7 @@ impl IntoResponse for ApiError {
                     .insert(header::RETRY_AFTER, HeaderValue::from(retry_after_secs));
                 return response;
             }
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, "conflict", msg),
             ApiError::Internal(msg) => {
                 eprintln!("[WebAPI] Internal error: {}", msg);
                 (

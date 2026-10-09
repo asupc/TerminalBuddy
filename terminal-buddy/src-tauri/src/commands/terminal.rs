@@ -1424,6 +1424,8 @@ impl TerminalService {
         startup_path: Option<&str>,
         // 排在 shell 启动命令之后、同一批次写入的额外命令（如 `claude --resume`）。
         initial_command: Option<&str>,
+        extra_param_tag: Option<&str>,
+        extra_param_tag_color: Option<&str>,
         app: AppHandle,
         owner: TerminalOwner,
     ) -> Result<String, String> {
@@ -1494,8 +1496,8 @@ impl TerminalService {
                     .filter(|group| !group.is_empty())
                     .map(str::to_string),
                 owner,
-                extra_param_tag: None,
-                extra_param_tag_color: None,
+                extra_param_tag: extra_param_tag.map(str::to_string),
+                extra_param_tag_color: extra_param_tag_color.map(str::to_string),
                 extra_startup_params: None,
                 extra_startup_mode: None,
                 terminal_type: effective_type.to_string(),
@@ -1723,6 +1725,8 @@ pub async fn start_blank_terminal(
             initial_cols,
             startup_path.as_deref(),
             initial_command.as_deref(),
+            None,
+            None,
             app,
             TerminalOwner::Pc,
         )

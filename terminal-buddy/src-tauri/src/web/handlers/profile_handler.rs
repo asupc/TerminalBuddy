@@ -1,3 +1,4 @@
+use crate::commands::profile::{get_projects, Project};
 use crate::models::Profile;
 use crate::services::ProfileService;
 use crate::web::auth::ClaimsFromRequest;
@@ -13,4 +14,13 @@ pub async fn list(
     ProfileService::get_all_profiles()
         .map(Json)
         .map_err(ApiError::Internal)
+}
+
+/// 只读项目列表：Web 端「启动项目」按项目目录 + 自定义启动命令开 PowerShell，
+/// 不在 Web 端管理项目。复用 PC 端 get_projects（含按分组补种项目的逻辑）。
+pub async fn list_projects(
+    State(_state): State<AppState>,
+    _claims: ClaimsFromRequest,
+) -> Result<Json<Vec<Project>>, ApiError> {
+    get_projects().map(Json).map_err(ApiError::Internal)
 }

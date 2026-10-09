@@ -639,7 +639,7 @@ fn repo_root_for_path(path: &str) -> Result<Option<PathBuf>, String> {
     }
 }
 
-fn require_repo_root(path: &str) -> Result<PathBuf, String> {
+pub(crate) fn require_repo_root(path: &str) -> Result<PathBuf, String> {
     repo_root_for_path(path)?.ok_or_else(|| "当前目录不是 Git 仓库".to_string())
 }
 
@@ -741,7 +741,7 @@ pub async fn get_git_repository_status(
     git_task(move || get_git_repository_status_impl(path)).await
 }
 
-fn get_git_repository_status_impl(path: String) -> Result<Option<GitRepositoryStatus>, String> {
+pub(crate) fn get_git_repository_status_impl(path: String) -> Result<Option<GitRepositoryStatus>, String> {
     let Some(root) = repo_root_for_path(&path)? else {
         return Ok(None);
     };
@@ -775,7 +775,7 @@ pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
     git_task(move || git_list_branches_impl(path)).await
 }
 
-fn git_list_branches_impl(path: String) -> Result<Vec<GitBranch>, String> {
+pub(crate) fn git_list_branches_impl(path: String) -> Result<Vec<GitBranch>, String> {
     let root = require_repo_root(&path)?;
     let local_output = run_git(
         &root,
@@ -841,7 +841,7 @@ pub async fn git_checkout_branch(path: String, branch: String) -> Result<String,
     git_task(move || git_checkout_branch_impl(path, branch)).await
 }
 
-fn git_checkout_branch_impl(path: String, branch: String) -> Result<String, String> {
+pub(crate) fn git_checkout_branch_impl(path: String, branch: String) -> Result<String, String> {
     let root = require_repo_root(&path)?;
     let branch = branch.trim();
     if branch.is_empty() {
@@ -881,7 +881,7 @@ pub async fn git_pull(path: String) -> Result<GitPullResult, String> {
     git_task(move || git_pull_impl(path)).await
 }
 
-fn git_pull_impl(path: String) -> Result<GitPullResult, String> {
+pub(crate) fn git_pull_impl(path: String) -> Result<GitPullResult, String> {
     let root = require_repo_root(&path)?;
     let old_head = head_hash(&root);
     let command = "git.exe pull -v --progress".to_string();
@@ -1321,6 +1321,33 @@ fn git_commit_paths_impl(
     }
     run_git(&root, &add_args)?;
     run_git(&root, &["commit", "-m", message])
+}
+
+// ---------------------------------------------------------------------------
+// Web 端（REST）简化包装：只要人类可读输出，完整结构化结果仍归 PC 端命令所有
+
+/// Web 端提交全部变更（git add -A + commit）：Web 文件树第一版没有文件级选择 UI。
+pub(crate) fn git_commit_all_impl(path: String, message: String) -> Result<String, String> {
+    let root = require_repo_root(&path)?;
+    let message = message.trim();
+    if message.is_empty() {
+        return Err("提交说明不能为空".to_string());
+    }
+    run_git(&root, &["add", "-A"])?;
+    run_git(&root, &["commit", "-m", message])
+}
+
+/// Web 端拉取：复用完整 impl，只取输出文本。
+pub(crate) fn git_pull_text_impl(path: String) -> Result<String, String> {
+    git_pull_impl(path).map(|result| result.output)
+}
+
+/// Web 端推送：默认推送当前分支（遵循仓库 push 配置与上游），不做选项编排；
+/// 需要预览 / force-with-lease 等高级推送时仍走 PC 端。
+pub(crate) fn git_push_text_impl(path: String) -> Result<String, String> {
+    let root = require_repo_root(&path)?;
+    let output = run_git_capture(&root, &["push", "-v", "--progress"])?;
+    Ok(combine_git_output(&output))
 }
 
 #[command]

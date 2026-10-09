@@ -29,6 +29,51 @@ pub struct ApiErrorResponse {
     pub message: String,
 }
 
+// ----- Claude 历史会话（Web 端）-----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeRenameRequest {
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeFlagsRequest {
+    #[serde(default)]
+    pub starred: Option<bool>,
+    #[serde(default)]
+    pub archived: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeDeleteBatchRequest {
+    pub session_ids: Vec<String>,
+}
+
+// ----- Web 端文件树 / Git -----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCheckoutRequest {
+    pub repo: String,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitRequest {
+    pub repo: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRepoRequest {
+    pub repo: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalInfo {
@@ -94,4 +139,16 @@ pub struct StartTerminalRequest {
     pub extra_param_tag: Option<String>,
     #[serde(default)]
     pub extra_param_tag_color: Option<String>,
+    /// 自定义标签名（与 PC 端 startTerminal 的 displayName 对齐）
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// 覆盖启动目录（profile 模式与项目模式共用）
+    #[serde(default)]
+    pub startup_path: Option<String>,
+    /// profile_id 为空时的空白终端归属分组（项目启动传项目名）
+    #[serde(default)]
+    pub startup_group: Option<String>,
+    /// profile_id 为空时注入的启动命令（项目自定义启动命令 / claude --resume）
+    #[serde(default)]
+    pub startup_command: Option<String>,
 }

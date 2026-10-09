@@ -1402,14 +1402,7 @@ pub fn delete_session(session_id: &str) -> Result<(), String> {
 pub fn export_session(session_id: &str, format: &str, dest_path: &str) -> Result<(), String> {
     match format {
         "markdown" => {
-            let page = get_replay(session_id, 0, usize::MAX)?;
-            let content = render_markdown(
-                &page.title,
-                &page.project_dir,
-                page.model.as_deref(),
-                page.total as usize,
-                &page.messages,
-            );
+            let content = export_session_content(session_id, "markdown")?;
             fs::write(dest_path, content).map_err(|error| format!("写入导出文件失败: {}", error))
         }
         "jsonl" => {
@@ -1426,6 +1419,37 @@ pub fn export_session(session_id: &str, format: &str, dest_path: &str) -> Result
             fs::copy(&file_path, dest_path)
                 .map(|_| ())
                 .map_err(|error| format!("复制会话记录失败: {}", error))
+        }
+        other => Err(format!("不支持的导出格式: {}", other)),
+    }
+}
+
+/// 导出内容到内存：Web 端浏览器下载用（REST 返回文本，前端 Blob 落盘）。
+/// markdown 复用导出渲染；jsonl 原样读出转录文件。
+pub fn export_session_content(session_id: &str, format: &str) -> Result<String, String> {
+    match format {
+        "markdown" => {
+            let page = get_replay(session_id, 0, usize::MAX)?;
+            Ok(render_markdown(
+                &page.title,
+                &page.project_dir,
+                page.model.as_deref(),
+                page.total as usize,
+                &page.messages,
+            ))
+        }
+        "jsonl" => {
+            let conn = DatabaseService::open()?;
+            let file_path = conn
+                .query_row(
+                    "SELECT file_path FROM claude_sessions WHERE session_id = ?1",
+                    [session_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|error| format!("查询 Claude 会话失败: {}", error))?
+                .ok_or_else(|| "会话记录不存在（可能已被删除）".to_string())?;
+            fs::read_to_string(&file_path).map_err(|error| format!("读取会话记录失败: {}", error))
         }
         other => Err(format!("不支持的导出格式: {}", other)),
     }

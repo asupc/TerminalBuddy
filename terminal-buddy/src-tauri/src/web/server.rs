@@ -70,6 +70,18 @@ pub fn build_router(state: AppState) -> Router {
         )
         // 连接（profile）只读列表 —— 手机端不管理 profile，照搬电脑端已配置的导航
         .route("/api/profiles", get(handlers::profile_handler::list))
+        // 项目只读列表 —— Web 端「启动项目」用（目录 + 自定义启动命令）
+        .route("/api/projects", get(handlers::profile_handler::list_projects))
+        // 项目文件树（只读浏览，白名单=已登记项目目录）
+        .route("/api/fs/list", get(handlers::fs_handler::list))
+        // Git：状态 / 分支为同步查询；切换 / 提交 / 拉取 / 推送为后台任务 + 轮询
+        .route("/api/git/status", get(handlers::git_handler::status))
+        .route("/api/git/branches", get(handlers::git_handler::branches))
+        .route("/api/git/operation", get(handlers::git_handler::operation))
+        .route("/api/git/checkout", post(handlers::git_handler::checkout))
+        .route("/api/git/commit", post(handlers::git_handler::commit))
+        .route("/api/git/pull", post(handlers::git_handler::pull))
+        .route("/api/git/push", post(handlers::git_handler::push))
         // 启动参数预设（与 PC 端共享 ClientData/extra_param_presets.json）
         .route(
             "/api/extra-param-presets",
@@ -86,6 +98,43 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::terminal_handler::list).post(handlers::terminal_handler::start),
         )
         .route("/api/terminals/{id}", delete(handlers::terminal_handler::close))
+        // Claude 历史会话（与 PC 端共享 SQLite 索引与 ~/.claude/projects 转录）
+        .route(
+            "/api/claude-history",
+            get(handlers::claude_history_handler::list),
+        )
+        .route(
+            "/api/claude-history/search",
+            get(handlers::claude_history_handler::search),
+        )
+        .route(
+            "/api/claude-history/rescan",
+            post(handlers::claude_history_handler::rescan),
+        )
+        .route(
+            "/api/claude-history/delete-batch",
+            post(handlers::claude_history_handler::delete_batch),
+        )
+        .route(
+            "/api/claude-history/{id}/replay",
+            get(handlers::claude_history_handler::replay),
+        )
+        .route(
+            "/api/claude-history/{id}/rename",
+            post(handlers::claude_history_handler::rename),
+        )
+        .route(
+            "/api/claude-history/{id}/flags",
+            post(handlers::claude_history_handler::set_flags),
+        )
+        .route(
+            "/api/claude-history/{id}/export",
+            get(handlers::claude_history_handler::export),
+        )
+        .route(
+            "/api/claude-history/{id}",
+            delete(handlers::claude_history_handler::delete),
+        )
         // 会话列表实时同步（meta WS，App 级单连接）
         .route("/ws/meta", get(ws::meta_ws_handler))
         // 终端 I/O（per-terminal WS）
