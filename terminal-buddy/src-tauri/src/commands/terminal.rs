@@ -1712,6 +1712,8 @@ pub async fn start_blank_terminal(
     initial_cols: u16,
     startup_path: Option<String>,
     initial_command: Option<String>,
+    extra_param_tag: Option<String>,
+    extra_param_tag_color: Option<String>,
     app: AppHandle,
     terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
@@ -1725,8 +1727,8 @@ pub async fn start_blank_terminal(
             initial_cols,
             startup_path.as_deref(),
             initial_command.as_deref(),
-            None,
-            None,
+            extra_param_tag.as_deref(),
+            extra_param_tag_color.as_deref(),
             app,
             TerminalOwner::Pc,
         )

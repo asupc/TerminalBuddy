@@ -148,6 +148,8 @@ export async function resumeClaudeSession(
       groupId: 'default',
       groupName: project?.name,
       owner: 'pc',
+      extraParamTag: preset?.name,
+      extraParamTagColor: preset?.tagColor ?? null,
       starting: true,
     }),
     start: (rows, cols) => startBlankTerminal(
@@ -157,6 +159,8 @@ export async function resumeClaudeSession(
       session.projectDir || undefined,
       name,
       `claude ${extraParams}`,
+      preset?.name,
+      preset?.tagColor ?? null,
     ),
     onStarted: (terminalId) => {
       if (session.projectDir) useAppStore.getState().setSessionDirectory(terminalId, session.projectDir);
