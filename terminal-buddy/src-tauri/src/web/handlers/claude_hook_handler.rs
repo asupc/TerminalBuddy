@@ -211,9 +211,13 @@ pub(crate) async fn claude_hook(
         _ => {}
     }
 
-    if request.hook_event_name != "PreToolUse"
-        || request.tool_name.as_deref() != Some("AskUserQuestion")
-    {
+    if request.hook_event_name != "PreToolUse" {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    if request.tool_name.as_deref() != Some("AskUserQuestion") {
+        // 工具调用心跳：Claude 正在活跃执行，刷新 running 指示灯，
+        // 避免长任务超过 30 分钟无事件时被过期兜底误灭
+        emit_terminal_event(&app, terminal_id, &request, "running");
         return StatusCode::NO_CONTENT.into_response();
     }
     let Some(tool_use_id) = request

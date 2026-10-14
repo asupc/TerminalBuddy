@@ -43,8 +43,10 @@ const HOOK_DEFINITIONS: &[HookDefinition] = &[
     HookDefinition {
         key: "decision",
         event: "PreToolUse",
-        matcher: Some("AskUserQuestion"),
-        status_message: "等待 TerminalBuddy 决策",
+        // 全工具匹配：AskUserQuestion 走决策流程，其余工具调用作为 running 心跳
+        // 刷新指示灯，防止长任务超过 30 分钟无事件时被过期兜底误灭
+        matcher: None,
+        status_message: "TerminalBuddy 正在同步执行状态",
     },
     HookDefinition {
         key: "completion",
@@ -556,10 +558,8 @@ mod tests {
             .as_array()
             .unwrap();
         assert!(groups[0].pointer("/hooks/0").is_none());
-        assert_eq!(
-            groups[1].get("matcher").and_then(|value| value.as_str()),
-            Some("AskUserQuestion")
-        );
+        // matcher=None 时 group 不带 matcher 字段（全工具匹配）
+        assert!(groups[1].get("matcher").is_none());
         assert_eq!(
             groups[1]
                 .pointer("/hooks/0/url")
