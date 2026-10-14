@@ -1,6 +1,9 @@
-﻿import './mock/setupMock';
+// 必须是第一个 import：局域网 http:// 访问属于非安全上下文，
+// crypto.randomUUID / navigator.clipboard 缺失会让「启动终端」与复制按钮静默失败。
+import './services/browser/cryptoShim';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './mock/setupMock';
 import App from './App';
 import WebEntry from './components/browser/WebEntry';
 import { installBrowserKeyGuard } from './services/browserKeys';
