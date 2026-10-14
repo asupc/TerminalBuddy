@@ -11,8 +11,13 @@ import './styles/global.css';
 import './styles/cartoonAnime1.css';
 import './components/browser/WebEntry.css';
 
-// 禁用默认右键菜单（后退、刷新、另存为等）
-document.addEventListener('contextmenu', (e) => e.preventDefault());
+// 输入框保留原生编辑菜单，支持密码粘贴等操作；其它区域禁用默认右键菜单。
+document.addEventListener('contextmenu', (e) => {
+  const target = e.target;
+  if (target instanceof HTMLElement
+    && (target.closest('input, textarea') || target.isContentEditable)) return;
+  e.preventDefault();
+});
 
 // 屏蔽 WebView2 的浏览器快捷键（F5 / Ctrl+R / Ctrl+Shift+R 刷新等）：刷新会重建页面，
 // 所有终端会话与未保存内容都会丢失
