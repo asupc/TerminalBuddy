@@ -1,76 +1,88 @@
 # AGENTS.md
 
-## Project layout
+## 项目结构
 
-- **Root is a wrapper.** All source lives in `terminal-buddy/`. Desktop frontend: `terminal-buddy/src/`, Rust backend: `terminal-buddy/src-tauri/`, Web frontend: `terminal-buddy/web/`.
-- Desktop frontend: React 18, TypeScript, Zustand 5, xterm.js 5.5, Monaco Editor.
-- Web frontend: Separate React SPA (`web/`), embedded into the Rust binary at build time via `include_dir!`.
-- Rust backend: Tauri 2, axum (Web API), portable-pty (ConPTY), ssh2, bcrypt, JWT.
+- **仓库根目录只是个壳。** 所有源码都在 `terminal-buddy/` 下。桌面端前端：`terminal-buddy/src/`，Rust 后端：`terminal-buddy/src-tauri/`，Web 前端：`terminal-buddy/web/`。
+- 桌面端前端：React 19、TypeScript 6、Zustand 5、xterm.js 6、Monaco Editor、React Flow。
+- Web 前端：独立 React SPA（`web/`），构建时通过 `include_dir!` 嵌入 Rust 二进制。
+- Rust 后端：Tauri 2、axum（Web API）、portable-pty（ConPTY）、ssh2、bcrypt、JWT、rusqlite。
+- 后端分三层：**commands**（薄 Tauri 包装层）→ **services**（业务逻辑 + 持久化）→ **models**（数据结构），外加一个 `web` 模块提供 HTTP/WS API。
 
-## Commands
+## 常用命令
 
-All commands run from `terminal-buddy/` unless noted.
+除特别说明外，均在 `terminal-buddy/` 目录下执行。
 
 ```bash
-npm install                  # install desktop frontend deps
-cd web && npm install        # install web frontend deps (separate node_modules)
+npm install                  # 安装桌面端前端依赖
+cd web && npm install        # 安装 Web 前端依赖（独立的 node_modules）
 
-npm run dev                  # Vite dev server only (port 1420, no Rust)
-npm run tauri dev            # full Tauri dev (runs Vite + Rust together)
-npm run build                # TypeScript check + Vite build
-npm run tauri build          # production build (NSIS installer); runs web build automatically via beforeBuildCommand
+npm run dev                  # 只启动 Vite dev server（1420 端口，不含 Rust）
+npm run tauri dev            # 完整 Tauri 开发模式（Vite + Rust 一起跑）
+npm run build                # 类型检查 + Vite 构建（tsc && vite build）
+npm run tauri build          # 生产构建（NSIS 安装包）；beforeBuildCommand 会自动执行
+                             # prepare:vscode-terminal + 桌面端构建 + Web 端构建
 
-npx tsc --noEmit             # TypeScript type check (desktop)
-cd web && npx tsc --noEmit   # TypeScript type check (web)
+npx tsc --noEmit             # 桌面端 TypeScript 类型检查
+cd web && npx tsc --noEmit   # Web 端 TypeScript 类型检查
 
-cd src-tauri && cargo check  # Rust compilation check
+cd src-tauri && cargo check  # Rust 编译检查
+cd src-tauri && cargo test --lib   # Rust 单元测试（25 个文件、约 164 个用例）
 ```
 
-Shortcut from repo root: `dev.bat` builds web frontend then launches `tauri dev`.
-`build-fast.bat` builds exe only (no installer); `build.bat` builds full NSIS installer.
+仓库根目录的快捷脚本：`dev.bat` 会先构建 Web 前端再启动 `tauri dev`。
 
-## Verification order
+仓库没有 lint 和格式化工具。TypeScript strict 模式开启了 `noUnusedLocals` 和 `noUnusedParameters`，未使用的绑定会让 `tsc` 失败。测试方面只有 Rust 单元测试（`cargo test --lib`）和独立的 `node scripts/test-*.mjs` 脚本，前端没有测试套件。
 
-1. `npx tsc --noEmit` in `terminal-buddy/`
-2. `npx tsc --noEmit` in `terminal-buddy/web/`
-3. `cargo check` in `terminal-buddy/src-tauri/`
+## 验证顺序
 
-No lint, formatter, or test suites exist. TypeScript strict mode enforces `noUnusedLocals` and `noUnusedParameters` — unused bindings will fail `tsc`.
+1. 在 `terminal-buddy/` 下执行 `npx tsc --noEmit`
+2. 在 `terminal-buddy/web/` 下执行 `npx tsc --noEmit`
+3. 在 `terminal-buddy/src-tauri/` 下执行 `cargo check`
+4. 改动 Rust 后，再执行 `cargo test --lib`
+5. 新增或删除 Tauri 命令时，在 `terminal-buddy/` 下执行 `python scripts/check-invoke-coverage.py`
 
-## Rust specifics
+## Rust 相关约定
 
-- Edition 2021; lib crate name is `terminal_buddy_lib` (cdylib + rlib).
-- `sccache` is configured via `src-tauri/.cargo/config.toml`.
-- Dev profile uses `opt-level = 1` + incremental; release uses LTO thin + strip.
-- `portable-pty` is **locally patched** at `src-tauri/portable-pty-patched/` — never update it from crates.io without verifying the patch.
-- All Tauri commands are registered in `lib.rs` `invoke_handler![]`. When adding a command: define in `commands/`, re-export via `commands/mod.rs`, add to `invoke_handler![]`.
-- Rust↔TypeScript serialization uses `camelCase` everywhere (`serde(rename_all = "camelCase")`).
+- Edition 2021；lib crate 名为 `terminal_buddy_lib`（cdylib + rlib）。
+- `sccache` 配置在 `src-tauri/.cargo/config.toml`。
+- dev profile 用 `opt-level = 1` + 增量编译；release 用 LTO thin + strip。
+- `portable-pty` 是**本地打补丁**的版本，位于 `src-tauri/portable-pty-patched/` —— 未经补丁验证，绝不要从 crates.io 更新它。
+- 所有 Tauri 命令都注册在 `lib.rs` 的 `invoke_handler![]` 里。新增命令的流程：在 `commands/` 定义 → 在 `commands/mod.rs` 重新导出 → 加进 `invoke_handler![]`。前端的 `invoke()` 调用必须是该列表的子集，由 `scripts/check-invoke-coverage.py` 校验。
+- `commands/workspace.rs` 后端已存在，但**故意不注册** —— 没有桌面端 UI 消费它，不过 `workspace_service` 与 `Workspaces/*.json` 存储仍然保留。
+- Rust ↔ TypeScript 序列化统一用 `camelCase`（`serde(rename_all = "camelCase")`）。**唯一例外：** `commands/fs.rs::FileNode` 是 snake_case，`web/src/types.ts` 与之保持一致。
+- 终端的基座 PTY 始终是 `cmd.exe`；所选 shell / SSH / Docker / K8s / MSTSC 命令是通过 PTY writer 注入的。
+- REST handler 里的重活（转录索引、目录列举、git 操作）必须走 `tokio::task::spawn_blocking`。
 
-## Frontend specifics
+## 前端相关约定
 
-- All UI text is in Chinese (Simplified).
-- State: Zustand store in `stores/appStore.ts`. Tauri bridge: `services/tauri.ts` (typed `invoke()` wrappers).
-- xterm.js 5.5 with WebGL renderer, fit/search/clipboard/web-links/unicode addons.
-- Window is frameless (`decorations: false`); `TitleBar.tsx` provides custom controls.
-- Web API dev server proxies `/api` → `http://localhost:9600` and `/ws` → `ws://localhost:9600`.
+- 界面文案一律用简体中文。
+- 状态：Zustand store 在 `stores/appStore.ts`（标签页/书签持久化到 `localStorage`）。Tauri 桥接：`services/tauri.ts`（带类型的 `invoke()` 包装）。命令模板、覆盖项与历史缓存：`data/commandTemplates.ts`，由 `initPersistedTemplates()` 持久化到后端。
+- xterm.js 6，WebGL 渲染器，启用 fit / search / clipboard / web-links / unicode 插件。
+- 窗口无边框（`decorations: false`），`TitleBar.tsx` 提供自定义窗口控件。主题通过 `<html>` 上的 `data-theme` 属性切换 CSS 自定义属性。
+- Web API 的 dev server 代理：`/api` → `http://localhost:9600`，`/ws` → `ws://localhost:9600`。
 
-## Data model
+## 数据模型
 
-All user data is JSON files under `%APPDATA%/TerminalBuddy/`: `Profiles/*.json`, `Workspaces/*.json`, `settings.json`, `command_templates.json`, `command_history.json`, `projects.json` (registered projects). Claude session history is indexed into a SQLite DB (`terminal_buddy.db`, rusqlite, schema migrations).
+- 所有用户数据都是 `%APPDATA%/TerminalBuddy/` 下的 JSON 文件：`Profiles/*.json`、`Workspaces/*.json`、`settings.json`、`command_templates.json`、`command_history.json`、`projects.json`（已登记的项目）。路径解析与自定义 `dataPath` 由 `services/path_service.rs` 负责。Claude 会话历史会索引进 SQLite 数据库（`terminal_buddy.db`，rusqlite，带 schema 迁移）。
+- **Profile**：id、name、group、terminalType（`powershell` | `cmd` | `ssh` | `docker` | `k8s` | `mstsc`，是字符串而非 Rust 枚举）、startupPath、startupCommands、environmentVariables、colorTheme、tabColor、windowSize（多数为可选），以及 SSH/Docker/K8s/MSTSC 相关字段。
+- **HistoryEntry**：`command` + 结构化的 `note`（向后兼容旧的字符串数组格式）。
+- **AppSettings**：closeBehavior（Exit/Tray）、dataPath、tabSidebarWidth、enableTabNavigation、singleInstance、webApiEnabled、webApiPort、webApiUsername、webApiPasswordHash、sshDownloadDir、serverMonitorInterval、webApiShareSessions（默认 false，控制 PC 与 Web 的会话隔离）。
 
 ## Web API
 
-Embedded axum server for remote terminal access. JWT auth, bcrypt passwords. WebSocket protocol for terminal I/O. Session isolation between PC and Web clients is controlled by the `webApiShareSessions` setting and enforced through one permission matrix in `src-tauri/src/models/terminal_access.rs` — never hard-code `owner` comparisons in handlers; call `TerminalService::authorize(id, actor, action)` instead.
+内嵌的 axum 服务，用于远程终端访问。JWT 鉴权、bcrypt 口令、WebSocket 协议传输终端 I/O。路由用的是手写的 accept 循环（而非 `axum::serve`），这样 hyper 能拿到 `TokioTimer`，空闲连接才能超时回收。登录暴力破解防护（`web/rate_limit.rs`）按 IP 统计失败次数并做指数退避封禁，同时有一个全局 bcrypt 并发信号量（返回 429 并带 `Retry-After`）。
 
-The REST surface also covers project launch (with startup-param presets), Claude session history (list/detail/search/rename/star/archive/delete/export/batch-delete + replay), a read-only project file tree, and Git status/branch/operations. File-tree and Git access is gated by `handlers::ensure_project_scope` (registered project dirs only, 403 outside); long Git ops are fire-and-poll with per-repo mutual exclusion (409 when busy). Web terminal creation reuses the desktop paths (`create_terminal` / `create_blank_terminal`).
+PC 端与 Web 端的会话隔离由 `webApiShareSessions` 设置控制，权限判定统一走 `src-tauri/src/models/terminal_access.rs` 里的权限矩阵 —— 永远不要在 handler 里硬编码 `owner` 比较，调用 `TerminalService::authorize(id, actor, action)` 即可。关闭共享时，Web 只能看到 Web 自己创建的终端，PC 终端在 WS 握手阶段就会被拒绝（403）；此时 PC 可以只读查看 Web 终端。Web 永远不能关闭 PC 的终端。终端 WS 在 `on_upgrade` **之前**就完成鉴权（未知返回 404，无权返回 403），并每 5 秒复查一次权限，因此会话中途关掉共享开关会立刻断掉在飞的连接。
+
+REST 接口还覆盖项目启动（带启动参数预设）、Claude 会话历史（列表/详情/搜索/重命名/收藏/归档/删除/导出/批量删除 + 回放）、只读的项目文件树、Git 状态与分支/操作，以及机器人回调。文件树与 Git 访问由 `handlers::ensure_project_scope` 把关（只允许已登记的项目目录，越界返回 403）；耗时较长的 Git 操作采用「发起即返回 + 轮询」模式，同一仓库互斥（忙时返回 409），Web 端提交走的是 `git add -A`（按文件提交和高级 push 选项仅限桌面端）。Web 端创建终端复用桌面端路径（`create_terminal` / `create_blank_terminal`）。
 
 <!-- CODEGRAPH_START -->
 ## CodeGraph
 
-In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+在已被 CodeGraph 索引的仓库中（仓库根目录存在 `.codegraph/` 目录），需要理解或定位代码时，**先**用 CodeGraph，不要直接 grep/find 或读文件：
 
-- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
-- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
+- **MCP 工具**（可用时）：`codegraph_explore` 一次调用基本能回答所有代码问题 —— 返回相关符号的逐字源码以及它们之间的调用路径，包括 grep 追不到的动态分发环节。查询里带上文件名或符号名，就能读到它当前带行号的源码。如果列出来了但暂缓加载，用工具搜索按名字载入。
+- **Shell**（总是可用）：`codegraph explore "<符号名或问题>"`，输出同上。
 
-If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
+如果没有 `.codegraph/` 目录，完全跳过 CodeGraph —— 是否建立索引由用户决定。
 <!-- CODEGRAPH_END -->
