@@ -1558,6 +1558,10 @@ impl TerminalService {
             "create-handoff",
             "create_handoff_terminal",
         );
+        // 唤起主窗口：双击 bat 等场景下窗口可能最小化、藏在托盘或被压在后台，
+        // handoff 是用户刚发起的本地动作，必须把窗口带到前台，否则 bat 会在
+        // 看不见的会话里跑（冷启动路径由 page load 后的 reveal_main_window 兜底）。
+        crate::show_main_window(&app);
         // 通知前端建 tab 并激活（activate=true：handoff 是用户刚发起的本地动作，
         // 与 Web 端建终端「不抢焦点」的行为区分开）。
         let _ = app.emit(

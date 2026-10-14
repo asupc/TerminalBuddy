@@ -198,8 +198,8 @@ fn disable_webview_browser_keys(app: &tauri::App) {
     }
 }
 
-/// 展示主窗口：取消最小化 + 显示 + 聚焦（托盘/单实例回调共用）。
-fn show_main_window(app: &tauri::AppHandle) {
+/// 展示主窗口：取消最小化 + 显示 + 聚焦（托盘/单实例/默认终端 handoff 共用）。
+pub(crate) fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
