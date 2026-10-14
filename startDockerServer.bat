@@ -1,6 +1,6 @@
 @echo off
 chcp 936 >nul
-setlocal EnableExtensions
+setlocal EnableExtensions DisableDelayedExpansion
 title TerminalBuddy 服务端
 
 cd /d "%~dp0"
@@ -20,12 +20,7 @@ if /i "%~1"=="-h" goto :mode_help
 if /i "%~1"=="--help" goto :mode_help
 if /i "%~1"=="-?" goto :mode_help
 set "ARG1=%~1"
-if "%ARG1:~0,1%"=="-" (
-    rem 直接传 -Port / -Rebuild / -Workspace 等参数时，按本机模式处理
-    set "MODE=local"
-    set "FORWARD_ARGS=%*"
-    goto :dispatch
-)
+if "%ARG1:~0,1%"=="-" goto :mode_local_args
 echo.
 echo [错误] 未知命令：%~1
 echo        可用命令：local、docker、docker-stop、docker-logs、help
@@ -36,13 +31,19 @@ goto :fail
 set "MODE=auto"
 goto :dispatch
 
+:mode_local_args
+set "MODE=local"
+rem 参数保留各自的引号，不对整行再加引号，避免路径特殊字符被 CMD 重新解释。
+set FORWARD_ARGS=%*
+goto :dispatch
+
 :mode_local
 set "MODE=local"
 rem 跳过开头的 local，其余参数原样转发给 start-web-server.ps1
 :collect_local_args
 shift
 if "%~1"=="" goto :dispatch
-set "FORWARD_ARGS=%FORWARD_ARGS% %1"
+set FORWARD_ARGS=%FORWARD_ARGS% %1
 goto :collect_local_args
 
 :mode_docker
@@ -149,6 +150,10 @@ if errorlevel 1 (
     goto :fail
 )
 
+set "LOCAL_PORT=9610"
+set "EXPLICIT_REBUILD="
+call :parse_local_options %*
+
 set "NEED_REBUILD="
 set "REBUILD_REASON="
 if not exist "%~dp0terminal-buddy\src-tauri\target\debug\terminal-buddy-server.exe" (
@@ -159,8 +164,7 @@ if not exist "%~dp0terminal-buddy\dist-web\index.html" (
     set "NEED_REBUILD=1"
     set "REBUILD_REASON=未检测到已编译的网页资源。"
 )
-echo(%* | findstr /i /c:"-rebuild" >nul 2>&1
-if not errorlevel 1 (
+if defined EXPLICIT_REBUILD (
     set "NEED_REBUILD="
 ) else if defined NEED_REBUILD (
     rem 编译产物缺失，需要重新编译。
@@ -187,11 +191,9 @@ if defined TOOL_MISSING (
 )
 echo.
 echo [提示] %REBUILD_REASON%将先自动编译，首次编译需要数分钟时间，请耐心等待。
-set "FORWARD_ARGS=%FORWARD_ARGS% -Rebuild"
+set FORWARD_ARGS=%FORWARD_ARGS% -Rebuild
 :local_tools_ok
 
-set "LOCAL_PORT=9610"
-call :parse_port %*
 set "POLL_SECONDS=900"
 
 echo.
@@ -279,14 +281,23 @@ echo 首次启动：在自动打开的网页中创建管理员密码（至少 8 个字符），创建后即可进入
 goto :done
 
 rem ============ 子过程 ============
-:parse_port
+:parse_local_options
 if "%~1"=="" exit /b 0
-if /i "%~1"=="-Port" (
-    if not "%~2"=="" set "LOCAL_PORT=%~2"
-    exit /b 0
-)
+if /i "%~1"=="-Rebuild" set "EXPLICIT_REBUILD=1"
+if /i "%~1"=="-Port" goto :parse_local_port
+if /i "%~1"=="-Workspace" goto :skip_local_value
+if /i "%~1"=="-DataDirectory" goto :skip_local_value
+if /i "%~1"=="-Username" goto :skip_local_value
 shift
-goto :parse_port
+goto :parse_local_options
+
+:parse_local_port
+if not "%~2"=="" set "LOCAL_PORT=%~2"
+:skip_local_value
+shift
+if "%~1"=="" exit /b 0
+shift
+goto :parse_local_options
 
 :require_docker
 where docker >nul 2>&1
