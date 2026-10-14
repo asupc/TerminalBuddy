@@ -579,7 +579,21 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                   启动<span className="config-nav-preset-chip" style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}>{preset.name}</span>
                 </div>
               ))}
+              <div className="context-menu-item" onClick={async () => {
+                closeContextMenu();
+                try { await openTerminalInDir(project.path); }
+                catch (err) { console.error(err); }
+              }}>命令行</div>
               <div className="context-menu-separator" />
+              <div className="context-menu-item" onClick={async () => {
+                closeContextMenu();
+                try { await openInExplorer(project.path); }
+                catch (err) { console.error(err); }
+              }}>打开目录</div>
+              <div className="context-menu-item" onClick={() => {
+                navigator.clipboard.writeText(project.path).catch(() => {});
+                closeContextMenu();
+              }}>复制启动路径</div>
             </>;
           })()}
           <div className="context-menu-item" onClick={() => { onAddProfile(groupContextMenu.group); closeContextMenu(); }}>
