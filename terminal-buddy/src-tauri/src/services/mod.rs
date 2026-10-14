@@ -20,6 +20,7 @@ pub mod default_terminal_service;
 #[cfg(feature = "desktop")]
 pub mod handoff_server;
 pub mod path_service;
+pub mod platform_service;
 pub mod profile_service;
 pub mod settings_service;
 pub mod ssh_session_service;

@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use terminal_buddy_lib::{commands, runtime::{AppHandle, Manager}, services::{ClaudeHookService, PathService, SettingsService}, web};
+use terminal_buddy_lib::{commands, runtime::AppHandle, services::{PathService, SettingsService}, web};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -10,18 +10,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("TERMINAL_BUDDY_DATA_DIR", &data_dir);
     PathService::require_data_dir()?;
 
+    let settings_path = SettingsService::get_settings_path();
+    // 已有文件损坏时停止启动，避免被误判为首次启动并覆盖管理员密码。
+    if settings_path.try_exists()? {
+        serde_json::from_slice::<terminal_buddy_lib::models::AppSettings>(&std::fs::read(&settings_path)?)?;
+    }
     let mut settings = SettingsService::get_settings();
-    let password = match std::env::var("TERMINAL_BUDDY_PASSWORD_FILE") {
-        Ok(path) => Some(std::fs::read_to_string(path)?.trim_end_matches(['\r', '\n']).to_string()),
-        Err(_) => std::env::var("TERMINAL_BUDDY_PASSWORD").ok(),
-    };
+    let password = if settings.web_api_password_hash.is_empty() {
+        match std::env::var("TERMINAL_BUDDY_PASSWORD_FILE") {
+            Ok(path) => Some(std::fs::read_to_string(path)?.trim_end_matches(['\r', '\n']).to_string()),
+            Err(_) => std::env::var("TERMINAL_BUDDY_PASSWORD").ok(),
+        }
+    } else { None };
     std::env::remove_var("TERMINAL_BUDDY_PASSWORD");
     if let Some(password) = password {
-        if password.is_empty() { return Err("服务端密码不能为空".into()); }
+        web::auth::validate_admin_password(&password)?;
         settings.web_api_password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)?;
     }
     if settings.web_api_password_hash.is_empty() {
-        return Err("首次启动请设置 TERMINAL_BUDDY_PASSWORD 或 TERMINAL_BUDDY_PASSWORD_FILE".into());
+        println!("首次启动：请打开网页创建管理员密码，初始化完成前业务接口需要认证。");
     }
     settings.web_api_enabled = true;
     settings.web_api_username = std::env::var("TERMINAL_BUDDY_USERNAME").unwrap_or(settings.web_api_username);
@@ -58,8 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(not(unix))]
         let _ = tokio::signal::ctrl_c().await;
-        shutdown_app.state::<commands::TerminalService>().shutdown_all_terminals(&shutdown_app);
-        ClaudeHookService::release_all_on_shutdown();
+        terminal_buddy_lib::runtime::shutdown(&shutdown_app);
         let _ = shutdown_tx.send(true);
     });
     web::server::run_server(settings.web_api_port, web::auth::generate_jwt_secret(), app, shutdown_rx).await?;

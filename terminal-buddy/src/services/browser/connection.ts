@@ -4,9 +4,11 @@ let token = sessionStorage.getItem('terminalBuddy.webToken') ?? '';
 let eventSocket: WebSocket | null = null;
 let retry: ReturnType<typeof setTimeout> | undefined;
 export let serverPlatform = 'windows';
+export let windowsBuildNumber: number | null = null;
 
 export function getToken(): string { return token; }
 export function setServerPlatform(platform: string): void { serverPlatform = platform; }
+export function setWindowsBuildNumber(value: number | null): void { windowsBuildNumber = value; }
 export function setToken(value: string): void {
   token = value;
   if (value) sessionStorage.setItem('terminalBuddy.webToken', value);

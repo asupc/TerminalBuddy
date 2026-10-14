@@ -17,3 +17,4 @@ target
 /secrets/
 /workspace/
 /terminal-buddy/server-data/
+/terminal-buddy/dist-web/

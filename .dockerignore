@@ -6,6 +6,7 @@
 **/node_modules
 **/target
 **/dist
+**/dist-web
 terminal-buddy/src-tauri/resources
 terminal-buddy/web
 terminal-buddy/plugins

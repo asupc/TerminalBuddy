@@ -15,11 +15,21 @@ pub struct LoginResponse {
     pub username: String,
 }
 
+#[cfg(not(feature = "desktop"))]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupAdminRequest {
+    pub password: String,
+    pub confirm_password: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiStatusResponse {
     pub enabled: bool,
     pub port: u16,
+    pub setup_required: bool,
+    pub username: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
 // 显式白名单：仅向已认证的个人服务账号开放下列业务命令。
-use super::desktop_handler::{argument, data, result};
+use super::{argument, data, result};
 use crate::{runtime::{AppHandle, Manager}, web::error::ApiError};
 use serde_json::Value;
 

@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certifi
     && useradd --create-home --uid 1000 --shell /bin/bash terminalbuddy \
     && mkdir -p /data /workspace && chown terminalbuddy:terminalbuddy /data /workspace
 COPY --from=backend /build/src-tauri/target/release/terminal-buddy-server /usr/local/bin/terminal-buddy-server
-COPY --from=frontend /build/frontend/dist /opt/terminal-buddy/web
+COPY --from=frontend /build/frontend/dist-web /opt/terminal-buddy/web
 ENV TERMINAL_BUDDY_DATA_DIR=/data \
     TERMINAL_BUDDY_WEB_DIST=/opt/terminal-buddy/web \
     TERMINAL_BUDDY_WORKSPACE_DIR=/workspace \

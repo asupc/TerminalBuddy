@@ -3,7 +3,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
-use tauri::Manager;
+use crate::runtime::Manager;
 
 use crate::commands::{
     process_bot_card_selection, process_bot_multi_selection, process_bot_reply, TerminalService,

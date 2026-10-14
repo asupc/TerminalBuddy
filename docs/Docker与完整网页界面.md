@@ -1,6 +1,6 @@
 # Docker 与完整网页界面
 
-此分支让 Windows 桌面版与网页正式版复用 `terminal-buddy/src/` 的完整 React 界面。原 `web/` 轻量网页保持独立。Docker 运行 `terminal-buddy-server`，不启动 Tauri 窗口、托盘或桌面终端插件。
+此分支让 Windows 桌面版与网页正式版复用 `terminal-buddy/src/` 的完整 React 界面。原 `web/` 轻量网页保持独立。网页正式资源输出到 `dist-web/`，桌面资源仍输出到 `dist/`。Docker 运行 `terminal-buddy-server`，不启动 Tauri 窗口、托盘或桌面终端插件。
 
 ## Windows 先看界面
 
@@ -36,16 +36,40 @@ npm run dev:web
 
 测试 Claude Hook 时，先关闭现有桌面应用，避免两端争用本机 19601 端口；Hook 绑定失败会在服务端日志中显示。普通终端不依赖该端口。
 
+本次已编译完整网页静态资源，并在 `http://127.0.0.1:9610/` 启动真实服务，可以直接打开该地址。账号为 `admin`，预览密码保存在 `terminal-buddy/server-data/preview-password.txt`，无需修改现有桌面服务的 9600 端口。预览工作区为 `terminal-buddy/server-data/preview-workspace`。
+
+本次服务停止后，可在 `terminal-buddy/` 中运行以下命令再次启动，沿用已保存的密码：
+
+```powershell
+.\start-web-server.ps1 -Port 9610 -Workspace .\server-data\preview-workspace
+```
+
+独立数据目录隔离的是 TerminalBuddy 配置与数据库；Claude 功能仍访问当前服务账号的 Claude 用户目录。Linux 容器中，该目录属于容器用户，不自动读取 Windows 用户目录。
+
+## Windows 一键启动
+
+在仓库根目录双击 `startDockerServer.bat`，默认按本机模式运行独立服务端（与 Docker 镜像使用同一份服务端程序，不需要 Docker，首次运行会自动编译），服务就绪后自动打开浏览器。
+
+需要 Docker 容器时，在命令行执行：
+
+```bat
+startDockerServer.bat docker
+startDockerServer.bat docker-stop
+startDockerServer.bat docker-logs
+```
+
+首次启动时，脚本会检查 `.env`，不存在就用默认值生成，并确认 `TERMINAL_BUDDY_WORKSPACE` 指向的目录存在；容器健康后自动打开浏览器。首次打开网页会要求创建管理员密码（至少 8 个字符），无需再手动准备密码文件。
+
 ## Linux Docker 部署
 
-在仓库根目录复制 `.env.example` 为 `.env`，将 `TERMINAL_BUDDY_WORKSPACE` 改为服务器上已经存在的项目根目录。容器用户 UID 为 1000，挂载目录需要允许该用户读写。
-
-创建 `secrets/admin_password.txt`，只写入实际登录密码；该目录已加入 Git 与 Docker 忽略规则。密码文件需要能被容器用户读取，使用受限的目录权限管理。随后执行：
+在仓库根目录复制 `.env.example` 为 `.env`，将 `TERMINAL_BUDDY_WORKSPACE` 改为服务器上已经存在的项目根目录。容器用户 UID 为 1000，挂载目录需要允许该用户读写。随后执行：
 
 ```bash
 docker compose up -d --build
 docker compose logs -f terminal-buddy
 ```
+
+首次启动后，通过浏览器打开服务地址，在页面中创建管理员密码（至少 8 个字符）。也可以预先准备 `secrets/admin_password.txt` 只写入实际登录密码，并在 `compose.yaml` 中配置 `TERMINAL_BUDDY_PASSWORD_FILE: /run/secrets/admin_password` 与对应 `secrets` 段落；密码在首次启动时写入设置，之后不再读取该文件。密码文件应使用受限的目录权限管理。
 
 默认端口只绑定宿主机 `127.0.0.1:9600`，可配置同机 HTTPS 反向代理转发 HTTP 和 WebSocket。需要直接在局域网访问时，显式将 `.env` 中的绑定地址改为 `0.0.0.0`。远程浏览器的主动剪贴板读取需要 HTTPS。
 
@@ -70,18 +94,29 @@ Windows 默认终端接管、系统托盘、注册表开机启动、`mstsc` 与�
 
 ## 验证状态
 
-本次只启动 Vite 开发服务检查浏览器演示与正式入口，不执行 TypeScript 检查、Rust 编译、Docker 镜像构建或部署。源码适配完成后仍需验证独立服务端在 Windows 与 Linux 的编译和实际终端、文件、Git、Claude 功能，以及 Windows 桌面回归。
+用户明确授权编译和启动后，已完成以下验证：
+
+- 桌面前端与原轻量网页的 TypeScript 检查通过。
+- 完整网页正式资源构建通过，输出到 `dist-web/`。
+- Windows 独立服务端 Rust 检查与编译通过，并在 9610 端口运行。
+- Windows 桌面端 `cargo check --lib` 通过；没有启动或打包新的桌面应用。
+- 真实接口验证通过：登录与未登录拒绝、文件读写/重命名/删除、越界路径拒绝、Git 状态查询、保存密码加密和解密、WebSocket 终端执行与 Web 会话归属。
+- 浏览器已登录完整界面，并通过键盘输入执行真实 PowerShell 命令；终端尺寸和文字显示已复查。
+
+验证脚本为 `terminal-buddy/scripts/smoke-web-server.mjs`，仅允许连接本机服务，在已登记的隔离工作区内创建和清理随机测试文件、配置与终端。默认工作区必须先初始化为 Git 仓库；使用本次预览服务时，可从 `terminal-buddy/` 执行 `node scripts/smoke-web-server.mjs`。仅需要保留测试终端供界面查看时追加 `--keep-terminal`。
+
+本机没有 Docker CLI，未构建或运行 Linux 镜像。Linux PTY、SSH/SFTP、Claude 完整交互与机器人功能尚未进行端到端验证。本次保留了正在运行的 Windows 桌面应用，其占用 19601 端口，因此独立服务的 Claude Hook 监听未启动。
 
 ## 修改范围
 
 | 文件或目录 | 改动 |
 | --- | --- |
-| 根目录 `Dockerfile`、`compose.yaml`、`.dockerignore`、`.env.example`、`.gitignore` | 多阶段镜像、数据卷、项目挂载、密码文件及忽略规则 |
+| 根目录 `Dockerfile`、`compose.yaml`、`.dockerignore`、`.env.example`、`.gitignore`、`startDockerServer.bat` | 多阶段镜像、数据卷、项目挂载、默认忽略规则与 Windows 本机/Docker 一键启动 |
 | `terminal-buddy/package.json`、`vite.config.ts` | 演示/正式网页模式、Tauri 浏览器适配别名、HTTP/WebSocket 开发代理 |
 | `terminal-buddy/preview-web.bat`、`start-web-server.ps1` | Windows 演示启动和显式编译的独立服务启动 |
 | `src/main.tsx`、`src/components/browser/`、`src/mock/setupMock.ts` | 登录入口，演示数据仅在演示模式启用 |
 | `src/services/browser/`、`src/services/platform.ts`、`src/services/tauri/terminal.ts` | 请求、事件、终端数据、窗口、剪贴板、上传和目录选择的浏览器实现 |
-| `src/App.tsx`、`src/services/sessionRestore.ts`、`src/stores/slices/sessionsSlice.ts`、`src/components/terminal/TerminalPanel.tsx` | 当前客户端归属、刷新接回会话、事件同步、避免重复页签和分屏适配 |
+| `src/App.tsx`、`src/services/sessionRestore.ts`、`src/stores/slices/sessionsSlice.ts`、`src/components/terminal/TerminalPanel.tsx`、`TerminalInstance.tsx` | 当前客户端归属、刷新接回会话、事件同步、避免重复页签、分屏适配和网页尺寸变化处理 |
 | `src/types/index.ts`、`src/services/tauri/profiles.ts`、`src/components/profile-config/ConfigEditDialog.tsx`、`src/components/settings/ProfilesSettings.tsx`、`src/components/shell/NewTerminalMenu.tsx`、`TabNav.tsx`、`src/utils/openTerminalInDir.ts` | Linux Shell 类型和菜单 |
 | `src/components/shell/TitleBar.tsx`、`src/components/settings/BehaviorSettings.tsx` | 网页窗口操作、禁用桌面专属选项 |
 | `src/components/terminal/hooks/useDragDrop.ts`、`src/components/file-explorer/file-utils.ts`、`FileNav.tsx`、`RemoteFileTree.tsx`、`src/utils/projectPath.ts` | 浏览器文件上传、服务器路径分隔符和 Linux 大小写 |
@@ -90,5 +125,7 @@ Windows 默认终端接管、系统托盘、注册表开机启动、`mstsc` 与�
 | `src-tauri/src/services/` | 运行时调用解耦、桌面服务条件编译、服务端密码加密、固定数据目录和 SSH 编辑缓存 |
 | `src-tauri/src/models/profile.rs`、`profile_validation.rs` | 加密错误阻止保存、区分密文类型、POSIX 参数引用 |
 | `src-tauri/src/web/` | 完整网页业务命令白名单、上传与文件接口、事件连接、Git 后台任务和共享仓库互斥、真实路径范围检查、原子输出快照 |
+| `src-tauri/src/services/platform_service.rs`、`src/components/browser/WebEntry.tsx`、`src/services/browser/connection.ts`、`core.ts` | 将 Windows 宿主构建号传递给网页终端，使用正确的 ConPTY 渲染参数 |
+| `terminal-buddy/scripts/smoke-web-server.mjs` | 本机隔离工作区的真实 HTTP/WebSocket 集成验证 |
 
 `portable-pty-patched/` 的库代码未修改，现有补丁继续使用。

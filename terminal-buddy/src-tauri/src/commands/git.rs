@@ -33,6 +33,7 @@ pub(crate) fn stop_git_commands() {
     GIT_COMMANDS_STOPPED.store(true, Ordering::Release);
 }
 
+#[cfg(feature = "desktop")]
 pub(crate) fn resume_git_commands() {
     GIT_COMMANDS_STOPPED.store(false, Ordering::Release);
 }

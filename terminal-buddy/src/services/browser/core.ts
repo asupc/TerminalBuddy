@@ -1,4 +1,4 @@
-import { emitLocal, getToken, logout, request, serverPlatform, socketUrl, uploadFiles } from './connection';
+import { emitLocal, getToken, logout, request, serverPlatform, windowsBuildNumber, socketUrl, uploadFiles } from './connection';
 
 interface TerminalConnection {
   socket: WebSocket;
@@ -64,7 +64,7 @@ export async function invoke<T>(command: string, args: Record<string, unknown> =
     return undefined as T;
   }
   if (command === 'acknowledge_terminal_output') return undefined as T;
-  if (command === 'get_windows_build_number') return null as T;
+  if (command === 'get_windows_build_number') return windowsBuildNumber as T;
   if (command === 'window_toggle_maximize') {
     if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
     return undefined as T;

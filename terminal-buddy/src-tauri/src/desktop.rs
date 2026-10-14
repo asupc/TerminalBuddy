@@ -1,64 +1,7 @@
 
-use crate::web::handlers::claude_hook_handler::{
-    answer_claude_hook_decision, continue_claude_hook_in_terminal,
-    get_pending_claude_hook_decisions, send_claude_hook_decision_notification,
-};
-use crate::commands::{
-    acknowledge_terminal_output, check_app_update,
-    claude_history_delete, claude_history_delete_many,
-    claude_history_export, claude_history_get_replay, claude_history_list,
-    claude_history_rename, claude_history_rescan, claude_history_search,
-    claude_history_set_flags,
-    // Claude 配置 / 资产库 / MCP（三期）
-    list_claude_projects, list_claude_memory_files, read_claude_memory_file,
-    write_claude_memory_file, create_claude_memory_file, delete_claude_memory_file,
-    read_claude_md, write_claude_md,
-    list_claude_assets, deploy_claude_asset, undeploy_claude_asset, sync_claude_asset,
-    import_claude_asset, list_importable_claude_assets, delete_claude_asset,
-    create_claude_asset, read_claude_asset, write_claude_asset,
-    list_claude_mcp_servers, save_claude_mcp_server, delete_claude_mcp_server,
-    get_claude_mcp_config_path, probe_claude_mcp,
-    close_terminal, connect_ssh_session,
-    create_profile, delete_path, delete_profile,
-    drain_terminal_output, ensure_dir, export_all_data, fetch_ark_usage,
-    fetch_deepseek_usage, fetch_minimax_usage, fetch_qianfan_usage, get_all_profiles, get_projects, save_projects,
-    get_app_settings, get_claude_sessions_for_terminals,
-    get_command_templates, get_data_path, get_data_path_status, get_default_terminal_status,
-    get_downloads_directory,
-    get_file_meta, get_file_size,
-    get_git_repository_status, get_profile, get_server_stats, get_ssh_home_dir,
-    get_ssh_temp_directory, get_terminal_loading_mode,
-    get_vscode_terminal_support, get_web_api_status, get_web_quick_access_url,
-    get_web_server_address, get_windows_build_number, git_checkout_branch,
-    git_commit_paths, git_get_changed_files, git_get_history, git_get_history_file_diff,
-    git_get_history_files, git_list_branches, git_preview_push, git_pull, git_push_with_options,
-    import_all_data,
-    init_command_templates, list_directory, list_terminals, open_in_explorer, open_path,
-    read_client_data, read_clipboard_file_paths,
-    read_clipboard_image_as_file, read_file_content, remote_chmod, remote_copy, remote_create_dir,
-    remote_create_file, remote_download, remote_download_dir, remote_list_dir, remote_move,
-    remote_remove, remote_rename, remote_upload, rename_path, resize_terminal, restart_web_server,
-    save_clipboard_image_to_claude_cache,
-    save_close_behavior, save_config_nav_width, save_enable_tab_navigation,
-    save_file_nav_width, save_launch_at_login, save_launch_window_mode,
-    save_server_monitor_interval, save_single_instance, save_ssh_download_dir,
-    save_tab_sidebar_width, save_terminal_loading_mode, save_web_api_settings,
-    set_data_path, set_default_terminal_enabled, show_claude_code_notification,
-    start_blank_terminal, start_mstsc, start_terminal, sync_launch_at_login, update_profile,
-    update_profile_last_used, update_terminal_display_name, window_close,
-    window_exit_app, window_minimize, window_toggle_maximize, write_client_data,
-    write_file_content, write_to_terminal,
-};
-use crate::commands::{
-    bot_scan_begin, bot_scan_poll, get_bot_callback_base_url,
-    get_bot_long_connection_status, get_bot_settings, save_bot_settings, send_bot_notification,
-    test_bot_channel, test_bot_decision_channel, verify_bot_channel,
-};
-use crate::commands::{
-    get_claude_hook_settings_status, install_claude_hooks, repair_claude_hooks,
-    save_claude_hook_config_dir, uninstall_claude_hooks,
-};
-use crate::commands::{MonitorCache, TerminalService};
+// Tauri 命令同时导出函数与注册宏，迁移到子模块后需要一并引入。
+use crate::web::handlers::claude_hook_handler::*;
+use crate::commands::{self, *};
 use crate::models::{CloseBehavior, LaunchWindowMode};
 use crate::services::{SettingsService, SshSessionService, WebServiceState};
 use std::fs::OpenOptions;

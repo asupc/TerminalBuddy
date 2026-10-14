@@ -23,7 +23,8 @@ pub(super) fn result<T: Serialize>(value: Result<T, String>) -> Result<Value, Ap
 
 pub async fn runtime_info() -> Json<Value> {
     Json(json!({"platform": std::env::consts::OS, "mode": if cfg!(feature = "desktop") { "desktop" } else { "server" },
-        "defaultTerminalType": crate::commands::terminal::default_terminal_type(), "fullInterface": true}))
+        "defaultTerminalType": crate::commands::terminal::default_terminal_type(), "fullInterface": true,
+        "windowsBuildNumber": crate::services::platform_service::windows_build_number()}))
 }
 
 fn scoped_file(path: &str) -> Result<(), ApiError> {

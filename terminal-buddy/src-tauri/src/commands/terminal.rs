@@ -34,6 +34,7 @@ use uuid::Uuid;
 
 const TERMINAL_DATA_IDLE_BUFFER_INTERVAL: Duration = Duration::from_millis(25);
 const TERMINAL_DATA_MAX_BUFFER_INTERVAL: Duration = Duration::from_millis(50);
+#[cfg(feature = "desktop")]
 const VSCODE_TERMINAL_DATA_BUFFER_INTERVAL: Duration = Duration::from_millis(5);
 const TERMINAL_DATA_CHANNEL_CAPACITY: usize = 32;
 const TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS: usize = 1000;
@@ -257,11 +258,11 @@ impl TerminalBackend {
         }
     }
 
-    fn acknowledge_output(&mut self, char_count: u32) -> Result<(), String> {
+    fn acknowledge_output(&mut self, _char_count: u32) -> Result<(), String> {
         match self {
             Self::Default { .. } => Ok(()),
             #[cfg(feature = "desktop")]
-            Self::VsCode(process) => process.acknowledge_output(char_count),
+            Self::VsCode(process) => process.acknowledge_output(_char_count),
             #[cfg(feature = "desktop")]
             Self::Handoff(process) => process.acknowledge_output(),
         }
@@ -281,6 +282,7 @@ impl TerminalBackend {
 #[derive(Clone, Copy)]
 enum TerminalOutputBufferMode {
     Default,
+    #[cfg(feature = "desktop")]
     VsCode,
 }
 
@@ -319,8 +321,8 @@ fn format_exit_code(code: Option<u32>) -> String {
 }
 
 fn spawn_terminal_backend(
-    app: &AppHandle,
-    mode: &TerminalLoadingMode,
+    _app: &AppHandle,
+    _mode: &TerminalLoadingMode,
     rows: u16,
     cols: u16,
     startup_path: Option<&str>,
@@ -342,9 +344,9 @@ fn spawn_terminal_backend(
         }
     }
     #[cfg(feature = "desktop")]
-    if *mode == TerminalLoadingMode::VsCode {
+    if *_mode == TerminalLoadingMode::VsCode {
         let (process, reader) =
-            VsCodeTerminalProcess::spawn(app, rows, cols, startup_path, env_vars)?;
+            VsCodeTerminalProcess::spawn(_app, rows, cols, startup_path, env_vars)?;
         return Ok((
             TerminalBackend::VsCode(process),
             reader,
@@ -429,6 +431,7 @@ fn spawn_output_forwarder(
                     batch_started + TERMINAL_DATA_MAX_BUFFER_INTERVAL,
                     true,
                 ),
+                #[cfg(feature = "desktop")]
                 TerminalOutputBufferMode::VsCode => (
                     batch_started + VSCODE_TERMINAL_DATA_BUFFER_INTERVAL,
                     batch_started + VSCODE_TERMINAL_DATA_BUFFER_INTERVAL,

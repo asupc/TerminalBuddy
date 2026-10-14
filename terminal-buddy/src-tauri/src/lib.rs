@@ -1,4 +1,5 @@
 pub mod commands;
+#[cfg(feature = "desktop")]
 mod hook_client;
 pub mod models;
 pub mod services;
@@ -11,6 +12,6 @@ mod desktop;
 #[cfg(feature = "desktop")]
 pub use desktop::{run, is_claude_hook_client_process, run_claude_hook_client};
 #[cfg(feature = "desktop")]
-pub(crate) use desktop::{boot_log, tray_available};
+pub(crate) use desktop::boot_log;
 #[cfg(not(feature = "desktop"))]
 pub(crate) fn boot_log(message: impl AsRef<str>) { eprintln!("{}", message.as_ref()); }

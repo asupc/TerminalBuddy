@@ -24,5 +24,5 @@ export default defineConfig(({ mode }) => ({
       ignored: ['**/src-tauri/**'],
     },
   },
-  build: { cssMinify: false },
+  build: { cssMinify: false, outDir: mode === 'browser' ? 'dist-web' : 'dist' },
 }));

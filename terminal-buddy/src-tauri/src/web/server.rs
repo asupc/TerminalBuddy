@@ -147,10 +147,14 @@ pub fn build_router(state: AppState) -> Router {
         // 终端 I/O（per-terminal WS）
         .route("/ws/terminal/{id}", get(ws::terminal_ws_handler));
 
+    // 桌面版继续由桌面设置管理密码，仅独立服务端提供首次初始化入口。
+    #[cfg(not(feature = "desktop"))]
+    let router = router.route("/api/auth/setup", post(handlers::auth_handler::setup_admin));
+
     #[cfg(any(debug_assertions, not(feature = "desktop")))]
     let router = {
         use tower_http::services::{ServeDir, ServeFile};
-        let default_dist = if cfg!(feature = "desktop") { "/../web/dist" } else { "/../dist" };
+        let default_dist = if cfg!(feature = "desktop") { "/../web/dist" } else { "/../dist-web" };
         let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| format!("{}{}", env!("CARGO_MANIFEST_DIR"), default_dist));
         router.fallback_service(
             ServeDir::new(&dist).not_found_service(ServeFile::new(std::path::Path::new(&dist).join("index.html"))),
@@ -276,7 +280,14 @@ pub async fn run_server(
     let router = build_router(state);
 
     // 绑定 0.0.0.0：让同一局域网的手机端可访问（旧实现绑定 127.0.0.1 仅本机可达）
+    #[cfg(feature = "desktop")]
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    #[cfg(not(feature = "desktop"))]
+    let addr = SocketAddr::new(
+        std::env::var("TERMINAL_BUDDY_LISTEN_ADDRESS").unwrap_or_else(|_| "0.0.0.0".to_string())
+            .parse().map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?,
+        port,
+    );
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -285,7 +296,7 @@ pub async fn run_server(
         }
     };
 
-    println!("[WebAPI] 服务器启动成功，监听 http://{}（局域网可访问）。", addr);
+    println!("[WebAPI] 服务器启动成功，监听 http://{}。", addr);
 
     // 不用 axum::serve：它不给 hyper 配置 Timer，空闲连接的 header_read_timeout
     // 永远不会触发。自写 accept 循环，逐连接配 TokioTimer + 空闲超时，
