@@ -41,7 +41,7 @@ goto :dispatch
 set "MODE=local"
 rem 跳过开头的 local，其余参数原样转发给 start-web-server.ps1
 :collect_local_args
-shift
+shift /1
 if "%~1"=="" goto :dispatch
 set FORWARD_ARGS=%FORWARD_ARGS% %1
 goto :collect_local_args
@@ -94,7 +94,7 @@ if not exist "%~dp0terminal-buddy\start-web-server.ps1" (
 ) else (
     echo   [通过] start-web-server.ps1 存在。
 )
-if not exist "%~dp0terminal-buddy\src-tauri\target\debug\terminal-buddy-server.exe" (
+if not exist "%~dp0terminal-buddy\src-tauri\target\server\debug\terminal-buddy-server.exe" (
     echo   [提示] 服务端程序尚未编译，首次启动时会自动编译。
 ) else (
     echo   [通过] 服务端程序已编译。
@@ -156,7 +156,7 @@ call :parse_local_options %*
 
 set "NEED_REBUILD="
 set "REBUILD_REASON="
-if not exist "%~dp0terminal-buddy\src-tauri\target\debug\terminal-buddy-server.exe" (
+if not exist "%~dp0terminal-buddy\src-tauri\target\server\debug\terminal-buddy-server.exe" (
     set "NEED_REBUILD=1"
     set "REBUILD_REASON=未检测到已编译的服务端程序。"
 )
@@ -171,7 +171,7 @@ if defined EXPLICIT_REBUILD (
 ) else (
     rem 编译产物存在时，检查源码是否比产物更新。
     set "STALE="
-    for /f "usebackq delims=" %%s in (`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$sources = Get-ChildItem -LiteralPath 'terminal-buddy\src','terminal-buddy\src-tauri\src' -Recurse -File; $sources += Get-Item -LiteralPath 'terminal-buddy\package.json','terminal-buddy\vite.config.ts','terminal-buddy\index.html'; $newest = ($sources | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime; $exe = (Get-Item -LiteralPath 'terminal-buddy\src-tauri\target\debug\terminal-buddy-server.exe').LastWriteTime; $web = (Get-Item -LiteralPath 'terminal-buddy\dist-web\index.html').LastWriteTime; if ($newest -gt $exe -or $newest -gt $web) { 'stale' }"`) do set "STALE=%%s"
+    for /f "usebackq delims=" %%s in (`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$sources = Get-ChildItem -LiteralPath 'terminal-buddy\src','terminal-buddy\src-tauri\src' -Recurse -File; $sources += Get-Item -LiteralPath 'terminal-buddy\package.json','terminal-buddy\vite.config.ts','terminal-buddy\index.html'; $newest = ($sources | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime; $exe = (Get-Item -LiteralPath 'terminal-buddy\src-tauri\target\server\debug\terminal-buddy-server.exe').LastWriteTime; $web = (Get-Item -LiteralPath 'terminal-buddy\dist-web\index.html').LastWriteTime; if ($newest -gt $exe -or $newest -gt $web) { 'stale' }"`) do set "STALE=%%s"
     if defined STALE (
         set "NEED_REBUILD=1"
         set "REBUILD_REASON=检测到源码比编译产物新。"
@@ -288,15 +288,15 @@ if /i "%~1"=="-Port" goto :parse_local_port
 if /i "%~1"=="-Workspace" goto :skip_local_value
 if /i "%~1"=="-DataDirectory" goto :skip_local_value
 if /i "%~1"=="-Username" goto :skip_local_value
-shift
+shift /1
 goto :parse_local_options
 
 :parse_local_port
 if not "%~2"=="" set "LOCAL_PORT=%~2"
 :skip_local_value
-shift
+shift /1
 if "%~1"=="" exit /b 0
-shift
+shift /1
 goto :parse_local_options
 
 :require_docker

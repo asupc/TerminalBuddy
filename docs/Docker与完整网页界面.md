@@ -25,6 +25,8 @@ cd D:\terminal-buddy\terminal-buddy
 
 首次启动会要求设置网页登录密码，默认账号为 `admin`。编译之后再次运行脚本无需 `-Rebuild`。
 
+本机独立服务端使用 `terminal-buddy/src-tauri/target/server/` 保存 Rust 编译产物，构建时关闭增量编译，避开已有的桌面或增量链接产物。完整 Rust 编译日志保存在 `terminal-buddy/server-data/logs/server-build.log`；编译失败时先查看日志中的第一条 `error`。
+
 在另一个终端运行：
 
 ```powershell
@@ -48,7 +50,7 @@ npm run dev:web
 
 ## Windows 一键启动
 
-在仓库根目录双击 `startDockerServer.bat`，默认按本机模式运行独立服务端（与 Docker 镜像使用同一份服务端程序，不需要 Docker，首次运行会自动编译），服务就绪后自动打开浏览器。
+在仓库根目录双击 `startDockerServer.bat`，默认优先使用已安装并运行的 Docker；Docker 不可用时退回本机独立服务端模式。两种方式使用同一份服务端程序，首次运行会按对应模式构建，服务就绪后自动打开浏览器。
 
 需要 Docker 容器时，在命令行执行：
 

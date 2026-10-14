@@ -9,7 +9,8 @@
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $serverRoot = $PSScriptRoot
-$executable = Join-Path $serverRoot 'src-tauri\target\debug\terminal-buddy-server.exe'
+$cargoTargetDirectory = Join-Path $serverRoot 'src-tauri\target\server'
+$executable = Join-Path $cargoTargetDirectory 'debug\terminal-buddy-server.exe'
 $portProbe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port)
 try { $portProbe.Start() }
 catch { throw "端口 $Port 已被占用，请先停止该端口的服务，或通过 -Port 指定其他端口。" }
@@ -22,8 +23,28 @@ if ($Rebuild) {
         if ($LASTEXITCODE -ne 0) { throw '网页依赖安装失败' }
         & npm.cmd run build:web:desktop
         if ($LASTEXITCODE -ne 0) { throw '完整网页资源构建失败' }
-        & cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --features server --bin terminal-buddy-server
-        if ($LASTEXITCODE -ne 0) { throw '独立服务端编译失败' }
+        $buildLogDirectory = Join-Path $serverRoot 'server-data\logs'
+        [IO.Directory]::CreateDirectory($buildLogDirectory) | Out-Null
+        $buildLogPath = Join-Path $buildLogDirectory 'server-build.log'
+        $previousIncremental = $env:CARGO_INCREMENTAL
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            # 独立服务端使用单独的产物目录，避开已有的增量链接产物。
+            $env:CARGO_INCREMENTAL = '0'
+            # Windows PowerShell 将重定向的原生 stderr 转成 ErrorRecord，先保留输出再检查退出码。
+            $ErrorActionPreference = 'Continue'
+            & cargo build --manifest-path src-tauri/Cargo.toml --target-dir $cargoTargetDirectory --no-default-features --features server --bin terminal-buddy-server 2>&1 |
+                ForEach-Object { $_.ToString() } | Tee-Object -FilePath $buildLogPath -ErrorAction Stop
+            $buildExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+            if ($null -eq $previousIncremental) {
+                Remove-Item Env:CARGO_INCREMENTAL -ErrorAction SilentlyContinue
+            } else {
+                $env:CARGO_INCREMENTAL = $previousIncremental
+            }
+        }
+        if ($buildExitCode -ne 0) { throw "独立服务端编译失败，完整日志：$buildLogPath" }
     } finally { Pop-Location }
 }
 if (-not (Test-Path -LiteralPath $executable)) {
