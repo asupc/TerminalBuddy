@@ -4,7 +4,7 @@ import { isTerminalWorking, useAppStore } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, writeFileContent, readFileContent } from '../../services/tauri';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { getWorkingDotColor } from '../../utils/tabColor';
+import { getIndicatorLight, getIndicatorClassName, getIndicatorColor, getIndicatorTitle } from '../../utils/claudeIndicator';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
@@ -197,10 +197,21 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                     </span>
                   ) : (
                     <>
-                      <span
-                        className={`tab-nav-dot${isTerminalWorking(terminalActivities[session.id]) ? ' working' : ''}`}
-                        style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
-                      />
+                      {(() => {
+                        const light = getIndicatorLight(terminalActivities[session.id]);
+                        return (
+                          <span
+                            className={`tab-nav-dot${getIndicatorClassName(light)}`}
+                            style={{ background: getIndicatorColor(light, session.tabColor) }}
+                            title={getIndicatorTitle(light) || undefined}
+                            onClick={(e) => {
+                              if (light !== 'failed' && light !== 'attention') return;
+                              e.stopPropagation();
+                              if (light === 'failed') useAppStore.getState().clearClaudeFailure(session.id);
+                            }}
+                          />
+                        );
+                      })()}
                       {session.extraParamTag && (
                         <span
                           className="tab-nav-tag-chip"

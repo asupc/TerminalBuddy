@@ -86,6 +86,13 @@
 .tab-nav-replay-item { margin-top: 0; padding-left: 22px; }
 .tab-nav-replay-item .tab-nav-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Git 历史 / 会话回放标签的关闭按钮复用 tree-item-close，但父级是 tab-nav-settings-btn
+   而非 tree-item，拿不到 TreeView.css 里 `.tree-item:hover .tree-item-close` 的显形规则，
+   会恒为 opacity:0（看不见、关不掉）。这里补上与树内一致的悬停显形。 */
+.tab-nav-settings-btn:hover .tree-item-close {
+  opacity: 1;
+}
+
 .tab-nav-content {
   flex: 1;
   overflow-y: auto;
