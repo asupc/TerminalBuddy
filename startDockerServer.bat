@@ -1,41 +1,44 @@
 @echo off
-chcp 65001 >nul
+chcp 936 >nul
 setlocal EnableExtensions
-title TerminalBuddy æœåŠ¡ç«¯
+title TerminalBuddy ·şÎñ¶Ë
 
 cd /d "%~dp0"
 
-rem ============ è§£æç¬¬ä¸€ä¸ªå‚æ•°ï¼Œå†³å®šè¿è¡Œæ¨¡å¼ ============
+rem ============ ½âÎöµÚÒ»¸ö²ÎÊı£¬¾ö¶¨ÔËĞĞÄ£Ê½ ============
 set "MODE="
 set "FORWARD_ARGS="
-if "%~1"=="" goto :mode_local_default
+if "%~1"=="" goto :mode_auto
 if /i "%~1"=="local" goto :mode_local
 if /i "%~1"=="docker" goto :mode_docker
 if /i "%~1"=="docker-stop" goto :mode_docker_stop
 if /i "%~1"=="docker-logs" goto :mode_docker_logs
 if /i "%~1"=="help" goto :mode_help
+if /i "%~1"=="-Check" goto :mode_check
+if /i "%~1"=="-check" goto :mode_check
 if /i "%~1"=="-h" goto :mode_help
 if /i "%~1"=="--help" goto :mode_help
 if /i "%~1"=="-?" goto :mode_help
-if "%~1:~0,1%"=="-" (
-    rem ç›´æ¥ä¼  -Port / -Rebuild ç­‰å‚æ•°æ—¶ï¼ŒæŒ‰æœ¬æœºæ¨¡å¼å¤„ç†
+set "ARG1=%~1"
+if "%ARG1:~0,1%"=="-" (
+    rem Ö±½Ó´« -Port / -Rebuild / -Workspace µÈ²ÎÊıÊ±£¬°´±¾»úÄ£Ê½´¦Àí
     set "MODE=local"
     set "FORWARD_ARGS=%*"
     goto :dispatch
 )
 echo.
-echo [é”™è¯¯] æœªçŸ¥å‘½ä»¤ï¼š%~1
-echo        å¯ç”¨å‘½ä»¤ï¼šlocalã€dockerã€docker-stopã€docker-logsã€help
-echo        æŸ¥çœ‹ç”¨æ³•ï¼šstartDockerServer.bat help
+echo [´íÎó] Î´ÖªÃüÁî£º%~1
+echo        ¿ÉÓÃÃüÁî£ºlocal¡¢docker¡¢docker-stop¡¢docker-logs¡¢help
+echo        ²é¿´ÓÃ·¨£ºstartDockerServer.bat help
 goto :fail
 
-:mode_local_default
-set "MODE=local"
+:mode_auto
+set "MODE=auto"
 goto :dispatch
 
 :mode_local
 set "MODE=local"
-rem è·³è¿‡å¼€å¤´çš„ localï¼Œå…¶ä½™å‚æ•°åŸæ ·è½¬å‘ç»™ start-web-server.ps1
+rem Ìø¹ı¿ªÍ·µÄ local£¬ÆäÓà²ÎÊıÔ­Ñù×ª·¢¸ø start-web-server.ps1
 :collect_local_args
 shift
 if "%~1"=="" goto :dispatch
@@ -54,29 +57,95 @@ goto :dispatch
 set "MODE=docker-logs"
 goto :dispatch
 
+:mode_check
+set "MODE=check"
+goto :dispatch
+
 :mode_help
 set "MODE=help"
 goto :dispatch
 
-rem ============ æ¨¡å¼åˆ†å‘ ============
+rem ============ Ä£Ê½·Ö·¢ ============
 :dispatch
+if /i "%MODE%"=="check" goto :check_mode
+if /i "%MODE%"=="auto" goto :auto_mode
 if /i "%MODE%"=="local" goto :local_mode
 if /i "%MODE%"=="docker" goto :docker_mode
 if /i "%MODE%"=="docker-stop" goto :docker_stop
 if /i "%MODE%"=="docker-logs" goto :docker_logs
-if /i "%MODE%"=="help" goto :show_help
 goto :show_help
 
-rem ============ æœ¬æœºæ¨¡å¼ï¼šåœ¨ Windows ä¸Šç›´æ¥è¿è¡ŒæœåŠ¡ç«¯ç¨‹åºï¼Œä¸éœ€è¦ Docker ============
+rem ============ Ö»¶Á×Ô¼ì£º²»±àÒë¡¢²»Æô¶¯¡¢²»ĞŞ¸ÄÈÎºÎÎÄ¼ş ============
+:check_mode
+echo.
+echo [×Ô¼ì] ÕıÔÚ¼ì²éÆô¶¯»·¾³£¨²»»á±àÒë»òÆô¶¯·şÎñ£©...
+echo.
+set "CHECK_FAIL="
+if not exist "%~dp0compose.yaml" (
+    echo   [¾¯¸æ] È±ÉÙ compose.yaml£¬Docker Ä£Ê½²»¿ÉÓÃ¡£
+    set "CHECK_FAIL=1"
+) else (
+    echo   [Í¨¹ı] compose.yaml ´æÔÚ¡£
+)
+if not exist "%~dp0terminal-buddy\start-web-server.ps1" (
+    echo   [¾¯¸æ] È±ÉÙ terminal-buddy\start-web-server.ps1£¬±¾»úÄ£Ê½²»¿ÉÓÃ¡£
+    set "CHECK_FAIL=1"
+) else (
+    echo   [Í¨¹ı] start-web-server.ps1 ´æÔÚ¡£
+)
+if not exist "%~dp0terminal-buddy\src-tauri\target\debug\terminal-buddy-server.exe" (
+    echo   [ÌáÊ¾] ·şÎñ¶Ë³ÌĞòÉĞÎ´±àÒë£¬Ê×´ÎÆô¶¯Ê±»á×Ô¶¯±àÒë¡£
+) else (
+    echo   [Í¨¹ı] ·şÎñ¶Ë³ÌĞòÒÑ±àÒë¡£
+)
+if not exist "%~dp0terminal-buddy\dist-web\index.html" (
+    echo   [ÌáÊ¾] ÍøÒ³×ÊÔ´ÉĞÎ´¹¹½¨£¬Ê×´ÎÆô¶¯Ê±»á×Ô¶¯¹¹½¨¡£
+) else (
+    echo   [Í¨¹ı] ÍøÒ³×ÊÔ´ÒÑ¹¹½¨¡£
+)
+where docker >nul 2>&1
+if errorlevel 1 (
+    echo   [ÌáÊ¾] Î´¼ì²âµ½ Docker£¬½«Ê¹ÓÃ±¾»úÄ£Ê½¡£
+) else (
+    docker info >nul 2>&1
+    if errorlevel 1 (
+        echo   [ÌáÊ¾] Docker Î´ÔËĞĞ£¬½«Ê¹ÓÃ±¾»úÄ£Ê½¡£
+    ) else (
+        echo   [Í¨¹ı] Docker ¿ÉÓÃ£¬Ä¬ÈÏ½«Ê¹ÓÃÈİÆ÷Ä£Ê½¡£
+    )
+)
+where cargo >nul 2>&1
+if errorlevel 1 ( echo   [ÌáÊ¾] Î´¼ì²âµ½ cargo£¬ÎŞ·¨×Ô¶¯±àÒë·şÎñ¶Ë¡£) else ( echo   [Í¨¹ı] cargo ¿ÉÓÃ¡£)
+where npm.cmd >nul 2>&1
+if errorlevel 1 ( echo   [ÌáÊ¾] Î´¼ì²âµ½ npm.cmd£¬ÎŞ·¨×Ô¶¯¹¹½¨ÍøÒ³¡£) else ( echo   [Í¨¹ı] npm.cmd ¿ÉÓÃ¡£)
+echo.
+echo [×Ô¼ì] Íê³É£¬Î´×öÈÎºÎĞŞ¸Ä¡£
+goto :done
+
+rem ²»´«²ÎÊıÊ±£ºÓÅÏÈÓÃ Docker ÈİÆ÷ÔËĞĞ£»Docker ²»¿ÉÓÃÊ±×Ô¶¯ÍË»Ø±¾»úÄ£Ê½
+:auto_mode
+where docker >nul 2>&1
+if errorlevel 1 (
+    echo [ÌáÊ¾] Î´¼ì²âµ½ Docker£¬½«ÓÃ±¾»úÄ£Ê½Æô¶¯¶ÀÁ¢·şÎñ¶Ë¡£
+    goto :local_mode
+)
+docker info >nul 2>&1
+if errorlevel 1 (
+    echo [ÌáÊ¾] Docker Î´ÔËĞĞ£¬½«ÓÃ±¾»úÄ£Ê½Æô¶¯¶ÀÁ¢·şÎñ¶Ë¡£
+    goto :local_mode
+)
+goto :docker_mode
+
+rem ============ ±¾»úÄ£Ê½£ºÔÚ Windows ÉÏÖ±½ÓÔËĞĞ·şÎñ¶Ë³ÌĞò£¬²»ĞèÒª Docker ============
 :local_mode
 if not exist "%~dp0terminal-buddy\start-web-server.ps1" (
-    echo [é”™è¯¯] æœªæ‰¾åˆ° terminal-buddy\start-web-server.ps1ã€‚
-    echo        è¯·ç¡®è®¤æœ¬è„šæœ¬ä½äº TerminalBuddy ä»“åº“æ ¹ç›®å½•ï¼Œä¸” terminal-buddy æºç ç›®å½•å®Œæ•´ã€‚
+    echo [´íÎó] Î´ÕÒµ½ terminal-buddy\start-web-server.ps1¡£
+    echo        ÇëÈ·ÈÏ±¾½Å±¾Î»ÓÚ TerminalBuddy ²Ö¿â¸ùÄ¿Â¼£¬ÇÒ terminal-buddy Ô´ÂëÄ¿Â¼ÍêÕû¡£
     goto :fail
 )
 where powershell.exe >nul 2>&1
 if errorlevel 1 (
-    echo [é”™è¯¯] æœªæ£€æµ‹åˆ° Windows PowerShellï¼Œæ— æ³•å¯åŠ¨æœ¬æœºæœåŠ¡ã€‚
+    echo [´íÎó] Î´¼ì²âµ½ Windows PowerShell£¬ÎŞ·¨Æô¶¯±¾»ú·şÎñ¡£
     goto :fail
 )
 
@@ -84,24 +153,24 @@ set "NEED_REBUILD="
 set "REBUILD_REASON="
 if not exist "%~dp0terminal-buddy\src-tauri\target\debug\terminal-buddy-server.exe" (
     set "NEED_REBUILD=1"
-    set "REBUILD_REASON=æœªæ£€æµ‹åˆ°å·²ç¼–è¯‘çš„æœåŠ¡ç«¯ç¨‹åºã€‚"
+    set "REBUILD_REASON=Î´¼ì²âµ½ÒÑ±àÒëµÄ·şÎñ¶Ë³ÌĞò¡£"
 )
 if not exist "%~dp0terminal-buddy\dist-web\index.html" (
     set "NEED_REBUILD=1"
-    set "REBUILD_REASON=æœªæ£€æµ‹åˆ°å·²ç¼–è¯‘çš„ç½‘é¡µèµ„æºã€‚"
+    set "REBUILD_REASON=Î´¼ì²âµ½ÒÑ±àÒëµÄÍøÒ³×ÊÔ´¡£"
 )
 echo(%* | findstr /i /c:"-rebuild" >nul 2>&1
 if not errorlevel 1 (
     set "NEED_REBUILD="
 ) else if defined NEED_REBUILD (
-    rem ç¼–è¯‘äº§ç‰©ç¼ºå¤±ï¼Œéœ€è¦é‡æ–°ç¼–è¯‘ã€‚
+    rem ±àÒë²úÎïÈ±Ê§£¬ĞèÒªÖØĞÂ±àÒë¡£
 ) else (
-    rem ç¼–è¯‘äº§ç‰©å­˜åœ¨æ—¶ï¼Œæ£€æŸ¥æºç æ˜¯å¦æ¯”äº§ç‰©æ›´æ–°ã€‚
+    rem ±àÒë²úÎï´æÔÚÊ±£¬¼ì²éÔ´ÂëÊÇ·ñ±È²úÎï¸üĞÂ¡£
     set "STALE="
-    for /f "usebackq delims=" %%s in (`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$sources = Get-ChildItem -LiteralPath 'terminal-buddy\src','terminal-buddy\src-tauri\src' -Recurse -File; $sources += Get-Item -LiteralPath 'terminal-buddy\package.json','terminal-buddy\vite.config.ts','terminal-buddy\index.html'; $newest = ($sources ^| Sort-Object LastWriteTime -Descending ^| Select-Object -First 1).LastWriteTime; $exe = (Get-Item -LiteralPath 'terminal-buddy\src-tauri\target\debug\terminal-buddy-server.exe').LastWriteTime; $web = (Get-Item -LiteralPath 'terminal-buddy\dist-web\index.html').LastWriteTime; if ($newest -gt $exe -or $newest -gt $web) { 'stale' }"`) do set "STALE=%%s"
+    for /f "usebackq delims=" %%s in (`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$sources = Get-ChildItem -LiteralPath 'terminal-buddy\src','terminal-buddy\src-tauri\src' -Recurse -File; $sources += Get-Item -LiteralPath 'terminal-buddy\package.json','terminal-buddy\vite.config.ts','terminal-buddy\index.html'; $newest = ($sources | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime; $exe = (Get-Item -LiteralPath 'terminal-buddy\src-tauri\target\debug\terminal-buddy-server.exe').LastWriteTime; $web = (Get-Item -LiteralPath 'terminal-buddy\dist-web\index.html').LastWriteTime; if ($newest -gt $exe -or $newest -gt $web) { 'stale' }"`) do set "STALE=%%s"
     if defined STALE (
         set "NEED_REBUILD=1"
-        set "REBUILD_REASON=æ£€æµ‹åˆ°æºç æ¯”ç¼–è¯‘äº§ç‰©æ–°ã€‚"
+        set "REBUILD_REASON=¼ì²âµ½Ô´Âë±È±àÒë²úÎïĞÂ¡£"
     )
 )
 
@@ -112,12 +181,12 @@ if errorlevel 1 set "TOOL_MISSING=cargo"
 where npm.cmd >nul 2>&1
 if errorlevel 1 set "TOOL_MISSING=npm.cmd"
 if defined TOOL_MISSING (
-    echo [é”™è¯¯] æœªæ£€æµ‹åˆ° %TOOL_MISSING%ï¼Œæ— æ³•è‡ªåŠ¨ç¼–è¯‘æœåŠ¡ç«¯ç¨‹åºã€‚
-    echo        è¯·å…ˆå®‰è£… Rust ä¸ Node.jsï¼Œæˆ–æ”¹ç”¨ Docker æ¨¡å¼ï¼šstartDockerServer.bat docker
+    echo [´íÎó] Î´¼ì²âµ½ %TOOL_MISSING%£¬ÎŞ·¨×Ô¶¯±àÒë·şÎñ¶Ë³ÌĞò¡£
+    echo        ÇëÏÈ°²×° Rust Óë Node.js£¬»ò¸ÄÓÃ Docker Ä£Ê½£ºstartDockerServer.bat docker
     goto :fail
 )
 echo.
-echo [æç¤º] %REBUILD_REASON%å°†å…ˆè‡ªåŠ¨ç¼–è¯‘ï¼Œé¦–æ¬¡ç¼–è¯‘éœ€è¦æ•°åˆ†é’Ÿæ—¶é—´ï¼Œè¯·è€å¿ƒç­‰å¾…ã€‚
+echo [ÌáÊ¾] %REBUILD_REASON%½«ÏÈ×Ô¶¯±àÒë£¬Ê×´Î±àÒëĞèÒªÊı·ÖÖÓÊ±¼ä£¬ÇëÄÍĞÄµÈ´ı¡£
 set "FORWARD_ARGS=%FORWARD_ARGS% -Rebuild"
 :local_tools_ok
 
@@ -126,10 +195,10 @@ call :parse_port %*
 set "POLL_SECONDS=900"
 
 echo.
-echo [æç¤º] æ­£åœ¨ä»¥æœ¬æœºæ¨¡å¼å¯åŠ¨ç‹¬ç«‹æœåŠ¡ç«¯ï¼ˆä¸ Docker é•œåƒè¿è¡ŒåŒä¸€ä¸ªæœåŠ¡ç«¯ç¨‹åºï¼Œæ— éœ€ Dockerï¼‰ã€‚
-echo        æœåŠ¡å°±ç»ªåä¼šè‡ªåŠ¨æ‰“å¼€æµè§ˆå™¨ï¼›æœªè‡ªåŠ¨æ‰“å¼€æ—¶è¯·æ‰‹åŠ¨è®¿é—® http://127.0.0.1:%LOCAL_PORT%/
-echo        é¦–æ¬¡å¯åŠ¨è¯·åœ¨æ‰“å¼€çš„ç½‘é¡µä¸­åˆ›å»ºç®¡ç†å‘˜å¯†ç ï¼ˆè‡³å°‘ 8 ä¸ªå­—ç¬¦ï¼‰ã€‚
-echo        å…³é—­æœ¬çª—å£æˆ–æŒ‰ Ctrl+C å¯åœæ­¢æœåŠ¡ã€‚
+echo [ÌáÊ¾] ÕıÔÚÒÔ±¾»úÄ£Ê½Æô¶¯¶ÀÁ¢·şÎñ¶Ë£¨Óë Docker ¾µÏñÔËĞĞÍ¬Ò»¸ö·şÎñ¶Ë³ÌĞò£¬ÎŞĞè Docker£©¡£
+echo        ·şÎñ¾ÍĞ÷ºó»á×Ô¶¯´ò¿ªä¯ÀÀÆ÷£»Î´×Ô¶¯´ò¿ªÊ±ÇëÊÖ¶¯·ÃÎÊ http://127.0.0.1:%LOCAL_PORT%/
+echo        Ê×´ÎÆô¶¯ÇëÔÚ´ò¿ªµÄÍøÒ³ÖĞ´´½¨¹ÜÀíÔ±ÃÜÂë£¨ÖÁÉÙ 8 ¸ö×Ö·û£©¡£
+echo        ¹Ø±Õ±¾´°¿Ú»ò°´ Ctrl+C ¿ÉÍ£Ö¹·şÎñ¡£
 echo.
 
 start "" /min powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "for ($i = 0; $i -lt %POLL_SECONDS%; $i++) { try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:%LOCAL_PORT%/api/health' -TimeoutSec 3; if ($r.StatusCode -eq 200) { Start-Process 'http://127.0.0.1:%LOCAL_PORT%/'; break } } catch { } Start-Sleep -Seconds 2 }"
@@ -138,14 +207,14 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0terminal-b
 set "SERVER_CODE=%ERRORLEVEL%"
 if "%SERVER_CODE%"=="0" goto :done
 echo.
-echo [é”™è¯¯] æœåŠ¡ç«¯å·²é€€å‡ºï¼Œé€€å‡ºç ï¼š%SERVER_CODE%
-echo        å¦‚æœåˆšæ‰æ˜¯æŒ‰ Ctrl+C ä¸»åŠ¨åœæ­¢ï¼Œå¯å¿½ç•¥è¿™æ¡æç¤ºã€‚
+echo [´íÎó] ·şÎñ¶ËÒÑÍË³ö£¬ÍË³öÂë£º%SERVER_CODE%
+echo        Èç¹û¸Õ²ÅÊÇ°´ Ctrl+C Ö÷¶¯Í£Ö¹£¬¿ÉºöÂÔÕâÌõÌáÊ¾¡£
 goto :fail
 
-rem ============ Docker æ¨¡å¼ ============
+rem ============ Docker Ä£Ê½ ============
 :docker_mode
 if not exist "%~dp0compose.yaml" (
-    echo [é”™è¯¯] æœªæ‰¾åˆ° compose.yamlï¼Œè¯·ç¡®è®¤æœ¬è„šæœ¬ä½äº TerminalBuddy ä»“åº“æ ¹ç›®å½•ã€‚
+    echo [´íÎó] Î´ÕÒµ½ compose.yaml£¬ÇëÈ·ÈÏ±¾½Å±¾Î»ÓÚ TerminalBuddy ²Ö¿â¸ùÄ¿Â¼¡£
     goto :fail
 )
 call :require_docker
@@ -153,19 +222,14 @@ if errorlevel 1 goto :fail
 call :ensure_env
 if errorlevel 1 goto :fail
 
-docker image inspect terminal-buddy:server >nul 2>&1
+echo.
+echo [ÌáÊ¾] ÕıÔÚ¹¹½¨²¢Æô¶¯ÖÕ¶Ë»ï°éÈİÆ÷£¨Ê×´Î¹¹½¨ĞèÒªÊı·ÖÖÓ£¬Ö®ºó»á¸´ÓÃ»º´æ£©¡£
+docker compose up -d --build
 if errorlevel 1 (
     echo.
-    echo [æç¤º] æœªæ‰¾åˆ°ç»ˆç«¯ä¼™ä¼´é•œåƒï¼Œå¼€å§‹é¦–æ¬¡æ„å»ºï¼ˆéœ€è¦ç¼–è¯‘å‰ç«¯ä¸ Rustï¼Œå¯èƒ½è€—æ—¶æ•°åˆ†é’Ÿï¼‰ã€‚
-    docker compose up -d --build
-) else (
-    docker compose up -d
-)
-if errorlevel 1 (
-    echo.
-    echo [é”™è¯¯] Docker å®¹å™¨å¯åŠ¨å¤±è´¥ã€‚
-    echo        å¦‚æœæç¤ºç«¯å£è¢«å ç”¨ï¼Œè¯·ä¿®æ”¹ .env ä¸­çš„ TERMINAL_BUDDY_PORTã€‚
-    echo        æŸ¥çœ‹è¯¦ç»†æ—¥å¿—ï¼šstartDockerServer.bat docker-logs
+    echo [´íÎó] Docker ÈİÆ÷Æô¶¯Ê§°Ü¡£
+    echo        Èç¹ûÌáÊ¾¶Ë¿Ú±»Õ¼ÓÃ£¬ÇëĞŞ¸Ä .env ÖĞµÄ TERMINAL_BUDDY_PORT¡£
+    echo        ²é¿´ÏêÏ¸ÈÕÖ¾£ºstartDockerServer.bat docker-logs
     goto :fail
 )
 
@@ -179,45 +243,42 @@ call :require_docker
 if errorlevel 1 goto :fail
 docker compose down
 if errorlevel 1 (
-    echo [é”™è¯¯] åœæ­¢ Docker æœåŠ¡å¤±è´¥ã€‚
+    echo [´íÎó] Í£Ö¹ Docker ·şÎñÊ§°Ü¡£
     goto :fail
 )
-echo [æç¤º] Docker æœåŠ¡å·²åœæ­¢ï¼Œæ•°æ®å·ä¿ç•™ï¼Œç®¡ç†å‘˜å¯†ç ä¸å†å²æ•°æ®ä»ç„¶æœ‰æ•ˆã€‚
+echo [ÌáÊ¾] Docker ·şÎñÒÑÍ£Ö¹£¬Êı¾İ¾í±£Áô£¬¹ÜÀíÔ±ÃÜÂëÓëÀúÊ·Êı¾İÈÔÈ»ÓĞĞ§¡£
 goto :done
 
 :docker_logs
 call :require_docker
 if errorlevel 1 goto :fail
-echo [æç¤º] æ­£åœ¨æ˜¾ç¤ºå®¹å™¨æ—¥å¿—ï¼ŒæŒ‰ Ctrl+C é€€å‡ºã€‚
+echo [ÌáÊ¾] ÕıÔÚÏÔÊ¾ÈİÆ÷ÈÕÖ¾£¬°´ Ctrl+C ÍË³ö¡£
 docker compose logs -f --tail 200 terminal-buddy
 goto :done
 
-rem ============ å¸®åŠ© ============
+rem ============ °ïÖú ============
 :show_help
 echo.
-echo ç”¨æ³•ï¼šstartDockerServer.bat [å‘½ä»¤æˆ–å‚æ•°]
+echo ÓÃ·¨£ºstartDockerServer.bat [ÃüÁî»ò²ÎÊı]
 echo.
-echo æœ¬æœºæ¨¡å¼ï¼ˆé»˜è®¤ï¼Œåœ¨ Windows ä¸Šç›´æ¥è¿è¡ŒæœåŠ¡ç«¯ç¨‹åºï¼Œä¸éœ€è¦ Dockerï¼‰ï¼š
-echo   startDockerServer.bat                                  å¯åŠ¨æœåŠ¡ï¼Œç¼ºå°‘ç¼–è¯‘äº§ç‰©æ—¶è‡ªåŠ¨ç¼–è¯‘
-echo   startDockerServer.bat local                            åŒä¸Š
-echo   startDockerServer.bat -Rebuild                         å¼ºåˆ¶é‡æ–°ç¼–è¯‘åå†å¯åŠ¨
-echo   startDockerServer.bat -Port 9620 -Workspace D:\code    æŒ‡å®šç«¯å£ä¸å·¥ä½œåŒºç›®å½•
+echo ²»´«²ÎÊı£¨ÍÆ¼ö£©£º
+echo   startDockerServer.bat                     Docker ¿ÉÓÃÊ±Æô¶¯ÈİÆ÷£»·ñÔòÓÃ±¾»úÄ£Ê½Æô¶¯
 echo.
-echo Docker æ¨¡å¼ï¼ˆéœ€è¦ Docker Desktop å·²å®‰è£…å¹¶å¯åŠ¨ï¼‰ï¼š
-echo   startDockerServer.bat docker                           æ„å»ºå¹¶å¯åŠ¨å®¹å™¨ï¼Œå°±ç»ªåæ‰“å¼€æµè§ˆå™¨
-echo   startDockerServer.bat docker-stop                      åœæ­¢å®¹å™¨ï¼ˆä¿ç•™æ•°æ®å·ï¼‰
-echo   startDockerServer.bat docker-logs                      æŸ¥çœ‹å®¹å™¨æ—¥å¿—
+echo Docker Ä£Ê½£¨ĞèÒª Docker Desktop ÒÑ°²×°²¢Æô¶¯£©£º
+echo   startDockerServer.bat docker              ¹¹½¨²¢Æô¶¯ÈİÆ÷£¬¾ÍĞ÷ºó´ò¿ªä¯ÀÀÆ÷
+echo   startDockerServer.bat docker-stop         Í£Ö¹ÈİÆ÷£¨±£ÁôÊı¾İ¾í£©
+echo   startDockerServer.bat docker-logs         ²é¿´ÈİÆ÷ÈÕÖ¾
 echo.
-echo å‚æ•°ï¼ˆæœ¬æœºæ¨¡å¼ï¼‰ï¼š
-echo   -Port ^<ç«¯å£^>         æœåŠ¡ç«¯å£ï¼Œé»˜è®¤ 9610
-echo   -Workspace ^<ç›®å½•^>    å·¥ä½œåŒºç›®å½•ï¼Œé»˜è®¤ terminal-buddy ç›®å½•
-echo   -DataDirectory ^<ç›®å½•^>  æ•°æ®ç›®å½•ï¼Œé»˜è®¤ terminal-buddy\server-data
-echo   -Rebuild               å¯åŠ¨å‰é‡æ–°ç¼–è¯‘æœåŠ¡ç«¯ä¸ç½‘é¡µèµ„æº
+echo ±¾»úÄ£Ê½£¨ÔÚ Windows ÉÏÖ±½ÓÔËĞĞ·şÎñ¶Ë³ÌĞò£¬²»ĞèÒª Docker£©£º
+echo   startDockerServer.bat local               Æô¶¯·şÎñ£¬È±ÉÙ±àÒë²úÎïÊ±×Ô¶¯±àÒë
+echo   startDockerServer.bat -Rebuild            Ç¿ÖÆÖØĞÂ±àÒëºóÔÙÆô¶¯
+echo   startDockerServer.bat -Port 9620          Ö¸¶¨¶Ë¿ÚÆô¶¯£¨Ä¬ÈÏ 9610£©
+echo   startDockerServer.bat -Workspace D:\code  Ö¸¶¨¹¤×÷ÇøÄ¿Â¼
 echo.
-echo é¦–æ¬¡å¯åŠ¨ï¼šåœ¨è‡ªåŠ¨æ‰“å¼€çš„ç½‘é¡µä¸­åˆ›å»ºç®¡ç†å‘˜å¯†ç ï¼ˆè‡³å°‘ 8 ä¸ªå­—ç¬¦ï¼‰ï¼Œåˆ›å»ºåå³å¯è¿›å…¥å®Œæ•´ç•Œé¢ã€‚
+echo Ê×´ÎÆô¶¯£ºÔÚ×Ô¶¯´ò¿ªµÄÍøÒ³ÖĞ´´½¨¹ÜÀíÔ±ÃÜÂë£¨ÖÁÉÙ 8 ¸ö×Ö·û£©£¬´´½¨ºó¼´¿É½øÈëÍêÕû½çÃæ¡£
 goto :done
 
-rem ============ å­è¿‡ç¨‹ ============
+rem ============ ×Ó¹ı³Ì ============
 :parse_port
 if "%~1"=="" exit /b 0
 if /i "%~1"=="-Port" (
@@ -230,32 +291,32 @@ goto :parse_port
 :require_docker
 where docker >nul 2>&1
 if errorlevel 1 (
-    echo [é”™è¯¯] æœªæ£€æµ‹åˆ° docker å‘½ä»¤ï¼Œè¯·å…ˆå®‰è£…å¹¶å¯åŠ¨ Docker Desktopã€‚
-    echo        åªæƒ³åœ¨æœ¬æœºè¿è¡ŒæœåŠ¡æ—¶ï¼Œå¯æ‰§è¡Œï¼šstartDockerServer.bat
+    echo [´íÎó] Î´¼ì²âµ½ docker ÃüÁî£¬ÇëÏÈ°²×°²¢Æô¶¯ Docker Desktop¡£
+    echo        Ö»ÏëÔÚ±¾»úÔËĞĞ·şÎñÊ±£¬¿ÉÖ´ĞĞ£ºstartDockerServer.bat local
     exit /b 1
 )
 docker info >nul 2>&1
 if errorlevel 1 (
-    echo [é”™è¯¯] æ— æ³•è¿æ¥ Docker æœåŠ¡ï¼Œè¯·ç¡®è®¤ Docker Desktop å·²å¯åŠ¨åé‡è¯•ã€‚
-    echo        åªæƒ³åœ¨æœ¬æœºè¿è¡ŒæœåŠ¡æ—¶ï¼Œå¯æ‰§è¡Œï¼šstartDockerServer.bat
+    echo [´íÎó] ÎŞ·¨Á¬½Ó Docker ·şÎñ£¬ÇëÈ·ÈÏ Docker Desktop ÒÑÆô¶¯ºóÖØÊÔ¡£
+    echo        Ö»ÏëÔÚ±¾»úÔËĞĞ·şÎñÊ±£¬¿ÉÖ´ĞĞ£ºstartDockerServer.bat local
     exit /b 1
 )
 docker compose version >nul 2>&1
 if errorlevel 1 (
-    echo [é”™è¯¯] æœªæ£€æµ‹åˆ° docker compose æ’ä»¶ï¼Œè¯·å‡çº§ Docker Desktop åé‡è¯•ã€‚
+    echo [´íÎó] Î´¼ì²âµ½ docker compose ²å¼ş£¬ÇëÉı¼¶ Docker Desktop ºóÖØÊÔ¡£
     exit /b 1
 )
 exit /b 0
 
 :ensure_env
 if not exist ".env" (
-    echo [æç¤º] æœªæ‰¾åˆ° .envï¼Œæ­£åœ¨æŒ‰é»˜è®¤å€¼ç”Ÿæˆï¼ˆå¯åœ¨å…¶ä¸­ä¿®æ”¹ç«¯å£ä¸å·¥ä½œåŒºï¼‰ã€‚
+    echo [ÌáÊ¾] Î´ÕÒµ½ .env£¬ÕıÔÚ°´Ä¬ÈÏÖµÉú³É£¨¿ÉÔÚÆäÖĞĞŞ¸Ä¶Ë¿ÚÓë¹¤×÷Çø£©¡£
     (
-        echo # TerminalBuddy Docker æœ¬åœ°é…ç½®ï¼ˆç”± startDockerServer.bat ç”Ÿæˆï¼‰
+        echo # TerminalBuddy Docker ±¾µØÅäÖÃ£¨ÓÉ startDockerServer.bat Éú³É£©
         echo TERMINAL_BUDDY_USERNAME=admin
         echo TERMINAL_BUDDY_PORT=9600
         echo TERMINAL_BUDDY_BIND_ADDRESS=127.0.0.1
-        echo # å·¥ä½œåŒºç›®å½•ï¼šè¯·å¡«å†™å®¿ä¸»æœºä¸Šå·²å­˜åœ¨çš„ç»å¯¹è·¯å¾„ï¼Œä¾‹å¦‚ D:/projects
+        echo # ¹¤×÷ÇøÄ¿Â¼£ºÇëÌîĞ´ËŞÖ÷»úÉÏÒÑ´æÔÚµÄ¾ø¶ÔÂ·¾¶£¬ÀıÈç D:/projects
         echo TERMINAL_BUDDY_WORKSPACE=./workspace
     )>".env"
 )
@@ -263,25 +324,31 @@ set "WS="
 for /f "usebackq tokens=1,* delims==" %%a in (".env") do if /i "%%a"=="TERMINAL_BUDDY_WORKSPACE" set "WS=%%b"
 if not defined WS set "WS=./workspace"
 set "WS=%WS:"=%"
+set "WS_COMPOSE=%WS:\=/%"
 set "WS_PATH=%WS:/=\%"
 if "%WS_PATH:~0,2%"==".\" set "WS_PATH=%WS_PATH:~2%"
-if exist "%WS_PATH%" exit /b 0
+if exist "%WS_PATH%" goto :workspace_ready
 if /i "%WS_PATH%"=="workspace" (
     mkdir "workspace" >nul 2>&1
-    exit /b 0
+    goto :workspace_ready
 )
-echo [é”™è¯¯] .env ä¸­çš„å·¥ä½œåŒºç›®å½•ä¸å­˜åœ¨ï¼š%WS%
-echo        è¯·æŠŠ TERMINAL_BUDDY_WORKSPACE æ”¹ä¸ºå®¿ä¸»æœºä¸Šå·²å­˜åœ¨çš„ç›®å½•ï¼Œä¾‹å¦‚ D:/projectsã€‚
+echo [´íÎó] .env ÖĞµÄ¹¤×÷ÇøÄ¿Â¼²»´æÔÚ£º%WS%
+echo        Çë°Ñ TERMINAL_BUDDY_WORKSPACE ¸ÄÎªËŞÖ÷»úÉÏÒÑ´æÔÚµÄÄ¿Â¼£¬ÀıÈç D:/projects¡£
 exit /b 1
+
+:workspace_ready
+rem Í³Ò»ÓÃÕıĞ±¸Ü´«¸ø Docker£¬±ÜÃâ .env ÖĞ·´Ğ±¸ÜÂ·¾¶ÔÚ compose ÀïµÄ×ªÒåÎÊÌâ
+set "TERMINAL_BUDDY_WORKSPACE=%WS_COMPOSE%"
+exit /b 0
 
 :wait_docker_health
 set "CID="
 for /f "usebackq delims=" %%i in (`docker compose ps -q terminal-buddy 2^>nul`) do set "CID=%%i"
 if not defined CID (
-    echo [é”™è¯¯] æœªæ‰¾åˆ°è¿è¡Œä¸­çš„å®¹å™¨ï¼Œè¯·æ‰§è¡Œ startDockerServer.bat docker-logs æŸ¥çœ‹æ—¥å¿—ã€‚
+    echo [´íÎó] Î´ÕÒµ½ÔËĞĞÖĞµÄÈİÆ÷£¬ÇëÖ´ĞĞ startDockerServer.bat docker-logs ²é¿´ÈÕÖ¾¡£
     exit /b 1
 )
-echo [æç¤º] ç­‰å¾…å®¹å™¨å¥åº·æ£€æŸ¥é€šè¿‡...
+echo [ÌáÊ¾] µÈ´ıÈİÆ÷½¡¿µ¼ì²éÍ¨¹ı...
 set /a TRY=0
 :docker_wait_loop
 set /a TRY+=1
@@ -289,11 +356,11 @@ set "HEALTH="
 for /f "usebackq delims=" %%s in (`docker inspect --format "{{.State.Health.Status}}" %CID% 2^>nul`) do set "HEALTH=%%s"
 if /i "%HEALTH%"=="healthy" exit /b 0
 if /i "%HEALTH%"=="unhealthy" (
-    echo [é”™è¯¯] å®¹å™¨å¥åº·æ£€æŸ¥æœªé€šè¿‡ï¼Œè¯·æ‰§è¡Œ startDockerServer.bat docker-logs æŸ¥çœ‹æ—¥å¿—ã€‚
+    echo [´íÎó] ÈİÆ÷½¡¿µ¼ì²éÎ´Í¨¹ı£¬ÇëÖ´ĞĞ startDockerServer.bat docker-logs ²é¿´ÈÕÖ¾¡£
     exit /b 1
 )
 if %TRY% GEQ 45 (
-    echo [é”™è¯¯] ç­‰å¾…å¥åº·æ£€æŸ¥è¶…æ—¶ï¼ˆçº¦ 90 ç§’ï¼‰ï¼Œè¯·æ‰§è¡Œ startDockerServer.bat docker-logs æŸ¥çœ‹æ—¥å¿—ã€‚
+    echo [´íÎó] µÈ´ı½¡¿µ¼ì²é³¬Ê±£¨Ô¼ 90 Ãë£©£¬ÇëÖ´ĞĞ startDockerServer.bat docker-logs ²é¿´ÈÕÖ¾¡£
     exit /b 1
 )
 timeout /t 2 /nobreak >nul 2>&1
@@ -304,19 +371,19 @@ set "URL="
 for /f "usebackq delims=" %%u in (`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "try { $m = @(docker compose port terminal-buddy 9600)[0] } catch { $m = $null }; if (-not $m) { $m = '127.0.0.1:9600' }; $i = $m.LastIndexOf(':'); $h = $m.Substring(0, $i).Trim('[', ']'); $p = $m.Substring($i + 1); if ($h -eq '0.0.0.0' -or $h -eq '::' -or $h -eq '') { $h = '127.0.0.1' }; 'http://' + $h + ':' + $p + '/'"`) do set "URL=%%u"
 if not defined URL set "URL=http://127.0.0.1:9600/"
 echo.
-echo æœåŠ¡åœ°å€ï¼š%URL%
+echo ·şÎñµØÖ·£º%URL%
 set "SETUP="
 for /f "usebackq delims=" %%r in (`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "try { (Invoke-RestMethod -Uri '%URL%api/auth/status' -TimeoutSec 5).setupRequired } catch { 'unknown' }"`) do set "SETUP=%%r"
-if /i "%SETUP%"=="True" echo [æç¤º] é¦–æ¬¡å¯åŠ¨ï¼šè¯·åœ¨æµè§ˆå™¨ä¸­åˆ›å»ºç®¡ç†å‘˜å¯†ç ï¼ˆè‡³å°‘ 8 ä¸ªå­—ç¬¦ï¼‰ï¼Œåˆ›å»ºåå³å®Œæˆåˆå§‹åŒ–ã€‚
-if /i "%SETUP%"=="False" echo [æç¤º] æœåŠ¡å·²åˆå§‹åŒ–ï¼Œè¯·åœ¨æµè§ˆå™¨ä¸­ä½¿ç”¨ç®¡ç†å‘˜è´¦å·ç™»å½•ã€‚
-if /i not "%SETUP%"=="True" if /i not "%SETUP%"=="False" echo [æç¤º] è¯·åœ¨æµè§ˆå™¨ä¸­æ‰“å¼€æœåŠ¡åœ°å€ï¼ŒæŒ‰é¡µé¢æç¤ºå®Œæˆåˆå§‹åŒ–æˆ–ç™»å½•ã€‚
+if /i "%SETUP%"=="True" echo [ÌáÊ¾] Ê×´ÎÆô¶¯£ºÇëÔÚä¯ÀÀÆ÷ÖĞ´´½¨¹ÜÀíÔ±ÃÜÂë£¨ÖÁÉÙ 8 ¸ö×Ö·û£©£¬´´½¨ºó¼´Íê³É³õÊ¼»¯¡£
+if /i "%SETUP%"=="False" echo [ÌáÊ¾] ·şÎñÒÑ³õÊ¼»¯£¬ÇëÔÚä¯ÀÀÆ÷ÖĞÊ¹ÓÃ¹ÜÀíÔ±ÕËºÅµÇÂ¼¡£
+if /i not "%SETUP%"=="True" if /i not "%SETUP%"=="False" echo [ÌáÊ¾] ÇëÔÚä¯ÀÀÆ÷ÖĞ´ò¿ª·şÎñµØÖ·£¬°´Ò³ÃæÌáÊ¾Íê³É³õÊ¼»¯»òµÇÂ¼¡£
 start "" "%URL%"
 exit /b 0
 
-rem ============ é€€å‡º ============
+rem ============ ÍË³ö ============
 :fail
 echo.
-echo æ“ä½œæœªå®Œæˆï¼Œè¯·æŒ‰ä¸Šé¢çš„æç¤ºå¤„ç†åé‡è¯•ã€‚
+echo ²Ù×÷Î´Íê³É£¬Çë°´ÉÏÃæµÄÌáÊ¾´¦ÀíºóÖØÊÔ¡£
 pause
 exit /b 1
 
