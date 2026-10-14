@@ -5,7 +5,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
-use tauri::{command, State};
+use crate::runtime::{State};
 
 /// Claude Code 会话文件结构 (位于 ~/.claude/sessions/<pid>.json)
 #[derive(Deserialize)]
@@ -16,8 +16,22 @@ struct ClaudeSessionFile {
     updated_at: u64,
 }
 
+#[cfg(not(windows))]
+fn get_all_processes() -> Vec<(u32, u32, String)> {
+    let Ok(entries) = fs::read_dir("/proc") else { return Vec::new(); };
+    entries.flatten().filter_map(|entry| {
+        let pid = entry.file_name().to_string_lossy().parse::<u32>().ok()?;
+        let stat = fs::read_to_string(entry.path().join("stat")).ok()?;
+        let end = stat.rfind(')')?;
+        let name = stat[stat.find('(')? + 1..end].to_lowercase();
+        let parent = stat[end + 1..].split_whitespace().nth(1)?.parse().ok()?;
+        Some((pid, parent, name))
+    }).collect()
+}
+
 /// 一次性获取所有进程的父子关系，返回 (pid, parent_pid, name)
 /// 使用 Windows API CreateToolhelp32Snapshot（几十毫秒），远快于 PowerShell/WMIC
+#[cfg(windows)]
 fn get_all_processes() -> Vec<(u32, u32, String)> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -90,7 +104,7 @@ fn find_claude_pids_in_tree(
 
 /// 批量获取多个终端的 Claude Code 会话 ID
 /// 只调用一次 CreateToolhelp32Snapshot，对所有终端在内存中查找，避免 N 次进程快照
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_claude_sessions_for_terminals(
     terminal_ids: Vec<String>,
     service: State<'_, TerminalService>,

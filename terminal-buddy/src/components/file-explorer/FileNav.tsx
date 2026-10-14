@@ -25,10 +25,10 @@ interface FileNavProps {
 
 function parentDirectoryPath(path: string): string {
   const normalized = normalizeConfiguredPath(path);
-  const separator = normalized.lastIndexOf('\\');
+  const separator = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'));
   if (separator < 0) return normalized;
   if (separator === 2 && /^[a-zA-Z]:\\/.test(normalized)) return normalized.slice(0, 3);
-  return normalized.slice(0, separator) || '\\';
+  return normalized.slice(0, separator) || (normalized.startsWith('/') ? '/' : '\\');
 }
 
 export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
@@ -504,8 +504,8 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
   const handleRenameInline = useCallback(async (path: string, newName: string) => {
     try {
       await renamePath(path, newName);
-      const parent = path.substring(0, path.lastIndexOf('\\'));
-      const renamedPath = parent + '\\' + newName;
+      const parent = parentDirectoryPath(path);
+      const renamedPath = parent + '/' + newName;
       setSelectedPath(current => current ? replacePathPrefix(current, path, renamedPath) : renamedPath);
       setGitTargetOverride(current => current ? replacePathPrefix(current, path, renamedPath) : current);
       setRootRefreshVersion(version => version + 1);

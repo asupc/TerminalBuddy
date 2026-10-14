@@ -53,6 +53,8 @@ fn needs_cmd_quoting(c: char) -> bool {
 /// 本函数不使用。
 pub fn quote_cmd_argument(field_label: &str, value: &str) -> Result<String, String> {
     reject_control_chars(field_label, value)?;
+    #[cfg(not(windows))]
+    { return Ok(format!("'{}'", value.replace('\'', "'\\''"))); }
     if let Some(bad) = value.chars().find(|c| matches!(c, '"' | '%')) {
         return Err(format!(
             "「{}」不能包含字符 {:?}：它在 cmd.exe 命令行中无法被安全转义。请去掉后重试。",

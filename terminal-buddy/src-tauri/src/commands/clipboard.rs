@@ -7,7 +7,7 @@ use windows::Win32::System::DataExchange::{
 
 const CF_DIB: u32 = 8;
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
     raw::open().map_err(|e| format!("Failed to open clipboard: {}", e))?;
     let result = (|| -> Result<Vec<String>, String> {
@@ -24,7 +24,7 @@ pub fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
 }
 
 /// Read clipboard image data (e.g. from PrintScreen) and save as PNG to temp dir.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn read_clipboard_image_as_file() -> Result<String, String> {
     let temp_dir = std::env::temp_dir().join("TerminalBuddy");
     let filename = format!(
@@ -36,7 +36,7 @@ pub fn read_clipboard_image_as_file() -> Result<String, String> {
 
 /// 剪贴板图片存入数据目录（Claude 图片引用辅助）：
 /// `@<path>` 引用要求 Claude 之后仍能读到该文件，TEMP 会被系统清理，故落到 dataPath。
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_clipboard_image_to_claude_cache() -> Result<String, String> {
     let dir = PathService::require_data_dir()?
         .join("ClientData")

@@ -28,6 +28,7 @@ import { initializeClaudeNotificationActions } from './services/claudeNotificati
 import { initAppHotkeys, registerHotkeyAction } from './services/hotkeys';
 import { restoreTabs, launchTerminalSession, reconcileBackendSessions } from './services/sessionRestore';
 import { useExitConfirm } from './hooks/useExitConfirm';
+import { clientTerminalOwner, isBrowserClient } from './services/platform';
 
 const SettingsPage = lazy(() => import('./components/settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
 
@@ -174,7 +175,7 @@ function App() {
             resizeTimer = null;
             const { sessions, splitMode, splitSlots, windowMode, terminalLayoutVersion } = useAppStore.getState();
             const terminalIds = splitMode === 'off'
-              ? sessions.filter(s => s.sessionType !== 'editor' && s.owner !== 'web').map(s => s.id)
+              ? sessions.filter(s => s.sessionType !== 'editor' && s.owner === clientTerminalOwner()).map(s => s.id)
               : splitSlots.map(s => s.sessionId).filter((s): s is string => s !== null);
             if (terminalIds.length > 0) {
               const detail: TerminalResizeDetail = {
@@ -395,6 +396,9 @@ function App() {
     const unlistenClosed = listen<string>('terminal-closed', (event) => {
       useAppStore.getState().removeSession(event.payload);
     });
+    const unlistenResync = isBrowserClient()
+      ? listen('web-resync', () => { void reconcileBackendSessions(); })
+      : Promise.resolve(() => {});
 
     // Listen for tray exit request to show confirmation dialog
     const unlistenTrayExit = listen('tray-exit-requested', () => {
@@ -414,12 +418,14 @@ function App() {
     return () => {
       unlistenCreated.then((f) => f());
       unlistenClosed.then((f) => f());
+      unlistenResync.then((f) => f());
       unlistenTrayExit.then((f) => f());
       unlistenTrayFallback.then((f) => f());
     };
   }, []);
 
   useEffect(() => {
+    if (isBrowserClient()) return;
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
       const settings = getAppSettings();
       if (settings.closeBehavior === 'tray') return; // tray mode handled by Rust
@@ -496,7 +502,7 @@ function App() {
       const newProfile = await createProfile(
         `${profile.name} (副本)`,
         profile.group,
-        profile.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc'
+        profile.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'mstsc'
       );
       await updateProfile({
         ...newProfile,
@@ -532,13 +538,13 @@ function App() {
     openSettingsDialog();
   }, [openSettingsDialog]);
 
-  const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'pwsh' | 'cmd') => {
+  const handleStartBlankTerminal = useCallback(async (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => {
     const store = useAppStore.getState();
     if (store.splitMode !== 'off' && !store.splitSlots.some(s => s.sessionId === null)) {
       store.showToast('分屏模式已满，请先关闭某个分屏或退出分屏', 'info');
       return;
     }
-    const name = terminalType === 'powershell' ? 'PowerShell' : terminalType === 'pwsh' ? 'PowerShell 7' : 'CMD';
+    const name = terminalType === 'powershell' ? 'PowerShell' : terminalType === 'pwsh' ? 'PowerShell 7' : terminalType === 'cmd' ? 'CMD' : terminalType;
     await launchTerminalSession({
       addSession,
       resolveStartingSession,

@@ -15,7 +15,9 @@ pub mod client_data_service;
 pub mod crypto_service;
 pub mod database_service;
 pub mod default_terminal_protocol;
+#[cfg(feature = "desktop")]
 pub mod default_terminal_service;
+#[cfg(feature = "desktop")]
 pub mod handoff_server;
 pub mod path_service;
 pub mod profile_service;
@@ -24,6 +26,10 @@ pub mod ssh_session_service;
 pub mod ssh_transfer;
 pub mod template_service;
 pub mod update_service;
+#[cfg(feature = "desktop")]
+pub mod vscode_terminal_service;
+#[cfg(not(feature = "desktop"))]
+#[path = "vscode_terminal_server.rs"]
 pub mod vscode_terminal_service;
 pub mod web_service;
 pub mod workspace_service;
@@ -43,7 +49,9 @@ pub use client_data_service::*;
 pub use crypto_service::*;
 pub use database_service::*;
 pub use default_terminal_protocol::*;
+#[cfg(feature = "desktop")]
 pub use default_terminal_service::*;
+#[cfg(feature = "desktop")]
 pub use handoff_server::*;
 pub use path_service::*;
 pub use profile_service::*;

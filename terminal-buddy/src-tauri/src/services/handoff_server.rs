@@ -23,7 +23,7 @@ use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use crate::runtime::{AppHandle, Manager};
 
 // ── Win32 原始声明（ole32 / kernel32）────────────────────────────────────────
 

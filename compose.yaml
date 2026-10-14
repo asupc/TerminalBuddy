@@ -1,0 +1,31 @@
+services:
+  terminal-buddy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: terminal-buddy:server
+    restart: unless-stopped
+    ports:
+      - "${TERMINAL_BUDDY_BIND_ADDRESS:-127.0.0.1}:${TERMINAL_BUDDY_PORT:-9600}:9600"
+    environment:
+      TERMINAL_BUDDY_USERNAME: ${TERMINAL_BUDDY_USERNAME:-admin}
+      TERMINAL_BUDDY_PASSWORD_FILE: /run/secrets/admin_password
+    secrets:
+      - admin_password
+    volumes:
+      - terminal-buddy-data:/data
+      - terminal-buddy-home:/home/terminalbuddy
+      - type: bind
+        source: ${TERMINAL_BUDDY_WORKSPACE:-./workspace}
+        target: /workspace
+        bind:
+          create_host_path: false
+    stop_grace_period: 20s
+
+secrets:
+  admin_password:
+    file: ./secrets/admin_password.txt
+
+volumes:
+  terminal-buddy-data:
+  terminal-buddy-home:

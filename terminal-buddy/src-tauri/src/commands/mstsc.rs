@@ -5,7 +5,6 @@ use crate::services::ProfileService;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use tauri::command;
 
 // 跟踪已启动的 mstsc 进程 PID，key = profile_id
 static MSTSC_PROCESSES: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
@@ -97,7 +96,7 @@ fn store_mstsc_credential(host: &str, user: &str, password: &str) -> windows::co
     unsafe { CredWriteW(&credential, 0) }
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn start_mstsc(profile_id: String) -> Result<(), String> {
     let profile =
         ProfileService::get_profile(&profile_id).map_err(|e| format!("配置不存在: {}", e))?;

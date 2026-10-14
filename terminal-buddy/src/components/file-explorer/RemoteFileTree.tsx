@@ -348,7 +348,7 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
 
   const startDownload = async (file: RemoteFileEntry) => {
     const baseDir = await getDownloadDir();
-    const localPath = `${baseDir}\\${file.name}`;
+    const localPath = `${baseDir}/${file.name}`;
     const id = crypto.randomUUID();
     addTransfer({
       id,
@@ -393,9 +393,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setContextMenu(null);
     try {
       const baseTempDir = await getSshTempDirectory();
-      const tempDir = `${baseTempDir}\\${terminalId}`;
+      const tempDir = `${baseTempDir}/${terminalId}`;
       await ensureDir(tempDir);
-      const localPath = `${tempDir}\\${file.name}`;
+      const localPath = `${tempDir}/${file.name}`;
       const id = crypto.randomUUID();
       await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
       await waitForDownload(id);
@@ -410,9 +410,9 @@ export const RemoteFileTree: FC<RemoteFileTreeProps> = ({ terminalId }) => {
     setContextMenu(null);
     try {
       const baseTempDir = await getSshTempDirectory();
-      const tempDir = `${baseTempDir}\\${terminalId}`;
+      const tempDir = `${baseTempDir}/${terminalId}`;
       await ensureDir(tempDir);
-      const localPath = `${tempDir}\\${file.name}`;
+      const localPath = `${tempDir}/${file.name}`;
       const id = crypto.randomUUID();
       await remoteDownload(terminalId, file.path, localPath, id, session?.profileId || '');
       await waitForDownload(id);

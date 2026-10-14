@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { listenTauri } from './events';
+import { isBrowserClient } from '../platform';
 import type { ExtraParamMode } from '../../types';
 
 // Terminal Commands
@@ -40,7 +41,7 @@ export async function onClaudeNotificationActivated(callback: (terminalId: strin
   return listenTauri<string>('claude-notification-activated', callback);
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string, initialCommand?: string, extraParamTag?: string, extraParamTagColor?: string | null): Promise<string> {
+export async function startBlankTerminal(terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string, initialCommand?: string, extraParamTag?: string, extraParamTagColor?: string | null): Promise<string> {
   return invoke('start_blank_terminal', { terminalType, displayName: displayName || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, initialCommand: initialCommand || null, extraParamTag: extraParamTag || null, extraParamTagColor: extraParamTagColor ?? null });
 }
 
@@ -87,5 +88,9 @@ export async function onTerminalOutput(
   terminalId: string,
   callback: (output: string) => void
 ): Promise<UnlistenFn> {
+  if (isBrowserClient()) {
+    const { subscribeTerminal } = await import('../browser/core');
+    return subscribeTerminal(terminalId, callback);
+  }
   return listenTauri<string>(`terminal_output_${terminalId}`, callback);
 }

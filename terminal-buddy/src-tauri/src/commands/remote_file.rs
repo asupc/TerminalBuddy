@@ -1,14 +1,14 @@
 use crate::models::ssh_types::RemoteFileEntry;
 use crate::services::profile_service::ProfileService;
 use crate::services::ssh_session_service::SshSessionService;
-use tauri::{command, AppHandle, State};
+use crate::runtime::{AppHandle, State};
 
 /// Escape a path for safe use in shell commands (single-quote wrapping).
 fn shell_escape(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn connect_ssh_session(
     terminal_id: String,
     profile_id: String,
@@ -18,7 +18,7 @@ pub fn connect_ssh_session(
     ssh_service.get_or_create_session(&terminal_id, &profile)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_list_dir(
     terminal_id: String,
     path: String,
@@ -27,7 +27,7 @@ pub fn remote_list_dir(
     ssh_service.list_dir(&terminal_id, &path)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_create_dir(
     terminal_id: String,
     path: String,
@@ -36,7 +36,7 @@ pub fn remote_create_dir(
     ssh_service.mkdir(&terminal_id, &path)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_create_file(
     terminal_id: String,
     path: String,
@@ -47,7 +47,7 @@ pub fn remote_create_file(
     Ok(())
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_remove(
     terminal_id: String,
     path: String,
@@ -57,7 +57,7 @@ pub fn remote_remove(
     ssh_service.remove(&terminal_id, &path, is_dir)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_rename(
     terminal_id: String,
     from: String,
@@ -67,7 +67,7 @@ pub fn remote_rename(
     ssh_service.rename(&terminal_id, &from, &to)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_move(
     terminal_id: String,
     from: String,
@@ -79,7 +79,7 @@ pub fn remote_move(
     Ok(())
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_copy(
     terminal_id: String,
     from: String,
@@ -91,7 +91,7 @@ pub fn remote_copy(
     Ok(())
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_chmod(
     terminal_id: String,
     path: String,
@@ -101,7 +101,7 @@ pub fn remote_chmod(
     ssh_service.chmod(&terminal_id, &path, mode)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_download(
     terminal_id: String,
     remote_path: String,
@@ -125,7 +125,7 @@ pub fn remote_download(
     )
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_download_dir(
     terminal_id: String,
     remote_path: String,
@@ -149,7 +149,7 @@ pub fn remote_download_dir(
     )
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn remote_upload(
     terminal_id: String,
     local_path: String,
@@ -173,7 +173,7 @@ pub fn remote_upload(
     )
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_ssh_home_dir(
     terminal_id: String,
     ssh_service: State<'_, SshSessionService>,
@@ -181,16 +181,16 @@ pub fn get_ssh_home_dir(
     ssh_service.get_home_dir(&terminal_id)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_ssh_temp_directory() -> Result<String, String> {
-    Ok(std::env::temp_dir()
-        .join("TerminalBuddy")
+    Ok(crate::services::PathService::require_data_dir()?
+        .join("ClientData")
         .join("ssh_edit")
         .to_string_lossy()
         .to_string())
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn ensure_dir(path: String) -> Result<(), String> {
     std::fs::create_dir_all(&path).map_err(|e| format!("创建目录失败: {}", e))
 }

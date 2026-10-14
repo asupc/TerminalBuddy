@@ -7,12 +7,23 @@ use crate::services::{
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
+#[cfg(all(windows, feature = "desktop"))]
 use std::ffi::OsStr;
 use std::fs;
+#[cfg(all(windows, feature = "desktop"))]
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use tauri::AppHandle;
+use crate::runtime::AppHandle;
 
+#[cfg(not(all(windows, feature = "desktop")))]
+fn set_autostart_registry(_enabled: bool) -> Result<(), String> {
+    Err("独立服务端由 Docker 或系统服务管理启动".to_string())
+}
+
+#[cfg(not(all(windows, feature = "desktop")))]
+fn read_autostart_registry() -> bool { false }
+
+#[cfg(all(windows, feature = "desktop"))]
 fn to_wide(s: &str) -> Vec<u16> {
     OsStr::new(s)
         .encode_wide()
@@ -20,6 +31,7 @@ fn to_wide(s: &str) -> Vec<u16> {
         .collect()
 }
 
+#[cfg(all(windows, feature = "desktop"))]
 fn set_autostart_registry(enabled: bool) -> Result<(), String> {
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::System::Registry::*;
@@ -68,6 +80,7 @@ fn set_autostart_registry(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(all(windows, feature = "desktop"))]
 fn read_autostart_registry() -> bool {
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::System::Registry::*;
@@ -104,12 +117,12 @@ fn read_autostart_registry() -> bool {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_app_settings() -> AppSettings {
     SettingsService::get_settings()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_close_behavior(behavior: String) -> Result<(), String> {
     let behavior = match behavior.as_str() {
         "exit" => CloseBehavior::Exit,
@@ -121,7 +134,7 @@ pub fn save_close_behavior(behavior: String) -> Result<(), String> {
     SettingsService::save_settings(&settings)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_launch_window_mode(mode: String) -> Result<(), String> {
     let mode = match mode.as_str() {
         "windowed" => LaunchWindowMode::Windowed,
@@ -131,12 +144,12 @@ pub fn save_launch_window_mode(mode: String) -> Result<(), String> {
     SettingsService::mutate_settings(|s| s.launch_window_mode = mode)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_vscode_terminal_support(app: AppHandle) -> VsCodeTerminalSupport {
     VsCodeTerminalProcess::probe_support(&app)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_terminal_loading_mode(mode: String, app: AppHandle) -> Result<(), String> {
     let mode = match mode.as_str() {
         "default" => TerminalLoadingMode::Default,
@@ -152,14 +165,14 @@ pub fn save_terminal_loading_mode(mode: String, app: AppHandle) -> Result<(), St
     SettingsService::mutate_settings(|settings| settings.terminal_loading_mode = mode)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_data_path() -> String {
     PathService::get_current_data_path()
 }
 
 /// 数据目录当前可用性状态，供设置页与启动横幅展示。
 /// `null` 表示进程尚未解析过数据目录（极早期）。
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_data_path_status() -> serde_json::Value {
     match PathService::get_data_dir_status() {
         Some(status) => serde_json::json!({
@@ -174,7 +187,7 @@ pub fn get_data_path_status() -> serde_json::Value {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn set_data_path(new_path: String) -> Result<(), String> {
     let validated = PathService::validate_data_path(&new_path)?;
     let old_dir = PathService::get_data_dir();
@@ -201,66 +214,66 @@ pub fn set_data_path(new_path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_enable_tab_navigation(enabled: bool) -> Result<(), String> {
     SettingsService::mutate_settings(|s| s.enable_tab_navigation = enabled)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_tab_sidebar_width(width: u32) -> Result<(), String> {
     let mut settings = SettingsService::get_settings();
     settings.tab_sidebar_width = width.clamp(150, 400);
     SettingsService::save_settings(&settings)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_config_nav_width(width: u32) -> Result<(), String> {
     let mut settings = SettingsService::get_settings();
     settings.config_nav_width = width.clamp(150, 400);
     SettingsService::save_settings(&settings)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_file_nav_width(width: u32) -> Result<(), String> {
     let mut settings = SettingsService::get_settings();
     settings.file_nav_width = width.clamp(150, 500);
     SettingsService::save_settings(&settings)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_single_instance(enabled: bool) -> Result<(), String> {
     SettingsService::mutate_settings(|s| s.single_instance = enabled)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_downloads_directory() -> Result<String, String> {
     dirs::download_dir()
         .map(|p| p.to_string_lossy().to_string())
         .ok_or_else(|| "Failed to get downloads directory".to_string())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_ssh_download_dir(dir: String) -> Result<(), String> {
     SettingsService::mutate_settings(|s| s.ssh_download_dir = Some(dir))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_server_monitor_interval(interval: u32) -> Result<(), String> {
     SettingsService::mutate_settings(|s| s.server_monitor_interval = interval)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_web_api_share_sessions(enabled: bool) -> Result<(), String> {
     SettingsService::mutate_settings(|s| s.web_api_share_sessions = enabled)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_launch_at_login(enabled: bool) -> Result<(), String> {
     set_autostart_registry(enabled)?;
     SettingsService::mutate_settings(|s| s.launch_at_login = enabled)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn sync_launch_at_login() -> bool {
     let registry_enabled = read_autostart_registry();
     let mut settings = SettingsService::get_settings();
@@ -300,7 +313,7 @@ fn read_json_file(path: &PathBuf) -> Result<Option<Value>, String> {
     Ok(Some(value))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn export_all_data(file_path: String) -> Result<(), String> {
     let data_dir = PathService::get_data_dir();
 
@@ -357,7 +370,7 @@ fn write_json_files(dir: &PathBuf, map: &HashMap<String, Value>) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn import_all_data(file_path: String) -> Result<(), String> {
     let path = PathBuf::from(&file_path);
     if !path.exists() {
@@ -430,7 +443,7 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_web_api_settings(
     enabled: bool,
     port: u16,
@@ -450,7 +463,7 @@ pub fn save_web_api_settings(
     SettingsService::save_settings(&settings)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_web_api_status() -> serde_json::Value {
     let settings = SettingsService::get_settings();
     serde_json::json!({

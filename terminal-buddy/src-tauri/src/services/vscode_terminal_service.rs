@@ -10,7 +10,7 @@ use std::process::{Child, ChildStderr, ChildStdin, Command, Stdio};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
-use tauri::AppHandle;
+use crate::runtime::AppHandle;
 
 const FRAME_INPUT: u8 = 1;
 const FRAME_RESIZE: u8 = 2;

@@ -98,6 +98,9 @@ fn set_status(status: DataDirStatus) {
 
 impl PathService {
     fn get_default_base_dir() -> PathBuf {
+        if let Some(directory) = std::env::var_os("TERMINAL_BUDDY_DATA_DIR") {
+            return PathBuf::from(directory);
+        }
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("TerminalBuddy")
@@ -114,6 +117,12 @@ impl PathService {
             return Ok(path);
         }
         let settings = SettingsService::get_settings();
+        if let Some(directory) = std::env::var_os("TERMINAL_BUDDY_DATA_DIR") {
+            let path = PathBuf::from(directory);
+            if !path.is_absolute() { return Err("TERMINAL_BUDDY_DATA_DIR 必须是绝对路径".to_string()); }
+            ensure_writable_dir(&path).map_err(|e| custom_dir_unavailable(&path, &e))?;
+            return Ok(path);
+        }
         let Some(ref custom) = settings.data_path else {
             set_status(DataDirStatus::Default);
             return Ok(Self::get_default_base_dir());

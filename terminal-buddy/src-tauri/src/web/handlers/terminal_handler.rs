@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use tauri::{Emitter, Manager};
+use crate::runtime::{Emitter, Manager};
 
 /// 列出 Web 端有权查看的终端：非共享模式下只有 Web（手机）自己创建的，
 /// 共享模式下才包含 PC 端的。前端按 owner 区分「继续」（Web，直接接入）
@@ -32,7 +32,7 @@ pub async fn start(
     let ts = state.app_handle.state::<TerminalService>();
     let terminal_id = if req.profile_id.trim().is_empty() {
         ts.create_blank_terminal(
-            "powershell",
+            crate::commands::terminal::default_terminal_type(),
             req.display_name.as_deref(),
             req.startup_group.as_deref(),
             req.rows.unwrap_or(0),

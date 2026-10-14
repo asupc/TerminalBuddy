@@ -11,7 +11,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use tauri::{Emitter, Manager};
+use crate::runtime::{Emitter, Manager};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{self, Instant, MissedTickBehavior};
 
@@ -26,11 +26,11 @@ const WS_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
 const WS_AUTH_RECHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 /// 全局 WS 连接配额守卫：early return、abort、panic 都会在 drop 时归还配额。
-struct WsConnectionSlot;
+pub(crate) struct WsConnectionSlot;
 
 impl WsConnectionSlot {
     /// 超过全局上限时返回 `None`，且不占用配额。
-    fn acquire() -> Option<Self> {
+    pub(crate) fn acquire() -> Option<Self> {
         let previous = WS_CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
         if previous >= MAX_GLOBAL_WS_CONNECTIONS {
             WS_CONNECTION_COUNT.fetch_sub(1, Ordering::Relaxed);
@@ -106,8 +106,10 @@ async fn handle_terminal_socket(
     let web_state = state.app_handle.state::<WebServiceState>();
 
     // 每终端上限检查与订阅注册在同一把锁内完成，不留并发超限窗口。
-    let Some((sub_id, mut output_rx)) =
-        web_state.subscribe_within_limit(&terminal_id, MAX_PER_TERMINAL_WS_CONNECTIONS)
+    let subscription = state.app_handle.state::<TerminalService>().subscribe_web_output(
+        &terminal_id, &web_state, MAX_PER_TERMINAL_WS_CONNECTIONS,
+    ).ok().flatten();
+    let Some((sub_id, mut output_rx, history)) = subscription
     else {
         eprintln!(
             "[WS] Per-terminal connection limit reached for {}",
@@ -118,11 +120,6 @@ async fn handle_terminal_socket(
 
     // Peek historical output — sent AFTER the frontend's first resize so escape
     // sequences (cursor positioning, etc.) are formatted for the correct size.
-    let history: String = {
-        let ts = state.app_handle.state::<TerminalService>();
-        ts.peek_terminal_output(&terminal_id, TerminalActor::Web)
-            .unwrap_or_default()
-    };
 
     // recv_task → send_task: error messages channel.
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -159,7 +156,7 @@ async fn handle_terminal_socket(
                         break;
                     }
                 }
-                data = output_rx.recv() => {
+                data = output_rx.recv(), if history_sent => {
                     match data {
                         Some(data) => {
                             // Manual JSON to avoid serde overhead on the hot path.

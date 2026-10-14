@@ -1,4 +1,5 @@
 import { FC, useEffect, useState } from 'react';
+import { isBrowserClient } from '../../services/platform';
 import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, getDefaultTerminalStatus, setDefaultTerminalEnabled, type VsCodeTerminalSupport, type DefaultTerminalStatus } from '../../services/tauri';
 import { showAlert } from '../../services/dialog';
 import { type AppSettings } from '../../utils/settings';
@@ -74,6 +75,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
             <input
               type="radio"
               name="launchWindowMode"
+              disabled={isBrowserClient()}
               checked={settings.launchWindowMode === 'windowed'}
               onChange={() => {
                 updateSetting('launchWindowMode', 'windowed');
@@ -86,6 +88,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
             <input
               type="radio"
               name="launchWindowMode"
+              disabled={isBrowserClient()}
               checked={settings.launchWindowMode === 'maximized'}
               onChange={() => {
                 updateSetting('launchWindowMode', 'maximized');
@@ -157,6 +160,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <input
             type="checkbox"
             checked={settings.closeBehavior === 'tray'}
+            disabled={isBrowserClient()}
             onChange={(e) => {
               const value = e.target.checked ? 'tray' : 'exit';
               updateSetting('closeBehavior', value);
@@ -214,6 +218,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <input
             type="checkbox"
             checked={settings.singleInstance}
+            disabled={isBrowserClient()}
             onChange={(e) => {
               const value = e.target.checked;
               updateSetting('singleInstance', value);
@@ -229,6 +234,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <input
             type="checkbox"
             checked={settings.launchAtLogin}
+            disabled={isBrowserClient()}
             onChange={(e) => {
               const value = e.target.checked;
               updateSetting('launchAtLogin', value);
@@ -244,6 +250,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
           <input
             type="checkbox"
             checked={defaultTerminal?.enabled ?? false}
+            disabled={isBrowserClient()}
             onChange={(e) => {
               toggleDefaultTerminal(e.target.checked);
             }}

@@ -3,19 +3,18 @@ use crate::services::{ProfileService, PathService};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use tauri::command;
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_all_profiles() -> Result<Vec<Profile>, String> {
     ProfileService::get_all_profiles()
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_profile(id: String) -> Result<Profile, String> {
     ProfileService::get_profile(&id)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn create_profile(
     name: String,
     group: String,
@@ -24,27 +23,27 @@ pub fn create_profile(
     ProfileService::create_profile(&name, &group, &terminal_type)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn update_profile(profile: Profile) -> Result<(), String> {
     ProfileService::update_profile(&profile)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn delete_profile(id: String) -> Result<(), String> {
     ProfileService::delete_profile(&id)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn update_profile_last_used(id: String) -> Result<(), String> {
     ProfileService::update_last_used(&id)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn export_all_profiles(path: String) -> Result<(), String> {
     ProfileService::export_all_profiles(&path)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn import_all_profiles(path: String) -> Result<Vec<Profile>, String> {
     ProfileService::import_profiles(&path)
 }
@@ -63,7 +62,7 @@ fn projects_file() -> Result<std::path::PathBuf, String> {
     Ok(PathService::require_data_dir()?.join("projects.json"))
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_projects() -> Result<Vec<Project>, String> {
     let file = PathService::get_data_dir().join("projects.json");
     let mut projects: Vec<Project> = if file.exists() {
@@ -87,7 +86,7 @@ pub fn get_projects() -> Result<Vec<Project>, String> {
     Ok(projects)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_projects(projects: Vec<Project>) -> Result<(), String> {
     let mut names = std::collections::HashSet::new();
     for project in &projects {

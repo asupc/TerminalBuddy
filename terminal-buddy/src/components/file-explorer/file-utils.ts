@@ -1,3 +1,4 @@
+import { serverUsesWindowsPaths } from '../../services/platform';
 import type { FileNode } from '../../services/tauri';
 
 export const DIRECTORY_RENDER_PAGE_SIZE = 200;
@@ -49,6 +50,7 @@ export function directoryName(path: string): string {
 }
 
 export function normalizeConfiguredPath(path: string): string {
+  if (!serverUsesWindowsPaths()) return path.trim().replace(/\/+$/, '') || '/';
   const slashNormalized = path.trim().replace(/\//g, '\\');
   if (slashNormalized.startsWith('\\\\?\\')) {
     const extendedBody = slashNormalized.slice(4).replace(/\\+/g, '\\');
@@ -65,11 +67,12 @@ export function normalizeConfiguredPath(path: string): string {
 }
 
 export function isPathEqualOrInside(path: string, root: string): boolean {
-  const normalizedPath = normalizeConfiguredPath(path).toLowerCase();
-  const normalizedRoot = normalizeConfiguredPath(root).toLowerCase();
+  const normalizedPath = serverUsesWindowsPaths() ? normalizeConfiguredPath(path).toLowerCase() : normalizeConfiguredPath(path);
+  const normalizedRoot = serverUsesWindowsPaths() ? normalizeConfiguredPath(root).toLowerCase() : normalizeConfiguredPath(root);
   if (!normalizedPath || !normalizedRoot) return false;
   if (normalizedPath === normalizedRoot) return true;
-  const prefix = normalizedRoot.endsWith('\\') ? normalizedRoot : `${normalizedRoot}\\`;
+  const separator = serverUsesWindowsPaths() ? '\\' : '/';
+  const prefix = normalizedRoot.endsWith(separator) ? normalizedRoot : `${normalizedRoot}${separator}`;
   return normalizedPath.startsWith(prefix);
 }
 

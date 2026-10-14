@@ -1,4 +1,4 @@
-export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
+export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
 export type ExtraParamMode = 'append' | 'independent';
 
 export interface Project {

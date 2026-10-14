@@ -9,6 +9,9 @@ pub struct SettingsService;
 
 impl SettingsService {
     pub fn get_settings_path() -> PathBuf {
+        if let Some(directory) = std::env::var_os("TERMINAL_BUDDY_DATA_DIR") {
+            return PathBuf::from(directory).join("settings.json");
+        }
         let base = dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("TerminalBuddy");

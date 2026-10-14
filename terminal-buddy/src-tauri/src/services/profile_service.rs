@@ -193,7 +193,7 @@ impl ProfileService {
 
         // Encrypt sensitive fields before writing to disk
         let mut to_save = profile.clone();
-        to_save.encrypt_sensitive_fields();
+        to_save.encrypt_sensitive_fields()?;
 
         let path = Self::get_profiles_dir()?.join(format!("{}.json", to_save.id));
         let content = serde_json::to_string_pretty(&to_save)

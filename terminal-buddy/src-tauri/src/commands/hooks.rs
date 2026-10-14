@@ -12,14 +12,14 @@ fn persist_config_dir(config_dir: &str) -> Result<String, String> {
     Ok(normalized)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_claude_hook_settings_status(
     selected_dir: Option<String>,
 ) -> Result<ClaudeHookSettingsStatus, String> {
     read_status(selected_dir.as_deref())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_claude_hook_config_dir(selected_dir: Option<String>) -> Result<(), String> {
     let selected_dir = selected_dir
         .as_deref()
@@ -33,7 +33,7 @@ pub fn save_claude_hook_config_dir(selected_dir: Option<String>) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn install_claude_hooks(
     selected_dir: Option<String>,
 ) -> Result<ClaudeHookSettingsStatus, String> {
@@ -42,7 +42,7 @@ pub fn install_claude_hooks(
     Ok(status)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn repair_claude_hooks(
     selected_dir: Option<String>,
 ) -> Result<ClaudeHookSettingsStatus, String> {
@@ -51,7 +51,7 @@ pub fn repair_claude_hooks(
     Ok(status)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn uninstall_claude_hooks(
     selected_dir: Option<String>,
 ) -> Result<ClaudeHookSettingsStatus, String> {

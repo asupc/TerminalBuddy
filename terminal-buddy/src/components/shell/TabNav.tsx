@@ -1,3 +1,4 @@
+import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { FileText, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore } from '../../stores/appStore';
@@ -20,7 +21,7 @@ interface TabSidebarProps {
   isSidebarMode: boolean;
   profiles: Profile[];
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
-  onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd') => void;
+  onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
   onStartTextEditor: () => void;
 }
 
@@ -281,9 +282,9 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   // Flatten expanded items for keyboard nav (recursive for nested groups)
   const visibleSubmenuItems = useMemo(() => {
     const result: TreeItem[] = [];
-    result.push({ id: 'powershell', label: 'PowerShell', data: { terminalType: 'powershell' as const } });
+    result.push({ id: defaultShellType(), label: serverUsesWindowsPaths() ? 'PowerShell' : 'Bash', data: { terminalType: defaultShellType() } });
     result.push({ id: 'pwsh', label: 'PowerShell 7', data: { terminalType: 'pwsh' as const } });
-    result.push({ id: 'cmd', label: 'CMD', data: { terminalType: 'cmd' as const } });
+    result.push({ id: 'cmd', label: serverUsesWindowsPaths() ? 'CMD' : 'Shell', data: { terminalType: serverUsesWindowsPaths() ? 'cmd' : 'sh' } });
 
     const flattenTree = (items: TreeItem[], expanded: Set<string>) => {
       for (const item of items) {
@@ -493,7 +494,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           } else if (item.data) {
             const d = item.data as Record<string, unknown>;
             if ('group' in d) onStartTerminalRef.current(item.data as Profile);
-            else if (d.terminalType) onStartBlankTerminalRef.current(d.terminalType as 'powershell' | 'pwsh' | 'cmd');
+            else if (d.terminalType) onStartBlankTerminalRef.current(d.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh');
             setShowContextMenu(false);
           }
         }
