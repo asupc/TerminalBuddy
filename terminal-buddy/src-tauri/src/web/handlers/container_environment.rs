@@ -32,7 +32,7 @@ pub fn is_docker_runtime() -> bool {
             || Path::new("/.dockerenv").is_file())
 }
 
-fn ensure_docker() -> Result<(), ApiError> {
+pub(crate) fn ensure_docker() -> Result<(), ApiError> {
     if is_docker_runtime() {
         Ok(())
     } else {

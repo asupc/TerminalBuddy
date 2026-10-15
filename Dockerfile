@@ -1,3 +1,6 @@
+ARG DOCKER_CLI_IMAGE=docker:28-cli
+FROM ${DOCKER_CLI_IMAGE} AS docker-cli
+
 FROM node:24-bookworm-slim AS frontend
 WORKDIR /build/frontend
 COPY terminal-buddy/package.json terminal-buddy/package-lock.json ./
@@ -15,9 +18,13 @@ COPY terminal-buddy/src-tauri/portable-pty-patched ./portable-pty-patched
 RUN cargo build --locked --release --no-default-features --features server --bin terminal-buddy-server
 
 FROM debian:bookworm-slim
+# /root 仅开放路径穿越，供 /root/... 工作区在容器内按宿主机同路径挂载。
 RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client libssl3 libssh2-1 tini && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1000 --shell /bin/bash terminalbuddy \
-    && mkdir -p /data /workspace && chown terminalbuddy:terminalbuddy /data /workspace
+    && mkdir -p /data /workspace && chown terminalbuddy:terminalbuddy /data /workspace \
+    && chmod 0711 /root
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 COPY --from=backend /build/src-tauri/target/release/terminal-buddy-server /usr/local/bin/terminal-buddy-server
 COPY --from=frontend /build/frontend/dist-web /opt/terminal-buddy/web
 ENV TERMINAL_BUDDY_DATA_DIR=/data \

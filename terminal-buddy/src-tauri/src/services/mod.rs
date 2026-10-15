@@ -11,6 +11,7 @@ pub mod claude_hook_service;
 pub mod claude_hook_settings;
 pub mod claude_history_service;
 pub mod claude_mcp_service;
+pub mod claude_provider_service;
 pub mod client_data_service;
 pub mod crypto_service;
 pub mod database_service;

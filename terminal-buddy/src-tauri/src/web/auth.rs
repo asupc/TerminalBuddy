@@ -17,12 +17,18 @@ pub trait HasJwtSecret {
     fn jwt_secret(&self) -> &str;
 }
 
+/// 登录有效期（天）：30 天。只要在有效期内，重启服务 / 重建容器都不会让已登录的会话失效，
+/// 用户不会因为服务端重启而被反复要求重新登录。
+pub const TOKEN_TTL_DAYS: i64 = 30;
+
+/// 用给定密钥签发一个有效期为 TOKEN_TTL_DAYS 天的 JWT。
+/// 密钥来自 load_or_create_jwt_secret（落盘持久化）。
 pub fn generate_jwt(username: &str, secret: &str) -> Result<String, String> {
     let now = Utc::now();
     let claims = Claims {
         sub: username.to_string(),
         iat: now.timestamp() as usize,
-        exp: (now + Duration::hours(24)).timestamp() as usize,
+        exp: (now + Duration::days(TOKEN_TTL_DAYS)).timestamp() as usize,
     };
     encode(
         &Header::default(),
@@ -71,11 +77,58 @@ where
     }
 }
 
-/// Generate a random 256-bit secret for JWT signing.
-pub fn generate_jwt_secret() -> String {
+/// 生成一个随机的 256 位密钥（仅用于首次创建 jwt.key）。
+fn random_jwt_secret() -> String {
     use rand::Rng;
     let bytes: [u8; 32] = rand::thread_rng().gen();
     hex::encode(bytes)
+}
+
+/// 读取持久化的 JWT 签名密钥，不存在时创建（`<数据目录>/jwt.key`）。
+///
+/// 这是「重启服务 / 重建容器后仍保持登录」的关键：密钥落盘后，之前签发的
+/// token 重启后依然能验签通过。此前的实现每次启动都随机生成密钥，导致服务
+/// 一重启，所有已登录设备立刻被强制退出。
+///
+/// 密钥在进程内缓存，因此同一进程内反复重启 HTTP 服务也复用同一个值。
+/// 密钥文件损坏时**不**静默换新密钥（那会踢掉所有设备），而是明确报错。
+pub fn load_or_create_jwt_secret() -> Result<String, String> {
+    use std::sync::{Mutex, OnceLock};
+
+    static SECRET: OnceLock<String> = OnceLock::new();
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    if let Some(secret) = SECRET.get() {
+        return Ok(secret.clone());
+    }
+    let _guard = LOCK.lock().map_err(|_| "密钥初始化锁不可用".to_string())?;
+    if let Some(secret) = SECRET.get() {
+        return Ok(secret.clone());
+    }
+
+    let path = crate::services::PathService::require_data_dir()?.join("jwt.key");
+    let secret = match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let trimmed = content.trim().to_string();
+            // 只接受 64 位十六进制（32 字节）
+            if trimmed.len() != 64 || !trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(format!(
+                    "JWT 密钥文件已损坏：{}。请恢复备份，或删除该文件后重新登录。",
+                    path.display()
+                ));
+            }
+            trimmed
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let fresh = random_jwt_secret();
+            crate::services::atomic_write_private(&path, fresh.as_bytes())
+                .map_err(|e| format!("写入 JWT 密钥文件失败: {}", e))?;
+            fresh
+        }
+        Err(error) => return Err(format!("读取 JWT 密钥文件失败: {}", error)),
+    };
+    let _ = SECRET.set(secret.clone());
+    Ok(secret)
 }
 
 #[cfg(not(feature = "desktop"))]
@@ -88,4 +141,42 @@ pub fn validate_admin_password(password: &str) -> Result<(), String> {
         return Err("管理员密码过长，请缩短后重试".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 登录有效期必须是 TOKEN_TTL_DAYS（30）天，而不是旧的 24 小时。
+    /// 这是用户可见行为，回归时必须失败而不是悄悄缩短。
+    #[test]
+    fn token_expiry_matches_configured_ttl() {
+        let secret = "test-secret";
+        let token = generate_jwt("admin", secret).unwrap();
+        let claims = verify_token(&token, secret).unwrap();
+
+        assert_eq!(claims.sub, "admin");
+        let lifetime_secs = claims.exp as i64 - claims.iat as i64;
+        assert_eq!(
+            lifetime_secs,
+            TOKEN_TTL_DAYS * 24 * 60 * 60,
+            "登录有效期应为 {} 天（{} 秒），实际 {} 秒",
+            TOKEN_TTL_DAYS,
+            TOKEN_TTL_DAYS * 24 * 60 * 60,
+            lifetime_secs
+        );
+        assert!(
+            TOKEN_TTL_DAYS >= 30,
+            "有效期不得短于用户要求的 30 天"
+        );
+    }
+
+    /// 换密钥必须验签失败（这是重启后依然有效的反面：密钥不一致才该失效）。
+    #[test]
+    fn verify_rejects_foreign_secret_and_malformed_token() {
+        let token = generate_jwt("admin", "secret-a").unwrap();
+        assert!(verify_token(&token, "secret-b").is_err());
+        assert!(verify_token("not-a-jwt", "secret-a").is_err());
+        assert!(verify_token("", "secret-a").is_err());
+    }
 }

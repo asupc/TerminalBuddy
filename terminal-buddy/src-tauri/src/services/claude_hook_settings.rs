@@ -80,7 +80,7 @@ pub struct ClaudeHookSettingsStatus {
     pub error: Option<String>,
 }
 
-fn claude_settings_write_lock() -> &'static Mutex<()> {
+pub(crate) fn claude_settings_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -107,7 +107,7 @@ pub fn normalize_claude_config_dir(selected_dir: &str) -> Result<String, String>
     Ok(normalized.to_string_lossy().to_string())
 }
 
-fn resolve_claude_config_dir(selected_dir: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn resolve_claude_config_dir(selected_dir: Option<&str>) -> Result<PathBuf, String> {
     if let Some(selected) = selected_dir
         .map(str::trim)
         .filter(|value| !value.is_empty())

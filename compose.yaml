@@ -9,12 +9,23 @@ services:
       - "${TERMINAL_BUDDY_BIND_ADDRESS:-127.0.0.1}:${TERMINAL_BUDDY_PORT:-9600}:9600"
     environment:
       TERMINAL_BUDDY_USERNAME: ${TERMINAL_BUDDY_USERNAME:-admin}
+      TERMINAL_BUDDY_WORKSPACE_DIR: ${TERMINAL_BUDDY_CONTAINER_WORKSPACE:-/workspace}
+      DOCKER_HOST: unix:///var/run/docker.sock
+    # Linux 上填写 stat -c '%g' /var/run/docker.sock 的结果；Docker Desktop 通常为 0。
+    group_add:
+      - "${TERMINAL_BUDDY_DOCKER_GID:-0}"
+    working_dir: ${TERMINAL_BUDDY_CONTAINER_WORKSPACE:-/workspace}
     volumes:
       - terminal-buddy-data:/data
       - terminal-buddy-home:/home/terminalbuddy
       - type: bind
         source: ${TERMINAL_BUDDY_WORKSPACE:-./workspace}
-        target: /workspace
+        target: ${TERMINAL_BUDDY_CONTAINER_WORKSPACE:-/workspace}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TERMINAL_BUDDY_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
         bind:
           create_host_path: false
     stop_grace_period: 20s

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useAppStore } from '../../../stores/appStore';
@@ -15,6 +15,8 @@ export interface UseDragDropOptions {
 
 /** Tauri 原生拖放 + FileTree 内部拖放两条路径的接收端。 */
 export function useDragDrop(opts: UseDragDropOptions) {
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
   const [dragOver, setDragOver] = useState(false);
   const [internalDragOver, setInternalDragOver] = useState(false);
 
@@ -27,9 +29,11 @@ export function useDragDrop(opts: UseDragDropOptions) {
       const leave = () => setDragOver(false);
       const drop = (event: DragEvent) => {
         event.preventDefault(); setDragOver(false);
-        if (opts.readOnly || !opts.isActiveRef.current) return;
+        if (optsRef.current.readOnly || !optsRef.current.isActiveRef.current) return;
         const files = Array.from(event.dataTransfer?.files ?? []);
-        if (files.length) void uploadFiles(files).then(paths => opts.onDrop(paths.join(' ')))
+        if (files.length) void uploadFiles(files).then(paths => {
+          if (!optsRef.current.readOnly) optsRef.current.onDrop(paths.join(' '));
+        })
           .catch(error => useAppStore.getState().showToast(error instanceof Error ? error.message : '文件上传失败', 'error'));
       };
       element.addEventListener('dragover', over); element.addEventListener('dragleave', leave); element.addEventListener('drop', drop);
@@ -41,15 +45,15 @@ export function useDragDrop(opts: UseDragDropOptions) {
     getCurrentWebview().onDragDropEvent((event) => {
       if (cancelled) return;
       if (event.payload.type === 'enter') {
-        if (opts.isActiveRef.current) setDragOver(true);
+        if (optsRef.current.isActiveRef.current) setDragOver(true);
       } else if (event.payload.type === 'over') {
         // hovering — keep drag-over state
       } else if (event.payload.type === 'drop') {
         setDragOver(false);
-        if (!opts.isActiveRef.current || opts.readOnly) return;
+        if (!optsRef.current.isActiveRef.current || optsRef.current.readOnly) return;
         const paths = event.payload.paths;
         if (paths && paths.length > 0) {
-          opts.onDrop(paths.join(' '));
+          optsRef.current.onDrop(paths.join(' '));
         }
       } else {
         // 'leave' / cancel
@@ -74,15 +78,15 @@ export function useDragDrop(opts: UseDragDropOptions) {
 
     const handleMouseUp = () => {
       const paths = useAppStore.getState().dragPaths;
-      if (!paths || !opts.isActiveRef.current || opts.readOnly) return;
+      if (!paths || !optsRef.current.isActiveRef.current || optsRef.current.readOnly) return;
       setInternalDragOver(false);
-      opts.onDrop(paths.join(' '));
+      optsRef.current.onDrop(paths.join(' '));
       useAppStore.getState().setDragPaths(null);
     };
 
     const handleMouseMove = (e: MouseEvent) => {
       const paths = useAppStore.getState().dragPaths;
-      if (!paths || !opts.isActiveRef.current) return;
+      if (!paths || !optsRef.current.isActiveRef.current) return;
       const rect = el.getBoundingClientRect();
       const inside = e.clientX >= rect.left && e.clientX <= rect.right
                   && e.clientY >= rect.top && e.clientY <= rect.bottom;

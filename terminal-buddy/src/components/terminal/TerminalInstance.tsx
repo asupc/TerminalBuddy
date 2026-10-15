@@ -34,6 +34,8 @@ import {
 import type { WebTerminalResizePayload } from './terminal-helpers';
 import { usePtyResize } from './hooks/usePtyResize';
 import { useDragDrop } from './hooks/useDragDrop';
+import { installBrowserClipboard, isBrowserPasteShortcut } from './browser-clipboard';
+import { uploadFiles } from '../../services/browser/connection';
 
 
 interface TerminalInstanceProps {
@@ -67,6 +69,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
+  // 会话归属可能在终端初始化后才同步；长生命周期监听必须读取当前权限。
+  const readOnlyRef = useRef(!!readOnly);
+  readOnlyRef.current = !!readOnly;
+  useLayoutEffect(() => {
+    if (xtermRef.current) xtermRef.current.options.disableStdin = !!readOnly;
+  }, [readOnly]);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onOutputRef = useRef(onOutput);
   onOutputRef.current = onOutput;
@@ -122,7 +130,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   colorThemeRef.current = colorTheme;
 
   const sendPastedText = useCallback((text: string): boolean => {
-    if (!text) return false;
+    if (readOnlyRef.current || !text) return false;
     if (text.includes('\n') || text.includes('\r')) {
       // 粘贴行尾必须写 CR：ConPTY 会把输入流里的 LF 当成带 Ctrl 修饰的 Enter，
       // 在开启 kitty 键盘协议的 TUI（如 pi）里被编码成 CSI 13;5u（Ctrl+Enter=提交），
@@ -137,6 +145,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
   // 图片粘贴辅助的插入回调：引用文本走粘贴规范（CR + 括号粘贴），发送时补 \r
   const handlePasteImageInsert = useCallback((text: string, submit: boolean) => {
+    if (readOnlyRef.current) return;
     sendPastedText(text);
     if (submit) onOutputRef.current(terminalId, '\r');
     xtermRef.current?.focus();
@@ -421,7 +430,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // 仅跟随应用的浅色终端启用最低对比度增强；黑板/自定义终端配色保持原样
         minimumContrastRatio: initialLightOptimized ? 4.5 : 1,
         allowProposedApi: true,
-        disableStdin: !!readOnly,
+        disableStdin: readOnlyRef.current,
         ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),
         reflowCursorLine: usesVsCodeTerminal,
         screenReaderMode: false,
@@ -465,6 +474,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // 按 F11 没反应」。这里显式放行 F11，让它冒泡到 cycleWindowMode。返回 false
       // 表示 xterm 不要处理该键。
       terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+        // 阻止 xterm 把 Ctrl+V / Cmd+V 编码成终端输入，保留浏览器默认粘贴。
+        if (isBrowserClient() && isBrowserPasteShortcut(e)) return false;
         // F11: 全屏切换；F2: 重命名（TabNav / ConfigNav / TerminalTabBar）
         // 返回 false 让这些键冒泡到 document，不被 xterm 消费
         if (e.type === 'keydown' && (e.key === 'F11' || e.key === 'F2')) return false;
@@ -772,7 +783,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           chunks.push(data.slice(i, i + PASTE_CHUNK_SIZE));
         }
         const sendNext = (idx: number) => {
-          if (disposed || idx >= chunks.length) return;
+          if (disposed || readOnlyRef.current || idx >= chunks.length) return;
           onOutputRef.current(terminalId, chunks[idx]);
           if (idx < chunks.length - 1) {
             setTimeout(() => sendNext(idx + 1), PASTE_CHUNK_DELAY);
@@ -782,6 +793,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       terminal.onData((data) => {
+        if (readOnlyRef.current) return;
         // Track command history on Enter
         if (data === '\r' || data === '\n') {
           handleClaudeTerminalInputActivity(terminalId);
@@ -920,7 +932,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // 补全面板内部的按键（如搜索框）由面板自行处理，避免被终端快捷键逻辑截获
         if ((e.target as HTMLElement | null)?.closest?.('.autocomplete-popup')) return;
         // ReadOnly mode: only allow copy (Ctrl+C) and search (Ctrl+F)
-        if (readOnly) {
+        if (readOnlyRef.current) {
           if (e.key === 'c' && e.ctrlKey && !e.shiftKey) {
             const selection = terminal.getSelection();
             if (selection) {
@@ -939,6 +951,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           e.stopPropagation();
           return;
         }
+        if (isBrowserClient() && isBrowserPasteShortcut(e)) return;
         // 补全面板快捷键：面板开→关、关→开（空输入时显示全部命令）
         const autocompleteHotkey = getHotkey('autocomplete');
         if (autocompleteHotkey && matchesHotkey(e, autocompleteHotkey)) {
@@ -1084,9 +1097,22 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       // Right-click context menu
       const xtermEl = terminal.element!;
+      const browserClient = isBrowserClient();
+      if (browserClient) {
+        cleanupFns.push(installBrowserClipboard(terminal, {
+          canPaste: () => !disposed && !readOnlyRef.current,
+          uploadFiles,
+          insertFiles: paths => sendPastedText(paths.map(path =>
+            /\.(png|jpe?g|gif|bmp|ico|svg|webp|tiff?)$/i.test(path) ? `[图片:${path}]` : path
+          ).join(' ')),
+          onError: error => useAppStore.getState().showToast(
+            error instanceof Error ? error.message : '粘贴文件上传失败', 'error'
+          ),
+        }));
+      }
 
       const shouldAutoPasteOnRightClick = (): boolean => {
-        if (readOnly) return false;
+        if (browserClient || readOnlyRef.current) return false;
         const settings = getAppSettings();
         return settings.rightClickPaste && !terminal.hasSelection();
       };
@@ -1109,7 +1135,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         pasteState.inFlight = true;
 
         void pasteFromClipboard().then((result) => {
-          if (!result) return;
+          if (readOnlyRef.current || !result) return;
           if (result.kind === 'image') {
             onOutputRef.current(terminalId, `[图片:${result.path}]`);
           } else {
@@ -1162,6 +1188,8 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       const handleContextMenu = (e: MouseEvent) => {
+        // 放行到 xterm 的原生菜单处理器，再由浏览器菜单触发 paste。
+        if (browserClient) return;
         e.preventDefault();
         // In readOnly mode, block paste but still allow copy from context menu
         if (shouldAutoPasteOnRightClick()) {
@@ -1372,9 +1400,9 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       if (selection) {
         navigator.clipboard.writeText(selection).catch(() => {});
       }
-    } else if (!readOnly) {
+    } else if (!readOnlyRef.current) {
       void pasteFromClipboard().then((result) => {
-        if (!result) return;
+        if (readOnlyRef.current || !result) return;
         if (result.kind === 'image') {
           onOutputRef.current(terminalId, `[图片:${result.path}]`);
         } else {
@@ -1384,7 +1412,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       });
     }
     setContextMenu({ x: 0, y: 0, anchorX: 0, anchorY: 0, visible: false });
-  }, []);
+  }, [sendPastedText, terminalId]);
 
   // Close context menu on click outside, keydown, or scroll
   useEffect(() => {
@@ -1421,6 +1449,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     isActiveRef,
     readOnly,
     onDrop: (text) => {
+      if (readOnlyRef.current) return;
       onOutputRef.current(terminalId, text);
       xtermRef.current?.focus();
     },

@@ -4,6 +4,7 @@ import { Dialog } from '../shared/Dialog';
 import { serverUsername } from '../../services/browser/connection';
 import { getContainerEnvironment, installContainerClaude, type ContainerEnvironment } from '../../services/browser/containerEnvironment';
 import './ContainerEnvironment.css';
+import { openClaudeProviders } from './ClaudeProviders';
 
 // localStorage 按网页源隔离，再按账号区分；退出、刷新和重新登录均不重复自动展示。
 const shownInMemory = new Set<string>();
@@ -123,6 +124,7 @@ export function ContainerEnvironmentButton() {
         {claude?.status === 'installed' && <p className="container-environment-hint">在网页终端输入 <code>claude</code> 即可启动。</p>}
         {(error || claude?.message) && <p className="container-environment-error" role="alert">{error || claude?.message}</p>}
         <div className="container-environment-actions">
+          <button type="button" className="container-environment-action" onClick={openClaudeProviders}>模型配置</button>
           <button type="button" className="container-environment-action" disabled={checking || installing} onClick={() => { void refresh(); }}>
             <RefreshCw size={14} className={checking ? 'container-environment-spin' : undefined} aria-hidden="true" />
             {checking ? '检测中…' : '重新检测'}

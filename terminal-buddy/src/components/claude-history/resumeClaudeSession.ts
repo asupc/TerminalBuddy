@@ -1,5 +1,6 @@
 import { startBlankTerminal, startTerminal, updateProfileLastUsed } from '../../services/tauri';
 import { launchTerminalSession } from '../../services/sessionRestore';
+import { clientTerminalOwner } from '../../services/platform';
 import { effectiveProfilePath, normalizeProjectPath, projectForDirectory } from '../../utils/projectPath';
 import { isClaudeLaunchProfile } from '../../utils/claudeLaunch';
 import { PRESET_THEMES, type Profile } from '../../types';
@@ -108,7 +109,7 @@ export async function resumeClaudeSession(
         tabColor: profile.tabColor || null,
         groupId: 'default',
         groupName: project?.name,
-        owner: 'pc',
+        owner: clientTerminalOwner(),
         extraParams,
         extraParamMode: 'append',
         extraParamTag: preset?.name,
@@ -147,7 +148,7 @@ export async function resumeClaudeSession(
       tabColor: null,
       groupId: 'default',
       groupName: project?.name,
-      owner: 'pc',
+      owner: clientTerminalOwner(),
       extraParamTag: preset?.name,
       extraParamTagColor: preset?.tagColor ?? null,
       starting: true,

@@ -15,7 +15,7 @@ import './components/browser/WebEntry.css';
 document.addEventListener('contextmenu', (e) => {
   const target = e.target;
   if (target instanceof HTMLElement
-    && (target.closest('input, textarea') || target.isContentEditable)) return;
+    && (target.closest('input, textarea, [data-native-context-menu]') || target.isContentEditable)) return;
   e.preventDefault();
 });
 

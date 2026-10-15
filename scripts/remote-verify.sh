@@ -42,6 +42,20 @@ echo
 echo "==== 数据卷 ===="
 docker inspect -f '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' "${CONTAINER}" 2>/dev/null
 
+echo
+echo "==== 容器内访问宿主机 Docker（应用用户） ===="
+docker exec --user terminalbuddy "${CONTAINER}" docker version || STATUS=1
+docker exec --user terminalbuddy "${CONTAINER}" docker compose version || STATUS=1
+docker exec --user terminalbuddy "${CONTAINER}" docker buildx version || STATUS=1
+HOST_DOCKER_ID="$(docker info --format '{{.ID}}' 2>/dev/null)"
+CONTAINER_DOCKER_ID="$(docker exec --user terminalbuddy "${CONTAINER}" docker info --format '{{.ID}}' 2>/dev/null)"
+if [ -n "$HOST_DOCKER_ID" ] && [ "$HOST_DOCKER_ID" = "$CONTAINER_DOCKER_ID" ]; then
+  echo "[OK] 容器与宿主机连接同一个 Docker Engine"
+else
+  echo "[FAIL] 容器未能连接宿主机 Docker Engine"
+  STATUS=1
+fi
+
 if [ "${STATUS}" = "0" ]; then
   echo
   echo "[OK] 校验全部通过"

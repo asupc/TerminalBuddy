@@ -1,6 +1,6 @@
 use crate::services::BotSettingsService;
 use crate::services::SettingsService;
-use crate::web::auth::generate_jwt_secret;
+use crate::web::auth::load_or_create_jwt_secret;
 use std::sync::Mutex;
 use crate::runtime::AppHandle;
 use tokio::sync::watch;
@@ -15,9 +15,11 @@ fn should_run_http_server() -> bool {
         || BotSettingsService::requires_callback_server()
 }
 
-fn start_http_server(app: AppHandle) {
+fn start_http_server(app: AppHandle) -> Result<(), String> {
     let settings = SettingsService::get_settings();
-    let jwt_secret = generate_jwt_secret();
+    // 密钥落盘持久化：重启应用 / 重启 HTTP 服务后，已登录设备的 token 依然有效。
+    let jwt_secret = load_or_create_jwt_secret()
+        .map_err(|error| format!("JWT 密钥初始化失败：{}", error))?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     *SHUTDOWN_TX.lock().unwrap() = Some(shutdown_tx);
     *JWT_SECRET.lock().unwrap() = Some(jwt_secret.clone());
@@ -27,13 +29,14 @@ fn start_http_server(app: AppHandle) {
         app,
         shutdown_rx,
     ));
+    Ok(())
 }
 
 pub fn sync_http_server_for_bot(app: AppHandle) -> Result<(), String> {
     let running = SHUTDOWN_TX.lock().unwrap().is_some();
     let should_run = should_run_http_server();
     if should_run && !running {
-        start_http_server(app);
+        start_http_server(app)?;
     } else if !should_run && running {
         if let Some(tx) = SHUTDOWN_TX.lock().unwrap().take() {
             let _ = tx.send(true);
@@ -55,7 +58,7 @@ pub async fn restart_web_server(app: AppHandle) -> Result<String, String> {
     if !should_run_http_server() {
         return Ok("HTTP 服务已停止".into());
     }
-    start_http_server(app);
+    start_http_server(app)?;
     Ok(format!("HTTP 服务已启动，端口: {}", settings.web_api_port))
 }
 
