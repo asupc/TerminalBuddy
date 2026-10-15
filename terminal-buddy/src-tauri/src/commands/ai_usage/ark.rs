@@ -2,7 +2,7 @@
 
 use super::{format_timestamp, get_http_client, send_usage_request, Tier, TierUsageResult};
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn fetch_ark_usage(cookie: String) -> TierUsageResult {
     if cookie.trim().is_empty() {
         return TierUsageResult {

@@ -32,6 +32,8 @@ import { UpdatePopover, type UpdateCheckStatus } from '../settings/UpdatePopover
 import { APP_VERSION } from '../../version';
 import appIcon from '../../assets/app-icon.png';
 import './TitleBar.css';
+import { isBrowserClient, isDockerClient } from '../../services/platform';
+import { ContainerEnvironmentButton } from '../browser/ContainerEnvironment';
 import {
   APP_OPACITY_PREVIEW_EVENT,
   applyTheme,
@@ -336,6 +338,7 @@ export const TitleBar: FC<TitleBarProps> = ({
       </div>
       <div className="titlebar-right">
         <div className="titlebar-action-group">
+          {isDockerClient() && <ContainerEnvironmentButton />}
           <div
             className="ai-usage-trigger"
             onMouseEnter={handleRefreshEnter}
@@ -536,7 +539,8 @@ export const TitleBar: FC<TitleBarProps> = ({
             type="button"
             className="titlebar-btn titlebar-window-btn"
             onClick={() => windowMinimize()}
-            title="最小化"
+            disabled={isBrowserClient()}
+            title={isBrowserClient() ? '请使用浏览器窗口的最小化按钮' : '最小化'}
             aria-label="最小化窗口"
           >
             <Minus />
@@ -545,7 +549,7 @@ export const TitleBar: FC<TitleBarProps> = ({
             type="button"
             className="titlebar-btn titlebar-window-btn"
             onClick={() => windowToggleMaximize()}
-            title="最大化"
+            title={isBrowserClient() ? '切换网页全屏' : '最大化'}
             aria-label="最大化窗口"
           >
             <Square />
@@ -554,7 +558,7 @@ export const TitleBar: FC<TitleBarProps> = ({
             type="button"
             className="titlebar-btn titlebar-window-btn titlebar-close-btn"
             onClick={() => windowClose()}
-            title="关闭"
+            title={isBrowserClient() ? '退出登录，保留服务器会话' : '关闭'}
             aria-label="关闭窗口"
           >
             <X />

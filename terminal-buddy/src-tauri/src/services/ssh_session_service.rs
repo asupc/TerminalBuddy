@@ -250,7 +250,7 @@ impl SshSessionService {
             .ok()
             .and_then(|mut sessions| sessions.remove(terminal_id));
         if let Some(session) = session {
-            let _cleanup_task = tauri::async_runtime::spawn_blocking(move || drop(session));
+            let _cleanup_task = crate::runtime::async_runtime::spawn_blocking(move || drop(session));
         }
     }
 }

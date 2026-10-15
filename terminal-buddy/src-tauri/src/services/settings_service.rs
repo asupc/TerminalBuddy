@@ -9,6 +9,9 @@ pub struct SettingsService;
 
 impl SettingsService {
     pub fn get_settings_path() -> PathBuf {
+        if let Some(directory) = std::env::var_os("TERMINAL_BUDDY_DATA_DIR") {
+            return PathBuf::from(directory).join("settings.json");
+        }
         let base = dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("TerminalBuddy");
@@ -75,12 +78,33 @@ impl SettingsService {
         let path = Self::get_settings_path();
         let content =
             serde_json::to_string_pretty(settings).map_err(|e| format!("序列化设置失败: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("写入设置文件失败: {}", e))?;
+        super::atomic_file::atomic_write(&path, content.as_bytes())
+            .map_err(|e| format!("写入设置文件失败: {}", e))?;
         // Update memory cache
         if let Ok(mut cache) = CACHED_SETTINGS.write() {
             *cache = Some(settings.clone());
         }
         Ok(())
+    }
+
+    /// 仅允许首次初始化；持有设置锁直到原子落盘，避免并发请求覆盖管理员。
+    #[cfg(not(feature = "desktop"))]
+    pub fn initialize_web_admin(password_hash: String) -> Result<Option<String>, String> {
+        let mut cache = CACHED_SETTINGS.write().map_err(|_| "设置锁不可用".to_string())?;
+        let mut settings = cache.clone().unwrap_or_else(Self::read_settings_from_disk);
+        if !settings.web_api_password_hash.is_empty() {
+            return Ok(None);
+        }
+        if !settings.web_api_enabled {
+            return Err("Web API 未启用".to_string());
+        }
+        settings.web_api_password_hash = password_hash;
+        let content = serde_json::to_vec_pretty(&settings).map_err(|e| format!("序列化设置失败: {}", e))?;
+        super::atomic_file::atomic_write(&Self::get_settings_path(), &content)
+            .map_err(|e| format!("保存管理员失败: {}", e))?;
+        let username = settings.web_api_username.clone();
+        *cache = Some(settings);
+        Ok(Some(username))
     }
 
     /// Invalidate cache when data_path changes (causes different base directory)

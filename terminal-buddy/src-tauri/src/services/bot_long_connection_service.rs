@@ -21,10 +21,10 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use crate::runtime::{AppHandle, Manager};
 
-fn tasks() -> &'static Mutex<Vec<tauri::async_runtime::JoinHandle<()>>> {
-    static TASKS: OnceLock<Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>> = OnceLock::new();
+fn tasks() -> &'static Mutex<Vec<crate::runtime::async_runtime::JoinHandle<()>>> {
+    static TASKS: OnceLock<Mutex<Vec<crate::runtime::async_runtime::JoinHandle<()>>>> = OnceLock::new();
     TASKS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
@@ -490,12 +490,12 @@ pub fn sync_bot_long_connections(app: AppHandle) -> Result<(), String> {
     let mut running = tasks().lock().unwrap_or_else(|value| value.into_inner());
     for channels in feishu_grouped.into_values() {
         let app = app.clone();
-        let task = tauri::async_runtime::spawn(run_feishu_connection(app, channels));
+        let task = crate::runtime::async_runtime::spawn(run_feishu_connection(app, channels));
         running.push(task);
     }
     for channels in weixin_grouped.into_values() {
         let app = app.clone();
-        let task = tauri::async_runtime::spawn(run_weixin_connection(app, channels));
+        let task = crate::runtime::async_runtime::spawn(run_weixin_connection(app, channels));
         running.push(task);
     }
     Ok(())

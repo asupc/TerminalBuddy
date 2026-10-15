@@ -193,7 +193,7 @@ impl ProfileService {
 
         // Encrypt sensitive fields before writing to disk
         let mut to_save = profile.clone();
-        to_save.encrypt_sensitive_fields();
+        to_save.encrypt_sensitive_fields()?;
 
         let path = Self::get_profiles_dir()?.join(format!("{}.json", to_save.id));
         let content = serde_json::to_string_pretty(&to_save)
@@ -244,7 +244,7 @@ impl ProfileService {
             profile.id = Uuid::new_v4().to_string();
             profile.created_at = chrono::Utc::now().to_rfc3339();
             profile.last_used_at = None;
-            profile.encrypt_sensitive_fields();
+            profile.encrypt_sensitive_fields()?;
             let save_path = Self::get_profiles_dir()?.join(format!("{}.json", profile.id));
             let json = serde_json::to_string_pretty(&profile)
                 .map_err(|e| format!("Failed to serialize: {}", e))?;

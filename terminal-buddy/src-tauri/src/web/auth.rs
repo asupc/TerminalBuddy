@@ -77,3 +77,15 @@ pub fn generate_jwt_secret() -> String {
     let bytes: [u8; 32] = rand::thread_rng().gen();
     hex::encode(bytes)
 }
+
+#[cfg(not(feature = "desktop"))]
+pub fn validate_admin_password(password: &str) -> Result<(), String> {
+    if password.trim().is_empty() || password.chars().count() < 8 {
+        return Err("管理员密码至少需要 8 个字符".to_string());
+    }
+    // bcrypt 只处理前 72 字节，拒绝过长输入，避免不同密码被当作同一个密码。
+    if password.len() > 72 {
+        return Err("管理员密码过长，请缩短后重试".to_string());
+    }
+    Ok(())
+}

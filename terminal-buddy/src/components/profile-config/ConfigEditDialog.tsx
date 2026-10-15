@@ -1,3 +1,4 @@
+import { defaultShellType, serverUsesWindowsPaths, isBrowserClient } from '../../services/platform';
 import { FC, useState, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useForm } from 'react-hook-form';
@@ -22,7 +23,7 @@ interface ConfigEditDialogProps {
 interface FormData {
   name: string;
   group: string;
-  terminalType: 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
+  terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
   startupPath: string;
   colorTheme: string;
   tabColor: string;
@@ -39,7 +40,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
     defaultValues: {
       name: profile?.name || '',
       group: defaultGroup || profile?.group || projects[0]?.name || '',
-      terminalType: profile?.terminalType || 'powershell',
+      terminalType: profile?.terminalType || defaultShellType(),
       startupPath: profile?.startupPath || '',
       colorTheme: profile?.colorTheme || 'dark-default',
       tabColor: profile?.tabColor || '',
@@ -269,13 +270,15 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
           <div className="form-group">
             <label>终端类型</label>
             <select {...register('terminalType')}>
-              <option value="powershell">PowerShell</option>
+              {serverUsesWindowsPaths() ? <option value="powershell">PowerShell</option> : <>
+                <option value="bash">Bash</option><option value="sh">Shell</option><option value="zsh">Zsh</option>
+              </>}
               <option value="pwsh">PowerShell 7</option>
-              <option value="cmd">CMD</option>
+              {serverUsesWindowsPaths() && <option value="cmd">CMD</option>}
               <option value="ssh">SSH</option>
               <option value="docker">Docker</option>
               <option value="k8s">Kubernetes</option>
-              <option value="mstsc">远程桌面 (RDP)</option>
+              {!isBrowserClient() && <option value="mstsc">远程桌面 (RDP)</option>}
             </select>
           </div>
 
@@ -300,7 +303,7 @@ export const ConfigEditDialog: FC<ConfigEditDialogProps> = ({
             </div>
           </div>
 
-          {['powershell', 'pwsh', 'cmd'].includes(watch('terminalType')) && (
+          {['powershell', 'pwsh', 'cmd', 'bash', 'sh', 'zsh'].includes(watch('terminalType')) && (
           <>
           <div className="form-group">
             <label>启动命令</label>

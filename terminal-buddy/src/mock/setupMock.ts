@@ -14,7 +14,7 @@ import {
 import { useAppStore } from '../stores/appStore';
 
 // 如果已经在真实 Tauri 环境中，不执行 mock
-if (typeof window !== 'undefined' && !(window as any).__TAURI_INTERNALS__) {
+if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && !(window as any).__TAURI_INTERNALS__) {
   console.log('⚡ [TerminalBuddy Mock] 正在安装浏览器端 1:1 Mock 运行时...');
 
   // 初始化 localStorage 配置，默认启用高颜值的 VSCode 侧边栏模式 (sidebar)

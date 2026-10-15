@@ -6,14 +6,14 @@ use super::claude_task;
 use crate::services::claude_history_service::{
     self, ClaudeHistoryScanResult, ClaudeReplayPage, ClaudeSearchHit, ClaudeSessionItem,
 };
-use tauri::AppHandle;
+use crate::runtime::AppHandle;
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_history_rescan(app: AppHandle) -> Result<ClaudeHistoryScanResult, String> {
     claude_task(move || claude_history_service::scan_and_index(&app)).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_history_list(
     include_archived: bool,
     project_dir: Option<String>,
@@ -22,7 +22,7 @@ pub async fn claude_history_list(
         .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_history_search(
     query: String,
     project_dir: Option<String>,
@@ -30,7 +30,7 @@ pub async fn claude_history_search(
     claude_task(move || claude_history_service::search(&query, project_dir.as_deref())).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_history_get_replay(
     session_id: String,
     offset: usize,
@@ -39,12 +39,12 @@ pub async fn claude_history_get_replay(
     claude_task(move || claude_history_service::get_replay(&session_id, offset, limit)).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_history_rename(session_id: String, title: String) -> Result<(), String> {
     claude_task(move || claude_history_service::rename_session(&session_id, &title)).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_history_set_flags(
     session_id: String,
     starred: Option<bool>,
@@ -53,17 +53,17 @@ pub async fn claude_history_set_flags(
     claude_task(move || claude_history_service::set_flags(&session_id, starred, archived)).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_history_delete(session_id: String) -> Result<(), String> {
     claude_task(move || claude_history_service::delete_session(&session_id)).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_history_delete_many(session_ids: Vec<String>) -> Result<(), String> {
     claude_task(move || claude_history_service::delete_sessions(&session_ids)).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_history_export(
     session_id: String,
     format: String,

@@ -104,5 +104,47 @@ pub async fn status() -> Json<ApiStatusResponse> {
     Json(ApiStatusResponse {
         enabled: settings.web_api_enabled,
         port: settings.web_api_port,
+        setup_required: !cfg!(feature = "desktop") && settings.web_api_password_hash.is_empty(),
+        username: settings.web_api_username,
     })
+}
+
+#[cfg(not(feature = "desktop"))]
+pub async fn setup_admin(
+    State(state): State<crate::web::server::AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<crate::models::web_api::SetupAdminRequest>,
+) -> Result<Json<LoginResponse>, ApiError> {
+    let settings = SettingsService::get_settings();
+    if !settings.web_api_password_hash.is_empty() {
+        return Err(ApiError::Conflict("管理员已创建，请使用已设置的密码登录".to_string()));
+    }
+    if !settings.web_api_enabled {
+        return Err(ApiError::BadRequest("Web API 未启用".to_string()));
+    }
+    if let LoginAttempt::Reject { retry_after } = state.login_throttle.check(peer.ip()) {
+        return Err(too_many_login_attempts(retry_after));
+    }
+    crate::web::auth::validate_admin_password(&req.password).map_err(ApiError::BadRequest)?;
+    if req.password != req.confirm_password {
+        return Err(ApiError::BadRequest("两次输入的密码不一致".to_string()));
+    }
+    let Some(verify_slot) = acquire_password_verify_slot().await else {
+        return Err(ApiError::TooManyRequests {
+            message: "服务器正忙，请稍后重试".to_string(),
+            retry_after_secs: PASSWORD_VERIFY_RETRY_AFTER_SECS,
+        });
+    };
+    let username = tokio::task::spawn_blocking(move || {
+        // 请求超时后也保留槽位，直到阻塞任务真正结束。
+        let _slot = verify_slot;
+        let hash = bcrypt::hash(req.password, bcrypt::DEFAULT_COST).map_err(|e| e.to_string())?;
+        SettingsService::initialize_web_admin(hash)
+    })
+    .await.map_err(|e| ApiError::Internal(format!("管理员初始化任务失败: {}", e)))?
+    .map_err(ApiError::Internal)?
+    .ok_or_else(|| ApiError::Conflict("管理员已创建，请使用已设置的密码登录".to_string()))?;
+    state.login_throttle.record_success(peer.ip());
+    let token = generate_jwt(&username, &state.jwt_secret).map_err(ApiError::Internal)?;
+    Ok(Json(LoginResponse { token, username }))
 }

@@ -12,7 +12,7 @@ use crate::services::{
 use chrono::{Duration, Utc};
 use serde_json::json;
 use std::collections::HashSet;
-use tauri::{AppHandle, Emitter};
+use crate::runtime::{AppHandle, Emitter};
 
 const BOT_TEST_TERMINAL_ID: &str = "__terminal_buddy_bot_decision_test__";
 
@@ -38,17 +38,17 @@ fn is_mobile_bot_notification(kind: &str, decision_id: Option<&str>) -> bool {
     kind == "completed" || decision_id.is_some()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_bot_settings() -> BotSettings {
     BotSettingsService::get_public()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_bot_long_connection_status() -> Vec<crate::models::BotLongConnectionStatus> {
     get_bot_long_connection_statuses()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_bot_callback_base_url() -> String {
     let settings = crate::services::SettingsService::get_settings();
     let host = (|| {
@@ -63,7 +63,7 @@ pub fn get_bot_callback_base_url() -> String {
     format!("http://{}:{}", host, settings.web_api_port)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn save_bot_settings(
     app: AppHandle,
     settings: BotSettings,
@@ -118,7 +118,7 @@ fn build_decision_binding(
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn send_bot_notification(
     request: BotNotificationRequest,
 ) -> Result<Vec<BotDeliveryReport>, String> {
@@ -212,7 +212,7 @@ async fn dispatch_connection_test(channel: &BotChannelConfig) -> Result<BotDeliv
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn test_bot_channel(channel_id: String) -> Result<BotDeliveryReport, String> {
     let settings = BotSettingsService::get_runtime()?;
     let channel = settings
@@ -223,12 +223,12 @@ pub async fn test_bot_channel(channel_id: String) -> Result<BotDeliveryReport, S
     dispatch_connection_test(channel).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn verify_bot_channel(channel: BotChannelConfig) -> Result<BotDeliveryReport, String> {
     dispatch_connection_test(&channel).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn test_bot_decision_channel(channel_id: String) -> Result<BotDeliveryReport, String> {
     let settings = BotSettingsService::get_runtime()?;
     if !settings.enabled {
@@ -324,7 +324,7 @@ pub async fn test_bot_decision_channel(channel_id: String) -> Result<BotDelivery
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn cancel_bot_decision(decision_id: String) -> Result<(), String> {
     BotBindingService::cancel(&decision_id)
 }
@@ -757,12 +757,12 @@ pub fn process_bot_reply(
     Ok(feedback)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn bot_scan_begin(platform: String) -> Result<ScanBeginResult, String> {
     begin_scan(&platform).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn bot_scan_poll(begin: ScanBeginResult) -> Result<ScanPollResult, String> {
     poll_scan(&begin).await
 }

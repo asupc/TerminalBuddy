@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use tauri::{AppHandle, Emitter};
+use crate::runtime::{AppHandle, Emitter};
 
 use crate::models::profile::Profile;
 use crate::models::ssh_types::{TransferError, TransferProgress};

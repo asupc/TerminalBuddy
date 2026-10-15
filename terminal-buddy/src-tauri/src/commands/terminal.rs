@@ -11,10 +11,12 @@ use crate::models::{
 };
 use crate::services::ssh_session_service::SshSessionService;
 use crate::services::ClaudeHookService;
+#[cfg(feature = "desktop")]
 use crate::services::HandoffPty;
 use crate::services::PathService;
 use crate::services::ProfileService;
 use crate::services::SettingsService;
+#[cfg(feature = "desktop")]
 use crate::services::VsCodeTerminalProcess;
 use crate::services::WebServiceState;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -26,16 +28,39 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{command, AppHandle, Emitter, Manager, State};
+use crate::runtime::{AppHandle, Emitter, Manager, State};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
 const TERMINAL_DATA_IDLE_BUFFER_INTERVAL: Duration = Duration::from_millis(25);
 const TERMINAL_DATA_MAX_BUFFER_INTERVAL: Duration = Duration::from_millis(50);
+#[cfg(feature = "desktop")]
 const VSCODE_TERMINAL_DATA_BUFFER_INTERVAL: Duration = Duration::from_millis(5);
 const TERMINAL_DATA_CHANNEL_CAPACITY: usize = 32;
 const TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS: usize = 1000;
 const TERMINAL_OUTPUT_BUFFER_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+pub fn default_terminal_type() -> &'static str {
+    if cfg!(windows) { "powershell" } else { "bash" }
+}
+
+fn base_shell() -> String {
+    if cfg!(windows) { "cmd.exe".to_string() } else {
+        std::env::var("TERMINAL_BUDDY_SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+    }
+}
+
+fn default_shell_command() -> &'static str {
+    if cfg!(windows) { "powershell.exe" } else { "bash" }
+}
+
+fn local_shell_command(shell: &str) -> String {
+    if cfg!(windows) { shell.to_string() } else { format!("exec {}", shell) }
+}
+
+fn target_shell() -> &'static str {
+    if cfg!(windows) { "cmd.exe" } else { "sh" }
+}
 
 struct TerminalOutputBuffer {
     chunks: VecDeque<Arc<str>>,
@@ -91,6 +116,8 @@ impl TerminalOutputBuffer {
 
 /// 定位 PowerShell 7.x 的 pwsh.exe：先查标准安装路径，再在 PATH 中查找
 fn resolve_pwsh_exe() -> Result<String, String> {
+    #[cfg(not(windows))]
+    { return Ok("pwsh".to_string()); }
     let default = r"C:\Program Files\PowerShell\7\pwsh.exe";
     if std::path::Path::new(default).is_file() {
         return Ok(default.to_string());
@@ -142,8 +169,10 @@ enum TerminalBackend {
         master: Box<dyn MasterPty + Send>,
         writer: Option<Box<dyn Write + Send>>,
     },
+    #[cfg(feature = "desktop")]
     VsCode(VsCodeTerminalProcess),
     /// 默认终端 handoff：管道/句柄由 COM 移交（`EstablishPtyHandoff`），无自有 spawn。
+    #[cfg(feature = "desktop")]
     Handoff(HandoffPty),
 }
 
@@ -159,7 +188,9 @@ impl TerminalBackend {
                     .and_then(|_| writer.flush())
                     .map_err(|error| format!("Write failed: {}", error))
             }
+            #[cfg(feature = "desktop")]
             Self::VsCode(process) => process.write_input(data),
+            #[cfg(feature = "desktop")]
             Self::Handoff(process) => process.write_input(data),
         }
     }
@@ -174,7 +205,9 @@ impl TerminalBackend {
                     pixel_height: 0,
                 })
                 .map_err(|error| format!("Resize failed: {}", error)),
+            #[cfg(feature = "desktop")]
             Self::VsCode(process) => process.resize(rows, cols),
+            #[cfg(feature = "desktop")]
             Self::Handoff(process) => process.resize(rows, cols),
         }
     }
@@ -192,7 +225,9 @@ impl TerminalBackend {
                 child.kill().ok();
                 child.wait().ok().map(|status| status.exit_code())
             }
+            #[cfg(feature = "desktop")]
             Self::VsCode(process) => process.close(),
+            #[cfg(feature = "desktop")]
             Self::Handoff(process) => process.close(),
         }
     }
@@ -204,9 +239,11 @@ impl TerminalBackend {
                 *writer = None;
                 child.kill().ok();
             }
+            #[cfg(feature = "desktop")]
             Self::VsCode(process) => {
                 process.kill().ok();
             }
+            #[cfg(feature = "desktop")]
             Self::Handoff(process) => process.kill_without_wait(),
         }
     }
@@ -214,15 +251,19 @@ impl TerminalBackend {
     fn process_id(&self) -> Option<u32> {
         match self {
             Self::Default { child, .. } => child.process_id(),
+            #[cfg(feature = "desktop")]
             Self::VsCode(process) => process.process_id(),
+            #[cfg(feature = "desktop")]
             Self::Handoff(process) => process.process_id(),
         }
     }
 
-    fn acknowledge_output(&mut self, char_count: u32) -> Result<(), String> {
+    fn acknowledge_output(&mut self, _char_count: u32) -> Result<(), String> {
         match self {
             Self::Default { .. } => Ok(()),
-            Self::VsCode(process) => process.acknowledge_output(char_count),
+            #[cfg(feature = "desktop")]
+            Self::VsCode(process) => process.acknowledge_output(_char_count),
+            #[cfg(feature = "desktop")]
             Self::Handoff(process) => process.acknowledge_output(),
         }
     }
@@ -230,7 +271,9 @@ impl TerminalBackend {
     fn loading_mode(&self) -> &'static str {
         match self {
             Self::Default { .. } => "default",
+            #[cfg(feature = "desktop")]
             Self::VsCode(_) => "vsCode",
+            #[cfg(feature = "desktop")]
             Self::Handoff(_) => "default",
         }
     }
@@ -239,6 +282,7 @@ impl TerminalBackend {
 #[derive(Clone, Copy)]
 enum TerminalOutputBufferMode {
     Default,
+    #[cfg(feature = "desktop")]
     VsCode,
 }
 
@@ -277,8 +321,8 @@ fn format_exit_code(code: Option<u32>) -> String {
 }
 
 fn spawn_terminal_backend(
-    app: &AppHandle,
-    mode: &TerminalLoadingMode,
+    _app: &AppHandle,
+    _mode: &TerminalLoadingMode,
     rows: u16,
     cols: u16,
     startup_path: Option<&str>,
@@ -299,9 +343,10 @@ fn spawn_terminal_backend(
             ));
         }
     }
-    if *mode == TerminalLoadingMode::VsCode {
+    #[cfg(feature = "desktop")]
+    if *_mode == TerminalLoadingMode::VsCode {
         let (process, reader) =
-            VsCodeTerminalProcess::spawn(app, rows, cols, startup_path, env_vars)?;
+            VsCodeTerminalProcess::spawn(_app, rows, cols, startup_path, env_vars)?;
         return Ok((
             TerminalBackend::VsCode(process),
             reader,
@@ -318,7 +363,7 @@ fn spawn_terminal_backend(
             pixel_height: 0,
         })
         .map_err(|error| format!("openpty FAILED: {}", error))?;
-    let mut command = CommandBuilder::new("cmd.exe");
+    let mut command = CommandBuilder::new(base_shell());
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     if let Some(path) = startup_path {
@@ -386,6 +431,7 @@ fn spawn_output_forwarder(
                     batch_started + TERMINAL_DATA_MAX_BUFFER_INTERVAL,
                     true,
                 ),
+                #[cfg(feature = "desktop")]
                 TerminalOutputBufferMode::VsCode => (
                     batch_started + VSCODE_TERMINAL_DATA_BUFFER_INTERVAL,
                     batch_started + VSCODE_TERMINAL_DATA_BUFFER_INTERVAL,
@@ -431,13 +477,15 @@ fn spawn_output_forwarder(
             if !output.is_empty() {
                 let desktop_attached = {
                     let mut buffer = output_buffer.lock().unwrap_or_else(|e| e.into_inner());
-                    buffer.push(output.clone())
+                    let attached = buffer.push(output.clone());
+                    // 与 Web 初始订阅共用缓冲锁，历史快照和实时流不会重叠。
+                    let web_state = app.state::<crate::services::WebServiceState>();
+                    web_state.broadcast(&terminal_id, &output);
+                    attached
                 };
                 if desktop_attached {
                     let _ = app.emit(&format!("terminal_output_{}", terminal_id), output.clone());
                 }
-                let web_state = app.state::<crate::services::WebServiceState>();
-                web_state.broadcast(&terminal_id, &output);
             }
 
             if disconnected {
@@ -504,7 +552,7 @@ fn release_terminal_resources(
         return;
     };
     let terminal_id = terminal_id.to_string();
-    let _cleanup_task = tauri::async_runtime::spawn_blocking(move || {
+    let _cleanup_task = crate::runtime::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
         let exit_code = backend.close();
         log_debug(&format!(
@@ -616,7 +664,7 @@ impl Drop for TerminalCreation {
         if !self.hook_registered {
             // hook token 还没注册时不要调用 unregister，避免误清同 id 的其他状态。
             if let Some(mut backend) = backend {
-                let _ = tauri::async_runtime::spawn_blocking(move || backend.close());
+                let _ = crate::runtime::async_runtime::spawn_blocking(move || backend.close());
             }
             return;
         }
@@ -758,15 +806,16 @@ fn build_init_commands(
     profile: Option<&Profile>,
 ) -> Result<Vec<String>, String> {
     let commands: Vec<String> = match terminal_type {
-        "cmd" => startup_commands,
+        "cmd" if cfg!(windows) => startup_commands,
+        "bash" | "sh" | "zsh" => { let mut commands = vec![local_shell_command(terminal_type)]; commands.extend(startup_commands); commands },
         "powershell" => {
-            let mut cmds = vec!["powershell.exe".to_string()];
+            let mut cmds = vec![local_shell_command(default_shell_command())];
             cmds.extend(startup_commands);
             cmds
         }
         "pwsh" => {
             let pwsh = resolve_pwsh_exe()?;
-            let mut cmds = vec![pwsh];
+            let mut cmds = vec![local_shell_command(&pwsh)];
             cmds.extend(startup_commands);
             cmds
         }
@@ -812,8 +861,8 @@ fn build_init_commands(
                 .ok_or("Docker 连接未填写容器名或容器 ID，请在连接配置中补全后重试。")?;
             validate_docker_container(container)?;
             vec![format!(
-                "docker exec -it {} cmd.exe",
-                quote_cmd_argument("Docker 容器", container)?
+                "docker exec -it {} {}",
+                quote_cmd_argument("Docker 容器", container)?, target_shell()
             )]
         }
         "k8s" => {
@@ -840,11 +889,11 @@ fn build_init_commands(
                     quote_cmd_argument("Kubernetes 容器", container)?
                 ));
             }
-            cmd.push_str(" -- cmd.exe");
+            cmd.push_str(&format!(" -- {}", target_shell()));
             vec![cmd]
         }
         _ => {
-            let mut cmds = vec!["powershell.exe".to_string()];
+            let mut cmds = vec![local_shell_command(default_shell_command())];
             cmds.extend(startup_commands);
             cmds
         }
@@ -1170,7 +1219,8 @@ impl TerminalService {
             .unwrap_or_default();
         let terminal_type = profile
             .as_ref()
-            .map_or("powershell", |p| p.terminal_type.as_str());
+            .map_or(default_terminal_type(), |p| p.terminal_type.as_str());
+        let terminal_type = if !cfg!(windows) && matches!(terminal_type, "powershell" | "cmd") { "bash" } else { terminal_type };
         let profile_startup_path = profile.as_ref().and_then(ProfileService::effective_startup_path);
         let startup_path_override = startup_path_override
             .map(str::trim)
@@ -1370,6 +1420,16 @@ impl TerminalService {
         Ok(buffer.collect())
     }
 
+    pub fn subscribe_web_output(
+        &self, id: &str, web: &WebServiceState, limit: usize,
+    ) -> Result<Option<(String, tokio::sync::mpsc::UnboundedReceiver<crate::services::web_service::OutputData>, String)>, TerminalAccessError> {
+        self.authorize(id, TerminalActor::Web, TerminalAction::View)?;
+        let instances = self.lock_instances();
+        let instance = instances.get(id).ok_or(TerminalAccessError::NotFound)?;
+        let buffer = instance.output_buffer.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(web.subscribe_within_limit(id, limit).map(|(subscription, receiver)| (subscription, receiver, buffer.collect())))
+    }
+
     /// 关闭终端的唯一入口（含授权）。成功后由 `teardown_terminal` 释放资源，
     /// 并对每个终端恰好发送一次 `terminal-closed` 与 session change。
     ///
@@ -1447,10 +1507,13 @@ impl TerminalService {
         // Blank terminals only support cmd and powershell;
         // ssh/docker/k8s require connection parameters from a profile
         let effective_type = match terminal_type {
-            "cmd" => "cmd",
+            "bash" => "bash",
+            "sh" => "sh",
+            "zsh" => "zsh",
+            "cmd" if cfg!(windows) => "cmd",
             "powershell" => "powershell",
             "pwsh" => "pwsh",
-            _ => "powershell", // fallback for ssh/docker/k8s without profile
+            _ => default_terminal_type(),
         };
         let display_name = display_name
             .filter(|name| !name.trim().is_empty())
@@ -1467,6 +1530,7 @@ impl TerminalService {
         // 因此必须在进入创建事务之前完成，避免回滚已 spawn 的 PTY。
         let mut init_commands = match effective_type {
             "cmd" => Vec::new(),
+            "bash" | "sh" | "zsh" => vec![local_shell_command(effective_type)],
             "pwsh" => vec![resolve_pwsh_exe().map_err(|error| {
                 log_debug(&format!(
                     "[create-blank] FAILED, id={}, type={}, stage=resolve-pwsh, error={}",
@@ -1474,7 +1538,7 @@ impl TerminalService {
                 ));
                 error
             })?],
-            _ => vec!["powershell.exe".to_string()],
+            _ => vec![local_shell_command(default_shell_command())],
         };
         // 额外命令与 shell 启动命令走同一批次延迟写入：单独 writeToTerminal 会抢在
         // powershell.exe 之前落到 cmd 基座上，等 TUI 接管后残余文本就打进输入框了。
@@ -1518,6 +1582,7 @@ impl TerminalService {
     /// 后端管道/句柄已就绪，无 profile、无 init_commands、不注册 Claude hook
     /// （客户端不是我们 spawn 的）。创建路径只剩 insert + 起转发，无 spawn 失败点，
     /// 不再走 `TerminalCreation` 守卫。
+    #[cfg(feature = "desktop")]
     pub fn create_handoff_terminal(
         &self,
         handoff: HandoffPty,
@@ -1579,7 +1644,7 @@ impl TerminalService {
     }
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn start_terminal(
     profile_id: String,
     display_name: Option<String>,
@@ -1594,7 +1659,7 @@ pub async fn start_terminal(
     terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
     let terminal_service = terminal_service.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::runtime::async_runtime::spawn_blocking(move || {
         terminal_service.create_terminal(
             &profile_id,
             display_name.as_deref(),
@@ -1613,7 +1678,7 @@ pub async fn start_terminal(
     .map_err(|error| format!("终端后台启动失败：{}", error))?
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn update_terminal_display_name(
     id: String,
     display_name: String,
@@ -1622,7 +1687,7 @@ pub fn update_terminal_display_name(
     terminal_service.update_terminal_display_name(&id, &display_name, TerminalActor::Pc)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn write_to_terminal(
     id: String,
     data: String,
@@ -1631,7 +1696,7 @@ pub fn write_to_terminal(
     terminal_service.write_to_terminal(&id, &data, TerminalActor::Pc)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn resize_terminal(
     id: String,
     rows: u16,
@@ -1646,7 +1711,7 @@ pub fn resize_terminal(
     terminal_service.resize_terminal(&id, rows, cols, true, TerminalActor::Pc)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn acknowledge_terminal_output(
     id: String,
     char_count: u32,
@@ -1655,7 +1720,7 @@ pub fn acknowledge_terminal_output(
     terminal_service.acknowledge_terminal_output(&id, char_count, TerminalActor::Pc)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_terminal_loading_mode(
     id: String,
     terminal_service: State<TerminalService>,
@@ -1665,7 +1730,7 @@ pub fn get_terminal_loading_mode(
         .map(str::to_string)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn close_terminal(
     id: String,
     app: AppHandle,
@@ -1683,7 +1748,7 @@ pub fn close_terminal(
     }
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn drain_terminal_output(
     id: String,
     terminal_service: State<TerminalService>,
@@ -1691,7 +1756,7 @@ pub fn drain_terminal_output(
     terminal_service.drain_terminal_output(&id, TerminalActor::Pc)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn peek_terminal_output(
     id: String,
     terminal_service: State<TerminalService>,
@@ -1701,14 +1766,14 @@ pub fn peek_terminal_output(
 
 /// 列出桌面端可见的存活终端（含 profile 元数据）。非共享模式下也能只读看到
 /// Web 端创建的终端，写操作由 `authorize` 单独拦截。
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn list_terminals(
     terminal_service: State<TerminalService>,
 ) -> Result<Vec<TerminalInfo>, String> {
     Ok(terminal_service.list_terminals_info_for(TerminalActor::Pc))
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn start_blank_terminal(
     terminal_type: String,
     display_name: Option<String>,
@@ -1722,7 +1787,7 @@ pub async fn start_blank_terminal(
     terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
     let terminal_service = terminal_service.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::runtime::async_runtime::spawn_blocking(move || {
         terminal_service.create_blank_terminal(
             &terminal_type,
             display_name.as_deref(),

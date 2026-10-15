@@ -15,7 +15,7 @@ use tokio::sync::watch;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(not(debug_assertions), feature = "desktop"))]
 use axum::response::IntoResponse;
 
 use crate::web::auth::HasJwtSecret;
@@ -38,7 +38,7 @@ const IDLE_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Clone)]
 pub struct AppState {
     pub jwt_secret: String,
-    pub app_handle: tauri::AppHandle,
+    pub app_handle: crate::runtime::AppHandle,
     /// 登录限流器：按 IP 的失败计数 + 指数退避封禁 + bcrypt 并发闸门。
     pub login_throttle: std::sync::Arc<LoginThrottle>,
 }
@@ -50,7 +50,7 @@ impl HasJwtSecret for AppState {
 }
 
 // Embed web frontend files for release mode
-#[cfg(not(debug_assertions))]
+#[cfg(all(not(debug_assertions), feature = "desktop"))]
 static WEB_DIST: include_dir::Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
 
@@ -59,6 +59,15 @@ pub fn build_router(state: AppState) -> Router {
         // 认证
         .route("/api/auth/login", post(handlers::auth_handler::login))
         .route("/api/auth/status", get(handlers::auth_handler::status))
+        .route("/api/runtime", get(handlers::desktop_handler::runtime_info))
+        .route("/api/container/environment", get(handlers::container_environment::status))
+        .route("/api/container/environment/claude/install", post(handlers::container_environment::install))
+        .route("/api/desktop/invoke/{command}", post(handlers::desktop_handler::invoke))
+        .route("/api/desktop/jobs/{id}", get(handlers::desktop_handler::job))
+        .route("/api/desktop/upload", post(handlers::desktop_handler::upload).layer(DefaultBodyLimit::max(32 * 1024 * 1024)))
+        .route("/api/desktop/file", get(handlers::desktop_handler::file))
+        .route("/ws/events", get(handlers::desktop_handler::events))
+        .route("/api/health", get(|| async { "正常" }))
         // 机器人平台回调使用各自签名的 Token，不走 Web API JWT
         .route(
             "/api/bot/feishu/events",
@@ -140,17 +149,21 @@ pub fn build_router(state: AppState) -> Router {
         // 终端 I/O（per-terminal WS）
         .route("/ws/terminal/{id}", get(ws::terminal_ws_handler));
 
-    #[cfg(debug_assertions)]
+    // 桌面版继续由桌面设置管理密码，仅独立服务端提供首次初始化入口。
+    #[cfg(not(feature = "desktop"))]
+    let router = router.route("/api/auth/setup", post(handlers::auth_handler::setup_admin));
+
+    #[cfg(any(debug_assertions, not(feature = "desktop")))]
     let router = {
         use tower_http::services::{ServeDir, ServeFile};
-        const WEB_DIST_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../web/dist");
-        const INDEX_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../web/dist/index.html");
+        let default_dist = if cfg!(feature = "desktop") { "/../web/dist" } else { "/../dist-web" };
+        let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| format!("{}{}", env!("CARGO_MANIFEST_DIR"), default_dist));
         router.fallback_service(
-            ServeDir::new(WEB_DIST_PATH).not_found_service(ServeFile::new(INDEX_PATH)),
+            ServeDir::new(&dist).not_found_service(ServeFile::new(std::path::Path::new(&dist).join("index.html"))),
         )
     };
 
-    #[cfg(not(debug_assertions))]
+    #[cfg(all(not(debug_assertions), feature = "desktop"))]
     let router = router.fallback(serve_embedded_file);
 
     // CORS 只为浏览器跨域放行服务。认证走 JWT（非 cookie），CSRF 无忧，但也不必全放行：
@@ -179,7 +192,7 @@ pub fn build_router(state: AppState) -> Router {
         .layer(cors)
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(not(debug_assertions), feature = "desktop"))]
 async fn serve_embedded_file(req: axum::extract::Request) -> axum::response::Response {
     let path = req.uri().path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
@@ -207,7 +220,7 @@ async fn serve_embedded_file(req: axum::extract::Request) -> axum::response::Res
     }
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(not(debug_assertions), feature = "desktop"))]
 fn guess_content_type(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
@@ -258,9 +271,9 @@ where
 pub async fn run_server(
     port: u16,
     jwt_secret: String,
-    app_handle: tauri::AppHandle,
+    app_handle: crate::runtime::AppHandle,
     mut shutdown_rx: watch::Receiver<bool>,
-) {
+) -> std::io::Result<()> {
     let state = AppState {
         jwt_secret,
         app_handle,
@@ -269,16 +282,23 @@ pub async fn run_server(
     let router = build_router(state);
 
     // 绑定 0.0.0.0：让同一局域网的手机端可访问（旧实现绑定 127.0.0.1 仅本机可达）
+    #[cfg(feature = "desktop")]
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    #[cfg(not(feature = "desktop"))]
+    let addr = SocketAddr::new(
+        std::env::var("TERMINAL_BUDDY_LISTEN_ADDRESS").unwrap_or_else(|_| "0.0.0.0".to_string())
+            .parse().map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?,
+        port,
+    );
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
             eprintln!("[WebAPI] 端口 {} 绑定失败: {}。", port, e);
-            return;
+            return Err(e);
         }
     };
 
-    println!("[WebAPI] 服务器启动成功，监听 http://{}（局域网可访问）。", addr);
+    println!("[WebAPI] 服务器启动成功，监听 http://{}。", addr);
 
     // 不用 axum::serve：它不给 hyper 配置 Timer，空闲连接的 header_read_timeout
     // 永远不会触发。自写 accept 循环，逐连接配 TokioTimer + 空闲超时，
@@ -339,4 +359,5 @@ pub async fn run_server(
         .shutdown()
         .await;
     println!("[WebAPI] 服务器已停止。");
+    Ok(())
 }

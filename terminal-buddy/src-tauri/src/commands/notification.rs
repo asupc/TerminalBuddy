@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter, Manager};
+use crate::runtime::{AppHandle, Emitter, Manager};
 use tauri_winrt_notification::{Duration, Sound, Toast};
 use windows_registry::CURRENT_USER;
 
@@ -45,7 +45,7 @@ fn notification_content(
     Ok((title, format!("{}：{}", name, summary)))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn show_claude_code_notification(
     app: AppHandle,
     terminal_id: String,

@@ -13,3 +13,8 @@ target
 /.idea
 /.codex
 /.playwright-mcp
+/.env
+/secrets/
+/workspace/
+/terminal-buddy/server-data/
+/terminal-buddy/dist-web/

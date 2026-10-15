@@ -210,7 +210,7 @@ fn compute_month(
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
     let client = get_http_client();
     let base = "https://platform.deepseek.com";

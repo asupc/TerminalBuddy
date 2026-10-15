@@ -8,14 +8,14 @@ fn parse_kind(kind: &str) -> Result<AssetKind, String> {
     AssetKind::from_str(kind).ok_or_else(|| format!("未知资产类型: {}", kind))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn list_claude_assets(
     project_dir: Option<String>,
 ) -> Result<Vec<AssetEntry>, String> {
     claude_task(move || claude_assets_service::list_assets(project_dir.as_deref())).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn deploy_claude_asset(
     kind: String,
     name: String,
@@ -28,7 +28,7 @@ pub async fn deploy_claude_asset(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn undeploy_claude_asset(
     kind: String,
     name: String,
@@ -46,7 +46,7 @@ pub async fn undeploy_claude_asset(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn sync_claude_asset(
     kind: String,
     name: String,
@@ -66,7 +66,7 @@ pub async fn sync_claude_asset(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn import_claude_asset(
     kind: String,
     scope: String,
@@ -84,7 +84,7 @@ pub async fn import_claude_asset(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn list_importable_claude_assets(
     scope: String,
     project_dir: Option<String>,
@@ -95,13 +95,13 @@ pub async fn list_importable_claude_assets(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn delete_claude_asset(kind: String, name: String) -> Result<(), String> {
     claude_task(move || claude_assets_service::delete_library_asset(parse_kind(&kind)?, &name))
         .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn create_claude_asset(
     kind: String,
     name: String,
@@ -113,12 +113,12 @@ pub async fn create_claude_asset(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn read_claude_asset(kind: String, name: String) -> Result<String, String> {
     claude_task(move || claude_assets_service::read_asset(parse_kind(&kind)?, &name)).await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn write_claude_asset(
     kind: String,
     name: String,

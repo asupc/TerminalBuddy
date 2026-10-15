@@ -1,4 +1,4 @@
-﻿use tauri::{AppHandle, Manager, WebviewWindow};
+﻿use crate::runtime::{AppHandle, Manager, WebviewWindow};
 
 /// Direct ntdll call — pure in-memory, no process spawn, takes microseconds.
 #[allow(non_snake_case)]
@@ -17,7 +17,7 @@ extern "system" {
     fn RtlGetVersion(info: *mut OSVERSIONINFOW) -> i32;
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_windows_build_number() -> Result<u32, String> {
     unsafe {
         let mut info: OSVERSIONINFOW = std::mem::zeroed();
@@ -31,12 +31,12 @@ pub fn get_windows_build_number() -> Result<u32, String> {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn window_minimize(window: WebviewWindow) -> Result<(), String> {
     window.minimize().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn window_toggle_maximize(window: WebviewWindow) -> Result<(), String> {
     let is_max = window.is_maximized().map_err(|e| e.to_string())?;
     if is_max {
@@ -46,12 +46,12 @@ pub fn window_toggle_maximize(window: WebviewWindow) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn window_close(window: WebviewWindow) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn window_exit_app(app: AppHandle) -> Result<(), String> {
     // 退出前统一收尾所有终端：注销 hook token、关闭 SSH session 与 Web 订阅者，
     // 并只向 PTY 发终止信号而不 wait，避免退出流程被 child.wait() 卡住。

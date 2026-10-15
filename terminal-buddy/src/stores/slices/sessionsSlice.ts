@@ -1,4 +1,5 @@
 import { effectiveProfilePath } from '../../utils/projectPath';
+import { clientTerminalOwner } from '../../services/platform';
 import type { StoreApi } from "zustand";
 import type { AppState, TerminalActivityPhase } from "../appStore";
 import { saveTabsToStorage, useAppStore } from "../appStore";
@@ -56,7 +57,7 @@ async function saveDraftIndex(drafts: DraftEntry[]): Promise<void> {
 
 async function ensureDraftsDir(): Promise<string> {
 	const dataPath = await getDataPath();
-	const draftsDir = dataPath + "\\ClientData\\drafts";
+	const draftsDir = dataPath + "/ClientData/drafts";
 	await ensureDir(draftsDir);
 	return draftsDir;
 }
@@ -102,10 +103,13 @@ export const createSessionsSlice = (
 		set((state) => {
 			const s = {
 				...session,
+				owner: session.owner ?? clientTerminalOwner(),
 				groupId: session.groupId || "default",
 				createdAt: session.createdAt ?? Date.now(),
 			};
-			const sessions = [...state.sessions, s];
+			const sessions = state.sessions.some(existing => existing.id === s.id)
+				? state.sessions.map(existing => existing.id === s.id ? { ...existing, ...s } : existing)
+				: [...state.sessions, s];
 			if (!state._skipSaveTabs && !s.starting) {
 				debouncedSaveTabs();
 			}
@@ -122,7 +126,8 @@ export const createSessionsSlice = (
 				return state;
 			}
 			resolved = true;
-			const sessions = state.sessions.map((session) => (session.id === startingId ? { ...session, id: terminalId, starting: false } : session));
+			const sessions = state.sessions.filter(session => session.id !== terminalId)
+				.map((session) => (session.id === startingId ? { ...session, id: terminalId, starting: false } : session));
 			const activeSessionId = state.activeSessionId === startingId ? terminalId : state.activeSessionId;
 			const splitSlots = state.splitSlots.map((slot) => (slot.sessionId === startingId ? { ...slot, sessionId: terminalId } : slot));
 			if (!state._skipSaveTabs) {
@@ -268,7 +273,7 @@ export const createSessionsSlice = (
 		}
 		const draftsDir = await ensureDraftsDir();
 		const draftId = `draft_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-		const filePath = draftsDir + "\\" + draftId + ".txt";
+		const filePath = draftsDir + "/" + draftId + ".txt";
 		await writeFileContent(filePath, "");
 		const drafts = await loadDraftIndex();
 		drafts.push({ filePath, createdAt: Date.now() });
@@ -464,7 +469,7 @@ export const createSessionsSlice = (
 			if (cur === "off") {
 				// Entry: populate from terminal-session count (editors & web sessions excluded).
 				const N = 2;
-				const terms = state.sessions.filter((s) => s.sessionType !== "editor" && s.owner !== "web");
+				const terms = state.sessions.filter((s) => s.sessionType !== "editor" && s.owner === clientTerminalOwner());
 				const now = Date.now();
 				let slots: { sessionId: string | null; enteredAt: number }[];
 				if (terms.length <= N) {

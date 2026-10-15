@@ -2,7 +2,7 @@ use crate::services::BotSettingsService;
 use crate::services::SettingsService;
 use crate::web::auth::generate_jwt_secret;
 use std::sync::Mutex;
-use tauri::AppHandle;
+use crate::runtime::AppHandle;
 use tokio::sync::watch;
 
 /// Stores the shutdown signal sender so we can stop/restart the server
@@ -21,7 +21,7 @@ fn start_http_server(app: AppHandle) {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     *SHUTDOWN_TX.lock().unwrap() = Some(shutdown_tx);
     *JWT_SECRET.lock().unwrap() = Some(jwt_secret.clone());
-    tauri::async_runtime::spawn(crate::web::server::run_server(
+    crate::runtime::async_runtime::spawn(crate::web::server::run_server(
         settings.web_api_port,
         jwt_secret,
         app,
@@ -43,7 +43,7 @@ pub fn sync_http_server_for_bot(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn restart_web_server(app: AppHandle) -> Result<String, String> {
     let settings = SettingsService::get_settings();
 
@@ -59,7 +59,7 @@ pub async fn restart_web_server(app: AppHandle) -> Result<String, String> {
     Ok(format!("HTTP 服务已启动，端口: {}", settings.web_api_port))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_web_server_address() -> Result<String, String> {
     let settings = SettingsService::get_settings();
     if !settings.web_api_enabled {
@@ -73,7 +73,7 @@ pub fn get_web_server_address() -> Result<String, String> {
 /// 生成免密快速访问 URL：用当前服务 jwt_secret 签发一个与正常登录等价的 JWT，
 /// 拼成 `http://<局域网IP>:<端口>/?token=<jwt>`。手机扫码 / PC 点击均可跳过登录直接进入。
 /// 复用本文件已有的 JWT_SECRET 与 lan_ipv4()。
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_web_quick_access_url() -> Result<String, String> {
     let settings = SettingsService::get_settings();
     if !settings.web_api_enabled {

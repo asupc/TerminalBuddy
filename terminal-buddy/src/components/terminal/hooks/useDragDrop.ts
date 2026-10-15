@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useAppStore } from '../../../stores/appStore';
+import { isBrowserClient } from '../../../services/platform';
+import { uploadFiles } from '../../../services/browser/connection';
 
 export interface UseDragDropOptions {
   terminalRef: React.RefObject<HTMLDivElement | null>;
@@ -18,6 +20,21 @@ export function useDragDrop(opts: UseDragDropOptions) {
 
   // Tauri native drag-drop: listen for file drops into the window
   useEffect(() => {
+    if (isBrowserClient()) {
+      const element = opts.terminalRef.current;
+      if (!element) return;
+      const over = (event: DragEvent) => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); setDragOver(true); } };
+      const leave = () => setDragOver(false);
+      const drop = (event: DragEvent) => {
+        event.preventDefault(); setDragOver(false);
+        if (opts.readOnly || !opts.isActiveRef.current) return;
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (files.length) void uploadFiles(files).then(paths => opts.onDrop(paths.join(' ')))
+          .catch(error => useAppStore.getState().showToast(error instanceof Error ? error.message : '文件上传失败', 'error'));
+      };
+      element.addEventListener('dragover', over); element.addEventListener('dragleave', leave); element.addEventListener('drop', drop);
+      return () => { element.removeEventListener('dragover', over); element.removeEventListener('dragleave', leave); element.removeEventListener('drop', drop); };
+    }
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
 

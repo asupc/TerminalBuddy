@@ -8,35 +8,51 @@ pub mod history_handler;
 pub mod preset_handler;
 pub mod profile_handler;
 pub mod terminal_handler;
+pub mod desktop_handler;
+pub mod container_environment;
 
 use crate::web::error::ApiError;
 
 /// Web 端文件树 / Git 的访问白名单：只允许已登记项目目录（含子目录）。
 /// 终端本身就有 shell 能力，但文件浏览接口仍收窄到项目范围，避免全盘暴露。
-/// 返回规范化 key（小写、正斜杠、去尾分隔符），供按仓库互斥等场景使用。
+/// 返回实际路径的规范化 key（Windows 忽略大小写，Linux 保留大小写），供仓库互斥使用。
 pub(crate) fn ensure_project_scope(path: &str) -> Result<String, ApiError> {
-    let key = normalize_scope_key(path);
+    let key = canonical_scope_key(path)?;
     if key.is_empty() {
         return Err(ApiError::Forbidden("路径不能为空".to_string()));
     }
     let projects = crate::commands::profile::get_projects()
         .map_err(ApiError::Internal)?;
     let allowed = projects.iter().any(|project| {
-        let base = normalize_scope_key(&project.path);
+        let base = canonical_scope_key(&project.path).unwrap_or_default();
         !base.is_empty() && (key == base || key.starts_with(&format!("{}/", base)))
     });
     if allowed {
         Ok(key)
     } else {
         Err(ApiError::Forbidden(
-            "该路径不在已登记的项目目录内，请先在桌面端登记项目".to_string(),
+            "该路径不在已登记的项目目录内，请先在项目管理中登记目录".to_string(),
         ))
     }
 }
 
 fn normalize_scope_key(path: &str) -> String {
-    path.trim()
+    let normalized = path.trim()
         .replace('\\', "/")
-        .trim_end_matches('/')
-        .to_lowercase()
+        .trim_end_matches('/').to_string();
+    if cfg!(windows) { normalized.to_lowercase() } else { normalized }
+}
+
+fn canonical_scope_key(path: &str) -> Result<String, ApiError> {
+    let mut candidate = std::path::PathBuf::from(path.trim());
+    if !candidate.is_absolute() { return Err(ApiError::Forbidden("必须使用服务器绝对路径".to_string())); }
+    let mut missing = Vec::new();
+    while !candidate.exists() {
+        let name = candidate.file_name().ok_or_else(|| ApiError::Forbidden("目录不可访问".to_string()))?.to_os_string();
+        missing.push(name);
+        if !candidate.pop() { return Err(ApiError::Forbidden("目录不可访问".to_string())); }
+    }
+    let mut real = candidate.canonicalize().map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    for name in missing.into_iter().rev() { real.push(name); }
+    Ok(normalize_scope_key(&real.to_string_lossy()))
 }

@@ -53,6 +53,42 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
+/// 完整网页界面与轻量 REST 共用同一张仓库互斥表。
+pub(crate) struct DesktopGitLease { repo: String }
+impl DesktopGitLease {
+    pub(crate) fn finish(self, outcome: &Result<serde_json::Value, String>) {
+        if let Ok(mut map) = operations().lock() {
+            if let Some(operation) = map.get_mut(&self.repo) {
+                operation.status = if outcome.is_ok() { "done" } else { "failed" }.to_string();
+                operation.output = outcome.as_ref().err().cloned().unwrap_or_default();
+                operation.finished_at = Some(now_millis());
+            }
+        }
+    }
+}
+impl Drop for DesktopGitLease {
+    fn drop(&mut self) {
+        if let Ok(mut map) = operations().lock() {
+            if let Some(operation) = map.get_mut(&self.repo) {
+                if operation.status == "running" {
+                    operation.status = "failed".to_string();
+                    operation.output = "操作已中断".to_string();
+                    operation.finished_at = Some(now_millis());
+                }
+            }
+        }
+    }
+}
+pub(crate) fn reserve_desktop_operation(path: &str, action: &str) -> Result<DesktopGitLease, ApiError> {
+    let repo = ensure_project_scope(path)?;
+    let mut map = operations().lock().map_err(|_| ApiError::Internal("Git 操作锁不可用".to_string()))?;
+    if map.get(&repo).is_some_and(|operation| operation.status == "running") {
+        return Err(ApiError::Conflict("该仓库有操作正在执行，请稍后重试".to_string()));
+    }
+    map.insert(repo.clone(), GitOperationStatus { action: action.to_string(), status: "running".to_string(), output: String::new(), started_at: now_millis(), finished_at: None });
+    Ok(DesktopGitLease { repo })
+}
+
 /// 启动后台 Git 操作：同仓库忙碌返回 409，任务结束后把输出写回轮询记录。
 /// 接收 String（而非 &str）：闭包要 move 同一份数据进后台任务，避免借用冲突。
 fn start_operation(

@@ -1,7 +1,9 @@
 import type { Profile, Project } from '../types';
+import { serverUsesWindowsPaths } from '../services/platform';
 
 export function normalizeProjectPath(path: string): string {
-  const normalized = path.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const clean = path.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalized = serverUsesWindowsPaths() ? clean.toLowerCase() : clean;
   const prefix = normalized.startsWith('//') ? '//' : normalized.startsWith('/') ? '/' : '';
   const segments: string[] = [];
   for (const segment of normalized.slice(prefix.length).split('/')) {
@@ -17,7 +19,7 @@ export function effectiveProfilePath(profile: Profile, projects: Project[]): str
   const override = profile.startupPath.trim();
   if (!override) return base;
   if (/^(?:[a-z]:[\\/]|\\\\|\/)/i.test(override)) return override;
-  return base ? `${base.replace(/[\\/]+$/, '')}\\${override}` : '';
+  return base ? `${base.replace(/[\\/]+$/, '')}/${override}` : '';
 }
 
 /** Longest configured project ancestor wins; never match sibling path prefixes. */

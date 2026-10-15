@@ -5,6 +5,7 @@ import { isClaudeCommand } from '../utils/claudeLaunch';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { TerminalSession } from '../types';
+import { isBrowserClient, clientTerminalOwner } from './platform';
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
 
@@ -22,7 +23,7 @@ function estimateTerminalSize(): { rows: number; cols: number } {
 }
 
 function isLocalShellTerminal(terminalType: string): boolean {
-  return terminalType === 'powershell' || terminalType === 'pwsh' || terminalType === 'cmd';
+  return ['powershell', 'pwsh', 'cmd', 'bash', 'sh', 'zsh'].includes(terminalType);
 }
 
 function waitForNextFrame(): Promise<void> {
@@ -91,7 +92,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   const terminalId = tab.profileId
     ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath, undefined, undefined, tab.extraParamMode)
     : await startBlankTerminal(
-      tab.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s',
+      tab.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s',
       estRows,
       estCols,
       startupPath,
@@ -107,7 +108,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     tabColor: tab.tabColor,
     groupId: tab.groupId || 'default',
     groupName: tab.groupName,
-    owner: 'pc',
+    owner: clientTerminalOwner(),
     startupPath: tab.startupPath,
     extraParams: tab.profileId ? baseParams : tab.extraParams,
     extraParamMode: tab.extraParamMode,
@@ -132,6 +133,12 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
 /** 恢复上次保存的页签：活动页签优先，其余并发池恢复，完成后统一落盘。 */
 export async function restoreTabs() {
   const { tabs, activeIndex } = await loadSavedTabs();
+  if (isBrowserClient()) {
+    // 刷新只接回服务器存活会话，绝不能按桌面启动逻辑重复创建 PTY。
+    for (const tab of tabs) if (tab.sessionType === 'editor') await restoreEditorTab(tab);
+    await reconcileBackendSessions();
+    return;
+  }
   if (tabs.length === 0) return;
   const restoredSessionIds: Array<string | undefined> = new Array(tabs.length);
   // 暂停逐次写入，恢复完后统一写一次
@@ -209,11 +216,19 @@ export async function reconcileBackendSessions() {
     console.error('Failed to list backend terminals:', error);
     return;
   }
+  if (isBrowserClient()) {
+    const ids = new Set(terminals.map(terminal => terminal.id));
+    useAppStore.getState().removeSessions(useAppStore.getState().sessions
+      .filter(session => session.sessionType !== 'editor' && !session.starting && !ids.has(session.id)).map(session => session.id));
+  }
   for (const terminal of terminals) {
     const store = useAppStore.getState();
     // 占位会话还没回填成真实 terminalId，此时补建会和它撞成两个页签。
     if (store.sessions.some(session => session.starting)) return;
-    if (store.sessions.some(session => session.id === terminal.id)) continue;
+    if (store.sessions.some(session => session.id === terminal.id)) {
+      store.updateSession(terminal.id, { profileName: terminal.profileName, owner: terminal.owner });
+      continue;
+    }
     const profile = store.profiles.find(item => item.id === terminal.profileId);
     const theme = PRESET_THEMES.find(item => item.id === profile?.colorTheme) || PRESET_THEMES[0];
     // 无活动页签时必须把补建的页签选上，否则用户看到的还是空窗口（与 handoff

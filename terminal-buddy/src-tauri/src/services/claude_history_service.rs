@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
-use tauri::{AppHandle, Emitter};
+use crate::runtime::{AppHandle, Emitter};
 
 /// tool_result 索引截断长度（防日志类结果爆炸）
 const TOOL_RESULT_INDEX_LIMIT: usize = 4 * 1024;
@@ -928,7 +928,7 @@ fn spawn_backfill(app: AppHandle, conn: Connection, projects_dir: PathBuf) {
         }
     }
 
-    let _task = tauri::async_runtime::spawn_blocking(move || {
+    let _task = crate::runtime::async_runtime::spawn_blocking(move || {
         let _guard = Guard;
         let mut last_pending = i64::MAX;
         loop {

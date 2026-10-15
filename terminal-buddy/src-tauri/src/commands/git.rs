@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use tauri::{command, Emitter};
+use crate::runtime::{Emitter};
 
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
@@ -33,6 +33,7 @@ pub(crate) fn stop_git_commands() {
     GIT_COMMANDS_STOPPED.store(true, Ordering::Release);
 }
 
+#[cfg(feature = "desktop")]
 pub(crate) fn resume_git_commands() {
     GIT_COMMANDS_STOPPED.store(false, Ordering::Release);
 }
@@ -573,7 +574,7 @@ fn normalize_git_output(parts: &[&str]) -> String {
         .to_string()
 }
 
-fn emit_git_push_chunk(app: &tauri::AppHandle, operation_id: Option<&str>, chunk: &str) {
+fn emit_git_push_chunk(app: &crate::runtime::AppHandle, operation_id: Option<&str>, chunk: &str) {
     let Some(operation_id) = operation_id else {
         return;
     };
@@ -648,7 +649,7 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(task)
+    crate::runtime::async_runtime::spawn_blocking(task)
         .await
         .map_err(|e| format!("Git 后台任务失败：{}", e))?
 }
@@ -734,7 +735,7 @@ fn parse_status_counts(entries: &[GitStatusEntry]) -> (u32, u32, u32, u32) {
     (changed, staged, unstaged, untracked)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_git_repository_status(
     path: String,
 ) -> Result<Option<GitRepositoryStatus>, String> {
@@ -770,7 +771,7 @@ pub(crate) fn get_git_repository_status_impl(path: String) -> Result<Option<GitR
     }))
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
     git_task(move || git_list_branches_impl(path)).await
 }
@@ -836,7 +837,7 @@ pub(crate) fn git_list_branches_impl(path: String) -> Result<Vec<GitBranch>, Str
     Ok(branches)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_checkout_branch(path: String, branch: String) -> Result<String, String> {
     git_task(move || git_checkout_branch_impl(path, branch)).await
 }
@@ -876,7 +877,7 @@ pub(crate) fn git_checkout_branch_impl(path: String, branch: String) -> Result<S
     }
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_pull(path: String) -> Result<GitPullResult, String> {
     git_task(move || git_pull_impl(path)).await
 }
@@ -1073,21 +1074,21 @@ fn preview_push_impl(options: GitPushOptions) -> Result<GitPushPreview, String> 
     })
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_preview_push(options: GitPushOptions) -> Result<GitPushPreview, String> {
     git_task(move || preview_push_impl(options)).await
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_push_with_options(
-    app: tauri::AppHandle,
+    app: crate::runtime::AppHandle,
     options: GitPushOptions,
 ) -> Result<GitPushResult, String> {
     git_task(move || git_push_with_options_impl(app, options)).await
 }
 
 fn git_push_with_options_impl(
-    app: tauri::AppHandle,
+    app: crate::runtime::AppHandle,
     options: GitPushOptions,
 ) -> Result<GitPushResult, String> {
     let root = require_repo_root(&options.path)?;
@@ -1117,7 +1118,7 @@ fn git_push_with_options_impl(
     })
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_get_changed_files(path: String) -> Result<Vec<GitChangedFile>, String> {
     git_task(move || git_get_changed_files_impl(path)).await
 }
@@ -1150,7 +1151,7 @@ fn git_get_changed_files_impl(path: String) -> Result<Vec<GitChangedFile>, Strin
     Ok(files)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_get_history_files(
     path: String,
     from_revision: Option<String>,
@@ -1208,7 +1209,7 @@ fn git_get_history_files_impl(
     Ok(parse_history_files(&name_status, &stats))
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_get_history_file_diff(
     path: String,
     from_revision: Option<String>,
@@ -1286,7 +1287,7 @@ fn git_get_history_file_diff_impl(
     })
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_commit_paths(
     path: String,
     message: String,
@@ -1350,7 +1351,7 @@ pub(crate) fn git_push_text_impl(path: String) -> Result<String, String> {
     Ok(combine_git_output(&output))
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn git_get_history(
     path: String,
     limit: Option<u32>,

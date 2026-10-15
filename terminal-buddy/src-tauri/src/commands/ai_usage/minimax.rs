@@ -2,7 +2,7 @@
 
 use super::{format_timestamp, get_http_client, send_usage_request, Tier, TierUsageResult};
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn fetch_minimax_usage(api_key: String) -> TierUsageResult {
     let body = match send_usage_request(
         get_http_client()

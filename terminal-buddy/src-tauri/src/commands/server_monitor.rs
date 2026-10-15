@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tauri::command;
 
 use crate::models::ssh_types::{DiskStats, MemoryStats, NetworkStats, ServerStats};
 use crate::services::ssh_session_service::SshSessionService;
@@ -220,11 +219,11 @@ fn parse_network(output: &str) -> (u64, u64) {
     (total_rx, total_tx)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_server_stats(
     terminal_id: String,
-    ssh_service: tauri::State<'_, SshSessionService>,
-    monitor_cache: tauri::State<'_, MonitorCache>,
+    ssh_service: crate::runtime::State<'_, SshSessionService>,
+    monitor_cache: crate::runtime::State<'_, MonitorCache>,
 ) -> Result<ServerStats, String> {
     let output = ssh_service.exec(&terminal_id, MONITOR_CMD)?;
 

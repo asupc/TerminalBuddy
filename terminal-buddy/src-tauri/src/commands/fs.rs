@@ -1,6 +1,5 @@
 use serde::Serialize;
 use std::fs;
-use tauri::command;
 
 #[derive(Serialize)]
 pub struct FileMeta {
@@ -44,7 +43,7 @@ pub struct FileNode {
     last_modified: u64,
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn list_directory(
     path: String,
     exclusions: Option<Vec<String>>,
@@ -86,7 +85,8 @@ pub fn list_directory(
     Ok(nodes)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(feature = "desktop")]
 pub fn open_path(path: String) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr;
@@ -146,7 +146,8 @@ pub fn open_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(feature = "desktop")]
 pub fn open_in_explorer(path: String) -> Result<(), String> {
     // Launch explorer.exe directly via ShellExecuteW. We deliberately do NOT use
     // std::process::Command here: Rust's Command applies CRT argument escaping,
@@ -237,7 +238,7 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn delete_path(path: String) -> Result<(), String> {
     let meta = fs::metadata(&path).map_err(|e| format!("Failed to access: {}", e))?;
     if meta.is_dir() {
@@ -307,7 +308,7 @@ fn validate_new_file_name(new_name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn rename_path(path: String, new_name: String) -> Result<(), String> {
     let source = std::path::Path::new(&path);
     let name = validate_new_file_name(&new_name)?;
@@ -329,7 +330,7 @@ pub fn rename_path(path: String, new_name: String) -> Result<(), String> {
 
 const MAX_READ_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn read_file_content(path: String) -> Result<String, String> {
     let metadata =
         fs::metadata(&path).map_err(|e| format!("Failed to read file metadata: {}", e))?;
@@ -342,7 +343,7 @@ pub fn read_file_content(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn write_file_content(path: String, content: String) -> Result<bool, String> {
     // 原子写：临时文件 + flush + sync + 替换。直接 fs::write 会在崩溃或磁盘满时
     // 把用户编辑的文件截断成半截内容。
@@ -351,13 +352,13 @@ pub fn write_file_content(path: String, content: String) -> Result<bool, String>
     Ok(true)
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_file_size(path: String) -> Result<u64, String> {
     let meta = fs::metadata(&path).map_err(|e| format!("Failed to get file size: {}", e))?;
     Ok(meta.len())
 }
 
-#[command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_file_meta(path: String) -> Result<FileMeta, String> {
     let meta = fs::metadata(&path).map_err(|e| format!("Failed to get file meta: {}", e))?;
     let last_modified = meta

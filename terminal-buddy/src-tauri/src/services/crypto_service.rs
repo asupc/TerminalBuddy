@@ -1,6 +1,8 @@
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+#[cfg(windows)]
 use windows::Win32::Foundation::{LocalFree, HLOCAL};
+#[cfg(windows)]
 use windows::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
@@ -12,6 +14,7 @@ use windows::Win32::Security::Cryptography::{
 /// （CryptProtectData / CryptUnprotectData 不会写这块缓冲），所以把
 /// `&[u8]` 的指针转成 `*mut u8` 传进去是安全的；输出缓冲的指针由 API
 /// 分配、用 `LocalFree` 释放。
+#[cfg(windows)]
 pub fn dpapi_encrypt(plaintext: &[u8]) -> Result<Vec<u8>, String> {
     if plaintext.is_empty() {
         return Ok(Vec::new());
@@ -45,6 +48,7 @@ pub fn dpapi_encrypt(plaintext: &[u8]) -> Result<Vec<u8>, String> {
 /// Returns decrypted bytes, or error string on failure.
 ///
 /// Safety 注释同 [`dpapi_encrypt`]。
+#[cfg(windows)]
 pub fn dpapi_decrypt(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     if ciphertext.is_empty() {
         return Ok(Vec::new());
@@ -76,12 +80,21 @@ pub fn dpapi_decrypt(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Encrypt a string to a Base64-encoded DPAPI blob.
 pub fn encrypt_string(plaintext: &str) -> Result<String, String> {
+    #[cfg(not(feature = "desktop"))]
+    { return server_crypto::encrypt(plaintext); }
+    #[cfg(feature = "desktop")]
+    {
     let encrypted = dpapi_encrypt(plaintext.as_bytes())?;
     Ok(BASE64_STANDARD.encode(encrypted))
+    }
 }
 
 /// Decrypt a Base64-encoded DPAPI blob back to a string.
 pub fn decrypt_string(encoded: &str) -> Result<String, String> {
+    #[cfg(not(feature = "desktop"))]
+    { return server_crypto::decrypt(encoded); }
+    #[cfg(feature = "desktop")]
+    {
     if encoded.is_empty() {
         return Ok(String::new());
     }
@@ -89,9 +102,68 @@ pub fn decrypt_string(encoded: &str) -> Result<String, String> {
         .decode(encoded)
         .map_err(|e| format!("Base64 decode failed: {}", e))?)?;
     String::from_utf8(decrypted).map_err(|e| format!("UTF-8 decode failed: {}", e))
+    }
 }
 
-#[cfg(test)]
+#[cfg(not(feature = "desktop"))]
+mod server_crypto {
+    use super::*;
+    use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+    use rand::RngCore;
+    use std::{io::{Read, Write}, sync::OnceLock};
+
+    fn key() -> Result<[u8; 32], String> {
+        static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+        static KEY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = KEY_LOCK.lock().map_err(|_| "密钥初始化锁不可用".to_string())?;
+        if let Some(key) = KEY.get() { return Ok(*key); }
+        let path = crate::services::PathService::require_data_dir()?.join("server.key");
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+        let mut bytes = [0u8; 32];
+        match options.open(&path) {
+            Ok(mut file) => {
+                rand::thread_rng().fill_bytes(&mut bytes);
+                file.write_all(&bytes).and_then(|_| file.sync_all()).map_err(|e| e.to_string())?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+                if file.metadata().map_err(|e| e.to_string())?.len() != 32 {
+                    return Err("服务端加密密钥长度错误，请恢复 server.key 备份".to_string());
+                }
+                file.read_exact(&mut bytes).map_err(|e| e.to_string())?;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+        let _ = KEY.set(bytes);
+        Ok(*KEY.get().expect("密钥已初始化"))
+    }
+
+    pub fn encrypt(text: &str) -> Result<String, String> {
+        if text.is_empty() { return Ok(String::new()); }
+        let cipher = Aes256Gcm::new_from_slice(&key()?).map_err(|e| e.to_string())?;
+        let mut nonce = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        let encrypted = cipher.encrypt(Nonce::from_slice(&nonce), text.as_bytes()).map_err(|e| e.to_string())?;
+        let mut bytes = nonce.to_vec();
+        bytes.extend(encrypted);
+        Ok(format!("v1:{}", BASE64_STANDARD.encode(bytes)))
+    }
+
+    pub fn decrypt(text: &str) -> Result<String, String> {
+        if text.is_empty() { return Ok(String::new()); }
+        let encoded = text.strip_prefix("v1:").ok_or("Windows DPAPI 密码无法在服务端解密，请重新录入密码")?;
+        let bytes = BASE64_STANDARD.decode(encoded).map_err(|e| e.to_string())?;
+        if bytes.len() < 28 { return Err("密码密文长度错误".to_string()); }
+        let cipher = Aes256Gcm::new_from_slice(&key()?).map_err(|e| e.to_string())?;
+        let plaintext = cipher.decrypt(Nonce::from_slice(&bytes[..12]), &bytes[12..]).map_err(|_| "密码解密失败，请检查 server.key".to_string())?;
+        String::from_utf8(plaintext).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(all(test, windows, feature = "desktop"))]
 mod tests {
     use super::*;
 

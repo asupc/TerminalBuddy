@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
-use tauri::{Emitter, Manager};
+use crate::runtime::{Emitter, Manager};
 
 use crate::commands::{send_bot_notification, TerminalService};
 use crate::models::{BotDecisionOption, BotNotificationRequest};
@@ -57,7 +57,7 @@ fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> &'a str {
         .unwrap_or_default()
 }
 
-fn terminal_name(app: &tauri::AppHandle, terminal_id: &str) -> String {
+fn terminal_name(app: &crate::runtime::AppHandle, terminal_id: &str) -> String {
     app.state::<TerminalService>()
         .list_terminals_info()
         .into_iter()
@@ -140,7 +140,7 @@ fn is_actionable_notification(request: &ClaudeHookRequest) -> bool {
 }
 
 fn emit_terminal_event(
-    app: &tauri::AppHandle,
+    app: &crate::runtime::AppHandle,
     terminal_id: &str,
     request: &ClaudeHookRequest,
     phase: &str,
@@ -164,7 +164,7 @@ fn emit_terminal_event(
 
 pub(crate) async fn claude_hook(
     headers: HeaderMap,
-    State(app): State<tauri::AppHandle>,
+    State(app): State<crate::runtime::AppHandle>,
     Json(request): Json<ClaudeHookRequest>,
 ) -> Response {
     let terminal_id = header_value(&headers, "x-terminalbuddy-terminal-id");
@@ -332,7 +332,7 @@ pub(crate) async fn claude_hook(
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn answer_claude_hook_decision(
     decision_id: String,
     answers: HashMap<String, String>,
@@ -340,19 +340,19 @@ pub fn answer_claude_hook_decision(
     ClaudeHookService::answer_all(&decision_id, answers)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn continue_claude_hook_in_terminal(decision_id: String) -> Result<(), String> {
     ClaudeHookService::continue_in_terminal(&decision_id)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_pending_claude_hook_decisions() -> Vec<ClaudeHookDecisionEvent> {
     ClaudeHookService::list_pending_decisions()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn send_claude_hook_decision_notification(
-    app: tauri::AppHandle,
+    app: crate::runtime::AppHandle,
     decision_id: String,
 ) -> Result<(), String> {
     let Some(lease) = ClaudeHookService::begin_notification(&decision_id) else {

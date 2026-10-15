@@ -1,4 +1,5 @@
 import { FC, useState } from 'react';
+import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { saveEnableTabNavigation } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
@@ -18,7 +19,7 @@ interface NewTerminalMenuProps {
   menuRef: React.RefObject<HTMLDivElement | null>;
   submenuRef: React.RefObject<HTMLDivElement | null>;
   onStartTerminal: (profile: Profile, extraParams?: string, presetName?: string, tabName?: string, presetTag?: string, presetTagColor?: string | null, extraParamMode?: ExtraParamMode) => void;
-  onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd') => void;
+  onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
   onStartTextEditor: () => void;
   onCloseAllTabs: () => void;
   onClose: () => void;
@@ -56,7 +57,7 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
     if (item.data) {
       const d = item.data as Record<string, unknown>;
       if ('group' in d) onStartTerminal(item.data as Profile);
-      else if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'pwsh' | 'cmd');
+      else if (d.terminalType) onStartBlankTerminal(d.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh');
       onClose();
     }
   };
@@ -92,11 +93,11 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
           if (!(event.target as HTMLElement).closest('.has-submenu')) setHoveredTarget(null);
         }}
       >
-        <div className="context-menu-item" onClick={() => { onStartBlankTerminal('powershell'); onClose(); }}>
-          PowerShell
+        <div className="context-menu-item" onClick={() => { onStartBlankTerminal(defaultShellType()); onClose(); }}>
+          {serverUsesWindowsPaths() ? 'PowerShell' : 'Bash'}
         </div>
-        <div className="context-menu-item" onClick={() => { onStartBlankTerminal('cmd'); onClose(); }}>
-          CMD
+        <div className="context-menu-item" onClick={() => { onStartBlankTerminal(serverUsesWindowsPaths() ? 'cmd' : 'sh'); onClose(); }}>
+          {serverUsesWindowsPaths() ? 'CMD' : 'Shell'}
         </div>
         <div className="context-menu-item" onClick={() => { onStartTextEditor(); onClose(); }}>
           文本编辑器

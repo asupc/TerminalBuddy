@@ -2,6 +2,7 @@ import { useAppStore } from '../stores/appStore';
 import { startBlankTerminal } from '../services/tauri';
 import type { ExtraParamPreset, Project } from '../types';
 import { projectStartupCommand } from './startupPresets';
+import { defaultShellType } from '../services/platform';
 
 /**
  * 打开一个 PowerShell 终端标签到指定目录，行为等同“文件与 Git”面板右键菜单中的“在当前目录打开命令窗口”。
@@ -25,11 +26,11 @@ export async function openTerminalInDir(dir?: string, options?: {
     estCols = Math.max(2, Math.floor((content.clientWidth - 20) / 8.4));
     estRows = Math.max(1, Math.floor((content.clientHeight - 20) / 17));
   }
-  const terminalId = await startBlankTerminal('powershell', estRows, estCols, dir, options?.name, options?.command);
+  const terminalId = await startBlankTerminal(defaultShellType(), estRows, estCols, dir, options?.name, options?.command);
   useAppStore.getState().addSession({
     id: terminalId,
     profileId: '',
-    profileName: options?.name || 'PowerShell',
+    profileName: options?.name || (defaultShellType() === 'bash' ? 'Bash' : 'PowerShell'),
     groupName: options?.groupName,
     startupPath: dir,
     // 空白终端没有配置命令，保存完整启动命令，供会话右键再次启动。
@@ -37,7 +38,7 @@ export async function openTerminalInDir(dir?: string, options?: {
     extraParamMode: options?.command !== undefined ? 'independent' : undefined,
     extraParamTag: options?.presetTag,
     extraParamTagColor: options?.presetTagColor,
-    terminalType: 'powershell',
+    terminalType: defaultShellType(),
     colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
     tabColor: null,
     groupId: 'default',

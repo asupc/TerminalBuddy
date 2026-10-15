@@ -5,6 +5,7 @@ import type { TerminalSession } from '../../types';
 import { TerminalTabBar } from './TerminalTabBar';
 import { isTerminalWorking, useAppStore } from '../../stores/appStore';
 import { writeToTerminal } from '../../services/tauri';
+import { clientTerminalOwner } from '../../services/platform';
 import {
   APP_OPACITY_PREVIEW_EVENT,
   getAppOpacity,
@@ -69,7 +70,7 @@ export const TerminalPanel: FC = () => {
   useEffect(() => {
     const ids = splitMode === 'off'
       ? sessions
-          .filter(s => s.sessionType !== 'editor' && s.owner !== 'web')
+          .filter(s => s.sessionType !== 'editor' && s.owner === clientTerminalOwner())
           .map(s => s.id)
       : splitSlots.map(s => s.sessionId).filter((s): s is string => s !== null);
     if (ids.length === 0) return;
@@ -227,7 +228,7 @@ export const TerminalPanel: FC = () => {
                 onOutput={handleTerminalInput}
                 isActive={isActivePane}
                 visible={!hidden}
-                readOnly={!settings.webApiShareSessions && session.owner === 'web'}
+                readOnly={!settings.webApiShareSessions && session.owner !== clientTerminalOwner()}
                 splitMode={splitMode}
               />
             </Suspense>

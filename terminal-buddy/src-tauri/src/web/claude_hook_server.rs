@@ -22,7 +22,7 @@ pub fn bind() -> Result<std::net::TcpListener, String> {
     Ok(listener)
 }
 
-pub async fn run(app: tauri::AppHandle, listener: std::net::TcpListener) {
+pub async fn run(app: crate::runtime::AppHandle, listener: std::net::TcpListener) {
     let router = Router::new()
         .route("/api/claude/hooks", post(claude_hook_handler::claude_hook))
         .with_state(app);

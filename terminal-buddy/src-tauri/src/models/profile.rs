@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 const DPAPI_MARKER: &str = "dpapi:";
+const SERVER_MARKER: &str = "aesgcm:";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,26 +58,25 @@ impl Profile {
     }
 
     /// Encrypt password fields before saving to disk (transparent encryption).
-    pub fn encrypt_sensitive_fields(&mut self) {
-        if let Some(ref p) = self.ssh_password {
-            if !p.is_empty() && !p.starts_with(DPAPI_MARKER) {
-                if let Ok(encrypted) = crate::services::crypto_service::encrypt_string(p) {
-                    self.ssh_password = Some(format!("{}{}", DPAPI_MARKER, encrypted));
+    pub fn encrypt_sensitive_fields(&mut self) -> Result<(), String> {
+        let marker = if cfg!(feature = "desktop") { DPAPI_MARKER } else { SERVER_MARKER };
+        for field in [&mut self.ssh_password, &mut self.mstsc_password] {
+            if let Some(value) = field.as_ref().filter(|value| !value.is_empty()) {
+                if value.starts_with(DPAPI_MARKER) || value.starts_with(SERVER_MARKER) {
+                    // 不能解密的导入密文不得当作明文密码使用。
+                    decrypt_password(value)?;
+                    continue;
                 }
+                let encrypted = crate::services::crypto_service::encrypt_string(value)?;
+                *field = Some(format!("{}{}", marker, encrypted));
             }
         }
-        if let Some(ref p) = self.mstsc_password {
-            if !p.is_empty() && !p.starts_with(DPAPI_MARKER) {
-                if let Ok(encrypted) = crate::services::crypto_service::encrypt_string(p) {
-                    self.mstsc_password = Some(format!("{}{}", DPAPI_MARKER, encrypted));
-                }
-            }
-        }
+        Ok(())
     }
 }
 
 fn decrypt_password(value: &str) -> Result<String, String> {
-    if let Some(encoded) = value.strip_prefix(DPAPI_MARKER) {
+    if let Some(encoded) = value.strip_prefix(DPAPI_MARKER).or_else(|| value.strip_prefix(SERVER_MARKER)) {
         crate::services::crypto_service::decrypt_string(encoded)
     } else {
         Ok(value.to_string())
