@@ -60,6 +60,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/login", post(handlers::auth_handler::login))
         .route("/api/auth/status", get(handlers::auth_handler::status))
         .route("/api/runtime", get(handlers::desktop_handler::runtime_info))
+        .route("/api/container/environment", get(handlers::container_environment::status))
+        .route("/api/container/environment/claude/install", post(handlers::container_environment::install))
         .route("/api/desktop/invoke/{command}", post(handlers::desktop_handler::invoke))
         .route("/api/desktop/jobs/{id}", get(handlers::desktop_handler::job))
         .route("/api/desktop/upload", post(handlers::desktop_handler::upload).layer(DefaultBodyLimit::max(32 * 1024 * 1024)))

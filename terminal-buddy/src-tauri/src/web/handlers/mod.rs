@@ -9,6 +9,7 @@ pub mod preset_handler;
 pub mod profile_handler;
 pub mod terminal_handler;
 pub mod desktop_handler;
+pub mod container_environment;
 
 use crate::web::error::ApiError;
 
