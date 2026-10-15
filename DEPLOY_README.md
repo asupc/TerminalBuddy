@@ -43,7 +43,8 @@ deploy.bat --no-pull        :: 不拉取最新代码，直接用本地源码
 | `TB_HOST_PORT` | `9610` | 宿主机映射端口 |
 | `TB_DATA_DIR` | `/root/terminal-buddy/data` | 数据目录（容器 `/data`） |
 | `TB_HOME_DIR` | `/root/terminal-buddy/home` | 用户目录（容器 `/home/terminalbuddy`） |
-| `TB_WORKSPACE` | `/root/terminal-buddy/workspace` | 工作区（容器 `/workspace`） |
+| `TB_WORKSPACE` | `/root/terminal-buddy/workspace` | 工作区（容器内同路径，兼容 `/workspace`） |
+| `TB_DOCKER_SOCKET` | `/var/run/docker.sock` | 宿主机 Docker socket，自动读取 GID 授权给容器用户 |
 | `TB_USERNAME` | `admin` | 网页登录账号 |
 | `TB_BIND_ADDRESS` | `0.0.0.0` | 绑定地址，改 `127.0.0.1` 则仅本机可访问 |
 | `TB_IMAGE_MIRROR` | `docker.m.daocloud.io/library` | 基础镜像加速源（CentOS 7 直连 Docker Hub 常不通） |
@@ -81,8 +82,27 @@ remote_port = 9610
 
 改完后重启 frpc：`docker restart frpc`
 
-## 常见问题
+## 登录有效期与持久化
 
+网页端的登录状态现在**有效期 30 天**，并且**重启服务 / 重建容器后依然保持登录**：
+
+- JWT 有效期由 `terminal-buddy/src-tauri/src/web/auth.rs` 的 `TOKEN_TTL_DAYS` 控制（默认 30 天）。
+- JWT 签名密钥持久化在数据目录的 `jwt.key`（容器内 `/data/jwt.key`，权限 600）。
+  密钥首次启动时自动生成，之后每次启动都复用同一个密钥，因此重启前后签发的 token 都有效。
+- 该文件必须与 `/data` 一起备份。**删除 `jwt.key` 等于让所有已登录设备立刻掉线**，需要重新登录。
+- 主动退出登录（或修改管理员密码后按需清理）仍会立即失效对应会话。
+
+升级到本次改动之前部署的实例，第一次重建容器会生成新的 `jwt.key`，
+浏览器里保存的旧 token 会失效一次，重新登录后即可长期保持。
+
+验证方式（服务器上执行）：
+
+```bash
+ls -l /root/terminal-buddy/data/jwt.key        # 应存在且为 600 权限、64 字节
+docker restart terminal-buddy                  # 重启后浏览器无需重新登录
+```
+
+## 常见问题
 **1. 基础镜像拉取失败**
 CentOS 7 直连 Docker Hub 通常超时。脚本已内置加速源，可用 `TB_IMAGE_MIRROR` 换源：
 `docker.1ms.run/library`、`hub.rat.dev/library`、`dockerpull.org` 等。
@@ -100,6 +120,68 @@ CentOS 7 直连 Docker Hub 通常超时。脚本已内置加速源，可用 `TB_
 **5. 后续如何升级代码**
 在项目目录 `git pull` 后执行 `deploy.bat`（默认就会先 `git pull --ff-only` 再构建部署）。
 
+## 在网页终端和 Claude 中部署宿主机 Docker 容器
+
+镜像包含 Docker CLI、Compose 和 Buildx（默认从 `docker:28-cli` 复制客户端，
+可在构建时用 `--build-arg DOCKER_CLI_IMAGE=...` 更换）。容器通过挂载的
+`/var/run/docker.sock` 连接宿主机现有 Docker Engine，新建的容器由宿主机运行。
+TerminalBuddy 仍以 uid 1000 运行，通过附加用户组访问 socket。
+
+### CentOS 一键部署
+
+本次升级需要完整重建镜像，不能使用 `--no-build`：
+
+```bat
+deploy.bat --no-pull
+```
+
+也可在服务器源码目录运行 `./deploy-centos.sh`。脚本自动检查本机 socket、读取其 GID，
+生成挂载和附加用户组，并在部署后以应用用户检查 Docker、Compose、Buildx 及 Engine ID。
+自定义或 rootless Docker 需设置 `TB_DOCKER_SOCKET`，并确保当前 Docker context 指向该本机 socket。
+
+工作区同时挂载到宿主机同名绝对路径和旧的 `/workspace` 路径，旧项目文件仍可访问。
+默认新工作区为 `/root/terminal-buddy/workspace`；已有项目如果登记的是 `/workspace/...`，
+请在网页中将项目目录改为 `/root/terminal-buddy/workspace/...` 后重新打开终端，
+以便 `docker compose` 的 `./data`、`.:/app` 等目录挂载使用正确的宿主机路径。
+镜像仅对容器自身的 `/root` 开放路径穿越，不修改宿主机 `/root` 的权限。
+
+### 手动 Compose 部署
+
+Linux 在 `.env` 中设置以下变量（GID 用 `stat -c '%g' /var/run/docker.sock` 查询）：
+
+```dotenv
+TERMINAL_BUDDY_WORKSPACE=/srv/projects
+TERMINAL_BUDDY_CONTAINER_WORKSPACE=/srv/projects
+TERMINAL_BUDDY_DOCKER_SOCKET=/var/run/docker.sock
+TERMINAL_BUDDY_DOCKER_GID=995
+```
+
+上面的 `995` 仅为示例，必须替换为实际 GID。然后执行 `docker compose up -d --build`。
+自定义工作区应使用项目专用目录，避免覆盖容器的 `/data`、`/home/terminalbuddy` 或系统目录。
+Windows Docker Desktop 使用 Linux 容器模式；保留容器工作区 `/workspace`，socket GID 通常为 `0`。
+Windows 路径与容器路径不同，应用容器的 bind source 需要显式使用 Docker Desktop 能访问的宿主机路径，
+或使用 Docker 命名卷。
+
+### 使用与验证
+
+在网页终端运行：
+
+```bash
+docker version
+docker ps
+docker compose version
+docker buildx version
+cd /root/terminal-buddy/workspace/你的项目
+docker compose up -d --build
+```
+
+在该终端启动的 Claude 同样可以执行这些命令。服务器端也可执行
+`docker exec --user terminalbuddy terminal-buddy docker ps` 验证权限。
+如果旧项目仍需从 `/workspace` 启动，应在部署文件中为 bind source 写入宿主机绝对路径。
+
+socket 授权允许网页终端及其中的 Claude 管理宿主机全部容器、镜像、卷和网络，
+其权限可扩展到宿主机 root。请仅向可信用户提供此实例的访问权限。
+
 ## 容器环境检测与 Claude 安装
 
 Docker 网页版顶部的“容器环境”按钮位于检查更新按钮旁。登录后首次自动打开检测弹框，
@@ -116,5 +198,24 @@ Claude 安装在容器用户的 `~/.local/bin` 和 `~/.local/share/claude`，不
 
 安装后在网页终端输入 `claude` 即可启动；模型登录或 API 配置由 Claude 的用户配置管理。
 Claude 对代码的访问范围由容器挂载目录和文件权限决定。
+
+### 自定义 Claude 模型配置
+
+Docker 网页顶部“Claude 模型配置”按钮可新增、编辑、删除多条自定义配置，
+也可从“容器环境”弹框进入。填写名称、Anthropic Messages 兼容的 API 基础地址、
+API 密钥与模型 ID，支持 AUTH_TOKEN / API_KEY 认证、Opus / Sonnet / Haiku 模型映射，
+以及高级环境变量 JSON。仅提供自定义配置，不包含接入商预设或协议转换代理。
+“从 JSON 填入”支持 CC Switch / Claude settings.json 中的 env 对象。
+
+保存和启用是两个操作：保存后点击条目的“启用”即可切换；编辑当前启用的条目时，
+“保存并应用”同步更新容器配置。切换后需退出运行中的 Claude，再输入 `claude` 启动；
+项目级设置、终端自定义环境变量及启动参数可能覆盖此处的用户级配置。
+
+条目保存在 `/data/terminal_buddy.db` 的 `claude_providers` 表，完整 API 配置经服务端
+AES-GCM 加密存储，网页不会读取回完整 API 密钥；编辑密钥留空表示保持原值。
+备份或迁移时请同时保留 `/data/server.key`，否则无法解密历史条目。
+当前启用条目和切换前配置也保存到数据库，支持“导入当前容器配置”和“恢复原配置”。
+写入 settings.json 时保留 hooks、权限等无关设置，清理旧地址、凭据和模型映射，
+通过临时文件原子替换；数据库提交失败时回退文件。接口要求网页登录认证，非 Docker 版禁用。
 
 镜像不预装 Node.js、Codex CLI 或 Claude CLI，其他命令行工具可按需扩展 Dockerfile。

@@ -361,6 +361,7 @@ export function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor
 
   if (core && originalSyncTextArea) {
     core._syncTextArea = () => {
+      if (terminal.element?.hasAttribute('data-native-context-menu-open')) return;
       originalSyncTextArea();
       if (shouldUsePromptAnchor()) {
         syncTextareaToPromptAnchor();
@@ -369,6 +370,8 @@ export function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor
   }
 
   const syncTextareaAnchor = () => {
+    // 原生右键菜单依赖 xterm 把 textarea 放在鼠标下，不能被 IME 锚点移走。
+    if (terminal.element?.hasAttribute('data-native-context-menu-open')) return;
     originalSyncTextArea?.();
     if (!shouldUsePromptAnchor() || !syncTextareaToPromptAnchor()) {
       return;

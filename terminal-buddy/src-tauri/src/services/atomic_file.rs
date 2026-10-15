@@ -78,6 +78,15 @@ fn replace_existing(path: &Path, temp: &Path) -> io::Result<()> {
 }
 
 pub fn atomic_write(path: &Path, content: &[u8]) -> io::Result<()> {
+    atomic_write_impl(path, content, false)
+}
+
+/// 写入包含凭据的配置；临时文件和替换后的文件在 Unix 上均仅当前用户可读写。
+pub fn atomic_write_private(path: &Path, content: &[u8]) -> io::Result<()> {
+    atomic_write_impl(path, content, true)
+}
+
+fn atomic_write_impl(path: &Path, content: &[u8], private: bool) -> io::Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -85,10 +94,16 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> io::Result<()> {
     fs::create_dir_all(parent)?;
     let temp = unique_temp_path(path)?;
     let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        #[cfg(not(unix))]
+        let _ = private;
+        let mut file = options.open(&temp)?;
         file.write_all(content)?;
         file.flush()?;
         file.sync_all()?;

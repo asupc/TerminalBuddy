@@ -75,6 +75,26 @@ impl DatabaseService {
     }
 
     fn run_migrations(connection: &mut Connection) -> Result<(), String> {
+        if !Self::has_migration(connection, "claude-providers-v1")? {
+            let transaction = connection.transaction().map_err(|e| format!("开始模型配置迁移失败: {e}"))?;
+            transaction.execute_batch(
+                "CREATE TABLE IF NOT EXISTS claude_providers (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    encrypted_config TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS claude_provider_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    active_provider_id TEXT REFERENCES claude_providers(id),
+                    encrypted_baseline TEXT
+                 );
+                 INSERT OR IGNORE INTO claude_provider_state (id) VALUES (1);"
+            ).map_err(|e| format!("创建模型配置表失败: {e}"))?;
+            Self::complete_migration(&transaction, "claude-providers-v1")?;
+            transaction.commit().map_err(|e| format!("提交模型配置迁移失败: {e}"))?;
+        }
         if !Self::has_migration(connection, "legacy-command-history-v1")? {
             let transaction = connection
                 .transaction()

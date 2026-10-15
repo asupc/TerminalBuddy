@@ -373,6 +373,7 @@ function App() {
       if (existingSession) {
         store.updateSession(id, {
           profileName,
+          owner,
           groupId: groupId ? resolvedGroupId : existingSession.groupId,
           groupName: groupName ?? existingSession.groupName,
         });
@@ -472,7 +473,7 @@ function App() {
         colorTheme: { background: theme.background, foreground: theme.foreground },
         tabColor: profile.tabColor || null,
         groupId: 'default',
-        owner: 'pc',
+        owner: clientTerminalOwner(),
         extraParams,
         extraParamMode,
         extraParamTag: presetTag,
@@ -557,7 +558,7 @@ function App() {
         colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
         tabColor: null,
         groupId: 'default',
-        owner: 'pc',
+        owner: clientTerminalOwner(),
         starting: true,
       }),
       start: (rows, cols) => startBlankTerminal(terminalType, rows, cols, undefined, name),

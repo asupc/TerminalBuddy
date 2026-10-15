@@ -12,6 +12,7 @@ target
 .claude
 /.idea
 /.codex
+/terminal-buddy/.codex
 /.playwright-mcp
 /.env
 /secrets/

@@ -12,6 +12,7 @@
 #   TB_HOME_DIR=/root/terminal-buddy/home
 #   TB_WORKSPACE=/root/terminal-buddy/workspace
 #   TB_USERNAME=admin
+#   TB_DOCKER_SOCKET=/var/run/docker.sock
 #   TB_IMAGE_MIRROR=docker.m.daocloud.io/library   基础镜像加速源
 set -euo pipefail
 
@@ -20,6 +21,13 @@ cd "$(dirname "$0")"
 log()  { printf '\033[36m[%s] %s\033[0m\n' "$(date '+%H:%M:%S')" "$*"; }
 warn() { printf '\033[33m[WARN] %s\033[0m\n' "$*"; }
 fail() { printf '\033[31m[ERROR] %s\033[0m\n' "$*" >&2; exit 1; }
+
+# 单引号保护 YAML 标量，双写 $ 防止 Compose 把路径内容当成变量插值。
+yaml_value() {
+  local value="${1//\'/\'\'}"
+  value="${value//\$/\$\$}"
+  printf "'%s'" "$value"
+}
 
 DO_BUILD=1
 DO_PULL=0
@@ -56,6 +64,7 @@ ensure_base_image() {
 ensure_base_image node 24-bookworm-slim
 ensure_base_image rust 1-bookworm
 ensure_base_image debian bookworm-slim
+ensure_base_image docker 28-cli
 
 # ---------- 可选：拉取最新代码 ----------
 if [ "$DO_PULL" = "1" ]; then
@@ -77,8 +86,32 @@ BIND_ADDRESS="${TB_BIND_ADDRESS:-0.0.0.0}"
 DATA_DIR="${TB_DATA_DIR:-/root/terminal-buddy/data}"
 HOME_DIR="${TB_HOME_DIR:-/root/terminal-buddy/home}"
 WORKSPACE_DIR="${TB_WORKSPACE:-/root/terminal-buddy/workspace}"
+DOCKER_SOCKET="${TB_DOCKER_SOCKET:-/var/run/docker.sock}"
 COMPOSE_FILE="compose.centos.yaml"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
+# Docker 客户端连接的必须是当前宿主机；远端 context 的路径无法在本机挂载。
+if [ -n "${DOCKER_CONTEXT:-}" ]; then
+  DOCKER_ENDPOINT="$(docker context inspect "$DOCKER_CONTEXT" --format '{{.Endpoints.docker.Host}}')"
+else
+  DOCKER_ENDPOINT="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}')}"
+fi
+[ "$DOCKER_ENDPOINT" = "unix://$DOCKER_SOCKET" ] || fail "当前 Docker 连接为 ${DOCKER_ENDPOINT}，请使用本机 socket，或用 TB_DOCKER_SOCKET 指定对应路径"
+[ -S "$DOCKER_SOCKET" ] || fail "Docker socket 不存在：${DOCKER_SOCKET}"
+DOCKER_GID="$(stat -c '%g' "$DOCKER_SOCKET")"
+case "$DOCKER_GID" in ''|*[!0-9]*) fail "无法读取 Docker socket 的数字 GID" ;; esac
+WORKSPACE_DIR="$(readlink -m -- "$WORKSPACE_DIR")"
+# 工作区会以同路径挂载，不能覆盖镜像的用户、系统目录或应用数据。
+case "$WORKSPACE_DIR" in
+  /|/root|/data|/data/*|/home|/home/terminalbuddy|/home/terminalbuddy/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|/usr|/usr/*|/etc|/etc/*|/var|/var/run|/var/run/*|/run|/run/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/opt|/opt/terminal-buddy|/opt/terminal-buddy/*)
+    fail "工作区不能覆盖容器的系统或数据目录：${WORKSPACE_DIR}" ;;
+esac
+for protected_dir in "$DATA_DIR" "$HOME_DIR"; do
+  protected_dir="$(readlink -m -- "$protected_dir")"
+  case "$protected_dir/" in
+    "$WORKSPACE_DIR/"*) fail "工作区不能包含应用数据或用户目录：${WORKSPACE_DIR}" ;;
+  esac
+done
 
 # 端口占用检查（放行 docker-proxy 自己）
 if command -v ss >/dev/null 2>&1; then
@@ -105,20 +138,52 @@ services:
     ports:
       - "${BIND_ADDRESS}:${HOST_PORT}:${CONTAINER_PORT}"
     environment:
-      TERMINAL_BUDDY_USERNAME: ${USERNAME}
+      TERMINAL_BUDDY_USERNAME: $(yaml_value "$USERNAME")
       TERMINAL_BUDDY_DATA_DIR: /data
       TERMINAL_BUDDY_WEB_DIST: /opt/terminal-buddy/web
-      TERMINAL_BUDDY_WORKSPACE_DIR: /workspace
+      TERMINAL_BUDDY_WORKSPACE_DIR: $(yaml_value "$WORKSPACE_DIR")
+      DOCKER_HOST: unix:///var/run/docker.sock
       TERMINAL_BUDDY_PORT: "${CONTAINER_PORT}"
       HOME: /home/terminalbuddy
       LANG: C.UTF-8
       TERM: xterm-256color
+    group_add:
+      - "${DOCKER_GID}"
+    working_dir: $(yaml_value "$WORKSPACE_DIR")
     volumes:
-      - ${DATA_DIR}:/data
-      - ${HOME_DIR}:/home/terminalbuddy
-      - ${WORKSPACE_DIR}:/workspace
-    stop_grace_period: 20s
+      - type: bind
+        source: $(yaml_value "$DATA_DIR")
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: $(yaml_value "$HOME_DIR")
+        target: /home/terminalbuddy
+        bind:
+          create_host_path: false
+      - type: bind
+        source: $(yaml_value "$WORKSPACE_DIR")
+        target: /workspace
+        bind:
+          create_host_path: false
+      - type: bind
+        source: $(yaml_value "$DOCKER_SOCKET")
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
 EOF
+if [ "$WORKSPACE_DIR" != "/workspace" ]; then
+  # 保留 /workspace 供已有项目使用，新项目使用与宿主机相同的绝对路径。
+  cat >> "$COMPOSE_FILE" <<EOF
+      - type: bind
+        source: $(yaml_value "$WORKSPACE_DIR")
+        target: $(yaml_value "$WORKSPACE_DIR")
+        bind:
+          create_host_path: false
+EOF
+fi
+printf '    stop_grace_period: 20s\n' >> "$COMPOSE_FILE"
+docker compose -f "$COMPOSE_FILE" config --quiet
 
 # ---------- 构建镜像 ----------
 if [ "$DO_BUILD" = "1" ]; then
@@ -150,6 +215,14 @@ if [ "$HEALTH" != "healthy" ]; then
   fail "健康检查未通过（当前：${HEALTH}）。排查：docker logs --tail 100 ${CONTAINER}"
 fi
 
+log "校验容器内 Docker 客户端与宿主机连接（uid 1000）"
+docker exec --user terminalbuddy "$CID" docker version || fail "容器内无法连接宿主机 Docker，请检查 socket 挂载、GID 和镜像版本"
+docker exec --user terminalbuddy "$CID" docker compose version || fail "镜像缺少 Docker Compose，请完整构建镜像，不要使用 --no-build"
+docker exec --user terminalbuddy "$CID" docker buildx version || fail "镜像缺少 Docker Buildx，请完整构建镜像"
+HOST_DOCKER_ID="$(docker info --format '{{.ID}}')"
+CONTAINER_DOCKER_ID="$(docker exec --user terminalbuddy "$CID" docker info --format '{{.ID}}')"
+[ -n "$HOST_DOCKER_ID" ] && [ "$HOST_DOCKER_ID" = "$CONTAINER_DOCKER_ID" ] || fail "容器与宿主机没有连接同一个 Docker Engine"
+
 # ---------- 外部可达性验证 ----------
 CODE_LAN="$(curl -s -o /dev/null -m 8 -w '%{http_code}' "http://${HOST_IP}:${HOST_PORT}/api/auth/status" || true)"
 CODE_LOOP="$(curl -s -o /dev/null -m 8 -w '%{http_code}' "http://127.0.0.1:${HOST_PORT}/api/auth/status" || true)"
@@ -162,7 +235,8 @@ echo "  容器名   : ${CONTAINER}"
 echo "  镜像     : ${IMAGE}"
 echo "  数据目录 : ${DATA_DIR}       -> 容器 /data"
 echo "  用户目录 : ${HOME_DIR}       -> 容器 /home/terminalbuddy"
-echo "  工作区   : ${WORKSPACE_DIR}  -> 容器 /workspace"
+echo "  工作区   : ${WORKSPACE_DIR}  -> 容器同路径（兼容 /workspace）"
+echo "  Docker   : ${DOCKER_SOCKET} -> 容器 /var/run/docker.sock（GID ${DOCKER_GID}）"
 echo "  访问地址 : http://${HOST_IP}:${HOST_PORT}/"
 echo "  登录账号 : ${USERNAME}"
 echo "  登录密码 : 首次访问网页时设置（至少 8 位）"

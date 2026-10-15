@@ -68,6 +68,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         terminal_buddy_lib::runtime::shutdown(&shutdown_app);
         let _ = shutdown_tx.send(true);
     });
-    web::server::run_server(settings.web_api_port, web::auth::generate_jwt_secret(), app, shutdown_rx).await?;
+    // 密钥持久化在数据目录（容器内 /data），重建容器 / 重启服务后已登录设备仍保持登录。
+    let jwt_secret = web::auth::load_or_create_jwt_secret()?;
+    web::server::run_server(settings.web_api_port, jwt_secret, app, shutdown_rx).await?;
     Ok(())
 }
