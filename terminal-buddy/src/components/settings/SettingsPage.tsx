@@ -1,14 +1,17 @@
-import { FC, lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { FC, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   BrainCircuit,
   MessageSquareMore,
+  Boxes,
   Database,
+  FileJson,
   FileX2,
   Globe2,
   Keyboard,
   Palette,
   Plug,
+  Search,
   Server,
   Settings,
   SlidersHorizontal,
@@ -26,6 +29,7 @@ import {
   type VsCodeTerminalSupport,
 } from '../../services/tauri';
 import { type AppSettings, getAppSettings, saveAppSettings } from '../../utils/settings';
+import { useAppStore } from '../../stores/appStore';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import './SettingsPage.css';
 
@@ -42,6 +46,8 @@ const BotNotificationSettings = lazy(() => import('./BotNotificationSettings').t
 const HookSettings = lazy(() => import('./HookSettings').then(module => ({ default: module.HookSettings })));
 const WebManageSettings = lazy(() => import('../shared/WebManageDialog').then(module => ({ default: module.WebManageSettings })));
 const ExtraParamsSettings = lazy(() => import('./ExtraParamsSettings').then(module => ({ default: module.ExtraParamsSettings })));
+const LlmProvidersSettings = lazy(() => import('../claude-panel/segments/LlmProvidersSegment').then(module => ({ default: module.LlmProvidersSegment })));
+const ClaudeSettingsEditor = lazy(() => import('../claude-panel/segments/ClaudeSettingsSegment').then(module => ({ default: module.ClaudeSettingsSegment })));
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -60,37 +66,79 @@ type SettingsSectionId =
   | 'hooks'
   | 'web-management'
   | 'bot-notifications'
-  | 'extra-params';
+  | 'extra-params'
+  | 'llm-providers'
+  | 'claude-settings';
 
 interface SettingsSection {
   id: SettingsSectionId;
   label: string;
   icon: LucideIcon;
+  keywords?: string[];
+  description?: string;
 }
 
-const SECTIONS: ReadonlyArray<SettingsSection> = [
-  { id: 'behavior', label: '行为设置', icon: SlidersHorizontal },
-  { id: 'appearance', label: '外观设置', icon: Palette },
-  { id: 'hotkeys', label: '快捷键设置', icon: Keyboard },
-  { id: 'data', label: '数据管理', icon: Database },
-  { id: 'profiles', label: '连接管理', icon: Plug },
-  { id: 'commands', label: '命令模板', icon: SquareTerminal },
-  { id: 'exclusions', label: '文件排除', icon: FileX2 },
-  { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit },
-  { id: 'ssh', label: 'SSH 设置', icon: Server },
-  { id: 'hooks', label: 'Hook 设置', icon: Webhook },
-  { id: 'web-management', label: 'Web 管理', icon: Globe2 },
-  { id: 'bot-notifications', label: '机器人通知', icon: MessageSquareMore },
-  { id: 'extra-params', label: '启动参数', icon: Terminal },
+interface SettingsGroup {
+  id: string;
+  label: string;
+  sections: SettingsSection[];
+}
+
+const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
+  {
+    id: 'general',
+    label: '常规与偏好',
+    sections: [
+      { id: 'behavior', label: '行为设置', icon: SlidersHorizontal, description: '内核引擎、启动与窗口行为、恢复选项卡与 Claude 会话', keywords: ['loading', 'vscode', 'window', 'startup', 'resume', '默认终端'] },
+      { id: 'appearance', label: '外观设置', icon: Palette, description: '主题、界面风格、呼吸指示灯与色彩方案', keywords: ['theme', 'dark', 'light', 'color', 'sidebar', 'indicator'] },
+      { id: 'hotkeys', label: '快捷键设置', icon: Keyboard, description: '唤起主窗口、新建终端与关闭标签快捷键录制', keywords: ['key', 'shortcut', 'bind'] },
+      { id: 'data', label: '数据管理', icon: Database, description: '数据存储路径迁移、完整备份与恢复导入', keywords: ['path', 'backup', 'export', 'import'] },
+    ],
+  },
+  {
+    id: 'terminal',
+    label: '终端与连接',
+    sections: [
+      { id: 'profiles', label: '连接管理', icon: Plug, description: '本地 Shell、SSH、Docker、K8s 连接项维护', keywords: ['profile', 'ssh', 'docker', 'powershell', 'cmd'] },
+      { id: 'commands', label: '命令模板', icon: SquareTerminal, description: '常用终端命令模板库与自定义命令', keywords: ['template', 'cmd', 'snippet'] },
+      { id: 'extra-params', label: '启动参数', icon: Terminal, description: '自定义启动参数预设与彩色角标', keywords: ['params', 'flag', 'preset'] },
+      { id: 'ssh', label: 'SSH 设置', icon: Server, description: 'SSH 远程文件下载路径与服务器负载探针刷新', keywords: ['download', 'monitor', 'cpu', 'memory'] },
+    ],
+  },
+  {
+    id: 'ai',
+    label: 'Claude & AI',
+    sections: [
+      { id: 'llm-providers', label: '模型供应商', icon: Boxes, description: 'DeepSeek、Claude 官方、OpenAI 兼容端点配置与模型拉取', keywords: ['ai', 'provider', 'model', 'deepseek', 'anthropic', 'api'] },
+      { id: 'claude-settings', label: 'Claude 默认配置', icon: FileJson, description: '用户级 settings.json 图形化配置、官方说明与快照备份', keywords: ['claude', 'settings.json', 'effort', 'token', 'context'] },
+      { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit, description: '模型 Token 消耗量、调用会话折线与用量统计', keywords: ['usage', 'token', 'cost', 'stats'] },
+    ],
+  },
+  {
+    id: 'extensions',
+    label: '扩展与服务',
+    sections: [
+      { id: 'web-management', label: 'Web 管理', icon: Globe2, description: '局域网 Web 终端访问服务与扫码连接', keywords: ['web', 'remote', 'port', 'password'] },
+      { id: 'bot-notifications', label: '机器人通知', icon: MessageSquareMore, description: '飞书、钉钉、企微等审批回调通知网关', keywords: ['bot', 'feishu', 'dingtalk', 'notification', 'webhook'] },
+      { id: 'hooks', label: 'Hook 设置', icon: Webhook, description: 'Claude Code 自动化决策拦截 Hook 脚本注入', keywords: ['hook', 'intercept', 'claude'] },
+      { id: 'exclusions', label: '文件排除', icon: FileX2, description: '项目文件树只读监视排除正则与忽略目录', keywords: ['exclude', 'ignore', 'tree'] },
+    ],
+  },
 ];
+
+const SECTIONS: ReadonlyArray<SettingsSection> = SECTION_GROUPS.flatMap(group => group.sections);
 
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [settings, setSettings] = useState<AppSettings>(getAppSettings);
   const [dataPath, setDataPath] = useState('');
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>('behavior');
+  const initialSection = useAppStore.getState().settingsDialogSection as SettingsSectionId | null;
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(
+    () => (initialSection && SECTIONS.some(section => section.id === initialSection) ? initialSection : 'behavior'),
+  );
   const [vsCodeSupport, setVsCodeSupport] = useState<VsCodeTerminalSupport | null>(null);
+  const [search, setSearch] = useState('');
   const [visitedSections, setVisitedSections] = useState<Set<SettingsSectionId>>(
-    () => new Set<SettingsSectionId>(['behavior'])
+    () => new Set<SettingsSectionId>([initialSection && SECTIONS.some(section => section.id === initialSection) ? initialSection : 'behavior']),
   );
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
 
@@ -109,6 +157,24 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       return next;
     });
   };
+
+  const filteredGroups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return SECTION_GROUPS;
+    return SECTION_GROUPS.map(group => {
+      const matchedSections = group.sections.filter(section => {
+        if (section.label.toLowerCase().includes(q)) return true;
+        if (section.description?.toLowerCase().includes(q)) return true;
+        if (section.keywords?.some(k => k.toLowerCase().includes(q))) return true;
+        return false;
+      });
+      return { ...group, sections: matchedSections };
+    }).filter(group => group.sections.length > 0);
+  }, [search]);
+
+  const flatVisibleSections = useMemo(() => {
+    return filteredGroups.flatMap(group => group.sections);
+  }, [filteredGroups]);
 
   useEffect(() => {
     getBackendAppSettings().then(backend => {
@@ -171,16 +237,20 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     setActiveSection(sectionId);
   };
 
-  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, sectionId: SettingsSectionId) => {
+    const list = flatVisibleSections;
+    const currentIndex = list.findIndex(s => s.id === sectionId);
+    if (currentIndex === -1) return;
+
     let targetIndex: number | null = null;
-    if (event.key === 'ArrowDown') targetIndex = (index + 1) % SECTIONS.length;
-    else if (event.key === 'ArrowUp') targetIndex = (index - 1 + SECTIONS.length) % SECTIONS.length;
+    if (event.key === 'ArrowDown') targetIndex = (currentIndex + 1) % list.length;
+    else if (event.key === 'ArrowUp') targetIndex = (currentIndex - 1 + list.length) % list.length;
     else if (event.key === 'Home') targetIndex = 0;
-    else if (event.key === 'End') targetIndex = SECTIONS.length - 1;
+    else if (event.key === 'End') targetIndex = list.length - 1;
     if (targetIndex === null) return;
 
     event.preventDefault();
-    const target = SECTIONS[targetIndex];
+    const target = list[targetIndex];
     selectSection(target.id);
     navButtonRefs.current[target.id]?.focus();
   };
@@ -219,6 +289,10 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         return <BotNotificationSettings />;
       case 'extra-params':
         return <ExtraParamsSettings />;
+      case 'llm-providers':
+        return <LlmProvidersSettings />;
+      case 'claude-settings':
+        return <ClaudeSettingsEditor />;
     }
   };
 
@@ -239,29 +313,59 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       >
         <div className="settings-page">
           <nav className="settings-nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
-            {SECTIONS.map((section, index) => {
-              const Icon = section.icon;
-              const isActive = activeSection === section.id;
-              return (
-                <button
-                  key={section.id}
-                  ref={element => { navButtonRefs.current[section.id] = element; }}
-                  id={`settings-tab-${section.id}`}
-                  className={`settings-nav-item ${isActive ? 'active' : ''}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  aria-controls={`settings-panel-${section.id}`}
-                  tabIndex={isActive ? 0 : -1}
-                  onClick={() => selectSection(section.id)}
-                  onKeyDown={event => handleTabKeyDown(event, index)}
-                  title={section.label}
-                >
-                  <Icon size={17} aria-hidden="true" />
-                  <span className="settings-nav-label">{section.label}</span>
-                </button>
-              );
-            })}
+            <div className="settings-nav-search-wrap">
+              <div className="settings-nav-search-inner">
+                <Search size={13} aria-hidden="true" />
+                <input
+                  type="text"
+                  className="settings-nav-search-input"
+                  placeholder="搜索设置项…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="settings-nav-scroll">
+              {filteredGroups.map(group => (
+                <div key={group.id} className="settings-nav-group">
+                  <div className="settings-nav-group-header">
+                    <span>{group.label}</span>
+                    <span style={{ opacity: 0.6 }}>{group.sections.length}</span>
+                  </div>
+                  <div className="settings-nav-group-items">
+                    {group.sections.map(section => {
+                      const Icon = section.icon;
+                      const isActive = activeSection === section.id;
+                      return (
+                        <button
+                          key={section.id}
+                          ref={element => { navButtonRefs.current[section.id] = element; }}
+                          id={`settings-tab-${section.id}`}
+                          className={`settings-nav-item ${isActive ? 'active' : ''}`}
+                          type="button"
+                          role="tab"
+                          aria-selected={isActive}
+                          aria-controls={`settings-panel-${section.id}`}
+                          tabIndex={isActive ? 0 : -1}
+                          onClick={() => selectSection(section.id)}
+                          onKeyDown={event => handleTabKeyDown(event, section.id)}
+                          title={section.label}
+                        >
+                          <Icon size={16} aria-hidden="true" />
+                          <span className="settings-nav-label">{section.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="settings-nav-footer">
+              <span>TerminalBuddy</span>
+              <span style={{ opacity: 0.7 }}>设置</span>
+            </div>
           </nav>
 
           <div className="settings-body">
@@ -276,6 +380,12 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
                     aria-labelledby={`settings-tab-${section.id}`}
                     hidden={activeSection !== section.id}
                   >
+                    <div className="settings-page-header">
+                      <div className="settings-page-header-text">
+                        <h3>{section.label}</h3>
+                        {section.description && <p>{section.description}</p>}
+                      </div>
+                    </div>
                     <Suspense fallback={<div className="settings-panel-loading" aria-live="polite">加载设置…</div>}>
                       {renderPanel(section.id)}
                     </Suspense>
