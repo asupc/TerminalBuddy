@@ -1,6 +1,7 @@
 .container-environment-dialog { width: min(480px, calc(100vw - 48px)); }
 .container-environment-intro { margin: 0 0 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
 .container-environment-tool { padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-secondary); }
+.container-environment-tool + .container-environment-tool { margin-top: 16px; }
 .container-environment-tool-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .container-environment-tool-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .container-environment-tool-name { display: flex; flex: 1; flex-direction: column; gap: 4px; }
