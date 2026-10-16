@@ -458,6 +458,21 @@
   gap: 10px;
 }
 
+/* 控件列内容较宽的行（如色板）：允许右侧收缩换行，左侧说明区保留最小可读宽度，
+   否则右侧会把左侧说明文字挤成每字一行 */
+.settings-row--wrap-ctrl .settings-row-info {
+  min-width: 220px;
+}
+
+.settings-row--wrap-ctrl .settings-row-ctrl {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.settings-row--wrap-ctrl .tab-color-options {
+  justify-content: flex-end;
+}
+
 /* 统一胶囊开关组件 Switch */
 .tb-switch {
   position: relative;
