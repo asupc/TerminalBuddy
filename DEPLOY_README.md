@@ -9,10 +9,10 @@
 | --- | --- |
 | `deploy.bat` | Windows 一键部署入口（→ CentOS）：拉代码 → 免密认证 → 打包上传 → 远端构建 → 启动校验 |
 | `deploy-centos.sh` | CentOS 服务器端一键部署：基础镜像兜底 → 生成 compose → 构建镜像 → 启动容器 → 健康检查 |
-| `deploy-fnos.sh` | **飞牛 fnOS 一键部署入口**：本机构建镜像 → 打包上传 → 远端载入并重建容器 → 自检 |
+| `deploy-fnos.sh` | **飞牛 fnOS 一键部署入口**：打包源码 → 上传 → 飞牛上构建镜像并重建容器 → 自检 |
 | `scripts/remote-deploy.sh` | `deploy.bat` 上传后在 CentOS 服务器执行的包装脚本（解压源码 + 调 `deploy-centos.sh`） |
 | `scripts/remote-verify.sh` | CentOS 部署后校验脚本（容器状态、健康、HTTP、端口、数据卷） |
-| `scripts/deploy-fnos-remote.sh` | 飞牛远端执行体（`deploy-fnos.sh` 上传后以 sudo 运行）：目录属主、生成 compose、载入镜像、重建容器 |
+| `scripts/deploy-fnos-remote.sh` | 飞牛远端执行体（`deploy-fnos.sh` 上传后以 sudo 运行）：目录属主、生成 compose、构建/载入镜像、重建容器 |
 | `scripts/install-key.py` | 首次运行自动把本机公钥安装到 CentOS 服务器，实现后续免密（飞牛链路不需要 python） |
 
 ## 用法
@@ -76,19 +76,20 @@ TB_HOST_PORT=9620 TB_BIND_ADDRESS=127.0.0.1 ./deploy-centos.sh
 飞牛默认禁止 root 登录，脚本用普通管理员账号 + `sudo` 完成，**不需要**在飞牛上装 Node.js / Rust。
 
 ```bash
-./deploy-fnos.sh                 # 全流程：本机构建 → 上传 → 远端载入镜像 → 重建容器 → 自检
-./deploy-fnos.sh --no-build      # 跳过重建镜像，用现有镜像重建容器
-./deploy-fnos.sh --build-on-nas  # 改在飞牛上编译 Rust（i3-N305 约 20-40 分钟，慢）
+./deploy-fnos.sh                 # 全流程：打包源码 → 上传 → 飞牛上构建镜像 → 重建容器 → 自检
+./deploy-fnos.sh --no-build      # 跳过构建，用飞牛上现有镜像重建容器
+./deploy-fnos.sh --build-local   # 改在本机构建镜像后上传（需本机 docker）
 ```
 
 sudo 密码来源（按优先级）：环境变量 `TB_FNOS_PASSWORD` → 凭据文件（`--config`，默认
 `~/.codex/private/fnos/config.json`）→ 交互式隐藏输入。密码只经 stdin 交给远端 `sudo -S`，
 不写入命令行参数或日志。首次运行会自动生成部署密钥并安装公钥到飞牛，之后全程免密。
 
-**为什么默认在飞牛上不编译**：TerminalBuddy 是 Rust release 构建（`lto = "thin"`），在
-i3-N305 这类低功耗 NAS 上约 20-40 分钟且内存吃紧。本机构建后可复用 Docker 层缓存
-（源码未变时几乎瞬时），导出镜像约 158MB，整体 1 分钟量级。飞牛上已有同一镜像时会
-自动跳过导出与上传。
+**默认在飞牛上编译**：部署机不需要安装 docker / Node / Rust，任意能 ssh 的机器都能发包，
+源码包约 16MB，比搬运 158MB 镜像包省事。i3-N305（8 核 / 7.8G 内存）首次构建约 20-40 分钟；
+之后源码指纹未变时**直接跳过构建**复用镜像，日常改配置或重建容器几乎瞬时完成。
+基础镜像走「本地命中 → 离线备份 → 备用镜像源」三级兜底，构建所需的 npm / crates 源
+在飞牛上实测可达。需要复用本机 Docker 层缓存时用 `--build-local`（本机需装 docker）。
 
 默认配置（写在 `deploy-fnos.sh` 顶部，可用环境变量覆盖）：
 
@@ -114,7 +115,7 @@ i3-N305 这类低功耗 NAS 上约 20-40 分钟且内存吃紧。本机构建后
 - **项目名固定**：源码位于 `src/` 子目录，`.env` 中写入 `COMPOSE_PROJECT_NAME=terminal-buddy`，
   避免项目名变成 `src` 与既有容器/网络脱节。
 - **Docker socket**：飞牛该 socket 的 GID 为 994，脚本自动读取并写入 `group_add`。
-- **基础镜像兜底**（仅在 `--build-on-nas` 或无镜像包时使用）：本地命中 → 离线备份
+- **基础镜像兜底**（在飞牛上构建时使用）：本地命中 → 离线备份
   （`<应用目录>/base-images/`）→ 备用镜像源，避免飞牛镜像加速源故障时构建第一步就失败。
 
 ### 首次登录
@@ -191,7 +192,7 @@ docker restart terminal-buddy                  # 重启后浏览器无需重新�
 **1. 基础镜像拉取失败**
 CentOS 7 直连 Docker Hub 通常超时。脚本已内置加速源，可用 `TB_IMAGE_MIRROR` 换源：
 `docker.1ms.run/library`、`hub.rat.dev/library`、`dockerpull.org` 等。
-飞牛侧（`deploy-fnos.sh --build-on-nas`）同样内置四个备用源，并支持
+飞牛侧（`deploy-fnos.sh` 默认即在飞牛上构建）同样内置四个备用源，并支持
 `<应用目录>/base-images/` 离线备份，镜像源全线故障时仍可恢复。
 
 **2. 健康检查不通过**

@@ -232,12 +232,13 @@ SUDO_PASSWORD="$(read_password)"
 
 REMOTE_ARGS="${APP_DIR} ${DATA_DIR} ${HOME_DIR} ${WORKSPACE_DIR} ${HOST_PORT} ${CONTAINER} ${IMAGE} ${FNOS_USER}"
 REMOTE_FLAGS=""
-# 默认（BUILD_LOCAL=0）：远端自行构建，不传标志 —— 远端 BUILD_ON_NAS=0 且无镜像包时
-# 即走「在飞牛上本地构建」分支。
+# 默认（BUILD_LOCAL=0）：让远端真正编译，传 --build-on-nas 走「在飞牛上本地构建」分支
+# （远端那个标志名保持不变，语义即「在飞牛上构建」）。
+[ "${BUILD_LOCAL}" = "0" ] && [ "${DO_BUILD}" = "1" ] && REMOTE_FLAGS="${REMOTE_FLAGS} --build-on-nas"
 [ "${NO_BASE_IMAGE_BACKUP}" = "1" ] && REMOTE_FLAGS="${REMOTE_FLAGS} --no-base-image-backup"
 # 是否要求远端跳过构建：
 #   --no-build     -> 跳过，直接用远端现有镜像
-#   --build-local  -> 本机已构建并（可能）上传镜像包，远端不再编译
+#   --build-local  -> 本机已构建并上传镜像包，远端只需载入
 #   默认           -> 远端需要编译
 if [ "${DO_BUILD}" = "0" ] || [ "${BUILD_LOCAL}" = "1" ]; then
   REMOTE_SKIP_BUILD=1
@@ -245,9 +246,8 @@ else
   REMOTE_SKIP_BUILD=0
 fi
 # 远端可复用的条件：本次确实上传/确认了镜像。
-#   本机构建且未上传（远端已有同一镜像）-> 远端镜像即所需镜像
-#   本机构建且上传了镜像包              -> 远端 docker load 后即所需镜像
-#   默认在飞牛构建                      -> 远端必须真正编译，不能标记为 current
+#   --build-local  -> 本机已构建，远端镜像即所需镜像，无需再编译
+#   默认在飞牛构建 -> 远端必须真正编译，不能标记为 current
 if [ "${BUILD_LOCAL}" = "1" ] && [ "${DO_BUILD}" = "1" ]; then
   REMOTE_IMAGE_CURRENT=1
 else
