@@ -44,7 +44,7 @@
 - **加载优先级**：Managed settings > CLI `--settings` > 项目 local（`.claude/settings.local.json`）> 项目 shared（`.claude/settings.json`）> 用户（`~/.claude/settings.json`）。本方案依赖“`--settings` 覆盖用户文件”实现与旧 Docker 链路的共存（旧链路写用户文件，新链路按终端覆盖）。
 - **`claude --settings <文件|内联JSON>`**：只覆盖同名键，省略的键保留文件值；文件须为常规文件且 ≤ 2 MiB。这是需求 3「临时 JSON + 启动参数」方案的官方依据。临时文件远小于 2 MiB，天然满足。
 - **`--model`**：覆盖 `model` 键与 `ANTHROPIC_MODEL`；**`--effort`**：`low|medium|high|xhigh|max|ultracode`（推理等级最高档为 `max`；`ultracode` 不做）。
-- **推理等级共五档，最高 `max`**：供应商 / 模型级推理等级取值 `low|medium|high|xhigh|max`。settings 文件内 `effortLevel` / `modelSettings.<模型>.effortLevel` 官方文档仅收录四档（`low|medium|high|xhigh`），`max` 经临时 settings 的 `env.CLAUDE_CODE_EFFORT_LEVEL`（本机实测有效）+ 启动命令 `--effort max` 双通道生效，不写入 `effortLevel` / `modelSettings` 字段。`max` 双通道属“文档推理 + 本机实测”，非官方明示，联调时按验收清单验证服务端实际命中。
+- **推理等级共五档，最高 `max`**：供应商 / 模型级推理等级取值 `low|medium|high|xhigh|max`。settings 文件内 `effortLevel` / `modelSettings.<模型>.effortLevel` 官方文档仅收录四档（`low|medium|high|xhigh`），`max` 经临时 settings 的 `env.CLAUDE_CODE_EFFORT_LEVEL`（本机实测有效）+ 启动命令 `--effort max` 双通道生效，不写入 `effortLevel` / `modelSettings` 字段。`max` 双通道属“文档推理 + 本机实测”，非官方明示，联调时按验收清单验证服务端实际命中。**所有档位**都写 `env.CLAUDE_CODE_EFFORT_LEVEL`：该 env 键优先级最高，用户级 settings.json 残留的同名值会穿透临时文件未写的键压制所选档位（2026-10-16 实测：残留 `max` 压制 `xhigh`）。
 - **env 按 key 合并**：临时 settings 里只需列出要覆盖的 env 键（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` 等），其余继承。
 - **上下文修正官方变量**：`CLAUDE_CODE_MAX_CONTEXT_TOKENS`（文档原话：用于 `ANTHROPIC_BASE_URL` 路由场景修正窗口假设）——即「上下文大小」的落点；输出上限 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`；thinking 预算 `MAX_THINKING_TOKENS`。
 - **`modelSettings`**：按模型规范名映射 `{ effortLevel, maxEffortLevel, autoCompactWindow }`，同文件内优先于顶层 `effortLevel`。
@@ -236,17 +236,18 @@ Tauri 命令（`commands/llm_provider.rs` 新文件，`commands/mod.rs` 重导�
     "ANTHROPIC_BASE_URL": "https://ai-proxy.company.com/v1",
     "ANTHROPIC_AUTH_TOKEN": "<解密后的 Key>", // 按供应商 authType 二选一
     "ANTHROPIC_MODEL": "claude-opus-5-5",
-    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "200000" // contextWindow 缺省时整键省略
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "200000", // contextWindow 缺省时整键省略
+    "CLAUDE_CODE_EFFORT_LEVEL": "xhigh" // 所有档位都写：压制用户级 settings.json 残留的同名值
   },
   "model": "claude-opus-5-5",
   "effortLevel": "xhigh",
   "modelSettings": { "claude-opus-5-5": { "effortLevel": "xhigh" } }
 }
-// 注：示例为非 max 档。level=max 时不写 effortLevel / modelSettings，
-// 改为 env.CLAUDE_CODE_EFFORT_LEVEL=max，见步骤 3。
+// 注：示例为非 max 档。level=max 时不写 effortLevel / modelSettings
+//（文件键仅收录到 xhigh），env.CLAUDE_CODE_EFFORT_LEVEL=max 仍写，见步骤 3。
 ```
 
-3. 组装启动命令：`claude --settings <quoted-tempfile> --model <quoted-model> --effort <level>`。临时路径与模型名分别经 `quote_cmd_argument` 包裹（路径含空格时加引号；模型名含 `"`/`%` 时拒绝并中文提示）；`level=max` 时仍传 `--effort max`，同时临时 settings 的 env 写 `CLAUDE_CODE_EFFORT_LEVEL=max`，不写 `effortLevel` / `modelSettings` 字段。
+3. 组装启动命令：`claude --settings <quoted-tempfile> --model <quoted-model> --effort <level>`。临时路径与模型名分别经 `quote_cmd_argument` 包裹（路径含空格时加引号；模型名含 `"`/`%` 时拒绝并中文提示）；所有档位都在临时 settings 的 env 写 `CLAUDE_CODE_EFFORT_LEVEL=<level>`——该 env 键优先级最高，用户级 settings.json 残留的同名值会把临时文件未写的档位压回去（2026-10-16 实测：残留 max 压制 xhigh）；`level=max` 时不写 `effortLevel` / `modelSettings` 字段。
 4. 叶子基于该 Profile 的 shell / 路径 / env（`create_terminal` 现有逻辑），`independent` 替换掉 `profile.startup_commands` 原内容；分组基于项目路径走 blank 链。两路都经 `spawn_terminal` → `build_terminal_env`，`TERMINAL_BUDDY_*` 与 `CLAUDE_CONFIG_DIR` 注入不受影响。**禁止另起 spawn 路径**。
 5. 记录 `terminalId → tempFile` 映射（内存 + 落盘小表，见 §5.3）。`terminal_id` 在 `create_*` 顶部已生成，展开函数签名需传入。
 6. **快照存引用**：前端 `extraParams`（`independent`）/ 后端 profile 路 `extra_startup_params`（`independent`）/ blank 路 `initial_command`（整条）里存的都是引用标记开头的命令，而非 `--settings` 旧路径。**展开契约**：
@@ -256,7 +257,7 @@ Tauri 命令（`commands/llm_provider.rs` 新文件，`commands/mod.rs` 重导�
    - `reject_control_chars` 始终在展开后对最终命令执行（profile 路在 `build_init_commands` 末尾约 L901-903，blank 路在入队前约 L1549）；
    - 引用含 `:` 与 shell 无冲突（`reject` 只拦控制字符，`quote` 拒绝集为 `"`/`%`，uuid 与模型 ID 均不在其中）。
 
-> 关于 `env.CLAUDE_CODE_EFFORT_LEVEL`：本机实测值为 `max` 且生效，确认为 effort 的环境形态；官方文档未收录。一期采用：effort 为 `max` 时临时 settings 经该 env 键 + `--effort max` 双通道生效。
+> 关于 `env.CLAUDE_CODE_EFFORT_LEVEL`：本机实测值为 `max` 且生效，确认为 effort 的环境形态；官方文档未收录。该 env 键优先级最高，会压制文件键 `effortLevel` / `modelSettings`（2026-10-16 实测：用户级残留 `max` 压制所选 `xhigh`）。因此临时 settings **所有档位**都写该 env 键，非 max 档同时写文件键双通道生效。
 
 ### 5.3 临时文件清理与引用失效
 
@@ -369,7 +370,7 @@ Tauri 命令（`commands/llm_provider.rs` 新文件，`commands/mod.rs` 重导�
 
 ## 10. 评审结论（已定）
 
-1. 推理等级共五档、最高 `max`（`ultracode` 不做）：`max` 经 `env.CLAUDE_CODE_EFFORT_LEVEL` + `--effort max` 双通道生效，不写入 `effortLevel` / `modelSettings` 字段。——**接受**
+1. 推理等级共五档、最高 `max`（`ultracode` 不做）：`max` 经 `env.CLAUDE_CODE_EFFORT_LEVEL` + `--effort max` 双通道生效，不写入 `effortLevel` / `modelSettings` 字段；所有档位都写该 env 键以压制用户级残留。——**接受**
 2. 无供应商时菜单显示引导项（备选整区隐藏已否决）。
 3. settings 备份保留 10 个。——**接受**
 4. Web 端允许编辑供应商 Key（与桌面一致）。——**接受**
