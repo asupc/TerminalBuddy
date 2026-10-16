@@ -9,6 +9,22 @@
 
 ## [未发布]
 
+### 🐮 飞牛 fnOS 一键部署
+
+- 新增 `deploy-fnos.sh`：把 TerminalBuddy 部署到飞牛 NAS，与 CentOS 实例并存。飞牛默认禁止
+  root 登录，脚本以普通管理员账号 + `sudo` 完成，**不需要**在飞牛上安装 Node.js 或 Rust；
+  首次运行自动生成部署密钥并安装公钥，之后全程免密，sudo 密码只经 stdin 传递、临时文件用 trap 清理。
+- 默认**本机构建、搬运镜像**而非在 NAS 上编译：Rust release 构建在 i3-N305 上约 20-40 分钟，
+  本机可复用 Docker 层缓存（源码未变时几乎瞬时），导出镜像约 158MB；飞牛上已有同一镜像时
+  自动跳过导出与上传。`--build-on-nas` 保留在飞牛本地编译的路径，并沿用「本地命中 → 离线备份
+  → 备用镜像源」三级基础镜像兜底。
+- 新增 `scripts/deploy-fnos-remote.sh`：远端以 root 运行，负责目录属主、生成 `compose.fnos.yaml`、
+  载入镜像、按源码/镜像/配置指纹决定是否重建容器、健康检查与容器内 Docker socket 校验。
+- 飞牛适配：`/vol1` 以 TrimACL 判定权限（`setfacl` 无效），部署时改用容器内 uid 1000 对
+  data / home / workspace 三个目录做**实际写入探测**，失败即中止并给出补救命令；数据、家目录、
+  工作区均持久化在 `/vol1/1000/docker/terminal-buddy/` 下，工作区与容器内同路径挂载，保证
+  终端里 `docker compose` 的相对目录挂载落到正确的宿主机路径。
+
 ### 🔐 Web 登录状态长期保持
 
 - **登录有效期延长至 30 天**：JWT 有效期由 24 小时改为 30 天（`web/auth.rs` 的 `TOKEN_TTL_DAYS`），不再频繁要求重新登录。
