@@ -1,6 +1,10 @@
 type EventCallback = (event: { event: string; id: number; payload: unknown }) => void;
 const callbacks = new Map<string, Set<EventCallback>>();
-let token = sessionStorage.getItem('terminalBuddy.webToken') ?? '';
+// 登录态存 localStorage 而非 sessionStorage：sessionStorage 的生命周期止于标签页/窗口，
+// 关掉浏览器 token 就没了，用户每次重新打开都要登录——即使后端 JWT 还有 30 天有效期。
+// localStorage 则在关闭浏览器、重启服务端（签名密钥持久化在数据目录 jwt.key）后依然保留，
+// 只要 JWT 没到期就能直接恢复登录。
+let token = localStorage.getItem('terminalBuddy.webToken') ?? '';
 let eventSocket: WebSocket | null = null;
 let retry: ReturnType<typeof setTimeout> | undefined;
 export let serverPlatform = 'windows';
@@ -15,8 +19,8 @@ export function setDockerRuntime(value: boolean): void { dockerRuntime = value; 
 export function setServerUsername(value: string): void { serverUsername = value; }
 export function setToken(value: string): void {
   token = value;
-  if (value) sessionStorage.setItem('terminalBuddy.webToken', value);
-  else sessionStorage.removeItem('terminalBuddy.webToken');
+  if (value) localStorage.setItem('terminalBuddy.webToken', value);
+  else localStorage.removeItem('terminalBuddy.webToken');
   clearTimeout(retry);
   const previous = eventSocket;
   eventSocket = null;

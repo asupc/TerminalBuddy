@@ -7,11 +7,13 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `deploy.bat` | Windows 一键部署入口：拉代码 → 免密认证 → 打包上传 → 远端构建 → 启动校验 |
-| `deploy-centos.sh` | 服务器端一键部署：基础镜像兜底 → 生成 compose → 构建镜像 → 启动容器 → 健康检查 |
-| `scripts/remote-deploy.sh` | `deploy.bat` 上传后在服务器执行的包装脚本（解压源码 + 调 `deploy-centos.sh`） |
-| `scripts/remote-verify.sh` | 部署后校验脚本（容器状态、健康、HTTP、端口、数据卷） |
-| `scripts/install-key.py` | 首次运行自动把本机公钥安装到服务器，实现后续免密 |
+| `deploy.bat` | Windows 一键部署入口（→ CentOS）：拉代码 → 免密认证 → 打包上传 → 远端构建 → 启动校验 |
+| `deploy-centos.sh` | CentOS 服务器端一键部署：基础镜像兜底 → 生成 compose → 构建镜像 → 启动容器 → 健康检查 |
+| `deploy-fnos.sh` | **飞牛 fnOS 一键部署入口**：打包源码 → 上传 → 飞牛上构建镜像并重建容器 → 自检 |
+| `scripts/remote-deploy.sh` | `deploy.bat` 上传后在 CentOS 服务器执行的包装脚本（解压源码 + 调 `deploy-centos.sh`） |
+| `scripts/remote-verify.sh` | CentOS 部署后校验脚本（容器状态、健康、HTTP、端口、数据卷） |
+| `scripts/deploy-fnos-remote.sh` | 飞牛远端执行体（`deploy-fnos.sh` 上传后以 sudo 运行）：目录属主、生成 compose、构建/载入镜像、重建容器 |
+| `scripts/install-key.py` | 首次运行自动把本机公钥安装到 CentOS 服务器，实现后续免密（飞牛链路不需要 python） |
 
 ## 用法
 
@@ -68,6 +70,90 @@ TB_HOST_PORT=9620 TB_BIND_ADDRESS=127.0.0.1 ./deploy-centos.sh
 | 局域网地址 | http://192.168.3.202:9610/ |
 | 公网地址 | http://123.57.172.104:9610/ （飞牛 frpc 转发） |
 
+## 一键部署到飞牛 fnOS（deploy-fnos.sh）
+
+把 TerminalBuddy 部署到飞牛 NAS（192.168.3.77），与 CentOS 实例并存、互不影响。
+飞牛默认禁止 root 登录，脚本用普通管理员账号 + `sudo` 完成，**不需要**在飞牛上装 Node.js / Rust。
+
+```bash
+./deploy-fnos.sh                 # 全流程：打包源码 → 上传 → 飞牛上构建镜像 → 重建容器 → 自检
+./deploy-fnos.sh --no-build      # 跳过构建，用飞牛上现有镜像重建容器
+./deploy-fnos.sh --build-local   # 改在本机构建镜像后上传（需本机 docker）
+```
+
+sudo 密码来源（按优先级）：环境变量 `TB_FNOS_PASSWORD` → 凭据文件（`--config`，默认
+`~/.codex/private/fnos/config.json`）→ 交互式隐藏输入。密码只经 stdin 交给远端 `sudo -S`，
+不写入命令行参数或日志。首次运行会自动生成部署密钥并安装公钥到飞牛，之后全程免密。
+
+**默认在飞牛上编译**：部署机不需要安装 docker / Node / Rust，任意能 ssh 的机器都能发包，
+源码包约 16MB，比搬运 158MB 镜像包省事。i3-N305（8 核 / 7.8G 内存）首次构建约 20-40 分钟；
+之后源码指纹未变时**直接跳过构建**复用镜像，日常改配置或重建容器几乎瞬时完成。
+基础镜像走「本地命中 → 离线备份 → 备用镜像源」三级兜底，构建所需的 npm / crates 源
+在飞牛上实测可达。需要复用本机 Docker 层缓存时用 `--build-local`（本机需装 docker）。
+
+默认配置（写在 `deploy-fnos.sh` 顶部，可用环境变量覆盖）：
+
+| 项 | 默认值 |
+|---|---|
+| 目标主机 | `192.168.3.77:22` |
+| 部署账号 | `397383523`（普通管理员，使用 sudo） |
+| 应用目录 | `/vol1/1000/docker/terminal-buddy` |
+| 数据目录 | `/vol1/1000/docker/terminal-buddy/data` → 容器 `/data` |
+| 用户目录 | `/vol1/1000/docker/terminal-buddy/home` → 容器 `/home/terminalbuddy` |
+| 工作区 | `/vol1/1000/docker/terminal-buddy/workspace`（容器内同路径） |
+| 监听端口 | `9600`（容器内同为 9600） |
+| 访问地址 | http://192.168.3.77:9600/ |
+
+飞牛适配要点：
+
+- **无 root 登录**：全部特权操作通过 `sudo` 执行，部署脚本以 root 运行后再降权到容器 uid 1000。
+- **TrimACL**：飞牛 `/vol1` 以自家 TrimACL 判定权限，`setfacl` 无效。脚本以 `chown 1000:1000`
+  为主，并在部署时用容器内 uid 1000 **实际写入探测** data / home / workspace 三个目录，
+  失败即中止并给出 `trimacl -m a:u:1000:...` 的补救命令。
+- **工作区同路径挂载**：容器内路径与宿主机一致，网页终端里 `docker compose` 的相对目录
+  挂载（`.:/app`、`./data`）才能落到正确的宿主机路径。
+- **项目名固定**：源码位于 `src/` 子目录，`.env` 中写入 `COMPOSE_PROJECT_NAME=terminal-buddy`，
+  避免项目名变成 `src` 与既有容器/网络脱节。
+- **Docker socket**：飞牛该 socket 的 GID 为 994，脚本自动读取并写入 `group_add`。
+- **基础镜像兜底**（在飞牛上构建时使用）：本地命中 → 离线备份
+  （`<应用目录>/base-images/`）→ 备用镜像源，避免飞牛镜像加速源故障时构建第一步就失败。
+
+### 首次登录
+
+部署完成后打开 http://192.168.3.77:9600/ ，页面会要求**创建管理员密码**（至少 8 个字符），
+账号为 `admin`。数据目录此时是全新的，与 CentOS 实例完全隔离。
+
+也可以预先准备密码：在飞牛上的 compose 中配置 `TERMINAL_BUDDY_PASSWORD_FILE: /run/secrets/...`
+并在首次启动前提供该文件，密码只在首次启动时读取。
+
+### 飞牛侧信息
+
+| 项目 | 值 |
+| --- | --- |
+| 容器名 | `terminal-buddy` |
+| 镜像 | `terminal-buddy:server` |
+| 端口 | `0.0.0.0:9600 -> 9600/tcp` |
+| 源码目录 | `/vol1/1000/docker/terminal-buddy/src` |
+| compose | `/vol1/1000/docker/terminal-buddy/src/compose.fnos.yaml` |
+| 部署状态 | `/vol1/1000/docker/terminal-buddy/.deploy-state` |
+| 重启策略 | `unless-stopped` |
+| 访问地址 | http://192.168.3.77:9600/ |
+
+常用运维（在飞牛或经 ssh）：
+
+```bash
+docker logs -f --tail 100 terminal-buddy     # 查看日志
+docker restart terminal-buddy                # 重启服务
+docker compose -f /vol1/1000/docker/terminal-buddy/src/compose.fnos.yaml down   # 停止
+```
+
+### 安全边界
+
+容器挂载了宿主机的 `/var/run/docker.sock`，因此**网页终端及其中的 Claude 可以管理飞牛上的
+全部容器、镜像、卷和网络**，权限等价于宿主 root。该实例当前只监听局域网 `0.0.0.0:9600`，
+**不要**直接映射到公网；确需公网访问请配置带 HTTPS 的反向代理并设置强管理员口令。
+若只想发布单个端口到公网，可在飞牛的 frpc 配置中新增一条指向 `192.168.3.77:9600` 的映射。
+
 ## 飞牛 frpc 配置
 
 配置文件：`/vol1/1000/docker/frpc/frpc.ini`
@@ -106,6 +192,8 @@ docker restart terminal-buddy                  # 重启后浏览器无需重新�
 **1. 基础镜像拉取失败**
 CentOS 7 直连 Docker Hub 通常超时。脚本已内置加速源，可用 `TB_IMAGE_MIRROR` 换源：
 `docker.1ms.run/library`、`hub.rat.dev/library`、`dockerpull.org` 等。
+飞牛侧（`deploy-fnos.sh` 默认即在飞牛上构建）同样内置四个备用源，并支持
+`<应用目录>/base-images/` 离线备份，镜像源全线故障时仍可恢复。
 
 **2. 健康检查不通过**
 脚本会自动打印最近 40 行日志。默认原因是数据目录属主不是容器内 uid 1000，
@@ -118,7 +206,21 @@ CentOS 7 直连 Docker Hub 通常超时。脚本已内置加速源，可用 `TB_
 脚本会先检查并给出占用进程；用 `TB_HOST_PORT` 换端口，同时记得同步修改飞牛 `frpc.ini`。
 
 **5. 后续如何升级代码**
-在项目目录 `git pull` 后执行 `deploy.bat`（默认就会先 `git pull --ff-only` 再构建部署）。
+CentOS：在项目目录 `git pull` 后执行 `deploy.bat`（默认就会先 `git pull --ff-only` 再构建部署）。
+飞牛：执行 `./deploy-fnos.sh` 即可，脚本会自动重建镜像并只在镜像真正变化时
+更新飞牛上的镜像与容器（未变化时飞牛侧服务零中断）。
+
+**6. 飞牛部署报「目录对容器内 uid 1000 不可写」**
+飞牛 `/vol1` 以 TrimACL 判定权限，POSIX ACL 不生效。按报错提示在飞牛上执行：
+
+```bash
+sudo chown -R 1000:1000 /vol1/1000/docker/terminal-buddy/{data,home,workspace}
+sudo /usr/trim/bin/trimacl -m a:u:1000:rwxpdDaAeEc:sfd /vol1/1000/docker/terminal-buddy
+```
+
+**7. 飞牛的镜像 / 容器被系统清理**
+飞牛会回收未被容器占用的镜像。重新执行 `./deploy-fnos.sh` 即可恢复；
+由于本机保留构建缓存，重新导出镜像只是一分钟左右的事。
 
 ## 在网页终端和 Claude 中部署宿主机 Docker 容器
 

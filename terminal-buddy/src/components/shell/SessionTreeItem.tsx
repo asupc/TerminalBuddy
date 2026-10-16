@@ -2,6 +2,7 @@ import { FC } from 'react';
 import { ChevronRight, X } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { formatDuration } from '../../utils/formatDuration';
+import { isDockerClient } from '../../services/platform';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName, type IndicatorLight } from '../../utils/claudeIndicator';
 import type { TreeItem } from '../file-explorer/TreeView';
 import type { TerminalSession } from '../../types';
@@ -187,7 +188,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                     return null;
                   })()}
                 </span>
-                {(child.data as any)?.owner === 'web' && <span className="tab-nav-owner-badge">Web</span>}
+                {(child.data as any)?.owner === 'web' && !isDockerClient() && <span className="tab-nav-owner-badge">Web</span>}
                 {(child.data as any)?.owner !== 'web' && terminalWebTakeovers[child.id] && (
                   <span className="tab-nav-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
                 )}

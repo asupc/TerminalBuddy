@@ -1,0 +1,44 @@
+# 开发预览实例：与生产实例（9610 / terminal-buddy）完全独立。
+# 数据、家目录、工作区各自独立，避免污染线上环境。
+# 镜像由 scripts/deploy-dev.sh 用生产 Dockerfile 构建，保证预览与生产同源。
+services:
+  terminal-buddy-dev:
+    image: terminal-buddy:dev
+    container_name: terminal-buddy-dev
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:9611:9600"
+    environment:
+      TERMINAL_BUDDY_USERNAME: admin
+      TERMINAL_BUDDY_DATA_DIR: /data
+      TERMINAL_BUDDY_WEB_DIST: /opt/terminal-buddy/web
+      TERMINAL_BUDDY_WORKSPACE_DIR: /workspace
+      DOCKER_HOST: unix:///var/run/docker.sock
+      TERMINAL_BUDDY_PORT: "9600"
+      HOME: /home/terminalbuddy
+      LANG: C.UTF-8
+      TERM: xterm-256color
+    group_add:
+      - "994"
+    volumes:
+      - type: bind
+        source: /root/terminal-buddy/dev/data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /root/terminal-buddy/dev/home
+        target: /home/terminalbuddy
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /root/terminal-buddy/dev/workspace
+        target: /workspace
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+    stop_grace_period: 20s

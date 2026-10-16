@@ -5,6 +5,7 @@ import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../.
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
 import { parseClaudeRef } from '../../utils/claudeLaunch';
+import { isDockerClient } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
 import './TerminalTabBar.css';
 
@@ -292,7 +293,8 @@ export const TerminalTabBar: FC = () => {
                 ) : null;
               })()}
               <span className="terminal-tab-name" style={session.tabColor ? { color: session.tabColor } : undefined}>{session.profileName}</span>
-              {session.owner === 'web' && <span className="terminal-owner-badge">Web</span>}
+              {/* Docker 端所有会话都来自网页端，Web 标签没有区分度，故隐藏 */}
+              {session.owner === 'web' && !isDockerClient() && <span className="terminal-owner-badge">Web</span>}
               {session.owner !== 'web' && terminalWebTakeovers[session.id] && (
                 <span className="terminal-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
               )}
