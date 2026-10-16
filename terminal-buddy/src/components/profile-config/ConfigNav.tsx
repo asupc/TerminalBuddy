@@ -5,7 +5,7 @@ import { openProjectTerminal, openTerminalInDir } from '../../utils/openTerminal
 import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
-import { inheritableClaudeArgs, isModelRefLocalType } from '../../utils/claudeLaunch';
+import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
 import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
@@ -549,8 +549,10 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           }}>命令行</div>
           {(() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
-            // 仅本地 shell 类型显示模型区：后端 ssh/docker/k8s 分支会丢弃引用。
+            // 仅本地 shell 类型显示模型区：后端 ssh/docker/k8s 分支会丢弃引用；
+            // 启动命令里跑 claude 的连接才有意义（引用命令整条替换 startup_commands）。
             if (!target || !isModelRefLocalType(target.terminalType)) return null;
+            if (!target.startupCommands.some(isClaudeCommand)) return null;
             return (
               <ClaudeModelMenuSection
                 itemClassName="context-menu-item"
@@ -635,13 +637,15 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                 try { await openTerminalInDir(project.path); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
-              <ClaudeModelMenuSection
-                itemClassName="context-menu-item"
-                separatorClassName="context-menu-separator"
-                title="Claude 模型"
-                onPickModel={(providerId, modelId) => void startProjectWithModel(project, providerId, modelId)}
-                onGotoProviders={gotoProvidersSettings}
-              />
+              {isClaudeCommand(command) && (
+                <ClaudeModelMenuSection
+                  itemClassName="context-menu-item"
+                  separatorClassName="context-menu-separator"
+                  title="Claude 模型"
+                  onPickModel={(providerId, modelId) => void startProjectWithModel(project, providerId, modelId)}
+                  onGotoProviders={gotoProvidersSettings}
+                />
+              )}
               <div className="context-menu-separator" />
               <div className="context-menu-item" onClick={async () => {
                 closeContextMenu();
