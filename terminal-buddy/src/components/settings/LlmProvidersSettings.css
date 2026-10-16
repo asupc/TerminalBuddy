@@ -49,6 +49,15 @@
   display: none;
 }
 
+/* 供应商卡片两列排布：设置页横向空间充足，单列会留下大片空白。
+ * 限定在本页作用域 —— Claude 面板里的同名列表位于窄侧栏，仍保持单列。
+ * 编辑面板是列表的兄弟节点，不在此网格内，仍占满整行。 */
+.llm-providers-panel .llm-provider-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .llm-providers-empty {
   border: 1px dashed var(--border);
   border-radius: 8px;
