@@ -2,7 +2,7 @@ import { buildClaudeRefCommand, startBlankTerminal, startTerminal, updateProfile
 import { launchTerminalSession } from '../../services/sessionRestore';
 import { clientTerminalOwner } from '../../services/platform';
 import { effectiveProfilePath, normalizeProjectPath, projectForDirectory } from '../../utils/projectPath';
-import { isClaudeLaunchProfile } from '../../utils/claudeLaunch';
+import { inheritableClaudeArgs, isClaudeLaunchProfile } from '../../utils/claudeLaunch';
 import { PRESET_THEMES, type Profile } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 
@@ -109,15 +109,17 @@ export async function resumeClaudeSession(
   }
 
   const name = session.title || 'Claude 会话';
+  const profile = pickClaudeProfile(store.profiles, session.projectDir);
+  const project = projectForDirectory(store.projects, session.projectDir);
+  // 指定模型恢复时继承所选连接（无则项目）启动命令里 claude 的参数，如 --dangerously-skip-permissions。
+  const inheritArgs = inheritableClaudeArgs(profile?.startupCommands ?? project?.startupCommand);
   const resumeArg = `--resume ${session.sessionId}`;
   // 快照里存整条含引用的命令（不含 --resume，恢复时临时拼）。
   const snapshotParams = vendorRef
-    ? buildClaudeRefCommand(vendorRef.providerId, vendorRef.modelId, effectivePreset?.params)
+    ? buildClaudeRefCommand(vendorRef.providerId, vendorRef.modelId, [inheritArgs, effectivePreset?.params].filter(Boolean).join(' '))
     : [effectivePreset?.params.trim(), resumeArg].filter(Boolean).join(' ');
   // 本次启动实际跑的命令（含 --resume）。
   const launchParams = vendorRef ? `${snapshotParams} ${resumeArg}` : snapshotParams;
-  const profile = pickClaudeProfile(store.profiles, session.projectDir);
-  const project = projectForDirectory(store.projects, session.projectDir);
   const base = {
     addSession: store.addSession,
     resolveStartingSession: store.resolveStartingSession,

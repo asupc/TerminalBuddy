@@ -6,6 +6,7 @@ import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWi
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getIndicatorLight, getIndicatorClassName, getIndicatorColor, getIndicatorTitle } from '../../utils/claudeIndicator';
+import { parseClaudeRef } from '../../utils/claudeLaunch';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
@@ -222,6 +223,12 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                           {session.extraParamTag}
                         </span>
                       )}
+                      {(() => {
+                        const modelRef = parseClaudeRef(session.extraParams ?? '');
+                        return modelRef ? (
+                          <span className="tab-nav-model-chip" title="供应商模型">{modelRef.modelId}</span>
+                        ) : null;
+                      })()}
                     </>
                   )}
                 </>

@@ -1,10 +1,11 @@
 /* ClaudeSettingsSegment 专属样式。共享壳与徽标见 ./shared.css。 */
 
-/* ---- 默认配置文件（ClaudeSettingsSegment） ---- */
+/* ---- 默认配置文件（ClaudeSettingsSegment）整体布局 ---- */
 .claude-settings-segment {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+  padding: 4px 0 24px;
 }
 
 .claude-settings-path {
@@ -14,30 +15,40 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: 'Cascadia Mono', Consolas, monospace;
+  padding: 0 2px;
 }
 
+/* 分组 Pills 标签导航 */
 .claude-settings-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
 }
 
 .claude-settings-pills button {
   font-size: 11.5px;
-  padding: 2px 8px;
-  border-radius: 10px;
+  padding: 3px 10px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-primary);
   color: var(--text-secondary);
   cursor: pointer;
+  transition: all var(--motion-fast) var(--ease-standard);
+}
+
+.claude-settings-pills button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 
 .claude-settings-pills button.on {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+  font-weight: 500;
 }
 
+/* 过滤搜索条 */
 .claude-settings-filterbar {
   display: flex;
   align-items: center;
@@ -47,69 +58,125 @@
 .claude-settings-search {
   flex: 1;
   min-width: 0;
+  height: 30px;
+  box-sizing: border-box;
   background: var(--bg-primary);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 4px 8px;
+  padding: 0 10px;
   font-size: 12.5px;
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.claude-settings-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .claude-settings-check {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
   cursor: pointer;
+  user-select: none;
 }
 
-.claude-settings-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.claude-settings-group-title {
-  font-weight: 600;
-  font-size: 12.5px;
+/* env effort 覆盖冲突警告条 */
+.claude-settings-effort-warning {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, var(--bg-primary));
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--warning);
 }
 
-.claude-settings-collapsed {
-  font-weight: 400;
-  font-size: 11.5px;
-  color: var(--text-tertiary);
+.claude-settings-effort-warning-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.5;
 }
 
-.claude-settings-row {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-  background: var(--bg-primary);
+/* ---- 卡片组体系对齐 SettingsPage 规范 ---- */
+.claude-settings-card-group {
+  margin-bottom: 4px;
+}
+
+.claude-settings-group-items {
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
 
+/* ---- 单行配置项：左右分列，高信息密度 ---- */
+.claude-settings-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  background: var(--bg-primary);
+  transition: background-color var(--motion-fast) var(--ease-standard);
+}
+
+.claude-settings-row:last-child {
+  border-bottom: none;
+}
+
+.claude-settings-row:hover {
+  background: color-mix(in srgb, var(--bg-tertiary) 40%, transparent);
+}
+
+/* 已自定义项：优雅的高亮，绝无突兀的大蓝框 */
 .claude-settings-row.customized {
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 3.5%, var(--bg-primary));
+}
+
+.claude-settings-row.customized:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-primary));
+}
+
+.claude-settings-row.customized::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+/* 左侧信息区 */
+.claude-settings-row-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .claude-settings-row-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .claude-settings-key {
   font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -118,64 +185,114 @@
 .claude-settings-desc {
   font-size: 12px;
   color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .claude-settings-official {
   font-size: 11.5px;
   color: var(--text-tertiary);
+  margin-left: 2px;
 }
 
-.claude-settings-input {
-  width: 100%;
+/* 右侧控制区 */
+.claude-settings-row-ctrl {
+  flex: 0 0 320px;
+  max-width: 48%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.claude-settings-row-ctrl .claude-settings-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 4px 6px;
-  font-size: 12.5px;
+  padding: 0 8px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
 }
 
-.claude-settings-input:disabled {
+.claude-settings-row-ctrl .claude-settings-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.claude-settings-row-ctrl .claude-settings-input:disabled {
   opacity: 0.7;
+}
+
+.claude-settings-reset-btn {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+/* 多行控件特例（JSON / List / 只读） */
+.claude-settings-row.is-multiline {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.claude-settings-row.is-multiline .claude-settings-row-ctrl {
+  flex: none;
+  max-width: 100%;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .claude-settings-ro {
   font-size: 12px;
   color: var(--text-secondary);
   background: var(--bg-tertiary);
-  border-radius: 4px;
-  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .claude-settings-jsonwrap {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  width: 100%;
 }
 
 .claude-settings-jsontext {
   width: 100%;
-  min-height: 300px;
+  min-height: 240px;
   resize: vertical;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: 8px 10px;
   font-family: 'Cascadia Mono', Consolas, monospace;
   font-size: 12px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.claude-settings-jsontext:focus {
+  border-color: var(--accent);
 }
 
 .claude-settings-jsontext.small {
-  min-height: 80px;
+  min-height: 72px;
 }
 
 .claude-settings-jsontext.invalid {
   border-color: var(--error, #e5484d);
-}
-
-.claude-settings-jsontext:not(.invalid) {
-  border-color: var(--border);
 }
 
 .claude-settings-jsonbar {
@@ -193,31 +310,49 @@
 .claude-settings-jsonview {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+}
+
+/* 自定义环境变量卡片 */
+.claude-settings-customenv-wrap {
+  padding: 12px 16px;
 }
 
 .claude-settings-customenv {
   display: flex;
-  gap: 6px;
+  gap: 8px;
+  align-items: center;
 }
 
 .claude-settings-customenv input {
   flex: 1;
   min-width: 0;
-  background: var(--bg-primary);
+  height: 28px;
+  box-sizing: border-box;
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 4px 6px;
+  padding: 0 8px;
   font-size: 12.5px;
+  outline: none;
 }
 
+.claude-settings-customenv input:focus {
+  border-color: var(--accent);
+}
+
+/* 备份列表 */
 .claude-settings-backup {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--border);
+}
+
+.claude-settings-backup:last-child {
+  border-bottom: none;
 }
 
 .claude-settings-backup-id {

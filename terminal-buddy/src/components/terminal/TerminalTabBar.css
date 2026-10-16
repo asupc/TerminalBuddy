@@ -170,6 +170,27 @@
   white-space: nowrap;
 }
 
+/* 供应商模型 chip：描边风格与预设实心 chip 区分 */
+.terminal-tab-model-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  background: transparent;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .terminal-tab-close {
   background: none;
   border: none;

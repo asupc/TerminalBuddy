@@ -4,6 +4,7 @@ import { isTerminalWorking, useAppStore } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
+import { parseClaudeRef } from '../../utils/claudeLaunch';
 import { ConfirmDialog } from '../shared/Dialog';
 import './TerminalTabBar.css';
 
@@ -284,6 +285,12 @@ export const TerminalTabBar: FC = () => {
                   {session.extraParamTag}
                 </span>
               )}
+              {session.sessionType !== 'editor' && (() => {
+                const modelRef = parseClaudeRef(session.extraParams ?? '');
+                return modelRef ? (
+                  <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
+                ) : null;
+              })()}
               <span className="terminal-tab-name" style={session.tabColor ? { color: session.tabColor } : undefined}>{session.profileName}</span>
               {session.owner === 'web' && <span className="terminal-owner-badge">Web</span>}
               {session.owner !== 'web' && terminalWebTakeovers[session.id] && (

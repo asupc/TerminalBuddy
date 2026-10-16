@@ -84,6 +84,7 @@ export const LlmProvidersSegment: FC = () => {
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [fetching, setFetching] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<LlmProviderView | null>(null);
+  const [modelQuery, setModelQuery] = useState('');
   const fetchRequestId = useRef(0);
 
   const load = useCallback(async () => {
@@ -225,7 +226,25 @@ export const LlmProvidersSegment: FC = () => {
     });
   };
 
+  /** 表头全选 / 全不选：全启用时点击取消全部，否则（部分或全不选）勾选全部。 */
+  const toggleAllModels = (checked: boolean) => {
+    setEditor(current => current
+      ? { ...current, models: current.models.map(model => ({ ...model, enabled: checked })) }
+      : current);
+  };
+
   const editingId = editor?.providerId ?? null;
+
+  // 模型列表显示集：按搜索词过滤（输入即过滤），已勾选的稳定排在前面。
+  // 仅作用于显示层，不改动 editor.models 本身，勾选状态与保存顺序不受影响；
+  // 「⟳ 获取模型列表」按 id 合并时同样保留原勾选（doFetch 展开prev）。
+  const query = modelQuery.trim().toLowerCase();
+  const visibleModels = editor
+    ? (query
+        ? editor.models.filter(model => model.id.toLowerCase().includes(query))
+        : editor.models.slice())
+      .sort((a, b) => Number(b.enabled) - Number(a.enabled))
+    : [];
 
   return (
     <div className="claude-segment llm-providers-segment">
@@ -324,14 +343,36 @@ export const LlmProvidersSegment: FC = () => {
             )}
           </div>
           {editor.models.length > 0 && (
+            <div className="llm-model-searchbar">
+              <input
+                className="llm-model-search"
+                value={modelQuery}
+                onChange={e => setModelQuery(e.target.value)}
+                placeholder="搜索模型 ID…"
+                spellCheck={false}
+              />
+              <span className="llm-provider-hint">{visibleModels.length}/{editor.models.length}</span>
+            </div>
+          )}
+          {editor.models.length > 0 && (
             <div className="llm-model-table">
               <div className="llm-model-row head">
-                <span className="llm-model-check">启用</span>
+                <span className="llm-model-check">
+                  <input
+                    type="checkbox"
+                    checked={editor.models.every(model => model.enabled)}
+                    onChange={e => toggleAllModels(e.target.checked)}
+                    ref={el => {
+                      if (el) el.indeterminate = editor.models.some(model => model.enabled) && !editor.models.every(model => model.enabled);
+                    }}
+                    title="全选 / 全不选（启用列）"
+                  />
+                </span>
                 <span className="llm-model-id">模型 ID</span>
                 <span className="llm-model-ctx">上下文</span>
                 <span className="llm-model-effort">推理等级</span>
               </div>
-              {editor.models.map(model => (
+              {visibleModels.map(model => (
                 <div key={model.id} className="llm-model-row">
                   <span className="llm-model-check">
                     <input
@@ -350,8 +391,8 @@ export const LlmProvidersSegment: FC = () => {
                       min={0}
                       step={1000}
                       value={model.contextWindow || ''}
-                      placeholder="继承"
-                      title="0 表示不覆盖，继承环境"
+                      placeholder="自动"
+                      title="模型真实上下文窗口（tokens），填写后按此值触发自动压缩；留空则关闭 Claude Code 对未知模型的窗口强制（按旧行为，不再告警）"
                       onChange={e => updateModel(model.id, { contextWindow: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
                     />
                   </span>
@@ -369,6 +410,7 @@ export const LlmProvidersSegment: FC = () => {
                   </span>
                 </div>
               ))}
+              {visibleModels.length === 0 && <div className="llm-model-empty">无匹配模型</div>}
             </div>
           )}
           <div className="llm-provider-editor-actions">

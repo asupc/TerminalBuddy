@@ -283,6 +283,25 @@ export const ClaudeSettingsSegment: FC = () => {
     });
   }, []);
 
+  // env.CLAUDE_CODE_EFFORT_LEVEL 优先级最高：与其他 effort 配置不一致时提示用户清理，
+  // 否则普通启动的实际档位会与面板所见不符。
+  const effortConflict = useMemo(() => {
+    const envEffort = getPathValue(content, 'env.CLAUDE_CODE_EFFORT_LEVEL');
+    if (typeof envEffort !== 'string' || !envEffort) return null;
+    const others = new Set<string>();
+    const topLevel = getPathValue(content, 'effortLevel');
+    if (typeof topLevel === 'string' && topLevel) others.add(topLevel);
+    const modelSettings = getPathValue(content, 'modelSettings');
+    if (typeof modelSettings === 'object' && modelSettings !== null) {
+      for (const value of Object.values(modelSettings as Record<string, unknown>)) {
+        const effort = (value as Record<string, unknown> | null)?.effortLevel;
+        if (typeof effort === 'string' && effort) others.add(effort);
+      }
+    }
+    const conflicting = [...others].filter(item => item !== envEffort);
+    return conflicting.length > 0 ? { envEffort, conflicting } : null;
+  }, [content]);
+
   return (
     <div className="claude-segment claude-settings-segment">
       <div className="claude-segment-toolbar">
@@ -328,50 +347,79 @@ export const ClaudeSettingsSegment: FC = () => {
               显示不常用
             </label>
           </div>
+          {effortConflict && (
+            <div className="claude-settings-effort-warning">
+              <span className="claude-settings-effort-warning-text">
+                冲突：env.CLAUDE_CODE_EFFORT_LEVEL={effortConflict.envEffort} 优先级最高，
+                将覆盖 effortLevel / modelSettings 中的 {effortConflict.conflicting.join('、')}，
+                普通启动会按 {effortConflict.envEffort} 运行。
+              </span>
+              <button type="button" className="claude-segment-btn" onClick={() => resetValue('env.CLAUDE_CODE_EFFORT_LEVEL')}>
+                清除 env 覆盖
+              </button>
+            </div>
+          )}
           {loading && <div className="claude-segment-empty">读取中…</div>}
           {!loading && visibleGroups.map(group => (
-            <div key={group.name} className="claude-settings-group">
-              <div className="claude-settings-group-title">
-                {group.name}
+            <div key={group.name} className="settings-card-group claude-settings-card-group">
+              <div className="card-group-header">
+                <span className="card-group-title">{group.name}</span>
                 {collapsedCounts[group.gi] > 0 && (
-                  <span className="claude-settings-collapsed">已收起 {collapsedCounts[group.gi]} 项不常用</span>
+                  <span className="card-group-extra">已收起 {collapsedCounts[group.gi]} 项不常用</span>
                 )}
               </div>
-              {group.items.map(item => (
-                <SettingRow
-                  key={item.key}
-                  template={item}
-                  value={getPathValue(content, item.key)}
-                  customized={isCustomized(item.key)}
-                  onChange={value => setValue(item.key, value)}
-                  onReset={() => resetValue(item.key)}
-                  onInvalid={invalid => reportInvalid(item.key, invalid)}
-                />
-              ))}
+              <div className="claude-settings-group-items">
+                {group.items.map(item => (
+                  <SettingRow
+                    key={item.key}
+                    template={item}
+                    value={getPathValue(content, item.key)}
+                    customized={isCustomized(item.key)}
+                    onChange={value => setValue(item.key, value)}
+                    onReset={() => resetValue(item.key)}
+                    onInvalid={invalid => reportInvalid(item.key, invalid)}
+                  />
+                ))}
+              </div>
             </div>
           ))}
           {!loading && unknownKeys.length > 0 && (
-            <div className="claude-settings-group">
-              <div className="claude-settings-group-title">文件内其他键<span className="claude-settings-collapsed">模板未收录，原样保留</span></div>
-              {unknownKeys.map(path => (
-                <div key={path} className="claude-settings-row customized">
-                  <div className="claude-settings-row-head">
-                    <span className="claude-settings-key">{path}</span>
-                    <span className="llm-badge">未知键</span>
+            <div className="settings-card-group claude-settings-card-group">
+              <div className="card-group-header">
+                <span className="card-group-title">文件内其他键</span>
+                <span className="card-group-extra">模板未收录，原样保留</span>
+              </div>
+              <div className="claude-settings-group-items">
+                {unknownKeys.map(path => (
+                  <div key={path} className="claude-settings-row customized">
+                    <div className="claude-settings-row-info">
+                      <div className="claude-settings-row-head">
+                        <span className="claude-settings-key">{path}</span>
+                        <span className="llm-badge">未知键</span>
+                        <span className="llm-badge custom">已自定义</span>
+                      </div>
+                      <div className="claude-settings-desc">模板未收录该键，保存时原样保留（前向兼容官方新键）</div>
+                    </div>
+                    <div className="claude-settings-row-ctrl">
+                      <input className="claude-settings-input" value={displayValue(getPathValue(content, path))} disabled />
+                    </div>
                   </div>
-                  <div className="claude-settings-desc">模板未收录该键，保存时原样保留（前向兼容官方新键）</div>
-                  <input className="claude-settings-input" value={displayValue(getPathValue(content, path))} disabled />
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
           {!loading && (
-            <div className="claude-settings-group">
-              <div className="claude-settings-group-title">自定义环境变量</div>
-              <div className="claude-settings-customenv">
-                <input value={customKey} onChange={e => setCustomKey(e.target.value)} placeholder="变量名，如 MY_PROXY_URL" spellCheck={false} />
-                <input value={customValue} onChange={e => setCustomValue(e.target.value)} placeholder="值" spellCheck={false} />
-                <button type="button" className="claude-segment-btn" onClick={addCustomEnv}>添加</button>
+            <div className="settings-card-group claude-settings-card-group">
+              <div className="card-group-header">
+                <span className="card-group-title">自定义环境变量</span>
+                <span className="card-group-extra">以 env.KEY 保存到 settings.json</span>
+              </div>
+              <div className="claude-settings-customenv-wrap">
+                <div className="claude-settings-customenv">
+                  <input value={customKey} onChange={e => setCustomKey(e.target.value)} placeholder="变量名，如 MY_PROXY_URL" spellCheck={false} />
+                  <input value={customValue} onChange={e => setCustomValue(e.target.value)} placeholder="值" spellCheck={false} />
+                  <button type="button" className="claude-segment-btn primary" onClick={addCustomEnv}>添加</button>
+                </div>
               </div>
             </div>
           )}
@@ -645,23 +693,38 @@ const SettingRow: FC<SettingRowProps> = ({ template, value, customized, onChange
     }
   };
 
+  const isMultiline = isJsonLike || template.control === 'ro';
+
   return (
-    <div className={`claude-settings-row${customized ? ' customized' : ''}`}>
-      <div className="claude-settings-row-head">
-        <span className="claude-settings-key" title={template.key}>{template.key}</span>
-        {sourceLabel && <span className="llm-badge src">{sourceLabel}</span>}
-        {customized
-          ? <span className="llm-badge custom">已自定义</span>
-          : <span className="llm-badge official">官方默认</span>}
+    <div className={`claude-settings-row${customized ? ' customized' : ''}${isMultiline ? ' is-multiline' : ''}`}>
+      <div className="claude-settings-row-info">
+        <div className="claude-settings-row-head">
+          <span className="claude-settings-key" title={template.key}>{template.key}</span>
+          {sourceLabel && <span className="llm-badge src">{sourceLabel}</span>}
+          {customized
+            ? <span className="llm-badge custom">已自定义</span>
+            : <span className="llm-badge official">官方默认</span>}
+        </div>
+        <div className="claude-settings-desc">
+          <span>{template.desc}</span>
+          {!customized && template.officialDefault && (
+            <span className="claude-settings-official"> · 默认值：{template.officialDefault}</span>
+          )}
+        </div>
+      </div>
+      <div className="claude-settings-row-ctrl">
+        {renderControl()}
         {customized && template.control !== 'ro' && (
-          <button type="button" className="claude-segment-btn mini" onClick={onReset}>恢复默认</button>
+          <button
+            type="button"
+            className="claude-segment-btn mini claude-settings-reset-btn"
+            title="恢复官方默认设置"
+            onClick={onReset}
+          >
+            恢复默认
+          </button>
         )}
       </div>
-      <div className="claude-settings-desc">{template.desc}</div>
-      {!customized && template.officialDefault && (
-        <div className="claude-settings-official">默认值：{template.officialDefault}</div>
-      )}
-      {renderControl()}
     </div>
   );
 };

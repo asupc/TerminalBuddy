@@ -5,7 +5,7 @@ import { openProjectTerminal, openTerminalInDir } from '../../utils/openTerminal
 import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
-import { isModelRefLocalType } from '../../utils/claudeLaunch';
+import { inheritableClaudeArgs, isModelRefLocalType } from '../../utils/claudeLaunch';
 import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
@@ -326,19 +326,21 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     await openProjectTerminal(project, preset);
   };
 
-  /** 叶子模型启动：引用命令整体替换 startup_commands（independent），shell/路径/env 仍生效。 */
+  /** 叶子模型启动：引用命令整体替换 startup_commands（independent），shell/路径/env 仍生效，
+   * 原 claude 命令的参数（如 --dangerously-skip-permissions）继承到引用命令后。 */
   const startProfileWithModel = (profile: Profile, providerId: string, modelId: string) => {
     closeContextMenu();
-    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId), undefined, undefined, undefined, undefined, 'independent');
+    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands)), undefined, undefined, undefined, undefined, 'independent');
   };
 
-  /** 分组模型启动：走 blank 链（恒为本地 shell），引用命令整条注入。 */
+  /** 分组模型启动：走 blank 链（恒为本地 shell），引用命令整条注入，模型名由 tab tag 呈现；
+   * 项目启动命令里 claude 的参数一并继承。 */
   const startProjectWithModel = async (project: Project, providerId: string, modelId: string) => {
     closeContextMenu();
     try {
       await openTerminalInDir(project.path, {
-        command: buildClaudeRefCommand(providerId, modelId),
-        name: `${project.name} · ${modelId}`,
+        command: buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(project.startupCommand)),
+        name: project.name,
         groupName: project.name,
       });
     } catch (error) {
