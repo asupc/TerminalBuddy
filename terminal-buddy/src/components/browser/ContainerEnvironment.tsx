@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, CircleAlert, Container, Download, LoaderCircle, RefreshCw, TerminalSquare } from 'lucide-react';
+import { CheckCircle2, CircleAlert, Container, Copy, Download, LoaderCircle, RefreshCw, TerminalSquare } from 'lucide-react';
 import { Dialog } from '../shared/Dialog';
 import { serverUsername } from '../../services/browser/connection';
 import {
-  getContainerEnvironment, installContainerClaude, installContainerCodex,
-  type ContainerCli, type ContainerEnvironment,
+  getContainerEnvironment, installContainerClaude, installContainerCodex, installContainerProcps,
+  type ContainerTool, type ContainerEnvironment,
 } from '../../services/browser/containerEnvironment';
 import { useAppStore } from '../../stores/appStore';
 import './ContainerEnvironment.css';
 
 // localStorage 按网页源隔离，再按账号区分；退出、刷新和重新登录均不重复自动展示。
 const shownInMemory = new Set<string>();
+const procpsInstallCommand = "docker exec --user root terminal-buddy sh -lc 'apt-get update && apt-get install -y --no-install-recommends procps'";
 const tools = [
   { id: 'claude', name: 'Claude Code', install: installContainerClaude },
   { id: 'codex', name: 'Codex CLI', install: installContainerCodex },
 ] as const;
+const procpsTool = { id: 'procps', install: installContainerProcps } as const;
 
 function showFirstTime(): boolean {
   const key = `terminalBuddy.containerEnvironment.shown.v1:${serverUsername}`;
@@ -31,11 +33,13 @@ export function ContainerEnvironmentButton() {
   const [open, setOpen] = useState(false);
   const [environment, setEnvironment] = useState<ContainerEnvironment | null>(null);
   const [checking, setChecking] = useState(false);
-  const [starting, setStarting] = useState<Record<ContainerCli, boolean>>({ claude: false, codex: false });
-  const [installErrors, setInstallErrors] = useState<Record<ContainerCli, string>>({ claude: '', codex: '' });
+  const [starting, setStarting] = useState<Record<ContainerTool, boolean>>({ claude: false, codex: false, procps: false });
+  const [installErrors, setInstallErrors] = useState<Record<ContainerTool, string>>({ claude: '', codex: '', procps: '' });
   const [error, setError] = useState('');
+  const [procpsCommandCopied, setProcpsCommandCopied] = useState(false);
+  const [procpsCopyError, setProcpsCopyError] = useState('');
   const pending = useRef(false);
-  const startingTools = useRef(new Set<ContainerCli>());
+  const startingTools = useRef(new Set<ContainerTool>());
   const installationRevision = useRef(0);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
 
@@ -77,8 +81,9 @@ export function ContainerEnvironmentButton() {
     return () => { cancelled = true; };
   }, []);
 
-  const installing = starting.claude || starting.codex
-    || environment?.claude.status === 'installing' || environment?.codex.status === 'installing';
+  const installing = starting.claude || starting.codex || starting.procps
+    || environment?.claude.status === 'installing' || environment?.codex.status === 'installing'
+    || environment?.procps?.status === 'installing';
   useEffect(() => {
     if (!installing) return;
     // 关闭对话框仍轮询，重新打开可以看到同一安装任务的进度。
@@ -86,8 +91,8 @@ export function ContainerEnvironmentButton() {
     return () => window.clearInterval(timer);
   }, [installing, refresh]);
 
-  const install = async (tool: typeof tools[number]) => {
-    if (startingTools.current.has(tool.id) || environment?.[tool.id].status === 'installing') return;
+  const install = async (tool: typeof tools[number] | typeof procpsTool) => {
+    if (startingTools.current.has(tool.id) || environment?.[tool.id]?.status === 'installing') return;
     startingTools.current.add(tool.id);
     installationRevision.current += 1;
     setStarting(value => ({ ...value, [tool.id]: true }));
@@ -96,7 +101,7 @@ export function ContainerEnvironmentButton() {
     try {
       const value = await tool.install();
       installationRevision.current += 1;
-      // 两种工具可以同时安装，各自的响应只更新对应工具。
+      // 各安装任务可以同时运行，响应只更新对应项目，保留其他项目的进行中状态。
       setEnvironment(current => current ? { ...current, [tool.id]: value[tool.id] } : value);
     }
     catch (reason) {
@@ -108,6 +113,23 @@ export function ContainerEnvironmentButton() {
       setStarting(value => ({ ...value, [tool.id]: false }));
     }
   };
+
+  const copyProcpsCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(procpsInstallCommand);
+      setProcpsCommandCopied(true);
+      setProcpsCopyError('');
+    } catch {
+      setProcpsCommandCopied(false);
+      setProcpsCopyError('复制失败，请手动选择并复制安装命令。');
+    }
+  };
+
+  const procps = environment?.procps;
+  const procpsNeedsInstall = procps && procps.status !== 'installed';
+  const procpsInstalling = starting.procps || procps?.status === 'installing';
+  const procpsMessage = procps?.status === 'installed' ? procps.message : installErrors.procps || procps?.message;
+  const procpsFailed = procps?.status !== 'installed' && (procps?.status === 'failed' || Boolean(installErrors.procps));
 
   /** 模型配置入口：关掉本弹窗，跳到设置页的「模型供应商」分项。 */
   const gotoProvidersSettings = () => {
@@ -137,7 +159,7 @@ export function ContainerEnvironmentButton() {
         <button type="button" className="container-environment-action" onClick={() => setOpen(false)}>关闭</button>
       </>}
     >
-      <p className="container-environment-intro">检测当前容器中的命令行工具，按需安装后即可在网页终端使用。</p>
+      <p className="container-environment-intro">检测当前容器中的命令行工具及运行依赖，缺失时可按提示安装。</p>
       {error && <p className="container-environment-error" role="alert">{error}</p>}
       {tools.map(tool => {
         const cli = environment?.[tool.id];
@@ -178,7 +200,48 @@ export function ContainerEnvironmentButton() {
           </div>
         </section>;
       })}
-      <p className="container-environment-hint">通过各工具的官方安装器安装，程序保存在容器的用户目录中。</p>
+      <section className="container-environment-tool" aria-label="procps（ps 命令）">
+        <div className="container-environment-tool-header">
+          <span className="container-environment-tool-icon"><TerminalSquare size={22} aria-hidden="true" /></span>
+          <div className="container-environment-tool-name"><strong>procps（ps 命令）</strong><span>Codex 后台服务依赖</span></div>
+          <span className={`container-environment-status ${procpsInstalling ? 'installing' : procps?.status ?? 'checking'}`} role="status" aria-live="polite">
+            {procpsInstalling || checking && !procps ? <LoaderCircle size={14} className="container-environment-spin" aria-hidden="true" />
+              : procps?.status === 'installed' ? <CheckCircle2 size={14} aria-hidden="true" />
+                : <CircleAlert size={14} aria-hidden="true" />}
+            {procpsInstalling ? '正在安装…' : procps?.status === 'installed' ? '已经可用'
+              : procps?.status === 'failed' ? '安装或检测异常'
+                : procps ? '缺少依赖' : checking ? '正在检测…' : '等待检测'}
+          </span>
+        </div>
+        {procpsInstalling && <p className="container-environment-hint">正在为当前容器安装 procps，请稍候。关闭此窗口不会中断安装。</p>}
+        {!procpsInstalling && procpsMessage && <p className={procpsFailed ? 'container-environment-error' : 'container-environment-hint'} role={procpsNeedsInstall ? 'alert' : undefined}>{procpsMessage}</p>}
+        {procpsNeedsInstall && !procpsInstalling && <>
+          <p className="container-environment-hint">点击“一键安装”补齐当前容器依赖，完成后会自动重新检测。</p>
+          <details className="container-environment-manual">
+            <summary>手动安装方法</summary>
+            <p className="container-environment-hint">也可以在 Docker 宿主机终端执行以下命令。容器名称不同于 <code>terminal-buddy</code> 时，请替换为实际名称。</p>
+            <pre className="container-environment-command"><code>{procpsInstallCommand}</code></pre>
+            {procpsCopyError && <p className="container-environment-error" role="alert">{procpsCopyError}</p>}
+            <div className="container-environment-actions">
+              <button type="button" className="container-environment-action" onClick={() => { void copyProcpsCommand(); }}>
+                {procpsCommandCopied ? <CheckCircle2 size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                {procpsCommandCopied ? '已复制' : '复制安装命令'}
+              </button>
+            </div>
+          </details>
+        </>}
+        <div className="container-environment-actions">
+          <button type="button" className="container-environment-action" disabled={checking || procpsInstalling} onClick={() => { void refresh(); }}>
+            <RefreshCw size={14} className={checking ? 'container-environment-spin' : undefined} aria-hidden="true" />
+            {checking ? '检测中…' : '重新检测'}
+          </button>
+          {procpsNeedsInstall && <button type="button" className="container-environment-action primary" disabled={checking || procpsInstalling} onClick={() => { void install(procpsTool); }}>
+            {procpsInstalling ? <LoaderCircle size={14} className="container-environment-spin" aria-hidden="true" /> : <Download size={14} aria-hidden="true" />}
+            {procpsInstalling ? '安装中…' : procps?.status === 'failed' ? '重试安装' : '一键安装'}
+          </button>}
+        </div>
+      </section>
+      <p className="container-environment-hint">Claude Code 和 Codex CLI 使用官方安装器安装在容器用户目录中；procps 为容器系统依赖。</p>
     </Dialog>}
   </>;
 }

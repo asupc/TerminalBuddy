@@ -11,6 +11,9 @@
 .container-environment-status.installed { color: var(--success); }
 .container-environment-status.failed { color: var(--error, #ef6b6b); }
 .container-environment-status.installing { color: var(--accent); }
+.container-environment-manual { margin-top: 12px; }
+.container-environment-manual > summary { color: var(--text-secondary); cursor: pointer; font-size: 12px; }
+.container-environment-command { margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .container-environment-version { margin: 14px 0 0; color: var(--text-primary); font-size: 12px; }
 .container-environment-hint { margin: 14px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
 .container-environment-hint code { color: var(--text-primary); }
