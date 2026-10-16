@@ -458,8 +458,13 @@ fn api_root(base_url: &str) -> String {
 }
 
 /// 生成临时 settings JSON。**永不含 `hooks` 键**（用户级 hook 照常生效）。
-/// `level=max` 时不写 `effortLevel` / `modelSettings`，改为
-/// `env.CLAUDE_CODE_EFFORT_LEVEL=max`（双通道的另一半是 `--effort max`）。
+/// 所有档位都写 `env.CLAUDE_CODE_EFFORT_LEVEL`：该 env 键优先级最高，用户级
+/// settings.json 里残留的同名值会穿透临时文件未写的键，把所选档位压回去。
+/// `level=max` 时不写 `effortLevel` / `modelSettings`（文件键仅收录到 xhigh）。
+/// 上下文窗口两键互斥：配置了真实窗口写 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`
+/// （auto-compact 按真实值触发）；未配置写 `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_
+/// WINDOW_ENFORCEMENT`，关闭 Claude Code 2.1.292+ 对未知模型按 200k 假设窗口的
+/// 黄色告警（恢复旧行为）。
 fn build_temp_settings(
     provider: &LlmProvider,
     decrypted_key: &str,
@@ -477,6 +482,13 @@ fn build_temp_settings(
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(),
             json!(context_window.to_string()),
         );
+    } else {
+        // 未配置窗口：关闭 Claude Code 对未知模型的 200k 假设强制（官方出口），
+        // 恢复旧行为并消除黄色告警。
+        env.insert(
+            "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT".to_string(),
+            json!("1"),
+        );
     }
     if max_output_tokens > 0 {
         env.insert(
@@ -484,10 +496,9 @@ fn build_temp_settings(
             json!(max_output_tokens.to_string()),
         );
     }
+    env.insert("CLAUDE_CODE_EFFORT_LEVEL".to_string(), json!(level));
     let mut root = serde_json::Map::new();
-    if level == "max" {
-        env.insert("CLAUDE_CODE_EFFORT_LEVEL".to_string(), json!("max"));
-    } else {
+    if level != "max" {
         root.insert("effortLevel".to_string(), json!(level));
         root.insert(
             "modelSettings".to_string(),
@@ -798,16 +809,26 @@ mod tests {
         let settings = build_temp_settings(&provider, "secret", "claude-opus-9", 200000, 0, "xhigh");
         assert_eq!(settings["effortLevel"], "xhigh");
         assert_eq!(settings["modelSettings"]["claude-opus-9"]["effortLevel"], "xhigh");
-        assert!(settings["env"].get("CLAUDE_CODE_EFFORT_LEVEL").is_none());
+        // 非 max 档也必须写 env 键，压制用户级 settings.json 残留的同名值
+        assert_eq!(settings["env"]["CLAUDE_CODE_EFFORT_LEVEL"], "xhigh");
     }
 
     #[test]
-    fn temp_settings_omits_default_context_window() {
+    fn temp_settings_context_window_env_pairing() {
         let provider = test_provider();
+        // 未配置窗口：写兜底开关关闭未知模型窗口强制，不写窗口覆盖。
         let settings = build_temp_settings(&provider, "secret", "claude-opus-9", 0, 0, "high");
         assert!(settings["env"].get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").is_none());
+        assert_eq!(
+            settings["env"]["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"],
+            "1"
+        );
+        // 配置了窗口：写真实窗口，不写兜底开关（两键互斥）。
         let settings = build_temp_settings(&provider, "secret", "claude-opus-9", 200000, 32000, "high");
         assert_eq!(settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "200000");
+        assert!(settings["env"]
+            .get("CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT")
+            .is_none());
         assert_eq!(settings["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "32000");
     }
 
