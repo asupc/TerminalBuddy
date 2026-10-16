@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, Download, FileJson, LoaderCircle, Plus, RefreshCw, RotateCcw, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { Check, ChevronRight, Download, FileJson, LoaderCircle, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { Dialog, ConfirmDialog } from '../shared/Dialog';
 import {
   activateClaudeProvider, createClaudeProvider, deactivateClaudeProvider, deleteClaudeProvider,
@@ -8,8 +8,6 @@ import {
 } from '../../services/browser/claudeProviders';
 import './ClaudeProviders.css';
 
-const OPEN_EVENT = 'terminal-buddy-open-claude-providers';
-export function openClaudeProviders() { window.dispatchEvent(new Event(OPEN_EVENT)); }
 const emptyDraft = (): ClaudeProviderInput => ({
   name: '', baseUrl: '', authType: 'ANTHROPIC_AUTH_TOKEN', apiKey: '',
   model: '', opusModel: '', sonnetModel: '', haikuModel: '', extraEnv: {},
@@ -26,22 +24,7 @@ function parseEnv(text: string): Record<string, string> {
   return value as Record<string, string>;
 }
 
-export function ClaudeProvidersButton() {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const show = () => setOpen(true);
-    window.addEventListener(OPEN_EVENT, show);
-    return () => window.removeEventListener(OPEN_EVENT, show);
-  }, []);
-  return <>
-    <button type="button" className={`titlebar-btn titlebar-action-btn${open ? ' active' : ''}`}
-      title="Claude 模型配置" aria-label="Claude 模型配置" aria-haspopup="dialog" aria-expanded={open}
-      onClick={() => setOpen(true)}><SlidersHorizontal aria-hidden="true" /></button>
-    {open && <ClaudeProvidersDialog onClose={() => setOpen(false)} />}
-  </>;
-}
-
-function ClaudeProvidersDialog({ onClose }: { onClose: () => void }) {
+export function ClaudeProvidersDialog({ onClose }: { onClose: () => void }) {
   const [data, setData] = useState<ClaudeProviderList | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<ClaudeProviderInput>(emptyDraft);

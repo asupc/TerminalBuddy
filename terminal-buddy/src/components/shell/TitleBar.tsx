@@ -34,7 +34,6 @@ import appIcon from '../../assets/app-icon.png';
 import './TitleBar.css';
 import { isBrowserClient, isDockerClient } from '../../services/platform';
 import { ContainerEnvironmentButton } from '../browser/ContainerEnvironment';
-import { ClaudeProvidersButton } from '../browser/ClaudeProviders';
 import {
   APP_OPACITY_PREVIEW_EVENT,
   applyTheme,
@@ -340,7 +339,6 @@ export const TitleBar: FC<TitleBarProps> = ({
       <div className="titlebar-right">
         <div className="titlebar-action-group">
           {isDockerClient() && <ContainerEnvironmentButton />}
-          {isDockerClient() && <ClaudeProvidersButton />}
           <div
             className="ai-usage-trigger"
             onMouseEnter={handleRefreshEnter}
