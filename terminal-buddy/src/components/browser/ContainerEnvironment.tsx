@@ -3,8 +3,8 @@ import { CheckCircle2, CircleAlert, Container, Download, LoaderCircle, RefreshCw
 import { Dialog } from '../shared/Dialog';
 import { serverUsername } from '../../services/browser/connection';
 import { getContainerEnvironment, installContainerClaude, type ContainerEnvironment } from '../../services/browser/containerEnvironment';
+import { useAppStore } from '../../stores/appStore';
 import './ContainerEnvironment.css';
-import { ClaudeProvidersDialog } from './ClaudeProviders';
 
 // localStorage 按网页源隔离，再按账号区分；退出、刷新和重新登录均不重复自动展示。
 const shownInMemory = new Set<string>();
@@ -21,12 +21,12 @@ function showFirstTime(): boolean {
 
 export function ContainerEnvironmentButton() {
   const [open, setOpen] = useState(false);
-  const [providersOpen, setProvidersOpen] = useState(false);
   const [environment, setEnvironment] = useState<ContainerEnvironment | null>(null);
   const [checking, setChecking] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
   const pending = useRef(false);
+  const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
 
   const refresh = useCallback(async () => {
     if (pending.current) return;
@@ -81,6 +81,12 @@ export function ContainerEnvironmentButton() {
     } finally { setStarting(false); }
   };
 
+  /** 模型配置入口：关掉本弹窗，跳到设置页的「模型供应商」分项。 */
+  const gotoProvidersSettings = () => {
+    setOpen(false);
+    openSettingsDialog('llm-providers');
+  };
+
   const statusText = installing ? '正在安装…'
     : claude?.status === 'installed' ? '已经安装'
       : claude?.status === 'failed' ? '安装失败'
@@ -125,7 +131,7 @@ export function ContainerEnvironmentButton() {
         {claude?.status === 'installed' && <p className="container-environment-hint">在网页终端输入 <code>claude</code> 即可启动。</p>}
         {(error || claude?.message) && <p className="container-environment-error" role="alert">{error || claude?.message}</p>}
         <div className="container-environment-actions">
-          <button type="button" className="container-environment-action" onClick={() => setProvidersOpen(true)}>模型配置</button>
+          <button type="button" className="container-environment-action" onClick={gotoProvidersSettings}>模型配置</button>
           <button type="button" className="container-environment-action" disabled={checking || installing} onClick={() => { void refresh(); }}>
             <RefreshCw size={14} className={checking ? 'container-environment-spin' : undefined} aria-hidden="true" />
             {checking ? '检测中…' : '重新检测'}
@@ -140,6 +146,5 @@ export function ContainerEnvironmentButton() {
       </section>
       <p className="container-environment-hint">通过 Claude 官方安装器安装，程序保存在容器的用户目录中。</p>
     </Dialog>}
-    {providersOpen && <ClaudeProvidersDialog onClose={() => setProvidersOpen(false)} />}
   </>;
 }
