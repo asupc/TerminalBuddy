@@ -194,12 +194,6 @@ else
   log "跳过构建，复用现有镜像 ${IMAGE}"
 fi
 
-# ---------- 校验镜像运行依赖 ----------
-log "校验镜像中的进程查询命令（Codex 后台服务依赖）"
-docker run --rm --user terminalbuddy --entrypoint /bin/sh "$IMAGE" \
-  -c 'command -v ps && ps -p "$$" -o pid=,ppid=,args=' \
-  || fail "镜像中的 ps 不可用，Codex 后台服务无法启动。请更新源码并完整构建镜像，不要使用 --no-build"
-
 # ---------- 启动容器 ----------
 log "启动容器 ${CONTAINER}"
 docker compose -f "$COMPOSE_FILE" up -d --force-recreate
