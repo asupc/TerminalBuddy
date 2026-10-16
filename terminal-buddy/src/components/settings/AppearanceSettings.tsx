@@ -71,7 +71,7 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
           <span className="card-group-title">活动指示灯与色彩</span>
         </div>
 
-        <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+        <div className="settings-row settings-row--wrap-ctrl" style={{ alignItems: 'flex-start' }}>
           <div className="settings-row-info">
             <div className="settings-row-title">活动指示灯颜色</div>
             <p className="settings-row-desc">终端执行命令时指示灯使用的颜色</p>
@@ -126,7 +126,7 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
           <span className="card-group-title">列表样式与字号</span>
         </div>
 
-        <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+        <div className="settings-row settings-row--wrap-ctrl" style={{ alignItems: 'flex-start' }}>
           <div className="settings-row-info">
             <div className="settings-row-title">列表选中样式</div>
             <p className="settings-row-desc">项目与命令、文件与 Git 面板中被选中列表条目的配色</p>

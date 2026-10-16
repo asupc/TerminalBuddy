@@ -147,6 +147,8 @@
 }
 
 .claude-form-row input[type='text'],
+.claude-form-row input[type='password'],
+.claude-form-row input[type='number'],
 .claude-form-row input:not([type]),
 .claude-form-row select {
   flex: 1;
