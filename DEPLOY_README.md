@@ -5,56 +5,79 @@
 
 ## 文件说明
 
+两条链路结构完全对称：**发起端**负责拉代码、打包、上传、触发；**目标端**是上传后在目标机
+以 root 执行的构建部署脚本。
+
 | 文件 | 作用 |
 | --- | --- |
-| `deploy.bat` | Windows 一键部署入口（→ CentOS）：拉代码 → 免密认证 → 打包上传 → 远端构建 → 启动校验 |
-| `deploy-centos.sh` | CentOS 服务器端一键部署：基础镜像兜底 → 生成 compose → 构建镜像 → 启动容器 → 健康检查 |
-| `deploy-fnos.sh` | **飞牛 fnOS 一键部署入口**：打包源码 → 上传 → 飞牛上构建镜像并重建容器 → 自检 |
-| `scripts/remote-deploy.sh` | `deploy.bat` 上传后在 CentOS 服务器执行的包装脚本（解压源码 + 调 `deploy-centos.sh`） |
-| `scripts/remote-verify.sh` | CentOS 部署后校验脚本（容器状态、健康、HTTP、端口、数据卷） |
-| `scripts/deploy-fnos-remote.sh` | 飞牛远端执行体（`deploy-fnos.sh` 上传后以 sudo 运行）：目录属主、生成 compose、构建/载入镜像、重建容器 |
-| `scripts/install-key.py` | 首次运行自动把本机公钥安装到 CentOS 服务器，实现后续免密（飞牛链路不需要 python） |
+| `deploy-centos.sh` | **发起端（→ CentOS）**：拉代码 → 免密认证 → 打包上传 → 目标机执行 → 自检。可在任意装了 ssh/scp/tar/curl 的机器上跑 |
+| `deploy-fnos.sh` | **发起端（→ 飞牛 fnOS）**：打包源码 → 上传 → 飞牛上构建镜像并重建容器 → 自检 |
+| `scripts/deploy-centos-remote.sh` | CentOS 目标端执行体（上传后以 root 运行）：解压、生成 compose、基础镜像兜底、构建/载入镜像、重建容器、健康检查 |
+| `scripts/deploy-fnos-remote.sh` | 飞牛目标端执行体（上传后以 sudo 运行）：目录属主、生成 compose、构建/载入镜像、重建容器 |
 
 ## 用法
 
-在 Windows 上双击 `deploy.bat`，或在该目录执行：
-
-```bat
-deploy.bat                  :: 完整流程：git pull + 构建 + 部署 + 校验
-deploy.bat --no-build       :: 跳过构建，用现有镜像快速重建容器
-deploy.bat --no-pull        :: 不拉取最新代码，直接用本地源码
-```
-
-首次运行会生成密钥 `%USERPROFILE%\.ssh\terminal_buddy_deploy` 并自动安装到服务器
-（复用 `~/.codex/private/centos-server/config.json` 中已保存的密码，无需手输）。
-
-## 服务器端单独执行
-
-若已登录服务器，也可以直接在项目根目录执行：
+在项目根目录执行（任意 Linux 机器均可作为发起端，本机不需要装 docker / Node / Rust）：
 
 ```bash
-./deploy-centos.sh              # 构建 + 部署
-./deploy-centos.sh --no-build   # 不构建，直接重建容器
-./deploy-centos.sh --pull       # 构建前先 git pull
+./deploy-centos.sh                  # 完整流程：git pull + 目标机构建 + 部署 + 自检
+./deploy-centos.sh --no-build       # 跳过构建，用目标机现有镜像快速重建容器
+./deploy-centos.sh --no-pull        # 不拉取代码，直接用当前工作区
+./deploy-centos.sh --build-local    # 改在本机构建镜像后上传（需本机 docker 且同架构）
+./deploy-centos.sh --host 192.168.3.202 --ssh-port 22
 ```
+
+首次运行会生成部署密钥 `~/.ssh/terminal_buddy_centos_deploy` 并自动安装到目标机，
+之后全程免密。密码按优先级读取：环境变量 `TB_CENTOS_PASSWORD` →
+`~/.codex/private/centos-server/config.json` → `~/.claude/skills/esxi-server/.pass` → 交互式输入。
+
+## 在目标机上直接执行
+
+`scripts/deploy-centos-remote.sh` 也可以手动传到目标机后单独运行，参数即目标机上的路径与端口：
+
+```bash
+sudo bash deploy-centos-remote.sh \
+  /root/terminal-buddy /root/terminal-buddy/data /root/terminal-buddy/home \
+  /root/terminal-buddy/workspace 9610 0.0.0.0 terminal-buddy terminal-buddy:server admin /var/run/docker.sock
+```
+
+注意它只负责「解压已在 `/tmp/terminal-buddy-src.tar.gz` 的源码包 + 构建部署」，
+不会自己拉代码；没有源码包时会直接报错。
 
 ## 可配置项（环境变量）
 
+发起端 `deploy-centos.sh` 用 `TB_CENTOS_*` 前缀：
+
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `TB_HOST_PORT` | `9610` | 宿主机映射端口 |
-| `TB_DATA_DIR` | `/root/terminal-buddy/data` | 数据目录（容器 `/data`） |
-| `TB_HOME_DIR` | `/root/terminal-buddy/home` | 用户目录（容器 `/home/terminalbuddy`） |
-| `TB_WORKSPACE` | `/root/terminal-buddy/workspace` | 工作区（容器内同路径，兼容 `/workspace`） |
-| `TB_DOCKER_SOCKET` | `/var/run/docker.sock` | 宿主机 Docker socket，自动读取 GID 授权给容器用户 |
-| `TB_USERNAME` | `admin` | 网页登录账号 |
-| `TB_BIND_ADDRESS` | `0.0.0.0` | 绑定地址，改 `127.0.0.1` 则仅本机可访问 |
-| `TB_IMAGE_MIRROR` | `docker.m.daocloud.io/library` | 基础镜像加速源（CentOS 7 直连 Docker Hub 常不通） |
+| `TB_CENTOS_HOST` | `192.168.3.202` | 目标机地址（也可用 `--host`） |
+| `TB_CENTOS_USER` | `root` | 目标机 SSH 账号（也可用 `--ssh-port` 配套调整） |
+| `TB_CENTOS_SSH_PORT` | `22` | 目标机 SSH 端口 |
+| `TB_CENTOS_APP_DIR` | `/root/terminal-buddy` | 目标机应用目录（源码落在其 `src/` 下） |
+| `TB_CENTOS_PORT` | `9610` | 宿主机映射端口 |
+| `TB_CENTOS_BIND_ADDRESS` | `0.0.0.0` | 绑定地址，改 `127.0.0.1` 则仅目标机本机可访问 |
+| `TB_CENTOS_CONTAINER` | `terminal-buddy` | 容器名 |
+| `TB_CENTOS_IMAGE` | `terminal-buddy:server` | 镜像 tag |
+| `TB_CENTOS_USERNAME` | `admin` | 网页登录账号 |
+| `TB_CENTOS_DOCKER_SOCKET` | `/var/run/docker.sock` | 目标机 Docker socket，自动读取 GID 授权给容器用户 |
+| `TB_CENTOS_SSH_KEY` | `~/.ssh/terminal_buddy_centos_deploy` | 部署密钥路径 |
+| `TB_CENTOS_CONFIG` | `~/.codex/private/centos-server/config.json` | 凭据文件（也可用 `--config`） |
+| `TB_CENTOS_PASSWORD` | 无 | SSH 密码，优先级最高（一般不用，首次装公钥时才需要） |
+| `TB_CENTOS_PULL` | `1` | 是否先 `git pull`，设 `0` 等同 `--no-pull` |
+
+目标端 `scripts/deploy-centos-remote.sh` 单独执行时用：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `TB_IMAGE_MIRROR` | 内置四个备用源 | 基础镜像加速源，接受裸源或带 `/library` 后缀两种写法 |
+| `TB_SKIP_BUILD` | `0` | 设 `1` 跳过构建，直接用现有镜像重建容器 |
+| `TB_IMAGE_TARBALL` | `/tmp/terminal-buddy-image.tar.gz` | 预置镜像包路径，存在则直接 `docker load` |
+| `TB_IMAGE_CURRENT` | `0` | 设 `1` 表示现有镜像即所需镜像，无需编译 |
 
 示例：
 
 ```bash
-TB_HOST_PORT=9620 TB_BIND_ADDRESS=127.0.0.1 ./deploy-centos.sh
+TB_CENTOS_PORT=9620 TB_CENTOS_BIND_ADDRESS=127.0.0.1 ./deploy-centos.sh
 ```
 
 ## 服务器侧信息
@@ -200,13 +223,14 @@ CentOS 7 直连 Docker Hub 通常超时。脚本已内置加速源，可用 `TB_
 `deploy-centos.sh` 已自动 `chown -R 1000:1000`；若手动改过目录需重新执行脚本。
 
 **3. 127.0.0.1 访问返回 000**
-端口只绑在服务器 IP（`TB_BIND_ADDRESS=192.168.3.202`）时属正常现象，用局域网地址访问即可。
+端口只绑在服务器 IP（`TB_CENTOS_BIND_ADDRESS=192.168.3.202`）时属正常现象，用局域网地址访问即可。
 
 **4. 端口 9610 被占用**
-脚本会先检查并给出占用进程；用 `TB_HOST_PORT` 换端口，同时记得同步修改飞牛 `frpc.ini`。
+目标端脚本会先检查并给出占用进程；用 `TB_CENTOS_PORT` 换端口，同时记得同步修改飞牛 `frpc.ini`。
 
 **5. 后续如何升级代码**
-CentOS：在项目目录 `git pull` 后执行 `deploy.bat`（默认就会先 `git pull --ff-only` 再构建部署）。
+CentOS：在任意机器的工作区执行 `./deploy-centos.sh`（默认先 `git pull --ff-only`，
+再打包上传到目标机构建部署）。
 飞牛：执行 `./deploy-fnos.sh` 即可，脚本会自动重建镜像并只在镜像真正变化时
 更新飞牛上的镜像与容器（未变化时飞牛侧服务零中断）。
 
@@ -233,13 +257,14 @@ TerminalBuddy 仍以 uid 1000 运行，通过附加用户组访问 socket。
 
 本次升级需要完整重建镜像，不能使用 `--no-build`：
 
-```bat
-deploy.bat --no-pull
+```bash
+./deploy-centos.sh --no-pull
 ```
 
-也可在服务器源码目录运行 `./deploy-centos.sh`。脚本自动检查本机 socket、读取其 GID，
-生成挂载和附加用户组，并在部署后以应用用户检查 Docker、Compose、Buildx 及 Engine ID。
-自定义或 rootless Docker 需设置 `TB_DOCKER_SOCKET`，并确保当前 Docker context 指向该本机 socket。
+目标端脚本会自动检查目标机 socket、读取其 GID，生成挂载和附加用户组，
+并在部署后以应用用户检查 Docker、Compose、Buildx 及 Engine ID。
+自定义或 rootless Docker 需把 socket 路径换掉：发起端设 `TB_CENTOS_DOCKER_SOCKET`，
+目标端单独执行时改最后一个位置参数。
 
 工作区同时挂载到宿主机同名绝对路径和旧的 `/workspace` 路径，旧项目文件仍可访问。
 默认新工作区为 `/root/terminal-buddy/workspace`；已有项目如果登记的是 `/workspace/...`，
