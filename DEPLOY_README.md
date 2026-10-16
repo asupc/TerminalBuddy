@@ -99,8 +99,9 @@ TB_CENTOS_PORT=9620 TB_CENTOS_BIND_ADDRESS=127.0.0.1 ./deploy-centos.sh
 飞牛默认禁止 root 登录，脚本用普通管理员账号 + `sudo` 完成，**不需要**在飞牛上装 Node.js / Rust。
 
 ```bash
-./deploy-fnos.sh                 # 全流程：打包源码 → 上传 → 飞牛上构建镜像 → 重建容器 → 自检
+./deploy-fnos.sh                 # 全流程：拉代码 → 打包源码 → 上传 → 飞牛上构建镜像 → 重建容器 → 自检
 ./deploy-fnos.sh --no-build      # 跳过构建，用飞牛上现有镜像重建容器
+./deploy-fnos.sh --no-pull       # 不拉取本机代码，直接用当前工作区
 ./deploy-fnos.sh --build-local   # 改在本机构建镜像后上传（需本机 docker）
 ```
 

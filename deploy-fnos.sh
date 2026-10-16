@@ -12,8 +12,9 @@
 # 需要在本机构建并上传镜像时用 --build-local（要求本机有 docker）。
 #
 # 用法：
-#   ./deploy-fnos.sh                       # 全流程（在飞牛上构建镜像）
+#   ./deploy-fnos.sh                       # 全流程（拉代码 → 在飞牛上构建镜像）
 #   ./deploy-fnos.sh --no-build            # 跳过构建，用飞牛上现有镜像重建容器
+#   ./deploy-fnos.sh --no-pull             # 不拉取本机代码，直接用当前工作区
 #   ./deploy-fnos.sh --build-local         # 改在本机构建镜像后上传（需本机 docker）
 #   ./deploy-fnos.sh --host 192.168.3.77 --listen-port 9600
 #
@@ -35,6 +36,7 @@ CONTAINER="${TB_FNOS_CONTAINER:-terminal-buddy}"
 IMAGE="${TB_FNOS_IMAGE:-terminal-buddy:server}"
 CONFIG_FILE="${TB_FNOS_CONFIG:-$HOME/.codex/private/fnos/config.json}"
 SSH_KEY="${TB_FNOS_SSH_KEY:-$HOME/.ssh/terminal_buddy_fnos_deploy}"
+PULL_LATEST="${TB_FNOS_PULL:-1}"
 # =====================================================
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -64,15 +66,21 @@ trap cleanup EXIT
 DO_BUILD=1
 BUILD_LOCAL=0
 NO_BASE_IMAGE_BACKUP=0
-for arg in "$@"; do
-  case "$arg" in
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --no-build)         DO_BUILD=0 ;;
+    --no-pull)          PULL_LATEST=0 ;;
+    --pull)             PULL_LATEST=1 ;;
     --build-local)      BUILD_LOCAL=1 ;;
     --build-on-nas)     warn "--build-on-nas 已无必要：现在默认就在飞牛上构建，按默认流程继续" ;;
     --no-base-image-backup) NO_BASE_IMAGE_BACKUP=1 ;;
+    --host)             FNOS_HOST="${2:?--host 需要一个地址}"; shift ;;
+    --listen-port)      HOST_PORT="${2:?--listen-port 需要一个端口}"; shift ;;
+    --config)           CONFIG_FILE="${2:?--config 需要一个文件路径}"; shift ;;
     -h|--help)          sed -n '2,30p' "$0"; exit 0 ;;
-    *) fail "未知参数：$arg（可用：--no-build / --build-local / --no-base-image-backup / --help）" ;;
+    *) fail "未知参数：$1（可用：--no-build / --no-pull / --build-local / --no-base-image-backup / --host / --listen-port / --config / --help）" ;;
   esac
+  shift
 done
 
 # ---------- 0. 本机依赖检查 ----------
@@ -88,7 +96,22 @@ command -v curl   >/dev/null 2>&1 || fail "未检测到 curl"
 [ -f "${REPO_DIR}/scripts/deploy-fnos-remote.sh" ] || fail "缺少 scripts/deploy-fnos-remote.sh"
 [ -d "${REPO_DIR}/terminal-buddy/src-tauri" ] || fail "缺少 terminal-buddy/src-tauri，源码不完整"
 
-# ---------- 1. 免密登录：需要时安装公钥 ----------
+# ---------- 1. 拉取本机最新代码 ----------
+if [ "${PULL_LATEST}" = "1" ]; then
+  if [ -d "${REPO_DIR}/.git" ]; then
+    command -v git >/dev/null 2>&1 || fail "未检测到 git，无法拉取代码；或用 --no-pull 跳过"
+    log "拉取本机最新代码：git pull --ff-only"
+    if ! git -C "${REPO_DIR}" pull --ff-only; then
+      fail "拉取失败（本机可能有未提交改动与远端冲突）。处理后再试，或用 --no-pull 直接用当前工作区。"
+    fi
+  else
+    warn "${REPO_DIR} 不是 git 仓库，跳过拉取"
+  fi
+else
+  log "已跳过代码拉取（--no-pull）"
+fi
+
+# ---------- 2. 免密登录：需要时安装公钥 ----------
 ssh_probe() {
   ssh -i "${SSH_KEY}" -o BatchMode=yes -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile="${KNOWN_HOSTS}" -o ConnectTimeout=8 \
@@ -158,7 +181,7 @@ else
   log "免密认证通过（${FNOS_USER}@${FNOS_HOST}）"
 fi
 
-# ---------- 2. 构建镜像 ----------
+# ---------- 3. 构建镜像 ----------
 if [ "${DO_BUILD}" = "0" ]; then
   log "跳过构建，复用飞牛上的现有镜像 ${IMAGE}"
 elif [ "${BUILD_LOCAL}" = "1" ]; then
@@ -177,7 +200,7 @@ else
   log "跳过本机构建：镜像将在飞牛上编译（首次约 20-40 分钟，之后按源码指纹跳过）"
 fi
 
-# ---------- 3. 打包源码与镜像 ----------
+# ---------- 4. 打包源码与镜像 ----------
 log "打包源码（排除 .git / node_modules / target / 构建产物）"
 rm -f "${SRC_TARBALL}"
 tar -czf "${SRC_TARBALL}" \
@@ -210,7 +233,7 @@ if [ "${BUILD_LOCAL}" = "1" ] && [ "${DO_BUILD}" = "1" ]; then
   fi
 fi
 
-# ---------- 4. 上传到飞牛 ----------
+# ---------- 5. 上传到飞牛 ----------
 SCP_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile="${KNOWN_HOSTS}"
           -o LogLevel=ERROR -P "${FNOS_PORT}")
 
@@ -226,7 +249,7 @@ if [ "${UPLOAD_IMAGE}" = "1" ]; then
     || fail "镜像上传失败，请检查网络与磁盘空间"
 fi
 
-# ---------- 5. 远端 sudo 执行 ----------
+# ---------- 6. 远端 sudo 执行 ----------
 SUDO_PASSWORD="$(read_password)"
 [ -n "${SUDO_PASSWORD}" ] || fail "未取得 sudo 密码"
 
@@ -275,7 +298,7 @@ if ! printf '%s\n' "${SUDO_PASSWORD}" | ssh -i "${SSH_KEY}" -o StrictHostKeyChec
   fail "远端部署失败，详见上方输出。排查：ssh ${FNOS_USER}@${FNOS_HOST} 'docker logs --tail 100 ${CONTAINER}'"
 fi
 
-# ---------- 6. 部署后自检 ----------
+# ---------- 7. 部署后自检 ----------
 BASE_URL="http://${FNOS_HOST}:${HOST_PORT}"
 log "部署后自检 ${BASE_URL}"
 
