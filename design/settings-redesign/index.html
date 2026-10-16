@@ -1,0 +1,1529 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TerminalBuddy · 设置弹窗重构设计方案与交互效果</title>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+  :root {
+    --bg-page: #0d0f12;
+    --text-page: #e8eaf0;
+    --text-muted: #8b93a7;
+    --accent: #4b95e9;
+    --accent-hover: #62a4ed;
+    --accent-subtle: rgba(75, 149, 233, 0.12);
+    --border-color: #2b2f36;
+
+    /* 弹窗设计系统变量 (暗色模式对齐 TerminalBuddy) */
+    --tb-bg-primary: #181a1d;
+    --tb-bg-secondary: #202226;
+    --tb-bg-tertiary: #272a2f;
+    --tb-bg-elevated: #23262b;
+    --tb-bg-card: rgba(255, 255, 255, 0.025);
+    --tb-bg-card-hover: rgba(255, 255, 255, 0.045);
+    --tb-text-primary: #e3e5e8;
+    --tb-text-secondary: #9aa0a8;
+    --tb-text-tertiary: #6b727d;
+    --tb-border: #33383f;
+    --tb-border-subtle: #292d33;
+    --tb-control-bg: #1c1f23;
+    --tb-control-border: #363b43;
+    --tb-control-hover: #292e36;
+    --tb-accent: #4b95e9;
+    --tb-accent-hover: #3b82f6;
+    --tb-accent-subtle: rgba(75, 149, 233, 0.14);
+    --tb-accent-border: rgba(75, 149, 233, 0.38);
+    --tb-success: #3fb950;
+    --tb-success-subtle: rgba(63, 185, 80, 0.14);
+    --tb-warning: #e3b341;
+    --tb-warning-subtle: rgba(227, 179, 65, 0.14);
+    --tb-danger: #f85149;
+    --tb-danger-subtle: rgba(248, 81, 73, 0.14);
+    --tb-radius-sm: 5px;
+    --tb-radius-md: 8px;
+    --tb-radius-lg: 12px;
+    --tb-shadow-dialog: 0 24px 64px -8px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.06);
+    --tb-shadow-card: 0 2px 8px rgba(0, 0, 0, 0.22);
+  }
+
+  [data-theme="light"] {
+    --bg-page: #f0f2f5;
+    --text-page: #1c1f24;
+    --text-muted: #647082;
+    --tb-bg-primary: #f6f8fa;
+    --tb-bg-secondary: #ffffff;
+    --tb-bg-tertiary: #eaecef;
+    --tb-bg-elevated: #ffffff;
+    --tb-bg-card: #ffffff;
+    --tb-bg-card-hover: #f3f5f8;
+    --tb-text-primary: #1f2328;
+    --tb-text-secondary: #656d76;
+    --tb-text-tertiary: #8c959f;
+    --tb-border: #d0d7de;
+    --tb-border-subtle: #e1e4e8;
+    --tb-control-bg: #f6f8fa;
+    --tb-control-border: #d0d7de;
+    --tb-control-hover: #ebeef1;
+    --tb-accent: #176fbd;
+    --tb-accent-hover: #125ea3;
+    --tb-accent-subtle: rgba(23, 111, 189, 0.1);
+    --tb-accent-border: rgba(23, 111, 189, 0.35);
+    --tb-shadow-dialog: 0 24px 64px -8px rgba(31, 35, 40, 0.25), 0 0 0 1px rgba(31, 35, 40, 0.08);
+    --tb-shadow-card: 0 1px 4px rgba(31, 35, 40, 0.06);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg-page);
+    color: var(--text-page);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 24px 20px 80px;
+    transition: background-color 0.2s, color 0.2s;
+  }
+  .mono { font-family: "Cascadia Code", Consolas, monospace; }
+
+  /* 顶部展示说明栏 */
+  .meta-header {
+    max-width: 1320px;
+    margin: 0 auto 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .meta-title-group .promptline {
+    font-size: 13px;
+    color: #e5a32b;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .meta-title-group h1 {
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text-page);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .meta-title-group .sub {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  /* 原型控制台 */
+  .demo-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color);
+    padding: 6px 12px;
+    border-radius: 8px;
+  }
+  .toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .toolbar-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-right: 2px;
+  }
+  .btn-chip {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.15s ease;
+  }
+  .btn-chip:hover {
+    color: var(--text-page);
+    border-color: var(--accent);
+  }
+  .btn-chip.active {
+    background: var(--accent-subtle);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* 主舞台容器 */
+  .stage-container {
+    max-width: 1320px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  /* 模拟窗口居中外壳 */
+  .window-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 12px 0 24px;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* 弹窗核心壳体 */
+  .settings-dialog-card {
+    background: var(--tb-bg-secondary);
+    border: 1px solid var(--tb-border);
+    border-radius: var(--tb-radius-lg);
+    box-shadow: var(--tb-shadow-dialog);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 760px;
+    width: 1240px; /* 默认优化调宽宽度 */
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 60px);
+    transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* 宽度切换变体类 */
+  .settings-dialog-card.width-old { width: 1024px; height: 700px; }
+  .settings-dialog-card.width-wide { width: 1240px; height: 760px; }
+  .settings-dialog-card.width-ultra { width: 1380px; height: 820px; }
+
+  /* 弹窗头部 Window Header */
+  .dialog-topbar {
+    height: 48px;
+    background: var(--tb-bg-primary);
+    border-bottom: 1px solid var(--tb-border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px 0 20px;
+    user-select: none;
+    flex-shrink: 0;
+  }
+  .dialog-title-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--tb-text-primary);
+  }
+  .dialog-title-box .icon-wrap {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: var(--tb-accent-subtle);
+    color: var(--tb-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dialog-title-box h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.2px;
+  }
+  .dialog-title-box .badge-hint {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: var(--tb-bg-tertiary);
+    color: var(--tb-text-tertiary);
+    border: 1px solid var(--tb-border-subtle);
+  }
+  .topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .win-btn-close {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--tb-radius-sm);
+    border: none;
+    background: transparent;
+    color: var(--tb-text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+  }
+  .win-btn-close:hover {
+    background: var(--tb-danger-subtle);
+    color: var(--tb-danger);
+  }
+
+  /* 弹窗内容两栏布局 */
+  .dialog-body-layout {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* 左侧分组侧边栏 Sidebar */
+  .dialog-sidebar {
+    width: 228px;
+    flex-shrink: 0;
+    background: var(--tb-bg-primary);
+    border-right: 1px solid var(--tb-border-subtle);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-search-box {
+    padding: 14px 14px 8px;
+    flex-shrink: 0;
+  }
+  .sidebar-search-inner {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .sidebar-search-inner svg {
+    position: absolute;
+    left: 9px;
+    color: var(--tb-text-tertiary);
+    pointer-events: none;
+  }
+  .sidebar-search-input {
+    width: 100%;
+    height: 30px;
+    background: var(--tb-control-bg);
+    border: 1px solid var(--tb-control-border);
+    border-radius: var(--tb-radius-sm);
+    padding: 0 10px 0 28px;
+    font-size: 12px;
+    color: var(--tb-text-primary);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .sidebar-search-input:focus {
+    border-color: var(--tb-accent);
+  }
+  .sidebar-search-input::placeholder {
+    color: var(--tb-text-tertiary);
+  }
+
+  .sidebar-nav-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    scrollbar-width: thin;
+  }
+  .nav-group-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--tb-text-tertiary);
+    padding: 4px 8px 6px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .nav-items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .nav-item-btn {
+    position: relative;
+    width: 100%;
+    min-height: 34px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    border: 1px solid transparent;
+    border-radius: var(--tb-radius-md);
+    background: transparent;
+    color: var(--tb-text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s ease;
+  }
+  .nav-item-btn:hover {
+    background: var(--tb-control-hover);
+    color: var(--tb-text-primary);
+  }
+  .nav-item-btn.active {
+    background: var(--tb-accent-subtle);
+    color: var(--tb-accent);
+    font-weight: 500;
+    border-color: var(--tb-accent-border);
+  }
+  .nav-item-btn svg {
+    flex-shrink: 0;
+    opacity: 0.85;
+  }
+  .nav-item-btn.active svg {
+    opacity: 1;
+    color: var(--tb-accent);
+  }
+  .nav-item-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav-item-tag {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--tb-bg-tertiary);
+    color: var(--tb-text-tertiary);
+    border: 1px solid var(--tb-border-subtle);
+  }
+  .nav-item-tag.accent {
+    background: var(--tb-accent-subtle);
+    color: var(--tb-accent);
+    border-color: var(--tb-accent-border);
+  }
+
+  /* 侧边栏底部信息 */
+  .sidebar-footer {
+    padding: 10px 14px;
+    border-top: 1px solid var(--tb-border-subtle);
+    font-size: 11px;
+    color: var(--tb-text-tertiary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  /* 右侧设置内容区 Main Content Area */
+  .dialog-content-main {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 24px 32px 36px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    background: var(--tb-bg-secondary);
+    scrollbar-width: thin;
+  }
+
+  /* 内容区顶部页面标头 Page Header */
+  .section-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--tb-border-subtle);
+    gap: 16px;
+  }
+  .header-text-col h3 {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--tb-text-primary);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header-text-col p {
+    font-size: 12px;
+    color: var(--tb-text-secondary);
+    line-height: 1.5;
+  }
+  .header-actions-col {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  /* 统一卡片组 Settings Card Group */
+  .settings-card-group {
+    background: var(--tb-bg-card);
+    border: 1px solid var(--tb-border);
+    border-radius: var(--tb-radius-md);
+    overflow: hidden;
+    box-shadow: var(--tb-shadow-card);
+  }
+  .card-group-header {
+    background: var(--tb-bg-primary);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--tb-border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-group-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--tb-text-primary);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .card-group-title svg {
+    color: var(--tb-text-secondary);
+  }
+  .card-group-extra {
+    font-size: 11px;
+    color: var(--tb-text-tertiary);
+  }
+
+  /* 统一设置行通用规范 Settings Row */
+  .settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--tb-border-subtle);
+    transition: background-color 0.15s;
+  }
+  .settings-row:last-child {
+    border-bottom: none;
+  }
+  .settings-row:hover {
+    background: var(--tb-bg-card-hover);
+  }
+  .settings-row-col-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .settings-row-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--tb-text-primary);
+    margin-bottom: 2px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .settings-row-desc {
+    font-size: 12px;
+    color: var(--tb-text-secondary);
+    line-height: 1.5;
+  }
+  .settings-row-desc a {
+    color: var(--tb-accent);
+    text-decoration: none;
+  }
+  .settings-row-desc a:hover {
+    text-decoration: underline;
+  }
+  .settings-row-col-ctrl {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  /* 控件规范 1: 现代化 iOS / Raycast 风格开关 Switch */
+  .tb-switch {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    background: var(--tb-control-border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    display: inline-block;
+    user-select: none;
+  }
+  .tb-switch.checked {
+    background: var(--tb-accent);
+  }
+  .tb-switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .tb-switch.checked .tb-switch-thumb {
+    transform: translateX(16px);
+  }
+
+  /* 控件规范 2: 分段胶囊控制器 Segmented Control */
+  .tb-segmented {
+    display: inline-flex;
+    background: var(--tb-control-bg);
+    border: 1px solid var(--tb-control-border);
+    border-radius: var(--tb-radius-sm);
+    padding: 2px;
+    gap: 2px;
+  }
+  .tb-segmented-btn {
+    border: none;
+    background: transparent;
+    color: var(--tb-text-secondary);
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .tb-segmented-btn:hover {
+    color: var(--tb-text-primary);
+  }
+  .tb-segmented-btn.active {
+    background: var(--tb-bg-secondary);
+    color: var(--tb-text-primary);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+    font-weight: 600;
+  }
+
+  /* 控件规范 3: 下拉框 Select & 输入框 Input */
+  .tb-select, .tb-input {
+    height: 32px;
+    background: var(--tb-control-bg);
+    border: 1px solid var(--tb-control-border);
+    border-radius: var(--tb-radius-sm);
+    padding: 0 10px;
+    font-size: 12px;
+    color: var(--tb-text-primary);
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .tb-select:focus, .tb-input:focus {
+    border-color: var(--tb-accent);
+    box-shadow: 0 0 0 2px var(--tb-accent-subtle);
+  }
+  .tb-select {
+    cursor: pointer;
+    padding-right: 24px;
+  }
+
+  /* 控件规范 4: 按钮规范 Buttons */
+  .tb-btn {
+    height: 32px;
+    padding: 0 13px;
+    border-radius: var(--tb-radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: all 0.15s ease;
+    border: 1px solid transparent;
+  }
+  .tb-btn.primary {
+    background: var(--tb-accent);
+    color: #ffffff;
+    border-color: var(--tb-accent);
+  }
+  .tb-btn.primary:hover {
+    background: var(--tb-accent-hover);
+  }
+  .tb-btn.secondary {
+    background: var(--tb-control-bg);
+    border-color: var(--tb-control-border);
+    color: var(--tb-text-primary);
+  }
+  .tb-btn.secondary:hover {
+    background: var(--tb-control-hover);
+    border-color: var(--tb-border);
+  }
+  .tb-btn.danger {
+    background: transparent;
+    border-color: transparent;
+    color: var(--tb-danger);
+  }
+  .tb-btn.danger:hover {
+    background: var(--tb-danger-subtle);
+  }
+  .tb-btn-icon-only {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--tb-radius-sm);
+    border: 1px solid var(--tb-control-border);
+    background: var(--tb-control-bg);
+    color: var(--tb-text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .tb-btn-icon-only:hover {
+    background: var(--tb-control-hover);
+    color: var(--tb-text-primary);
+  }
+
+  /* 宽屏多列网格 (针对大模型供应商、命令卡片等页面) */
+  .grid-2col {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .provider-card {
+    background: var(--tb-bg-primary);
+    border: 1px solid var(--tb-border);
+    border-radius: var(--tb-radius-md);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .provider-card:hover {
+    border-color: var(--tb-accent-border);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  }
+  .provider-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .provider-title-tag {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .provider-title-tag strong {
+    font-size: 14px;
+    color: var(--tb-text-primary);
+  }
+  .badge-status {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 12px;
+    font-weight: 500;
+  }
+  .badge-status.active {
+    background: var(--tb-success-subtle);
+    color: var(--tb-success);
+    border: 1px solid rgba(63, 185, 80, 0.3);
+  }
+  .badge-status.default {
+    background: var(--tb-accent-subtle);
+    color: var(--tb-accent);
+    border: 1px solid var(--tb-accent-border);
+  }
+  .provider-desc-line {
+    font-size: 12px;
+    color: var(--tb-text-secondary);
+    word-break: break-all;
+    font-family: "Cascadia Code", Consolas, monospace;
+    background: var(--tb-bg-secondary);
+    padding: 5px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--tb-border-subtle);
+  }
+  .provider-models-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .model-chip {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: var(--tb-bg-secondary);
+    border: 1px solid var(--tb-border-subtle);
+    color: var(--tb-text-secondary);
+  }
+
+  /* 底部文档解析区域 */
+  .analysis-section {
+    max-width: 1320px;
+    margin: 20px auto 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .analysis-card {
+    background: var(--tb-bg-secondary);
+    border: 1px solid var(--tb-border);
+    border-radius: var(--tb-radius-md);
+    padding: 18px 20px;
+  }
+  .analysis-card h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--tb-text-page);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .analysis-card p, .analysis-card ul {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.65;
+  }
+  .analysis-card ul {
+    padding-left: 18px;
+    margin-top: 6px;
+  }
+  .analysis-card li {
+    margin-bottom: 4px;
+  }
+
+  /* 选项卡色彩预览 */
+  .color-swatch-list {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .color-swatch-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+  .color-swatch-btn:hover {
+    transform: scale(1.15);
+  }
+  .color-swatch-btn.selected {
+    border-color: var(--tb-text-primary);
+  }
+
+  /* 响应式调整 */
+  @media (max-width: 1080px) {
+    .settings-dialog-card {
+      width: 100% !important;
+      height: 680px;
+    }
+    .analysis-section {
+      grid-template-columns: 1fr;
+    }
+    .grid-2col {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="meta-header">
+  <div class="meta-title-group">
+    <div class="promptline">
+      <i data-lucide="terminal" style="width:14px;height:14px;"></i>
+      TerminalBuddy ❯ design / settings-redesign
+    </div>
+    <h1>设置弹窗重构 · 布局交互原型设计</h1>
+    <p class="sub">整体调宽宽度 (1024px → 1240px+) · 4 组层级分类侧边栏 · 统一卡片式 (Card-based) 设置行规范 · 响应式与主题适配</p>
+  </div>
+  <div class="demo-toolbar">
+    <div class="toolbar-group">
+      <span class="toolbar-label">弹窗宽度:</span>
+      <button class="btn-chip" data-width="old" onclick="setWidth('old')">原版 1024px</button>
+      <button class="btn-chip active" data-width="wide" onclick="setWidth('wide')">推荐 1240px</button>
+      <button class="btn-chip" data-width="ultra" onclick="setWidth('ultra')">宽屏 1380px</button>
+    </div>
+    <div style="width:1px;height:16px;background:var(--border-color);margin:0 4px;"></div>
+    <div class="toolbar-group">
+      <span class="toolbar-label">主题:</span>
+      <button class="btn-chip active" id="btn-theme-dark" onclick="setTheme('dark')"><i data-lucide="moon" style="width:13px;height:13px;"></i>暗色</button>
+      <button class="btn-chip" id="btn-theme-light" onclick="setTheme('light')"><i data-lucide="sun" style="width:13px;height:13px;"></i>浅色</button>
+    </div>
+  </div>
+</div>
+
+<div class="stage-container">
+  <!-- 弹窗展示核心区 -->
+  <div class="window-wrap">
+    <div class="settings-dialog-card width-wide" id="settings-card">
+
+      <!-- 弹窗顶栏 Header -->
+      <div class="dialog-topbar">
+        <div class="dialog-title-box">
+          <div class="icon-wrap">
+            <i data-lucide="settings" style="width:16px;height:16px;"></i>
+          </div>
+          <h2>设置</h2>
+          <span class="badge-hint" id="current-section-badge">常规与偏好 / 行为设置</span>
+        </div>
+        <div class="topbar-actions">
+          <button class="win-btn-close" title="关闭设置" onclick="alert('提示：这是交互设计原型，点击确定继续体验')">
+            <i data-lucide="x" style="width:16px;height:16px;"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 弹窗两栏主体 -->
+      <div class="dialog-body-layout">
+
+        <!-- 左侧分组侧边栏 Sidebar -->
+        <aside class="dialog-sidebar" aria-label="设置导航">
+          <div class="sidebar-search-box">
+            <div class="sidebar-search-inner">
+              <i data-lucide="search" style="width:13px;height:13px;"></i>
+              <input type="text" class="sidebar-search-input" id="sidebar-search" placeholder="搜索设置项..." oninput="handleSearch(this.value)">
+            </div>
+          </div>
+
+          <div class="sidebar-nav-scroll" id="sidebar-scroll">
+
+            <!-- 分组 1: 常规与偏好 -->
+            <div class="nav-group-section">
+              <div class="nav-group-title">
+                <span>常规与偏好</span>
+                <span style="opacity:0.6;">4</span>
+              </div>
+              <div class="nav-items-list">
+                <button type="button" class="nav-item-btn active" data-tab="behavior" onclick="switchTab('behavior')">
+                  <i data-lucide="sliders-horizontal" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">行为设置</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="appearance" onclick="switchTab('appearance')">
+                  <i data-lucide="palette" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">外观设置</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="hotkeys" onclick="switchTab('hotkeys')">
+                  <i data-lucide="keyboard" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">快捷键</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="data" onclick="switchTab('data')">
+                  <i data-lucide="database" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">数据存储</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 分组 2: 终端与连接 -->
+            <div class="nav-group-section">
+              <div class="nav-group-title">
+                <span>终端与连接</span>
+                <span style="opacity:0.6;">4</span>
+              </div>
+              <div class="nav-items-list">
+                <button type="button" class="nav-item-btn" data-tab="profiles" onclick="switchTab('profiles')">
+                  <i data-lucide="plug" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">连接管理</span>
+                  <span class="nav-item-tag">12</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="commands" onclick="switchTab('commands')">
+                  <i data-lucide="square-terminal" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">命令模板</span>
+                  <span class="nav-item-tag">36</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="extra-params" onclick="switchTab('extra-params')">
+                  <i data-lucide="terminal" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">启动预设</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="ssh" onclick="switchTab('ssh')">
+                  <i data-lucide="server" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">SSH 设置</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 分组 3: Claude & AI -->
+            <div class="nav-group-section">
+              <div class="nav-group-title">
+                <span>Claude & AI</span>
+                <span class="nav-item-tag accent" style="font-size:9px;">NEW</span>
+              </div>
+              <div class="nav-items-list">
+                <button type="button" class="nav-item-btn" data-tab="llm-providers" onclick="switchTab('llm-providers')">
+                  <i data-lucide="boxes" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">模型供应商</span>
+                  <span class="nav-item-tag accent">推荐</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="claude-settings" onclick="switchTab('claude-settings')">
+                  <i data-lucide="file-json" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">默认配置文件</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="ai-usage" onclick="switchTab('ai-usage')">
+                  <i data-lucide="brain-circuit" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">AI 用量统计</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 分组 4: 扩展与服务 -->
+            <div class="nav-group-section">
+              <div class="nav-group-title">
+                <span>扩展与服务</span>
+                <span style="opacity:0.6;">4</span>
+              </div>
+              <div class="nav-items-list">
+                <button type="button" class="nav-item-btn" data-tab="web-management" onclick="switchTab('web-management')">
+                  <i data-lucide="globe-2" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">Web 远程管理</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="bot-notifications" onclick="switchTab('bot-notifications')">
+                  <i data-lucide="message-square-more" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">机器人通知</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="hooks" onclick="switchTab('hooks')">
+                  <i data-lucide="webhook" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">Hook 钩子</span>
+                </button>
+                <button type="button" class="nav-item-btn" data-tab="exclusions" onclick="switchTab('exclusions')">
+                  <i data-lucide="file-x-2" style="width:15px;height:15px;"></i>
+                  <span class="nav-item-title">文件排除规则</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="sidebar-footer">
+            <span>TerminalBuddy v2.4.0</span>
+            <span class="mono" style="opacity:0.7;">Esc 关闭</span>
+          </div>
+        </aside>
+
+        <!-- 右侧设置内容滚动主视口 -->
+        <main class="dialog-content-main" id="content-main">
+
+          <!-- 面板 1: 行为设置 (Behavior) -->
+          <div class="tab-panel active" id="panel-behavior">
+            <div class="section-page-header">
+              <div class="header-text-col">
+                <h3>行为设置</h3>
+                <p>配置终端核心运行机制、启动窗口行为、标签页自动恢复与会话记忆。</p>
+              </div>
+              <div class="header-actions-col">
+                <button class="tb-btn secondary" onclick="alert('已重置当前页设置为默认')">
+                  <i data-lucide="rotate-ccw" style="width:13px;height:13px;"></i>恢复本页默认
+                </button>
+              </div>
+            </div>
+
+            <!-- 卡片组 1: 终端引擎核心 -->
+            <div class="settings-card-group">
+              <div class="card-group-header">
+                <span class="card-group-title">
+                  <i data-lucide="cpu" style="width:14px;height:14px;"></i>终端内核与渲染
+                </span>
+                <span class="card-group-extra">底层 PTY 与加载加速</span>
+              </div>
+
+              <!-- 行 1: 终端加载方案 -->
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">终端加载方案</div>
+                  <div class="settings-row-desc">选择终端后端加载方案，VS Code 模式支持更高性能与插件加速</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="tb-segmented">
+                    <button class="tb-segmented-btn active" onclick="selectSegment(this)">默认引擎</button>
+                    <button class="tb-segmented-btn" onclick="selectSegment(this)">VS Code 插件引擎</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 行 2: 默认终端劫持 -->
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">设为系统默认终端</div>
+                  <div class="settings-row-desc">接管 Win+R 或 Explorer 打开终端的系统调用（路线 A：COM 代理注册）</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="tb-switch checked" onclick="toggleSwitch(this)">
+                    <div class="tb-switch-thumb"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡片组 2: 启动与窗口生命周期 -->
+            <div class="settings-card-group">
+              <div class="card-group-header">
+                <span class="card-group-title">
+                  <i data-lucide="app-window" style="width:14px;height:14px;"></i>启动与窗口行为
+                </span>
+              </div>
+
+              <!-- 行 1: 启动窗口模式 -->
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">启动窗口模式</div>
+                  <div class="settings-row-desc">启动时直接按所选窗口状态渲染，避免先最大化再切回窗口的视觉闪烁</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="tb-segmented">
+                    <button class="tb-segmented-btn active" onclick="selectSegment(this)">窗口模式</button>
+                    <button class="tb-segmented-btn" onclick="selectSegment(this)">最大化启动</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 行 2: 开机自启 -->
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">开机自启动</div>
+                  <div class="settings-row-desc">在系统登录完成后自动静默启动 TerminalBuddy</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="tb-switch" onclick="toggleSwitch(this)">
+                    <div class="tb-switch-thumb"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 行 3: 关闭窗口行为 -->
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">关闭主窗口时的行为</div>
+                  <div class="settings-row-desc">选择点击关闭按钮时是直接退出还是最小化托盘驻留后台</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <select class="tb-select">
+                    <option value="tray">最小化到系统托盘</option>
+                    <option value="exit">直接退出程序</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡片组 3: 会话与选项卡恢复 -->
+            <div class="settings-card-group">
+              <div class="card-group-header">
+                <span class="card-group-title">
+                  <i data-lucide="history" style="width:14px;height:14px;"></i>会话持久化与恢复
+                </span>
+              </div>
+
+              <!-- 行 1: 启动时恢复选项卡 -->
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">启动时自动恢复已打开的选项卡</div>
+                  <div class="settings-row-desc">程序退出时持久化当前各标签页状态，下次启动时自动重建终端环境</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="tb-switch checked" onclick="toggleSwitch(this)">
+                    <div class="tb-switch-thumb"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 行 2: 自动恢复 Claude 会话 -->
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">自动恢复关联的 Claude Code 会话</div>
+                  <div class="settings-row-desc">对带有 Claude 上下文的标签页，重启后执行 <code class="mono">claude --resume</code> 自动无缝衔接</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="tb-switch checked" onclick="toggleSwitch(this)">
+                    <div class="tb-switch-thumb"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 面板 2: 外观设置 (Appearance) -->
+          <div class="tab-panel" id="panel-appearance" style="display:none;">
+            <div class="section-page-header">
+              <div class="header-text-col">
+                <h3>外观设置</h3>
+                <p>自定义应用程序视觉主题、左侧栏风格、终端指示灯及色彩系统。</p>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="card-group-header">
+                <span class="card-group-title"><i data-lucide="layout" style="width:14px;height:14px;"></i>界面布局与风格</span>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">主界面布局风格</div>
+                  <div class="settings-row-desc">可选择经典顶部导航栏或类似 VS Code 的左侧紧凑 Activity Bar</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="tb-segmented">
+                    <button class="tb-segmented-btn active" onclick="selectSegment(this)">经典默认</button>
+                    <button class="tb-segmented-btn" onclick="selectSegment(this)">现代侧边栏</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">终端配色跟随应用主题</div>
+                  <div class="settings-row-desc">开启后终端背景与文字颜色将自适应浅色与深色切换</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="tb-switch checked" onclick="toggleSwitch(this)">
+                    <div class="tb-switch-thumb"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="card-group-header">
+                <span class="card-group-title"><i data-lucide="sparkles" style="width:14px;height:14px;"></i>活动指示灯与色彩</span>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">活动指示灯颜色模式</div>
+                  <div class="settings-row-desc">终端运行耗时任务或 Claude 执行时的呼吸灯颜色</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="tb-segmented">
+                    <button class="tb-segmented-btn active" onclick="selectSegment(this)">跟随选项卡颜色</button>
+                    <button class="tb-segmented-btn" onclick="selectSegment(this)">自定义固定颜色</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">预设色彩槽</div>
+                  <div class="settings-row-desc">选择最适合当前终端工作流的高亮色彩</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <div class="color-swatch-list">
+                    <button class="color-swatch-btn selected" style="background:#4b95e9;"></button>
+                    <button class="color-swatch-btn" style="background:#55b988;"></button>
+                    <button class="color-swatch-btn" style="background:#d9a441;"></button>
+                    <button class="color-swatch-btn" style="background:#ef6b73;"></button>
+                    <button class="color-swatch-btn" style="background:#b083f0;"></button>
+                    <button class="color-swatch-btn" style="background:#ec4899;"></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 面板 3: 模型供应商 (LLM Providers) - 重点展示宽屏优势 -->
+          <div class="tab-panel" id="panel-llm-providers" style="display:none;">
+            <div class="section-page-header">
+              <div class="header-text-col">
+                <h3>大模型供应商管理</h3>
+                <p>接入多家 LLM 供应商 API（支持 Anthropic、OpenAI 兼容端点、MiniMax、DeepSeek 等），支持一键拉取模型、上下文微调与快捷右键启动。</p>
+              </div>
+              <div class="header-actions-col">
+                <button class="tb-btn primary" onclick="alert('点击添加供应商')">
+                  <i data-lucide="plus" style="width:14px;height:14px;"></i>添加供应商
+                </button>
+              </div>
+            </div>
+
+            <!-- 宽屏调宽后的双列栅格卡片 -->
+            <div class="grid-2col">
+
+              <!-- 供应商卡片 1 -->
+              <div class="provider-card">
+                <div class="provider-card-head">
+                  <div class="provider-title-tag">
+                    <i data-lucide="zap" style="width:16px;height:16px;color:#e3b341;"></i>
+                    <strong>DeepSeek Official</strong>
+                    <span class="badge-status default">默认供应商</span>
+                  </div>
+                  <div style="display:flex;gap:4px;">
+                    <button class="tb-btn-icon-only" title="刷新模型列表"><i data-lucide="refresh-cw" style="width:13px;height:13px;"></i></button>
+                    <button class="tb-btn-icon-only" title="编辑"><i data-lucide="pencil" style="width:13px;height:13px;"></i></button>
+                  </div>
+                </div>
+                <div class="provider-desc-line">https://api.deepseek.com/v1</div>
+                <div style="font-size:12px;color:var(--tb-text-secondary);display:flex;align-items:center;justify-content:space-between;">
+                  <span>可用模型 (2):</span>
+                  <span style="font-size:11px;color:var(--tb-success);">● 连通正常 (18ms)</span>
+                </div>
+                <div class="provider-models-chips">
+                  <span class="model-chip" style="color:var(--tb-accent);font-weight:500;">deepseek-chat (64k)</span>
+                  <span class="model-chip" style="color:#b083f0;font-weight:500;">deepseek-reasoner (R1)</span>
+                </div>
+              </div>
+
+              <!-- 供应商卡片 2 -->
+              <div class="provider-card">
+                <div class="provider-card-head">
+                  <div class="provider-title-tag">
+                    <i data-lucide="box" style="width:16px;height:16px;color:var(--tb-accent);"></i>
+                    <strong>Claude 官方直连</strong>
+                    <span class="badge-status active">已启用</span>
+                  </div>
+                  <div style="display:flex;gap:4px;">
+                    <button class="tb-btn-icon-only" title="刷新模型列表"><i data-lucide="refresh-cw" style="width:13px;height:13px;"></i></button>
+                    <button class="tb-btn-icon-only" title="编辑"><i data-lucide="pencil" style="width:13px;height:13px;"></i></button>
+                  </div>
+                </div>
+                <div class="provider-desc-line">https://api.anthropic.com</div>
+                <div style="font-size:12px;color:var(--tb-text-secondary);display:flex;align-items:center;justify-content:space-between;">
+                  <span>可用模型 (3):</span>
+                  <span style="font-size:11px;color:var(--tb-text-tertiary);">原生 Anthropic 协议</span>
+                </div>
+                <div class="provider-models-chips">
+                  <span class="model-chip">claude-3-7-sonnet-20250219</span>
+                  <span class="model-chip">claude-3-5-haiku-20241022</span>
+                  <span class="model-chip">claude-3-opus-20240229</span>
+                </div>
+              </div>
+
+              <!-- 供应商卡片 3 -->
+              <div class="provider-card">
+                <div class="provider-card-head">
+                  <div class="provider-title-tag">
+                    <i data-lucide="cpu" style="width:16px;height:16px;color:#55b988;"></i>
+                    <strong>Ollama 本地大模型</strong>
+                    <span class="badge-status active">本地运行</span>
+                  </div>
+                  <div style="display:flex;gap:4px;">
+                    <button class="tb-btn-icon-only" title="刷新模型列表"><i data-lucide="refresh-cw" style="width:13px;height:13px;"></i></button>
+                    <button class="tb-btn-icon-only" title="编辑"><i data-lucide="pencil" style="width:13px;height:13px;"></i></button>
+                  </div>
+                </div>
+                <div class="provider-desc-line">http://localhost:11434/v1</div>
+                <div style="font-size:12px;color:var(--tb-text-secondary);display:flex;align-items:center;justify-content:space-between;">
+                  <span>可用模型 (1):</span>
+                  <span style="font-size:11px;color:var(--tb-success);">● 本地免 Key 离线推理</span>
+                </div>
+                <div class="provider-models-chips">
+                  <span class="model-chip">qwen2.5-coder:14b</span>
+                </div>
+              </div>
+
+              <!-- 添加新卡片插槽 -->
+              <div class="provider-card" style="border-style:dashed;align-items:center;justify-content:center;min-height:160px;cursor:pointer;background:transparent;" onclick="alert('添加新供应商')">
+                <i data-lucide="plus-circle" style="width:28px;height:28px;color:var(--tb-text-tertiary);"></i>
+                <span style="font-size:13px;color:var(--tb-text-secondary);font-weight:500;">点击快速绑定新供应商端点</span>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- 面板 4: 快捷键设置 (Hotkeys) -->
+          <div class="tab-panel" id="panel-hotkeys" style="display:none;">
+            <div class="section-page-header">
+              <div class="header-text-col">
+                <h3>快捷键设置</h3>
+                <p>全局唤起窗口、标签页切换及控制台操作快捷键录制。</p>
+              </div>
+            </div>
+
+            <div class="settings-card-group">
+              <div class="card-group-header">
+                <span class="card-group-title"><i data-lucide="command" style="width:14px;height:14px;"></i>全局操作快捷键</span>
+                <span class="card-group-extra">在任何应用窗口下皆可响应</span>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">唤起 / 隐藏主窗口</div>
+                  <div class="settings-row-desc">快速呼出 TerminalBuddy 并在桌面最前端置顶</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <button class="tb-btn secondary" style="font-family:monospace;font-size:12px;padding:0 12px;">
+                    <i data-lucide="disc" style="width:12px;height:12px;color:var(--tb-danger);"></i>Ctrl + `
+                  </button>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">新建终端标签页</div>
+                  <div class="settings-row-desc">按当前默认 Profile 开启新终端</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <button class="tb-btn secondary" style="font-family:monospace;font-size:12px;padding:0 12px;">
+                    <i data-lucide="disc" style="width:12px;height:12px;color:var(--tb-danger);"></i>Ctrl + T
+                  </button>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-row-col-info">
+                  <div class="settings-row-title">关闭当前标签页</div>
+                  <div class="settings-row-desc">优雅终止当前终端进程并释放资源</div>
+                </div>
+                <div class="settings-row-col-ctrl">
+                  <button class="tb-btn secondary" style="font-family:monospace;font-size:12px;padding:0 12px;">
+                    <i data-lucide="disc" style="width:12px;height:12px;color:var(--tb-danger);"></i>Ctrl + W
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 其他预留占位面板 -->
+          <div class="tab-panel" id="panel-other" style="display:none;">
+            <div class="section-page-header">
+              <div class="header-text-col">
+                <h3 id="other-panel-title">设置项详情</h3>
+                <p id="other-panel-desc">对应配置项的统一卡片流视图。</p>
+              </div>
+            </div>
+            <div class="settings-card-group" style="padding:48px;text-align:center;">
+              <i data-lucide="layers" style="width:36px;height:36px;color:var(--tb-text-tertiary);margin:0 auto 12px;display:block;"></i>
+              <div style="font-size:14px;color:var(--tb-text-primary);font-weight:500;">统一卡片架构已接入</div>
+              <div style="font-size:12px;color:var(--tb-text-secondary);margin-top:6px;">该分类沿用统一 Card + Row 规范，享受调宽后的宽屏体验。</div>
+            </div>
+          </div>
+
+        </main>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 下方设计解析与改造落地说明 -->
+  <div class="analysis-section">
+    <div class="analysis-card">
+      <h4><i data-lucide="maximize-2" style="width:15px;height:15px;color:var(--accent);"></i> 1. 弹窗调宽策略</h4>
+      <p>从原有狭窄的 1024px 全局拓宽至 1240px（超宽屏下可达 1380px）：</p>
+      <ul>
+        <li><b>侧边栏定宽 228px</b>（微增 32px）：容纳更清晰的分类标题、徽标与搜索框。</li>
+        <li><b>内容工作区扩容至 980px+</b>：告别以往 780px 写死宽度导致的拥挤与大面积右侧留白。</li>
+        <li><b>支持双列 / 三列响应式网格</b>：大模型供应商、命令预设等列表在大屏下自动双列并排，屏效提升 100%。</li>
+      </ul>
+    </div>
+
+    <div class="analysis-card">
+      <h4><i data-lucide="list-tree" style="width:15px;height:15px;color:#55b988;"></i> 2. 侧边栏层级与分组</h4>
+      <p>将原有杂乱堆砌的 15 个 Tab 按逻辑聚合为 4 大核心维度：</p>
+      <ul>
+        <li><b>常规与偏好</b>：行为设置、外观、快捷键、数据管理。</li>
+        <li><b>终端与连接</b>：连接管理、命令模板、启动预设、SSH。</li>
+        <li><b>Claude & AI</b>：模型供应商、默认配置文件、AI 用量。</li>
+        <li><b>扩展与服务</b>：Web 远程、机器人通知、Hook、文件排除。</li>
+        <li>配备<b>实时搜索过滤</b>，输入关键字即刻高亮过滤所有设置页。</li>
+      </ul>
+    </div>
+
+    <div class="analysis-card">
+      <h4><i data-lucide="component" style="width:15px;height:15px;color:#e3b341;"></i> 3. 统一样式系统 (Design Tokens)</h4>
+      <p>规范化所有 15 个子页面的视觉组件，杜绝割裂感：</p>
+      <ul>
+        <li><b>卡片组 (Card Group)</b>：以带微圆角和极细边框的容器分组相关选项。</li>
+        <li><b>标准设置行 (Row)</b>：统一为“左侧标题+释义，右侧控件”的左右对齐网格。</li>
+        <li><b>统一控件体系</b>：标准 Switch 开关、分段胶囊 Segment、Select 下拉框高度均统一为 32px。</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // 初始化 Lucide 图标
+  lucide.createIcons();
+
+  // 选项卡切换逻辑
+  const navButtons = document.querySelectorAll('.nav-item-btn');
+  const panels = {
+    'behavior': document.getElementById('panel-behavior'),
+    'appearance': document.getElementById('panel-appearance'),
+    'llm-providers': document.getElementById('panel-llm-providers'),
+    'hotkeys': document.getElementById('panel-hotkeys'),
+    'other': document.getElementById('panel-other'),
+  };
+  const badgeEl = document.getElementById('current-section-badge');
+
+  function switchTab(tabId) {
+    navButtons.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === tabId);
+    });
+
+    // 隐藏所有面板
+    Object.values(panels).forEach(p => {
+      if (p) {
+        p.style.display = 'none';
+        p.classList.remove('active');
+      }
+    });
+
+    // 显示目标面板
+    const target = panels[tabId] || panels['other'];
+    if (target) {
+      target.style.display = 'block';
+      target.classList.add('active');
+    }
+
+    // 占位面板标题定制
+    if (!panels[tabId]) {
+      const btn = document.querySelector(`.nav-item-btn[data-tab="${tabId}"]`);
+      const title = btn ? btn.querySelector('.nav-item-title').textContent : '设置';
+      document.getElementById('other-panel-title').textContent = title;
+      document.getElementById('other-panel-desc').textContent = `已将「${title}」整合纳入全新统一的卡片布局规范与宽屏工作台容器中。`;
+    }
+
+    // 更新面包屑指示器
+    const activeBtn = document.querySelector(`.nav-item-btn[data-tab="${tabId}"]`);
+    if (activeBtn) {
+      const groupTitle = activeBtn.closest('.nav-group-section').querySelector('.nav-group-title span').textContent;
+      const title = activeBtn.querySelector('.nav-item-title').textContent;
+      badgeEl.textContent = `${groupTitle} / ${title}`;
+    }
+  }
+
+  // 宽度模式切换
+  function setWidth(mode) {
+    const card = document.getElementById('settings-card');
+    card.classList.remove('width-old', 'width-wide', 'width-ultra');
+    card.classList.add(`width-${mode}`);
+
+    document.querySelectorAll('[data-width]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.width === mode);
+    });
+  }
+
+  // 主题切换
+  function setTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.getElementById('btn-theme-dark').classList.toggle('active', theme === 'dark');
+    document.getElementById('btn-theme-light').classList.toggle('active', theme === 'light');
+  }
+
+  // 开关交互切换
+  function toggleSwitch(el) {
+    el.classList.toggle('checked');
+  }
+
+  // 分段选择器切换
+  function selectSegment(btn) {
+    const parent = btn.parentElement;
+    parent.querySelectorAll('.tb-segmented-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  // 快捷搜索高亮过滤
+  function handleSearch(query) {
+    const q = query.trim().toLowerCase();
+    const items = document.querySelectorAll('.nav-item-btn');
+    const groups = document.querySelectorAll('.nav-group-section');
+
+    items.forEach(item => {
+      const text = item.textContent.toLowerCase();
+      const match = !q || text.includes(q);
+      item.style.display = match ? 'flex' : 'none';
+    });
+
+    groups.forEach(g => {
+      const visibleItems = g.querySelectorAll('.nav-item-btn[style*="display: flex"]');
+      const hasVisible = visibleItems.length > 0;
+      g.style.display = (!q || hasVisible) ? 'block' : 'none';
+    });
+  }
+</script>
+</body>
+</html>

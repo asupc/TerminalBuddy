@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TerminalBuddy · Claude Code 终端增强 · 交互预览</title>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+  body{background:#0e1013;color:#e8eaf0;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;margin:0;padding:28px 20px 80px;line-height:1.7}
+  .sheet{max-width:1180px;margin:0 auto}
+  .promptline{font-family:"Cascadia Mono",Consolas,monospace;font-size:14px;color:#FFB000;margin-bottom:6px}
+  h1{font-size:22px;font-weight:600;margin:0 0 4px}
+  .sub{color:#8B93A7;font-size:13px;margin:0 0 18px}
+</style>
+</head>
+<body>
+<div class="sheet">
+<div class="promptline">TerminalBuddy ❯ design / claude-terminal-enhancement</div>
+<h1>Claude Code 终端增强 · 交互预览</h1>
+<p class="sub">对应设计文档 design.md 。四个视图均可点击体验：右键菜单启动 / 模型供应商 / 默认配置文件 / 会话恢复。</p>
+<div id="tb-claude-enh">
+<style>
+#tb-claude-enh{--tb-bg:#14161a;--tb-panel:#1c1f24;--tb-panel2:#23272e;--tb-hover:#2a2f37;--tb-line:#2e333a;--tb-ink:#e3e5e8;--tb-dim:#9aa0a8;--tb-dim2:#6f767f;--tb-accent:#4b95e9;--tb-accent-dim:rgba(75,149,233,.14);--tb-green:#56d364;--tb-orange:#e6a23c;--tb-red:#f14c4c;--tb-purple:#b083f0;--tb-yellow:#e3b341;background:var(--tb-bg);color:var(--tb-ink);font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;font-size:13px;line-height:1.6;border-radius:10px;overflow:hidden;border:1px solid var(--tb-line)}
+#tb-claude-enh *{box-sizing:border-box}
+#tb-claude-enh .mono{font-family:"Cascadia Mono",Consolas,"Courier New",monospace}
+#tb-claude-enh button{font:inherit;color:inherit}
+#tb-claude-enh .tbce-titlebar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#101216;border-bottom:1px solid var(--tb-line)}
+#tb-claude-enh .tbce-traffic{display:flex;gap:6px}
+#tb-claude-enh .tbce-traffic i{width:11px;height:11px;border-radius:50%;background:#3a4048}
+#tb-claude-enh .tbce-traffic i:first-child{background:#f14c4c}#tb-claude-enh .tbce-traffic i:nth-child(2){background:#e3b341}#tb-claude-enh .tbce-traffic i:nth-child(3){background:#56d364}
+#tb-claude-enh .tbce-apptitle{color:var(--tb-dim);font-size:12px}
+#tb-claude-enh .tbce-apptitle b{color:var(--tb-ink);font-weight:500}
+#tb-claude-enh .tbce-body{display:flex;min-height:560px}
+#tb-claude-enh .tbce-side{width:196px;flex:none;background:#17191d;border-right:1px solid var(--tb-line);padding:12px 8px;display:flex;flex-direction:column;gap:2px}
+#tb-claude-enh .tbce-side h4{font-size:11px;font-weight:500;color:var(--tb-dim2);padding:6px 10px 4px;margin:0}
+#tb-claude-enh .tbce-navbtn{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;border:0;border-radius:6px;padding:7px 10px;color:var(--tb-dim);cursor:pointer}
+#tb-claude-enh .tbce-navbtn svg{width:15px;height:15px;flex:none}
+#tb-claude-enh .tbce-navbtn:hover{background:var(--tb-hover);color:var(--tb-ink)}
+#tb-claude-enh .tbce-navbtn.on{background:var(--tb-accent-dim);color:var(--tb-accent)}
+#tb-claude-enh .tbce-main{flex:1;min-width:0;display:flex;flex-direction:column}
+#tb-claude-enh .tbce-viewhead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--tb-line)}
+#tb-claude-enh .tbce-viewhead h2{font-size:14px;font-weight:500;margin:0}
+#tb-claude-enh .tbce-viewhead p{margin:0;color:var(--tb-dim2);font-size:12px}
+#tb-claude-enh .tbce-view{padding:14px 16px 20px}
+#tb-claude-enh .tbce-cols{display:grid;grid-template-columns:300px 1fr;gap:14px;align-items:start}
+#tb-claude-enh .tbce-panel{background:var(--tb-panel);border:1px solid var(--tb-line);border-radius:8px;overflow:hidden}
+#tb-claude-enh .tbce-panel>h3{font-size:12px;font-weight:500;color:var(--tb-dim);padding:9px 12px;margin:0;border-bottom:1px solid var(--tb-line);display:flex;align-items:center;gap:7px}
+#tb-claude-enh .tbce-panel>h3 svg{width:14px;height:14px}
+#tb-claude-enh .tbce-panel .tbce-pad{padding:12px}
+#tb-claude-enh .tbce-tree{padding:6px}
+#tb-claude-enh .tbce-tgroup{display:flex;align-items:center;gap:6px;padding:6px 8px;color:var(--tb-dim);font-size:12px}
+#tb-claude-enh .tbce-tgroup svg{width:14px;height:14px}
+#tb-claude-enh .tbce-tleaf{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;border:0;border-radius:6px;padding:7px 8px 7px 26px;cursor:pointer;color:var(--tb-ink)}
+#tb-claude-enh .tbce-tleaf svg{width:14px;height:14px;color:var(--tb-dim)}
+#tb-claude-enh .tbce-tleaf:hover{background:var(--tb-hover)}
+#tb-claude-enh .tbce-tleaf.sel{background:var(--tb-accent-dim)}
+#tb-claude-enh .tbce-tip{margin:8px;padding:8px 10px;border:1px dashed var(--tb-line);border-radius:6px;color:var(--tb-dim2);font-size:12px}
+#tb-claude-enh .tbce-launchzone{position:relative}
+#tb-claude-enh .tbce-panel.tbce-launchzone{overflow:visible}
+#tb-claude-enh .tbce-menu{position:absolute;z-index:40;min-width:250px;background:#22262d;border:1px solid #3a4048;border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.5);padding:5px;display:none}
+#tb-claude-enh .tbce-menu.show{display:block}
+#tb-claude-enh .tbce-mi{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;border:0;border-radius:5px;padding:7px 10px;cursor:pointer;color:var(--tb-ink);font-size:13px}
+#tb-claude-enh .tbce-mi svg{width:14px;height:14px;color:var(--tb-dim)}
+#tb-claude-enh .tbce-mi:hover:not(:disabled){background:var(--tb-accent);color:#fff}
+#tb-claude-enh .tbce-mi:hover:not(:disabled) svg{color:#fff}
+#tb-claude-enh .tbce-mi:disabled{color:var(--tb-dim2);cursor:default}
+#tb-claude-enh .tbce-mi .grow{flex:1}
+#tb-claude-enh .tbce-sep{height:1px;background:var(--tb-line);margin:5px 8px}
+#tb-claude-enh .tbce-mhead{font-size:11px;color:var(--tb-dim2);padding:5px 10px 3px}
+#tb-claude-enh .tbce-sub{position:absolute;left:100%;top:0;min-width:250px;background:#22262d;border:1px solid #3a4048;border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.5);padding:5px;display:none}
+#tb-claude-enh .tbce-mi-wrap{position:relative}
+#tb-claude-enh .tbce-mi-wrap.open>.tbce-sub{display:block}
+#tb-claude-enh .tbce-badge{font-size:11px;padding:1px 7px;border-radius:20px;background:#333a43;color:var(--tb-dim);white-space:nowrap}
+#tb-claude-enh .tbce-badge.def{background:rgba(86,211,100,.16);color:var(--tb-green)}
+#tb-claude-enh .tbce-badge.e-low{background:#2c3138;color:var(--tb-dim)}
+#tb-claude-enh .tbce-badge.e-medium{background:rgba(75,149,233,.16);color:var(--tb-accent)}
+#tb-claude-enh .tbce-badge.e-high{background:rgba(230,162,60,.16);color:var(--tb-orange)}
+#tb-claude-enh .tbce-badge.e-xhigh{background:rgba(176,131,240,.18);color:var(--tb-purple)}
+#tb-claude-enh .tbce-badge.e-max{background:rgba(241,76,76,.16);color:var(--tb-red)}
+#tb-claude-enh .tbce-badge.cust{background:rgba(230,162,60,.16);color:var(--tb-orange)}
+#tb-claude-enh .tbce-badge.off{background:transparent;border:1px solid var(--tb-line);color:var(--tb-dim2)}
+#tb-claude-enh .tbce-term{background:#0d0f12;border:1px solid var(--tb-line);border-radius:8px;overflow:hidden}
+#tb-claude-enh .tbce-termtab{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--tb-line);font-size:12px;color:var(--tb-dim)}
+#tb-claude-enh .tbce-dot{width:8px;height:8px;border-radius:50%;background:var(--tb-green);flex:none}
+#tb-claude-enh .tbce-termbody{padding:12px;font-size:12px;white-space:pre-wrap;word-break:break-all}
+#tb-claude-enh .tbce-ps{color:var(--tb-green)}
+#tb-claude-enh .tbce-kv{display:grid;grid-template-columns:96px 1fr;gap:4px 10px;font-size:12px;margin:0}
+#tb-claude-enh .tbce-kv dt{color:var(--tb-dim2)}
+#tb-claude-enh .tbce-kv dd{margin:0;word-break:break-all}
+#tb-claude-enh .tbce-json{background:#0d0f12;border:1px solid var(--tb-line);border-radius:8px;padding:12px;font-size:12px;white-space:pre;overflow:auto;max-height:480px;margin:0}
+#tb-claude-enh .tbce-flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0;padding:0;list-style:none}
+#tb-claude-enh .tbce-flow li{background:var(--tb-panel2);border:1px solid var(--tb-line);border-radius:6px;padding:5px 10px;font-size:12px;color:var(--tb-dim)}
+#tb-claude-enh .tbce-flow li b{color:var(--tb-accent);font-weight:500;margin-right:4px}
+#tb-claude-enh .tbce-flow li.arrow{background:transparent;border:0;padding:0 1px;color:var(--tb-dim2)}
+#tb-claude-enh .tbce-sec{font-size:12px;color:var(--tb-dim);margin:14px 0 6px;display:flex;align-items:center;gap:6px}
+#tb-claude-enh .tbce-sec svg{width:13px;height:13px}
+#tb-claude-enh .tbce-sec:first-child{margin-top:0}
+#tb-claude-enh .tbce-empty{color:var(--tb-dim2);text-align:center;padding:34px 10px;font-size:12px}
+#tb-claude-enh .tbce-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+#tb-claude-enh .tbce-card{background:var(--tb-panel);border:1px solid var(--tb-line);border-radius:8px;padding:12px}
+#tb-claude-enh .tbce-card.isdef{border-color:rgba(86,211,100,.45)}
+#tb-claude-enh .tbce-card.editing{border-color:var(--tb-accent)}
+#tb-claude-enh .tbce-card h3{margin:0 0 2px;font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px}
+#tb-claude-enh .tbce-card .url{color:var(--tb-dim);font-size:12px;word-break:break-all}
+#tb-claude-enh .tbce-card .meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+#tb-claude-enh .tbce-card .models{font-size:12px;color:var(--tb-dim);margin:4px 0 10px}
+#tb-claude-enh .tbce-card .models div{display:flex;align-items:center;gap:6px;padding:2px 0}
+#tb-claude-enh .tbce-actions{display:flex;gap:8px;flex-wrap:wrap}
+#tb-claude-enh .tbce-btn{display:inline-flex;align-items:center;gap:6px;background:var(--tb-panel2);border:1px solid var(--tb-line);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;color:var(--tb-ink)}
+#tb-claude-enh .tbce-btn svg{width:14px;height:14px}
+#tb-claude-enh .tbce-btn:hover{background:var(--tb-hover)}
+#tb-claude-enh .tbce-btn.primary{background:var(--tb-accent);border-color:var(--tb-accent);color:#fff}
+#tb-claude-enh .tbce-btn.primary:hover{filter:brightness(1.08)}
+#tb-claude-enh .tbce-btn.danger:hover{border-color:var(--tb-red);color:var(--tb-red)}
+#tb-claude-enh .tbce-btn:disabled{opacity:.5;cursor:default}
+#tb-claude-enh .tbce-epanel{margin-top:12px;background:var(--tb-panel);border:1px solid var(--tb-accent);border-radius:8px;overflow:hidden}
+#tb-claude-enh .tbce-epanel header{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--tb-line);font-size:13px;font-weight:500}
+#tb-claude-enh .tbce-epanel header .grow{flex:1}
+#tb-claude-enh .tbce-epanel .tbce-dbody{padding:14px;display:flex;flex-direction:column;gap:10px}
+#tb-claude-enh .tbce-epanel footer{display:flex;justify-content:flex-end;gap:8px;padding:12px 14px;border-top:1px solid var(--tb-line)}
+#tb-claude-enh .tbce-field label{display:block;font-size:12px;color:var(--tb-dim);margin-bottom:4px}
+#tb-claude-enh .tbce-field label .req{color:var(--tb-red)}
+#tb-claude-enh .tbce-input,.tbce-select{background:#14161a;border:1px solid var(--tb-line);border-radius:6px;color:var(--tb-ink);padding:7px 10px;font:inherit;font-size:13px;width:100%}
+#tb-claude-enh .tbce-input:focus,.tbce-select:focus{outline:none;border-color:var(--tb-accent)}
+#tb-claude-enh .tbce-row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#tb-claude-enh .tbce-fetchrow{display:flex;align-items:center;gap:10px}
+#tb-claude-enh .tbce-fetchrow .st{font-size:12px;color:var(--tb-dim2)}
+#tb-claude-enh .tbce-fetchrow .st.ok{color:var(--tb-green)}
+#tb-claude-enh .tbce-fetchrow .st.err{color:var(--tb-red)}
+#tb-claude-enh table.tbce-mtable{width:100%;border-collapse:collapse;font-size:12px}
+#tb-claude-enh table.tbce-mtable th{text-align:left;color:var(--tb-dim2);font-weight:400;padding:6px 8px;border-bottom:1px solid var(--tb-line)}
+#tb-claude-enh table.tbce-mtable td{padding:6px 8px;border-bottom:1px solid #262b32;vertical-align:middle}
+#tb-claude-enh table.tbce-mtable tr:last-child td{border-bottom:0}
+#tb-claude-enh table.tbce-mtable input[type=text],#tb-claude-enh table.tbce-mtable input[type=number]{width:110px;background:#14161a;border:1px solid var(--tb-line);border-radius:5px;color:var(--tb-ink);padding:4px 8px;font:inherit;font-size:12px}
+#tb-claude-enh table.tbce-mtable select{background:#14161a;border:1px solid var(--tb-line);border-radius:5px;color:var(--tb-ink);padding:4px 6px;font:inherit;font-size:12px}
+#tb-claude-enh table.tbce-mtable input[type=checkbox]{width:15px;height:15px;accent-color:var(--tb-accent);cursor:pointer}
+#tb-claude-enh .tbce-spin{width:13px;height:13px;border:2px solid var(--tb-line);border-top-color:var(--tb-accent);border-radius:50%;display:inline-block;vertical-align:-2px;animation:tbce-rot .7s linear infinite}
+#tb-claude-enh @keyframes tbce-rot{to{transform:rotate(360deg)}}
+#tb-claude-enh .tbce-setrow{display:grid;grid-template-columns:220px 1fr;gap:10px;padding:10px 12px;border-bottom:1px solid #262b32}
+#tb-claude-enh .tbce-setrow:last-child{border-bottom:0}
+#tb-claude-enh .tbce-setrow .k{font-size:12px;word-break:break-all}
+#tb-claude-enh .tbce-setrow .k .tbce-badge{margin-left:6px}
+#tb-claude-enh .tbce-setrow .d{font-size:12px;color:var(--tb-dim);margin-top:4px}
+#tb-claude-enh .tbce-setrow .d .offv{color:var(--tb-dim2)}
+#tb-claude-enh .tbce-setrow .v{display:flex;gap:8px;align-items:flex-start}
+#tb-claude-enh .tbce-setrow .v .tbce-input,.tbce-setrow .v .tbce-select{flex:1}
+#tb-claude-enh .tbce-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+#tb-claude-enh .tbce-toolbar .grow{flex:1}
+#tb-claude-enh .tbce-seg{display:inline-flex;background:var(--tb-panel);border:1px solid var(--tb-line);border-radius:7px;padding:2px;gap:2px}
+#tb-claude-enh .tbce-seg button{border:0;background:transparent;border-radius:5px;padding:5px 14px;cursor:pointer;color:var(--tb-dim);font-size:12px}
+#tb-claude-enh .tbce-seg button.on{background:var(--tb-panel2);color:var(--tb-ink)}
+#tb-claude-enh .tbce-meta{font-size:12px;color:var(--tb-dim2);margin-bottom:10px;display:flex;gap:14px;flex-wrap:wrap}
+#tb-claude-enh .tbce-meta b{color:var(--tb-dim);font-weight:500}
+#tb-claude-enh .tbce-toast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%) translateY(8px);z-index:60;background:#22262d;border:1px solid #3a4048;border-radius:8px;padding:9px 16px;font-size:12px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:90%;text-align:center}
+#tb-claude-enh .tbce-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#tb-claude-enh .tbce-toast.ok{border-color:rgba(86,211,100,.5)}
+#tb-claude-enh .tbce-rel{position:relative}
+#tb-claude-enh .tbce-tleaf.tbce-his{padding-left:8px}
+#tb-claude-enh .tbce-flow li b.tbce-ok{color:var(--tb-green)}
+#tb-claude-enh .tbce-flow li b.tbce-bad{color:var(--tb-red)}
+#tb-claude-enh .tbce-search{flex:1;min-width:170px;max-width:300px}
+#tb-claude-enh .tbce-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+#tb-claude-enh .tbce-pill{border:1px solid var(--tb-line);background:var(--tb-panel);border-radius:20px;padding:4px 12px;font-size:12px;color:var(--tb-dim);cursor:pointer}
+#tb-claude-enh .tbce-pill:hover{color:var(--tb-ink)}
+#tb-claude-enh .tbce-pill.on{background:var(--tb-accent-dim);border-color:var(--tb-accent);color:var(--tb-accent)}
+#tb-claude-enh .tbce-pill .n{opacity:.65}
+#tb-claude-enh .tbce-ghead{font-size:12px;font-weight:500;padding:10px 12px 6px;display:flex;gap:8px;align-items:baseline}
+#tb-claude-enh .tbce-ghead .cnt{color:var(--tb-dim2);font-weight:400;font-size:11px}
+#tb-claude-enh .tbce-ghead:not(:first-child){border-top:1px solid var(--tb-line)}
+#tb-claude-enh textarea.tbce-input{resize:vertical;min-height:54px;line-height:1.55}
+#tb-claude-enh textarea.tbce-input.json-ok{border-color:rgba(86,211,100,.55)}
+#tb-claude-enh textarea.tbce-input.json-bad{border-color:var(--tb-red)}
+#tb-claude-enh .tbce-jsonbtn{flex:none;align-self:flex-start}
+#tb-claude-enh .tbce-jsonhint{font-size:11px;margin-top:3px}
+#tb-claude-enh .tbce-jsonhint.ok{color:var(--tb-green)}
+#tb-claude-enh .tbce-jsonhint.bad{color:var(--tb-red)}
+#tb-claude-enh .tbce-vcol{flex:1;display:flex;flex-direction:column;min-width:0}
+#tb-claude-enh .tbce-check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--tb-dim);cursor:pointer;white-space:nowrap}
+#tb-claude-enh .tbce-check input{width:15px;height:15px;accent-color:var(--tb-accent);cursor:pointer}
+#tb-claude-enh .tbce-cenv{display:flex;gap:8px;padding:4px 12px 12px}
+#tb-claude-enh .tbce-src{font-size:10px;padding:1px 6px;border-radius:4px;margin-left:6px;white-space:nowrap;vertical-align:1px}
+#tb-claude-enh .tbce-src.cc{background:rgba(75,149,233,.14);color:var(--tb-accent)}
+#tb-claude-enh .tbce-src.local{background:rgba(86,211,100,.14);color:var(--tb-green)}
+#tb-claude-enh .tbce-src.undoc{background:rgba(227,179,65,.16);color:var(--tb-yellow)}
+@media (max-width:900px){#tb-claude-enh .tbce-cols{grid-template-columns:1fr}#tb-claude-enh .tbce-body{flex-direction:column}#tb-claude-enh .tbce-side{width:auto;flex-direction:row;flex-wrap:wrap;align-items:center;border-right:0;border-bottom:1px solid var(--tb-line)}#tb-claude-enh .tbce-side h4{width:100%}#tb-claude-enh .tbce-setrow{grid-template-columns:1fr}}
+</style>
+
+<div class="tbce-titlebar"><div class="tbce-traffic"><i></i><i></i><i></i></div><div class="tbce-apptitle"><b>TerminalBuddy</b> · Claude Code 终端增强 · 交互预览</div></div>
+<div class="tbce-body tbce-rel" id="tbce-shell">
+  <aside class="tbce-side" aria-label="功能导航">
+    <h4>Claude 面板</h4>
+    <button type="button" class="tbce-navbtn" data-navtip="已有功能，本预览不展开"><i data-lucide="layout-dashboard"></i>总览</button>
+    <button type="button" class="tbce-navbtn" data-navtip="已有功能，本预览不展开"><i data-lucide="book-open"></i>Memory</button>
+    <button type="button" class="tbce-navbtn" data-navtip="已有功能，本预览不展开"><i data-lucide="file-text"></i>CLAUDE.md</button>
+    <button type="button" class="tbce-navbtn" data-navtip="已有功能，本预览不展开"><i data-lucide="puzzle"></i>技能 / MCP</button>
+    <h4>新增（本方案）</h4>
+    <button type="button" class="tbce-navbtn on" data-view="launch"><i data-lucide="mouse-pointer-click"></i>右键菜单启动</button>
+    <button type="button" class="tbce-navbtn" data-view="providers"><i data-lucide="server"></i>模型供应商</button>
+    <button type="button" class="tbce-navbtn" data-view="settings"><i data-lucide="file-json"></i>默认配置文件</button>
+    <button type="button" class="tbce-navbtn" data-view="resume"><i data-lucide="history"></i>会话恢复</button>
+  </aside>
+  <div class="tbce-main">
+    <div class="tbce-viewhead"><div><h2 id="tbce-title">右键菜单启动</h2><p id="tbce-subtitle">在项目 / 配置项上右键，默认供应商模型平铺，其他供应商二级菜单</p></div></div>
+
+    <!-- 视图1：右键启动 -->
+    <div class="tbce-view" id="tbce-view-launch">
+      <div class="tbce-cols">
+        <div class="tbce-panel tbce-launchzone" id="tbce-navpanel">
+          <h3><i data-lucide="folder-tree"></i>项目 / 配置导航</h3>
+          <div class="tbce-tree">
+            <div class="tbce-tgroup"><i data-lucide="folder"></i>Web 前端</div>
+            <button type="button" class="tbce-tleaf" data-leaf="开发终端 · claude"><i data-lucide="terminal"></i>开发终端 · claude</button>
+            <button type="button" class="tbce-tleaf" data-leaf="构建任务"><i data-lucide="terminal"></i>构建任务</button>
+            <div class="tbce-tgroup"><i data-lucide="folder"></i>桌面端</div>
+            <button type="button" class="tbce-tleaf" data-leaf="调试终端"><i data-lucide="terminal"></i>调试终端</button>
+          </div>
+          <div class="tbce-tip">👉 在任意配置项上 <b>右键</b>，体验新的「Claude 模型」菜单区（也可左键选中后按菜单键）。</div>
+          <div class="tbce-menu" id="tbce-menu" role="menu"></div>
+        </div>
+        <div class="tbce-panel">
+          <h3><i data-lucide="play"></i>启动预览 <span class="tbce-badge off" id="tbce-target">尚未选择模型</span></h3>
+          <div class="tbce-pad" id="tbce-preview"><div class="tbce-empty">在左侧导航右键 → 选择模型后，这里会显示<br>生成的启动命令、参数替换表与临时 settings 文件内容。</div></div>
+        </div>
+      </div>
+      <div class="tbce-sec"><i data-lucide="git-branch"></i>启动流程</div>
+      <ol class="tbce-flow">
+        <li><b>①</b>右键选择模型</li><li class="arrow">→</li>
+        <li><b>②</b>生成临时 settings.json（temp 目录）</li><li class="arrow">→</li>
+        <li><b>③</b>注入 claude --settings 启动命令</li><li class="arrow">→</li>
+        <li><b>④</b>会话运行（快照存引用，见下）</li><li class="arrow">→</li>
+        <li><b>⑤</b>终端关闭自动清理</li><li class="arrow">→</li>
+        <li><b>⑥</b>以此新建/重启恢复：凭引用重建临时文件</li>
+      </ol>
+    </div>
+
+    <!-- 视图2：供应商 -->
+    <div class="tbce-view tbce-rel" id="tbce-view-providers" hidden>
+      <div class="tbce-toolbar">
+        <button type="button" class="tbce-btn primary" id="tbce-add"><i data-lucide="plus"></i>新增供应商</button>
+        <span class="grow"></span>
+        <span class="tbce-meta" style="margin:0" id="tbce-pcount"></span>
+      </div>
+      <div class="tbce-cards" id="tbce-cards"></div>
+      <div class="tbce-epanel" id="tbce-epanel" hidden></div>
+    </div>
+
+    <!-- 视图3：配置文件 -->
+    <div class="tbce-view" id="tbce-view-settings" hidden>
+      <div class="tbce-meta"><span>路径 <b class="mono">~/.claude/settings.json</b>（可用 CLAUDE_CONFIG_DIR 覆盖）</span><span>模板覆盖 <b id="tbce-tplcount">–</b> 个键</span><span>常用 <b id="tbce-commoncount">–</b></span><span>当前显示 <b id="tbce-showcount">–</b></span><span>已自定义 <b id="tbce-custcount">–</b></span><span>未设置 <b id="tbce-unsetcount">–</b></span><span>自定义 env <b id="tbce-cenvcount">0</b></span><span>未知键 <b>2</b>（原样保留）</span></div>
+      <div class="tbce-toolbar">
+        <div class="tbce-seg" role="tablist" aria-label="视图切换"><button type="button" class="on" id="tbce-segform">表单</button><button type="button" id="tbce-segjson">JSON</button></div>
+        <input class="tbce-input tbce-search" id="tbce-sq" placeholder="搜索键名或说明，如 effort、MCP、sandbox…">
+        <label class="tbce-check"><input type="checkbox" id="tbce-conly">仅看已自定义</label>
+        <label class="tbce-check"><input type="checkbox" id="tbce-showadv">显示不常用</label>
+        <span class="grow"></span>
+        <select class="tbce-select" id="tbce-backups" style="width:auto" aria-label="备份版本"><option>备份 2026-10-15 10:30</option><option>备份 2026-10-14 18:02</option><option>备份 2026-10-12 09:41</option></select>
+        <button type="button" class="tbce-btn" id="tbce-restore"><i data-lucide="rotate-ccw"></i>恢复该备份</button>
+        <button type="button" class="tbce-btn primary" id="tbce-saveset"><i data-lucide="check"></i>保存修改</button>
+      </div>
+      <div class="tbce-pills" id="tbce-pills"></div>
+      <div class="tbce-panel"><div id="tbce-formrows"></div><div class="tbce-pad" id="tbce-jsonwrap" hidden><pre class="tbce-json" id="tbce-settingsjson"></pre></div></div>
+    </div>
+
+    <!-- 视图4：会话恢复 -->
+    <div class="tbce-view" id="tbce-view-resume" hidden>
+      <div class="tbce-cols">
+        <div class="tbce-panel tbce-launchzone" id="tbce-hispanel">
+          <h3><i data-lucide="history"></i>Claude 历史会话</h3>
+          <div class="tbce-tree">
+            <button type="button" class="tbce-tleaf tbce-his" data-his="登录页重构" data-sid="a1b2c3d4"><i data-lucide="message-square"></i>登录页重构</button>
+            <button type="button" class="tbce-tleaf tbce-his" data-his="接口联调排障" data-sid="e5f6a7b8"><i data-lucide="message-square"></i>接口联调排障</button>
+            <button type="button" class="tbce-tleaf tbce-his" data-his="单测补齐" data-sid="c9d0e1f2"><i data-lucide="message-square"></i>单测补齐</button>
+          </div>
+          <div class="tbce-tip">👉 在会话上 <b>右键</b>，体验「指定模型恢复」；<b>双击</b>按原方式恢复（行为不变）。</div>
+          <div class="tbce-menu" id="tbce-hismenu" role="menu"></div>
+        </div>
+        <div class="tbce-panel">
+          <h3><i data-lucide="play"></i>恢复预览 <span class="tbce-badge off" id="tbce-resumetarget">尚未选择</span></h3>
+          <div class="tbce-pad" id="tbce-resumepreview"><div class="tbce-empty">在左侧会话右键 → 指定模型恢复后，这里会显示<br>引用命令组装、退出采集与重启恢复流程。</div></div>
+        </div>
+      </div>
+      <div class="tbce-sec"><i data-lucide="power"></i>关闭恢复流程（退出 → 重启）</div>
+      <ol class="tbce-flow" id="tbce-restoreflow">
+        <li><b>①</b>退出采集 claudeSessionId（引用亦识别）</li><li class="arrow">→</li>
+        <li><b>②</b>快照落盘 saved_tabs.json（含引用命令）</li><li class="arrow">→</li>
+        <li><b>③</b>kill PTY，内存映射丢失</li><li class="arrow">→</li>
+        <li><b>④</b>启动清旧 --resume、拼新 --resume</li><li class="arrow">→</li>
+        <li><b>⑤</b>引用展开重建临时文件并注入</li><li class="arrow">→</li>
+        <li><b>⑥</b>失效单页签隔离，其余照常</li>
+      </ol>
+      <div class="tbce-toolbar" style="margin-top:12px"><button type="button" class="tbce-btn" id="tbce-simrestart"><i data-lucide="rotate-ccw"></i>模拟重启恢复</button><span class="tbce-meta" style="margin:0">演示：清空临时文件映射，按当前供应商配置重新展开引用</span></div>
+      <div class="tbce-panel" style="margin-top:10px" id="tbce-restartpanel" hidden><h3><i data-lucide="terminal"></i>重启恢复日志（演示）</h3><div class="tbce-pad"><div class="tbce-term"><div class="tbce-termbody" id="tbce-restartlog"></div></div></div></div>
+    </div>
+  </div>
+  <div class="tbce-toast" id="tbce-toast" role="status"></div>
+</div>
+
+<script>
+(function(){
+var root=document.getElementById('tb-claude-enh');
+function $(s){return root.querySelector(s)} function $all(s){return Array.prototype.slice.call(root.querySelectorAll(s))}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function icons(){if(window.lucide&&window.lucide.createIcons){window.lucide.createIcons({attrs:{width:14,height:14}})}}
+var EFF={low:'低 low',medium:'中 medium',high:'高 high',xhigh:'极高 xhigh',max:'最高 max'};
+var state={
+  providers:[
+    {id:'p1',name:'公司中转站',url:'https://ai-proxy.company.com/v1',keyTail:'8f3a',isDefault:true,effort:'high',modelsUrl:'',
+     models:[
+       {id:'claude-opus-5-5',on:true,ctx:200000,effort:'max'},
+       {id:'claude-sonnet-4-6',on:true,ctx:200000,effort:''},
+       {id:'claude-haiku-4-5',on:true,ctx:200000,effort:'low'},
+       {id:'gpt-5-codex',on:false,ctx:128000,effort:''}]},
+    {id:'p2',name:'备用中转站',url:'https://backup.example.com/api',keyTail:'c41d',isDefault:false,effort:'medium',modelsUrl:'',
+     models:[
+       {id:'claude-opus-5-5',on:true,ctx:200000,effort:''},
+       {id:'deepseek-v4',on:true,ctx:128000,effort:'medium'}]}
+  ],
+  fetched:{},
+  editingId:null,
+  customEnv:[],
+  settings:[]
+};
+var SETTING_GROUPS=[
+{g:'模型与推理',items:[
+{k:'model',t:'text',d:'新会话默认模型；--model 可按会话覆盖',off:'跟随 Claude 官方默认'},
+{k:'effortLevel',t:'effort',d:'未在 modelSettings 单设模型的默认推理强度（含最高档 max，max 经 --effort 生效）',off:'unset'},
+{k:'modelSettings',t:'json',d:'按模型保存 effortLevel / maxEffortLevel / autoCompactWindow（v2.1.251+）',off:'{"模型名":{"effortLevel":"high"}}'},
+{k:'maxEffortLevel',t:'select',opts:[['low','低 low'],['medium','中 medium'],['high','高 high'],['xhigh','极高 xhigh'],['max','最高 max']],d:'推理强度上限；多个来源取最低值生效（v2.1.267+）',off:'unset'},
+{k:'fallbackModel',t:'list',d:'主模型过载时按序重试的备用链（最多取前 3 个，不跨文件合并）',off:'unset'},
+{k:'availableModels',t:'list',d:'允许选择模型的白名单（别名或 ID）',off:'unset（全部可用）'},
+{k:'availableModelsMatch',t:'select',opts:[['prefix','前缀匹配 prefix'],['exact','精确匹配 exact']],d:'白名单匹配方式',off:'prefix'},
+{k:'deniedModels',t:'list',d:'黑名单模型；即使白名单允许也不可用',off:'unset'},
+{k:'enforceAvailableModels',t:'bool',d:'让 Default 选项也落到白名单内',off:'false'},
+{k:'modelOverrides',t:'json',d:'模型 ID 映射到厂商专属 ID（如 Bedrock ARN）',off:'{}'},
+{k:'modelPicker',t:'json',d:'自定义 /model 选择器 {options, replaceBuiltInOptions}',off:'unset'},
+{k:'modelPricing',t:'json',d:'按合同价显示花费 {multiplier, overrides}',off:'unset'},
+{k:'advisorModel',t:'text',d:'advisor 工具使用的模型；不设则关闭（仅 Anthropic API 可用）',off:'unset'},
+{k:'primaryModel',t:'text',src:'cc',d:'顶层形态的主模型名',off:'unset'},
+{k:'smallFastModel',t:'text',src:'cc',d:'顶层形态的小快模型名',off:'unset'},
+{k:'env.ANTHROPIC_MODEL',t:'text',src:'local',v:'glm-5.3-flash[1M]',d:'环境级主模型 / 兜底模型',off:'unset'},
+{k:'env.ANTHROPIC_DEFAULT_OPUS_MODEL',t:'text',src:'local',v:'glm-5.3',d:'Opus 档位映射的实际模型',off:'unset'},
+{k:'env.ANTHROPIC_DEFAULT_SONNET_MODEL',t:'text',src:'local',v:'glm-5.3',d:'Sonnet 档位映射的实际模型',off:'unset'},
+{k:'env.ANTHROPIC_DEFAULT_HAIKU_MODEL',t:'text',src:'local',v:'glm-5.3',d:'Haiku 档位映射的实际模型（后台任务也用它）',off:'unset'},
+{k:'env.ANTHROPIC_DEFAULT_FABLE_MODEL',t:'text',src:'local',v:'glm-5.3',d:'Fable 档位映射的实际模型；未配按 fable→opus 降级',off:'unset'},
+{k:'env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME',t:'text',src:'local',v:'glm-5.3',d:'Opus 档在 /model 菜单的显示名',off:'unset'},
+{k:'env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME',t:'text',src:'local',v:'glm-5.3',d:'Sonnet 档在 /model 菜单的显示名',off:'unset'},
+{k:'env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME',t:'text',src:'local',v:'glm-5.3',d:'Haiku 档在 /model 菜单的显示名',off:'unset'},
+{k:'env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME',t:'text',src:'local',v:'glm-5.3',d:'Fable 档在 /model 菜单的显示名',off:'unset'},
+{k:'env.ANTHROPIC_SMALL_FAST_MODEL',t:'text',src:'cc',d:'已废弃的旧小快模型键（仅回显，不建议新写）',off:'unset'},
+{k:'env.ANTHROPIC_CUSTOM_HEADERS',t:'json',src:'cc',d:'自定义请求头（如 Cloudflare 场景）',off:'{}'},
+{k:'env.CLAUDE_CODE_SUBAGENT_MODEL',t:'text',src:'local',v:'glm-5.3',d:'子代理模型',off:'unset'},
+{k:'env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE',t:'text',src:'cc',d:'强制子代理使用指定模型',off:'unset'},
+{k:'env.CLAUDE_CODE_EFFORT_LEVEL',t:'effortmax',src:'undoc',v:'max',d:'effort 的环境形态；最高档 max 经该键或 --effort 生效（本机实测）',off:'unset'}
+]},
+{g:'连接与认证',items:[
+{k:'apiKeyHelper',t:'text',d:'生成 API 凭证的自定义命令（数组形态走 JSON 视图）',off:'unset'},
+{k:'env.CLAUDE_CODE_API_KEY_HELPER_TTL_MS',t:'num',src:'cc',d:'apiKeyHelper 结果缓存毫秒数',off:'unset'},
+{k:'apiBaseUrl',t:'text',src:'cc',d:'顶层形态的 API 地址',off:'unset'},
+{k:'env.ANTHROPIC_BASE_URL',t:'text',src:'local',v:'https://your-relay.example.com:8888/',d:'请求地址；供应商启动时由临时 settings 覆盖',off:'官方默认地址'},
+{k:'env.ANTHROPIC_AUTH_TOKEN',t:'password',src:'local',v:'••••9c21',d:'默认凭据，以 Bearer 发送；与供应商 Key 分开管理',off:'未设置'},
+{k:'env.ANTHROPIC_API_KEY',t:'password',src:'cc',d:'备选凭据，以 x-api-key 发送',off:'未设置'},
+{k:'env.CLAUDE_CODE_OAUTH_TOKEN',t:'password',src:'cc',d:'订阅账号长期 Token',off:'未设置'},
+{k:'env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN',t:'password',src:'cc',d:'订阅账号刷新 Token',off:'未设置'},
+{k:'env.CLAUDE_CODE_OAUTH_SCOPES',t:'text',src:'cc',d:'订阅账号授权范围',off:'unset'},
+{k:'env.AWS_REGION',t:'text',src:'cc',d:'Bedrock 区域',off:'unset'},
+{k:'env.AWS_ACCESS_KEY_ID',t:'password',src:'cc',d:'Bedrock AKSK 的 ID',off:'未设置'},
+{k:'env.AWS_SECRET_ACCESS_KEY',t:'password',src:'cc',d:'Bedrock AKSK 的 Secret',off:'未设置'},
+{k:'env.AWS_BEARER_TOKEN_BEDROCK',t:'password',src:'cc',d:'Bedrock API Key（Claude Code 只认此变量）',off:'未设置'},
+{k:'apiKey',t:'password',src:'cc',d:'旧 Bedrock 预设的顶层 Key；Bedrock 下投影为 AWS_BEARER_TOKEN_BEDROCK',off:'未设置'},
+{k:'awsAuthRefresh',t:'text',src:'cc',d:'刷新 Bedrock 凭据的命令',off:'unset'},
+{k:'awsCredentialExport',t:'text',src:'cc',d:'输出 Bedrock 凭据 JSON 的命令',off:'unset'},
+{k:'env.CLOUD_ML_REGION',t:'text',src:'cc',d:'Vertex / GCP 区域',off:'unset'},
+{k:'env.GOOGLE_APPLICATION_CREDENTIALS',t:'text',src:'cc',d:'Vertex 凭据文件路径',off:'unset'},
+{k:'gcpAuthRefresh',t:'text',src:'cc',d:'刷新 GCP 凭据的命令',off:'unset'},
+{k:'env.CLAUDE_CODE_USE_BEDROCK',t:'envbool',src:'cc',d:'切换到 Bedrock 协议',off:'unset'},
+{k:'env.CLAUDE_CODE_USE_VERTEX',t:'envbool',src:'cc',d:'切换到 Vertex 协议',off:'unset'},
+{k:'env.CLAUDE_CODE_USE_FOUNDRY',t:'envbool',src:'cc',d:'切换到 Foundry 原生模式（无 BASE_URL，走不了本地路由）',off:'unset'},
+{k:'env.CLAUDE_CODE_USE_GATEWAY',t:'envbool',src:'cc',d:'切换到网关协议',off:'unset'},
+{k:'env.CLAUDE_CODE_USE_MANTLE',t:'envbool',src:'cc',d:'切换到 Mantle 协议',off:'unset'},
+{k:'env.CLAUDE_CODE_USE_ANTHROPIC_AWS',t:'envbool',src:'cc',d:'切换到 Anthropic-on-AWS 协议',off:'unset'},
+{k:'env.CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD',t:'envbool',src:'cc',d:'切换到 Anthropic-on-GCP 协议',off:'unset'},
+{k:'allowedProviders',t:'list',d:'限制可用的 API 厂商（Managed）',off:'unset'},
+{k:'forceLoginGatewayUrl',t:'text',d:'登录网关 URL',off:'unset'},
+{k:'forceLoginMethod',t:'text',d:'限定登录方式',off:'unset'},
+{k:'forceLoginOrgUUID',t:'text',d:'锁定登录组织',off:'unset'},
+{k:'gatewayInternalNetworks',t:'list',d:'内网网关地址名单',off:'unset'},
+{k:'otelHeadersHelper',t:'text',d:'生成 OTel 追踪头的命令',off:'unset'}
+]},
+{g:'上下文与记忆',items:[
+{k:'autoCompactEnabled',t:'bool',src:'local',v:'true',d:'上下文自动压缩开关',off:'true'},
+{k:'autoCompactWindow',t:'num',src:'local',v:'750000',d:'达到该 token 数时自动压缩（100000–1000000 或 auto）',off:'auto'},
+{k:'env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE',t:'num',src:'undoc',v:'75',d:'自动压缩触发百分比覆盖（本机实测，非官方文档键）',off:'unset'},
+{k:'env.CLAUDE_CODE_MAX_CONTEXT_TOKENS',t:'num',src:'local',v:'1000000',d:'覆盖上下文窗口假设值；BASE_URL 路由场景修正窗口',off:'按模型默认'},
+{k:'env.CLAUDE_CODE_AUTO_COMPACT_WINDOW',t:'num',src:'cc',d:'自动压缩触发窗口，取 min(模型窗口, 该值)',off:'unset'},
+{k:'env.CLAUDE_CODE_MAX_OUTPUT_TOKENS',t:'num',src:'cc',d:'钉住单次最大输出 token',off:'按模型默认'},
+{k:'env.MAX_THINKING_TOKENS',t:'num',src:'cc',d:'thinking 预算；上限为本次 max output -1',off:'unset'},
+{k:'env.CLAUDE_CODE_DISABLE_1M_CONTEXT',t:'envbool',src:'cc',d:'禁用 1M 上下文行为',off:'unset'},
+{k:'env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT',t:'envbool',src:'cc',d:'对未知模型不强制窗口校验',off:'unset'},
+{k:'idleCompaction',t:'bool',d:'空闲时是否压缩长会话',off:'unset'},
+{k:'bashOutputMaxChars',t:'num',d:'Bash 成功输出交给 Claude 的字符上限',off:'unset'},
+{k:'taskOutputMaxChars',t:'num',d:'TaskOutput 尺寸（已移除的旧键，保留回显）',off:'unset'},
+{k:'env.MAX_MCP_OUTPUT_TOKENS',t:'num',src:'cc',d:'MCP 输出 token 上限',off:'25000'},
+{k:'env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS',t:'num',src:'cc',d:'文件读取输出 token 上限',off:'25000'},
+{k:'claudeMd',t:'json',d:'组织统一下发的 CLAUDE.md（Managed）',off:'unset'},
+{k:'claudeMdExcludes',t:'list',d:'跳过特定的 CLAUDE.md',off:'unset'},
+{k:'autoMemoryEnabled',t:'bool',d:'auto memory 开关',off:'unset'},
+{k:'autoMemoryDirectory',t:'text',d:'auto memory 目录',off:'unset'},
+{k:'fileCheckpointingEnabled',t:'bool',d:'文件快照开关',off:'unset'},
+{k:'plansDirectory',t:'text',d:'plan 文件目录',off:'unset'},
+{k:'skillListingBudgetFraction',t:'num',d:'技能列表上下文预算占比',off:'unset'},
+{k:'skillListingMaxDescChars',t:'num',d:'技能描述截断字符数',off:'unset'}
+]},
+{g:'权限与沙箱',items:[
+{k:'permissions',t:'ro',ro:'allow 0 条 · ask 0 条 · deny 2 条（规则只读保留）',d:'权限规则 allow / ask / deny 只读展示，写回时原样保留'},
+{k:'permissions.defaultMode',t:'select',src:'local',v:'auto',opts:[['auto','auto（自动）'],['default','default（标准）'],['acceptEdits','acceptEdits（自动接受编辑）'],['plan','plan（规划模式）'],['bypassPermissions','bypassPermissions（跳过权限）']],d:'权限起始模式',off:'default'},
+{k:'permissions.additionalDirectories',t:'list',d:'额外允许的工作目录',off:'unset'},
+{k:'permissions.blockReadsOutsideWorkingDirectories',t:'bool',d:'所有模式下禁止读取工作区外',off:'false'},
+{k:'permissions.disableBypassPermissionsMode',t:'bool',d:'禁用 bypass 权限模式',off:'false'},
+{k:'allowManagedPermissionRulesOnly',t:'bool',d:'权限规则只允许组织来源',off:'false'},
+{k:'autoMode',t:'json',d:'auto mode 分类器配置对象',off:'unset'},
+{k:'autoMode.classifyAllShell',t:'bool',d:'auto 模式下分类所有 Shell 命令',off:'unset'},
+{k:'disableAutoMode',t:'bool',d:'禁用 auto mode',off:'false'},
+{k:'skipAutoPermissionPrompt',t:'bool',d:'跳过 auto 权限提示',off:'false'},
+{k:'skipDangerousModePermissionPrompt',t:'bool',src:'local',v:'true',d:'跳过危险模式权限提示',off:'false'},
+{k:'useAutoModeDuringPlan',t:'bool',d:'plan 期间使用 auto mode',off:'unset'},
+{k:'sandbox',t:'json',d:'沙箱总配置对象（布尔形态直接填 true / false）',off:'unset'},
+{k:'sandbox.enabled',t:'bool',d:'启用沙箱',off:'unset'},
+{k:'sandbox.failIfUnavailable',t:'bool',d:'沙箱不可用时失败',off:'unset'},
+{k:'sandbox.excludedCommands',t:'list',d:'沙箱排除的命令',off:'unset'},
+{k:'sandbox.ignoreViolations',t:'bool',d:'忽略沙箱违规',off:'false'},
+{k:'sandbox.allowAppleEvents',t:'bool',d:'允许苹果事件（macOS）',off:'unset'},
+{k:'sandbox.allowUnsandboxedCommands',t:'bool',d:'失败时重试非沙箱命令',off:'unset'},
+{k:'sandbox.autoAllowBashIfSandboxed',t:'bool',d:'沙箱内 Bash 免问',off:'unset'},
+{k:'sandbox.bwrapPath',t:'text',d:'bwrap 路径',off:'unset'},
+{k:'sandbox.socatPath',t:'text',d:'socat 路径',off:'unset'},
+{k:'sandbox.ripgrep',t:'text',d:'ripgrep 路径',off:'unset'},
+{k:'sandbox.credentials.envVars',t:'list',d:'隐藏或重签的凭证环境变量',off:'unset'},
+{k:'sandbox.credentials.files',t:'list',d:'凭证文件',off:'unset'},
+{k:'sandbox.credentials.awsPairs',t:'json',d:'AWS 凭证对',off:'unset'},
+{k:'sandbox.credentials.sigv4',t:'bool',d:'SigV4 重签',off:'unset'},
+{k:'sandbox.credentials.allowPlaintextInject',t:'bool',d:'允许明文注入凭证',off:'false'},
+{k:'sandbox.filesystem.allowRead',t:'list',d:'沙箱允许读取的路径',off:'unset'},
+{k:'sandbox.filesystem.allowWrite',t:'list',d:'沙箱允许写入的路径',off:'unset'},
+{k:'sandbox.filesystem.denyRead',t:'list',d:'沙箱禁止读取的路径',off:'unset'},
+{k:'sandbox.filesystem.denyWrite',t:'list',d:'沙箱禁止写入的路径',off:'unset'},
+{k:'sandbox.filesystem.disabled',t:'bool',d:'禁用文件系统隔离',off:'false'},
+{k:'sandbox.filesystem.allowManagedReadPathsOnly',t:'bool',d:'只允许托管可读路径',off:'false'},
+{k:'sandbox.network.allowedDomains',t:'list',d:'沙箱允许的域名',off:'unset'},
+{k:'sandbox.network.deniedDomains',t:'list',d:'沙箱禁止的域名',off:'unset'},
+{k:'sandbox.network.allowAllUnixSockets',t:'bool',d:'允许所有 Unix socket',off:'false'},
+{k:'sandbox.network.allowUnixSockets',t:'list',d:'允许的 Unix socket',off:'unset'},
+{k:'sandbox.network.allowLocalBinding',t:'bool',d:'允许本地绑定',off:'unset'},
+{k:'sandbox.network.allowMachLookup',t:'bool',d:'允许 Mach 查询（macOS）',off:'unset'},
+{k:'sandbox.network.strictAllowlist',t:'bool',d:'严格域名白名单',off:'false'},
+{k:'sandbox.network.tlsTerminate',t:'bool',d:'TLS 终止',off:'unset'},
+{k:'sandbox.network.httpProxyPort',t:'num',d:'HTTP 代理端口',off:'unset'},
+{k:'sandbox.network.socksProxyPort',t:'num',d:'SOCKS 代理端口',off:'unset'}
+]},
+{g:'代理与思考',items:[
+{k:'alwaysThinkingEnabled',t:'bool',d:'extended thinking 全局开关',off:'unset'},
+{k:'showThinkingSummaries',t:'bool',d:'显示思考摘要而非折叠',off:'unset'},
+{k:'env.CLAUDE_CODE_DISABLE_THINKING',t:'envbool',src:'cc',d:'禁用思考（代理 / 网关 / 第三方兼容项）',off:'unset'},
+{k:'env.DISABLE_INTERLEAVED_THINKING',t:'envbool',src:'cc',d:'禁用交错思考（官方兼容项）',off:'unset'},
+{k:'env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT',t:'envbool',src:'cc',d:'总是启用 effort 参数（官方兼容项）',off:'unset'},
+{k:'env.CLAUDE_CODE_EXTRA_BODY',t:'json',src:'cc',d:'向请求体追加额外字段',off:'unset'},
+{k:'env.CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING',t:'envbool',src:'cc',d:'打开细粒度工具流式',off:'unset'},
+{k:'env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',t:'envbool',src:'cc',d:'不发送实验性 beta 头',off:'unset'},
+{k:'env.CLAUDE_CODE_DISABLE_ARTIFACT',t:'envbool',src:'cc',d:'禁用 Artifact 工具（严格校验 schema 的上游用）',off:'unset'},
+{k:'enableArtifact',t:'bool',d:'Artifact 工具开关（新）',off:'unset'},
+{k:'disableArtifact',t:'bool',d:'Artifact 工具开关（旧，保留回显）',off:'unset'},
+{k:'env.ENABLE_TOOL_SEARCH',t:'envbool',src:'local',v:'false',d:'打开 MCP 工具搜索；第三方地址默认关',off:'unset'},
+{k:'env.CLAUDE_CODE_AUTO_MODE_SERVER',t:'envbool',src:'cc',d:'auto 模式服务端分类器；网关场景须设 0',off:'unset'},
+{k:'env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',t:'envbool',src:'cc',d:'向 BASE_URL 拉取模型列表（网关需要）',off:'unset'},
+{k:'env.API_TIMEOUT_MS',t:'num',src:'cc',d:'请求超时毫秒数（归用户全局）',off:'unset'},
+{k:'env.DISABLE_TELEMETRY',t:'envbool',src:'cc',d:'关闭遥测（归用户全局）',off:'unset'},
+{k:'env.CLAUDE_CODE_ATTRIBUTION_HEADER',t:'text',src:'undoc',v:'0',d:'署名请求头开关（本机实测，非官方文档键）',off:'unset'},
+{k:'env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',t:'envbool',src:'undoc',v:'1',d:'关闭非必要流量（本机实测，非官方文档键）',off:'unset'},
+{k:'ultracode',t:'bool',d:'是否为实质任务自动规划 workflow',off:'unset'},
+{k:'agent',t:'text',d:'每会话默认扮演的 subagent（对象形态走 JSON 视图）',off:'unset'},
+{k:'teammateMode',t:'text',d:'agent team 队友显示方式',off:'unset'},
+{k:'env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',t:'envbool',src:'undoc',v:'1',d:'实验性 agent teams（本机实测，非官方文档键）',off:'unset'},
+{k:'crossSessionInbound',t:'text',d:'其他会话消息：送达 / 仅提示 / 拒绝',off:'unset'},
+{k:'disableAgentView',t:'bool',d:'关闭后台 agent 与 agent view',off:'false'},
+{k:'processWrapper',t:'text',d:'后台进程经企业启动器运行（数组形态走 JSON 视图）',off:'unset'},
+{k:'worktree',t:'json',d:'worktree 创建配置对象',off:'unset'},
+{k:'worktree.baseRef',t:'text',d:'worktree 基准分支',off:'unset'},
+{k:'worktree.bgIsolation',t:'bool',d:'后台免 worktree',off:'unset'},
+{k:'worktree.location',t:'text',d:'worktree 位置',off:'unset'},
+{k:'worktree.sparsePaths',t:'list',d:'稀疏检出路径',off:'unset'},
+{k:'worktree.symlinkDirectories',t:'list',d:'软链大目录',off:'unset'}
+]},
+{g:'界面与终端',items:[
+{k:'theme',t:'text',d:'主题',off:'dark'},
+{k:'tui',t:'text',src:'local',v:'fullscreen',d:'全屏或经典渲染',off:'fullscreen'},
+{k:'editorMode',t:'select',src:'local',v:'normal',opts:[['normal','normal'],['vim','vim 键位']],d:'编辑器键位',off:'normal'},
+{k:'vimInsertModeRemaps',t:'json',d:'vim insert 模式映射',off:'unset'},
+{k:'keybindingFlavor',t:'text',d:'已废弃，无作用（保留回显）',off:'unset'},
+{k:'timeFormat',t:'select',src:'local',v:'24-hour',opts:[['12-hour','12 小时制'],['24-hour','24 小时制']],d:'时间格式',off:'unset'},
+{k:'timeZone',t:'text',d:'时区',off:'系统默认'},
+{k:'language',t:'text',d:'默认回复语言（如 japanese）',off:'unset'},
+{k:'statusLine',t:'json',src:'local',v:'{"type":"command","command":"node status-line.mjs","refreshInterval":10}',d:'状态行 {type, command, refreshInterval}',off:'unset'},
+{k:'subagentStatusLine',t:'json',d:'子代理状态行改写',off:'unset'},
+{k:'spinnerTipsEnabled',t:'bool',d:'spinner 提示开关',off:'true'},
+{k:'spinnerTipsOverride',t:'list',d:'自定义 spinner 提示',off:'unset'},
+{k:'spinnerVerbs',t:'list',d:'spinner 动词',off:'unset'},
+{k:'showTurnDuration',t:'bool',d:'显示回复耗时',off:'unset'},
+{k:'maxProseWidth',t:'num',d:'正文显示宽度',off:'unset'},
+{k:'showClearContextOnPlanAccept',t:'bool',d:'plan 通过页显示清上下文选项',off:'unset'},
+{k:'terminalProgressBarEnabled',t:'bool',d:'终端进度条开关',off:'true'},
+{k:'terminalTitleFromRename',t:'bool',d:'rename 不改 tab 标题',off:'unset'},
+{k:'syntaxHighlightingDisabled',t:'bool',d:'关闭语法高亮',off:'false'},
+{k:'verbose',t:'bool',d:'详细输出',off:'false'},
+{k:'viewMode',t:'text',d:'默认视图',off:'unset'},
+{k:'voice',t:'text',d:'语音听写配置',off:'unset'},
+{k:'voiceEnabled',t:'bool',d:'语音旧开关（保留回显）',off:'unset'},
+{k:'wheelScrollAccelerationEnabled',t:'bool',d:'滚轮加速',off:'unset'},
+{k:'autoScrollEnabled',t:'bool',d:'全屏跟随输出',off:'true'},
+{k:'axScreenReader',t:'bool',d:'无障碍输出',off:'false'},
+{k:'prefersReducedMotion',t:'bool',d:'减弱动画',off:'false'},
+{k:'footerLinksRegexes',t:'json',d:'单号转链接正则',off:'unset'},
+{k:'companyAnnouncements',t:'text',d:'启动显示的组织公告（数组形态走 JSON 视图）',off:'unset'},
+{k:'fileSuggestion',t:'json',d:'@ 补全命令配置',off:'unset'},
+{k:'respondToBashCommands',t:'bool',d:'! 命令后是否回复',off:'unset'},
+{k:'emojiCompletionEnabled',t:'bool',d:'emoji 补全',off:'unset'},
+{k:'promptSuggestionEnabled',t:'bool',d:'灰色输入提示',off:'unset'},
+{k:'spellcheck',t:'bool',d:'拼写检查',off:'unset'},
+{k:'respectGitignore',t:'bool',d:'@ 拾取时过滤 gitignore',off:'true'},
+{k:'defaultShell',t:'text',d:'! 前缀使用 Bash 还是 PowerShell',off:'unset'},
+{k:'env.CLAUDE_CODE_USE_POWERSHELL_TOOL',t:'envbool',src:'local',v:'1',d:'使用 PowerShell 工具（Windows）',off:'unset'},
+{k:'askUserQuestionTimeout',t:'num',d:'问题超时秒数，超时自动继续',off:'unset'},
+{k:'dialogExpiry',t:'num',d:'远控对话超时',off:'unset'},
+{k:'autoContinueAtUsageLimit',t:'bool',d:'用量限重置后自动继续',off:'unset'},
+{k:'bashEditDiffEnabled',t:'bool',d:'记录 Bash 运行期间变更的文件',off:'unset'},
+{k:'copyFullResponse',t:'bool',d:'/copy 行为（完整回复）',off:'unset'},
+{k:'copyOnSelect',t:'bool',d:'选中即复制',off:'unset'},
+{k:'diffTool',t:'text',d:'diff 查看器',off:'unset'},
+{k:'leftArrowOpensAgents',t:'bool',d:'左箭头进入 agent view',off:'unset'},
+{k:'defaultToAgentsView',t:'bool',d:'默认进入 agent view',off:'false'},
+{k:'permissionExplainerEnabled',t:'bool',d:'已移除的 Ctrl+E 解释（保留回显）',off:'unset'},
+{k:'autoConnectIde',t:'bool',d:'自动连接 IDE',off:'unset'},
+{k:'autoInstallIdeExtension',t:'bool',d:'自动安装 IDE 扩展',off:'unset'},
+{k:'claudeInChromeDefaultEnabled',t:'bool',d:'默认开启 Chrome 集成',off:'unset'},
+{k:'externalEditorContext',t:'bool',d:'Ctrl+G 带上文',off:'unset'},
+{k:'prStatusFooterEnabled',t:'bool',d:'PR 状态脚注',off:'unset'},
+{k:'teammateDefaultModel',t:'text',d:'已移除的队友模型（保留回显）',off:'unset'},
+{k:'feedbackDrafts',t:'json',d:'反馈草稿',off:'unset'},
+{k:'feedbackSurveyRate',t:'num',d:'质量问卷频率',off:'unset'}
+]},
+{g:'通知与远程',items:[
+{k:'preferredNotifChannel',t:'text',src:'local',v:'auto',d:'任务完成用终端铃声还是桌面通知',off:'auto'},
+{k:'agentPushNotifEnabled',t:'bool',d:'Claude 自主推送时手机通知',off:'unset'},
+{k:'inputNeededNotifEnabled',t:'bool',d:'等待输入时手机通知',off:'unset'},
+{k:'awaySummaryEnabled',t:'bool',d:'回终端时显示会话回顾',off:'unset'},
+{k:'remote',t:'json',d:'远程配置；remote.defaultEnvironmentId 为 claude --cloud 默认云环境',off:'unset'},
+{k:'remoteControlAtStartup',t:'bool',d:'启动自动连接 Remote Control',off:'false'},
+{k:'disableRemoteControl',t:'bool',d:'全局关闭 Remote Control',off:'false'},
+{k:'sshConfigs',t:'json',d:'Desktop 预置 SSH 连接',off:'unset'},
+{k:'sshHostAllowlist',t:'list',d:'限制可连的 SSH 主机',off:'unset'},
+{k:'disableDeepLinkRegistration',t:'bool',d:'不注册 claude-cli 协议',off:'false'},
+{k:'disableDesktopLocalSessions',t:'bool',d:'禁桌面本机 session，只留 SSH / 云（Managed）',off:'false'}
+]},
+{g:'插件与技能',items:[
+{k:'enabledPlugins',t:'json',src:'local',v:'{"claude-code-setup@claude-plugins-official":true,"code-review@claude-plugins-official":true,"document-skills@anthropic-agent-skills":true,"frontend-design@claude-plugins-official":true,"skill-creator@claude-plugins-official":true}',d:'插件开关表',off:'{}'},
+{k:'pluginConfigs',t:'json',src:'local',v:'{"agents-md@builtin":{"options":{"instructionFiles":"claude-md-or-agents-md"}}}',d:'插件配置答案',off:'{}'},
+{k:'appendPlugins',t:'list',d:'组织 mods 在用户 mods 后运行',off:'unset'},
+{k:'prependPlugins',t:'list',d:'组织 mods 在用户 mods 前运行',off:'unset'},
+{k:'blockedMarketplaces',t:'list',d:'屏蔽的 marketplace',off:'unset'},
+{k:'strictKnownMarketplaces',t:'bool',d:'严格 marketplace 白名单',off:'false'},
+{k:'extraKnownMarketplaces',t:'json',src:'local',v:'{"anthropic-agent-skills":{"source":{"source":"github","repo":"anthropics/skills"}},"ui-ux-pro-max-skill":{"source":{"source":"github","repo":"nextlevelbuilder/ui-ux-pro-max-skill"}}}',d:'额外注册的 marketplace',off:'{}'},
+{k:'pluginSuggestionMarketplaces',t:'list',d:'插件建议来源 marketplace',off:'unset'},
+{k:'disableBundledSkills',t:'bool',d:'关闭内置技能',off:'false'},
+{k:'disableSkillShellExecution',t:'bool',d:'禁止技能内联 shell',off:'false'},
+{k:'skillOverrides',t:'json',d:'隐藏 / 折叠技能',off:'unset'},
+{k:'disableCommandPluginSources',t:'bool',d:'禁止命令安装插件',off:'false'},
+{k:'strictPluginOnlyCustomization',t:'json',d:'只允许插件来源定制 {.agents / .hooks / .mcp / .skills}',off:'unset'},
+{k:'pluginTrustMessage',t:'text',d:'信任警告附加文案',off:'unset'},
+{k:'syncClaudeAiPlugins',t:'bool',d:'同步 claude.ai 账号插件',off:'true'},
+{k:'syncClaudeAiSkills',t:'bool',d:'同步 claude.ai 账号技能',off:'true'},
+{k:'channelsEnabled',t:'bool',d:'启用 channels（Managed）',off:'unset'},
+{k:'allowedChannelPlugins',t:'list',d:'可推送消息的 channel 插件（Managed）',off:'unset'}
+]},
+{g:'MCP',items:[
+{k:'allowedMcpServers',t:'list',d:'允许的 MCP 服务器',off:'unset'},
+{k:'deniedMcpServers',t:'list',d:'拒绝的 MCP 服务器',off:'unset'},
+{k:'enabledMcpjsonServers',t:'list',d:'批准的 .mcp.json 服务器',off:'unset'},
+{k:'disabledMcpjsonServers',t:'list',d:'禁用的 .mcp.json 服务器',off:'unset'},
+{k:'enableAllProjectMcpServers',t:'bool',d:'启用所有项目 MCP 服务器',off:'unset'},
+{k:'allowManagedMcpServersOnly',t:'bool',d:'只用 managed 允许表',off:'false'},
+{k:'managedMcpServers',t:'json',d:'组织统一下发的远端 MCP（Managed）',off:'unset'},
+{k:'allowAllClaudeAiMcps',t:'bool',d:'managed-mcp 下仍加载 claude.ai 连接器',off:'unset'},
+{k:'allowClaudeInChromeWithManagedMcp',t:'bool',d:'Chrome 内置服务（managed-mcp 下）',off:'unset'},
+{k:'disableClaudeAiConnectors',t:'bool',d:'不拉取 claude.ai 连接器',off:'false'},
+{k:'isolatePeerMachines',t:'bool',d:'隔离对端机器',off:'unset'}
+]},
+{g:'Hooks 与自动化',items:[
+{k:'hooks',t:'ro',ro:'7 个事件已安装（由 Hook 管理页维护，写回保留）',d:'生命周期 hook 命令'},
+{k:'disableAllHooks',t:'bool',d:'全关 hook + statusline + @ 建议',off:'false'},
+{k:'allowManagedHooksOnly',t:'bool',d:'只跑组织 hook',off:'false'},
+{k:'enableWorkflows',t:'bool',d:'开启动态 workflow',off:'unset'},
+{k:'disableWorkflows',t:'bool',d:'关闭动态 workflow',off:'false'},
+{k:'workflowKeywordTriggerEnabled',t:'bool',d:'输入 ultracode 是否触发 workflow',off:'unset'},
+{k:'workflowSizeGuideline',t:'num',d:'动态 workflow 目标 agent 数',off:'unset'},
+{k:'allowedHttpHookUrls',t:'list',d:'HTTP hook 可请求的 URL',off:'unset'},
+{k:'httpHookAllowedEnvVars',t:'list',d:'HTTP hook 可放 header 的 env',off:'unset'}
+]},
+{g:'Git 与署名',items:[
+{k:'attribution',t:'json',d:'提交与 PR 署名总开关 {.commit / .pr / .sessionUrl}（布尔 / 字符串形态直接填 JSON）',off:'unset'},
+{k:'includeCoAuthoredBy',t:'bool',d:'旧署名开关（保留回显）',off:'unset'},
+{k:'includeGitInstructions',t:'bool',d:'是否注入内置 git 指令',off:'true'},
+{k:'prUrlTemplate',t:'text',d:'PR 链接模板（指向内网 review）',off:'unset'}
+]},
+{g:'更新·企业·隐私',items:[
+{k:'autoUpdatesChannel',t:'text',d:'跟随的更新通道（如 stable）',off:'unset'},
+{k:'minimumVersion',t:'text',d:'自动更新最低版',off:'unset'},
+{k:'requiredMinimumVersion',t:'text',d:'强制最低版本',off:'unset'},
+{k:'requiredMaximumVersion',t:'text',d:'强制最高版本',off:'unset'},
+{k:'forceRemoteSettingsRefresh',t:'bool',d:'启动阻塞等待远端设置',off:'false'},
+{k:'managedSourcesBehavior',t:'json',d:'多托管源合并策略',off:'unset'},
+{k:'parentSettingsBehavior',t:'json',d:'宿主透传策略处理',off:'unset'},
+{k:'policyHelper',t:'json',d:'外部程序计算策略 {.path / .timeoutMs / .refreshIntervalMs}',off:'unset'},
+{k:'wslInheritsWindowsSettings',t:'bool',d:'WSL 读取 Windows 托管策略（Managed）',off:'false'},
+{k:'disableSideloadFlags',t:'bool',d:'禁 sideload 插件 / agent / MCP 的 CLI 参数（Managed）',off:'false'},
+{k:'cleanupPeriodDays',t:'num',d:'transcript 保留天数',off:'unset'},
+{k:'desktopSessionCleanupPeriodDays',t:'num',d:'Desktop 会话保留天数',off:'unset'},
+{k:'skipWebFetchPreflight',t:'bool',d:'跳过 WebFetch 预检',off:'false'}
+]}
+];
+state.settings=[];
+SETTING_GROUPS.forEach(function(g,gi){g.items.forEach(function(s){s.gi=gi;if((s.t==='json'||s.t==='list')&&s.v)formatJsonState(s);state.settings.push(s)})});
+var uiState={pill:-1,q:'',conly:false,showAdv:false};
+var COMMON_KEYS={'model':1,'effortLevel':1,'modelSettings':1,'maxEffortLevel':1,'fallbackModel':1,'env.ANTHROPIC_MODEL':1,'env.ANTHROPIC_DEFAULT_OPUS_MODEL':1,'env.ANTHROPIC_DEFAULT_SONNET_MODEL':1,'env.ANTHROPIC_DEFAULT_HAIKU_MODEL':1,'env.ANTHROPIC_DEFAULT_FABLE_MODEL':1,'env.CLAUDE_CODE_SUBAGENT_MODEL':1,'env.ANTHROPIC_BASE_URL':1,'env.ANTHROPIC_AUTH_TOKEN':1,'env.ANTHROPIC_API_KEY':1,'autoCompactEnabled':1,'autoCompactWindow':1,'env.CLAUDE_CODE_MAX_CONTEXT_TOKENS':1,'env.CLAUDE_CODE_MAX_OUTPUT_TOKENS':1,'permissions':1,'permissions.defaultMode':1,'permissions.additionalDirectories':1,'skipDangerousModePermissionPrompt':1,'env.DISABLE_TELEMETRY':1,'theme':1,'tui':1,'editorMode':1,'language':1,'statusLine':1,'defaultShell':1,'preferredNotifChannel':1,'enabledPlugins':1,'extraKnownMarketplaces':1,'hooks':1,'disableAllHooks':1,'attribution':1};
+function isCommon(s){return !!COMMON_KEYS[s.k]}
+var PRESERVED={
+  permissions:{allow:[],deny:['Edit(//d/YourProject/.claude/skills/**)','Edit(//d/YourProject/.claude/delivery-tools/**)']},
+  hooks:{SessionStart:[{matcher:'*',hooks:[{type:'command',command:'internal-claude-hook --terminal-buddy'}]}],UserPromptSubmit:[{matcher:'*',hooks:[{type:'command',command:'internal-claude-hook --terminal-buddy'}]}],Notification:[{matcher:'*',hooks:[{type:'command',command:'internal-claude-hook --terminal-buddy'}]}],PreToolUse:[{matcher:'*',hooks:[{type:'command',command:'internal-claude-hook --terminal-buddy'}]}],Stop:[{matcher:'*',hooks:[{type:'command',command:'internal-claude-hook --terminal-buddy'}]}],StopFailure:[{matcher:'*',hooks:[{type:'command',command:'internal-claude-hook --terminal-buddy'}]}],SessionEnd:[{matcher:'*',hooks:[{type:'command',command:'internal-claude-hook --terminal-buddy'}]}]},
+  experimentalNewKey:'keep-me',anotherFutureFlag:true
+};
+var toastEl=$('#tbce-toast'),toastTimer=null;
+function toast(msg,ok){toastEl.textContent=msg;toastEl.className='tbce-toast show'+(ok?' ok':'');clearTimeout(toastTimer);toastTimer=setTimeout(function(){toastEl.className='tbce-toast'},2400)}
+$all('[data-navtip]').forEach(function(b){b.addEventListener('click',function(){toast(b.getAttribute('data-navtip'))})});
+
+/* ---- 视图切换 ---- */
+var titles={launch:['右键菜单启动','在项目 / 配置项上右键，默认供应商模型平铺，其他供应商二级菜单'],providers:['模型供应商','接入多个供应商，手动拉取模型列表并勾选可用模型'],settings:['默认配置文件','常用 35 键默认展示，不常用默认收起（已设置的除外）；勾选「显示不常用」或搜索可找回'],resume:['会话恢复','历史会话指定模型恢复；程序关闭后页签凭引用重建并接回对话']};
+$all('[data-view]').forEach(function(b){b.addEventListener('click',function(){
+  $all('[data-view]').forEach(function(o){o.classList.remove('on')});b.classList.add('on');
+  ['launch','providers','settings','resume'].forEach(function(v){$('#tbce-view-'+v).hidden=(v!==b.getAttribute('data-view'))});
+  $('#tbce-title').textContent=titles[b.getAttribute('data-view')][0];
+  $('#tbce-subtitle').textContent=titles[b.getAttribute('data-view')][1];
+  hideMenu();hideHisMenu();
+})});
+
+/* ---- 右键菜单 ---- */
+var menu=$('#tbce-menu'),navpanel=$('#tbce-navpanel'),curLeaf='';
+function effOf(p,m){return m.effort||p.effort}
+function effLabel(e){return EFF[e]||('未知 '+e)}
+function effBadge(p,m){var e=effOf(p,m);return '<span class="tbce-badge e-'+e+'">'+effLabel(e).split(' ')[0]+(m.effort?'':' ·默认')+'</span>'}
+function renderMenu(){
+  var def=state.providers.filter(function(p){return p.isDefault})[0];
+  var others=state.providers.filter(function(p){return !p.isDefault});
+  var h='<button type="button" class="tbce-mi" data-act="start"><i data-lucide="play"></i>启动</button>';
+  h+='<button type="button" class="tbce-mi" data-act="cmd"><i data-lucide="terminal"></i>命令行</button><div class="tbce-sep"></div>';
+  if(!state.providers.length){h+='<div class="tbce-mhead">Claude 模型</div><button type="button" class="tbce-mi" data-act="goproviders"><i data-lucide="server"></i>配置模型供应商…</button>';}
+  else{
+    if(def){var dm=def.models.filter(function(m){return m.on});
+      h+='<div class="tbce-mhead">Claude 模型 · '+esc(def.name)+'（默认）</div>';
+      if(!dm.length)h+='<button type="button" class="tbce-mi" disabled>该供应商暂无可用模型</button>';
+      dm.forEach(function(m){h+='<button type="button" class="tbce-mi" data-act="launch" data-p="'+def.id+'" data-m="'+esc(m.id)+'"><i data-lucide="zap"></i><span class="grow mono">'+esc(m.id)+'</span>'+effBadge(def,m)+'</button>'});
+    }
+    others.forEach(function(p){var pm=p.models.filter(function(m){return m.on});
+      h+='<div class="tbce-mi-wrap"><button type="button" class="tbce-mi" data-sub="'+p.id+'"><i data-lucide="server"></i><span class="grow">'+esc(p.name)+'</span><i data-lucide="chevron-right"></i></button><div class="tbce-sub" role="menu">';
+      h+='<div class="tbce-mhead">'+esc(p.name)+' · 默认推理 '+effLabel(p.effort)+'</div>';
+      if(!pm.length)h+='<button type="button" class="tbce-mi" disabled>暂无可用模型</button>';
+      pm.forEach(function(m){h+='<button type="button" class="tbce-mi" data-act="launch" data-p="'+p.id+'" data-m="'+esc(m.id)+'"><i data-lucide="zap"></i><span class="grow mono">'+esc(m.id)+'</span>'+effBadge(p,m)+'</button>'});
+      h+='</div></div>';
+    });
+  }
+  h+='<div class="tbce-sep"></div><button type="button" class="tbce-mi" data-act="noop"><i data-lucide="pencil"></i>编辑 / 置顶 / 删除…</button>';
+  menu.innerHTML=h;icons();
+  $all('#tbce-menu [data-sub]').forEach(function(b){
+    b.addEventListener('mouseenter',function(){$all('#tbce-menu .tbce-mi-wrap').forEach(function(w){w.classList.remove('open')});b.parentElement.classList.add('open')});
+    b.addEventListener('click',function(e){e.stopPropagation();var w=b.parentElement,was=w.classList.contains('open');$all('#tbce-menu .tbce-mi-wrap').forEach(function(x){x.classList.remove('open')});if(!was)w.classList.add('open')});
+  });
+  $all('#tbce-menu [data-act]').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();onMenuAct(b)})});
+}
+function onMenuAct(b){
+  var act=b.getAttribute('data-act');
+  if(act==='launch'){launchModel(b.getAttribute('data-p'),b.getAttribute('data-m'));hideMenu();}
+  else if(act==='goproviders'){hideMenu();root.querySelector('[data-view="providers"]').click();}
+  else if(act==='noop'){toast('演示仅展示新增的模型区');hideMenu();}
+  else{toast('原有菜单项，行为不变（演示）');hideMenu();}
+}
+function hideMenu(){menu.classList.remove('show');$all('#tbce-menu .tbce-mi-wrap').forEach(function(w){w.classList.remove('open')})}
+function hideHisMenu(){var hm=$('#tbce-hismenu');hm.classList.remove('show');$all('#tbce-hismenu .tbce-mi-wrap').forEach(function(w){w.classList.remove('open')})}
+$all('.tbce-tleaf').forEach(function(leaf){
+  leaf.addEventListener('click',function(){$all('.tbce-tleaf').forEach(function(o){o.classList.remove('sel')});leaf.classList.add('sel');curLeaf=leaf.getAttribute('data-leaf')});
+  leaf.addEventListener('contextmenu',function(e){
+    e.preventDefault();$all('.tbce-tleaf').forEach(function(o){o.classList.remove('sel')});leaf.classList.add('sel');curLeaf=leaf.getAttribute('data-leaf');
+    renderMenu();
+    var r=navpanel.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+    menu.classList.add('show');menu.style.left='0px';menu.style.top='0px';
+    var mw=menu.offsetWidth,mh=menu.offsetHeight;
+    if(x+mw>r.width-8)x=Math.max(8,r.width-mw-8); if(y+mh>r.height-8)y=Math.max(8,r.height-mh-8);
+    menu.style.left=x+'px';menu.style.top=y+'px';
+  });
+});
+document.addEventListener('click',function(e){if(!menu.contains(e.target))hideMenu();var hm=$('#tbce-hismenu');if(hm&&!hm.contains(e.target))hideHisMenu()});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){hideMenu();hideHisMenu()}});
+
+/* ---- 历史会话：指定模型恢复 ---- */
+var hismenu=$('#tbce-hismenu'),hispanel=$('#tbce-hispanel'),curHis='',curSid='',resumeSel=null;
+function renderHisMenu(){
+  var def=state.providers.filter(function(p){return p.isDefault})[0];
+  var others=state.providers.filter(function(p){return !p.isDefault});
+  var h='<button type="button" class="tbce-mi" data-hact="resume"><i data-lucide="play"></i>恢复会话<span class="grow"></span><span class="tbce-badge off">双击同效</span></button>';
+  h+='<button type="button" class="tbce-mi" data-hact="replay"><i data-lucide="eye"></i>查看详情 / 回放</button><div class="tbce-sep"></div>';
+  if(!state.providers.length){h+='<div class="tbce-mhead">指定模型恢复</div><button type="button" class="tbce-mi" data-hact="goproviders"><i data-lucide="server"></i>配置模型供应商…</button>';}
+  else{
+    if(def){var dm=def.models.filter(function(m){return m.on});
+      h+='<div class="tbce-mhead">指定模型恢复 · '+esc(def.name)+'（默认）</div>';
+      if(!dm.length)h+='<button type="button" class="tbce-mi" disabled>该供应商暂无可用模型</button>';
+      dm.forEach(function(m){h+='<button type="button" class="tbce-mi" data-hact="vendor" data-p="'+def.id+'" data-m="'+esc(m.id)+'"><i data-lucide="zap"></i><span class="grow mono">'+esc(m.id)+'</span>'+effBadge(def,m)+'</button>'});
+    }
+    others.forEach(function(p){var pm=p.models.filter(function(m){return m.on});
+      h+='<div class="tbce-mi-wrap"><button type="button" class="tbce-mi" data-hsub="'+p.id+'"><i data-lucide="server"></i><span class="grow">'+esc(p.name)+'</span><i data-lucide="chevron-right"></i></button><div class="tbce-sub" role="menu">';
+      h+='<div class="tbce-mhead">'+esc(p.name)+' · 默认推理 '+effLabel(p.effort)+'</div>';
+      if(!pm.length)h+='<button type="button" class="tbce-mi" disabled>暂无可用模型</button>';
+      pm.forEach(function(m){h+='<button type="button" class="tbce-mi" data-hact="vendor" data-p="'+p.id+'" data-m="'+esc(m.id)+'"><i data-lucide="zap"></i><span class="grow mono">'+esc(m.id)+'</span>'+effBadge(p,m)+'</button>'});
+      h+='</div></div>';
+    });
+  }
+  h+='<div class="tbce-sep"></div><button type="button" class="tbce-mi" data-hact="noop"><i data-lucide="pencil"></i>重命名 / 收藏 / 归档 / 删除…</button>';
+  hismenu.innerHTML=h;icons();
+  $all('#tbce-hismenu [data-hsub]').forEach(function(b){
+    b.addEventListener('mouseenter',function(){$all('#tbce-hismenu .tbce-mi-wrap').forEach(function(w){w.classList.remove('open')});b.parentElement.classList.add('open')});
+    b.addEventListener('click',function(e){e.stopPropagation();var w=b.parentElement,was=w.classList.contains('open');$all('#tbce-hismenu .tbce-mi-wrap').forEach(function(x){x.classList.remove('open')});if(!was)w.classList.add('open')});
+  });
+  $all('#tbce-hismenu [data-hact]').forEach(function(b){b.addEventListener('click',function(e){e.stopPropagation();onHisAct(b)})});
+}
+function onHisAct(b){
+  var act=b.getAttribute('data-hact');
+  if(act==='vendor'){resumeWithModel(b.getAttribute('data-p'),b.getAttribute('data-m'));hideHisMenu()}
+  else if(act==='resume'){resumePlain();hideHisMenu()}
+  else if(act==='goproviders'){hideHisMenu();root.querySelector('[data-view="providers"]').click()}
+  else{toast(act==='replay'?'回放：行为不变（演示）':'演示仅展示新增的模型区');hideHisMenu()}
+}
+function findPM(pid,mid){
+  var r={p:null,m:null};
+  state.providers.forEach(function(x){if(x.id===pid){r.p=x;x.models.forEach(function(y){if(y.id===mid)r.m=y})}});
+  return r;
+}
+function resumeWithModel(pid,mid){
+  var r=findPM(pid,mid);if(!r.p||!r.m)return;
+  var eff=effOf(r.p,r.m);
+  resumeSel={pid:pid,mid:mid,sid:curSid,title:curHis};
+  $('#tbce-resumetarget').textContent=curHis+' → '+mid+' --resume';
+  var ref='__TB_CLAUDE_REF__:'+pid+':'+mid;
+  var cmd=ref+' --resume '+curSid;
+  var h='<div class="tbce-sec"><i data-lucide="terminal"></i>组装的恢复命令（引用 + 会话）</div>';
+  h+='<div class="tbce-term"><div class="tbce-termtab"><span class="tbce-dot"></span><span>'+esc(curHis)+' · '+esc(mid)+'</span></div><div class="tbce-termbody"><span class="tbce-ps">❯ </span>'+esc(cmd)+'</div></div>';
+  h+='<div class="tbce-sec"><i data-lucide="list-checks"></i>展开与恢复说明</div>';
+  h+='<dl class="tbce-kv"><dt>供应商</dt><dd>'+esc(r.p.name)+(r.p.isDefault?' <span class="tbce-badge def">默认</span>':'')+'</dd><dt>推理强度</dt><dd><span class="tbce-badge e-'+eff+'">'+effLabel(eff)+'</span></dd><dt>引用展开</dt><dd>后端按当前供应商配置重建临时 settings，替换为 <span class="mono">--settings &lt;新文件&gt; --model '+esc(mid)+' --effort '+eff+'</span> 后注入</dd><dt>会话接回</dt><dd class="mono">--resume '+esc(curSid)+'（对话内容来自 ~/.claude，非本应用存储）</dd><dt>退出采集</dt><dd>引用标记命中 Claude 判定正则，claudeSessionId 照常落盘</dd><dt>重启恢复</dt><dd>页签快照含引用命令；引用不随终端关闭删除，重启后重新展开引用 + 拼新 --resume，见下方模拟</dd></dl>';
+  $('#tbce-resumepreview').innerHTML=h;icons();
+  toast('已按「'+r.p.name+' / '+mid+'」生成恢复预览',true);
+}
+function resumePlain(){
+  resumeSel=null;
+  $('#tbce-resumetarget').textContent=curHis+' → 原方式恢复';
+  var h='<div class="tbce-sec"><i data-lucide="terminal"></i>组装的恢复命令（原方式）</div>';
+  h+='<div class="tbce-term"><div class="tbce-termtab"><span class="tbce-dot"></span><span>'+esc(curHis)+'</span></div><div class="tbce-termbody"><span class="tbce-ps">❯ </span>claude --resume '+esc(curSid)+'</div></div>';
+  h+='<div class="tbce-sec"><i data-lucide="info"></i>说明</div>';
+  h+='<dl class="tbce-kv"><dt>行为</dt><dd>与现有版本完全一致：profile 启动命令 + 预设参数 + --resume，不经过供应商引用</dd><dt>适用</dt><dd>历史习惯保留；想换模型时用「指定模型恢复」</dd></dl>';
+  $('#tbce-resumepreview').innerHTML=h;icons();
+  toast('原方式恢复：行为不变（演示）',true);
+}
+$all('.tbce-his').forEach(function(item){
+  item.addEventListener('click',function(){$all('.tbce-his').forEach(function(o){o.classList.remove('sel')});item.classList.add('sel');curHis=item.getAttribute('data-his');curSid=item.getAttribute('data-sid')});
+  item.addEventListener('dblclick',function(){$all('.tbce-his').forEach(function(o){o.classList.remove('sel')});item.classList.add('sel');curHis=item.getAttribute('data-his');curSid=item.getAttribute('data-sid');resumePlain()});
+  item.addEventListener('contextmenu',function(e){
+    e.preventDefault();$all('.tbce-his').forEach(function(o){o.classList.remove('sel')});item.classList.add('sel');curHis=item.getAttribute('data-his');curSid=item.getAttribute('data-sid');
+    renderHisMenu();
+    var r=hispanel.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+    hismenu.classList.add('show');hismenu.style.left='0px';hismenu.style.top='0px';
+    var mw=hismenu.offsetWidth,mh=hismenu.offsetHeight;
+    if(x+mw>r.width-8)x=Math.max(8,r.width-mw-8); if(y+mh>r.height-8)y=Math.max(8,r.height-mh-8);
+    hismenu.style.left=x+'px';hismenu.style.top=y+'px';
+  });
+});
+$('#tbce-simrestart').addEventListener('click',function(){
+  $('#tbce-restartpanel').hidden=false;
+  var log=$('#tbce-restartlog'),lines=[];
+  if(!resumeSel){
+    lines.push('<span class="tbce-ps">❯ 模拟重启…</span>','[退出] 未发现模型终端快照（请先在左侧指定模型恢复一次）','[启动] 无引用页签需要恢复','<span style="color:var(--tb-dim)">提示：先右键指定模型恢复，再点模拟重启，观察引用重建流程。</span>');
+    log.innerHTML=lines.join('\n');icons();return;
+  }
+  var r=findPM(resumeSel.pid,resumeSel.mid);
+  lines.push('<span class="tbce-ps">❯ 模拟重启…</span>','[退出] 采集 claudeSessionId='+resumeSel.sid+'（引用命中判定）','[退出] saved_tabs.json 落盘：extraParams 含 __TB_CLAUDE_REF__','[退出] kill PTY，terminalId→tempFile 内存映射丢失','[启动] 读取页签：'+resumeSel.title,'[启动] 清理旧 --resume，拼接新 --resume '+resumeSel.sid);
+  if(!r.p||!r.m){
+    lines.push('<span style="color:var(--tb-red)">[启动] 引用展开失败：供应商或模型已被删除</span>','<span style="color:var(--tb-red)">[启动] 该页签拒绝恢复并提示重选；其余页签照常恢复（隔离）</span>');
+  }else{
+    var eff=effOf(r.p,r.m);
+    var tmp='C:\\Users\\demo\\AppData\\Local\\Temp\\terminal-buddy-claude-'+Math.random().toString(16).slice(2,6)+'.json';
+    lines.push('[启动] 引用展开：按「'+r.p.name+'」当前配置重建临时文件','[启动] 新文件：'+tmp,'[启动] 注入：claude --settings "…" --model '+r.m.id+' --effort '+eff+' --resume '+resumeSel.sid,'<span style="color:var(--tb-green)">[启动] 恢复成功：同模型新终端 + 对话已接回</span>');
+  }
+  log.innerHTML=lines.join('\n');icons();
+  toast('重启恢复模拟完成',true);
+});
+
+/* ---- 启动预览 ---- */
+function launchModel(pid,mid){
+  var p=null,m=null;
+  state.providers.forEach(function(x){if(x.id===pid){p=x;x.models.forEach(function(y){if(y.id===mid)m=y})}});
+  if(!p||!m)return;
+  var eff=effOf(p,m);
+  var tmp='C:\\Users\\demo\\AppData\\Local\\Temp\\terminal-buddy-claude-'+Math.random().toString(16).slice(2,6)+'.json';
+  $('#tbce-target').textContent=(curLeaf||'当前配置')+' → '+m.id;
+  var cmd='claude --settings "'+tmp+'" --model '+m.id+' --effort '+eff;
+  var settings={env:{ANTHROPIC_BASE_URL:p.url,ANTHROPIC_AUTH_TOKEN:'••••'+p.keyTail+'（实际写入解密 Key）',ANTHROPIC_MODEL:m.id,CLAUDE_CODE_MAX_CONTEXT_TOKENS:String(m.ctx)},model:m.id};
+  if(eff==='max'){settings.env.CLAUDE_CODE_EFFORT_LEVEL='max'}
+  else{settings.effortLevel=eff;settings.modelSettings={};settings.modelSettings[m.id]={effortLevel:eff}}
+  var h='<div class="tbce-sec"><i data-lucide="terminal"></i>注入的启动命令</div>';
+  h+='<div class="tbce-term"><div class="tbce-termtab"><span class="tbce-dot"></span><span>'+esc(curLeaf||'新终端')+' · '+esc(m.id)+'</span></div><div class="tbce-termbody"><span class="tbce-ps">❯ </span>'+esc(cmd)+'</div></div>';
+  h+='<div class="tbce-sec"><i data-lucide="list-checks"></i>参数替换表（按供应商配置自动替换）</div>';
+  h+='<dl class="tbce-kv"><dt>供应商</dt><dd>'+esc(p.name)+(p.isDefault?' <span class="tbce-badge def">默认</span>':'')+'</dd><dt>模型</dt><dd class="mono">'+esc(m.id)+'</dd><dt>推理强度</dt><dd><span class="tbce-badge e-'+eff+'">'+effLabel(eff)+'</span>'+(m.effort?'（模型级）':'（供应商默认）')+(eff==='max'?'，经 env.CLAUDE_CODE_EFFORT_LEVEL + --effort 生效':'')+'</dd><dt>上下文</dt><dd class="mono">'+m.ctx+' → CLAUDE_CODE_MAX_CONTEXT_TOKENS</dd><dt>中转地址</dt><dd class="mono">'+esc(p.url)+'</dd><dt>API Key</dt><dd class="mono">••••'+esc(p.keyTail)+'（落盘加密，启动时解密注入）</dd><dt>临时文件</dt><dd class="mono">'+esc(tmp)+'</dd><dt>快照引用</dt><dd class="mono">__TB_CLAUDE_REF__:'+p.id+':'+esc(m.id)+'</dd><dt>引用语义</dt><dd>快照只存引用不存路径；随终端关闭删除的是临时文件，引用本身不受影响。以此新建/重启恢复时后端凭引用重新生成临时文件；供应商被删则拒绝启动并提示重选</dd><dt>清理策略</dt><dd>终端关闭自动删除临时文件 + 落盘小表条目；启动时读表清残留并清表，另有 24h 兜底清扫</dd></dl>';
+  h+='<div class="tbce-sec"><i data-lucide="file-json"></i>临时 settings.json（--settings 全优先级覆盖）</div>';
+  h+='<pre class="tbce-json">'+esc(JSON.stringify(settings,null,2))+'</pre>';
+  $('#tbce-preview').innerHTML=h;icons();
+  toast('已按「'+p.name+' / '+m.id+'」生成启动预览',true);
+  if(window.zcode&&window.zcode.setWidgetState){window.zcode.setWidgetState({modelContent:{provider:p.name,model:m.id,effort:eff}}).catch(function(){})}
+}
+
+/* ---- 供应商卡片 ---- */
+function renderCards(){
+  var wrap=$('#tbce-cards');
+  $('#tbce-pcount').textContent='共 '+state.providers.length+' 个供应商';
+  if(!state.providers.length){wrap.innerHTML='<div class="tbce-panel" style="grid-column:1/-1"><div class="tbce-empty">还没有供应商，点击「新增供应商」接入第一个。</div></div>';return}
+  var h='';
+  state.providers.forEach(function(p){
+    var on=p.models.filter(function(m){return m.on});
+    h+='<div class="tbce-card'+(p.isDefault?' isdef':'')+(state.editingId===p.id?' editing':'')+'"><h3>'+esc(p.name)+(p.isDefault?' <span class="tbce-badge def">★ 默认</span>':'')+(state.editingId===p.id?' <span class="tbce-badge cust">编辑中</span>':'')+'</h3>';
+    h+='<div class="url mono">'+esc(p.url)+'</div>';
+    h+='<div class="meta"><span class="tbce-badge">可用模型 '+on.length+'/'+p.models.length+'</span><span class="tbce-badge e-'+p.effort+'">默认推理 '+effLabel(p.effort)+'</span><span class="tbce-badge">Key ••••'+esc(p.keyTail)+'</span></div>';
+    h+='<div class="models">'+on.map(function(m){return '<div><span class="mono">'+esc(m.id)+'</span> <span class="tbce-badge e-'+effOf(p,m)+'">'+effLabel(effOf(p,m)).split(' ')[0]+'</span></div>'}).join('')+'</div>';
+    h+='<div class="tbce-actions"><button type="button" class="tbce-btn" data-edit="'+p.id+'"><i data-lucide="pencil"></i>编辑</button>';
+    if(!p.isDefault)h+='<button type="button" class="tbce-btn" data-def="'+p.id+'"><i data-lucide="star"></i>设为默认</button>';
+    h+='<button type="button" class="tbce-btn danger" data-del="'+p.id+'"><i data-lucide="trash-2"></i>'+(state.armDel===p.id?'确认删除？':'删除')+'</button></div></div>';
+  });
+  wrap.innerHTML=h;icons();
+  $all('[data-edit]').forEach(function(b){b.addEventListener('click',function(){
+    if(state.saving)return;
+    var pid=b.getAttribute('data-edit');
+    if(state.editingId===pid){closeEditor();renderCards();return}
+    openEditor(pid);
+  })});
+  $all('[data-def]').forEach(function(b){b.addEventListener('click',function(){
+    state.providers.forEach(function(p){p.isDefault=(p.id===b.getAttribute('data-def'))});
+    renderCards();toast('已切换默认供应商（演示）',true);
+  })});
+  $all('[data-del]').forEach(function(b){b.addEventListener('click',function(){
+    if(state.saving)return;
+    var delId=b.getAttribute('data-del');
+    if(state.armDel!==delId){state.armDel=delId;renderCards();setTimeout(function(){if(state.armDel===delId){state.armDel=null;renderCards()}},3000);return}
+    state.armDel=null;
+    var p=state.providers.filter(function(x){return x.id===delId})[0];
+    state.providers=state.providers.filter(function(x){return x.id!==delId});
+    if(p&&p.isDefault&&state.providers.length)state.providers[0].isDefault=true;
+    if(state.editingId===delId)closeEditor();
+    renderCards();toast('已删除供应商「'+(p?p.name:'')+'」（演示）',true);
+  })});
+}
+
+/* ---- 供应商内联编辑面板 ---- */
+var dlgModels=[],fetchSeq=0;
+function effortOptions(sel){var h='<option value="">跟随默认</option>';Object.keys(EFF).forEach(function(k){h+='<option value="'+k+'"'+(sel===k?' selected':'')+'>'+EFF[k]+'</option>'});return h}
+function openEditor(pid){
+  state.editingId=pid||null;dlgModels=[];
+  var p=pid?state.providers.filter(function(x){return x.id===pid})[0]:null;
+  var panel=$('#tbce-epanel'),h='';
+  h+='<header><i data-lucide="server"></i><span>'+(p?('编辑供应商 · '+esc(p.name)):'新增供应商')+'</span><span class="grow"></span><button type="button" class="tbce-btn" data-eact="cancel">收起</button></header>';
+  h+='<div class="tbce-dbody">';
+  h+='<div class="tbce-row2"><div class="tbce-field"><label>供应商名称 <span class="req">*</span></label><input class="tbce-input" id="tbce-f-name" value="'+(p?esc(p.name):'')+'" placeholder="如：公司中转站"></div>';
+  h+='<div class="tbce-field"><label>默认推理等级</label><select class="tbce-select" id="tbce-f-effort">'+Object.keys(EFF).map(function(k){return '<option value="'+k+'"'+((p?p.effort:'high')===k?' selected':'')+'>'+EFF[k]+'</option>'}).join('')+'</select></div></div>';
+  h+='<div class="tbce-field"><label>Base URL <span class="req">*</span></label><input class="tbce-input mono" id="tbce-f-url" value="'+(p?esc(p.url):'')+'" placeholder="https://ai-proxy.example.com/v1"></div>';
+  h+='<div class="tbce-field"><label>API Key '+(p?'':'<span class="req">*</span>')+'</label><input class="tbce-input mono" id="tbce-f-key" type="password" placeholder="'+(p?('留空表示不修改（当前 ••••'+p.keyTail+'）'):'落盘加密保存，界面仅显示末 4 位')+'"></div>';
+  h+='<div class="tbce-field"><label>模型列表端点（可选，留空自动推导）</label><input class="tbce-input mono" id="tbce-f-modelsurl" value="'+(p&&p.modelsUrl?esc(p.modelsUrl):'')+'" placeholder="如 https://.../v1/models"></div>';
+  h+='<div class="tbce-fetchrow"><button type="button" class="tbce-btn" data-eact="fetch"><i data-lucide="refresh-cw"></i>获取模型列表</button><span class="st" id="tbce-fetchst">手动拉取，不自动轮询</span></div>';
+  h+='<div id="tbce-mwrap" hidden><table class="tbce-mtable"><thead><tr><th style="width:36px">可用</th><th>模型</th><th>上下文大小</th><th>推理等级</th></tr></thead><tbody id="tbce-mrows"></tbody></table></div>';
+  h+='</div><footer><button type="button" class="tbce-btn" data-eact="cancel">取消</button><button type="button" class="tbce-btn primary" data-eact="save"><i data-lucide="check"></i>保存</button></footer>';
+  panel.innerHTML=h;panel.hidden=false;icons();
+  if(p){dlgModels=p.models.map(function(m){return{id:m.id,on:m.on,ctx:m.ctx,effort:m.effort,keep:true}});renderEditorModels(true)}
+  bindEditorActions();
+  renderCards();
+  panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  var nameInp=$('#tbce-f-name');if(nameInp&&!p)nameInp.focus();
+}
+function closeEditor(){state.editingId=null;dlgModels=[];fetchSeq++;var panel=$('#tbce-epanel');panel.hidden=true;panel.innerHTML=''}
+function renderEditorModels(fromExisting){
+  $('#tbce-mwrap').hidden=false;
+  var h='';
+  dlgModels.forEach(function(m,i){
+    h+='<tr><td><input type="checkbox" data-i="'+i+'" data-f="on"'+(m.on?' checked':'')+' aria-label="启用'+esc(m.id)+'"></td><td class="mono">'+esc(m.id)+(m.keep&&fromExisting? ' <span class="tbce-badge off">已配置</span>':'')+'</td><td><input type="number" data-i="'+i+'" data-f="ctx" value="'+m.ctx+'" min="1000" step="1000"></td><td><select data-i="'+i+'" data-f="effort">'+effortOptions(m.effort)+'</select></td></tr>';
+  });
+  $('#tbce-mrows').innerHTML=h||'<tr><td colspan="4" style="color:var(--tb-dim2)">暂无模型，请先获取模型列表</td></tr>';
+  $all('#tbce-mrows [data-f]').forEach(function(el){el.addEventListener('change',function(){
+    var i=+el.getAttribute('data-i'),f=el.getAttribute('data-f');
+    dlgModels[i][f]=(f==='on')?el.checked:(f==='ctx'?Math.max(1000,+el.value||1000):el.value);
+  })});
+}
+function doFetchModels(){
+  var urlEl=$('#tbce-f-url'),keyEl=$('#tbce-f-key');if(!urlEl||!keyEl)return;
+  var url=urlEl.value.trim(),key=keyEl.value.trim();
+  var muEl=$('#tbce-f-modelsurl'),mu=muEl?muEl.value.trim():'';
+  var st=$('#tbce-fetchst');
+  if(!url||(!key&&!state.editingId)){st.className='st err';st.textContent='请先填写 URL 与 Key';return}
+  var seq=++fetchSeq;
+  var btn=root.querySelector('[data-eact="fetch"]');if(btn)btn.disabled=true;
+  st.className='st';st.innerHTML='<span class="tbce-spin"></span> 正在请求 '+esc(mu||(url.replace(/\/$/,'')+'/v1/models'))+' …';
+  setTimeout(function(){
+    if(seq!==fetchSeq)return;
+    if(btn)btn.disabled=false;
+    var seedSrc=(mu||url).toLowerCase();var seed=seedSrc.indexOf('backup')>=0?['claude-opus-5-5','deepseek-v4','qwen3-max']:['claude-opus-5-5','claude-sonnet-4-6','claude-haiku-4-5','gpt-5-codex'];
+    var merged={};
+    dlgModels.forEach(function(m){merged[m.id]=m});
+    seed.forEach(function(id){if(!merged[id])merged[id]={id:id,on:true,ctx:id.indexOf('haiku')>=0?200000:(id.indexOf('deepseek')>=0||id.indexOf('qwen')>=0?128000:200000),effort:'',keep:false}});
+    dlgModels=Object.keys(merged).map(function(k){merged[k].keep=!!merged[k].keep;return merged[k]});
+    if(!$('#tbce-mrows'))return;
+    renderEditorModels(false);
+    st.className='st ok';st.textContent='获取到 '+seed.length+' 个模型（已配置但未返回的予以保留）';
+  },900);
+}
+function doSaveProvider(){
+  var nameEl=$('#tbce-f-name'),urlEl=$('#tbce-f-url'),keyEl=$('#tbce-f-key');if(!nameEl||!urlEl||!keyEl)return;
+  var name=nameEl.value.trim(),url=urlEl.value.trim(),key=keyEl.value.trim();
+  if(!name||!url||(!key&&!state.editingId)){toast('请填写名称、URL 与 Key');return}
+  if(!dlgModels.length){toast('请先获取模型列表并勾选可用模型');return}
+  var on=dlgModels.filter(function(m){return m.on});
+  state.saving=true;
+  var rec={id:state.editingId||('p'+Date.now()),name:name,url:url,keyTail:key?key.slice(-4):(state.providers.filter(function(x){return x.id===state.editingId})[0]||{keyTail:'••••'}).keyTail,isDefault:false,effort:$('#tbce-f-effort').value,modelsUrl:($('#tbce-f-modelsurl')?$('#tbce-f-modelsurl').value.trim():''),models:dlgModels.map(function(m){return{id:m.id,on:m.on,ctx:m.ctx,effort:m.effort}})};
+  if(state.editingId){var idx=0;state.providers.forEach(function(p,i){if(p.id===state.editingId)idx=i});rec.isDefault=state.providers[idx].isDefault;state.providers[idx]=rec}
+  else{if(!state.providers.length)rec.isDefault=true;state.providers.push(rec)}
+  closeEditor();renderCards();state.saving=false;
+  toast('已保存「'+name+'」，可用模型 '+on.length+' 个',true);
+}
+function bindEditorActions(){
+  $all('#tbce-epanel [data-eact]').forEach(function(b){b.addEventListener('click',function(){
+    var act=b.getAttribute('data-eact');
+    if(act==='cancel'){if(state.saving)return;closeEditor();renderCards()}
+    else if(act==='fetch'){doFetchModels()}
+    else if(act==='save'){doSaveProvider()}
+  })});
+}
+$('#tbce-add').addEventListener('click',function(){
+  if(state.saving)return;
+  if(!state.editingId&&!$('#tbce-epanel').hidden){closeEditor();renderCards();return}
+  openEditor(null);
+});
+
+/* ---- 配置文件 ---- */
+function isSet(s){return s.t!=='ro'&&s.v!==undefined&&s.v!==''}
+function srcTag(s){
+  if(s.src==='cc')return '<span class="tbce-src cc">cc-switch</span>';
+  if(s.src==='local')return '<span class="tbce-src local">本机</span>';
+  if(s.src==='undoc')return '<span class="tbce-src undoc">未收录</span>';
+  return '';
+}
+function jsonError(s){
+  try{if((s.v||'').trim())JSON.parse(s.v);return ''}catch(e){return String((e&&e.message)||'parse error').split('\n')[0]}
+}
+function isJsonValid(s){return jsonError(s)===''}
+function isBadJson(s){return (s.t==='json'||s.t==='list')&&!!s.v&&!isJsonValid(s)}
+function formatJsonState(s){
+  if(!s.v||!s.v.trim())return 'empty';
+  try{s.v=JSON.stringify(JSON.parse(s.v),null,2);return 'ok'}
+  catch(e){return 'bad'}
+}
+function rowHtml(s,i){
+  var badge=s.t==='ro'?' <span class="tbce-badge off">只读</span>':(isSet(s)?' <span class="tbce-badge cust">已自定义</span>':' <span class="tbce-badge off">官方默认</span>');
+  var h='<div class="tbce-setrow"><div><div class="k mono">'+esc(s.k)+badge+srcTag(s)+'</div><div class="d">'+esc(s.d)+(s.off?'<br><span class="offv">官方默认：'+esc(s.off)+'</span>':'')+'</div></div><div class="v">';
+  if(s.t==='ro'){h+='<input class="tbce-input" value="'+esc(s.ro||'')+'" disabled>'}
+  else if(s.t==='effort'){h+='<select class="tbce-select" data-s="'+i+'"><option value="">未设置（跟随官方默认）</option>'+Object.keys(EFF).map(function(k){return '<option value="'+k+'"'+(s.v===k?' selected':'')+'>'+EFF[k]+(k==='max'?'（经 --effort 生效）':'')+'</option>'}).join('')+'</select>'}
+  else if(s.t==='effortmax'){h+='<select class="tbce-select" data-s="'+i+'"><option value="">未设置</option>'+Object.keys(EFF).map(function(k){return '<option value="'+k+'"'+(s.v===k?' selected':'')+'>'+EFF[k]+'</option>'}).join('')+'</select>'}
+  else if(s.t==='select'){h+='<select class="tbce-select" data-s="'+i+'"><option value="">未设置（跟随官方默认）</option>'+s.opts.map(function(o){return '<option value="'+o[0]+'"'+(s.v===o[0]?' selected':'')+'>'+esc(o[1])+'</option>'}).join('')+'</select>'}
+  else if(s.t==='bool'){h+='<select class="tbce-select" data-s="'+i+'"><option value="">未设置（跟随官方默认）</option><option value="true"'+(s.v==='true'?' selected':'')+'>true</option><option value="false"'+(s.v==='false'?' selected':'')+'>false</option></select>'}
+  else if(s.t==='envbool'){h+='<select class="tbce-select" data-s="'+i+'"><option value="">未设置</option><option value="1"'+(s.v==='1'?' selected':'')+'>启用 1</option><option value="0"'+(s.v==='0'?' selected':'')+'>禁用 0</option><option value="true"'+(s.v==='true'?' selected':'')+'>启用 true</option><option value="false"'+(s.v==='false'?' selected':'')+'>禁用 false</option></select>'}
+  else if(s.t==='json'||s.t==='list'){
+    var ph=s.t==='json'?(s.off&&s.off.charAt(0)==='{'?esc(s.off):(s.off?('官方默认：'+esc(s.off)):'未设置，留空使用官方默认')):'未设置；JSON 数组，如 [&quot;a&quot;, &quot;b&quot;]';
+    var vc=isJsonValid(s)?' json-ok':(s.v?' json-bad':'');
+    h+='<div class="tbce-vcol"><textarea class="tbce-input mono'+vc+'" data-s="'+i+'" rows="'+(s.t==='json'?'5':'2')+'" placeholder="'+ph+'">'+esc(s.v||'')+'</textarea>';
+    if(s.v)h+='<div class="tbce-jsonhint '+(isJsonValid(s)?'ok':'bad')+'">'+(isJsonValid(s)?'JSON 有效':'JSON 无效：'+esc(jsonError(s))+'，保存时将被拦截')+'</div>';
+    h+='</div><button type="button" class="tbce-btn tbce-jsonbtn" data-format="'+i+'" title="格式化为标准 JSON（2 空格缩进）">格式化</button>';
+  }
+  else if(s.t==='num'){h+='<input class="tbce-input mono" data-s="'+i+'" type="number" value="'+esc(s.v||'')+'" placeholder="'+esc(s.off||'未设置')+'">'}
+  else{h+='<input class="tbce-input mono" data-s="'+i+'" type="'+(s.t==='password'?'password':'text')+'" value="'+esc(s.v||'')+'" placeholder="'+(s.v?'':(s.off?'官方默认：'+esc(s.off):'未设置，留空使用官方默认'))+'">'}
+  if(s.t!=='ro'&&isSet(s))h+='<button type="button" class="tbce-btn" data-restore="'+i+'" title="删除该键，恢复官方默认">恢复默认</button>';
+  return h+'</div></div>';
+}
+function renderPills(){
+  var allVis=state.settings.filter(matchNoPill).length;
+  var h='<button type="button" class="tbce-pill'+(uiState.pill===-1?' on':'')+'" data-pill="-1">全部 <span class="n">'+allVis+'/'+state.settings.length+'</span></button>';
+  SETTING_GROUPS.forEach(function(g,gi){
+    var n=g.items.filter(matchNoPill).length;
+    h+='<button type="button" class="tbce-pill'+(uiState.pill===gi?' on':'')+'" data-pill="'+gi+'">'+esc(g.g)+' <span class="n">'+n+'/'+g.items.length+'</span></button>';
+  });
+  $('#tbce-pills').innerHTML=h;
+  $all('[data-pill]').forEach(function(b){b.addEventListener('click',function(){uiState.pill=+b.getAttribute('data-pill');renderSettings()})});
+}
+function matchNoPill(s){
+  if(uiState.conly&&!isSet(s))return false;
+  if(!uiState.showAdv&&!uiState.conly&&!uiState.q&&!isCommon(s)&&!isSet(s))return false;
+  if(uiState.q){var q=uiState.q.toLowerCase();if((s.k+' '+s.d).toLowerCase().indexOf(q)<0)return false}
+  return true;
+}
+function matches(s){
+  if(uiState.pill>=0&&s.gi!==uiState.pill)return false;
+  return matchNoPill(s);
+}
+function renderSettings(){
+  renderPills();
+  var h='';
+  SETTING_GROUPS.forEach(function(g,gi){
+    if(uiState.pill>=0&&uiState.pill!==gi)return;
+    var rows=g.items.filter(matches);
+    if(!rows.length)return;
+    var hid=g.items.filter(function(s){return !matchNoPill(s)}).length;
+    var hint=(!uiState.showAdv&&!uiState.q&&!uiState.conly&&hid>0)?'（已收起 '+hid+' 项不常用）':'';
+    h+='<div class="tbce-ghead">'+esc(g.g)+' <span class="cnt">'+rows.length+' 项 '+hint+'</span></div>';
+    rows.forEach(function(s){h+=rowHtml(s,state.settings.indexOf(s))});
+  });
+  if(state.customEnv.length){
+    h+='<div class="tbce-ghead">自定义 env <span class="cnt">'+state.customEnv.length+' 项</span></div>';
+    state.customEnv.forEach(function(e,i){
+      if(e.editing){h+='<div class="tbce-setrow"><div><div class="k mono">env.<input class="tbce-input mono" data-cename="'+i+'" value="'+esc(e.k)+'" placeholder="变量名" style="width:170px;display:inline-block;vertical-align:baseline"></div><div class="d">只能包含字母、数字与下划线，不能以数字开头</div></div><div class="v"><input class="tbce-input mono" data-ce="'+i+'" value="'+esc(e.v)+'" placeholder="变量值"><button type="button" class="tbce-btn primary" data-ceok="'+i+'">确定</button><button type="button" class="tbce-btn" data-cedel="'+i+'">取消</button></div></div>'}
+      else{h+='<div class="tbce-setrow"><div><div class="k mono">env.'+esc(e.k)+' <span class="tbce-badge cust">自定义</span></div><div class="d">模板之外的 env 变量，随文件保存</div></div><div class="v"><input class="tbce-input mono" data-ce="'+i+'" value="'+esc(e.v)+'" placeholder="变量值"><button type="button" class="tbce-btn danger" data-cedel="'+i+'">删除</button></div></div>'}
+    });
+  }
+  if(!h)h='<div class="tbce-empty">没有匹配的配置项。不常用配置默认收起，可勾选「显示不常用」或换个关键词试试。</div>';
+  else h+='<div class="tbce-cenv"><button type="button" class="tbce-btn" id="tbce-addenv"><i data-lucide="plus"></i>添加自定义 env 变量</button></div>';
+  $('#tbce-formrows').innerHTML=h;icons();
+  $all('[data-s]').forEach(function(el){el.addEventListener('change',function(){var s=state.settings[+el.getAttribute('data-s')];s.v=el.value;renderSettings()})});
+  $all('[data-restore]').forEach(function(b){b.addEventListener('click',function(){var rs=state.settings[+b.getAttribute('data-restore')];rs.v='';renderSettings();toast(isCommon(rs)?'已恢复官方默认（该键将从文件中删除）':'已恢复官方默认，该行已收起（勾选「显示不常用」可找回）',true)})});
+  $all('[data-format]').forEach(function(b){b.addEventListener('click',function(){
+    var s=state.settings[+b.getAttribute('data-format')];
+    var r=formatJsonState(s);
+    renderSettings();
+    if(r==='ok')toast('已格式化 '+s.k,true);
+    else if(r==='empty')toast('内容为空，无需格式化');
+    else toast('JSON 无效：'+s.k+'（'+jsonError(s)+'），请先修正');
+  })});
+  $all('[data-cename]').forEach(function(el){el.addEventListener('change',function(){state.customEnv[+el.getAttribute('data-cename')].k=el.value.trim()})});
+  $all('[data-ce]').forEach(function(el){el.addEventListener('change',function(){state.customEnv[+el.getAttribute('data-ce')].v=el.value;buildSettingsJson()})});
+  $all('[data-ceok]').forEach(function(b){b.addEventListener('click',function(){
+    var e=state.customEnv[+b.getAttribute('data-ceok')];
+    if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(e.k||'')){toast('变量名只能包含字母、数字与下划线，且不能以数字开头');return}
+    var dup=state.settings.some(function(s){return s.k==='env.'+e.k})||state.customEnv.some(function(x){return x!==e&&x.k===e.k});
+    if(dup){toast('该变量已在模板中，直接搜索编辑即可');return}
+    delete e.editing;renderSettings();toast('已添加 env.'+e.k,true);
+  })});
+  var addBtn=$('#tbce-addenv');if(addBtn)addBtn.addEventListener('click',addCustomEnv);
+  var n=state.settings.filter(isSet).length;
+  $('#tbce-tplcount').textContent=state.settings.length;$('#tbce-custcount').textContent=n;
+  $('#tbce-unsetcount').textContent=(state.settings.length-n-state.settings.filter(function(s){return s.t==='ro'}).length);
+  $('#tbce-cenvcount').textContent=state.customEnv.length;
+  $('#tbce-commoncount').textContent=Object.keys(COMMON_KEYS).length;
+  $('#tbce-showcount').textContent=state.settings.filter(matchNoPill).length;
+  buildSettingsJson();
+}
+function setDeep(j,path,val){
+  var parts=path.split('.'),o=j;
+  for(var i=0;i<parts.length-1;i++){if(typeof o[parts[i]]!=='object'||o[parts[i]]===null)o[parts[i]]={};o=o[parts[i]]}
+  o[parts[parts.length-1]]=val;
+}
+function buildSettingsJson(){
+  var j=JSON.parse(JSON.stringify(PRESERVED));
+  state.settings.forEach(function(s){
+    if(!isSet(s))return;
+    var val=s.v;
+    if(s.t==='bool')val=(s.v==='true');
+    else if(s.t==='num')val=+s.v;
+    else if(s.t==='json'||s.t==='list'){try{val=JSON.parse(s.v)}catch(e){return}}
+    setDeep(j,s.k,val);
+  });
+  state.customEnv.forEach(function(e){if(e.k&&!e.editing){j.env=j.env||{};j.env[e.k]=e.v}});
+  $('#tbce-settingsjson').textContent=JSON.stringify(j,null,2);
+}
+function addCustomEnv(){
+  if(state.customEnv.some(function(e){return e.editing}))return;
+  state.customEnv.push({k:'',v:'',editing:true});renderSettings();
+  var inp=root.querySelector('[data-cename]');if(inp)inp.focus();
+}
+$('#tbce-sq').addEventListener('input',function(e){uiState.q=e.target.value.trim();renderSettings()});
+$('#tbce-conly').addEventListener('change',function(e){uiState.conly=e.target.checked;renderSettings()});
+$('#tbce-showadv').addEventListener('change',function(e){uiState.showAdv=e.target.checked;renderSettings()});
+$('#tbce-segform').addEventListener('click',function(){$('#tbce-segform').classList.add('on');$('#tbce-segjson').classList.remove('on');$('#tbce-formrows').hidden=false;$('#tbce-jsonwrap').hidden=true});
+$('#tbce-segjson').addEventListener('click',function(){$('#tbce-segjson').classList.add('on');$('#tbce-segform').classList.remove('on');$('#tbce-formrows').hidden=true;$('#tbce-jsonwrap').hidden=false});
+$('#tbce-saveset').addEventListener('click',function(){
+  var bad=state.settings.filter(isBadJson);
+  if(bad.length){toast('有 '+bad.length+' 个 JSON 无效，保存已拦截：'+bad.map(function(s){return s.k}).join('、'));return}
+  toast('已写回 settings.json 并备份上一版（演示）',true);
+});
+$('#tbce-restore').addEventListener('click',function(){toast('已从「'+$('#tbce-backups').value+'」恢复（演示）',true)});
+
+renderCards();renderSettings();icons();
+})();
+</script>
+</div>
+</div>
+</body>
+</html>
