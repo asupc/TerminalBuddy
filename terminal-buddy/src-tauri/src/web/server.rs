@@ -1,6 +1,6 @@
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Request};
 use axum::http::{HeaderValue, StatusCode};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioExecutor, TokioTimer};
@@ -149,6 +149,46 @@ pub fn build_router(state: AppState) -> Router {
             "/api/claude-history/{id}",
             delete(handlers::claude_history_handler::delete),
         )
+        // Claude 默认配置文件（与 PC 端共享 ~/.claude/settings.json）
+        .route(
+            "/api/claude/settings",
+            get(handlers::claude_settings_handler::read)
+                .put(handlers::claude_settings_handler::write),
+        )
+        .route(
+            "/api/claude/settings/backups",
+            get(handlers::claude_settings_handler::list_backups),
+        )
+        .route(
+            "/api/claude/settings/backups/{id}/restore",
+            post(handlers::claude_settings_handler::restore_backup),
+        )
+        // 大模型供应商（与 PC 端共享 llm_providers.json）
+        .route(
+            "/api/llm-providers",
+            get(handlers::llm_provider_handler::list).post(handlers::llm_provider_handler::create),
+        )
+        .route(
+            "/api/llm-providers/fetch-models",
+            post(handlers::llm_provider_handler::fetch_models),
+        )
+        .route(
+            "/api/llm-providers/launch-targets",
+            get(handlers::llm_provider_handler::launch_targets),
+        )
+        .route(
+            "/api/llm-providers/order",
+            put(handlers::llm_provider_handler::update_order),
+        )
+        .route(
+            "/api/llm-providers/{id}",
+            put(handlers::llm_provider_handler::update)
+                .delete(handlers::llm_provider_handler::remove),
+        )
+        .route(
+            "/api/llm-providers/{id}/set-default",
+            post(handlers::llm_provider_handler::set_default),
+        )
         // 会话列表实时同步（meta WS，App 级单连接）
         .route("/ws/meta", get(ws::meta_ws_handler))
         // 终端 I/O（per-terminal WS）
@@ -285,6 +325,12 @@ pub async fn run_server(
         login_throttle: std::sync::Arc::new(LoginThrottle::new()),
     };
     let router = build_router(state);
+
+    // 独立服务端同样清扫模型终端残留的临时 --settings 文件（桌面端在 setup 里
+    // 已做过一次，本调用幂等，重复执行无害）。
+    let _cleanup_task = tokio::task::spawn_blocking(|| {
+        crate::services::llm_provider_service::cleanup_stale_temp_settings();
+    });
 
     // 绑定 0.0.0.0：让同一局域网的手机端可访问（旧实现绑定 127.0.0.1 仅本机可达）
     #[cfg(feature = "desktop")]

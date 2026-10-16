@@ -1,4 +1,5 @@
 pub mod bot;
+pub mod llm_provider;
 pub mod profile;
 pub mod profile_validation;
 pub mod settings;
@@ -9,6 +10,7 @@ pub mod update;
 pub mod web_api;
 pub mod workspace;
 pub use bot::*;
+pub use llm_provider::*;
 pub use profile::*;
 pub use profile_validation::*;
 pub use settings::*;

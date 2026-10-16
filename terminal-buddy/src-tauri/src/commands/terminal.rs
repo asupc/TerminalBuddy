@@ -544,6 +544,8 @@ fn release_terminal_resources(
 ) {
     // hook token + pending decision + 待确认通知卡片，本身幂等。
     ClaudeHookService::unregister_terminal(terminal_id);
+    // 模型终端的临时 --settings 文件与映射条目，幂等（无映射时为 no-op）。
+    crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(terminal_id);
     // SSH 终端才有 session，其余为 no-op。
     app.state::<SshSessionService>().close_session(terminal_id);
     // 丢弃 Web 订阅者 → 各 WS 的 recv() 返回 None → 向手机端发送 Exited。
@@ -663,6 +665,8 @@ impl Drop for TerminalCreation {
         }
         if !self.hook_registered {
             // hook token 还没注册时不要调用 unregister，避免误清同 id 的其他状态。
+            // 但引用展开已登记的临时 --settings 文件必须清理（spawn 失败泄漏）。
+            crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(&self.terminal_id);
             if let Some(mut backend) = backend {
                 let _ = crate::runtime::async_runtime::spawn_blocking(move || backend.close());
             }
@@ -1234,6 +1238,23 @@ impl TerminalService {
             .unwrap_or_default();
         let startup_commands =
             apply_extra_startup_params(startup_commands, extra_startup_params, extra_startup_mode);
+        // 引用展开（apply 后 / build 前）：`__TB_CLAUDE_REF__` 开头的命令在这里
+        // 生成一次性临时 --settings 文件并替换为新路径。不含引用的命令原样返回。
+        // 展开失败即拒绝启动，并清理本 terminal_id 已登记的临时文件。
+        let startup_commands = match crate::services::llm_provider_service::expand_claude_refs_in_commands(
+            startup_commands,
+            &terminal_id,
+        ) {
+            Ok(commands) => commands,
+            Err(error) => {
+                crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(&terminal_id);
+                log_debug(&format!(
+                    "[create] FAILED, id={}, type={}, stage=expand-claude-ref, error={}",
+                    terminal_id, terminal_type, error
+                ));
+                return Err(error);
+            }
+        };
         let profile_env: Vec<(String, String)> = profile
             .as_ref()
             .map(|p| {
@@ -1468,6 +1489,7 @@ impl TerminalService {
         let ssh_service = app.state::<SshSessionService>();
         for mut instance in instances {
             ClaudeHookService::unregister_terminal(&instance.id);
+            crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(&instance.id);
             ssh_service.close_session(&instance.id);
             web_state.close_all(&instance.id);
             instance.backend.kill_without_wait();
@@ -1546,8 +1568,23 @@ impl TerminalService {
             .map(str::trim)
             .filter(|command| !command.is_empty())
         {
-            reject_control_chars("启动命令", command)?;
-            init_commands.push(command.to_string());
+            // 引用展开先于校验：展开后的最终命令再过 reject，防注入。
+            let command = match crate::services::llm_provider_service::expand_leading_claude_ref(
+                command,
+                &terminal_id,
+            ) {
+                Ok(expanded) => expanded,
+                Err(error) => {
+                    crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(&terminal_id);
+                    log_debug(&format!(
+                        "[create-blank] FAILED, id={}, type={}, stage=expand-claude-ref, error={}",
+                        terminal_id, effective_type, error
+                    ));
+                    return Err(error);
+                }
+            };
+            reject_control_chars("启动命令", &command)?;
+            init_commands.push(command);
         }
 
         self.spawn_terminal(

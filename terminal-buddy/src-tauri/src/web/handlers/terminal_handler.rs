@@ -59,7 +59,10 @@ pub async fn start(
             TerminalOwner::Web,
         )
     }
-    .map_err(ApiError::Internal)?;
+    // 创建失败的中文原因（引用失效 / 旧路径过期 / 参数校验）必须原样提示给
+    // 用户，不能走 Internal 的通用 500 文案；「拒绝启动并提示重新选择」是
+    // 设计的验收要求。
+    .map_err(ApiError::BadRequest)?;
 
     // 两种创建路径统一从实例表取 TerminalInfo：空白终端没有 profile，
     // 手工拼装会在这里分叉两份字段映射，list_terminals_info 已是唯一权威来源。

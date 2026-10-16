@@ -89,6 +89,25 @@ pub fn encrypt_string(plaintext: &str) -> Result<String, String> {
     }
 }
 
+/// 落盘密钥字段的通用封装：桌面端 `dpapi:<base64>`，服务端 `aesgcm:v1:<base64>`。
+/// 空明文落为空密文（`marker` + 空串），调用方用空表示"未设置"。
+pub fn encrypt_secret_field(plaintext: &str) -> Result<String, String> {
+    let marker = if cfg!(feature = "desktop") { "dpapi:" } else { "aesgcm:" };
+    Ok(format!("{}{}", marker, encrypt_string(plaintext)?))
+}
+
+/// 解析 [`encrypt_secret_field`] 写入的密文；无 marker 的旧值原样返回明文。
+pub fn decrypt_secret_field(value: &str) -> Result<String, String> {
+    if let Some(encoded) = value
+        .strip_prefix("dpapi:")
+        .or_else(|| value.strip_prefix("aesgcm:"))
+    {
+        decrypt_string(encoded)
+    } else {
+        Ok(value.to_string())
+    }
+}
+
 /// Decrypt a Base64-encoded DPAPI blob back to a string.
 pub fn decrypt_string(encoded: &str) -> Result<String, String> {
     #[cfg(not(feature = "desktop"))]

@@ -391,6 +391,11 @@ pub fn run() {
             bootstrap_http_server(app.handle())?;
             bootstrap_bot_connections(app.handle())?;
             bootstrap_claude_hook(app.handle());
+            // 模型终端残留的临时 --settings 文件：上次异常退出可能没清掉，
+            // 启动时按落盘小表精确删除 + 24h 兜底（后台线程，不阻塞窗口）。
+            let _cleanup_task = crate::runtime::async_runtime::spawn_blocking(|| {
+                crate::services::llm_provider_service::cleanup_stale_temp_settings();
+            });
 
             boot_log("setup done — waiting for WebView page load before showing window");
             Ok(())
@@ -440,6 +445,11 @@ pub fn run() {
             list_claude_projects, list_claude_memory_files, read_claude_memory_file,
             write_claude_memory_file, create_claude_memory_file, delete_claude_memory_file,
             read_claude_md, write_claude_md,
+            read_claude_settings, write_claude_settings,
+            list_claude_settings_backups, restore_claude_settings_backup,
+            list_llm_providers, save_llm_provider, delete_llm_provider,
+            set_default_llm_provider, update_llm_provider_order,
+            fetch_llm_provider_models, list_claude_launch_targets,
             list_claude_assets, deploy_claude_asset, undeploy_claude_asset, sync_claude_asset,
             import_claude_asset, list_importable_claude_assets, delete_claude_asset,
             create_claude_asset, read_claude_asset, write_claude_asset,

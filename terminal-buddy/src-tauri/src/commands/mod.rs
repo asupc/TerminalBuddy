@@ -14,6 +14,7 @@ pub mod fs;
 pub mod git;
 pub mod git_parse;
 pub mod hooks;
+pub mod llm_provider;
 #[cfg(feature = "desktop")]
 pub mod mstsc;
 #[cfg(feature = "desktop")]
@@ -44,6 +45,7 @@ pub use default_terminal::*;
 pub use fs::*;
 pub use git::*;
 pub use hooks::*;
+pub use llm_provider::*;
 #[cfg(feature = "desktop")]
 pub use mstsc::*;
 #[cfg(feature = "desktop")]
