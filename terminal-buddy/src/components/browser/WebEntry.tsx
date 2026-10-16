@@ -70,7 +70,6 @@ export default function WebEntry() {
       <div className="web-login-logo">⌘</div>
       <h1>{setupRequired ? '创建管理员密码' : '终端伙伴'}</h1>
       <p>{setupRequired ? '首次启动，请为管理员设置密码。创建后即可进入完整工作界面。' : '登录后进入完整工作界面'}</p>
-      <label>{setupRequired ? '管理员账号' : '用户名'}<input autoComplete="username" value={username} readOnly={setupRequired} onChange={event => setUsername(event.target.value)} required disabled={busy || !ready} /></label>
       <label>{setupRequired ? '管理员密码' : '密码'}<input type="password" autoComplete={setupRequired ? 'new-password' : 'current-password'} value={password} onChange={event => setPassword(event.target.value)} required disabled={busy || !ready} /></label>
       {setupRequired && <>
         <div className="web-login-hint">密码至少需要 8 个字符</div>
