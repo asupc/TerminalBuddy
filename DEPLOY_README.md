@@ -321,3 +321,29 @@ AES-GCM 加密存储，网页不会读取回完整 API 密钥；编辑密钥留�
 通过临时文件原子替换；数据库提交失败时回退文件。接口要求网页登录认证，非 Docker 版禁用。
 
 镜像不预装 Node.js、Codex CLI 或 Claude CLI，其他命令行工具可按需扩展 Dockerfile。
+
+## Codex 启动提示找不到 ps
+
+如果容器内运行 `codex` 时出现 `failed to invoke ps for pid-managed app server: No such file or directory`，说明容器缺少 `ps` 命令。运行镜像已将提供该命令的 `procps` 加入系统依赖，部署校验也会以 `terminalbuddy` 用户检查进程查询是否可用。
+
+使用 `deploy-centos.sh` 时，默认只构建当前目录的源码，不会自动拉取最新代码。请先更新实际部署分支，并确认 Dockerfile 已包含 `procps`，再完整部署：
+
+```bash
+git branch --show-current
+git pull --ff-only
+grep -n procps Dockerfile
+./deploy-centos.sh
+```
+
+不要使用 `--no-build` 复用旧镜像。脚本会在替换运行中的容器之前，以 `terminalbuddy` 用户启动临时容器验证 `ps`；如果镜像缺少依赖，将停止部署并给出提示。
+
+已经运行的旧容器可以在 Docker 宿主机执行以下命令补装，无需重启服务：
+
+```bash
+docker exec --user root terminal-buddy sh -lc 'apt-get update && apt-get install -y --no-install-recommends procps'
+docker exec --user terminalbuddy terminal-buddy sh -c 'command -v ps && ps -p "$$" -o pid=,ppid=,args='
+```
+
+补装后，在原网页终端重新运行 `codex`。以上操作只修改当前容器；之后重新创建容器时，需要使用包含此次 Dockerfile 修复的镜像。
+
+暂时无法安装系统包时，可先执行 `codex --no-daemon`，按报错提示跳过后台服务。恢复或分叉会话时，对原命令保留全部参数并加上 `--no-daemon`。

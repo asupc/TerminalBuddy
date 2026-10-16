@@ -43,6 +43,10 @@ echo "==== 数据卷 ===="
 docker inspect -f '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' "${CONTAINER}" 2>/dev/null
 
 echo
+echo "==== 容器进程查询（Codex 后台服务依赖） ===="
+docker exec --user terminalbuddy "${CONTAINER}" sh -c 'command -v ps && ps -p "$$" -o pid=,ppid=,args=' || STATUS=1
+
+echo
 echo "==== 容器内访问宿主机 Docker（应用用户） ===="
 docker exec --user terminalbuddy "${CONTAINER}" docker version || STATUS=1
 docker exec --user terminalbuddy "${CONTAINER}" docker compose version || STATUS=1
