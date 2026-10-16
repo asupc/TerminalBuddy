@@ -54,12 +54,13 @@ export const createProfilesSlice = (
 	setConfigSearchQuery: (query) => set({ configSearchQuery: query }),
 
 	settingsDialogOpen: false,
+	settingsDialogSection: null,
 	gitHistoryTab: null,
 	claudeReplayTab: null,
 	claudeReplayTabs: [],
 	activeSpecialTab: null,
-	openSettingsDialog: () => set({ settingsDialogOpen: true }),
-	closeSettingsDialog: () => set({ settingsDialogOpen: false }),
+	openSettingsDialog: (section) => set({ settingsDialogOpen: true, settingsDialogSection: section ?? null }),
+	closeSettingsDialog: () => set({ settingsDialogOpen: false, settingsDialogSection: null }),
 	openGitHistoryTab: (tab) => set({ gitHistoryTab: tab, activeSpecialTab: "git-history" }),
 	closeGitHistoryTab: () =>
 		set((state) => ({

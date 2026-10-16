@@ -3,6 +3,7 @@
 export * from './bot';
 export * from './claudeAssets';
 export * from './claudeConfig';
+export * from './claudeEnhance';
 export * from './claudeHistory';
 export * from './claudeHook';
 export * from './claudeMcp';

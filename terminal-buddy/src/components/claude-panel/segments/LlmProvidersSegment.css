@@ -1,0 +1,177 @@
+/* LlmProvidersSegment 专属样式。共享壳与徽标见 ./shared.css。 */
+
+/* ---- 模型供应商（LlmProvidersSegment） ---- */
+.llm-providers-segment {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.claude-segment-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.llm-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.llm-provider-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.llm-provider-card.editing {
+  border-color: var(--accent);
+}
+
+.llm-provider-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.llm-provider-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-provider-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+}
+
+.llm-provider-meta > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-key-tail {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.llm-provider-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.llm-provider-editor {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.llm-provider-editor-title {
+  font-weight: 600;
+}
+
+.claude-form-row-inline {
+  display: flex;
+  gap: 8px;
+}
+
+.claude-form-row-inline .claude-form-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.llm-provider-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  align-self: center;
+}
+
+.llm-model-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.llm-model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.llm-model-row.head {
+  border-top: none;
+  background: var(--bg-tertiary);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.llm-model-check {
+  width: 40px;
+  text-align: center;
+  flex: none;
+}
+
+.llm-model-id {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.llm-model-ctx {
+  width: 90px;
+  flex: none;
+}
+
+.llm-model-ctx input {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+.llm-model-effort {
+  width: 110px;
+  flex: none;
+}
+
+.llm-model-effort select {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+.llm-provider-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

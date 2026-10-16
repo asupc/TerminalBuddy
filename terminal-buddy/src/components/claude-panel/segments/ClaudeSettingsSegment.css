@@ -1,0 +1,237 @@
+/* ClaudeSettingsSegment 专属样式。共享壳与徽标见 ./shared.css。 */
+
+/* ---- 默认配置文件（ClaudeSettingsSegment） ---- */
+.claude-settings-segment {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.claude-settings-path {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
+
+.claude-settings-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.claude-settings-pills button {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.claude-settings-pills button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.claude-settings-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.claude-settings-search {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+
+.claude-settings-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.claude-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.claude-settings-group-title {
+  font-weight: 600;
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.claude-settings-collapsed {
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.claude-settings-row {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.claude-settings-row.customized {
+  border-color: var(--accent);
+}
+
+.claude-settings-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.claude-settings-key {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-settings-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.claude-settings-official {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.claude-settings-input {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 4px 6px;
+  font-size: 12.5px;
+}
+
+.claude-settings-input:disabled {
+  opacity: 0.7;
+}
+
+.claude-settings-ro {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.claude-settings-jsonwrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.claude-settings-jsontext {
+  width: 100%;
+  min-height: 300px;
+  resize: vertical;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.claude-settings-jsontext.small {
+  min-height: 80px;
+}
+
+.claude-settings-jsontext.invalid {
+  border-color: var(--error, #e5484d);
+}
+
+.claude-settings-jsontext:not(.invalid) {
+  border-color: var(--border);
+}
+
+.claude-settings-jsonbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.claude-settings-jsonerror {
+  font-size: 11.5px;
+  color: var(--error, #e5484d);
+  word-break: break-all;
+}
+
+.claude-settings-jsonview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.claude-settings-customenv {
+  display: flex;
+  gap: 6px;
+}
+
+.claude-settings-customenv input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 4px 6px;
+  font-size: 12.5px;
+}
+
+.claude-settings-backup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.claude-settings-backup-id {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.claude-settings-backup-meta {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}

@@ -1,0 +1,219 @@
+/* Claude 分段共享样式：壳（claude-segment*）与通用控件（claude-form-*、llm-badge*）。
+ * 各 Segment 自行引入，不依赖 ClaudePanel 是否挂载。
+ */
+
+.claude-segment {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.claude-segment-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+}
+
+.claude-segment-seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex: none;
+}
+
+.claude-segment-seg button {
+  background: var(--bg-tertiary);
+  border: none;
+  color: var(--text-secondary);
+  padding: 2px 9px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.claude-segment-seg button + button {
+  border-left: 1px solid var(--border);
+}
+
+.claude-segment-seg button.on {
+  background: color-mix(in srgb, var(--accent) 24%, var(--bg-tertiary));
+  color: var(--text-primary);
+}
+
+.claude-segment-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  padding: 2px 5px;
+  font-size: 12px;
+}
+
+.claude-segment-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.claude-segment-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  padding: 2px 8px;
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.claude-segment-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.claude-segment-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.claude-segment-btn.primary {
+  background: color-mix(in srgb, var(--accent) 26%, var(--bg-tertiary));
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.claude-segment-btn.mini {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.claude-segment-btn.danger:hover:not(:disabled) {
+  border-color: #f14c4c;
+  color: #f14c4c;
+}
+
+.claude-segment-filter {
+  flex: none;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  padding: 3px 7px;
+  font-size: 12px;
+}
+
+.claude-segment-empty {
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 22px 10px;
+  font-size: 12px;
+  flex: none;
+}
+
+.claude-segment-empty small {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+.claude-segment-note {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-segment-note.foot {
+  flex: none;
+  text-align: center;
+}
+
+.claude-form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.claude-form-row input[type='text'],
+.claude-form-row input:not([type]),
+.claude-form-row select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  padding: 3px 7px;
+  font-size: 12.5px;
+}
+
+.claude-form-row.radio {
+  cursor: pointer;
+}
+
+.claude-form-row.checkbox {
+  cursor: pointer;
+}
+
+.claude-form-group-title {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+/* 通用徽标（llm-badge*）：供应商与配置两段共用。 */
+.llm-badge {
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.llm-badge.default {
+  background: var(--accent);
+  color: #fff;
+}
+
+.llm-badge.editing {
+  background: var(--warning, #b7791f);
+  color: #fff;
+}
+
+.llm-badge.effort {
+  background: var(--bg-tertiary);
+}
+
+.llm-badge.new {
+  background: var(--success, #2f9e44);
+  color: #fff;
+  margin-left: 4px;
+}
+
+.llm-badge.custom {
+  background: var(--accent);
+  color: #fff;
+}
+
+.llm-badge.official {
+  opacity: 0.75;
+}
+
+.llm-badge.src {
+  background: var(--bg-tertiary);
+}
+

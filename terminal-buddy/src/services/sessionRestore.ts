@@ -1,7 +1,7 @@
 import { closeTerminal, getFileSize, listTerminals, startBlankTerminal, startTerminal, writeToTerminal } from './tauri';
 import { loadSavedTabs, saveTabsToStorage, useAppStore } from '../stores/appStore';
 import { getAppSettings } from '../utils/settings';
-import { isClaudeCommand } from '../utils/claudeLaunch';
+import { containsClaudeRef, isClaudeCommand } from '../utils/claudeLaunch';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { TerminalSession } from '../types';
@@ -80,13 +80,13 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     ? tab.directory
     : undefined;
   // 空白终端（项目右键启动等）的 extraParams 保存的是完整启动命令，恢复时重跑：
-  // - 命令跑 claude → 连同 --resume 一起恢复会话
+  // - 命令跑 claude（含模型引用标记）→ 连同 --resume 一起恢复会话
   // - 命令不含 claude 但记录了会话（当时手动敲的 claude）→ 只重跑原命令，
   //   追加 --resume 会把原命令拼坏
   // - 没保存命令（纯手动敲 claude 的空白终端）→ 直接 claude --resume
   const blankCommand = !tab.profileId
     ? (baseParams
-      ? (isClaudeCommand(baseParams) ? launchParams : baseParams)
+      ? ((isClaudeCommand(baseParams) || containsClaudeRef(baseParams)) ? launchParams : baseParams)
       : (launchParams ? `claude ${launchParams}` : undefined))
     : undefined;
   const terminalId = tab.profileId
@@ -158,6 +158,9 @@ export async function restoreTabs() {
         }
       } catch (err) {
         console.error('Failed to restore tab:', tab.profileName, err);
+        // 单页签失败不中断其余恢复（并发池隔离），但必须明确提示：
+        // 引用展开失败（供应商被删）时用户需要知道去重新选择模型。
+        useAppStore.getState().showToast(`恢复页签「${tab.profileName}」失败：${String(err)}`, 'error');
       }
     };
 

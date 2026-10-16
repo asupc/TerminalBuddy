@@ -11,6 +11,8 @@ import { MemorySegment } from './segments/MemorySegment';
 import { ClaudeMdSegment } from './segments/ClaudeMdSegment';
 import { AssetsSegment } from './segments/AssetsSegment';
 import { McpSegment } from './segments/McpSegment';
+import { LlmProvidersSegment } from './segments/LlmProvidersSegment';
+import { ClaudeSettingsSegment } from './segments/ClaudeSettingsSegment';
 import './ClaudePanel.css';
 
 const PHASE_LABEL: Record<string, string> = {
@@ -23,6 +25,8 @@ const PHASE_LABEL: Record<string, string> = {
 
 const SEGMENTS = [
   { id: 'overview', label: '总览' },
+  { id: 'models', label: '模型' },
+  { id: 'settings', label: '默认配置' },
   { id: 'memory', label: 'Memory' },
   { id: 'claudemd', label: 'CLAUDE.md' },
   { id: 'assets', label: '技能' },
@@ -43,7 +47,7 @@ interface OverviewCard {
   claudeSessionId?: string;
 }
 
-/** Claude 面板：会话总览 / Memory / CLAUDE.md / 技能资产 / MCP 五个分段（切换不卸载，编辑状态保留）。 */
+/** Claude 面板：会话总览 / 模型 / 默认配置 / Memory / CLAUDE.md / 技能资产 / MCP 七个分段（切换不卸载，编辑状态保留）。 */
 export const ClaudePanel: FC = () => {
   const [segment, setSegment] = useState<SegmentId>('overview');
   // 分段首次切到才挂载、之后常驻：既不在启动时把四个分段的数据请求全打一遍，
@@ -160,6 +164,8 @@ export const ClaudePanel: FC = () => {
           ))}
         </div>
       </div>
+      <div className={`claude-segment-host${segment === 'models' ? '' : ' off'}`}>{visited.includes('models') && <LlmProvidersSegment />}</div>
+      <div className={`claude-segment-host${segment === 'settings' ? '' : ' off'}`}>{visited.includes('settings') && <ClaudeSettingsSegment />}</div>
       <div className={`claude-segment-host${segment === 'memory' ? '' : ' off'}`}>{visited.includes('memory') && <MemorySegment />}</div>
       <div className={`claude-segment-host${segment === 'claudemd' ? '' : ' off'}`}>{visited.includes('claudemd') && <ClaudeMdSegment />}</div>
       <div className={`claude-segment-host${segment === 'assets' ? '' : ' off'}`}>{visited.includes('assets') && <AssetsSegment />}</div>

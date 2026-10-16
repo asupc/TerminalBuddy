@@ -40,10 +40,12 @@ import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { ConfirmDialog } from '../shared/Dialog';
+import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { ClaudeExportDialog } from './ClaudeExportDialog';
 import {
   pickClaudeProfile,
   resumeClaudeSession,
+  type ClaudeVendorRef,
   type ResumeLaunchPreset,
 } from './resumeClaudeSession';
 import type { ExtraParamPreset, Project } from '../../types';
@@ -131,6 +133,8 @@ const MenuItem: FC<MenuItemProps> = ({ icon: Icon, label, hint, danger, preset, 
 /** Claude Code 会话面板：列表 + 全文检索 + 右键管理 + 双击恢复。 */
 export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isActive = true }) => {
   const showToast = useAppStore(s => s.showToast);
+  const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
+  const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
   const profiles = useAppStore(s => s.profiles);
@@ -176,6 +180,11 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
   useEffect(() => {
     setScopeDismissed(false);
   }, [activeSessionId, activeSpecialTab, claudeReplayTab?.sessionId]);
+
+  // 模型菜单数据源：挂载时加载，右键打开时用缓存。
+  useEffect(() => {
+    void refreshClaudeLaunchTargets();
+  }, [refreshClaudeLaunchTargets]);
 
   useEffect(() => {
     searchRequestRef.current += 1;
@@ -383,6 +392,14 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
     }, launchPreset).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
+  }, [showToast]);
+
+  const handleResumeWithModel = useCallback((item: ClaudeSessionItem, vendorRef: ClaudeVendorRef) => {
+    void resumeClaudeSession({
+      sessionId: item.sessionId,
+      title: item.customTitle || item.title,
+      projectDir: item.projectDir,
+    }, undefined, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
   }, [showToast]);
 
   const handleReplay = useCallback((sessionId: string, title: string, projectDir: string, focusSeq?: number) => {
@@ -750,6 +767,17 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
               onClick={() => { handleResume(contextMenu.item, preset); setContextMenu(null); }}
             />
           ))}
+          <ClaudeModelMenuSection
+            itemClassName="claude-hist-context-item"
+            separatorClassName="claude-hist-context-sep"
+            title="指定模型恢复"
+            onPickModel={(providerId, modelId) => {
+              const item = contextMenu.item;
+              setContextMenu(null);
+              handleResumeWithModel(item, { providerId, modelId });
+            }}
+            onGotoProviders={() => { setContextMenu(null); openSettingsDialog('llm-providers'); }}
+          />
           <MenuItem
             icon={Eye}
             label="查看详情 / 回放"

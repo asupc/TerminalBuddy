@@ -7,6 +7,8 @@ import { createSessionsSlice } from "./slices/sessionsSlice";
 import { createTabsSlice } from "./slices/tabsSlice";
 import { createTransfersSlice } from "./slices/transfersSlice";
 import { createWindowSlice } from "./slices/windowSlice";
+import { createClaudeLaunchSlice } from "./slices/claudeLaunchSlice";
+import type { LlmLaunchTarget } from "../services/tauri";
 
 interface SavedTab {
 	profileId: string;
@@ -241,7 +243,9 @@ export interface AppState {
 
 	// Settings dialog and workspace special tabs
 	settingsDialogOpen: boolean;
-	openSettingsDialog: () => void;
+	// 打开设置时跳转到的分组（null 表示默认分组）；供右键菜单引导项使用
+	settingsDialogSection: string | null;
+	openSettingsDialog: (section?: string) => void;
 	closeSettingsDialog: () => void;
 	gitHistoryTab: GitHistoryTab | null;
 	openGitHistoryTab: (tab: GitHistoryTab) => void;
@@ -388,6 +392,12 @@ export interface AppState {
 	removeTransfer: (id: string) => void;
 	clearCompletedTransfers: (terminalId: string) => void;
 	clearCompletedTransfersByProfile: (profileId: string) => void;
+
+	// Claude 模型启动：右键菜单数据源（挂载 + 供应商变更时刷新，右键打开时用缓存）
+	claudeLaunchTargets: LlmLaunchTarget[];
+	claudeLaunchTargetsLoaded: boolean;
+	refreshClaudeLaunchTargets: () => Promise<void>;
+	setClaudeLaunchTargets: (targets: LlmLaunchTarget[]) => void;
 }
 
 // 各 slice 只声明自己管辖的字段（Partial<AppState>），
@@ -399,6 +409,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 	...createTabsSlice(set),
 	...createTransfersSlice(set),
 	...createWindowSlice(set),
+	...createClaudeLaunchSlice(set),
 }) as AppState);
 
 // Listen for app-settings-changed events and increment version to trigger re-renders

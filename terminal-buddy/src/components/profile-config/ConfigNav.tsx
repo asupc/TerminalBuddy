@@ -1,13 +1,15 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import { useAppStore } from '../../stores/appStore';
-import { deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
+import { buildClaudeRefCommand, deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
 import { openProjectTerminal, openTerminalInDir } from '../../utils/openTerminalInDir';
 import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
+import { isModelRefLocalType } from '../../utils/claudeLaunch';
 import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
+import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { open as openDirectory } from '@tauri-apps/plugin-dialog';
 import { saveProjects } from '../../services/tauri';
 import type { Project } from '../../types';
@@ -52,12 +54,20 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const setConfigSearchQuery = useAppStore(s => s.setConfigSearchQuery);
   const extraParamPresets = useAppStore(s => s.extraParamPresets);
   const setDragProfileId = useAppStore(s => s.setDragProfileId);
+  const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
+  const showToast = useAppStore(s => s.showToast);
+  const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
+
+  // 模型菜单数据源：挂载时加载，右键打开时用缓存。
+  useEffect(() => {
+    void refreshClaudeLaunchTargets();
+  }, [refreshClaudeLaunchTargets]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {
@@ -316,6 +326,31 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     await openProjectTerminal(project, preset);
   };
 
+  /** 叶子模型启动：引用命令整体替换 startup_commands（independent），shell/路径/env 仍生效。 */
+  const startProfileWithModel = (profile: Profile, providerId: string, modelId: string) => {
+    closeContextMenu();
+    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId), undefined, undefined, undefined, undefined, 'independent');
+  };
+
+  /** 分组模型启动：走 blank 链（恒为本地 shell），引用命令整条注入。 */
+  const startProjectWithModel = async (project: Project, providerId: string, modelId: string) => {
+    closeContextMenu();
+    try {
+      await openTerminalInDir(project.path, {
+        command: buildClaudeRefCommand(providerId, modelId),
+        name: `${project.name} · ${modelId}`,
+        groupName: project.name,
+      });
+    } catch (error) {
+      showToast('模型启动失败：' + String(error), 'error');
+    }
+  };
+
+  const gotoProvidersSettings = () => {
+    closeContextMenu();
+    openSettingsDialog('llm-providers');
+  };
+
   const handleFinishRenameProfile = async () => {
     const trimmed = renamingProfileName.trim();
     const id = renamingProfileId;
@@ -510,6 +545,20 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
               catch (err) { console.error(err); }
             }
           }}>命令行</div>
+          {(() => {
+            const target = profiles.find((p) => p.id === contextMenu.profileId);
+            // 仅本地 shell 类型显示模型区：后端 ssh/docker/k8s 分支会丢弃引用。
+            if (!target || !isModelRefLocalType(target.terminalType)) return null;
+            return (
+              <ClaudeModelMenuSection
+                itemClassName="context-menu-item"
+                separatorClassName="context-menu-separator"
+                title="Claude 模型"
+                onPickModel={(providerId, modelId) => startProfileWithModel(target, providerId, modelId)}
+                onGotoProviders={gotoProvidersSettings}
+              />
+            );
+          })()}
           <div className="context-menu-item" onClick={() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             closeContextMenu();
@@ -584,6 +633,13 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                 try { await openTerminalInDir(project.path); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
+              <ClaudeModelMenuSection
+                itemClassName="context-menu-item"
+                separatorClassName="context-menu-separator"
+                title="Claude 模型"
+                onPickModel={(providerId, modelId) => void startProjectWithModel(project, providerId, modelId)}
+                onGotoProviders={gotoProvidersSettings}
+              />
               <div className="context-menu-separator" />
               <div className="context-menu-item" onClick={async () => {
                 closeContextMenu();

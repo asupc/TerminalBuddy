@@ -1,0 +1,99 @@
+/* 模型菜单区（ConfigNav 与 HistoryPanel 右键菜单共用） */
+.claude-model-menu-head {
+  cursor: default !important;
+  font-size: 11.5px !important;
+  color: var(--text-tertiary) !important;
+  background: transparent !important;
+  min-height: 22px !important;
+}
+
+.claude-model-menu-disabled {
+  cursor: default !important;
+  color: var(--text-tertiary) !important;
+  background: transparent !important;
+  font-size: 12px !important;
+}
+
+.claude-model-menu-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  color: var(--text-secondary);
+}
+
+.claude-model-menu-play {
+  flex: none;
+  font-size: 10px;
+  margin-right: 6px;
+  color: var(--accent);
+}
+
+.claude-model-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claude-model-menu-label.mono {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.claude-model-menu-arrow {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--text-tertiary);
+}
+
+.claude-model-effort {
+  flex: none;
+  font-size: 10.5px;
+  line-height: 1.5;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  margin-left: 6px;
+}
+
+.claude-model-effort.effort-max {
+  background: var(--accent);
+  color: #fff;
+}
+
+.claude-model-effort.effort-xhigh {
+  background: #7c5cd6;
+  color: #fff;
+}
+
+/* 二级子菜单：hover 展开（.open 由组件 state 控制，兼顾点击切换） */
+.claude-model-subwrap {
+  position: relative;
+}
+
+.claude-model-submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -4px;
+  margin-left: 2px;
+  min-width: 200px;
+  max-width: 320px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  z-index: 1300;
+  box-shadow: var(--shadow-menu);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.claude-model-subwrap.open .claude-model-submenu {
+  display: block;
+}

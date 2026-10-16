@@ -9,6 +9,7 @@ import { HistoryPanel } from "./components/claude-history/HistoryPanel";
 import { TabNav } from "./components/shell/TabNav";
 import { ActivityBar, type SidebarPanel } from "./components/shell/ActivityBar";
 import { effectiveProfilePath } from './utils/projectPath';
+import { containsClaudeRef } from './utils/claudeLaunch';
 import { ConfigEditDialog } from "./components/profile-config/ConfigEditDialog";
 import { ExtraParamsDialog } from "./components/profile-config/ExtraParamsDialog";
 import { ClaudeDecisionDialog } from "./components/shared/ClaudeDecisionDialog";
@@ -48,6 +49,7 @@ function restoreTabsOnce(): Promise<void> {
   }
   return restoreTabsPromise;
 }
+
 
 import type { ExtraParamMode, Profile } from './types';
 import { PRESET_THEMES } from './types';
@@ -288,7 +290,7 @@ function App() {
         ? [extraParams]
         : [...startupCommands, extraParams];
       const configuredClaude = configuredCommands
-        .some(command => /(^|[\s;&|])claude(?:\.(?:cmd|exe|ps1))?(?=$|\s)/i.test(command));
+        .some(command => /(^|[\s;&|])claude(?:\.(?:cmd|exe|ps1))?(?=$|\s)/i.test(command) || containsClaudeRef(command));
       const isClaudeTerminal = hookIdentified || configuredClaude;
       if (isClaudeTerminal) claudeTerminalIds.push(session.id);
     }

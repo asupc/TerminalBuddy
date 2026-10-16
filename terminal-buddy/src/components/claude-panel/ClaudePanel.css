@@ -725,3 +725,7 @@
   font-size: 12px;
 }
 
+
+/* 模型供应商 / 默认配置文件两段样式已拆至 segments/LlmProvidersSegment.css、
+ * segments/ClaudeSettingsSegment.css，共享壳与徽标见 segments/shared.css，
+ * 由各自 Segment 自引入（不依赖本面板是否挂载）。 */
