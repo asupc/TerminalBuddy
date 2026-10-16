@@ -46,7 +46,7 @@ const BotNotificationSettings = lazy(() => import('./BotNotificationSettings').t
 const HookSettings = lazy(() => import('./HookSettings').then(module => ({ default: module.HookSettings })));
 const WebManageSettings = lazy(() => import('../shared/WebManageDialog').then(module => ({ default: module.WebManageSettings })));
 const ExtraParamsSettings = lazy(() => import('./ExtraParamsSettings').then(module => ({ default: module.ExtraParamsSettings })));
-const LlmProvidersSettings = lazy(() => import('../claude-panel/segments/LlmProvidersSegment').then(module => ({ default: module.LlmProvidersSegment })));
+const LlmProvidersSettings = lazy(() => import('./LlmProvidersSettings').then(module => ({ default: module.LlmProvidersSettings })));
 const ClaudeSettingsEditor = lazy(() => import('../claude-panel/segments/ClaudeSettingsSegment').then(module => ({ default: module.ClaudeSettingsSegment })));
 
 interface SettingsPageProps {
@@ -109,7 +109,7 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
     id: 'ai',
     label: 'Claude & AI',
     sections: [
-      { id: 'llm-providers', label: '模型供应商', icon: Boxes, description: 'DeepSeek、Claude 官方、OpenAI 兼容端点配置与模型拉取', keywords: ['ai', 'provider', 'model', 'deepseek', 'anthropic', 'api'] },
+      { id: 'llm-providers', label: '模型供应商', icon: Boxes, description: 'Claude 与 Codex 供应商的端点、密钥与模型配置', keywords: ['ai', 'provider', 'model', 'deepseek', 'anthropic', 'codex', 'api'] },
       { id: 'claude-settings', label: 'Claude 默认配置', icon: FileJson, description: '用户级 settings.json 图形化配置、官方说明与快照备份', keywords: ['claude', 'settings.json', 'effort', 'token', 'context'] },
       { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit, description: '模型 Token 消耗量、调用会话折线与用量统计', keywords: ['usage', 'token', 'cost', 'stats'] },
     ],

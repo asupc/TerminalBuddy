@@ -1,0 +1,66 @@
+/* 设置页「模型供应商」分页外壳：Claude / Codex。内容样式见
+ * ../claude-panel/segments/LlmProvidersSegment.css。 */
+
+.llm-providers-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.llm-providers-tabs {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.llm-providers-tab {
+  min-height: 32px;
+  padding: 0 11px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--settings-text-secondary, var(--text-secondary));
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.llm-providers-tab:hover {
+  color: var(--settings-text-primary, var(--text-primary));
+  background: var(--settings-control-hover, var(--list-hover-bg));
+}
+
+.llm-providers-tab.active {
+  color: var(--settings-text-primary, var(--text-primary));
+  border-color: var(--settings-selected-border, var(--border));
+  background: var(--settings-selected-bg, var(--bg-tertiary));
+}
+
+.llm-providers-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.llm-providers-panel[hidden] {
+  display: none;
+}
+
+.llm-providers-empty {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 34px 16px;
+  text-align: center;
+  color: var(--settings-text-secondary, var(--text-secondary));
+  font-size: 13px;
+}
+
+.llm-providers-empty small {
+  display: block;
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--settings-text-muted, var(--text-tertiary));
+}
