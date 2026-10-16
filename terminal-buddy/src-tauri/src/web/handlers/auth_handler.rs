@@ -106,6 +106,7 @@ pub async fn status() -> Json<ApiStatusResponse> {
         port: settings.web_api_port,
         setup_required: !cfg!(feature = "desktop") && settings.web_api_password_hash.is_empty(),
         username: settings.web_api_username,
+        page_title: settings.web_page_title,
     })
 }
 

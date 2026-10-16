@@ -92,6 +92,9 @@ pub struct AppSettings {
     pub web_api_username: String,
     #[serde(default = "default_web_api_password_hash")]
     pub web_api_password_hash: String,
+    /// Docker 网页主页标题（浏览器标签 + 登录页大标题），空串 = 默认「TerminalBuddy」/「终端伙伴」。
+    #[serde(default)]
+    pub web_page_title: String,
     #[serde(default)]
     pub ssh_download_dir: Option<String>,
     #[serde(default = "default_server_monitor_interval")]
@@ -125,6 +128,7 @@ impl Default for AppSettings {
             web_api_port: 9600,
             web_api_username: "admin".to_string(),
             web_api_password_hash: String::new(),
+            web_page_title: String::new(),
             ssh_download_dir: None,
             server_monitor_interval: 3,
             web_api_share_sessions: false,

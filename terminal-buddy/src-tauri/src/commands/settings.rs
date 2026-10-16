@@ -471,5 +471,89 @@ pub fn get_web_api_status() -> serde_json::Value {
         "port": settings.web_api_port,
         "username": settings.web_api_username,
         "hasPassword": !settings.web_api_password_hash.is_empty(),
+        "pageTitle": settings.web_page_title,
     })
+}
+
+/// 网页主页标题的长度上限（按字符数计，中文与字母均算 1 个字符）。
+pub const WEB_PAGE_TITLE_MAX_CHARS: usize = 60;
+
+/// 规范化网页主页标题：去除首尾空白并校验长度；空串放行（表示恢复默认标题）。
+pub fn normalize_web_page_title(title: &str) -> Result<String, String> {
+    let trimmed = title.trim();
+    if trimmed.chars().count() > WEB_PAGE_TITLE_MAX_CHARS {
+        return Err(format!("主页标题最多 {} 个字符", WEB_PAGE_TITLE_MAX_CHARS));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Docker 网页端修改管理员登录密码：需验证旧密码，新密码复用统一的强度校验。
+/// bcrypt 的 verify 与 hash 都是 CPU 密集操作，与登录接口共用全局并发闸门并放到阻塞线程池执行。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn change_web_admin_password(
+    old_password: String,
+    new_password: String,
+) -> Result<(), String> {
+    if SettingsService::get_settings().web_api_password_hash.is_empty() {
+        return Err("管理员密码尚未初始化，请先在登录页完成创建".to_string());
+    }
+    crate::web::auth::validate_admin_password(&new_password)?;
+    let Some(_verify_slot) = crate::web::rate_limit::acquire_password_verify_slot().await else {
+        return Err(format!(
+            "服务器正忙，请在 {} 秒后重试",
+            crate::web::rate_limit::PASSWORD_VERIFY_RETRY_AFTER_SECS
+        ));
+    };
+    crate::runtime::async_runtime::spawn_blocking(move || {
+        // 阻塞线程内重读最新 hash，避免排队期间管理员被并发初始化/修改
+        let hash = SettingsService::get_settings().web_api_password_hash;
+        if hash.is_empty() {
+            return Err("管理员密码尚未初始化，请先在登录页完成创建".to_string());
+        }
+        match bcrypt::verify(&old_password, &hash) {
+            Ok(true) => {}
+            Ok(false) => return Err("旧密码不正确".to_string()),
+            Err(e) => return Err(format!("密码校验失败：{}", e)),
+        }
+        let new_hash = bcrypt::hash(&new_password, bcrypt::DEFAULT_COST)
+            .map_err(|e| format!("密码加密失败：{}", e))?;
+        SettingsService::mutate_settings(|s| s.web_api_password_hash = new_hash)
+    })
+    .await
+    .map_err(|e| format!("密码修改任务失败：{}", e))?
+}
+
+/// 保存 Docker 网页主页标题（浏览器标签 + 登录页大标题），空串恢复默认。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn save_web_page_title(title: String) -> Result<(), String> {
+    let normalized = normalize_web_page_title(&title)?;
+    SettingsService::mutate_settings(|s| s.web_page_title = normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_web_page_title_trims_input() {
+        assert_eq!(normalize_web_page_title("  我的终端  ").unwrap(), "我的终端");
+    }
+
+    #[test]
+    fn normalize_web_page_title_allows_empty_for_default() {
+        assert_eq!(normalize_web_page_title("   ").unwrap(), "");
+    }
+
+    #[test]
+    fn normalize_web_page_title_rejects_over_limit() {
+        // 61 个 ASCII 字符应被拒绝
+        let long = "a".repeat(WEB_PAGE_TITLE_MAX_CHARS + 1);
+        assert!(normalize_web_page_title(&long).is_err());
+        // 恰好 60 个字符（含中文，按字符数而非字节数计）应放行
+        let chinese = "终".repeat(WEB_PAGE_TITLE_MAX_CHARS);
+        assert!(normalize_web_page_title(&chinese).is_ok());
+        // 61 个中文（183 字节）应被拒绝
+        let chinese_long = "终".repeat(WEB_PAGE_TITLE_MAX_CHARS + 1);
+        assert!(normalize_web_page_title(&chinese_long).is_err());
+    }
 }

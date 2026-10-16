@@ -483,6 +483,7 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
           port: 9600,
           username: 'admin',
           hasPassword: true,
+          pageTitle: '',
         };
       case 'get_web_server_address':
         return 'http://192.168.10.88:9600';

@@ -16,8 +16,19 @@ export async function getWebApiStatus(): Promise<{
   port: number;
   username: string;
   hasPassword: boolean;
+  pageTitle: string;
 }> {
   return invoke('get_web_api_status');
+}
+
+/** Docker 网页端修改管理员登录密码：需验证旧密码，新密码至少 8 个字符。 */
+export async function changeWebAdminPassword(oldPassword: string, newPassword: string): Promise<void> {
+  return invoke('change_web_admin_password', { oldPassword, newPassword });
+}
+
+/** 保存 Docker 网页主页标题（浏览器标签 + 登录页大标题），空字符串恢复默认。 */
+export async function saveWebPageTitle(title: string): Promise<void> {
+  return invoke('save_web_page_title', { title });
 }
 
 export async function restartWebServer(): Promise<string> {

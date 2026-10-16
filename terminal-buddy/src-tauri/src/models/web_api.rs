@@ -30,6 +30,9 @@ pub struct ApiStatusResponse {
     pub port: u16,
     pub setup_required: bool,
     pub username: String,
+    /// Docker 网页主页标题（浏览器标签 + 登录页大标题），空串 = 默认标题。
+    #[serde(default)]
+    pub page_title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

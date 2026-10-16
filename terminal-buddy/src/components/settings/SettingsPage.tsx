@@ -14,6 +14,7 @@ import {
   Search,
   Server,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   SquareTerminal,
   Terminal,
@@ -30,6 +31,7 @@ import {
 } from '../../services/tauri';
 import { type AppSettings, getAppSettings, saveAppSettings } from '../../utils/settings';
 import { useAppStore } from '../../stores/appStore';
+import { isDockerClient } from '../../services/platform';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import './SettingsPage.css';
 
@@ -48,6 +50,7 @@ const WebManageSettings = lazy(() => import('../shared/WebManageDialog').then(mo
 const ExtraParamsSettings = lazy(() => import('./ExtraParamsSettings').then(module => ({ default: module.ExtraParamsSettings })));
 const LlmProvidersSettings = lazy(() => import('./LlmProvidersSettings').then(module => ({ default: module.LlmProvidersSettings })));
 const ClaudeSettingsEditor = lazy(() => import('../claude-panel/segments/ClaudeSettingsSegment').then(module => ({ default: module.ClaudeSettingsSegment })));
+const WebAuthSettings = lazy(() => import('./WebAuthSettings').then(module => ({ default: module.WebAuthSettings })));
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -63,6 +66,7 @@ type SettingsSectionId =
   | 'exclusions'
   | 'ai-usage'
   | 'ssh'
+  | 'web-auth'
   | 'hooks'
   | 'web-management'
   | 'bot-notifications'
@@ -103,6 +107,8 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'commands', label: '命令模板', icon: SquareTerminal, description: '常用终端命令模板库与自定义命令', keywords: ['template', 'cmd', 'snippet'] },
       { id: 'extra-params', label: '启动参数', icon: Terminal, description: '自定义启动参数预设与彩色角标', keywords: ['params', 'flag', 'preset'] },
       { id: 'ssh', label: 'SSH 设置', icon: Server, description: 'SSH 远程文件下载路径与服务器负载探针刷新', keywords: ['download', 'monitor', 'cpu', 'memory'] },
+      // Docker 网页版专属：非 Docker 环境在 visibleGroups 中过滤掉
+      { id: 'web-auth', label: '网页认证', icon: ShieldCheck, description: 'Docker 网页登录管理员密码与主页标题', keywords: ['web', 'docker', 'password', 'title', 'login', 'auth', '认证', '标题'] },
     ],
   },
   {
@@ -126,19 +132,25 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
   },
 ];
 
-const SECTIONS: ReadonlyArray<SettingsSection> = SECTION_GROUPS.flatMap(group => group.sections);
-
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [settings, setSettings] = useState<AppSettings>(getAppSettings);
+  // 「网页认证」分区仅 Docker 网页版显示；App 在 WebEntry 完成运行时探测后才渲染，此值在组件生命周期内恒定
+  const dockerClient = isDockerClient();
+  const visibleGroups = useMemo(
+    () => dockerClient ? SECTION_GROUPS
+      : SECTION_GROUPS.map(group => ({ ...group, sections: group.sections.filter(section => section.id !== 'web-auth') })),
+    [dockerClient],
+  );
+  const visibleSections = useMemo(() => visibleGroups.flatMap(group => group.sections), [visibleGroups]);
   const [dataPath, setDataPath] = useState('');
   const initialSection = useAppStore.getState().settingsDialogSection as SettingsSectionId | null;
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(
-    () => (initialSection && SECTIONS.some(section => section.id === initialSection) ? initialSection : 'behavior'),
+    () => (initialSection && visibleSections.some(section => section.id === initialSection) ? initialSection : 'behavior'),
   );
   const [vsCodeSupport, setVsCodeSupport] = useState<VsCodeTerminalSupport | null>(null);
   const [search, setSearch] = useState('');
   const [visitedSections, setVisitedSections] = useState<Set<SettingsSectionId>>(
-    () => new Set<SettingsSectionId>([initialSection && SECTIONS.some(section => section.id === initialSection) ? initialSection : 'behavior']),
+    () => new Set<SettingsSectionId>([initialSection && visibleSections.some(section => section.id === initialSection) ? initialSection : 'behavior']),
   );
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
 
@@ -160,8 +172,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
   const filteredGroups = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return SECTION_GROUPS;
-    return SECTION_GROUPS.map(group => {
+    if (!q) return visibleGroups;
+    return visibleGroups.map(group => {
       const matchedSections = group.sections.filter(section => {
         if (section.label.toLowerCase().includes(q)) return true;
         if (section.description?.toLowerCase().includes(q)) return true;
@@ -170,7 +182,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
       });
       return { ...group, sections: matchedSections };
     }).filter(group => group.sections.length > 0);
-  }, [search]);
+  }, [search, visibleGroups]);
 
   const flatVisibleSections = useMemo(() => {
     return filteredGroups.flatMap(group => group.sections);
@@ -281,6 +293,8 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         return <AiUsageSettings settings={settings} updateSetting={updateSetting} />;
       case 'ssh':
         return <SshSettings settings={settings} updateSetting={updateSetting} />;
+      case 'web-auth':
+        return <WebAuthSettings />;
       case 'hooks':
         return <HookSettings settings={settings} updateSetting={updateSetting} />;
       case 'web-management':
@@ -370,7 +384,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
           <div className="settings-body">
             <div className="settings-content">
-              {SECTIONS.filter(section => visitedSections.has(section.id)).map(section => {
+              {visibleSections.filter(section => visitedSections.has(section.id)).map(section => {
                 return (
                   <section
                     key={section.id}

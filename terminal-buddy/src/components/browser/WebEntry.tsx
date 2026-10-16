@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import App from '../../App';
 import { getToken, setToken, setServerPlatform, setWindowsBuildNumber, setDockerRuntime, setServerUsername } from '../../services/browser/connection';
 import './WebEntry.css';
@@ -10,8 +10,26 @@ export default function WebEntry() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [setupRequired, setSetupRequired] = useState(false);
+  // Docker 网页主页标题（管理员可在设置 → 终端与连接 → 网页认证中自定义），空串 = 默认
+  const [pageTitle, setPageTitle] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // 标题同时作用于浏览器标签页；登录成功走整页 reload，effect 会重跑，登录后依然生效
+  useEffect(() => {
+    document.title = pageTitle || 'TerminalBuddy';
+  }, [pageTitle]);
+
+  // 登出不刷新页面：登录卡片标题是旧快照，authenticated 跌落时重拉一次标题
+  const wasAuthenticated = useRef(Boolean(getToken()));
+  useEffect(() => {
+    if (authenticated || wasAuthenticated.current === authenticated) return;
+    wasAuthenticated.current = false;
+    fetch('/api/auth/status')
+      .then(response => response.json() as Promise<{ pageTitle?: string }>)
+      .then(status => setPageTitle(status.pageTitle || ''))
+      .catch(() => {});
+  }, [authenticated]);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,11 +44,12 @@ export default function WebEntry() {
     });
     const statusRequest = fetch('/api/auth/status').then(async response => {
       if (!response.ok) throw new Error('无法读取管理员初始化状态');
-      const status = await response.json() as { setupRequired?: boolean; username?: string };
+      const status = await response.json() as { setupRequired?: boolean; username?: string; pageTitle?: string };
       if (cancelled) return;
       setSetupRequired(Boolean(status.setupRequired));
       setUsername(status.username || 'admin');
       setServerUsername(status.username || 'admin');
+      setPageTitle(status.pageTitle || '');
       if (status.setupRequired) { setToken(''); setAuthenticated(false); }
     });
     void Promise.all([runtimeRequest, statusRequest]).then(() => {
@@ -68,7 +87,7 @@ export default function WebEntry() {
       finally { setBusy(false); }
     }}>
       <div className="web-login-logo">⌘</div>
-      <h1>{setupRequired ? '创建管理员密码' : '终端伙伴'}</h1>
+      <h1>{setupRequired ? '创建管理员密码' : (pageTitle || '终端伙伴')}</h1>
       <p>{setupRequired ? '首次启动，请为管理员设置密码。创建后即可进入完整工作界面。' : '登录后进入完整工作界面'}</p>
       <label>{setupRequired ? '管理员密码' : '密码'}<input type="password" autoComplete={setupRequired ? 'new-password' : 'current-password'} value={password} onChange={event => setPassword(event.target.value)} required disabled={busy || !ready} /></label>
       {setupRequired && <>

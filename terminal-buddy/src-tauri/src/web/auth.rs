@@ -131,7 +131,6 @@ pub fn load_or_create_jwt_secret() -> Result<String, String> {
     Ok(secret)
 }
 
-#[cfg(not(feature = "desktop"))]
 pub fn validate_admin_password(password: &str) -> Result<(), String> {
     if password.trim().is_empty() || password.chars().count() < 8 {
         return Err("管理员密码至少需要 8 个字符".to_string());
