@@ -1,0 +1,63 @@
+.codex-provider-description,
+.codex-provider-path {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.codex-provider-path {
+  color: var(--text-tertiary);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
+
+.codex-provider-error {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--danger, #e06c75);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.codex-provider-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.codex-provider-advanced summary {
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.codex-provider-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+  .codex-providers-settings .claude-segment-toolbar,
+  .codex-providers-settings .claude-segment-actions {
+    flex-wrap: wrap;
+  }
+
+  .codex-providers-settings .claude-form-row-inline {
+    flex-direction: column;
+  }
+
+  .llm-providers-panel .codex-providers-settings .llm-provider-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

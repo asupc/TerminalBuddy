@@ -8,6 +8,7 @@ export * from './claudeHistory';
 export * from './claudeHook';
 export * from './claudeMcp';
 export * from './clientData';
+export * from './codexProviders';
 export * from './clipboard';
 export * from './defaultTerminal';
 export * from './events';

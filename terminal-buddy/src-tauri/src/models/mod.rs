@@ -1,4 +1,5 @@
 pub mod bot;
+pub mod codex_provider;
 pub mod llm_provider;
 pub mod profile;
 pub mod profile_validation;

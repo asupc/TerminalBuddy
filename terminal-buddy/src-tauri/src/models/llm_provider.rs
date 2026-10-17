@@ -153,7 +153,7 @@ pub fn resolve_model_effort(model: &LlmModelConfig, default_effort: &str) -> Str
     }
 }
 
-fn validate_base_url(value: &str) -> Result<String, String> {
+pub(crate) fn validate_base_url(value: &str) -> Result<String, String> {
     let trimmed = value.trim().trim_end_matches('/').to_string();
     let url = reqwest::Url::parse(&trimmed).map_err(|_| "请输入有效的 HTTP 或 HTTPS API 地址".to_string())?;
     if !matches!(url.scheme(), "http" | "https")

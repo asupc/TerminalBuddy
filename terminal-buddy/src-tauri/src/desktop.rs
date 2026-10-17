@@ -450,6 +450,8 @@ pub fn run() {
             list_llm_providers, save_llm_provider, delete_llm_provider,
             set_default_llm_provider, update_llm_provider_order,
             fetch_llm_provider_models, list_claude_launch_targets,
+            get_codex_provider_state, save_codex_provider, activate_codex_provider,
+            delete_codex_provider, import_codex_provider, fetch_codex_provider_models,
             list_claude_assets, deploy_claude_asset, undeploy_claude_asset, sync_claude_asset,
             import_claude_asset, list_importable_claude_assets, delete_claude_asset,
             create_claude_asset, read_claude_asset, write_claude_asset,
