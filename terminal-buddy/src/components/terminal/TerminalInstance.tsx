@@ -1248,7 +1248,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     void Promise.all([
       listen<WebTerminalResizePayload>('terminal-web-resize', (event) => {
-        if (isBrowserClient()) return;
         const payload = event.payload;
         if (payload.terminalId !== terminalId || disposed) return;
 
@@ -1266,7 +1265,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         try { terminal.refresh(0, terminal.rows - 1); } catch { /* renderer may be disposing */ }
       }),
       listen<string>('terminal-web-takeover-ended', (event) => {
-        if (isBrowserClient()) return;
         if (event.payload !== terminalId || disposed) return;
 
         useAppStore.getState().setTerminalWebTakeover(terminalId, false);

@@ -36,7 +36,7 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
   const goBack = () => setView({ screen: 'nav' });
 
   // 本端能否真正关闭这个会话：仅 Web 池里手机端自己创建的（creator === 'mobile'，
-  // 旧后端无该字段时视为可关）。电脑端创建的会话手机端只能「断开查看」。
+  // 旧后端无该字段时视为可关）。电脑端创建的会话手机端只能「断开接管」。
   const canClose =
     owner === 'web' && session?.creator !== 'desktop';
 
@@ -92,7 +92,7 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
         </div>
         {owner === 'pc' && <span className="owner-badge">PC 接管</span>}
         {owner === 'web' && session?.creator === 'desktop' && (
-          <span className="owner-badge">电脑会话</span>
+          <span className="owner-badge">接管中</span>
         )}
         <button
           className="icon-button"
@@ -126,7 +126,7 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
                 }}
               >
                 <Unplug size={17} />
-                {owner === 'pc' ? '断开接管' : '断开查看'}
+                断开接管
               </button>
             )}
           </div>

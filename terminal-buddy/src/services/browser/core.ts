@@ -13,7 +13,7 @@ const terminals = new Map<string, TerminalConnection>();
 export async function subscribeTerminal(id: string, callback: (output: string) => void): Promise<() => void> {
   let connection = terminals.get(id);
   if (!connection) {
-    connection = { socket: new WebSocket(socketUrl(`/ws/terminal/${encodeURIComponent(id)}`)), callbacks: new Set(), rows: 30, cols: 100, closed: false };
+    connection = { socket: new WebSocket(socketUrl(`/ws/terminal/${encodeURIComponent(id)}?viewport=1&takeover=0`)), callbacks: new Set(), rows: 30, cols: 100, closed: false };
     terminals.set(id, connection);
     attach(id, connection);
   }
@@ -30,7 +30,14 @@ function attach(id: string, connection: TerminalConnection): void {
   const socket = connection.socket;
   socket.onopen = () => socket.send(JSON.stringify({ type: 'resize', rows: connection.rows, cols: connection.cols }));
   socket.onmessage = event => {
-    const message = JSON.parse(String(event.data)) as { type: string; data?: string; message?: string };
+    const message = JSON.parse(String(event.data)) as { type: string; data?: string; message?: string; rows?: number; cols?: number; takeover?: boolean };
+    if (message.type === 'viewport') {
+      if (message.takeover) {
+        emitLocal('terminal-web-resize', { terminalId: id, rows: message.rows, cols: message.cols });
+      } else {
+        emitLocal('terminal-web-takeover-ended', id);
+      }
+    }
     if (message.type === 'output') connection.callbacks.forEach(callback => callback(message.data ?? ''));
     if (message.type === 'error') console.error(message.message);
     if (message.type === 'exited') { connection.closed = true; emitLocal('terminal-closed', id); }
@@ -40,7 +47,7 @@ function attach(id: string, connection: TerminalConnection): void {
     connection.retry = setTimeout(() => {
       // 重连时重置画面，再接收服务器滚动历史，避免显示两份输出。
       connection.callbacks.forEach(callback => callback('\x1bc'));
-      connection.socket = new WebSocket(socketUrl(`/ws/terminal/${encodeURIComponent(id)}`));
+      connection.socket = new WebSocket(socketUrl(`/ws/terminal/${encodeURIComponent(id)}?viewport=1&takeover=0`));
       attach(id, connection);
     }, 1500);
   };

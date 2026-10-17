@@ -183,6 +183,7 @@ pub struct TerminalInstance {
     /// 创建端设备（PC 桌面与电脑浏览器都记 Desktop）。仅用于 Web 池内的
     /// 关闭权限细分：手机端不能关电脑端创建的会话。
     pub creator: TerminalCreator,
+    takeover: crate::models::TerminalTakeover,
     pub extra_param_tag: Option<String>,
     pub extra_param_tag_color: Option<String>,
     /// 启动时使用的额外参数（快照，供 Web 端「以此配置新建终端」复用）
@@ -196,6 +197,33 @@ pub struct TerminalInstance {
 }
 
 impl TerminalInstance {
+    fn resize_viewport(
+        &mut self,
+        size: crate::models::TerminalSize,
+        notification: Option<(crate::models::TerminalViewport, &AppHandle)>,
+    ) -> Result<(), String> {
+        // 与回放快照、输出入队使用同一把锁，先通知网格，再转发该网格的输出。
+        let mut buffer = self.output_buffer.lock().unwrap_or_else(|e| e.into_inner());
+        if size.rows != self.current_rows || size.cols != self.current_cols {
+            self.backend.resize(size.rows, size.cols)?;
+            buffer.rows = size.rows;
+            buffer.cols = size.cols;
+            self.current_rows = size.rows;
+            self.current_cols = size.cols;
+        }
+        if let Some((viewport, app)) = notification {
+            app.state::<WebServiceState>().broadcast_viewport(&self.id, viewport);
+            if viewport.takeover {
+                let _ = app.emit("terminal-web-resize", serde_json::json!({
+                    "terminalId": self.id, "rows": size.rows, "cols": size.cols,
+                }));
+            } else {
+                let _ = app.emit("terminal-web-takeover-ended", &self.id);
+            }
+        }
+        Ok(())
+    }
+
     /// 后端进程 PID（供 Claude 会话发现等跨模块使用）
     pub(crate) fn process_id(&self) -> Option<u32> {
         self.backend.process_id()
@@ -1214,6 +1242,7 @@ impl TerminalService {
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
             current_cols: init_cols,
+            takeover: Default::default(),
         });
         creation.inserted = true;
         creation.stage = "init-commands";
@@ -1417,6 +1446,10 @@ impl TerminalService {
         let instance = instances
             .get_mut(id)
             .ok_or_else(|| TerminalAccessError::NotFound.to_string())?;
+        let requested = crate::models::TerminalSize::new(rows, cols);
+        if instance.takeover.desktop_resize(requested).is_none() {
+            return Ok(());
+        }
         let (new_rows, new_cols) = if allow_shrink {
             (rows, cols)
         } else {
@@ -1427,20 +1460,38 @@ impl TerminalService {
                 std::cmp::max(instance.current_cols, cols),
             )
         };
-        if new_rows != instance.current_rows || new_cols != instance.current_cols {
-            // 与订阅快照和输出入队共用缓冲锁，尺寸与对应输出一起记录。
-            let mut buffer = instance.output_buffer.lock().unwrap_or_else(|e| e.into_inner());
-            instance.backend.resize(new_rows, new_cols)?;
-            buffer.rows = new_rows;
-            buffer.cols = new_cols;
-            instance.current_rows = new_rows;
-            instance.current_cols = new_cols;
-            log_debug(&format!(
-                "[resize] id={} rows={} cols={} allow_shrink={}",
-                id, new_rows, new_cols, allow_shrink
-            ));
+        instance.resize_viewport(crate::models::TerminalSize::new(new_rows, new_cols), None)
+    }
+
+    /// 手机连接在首次 resize 时取得尺寸控制权；电脑连接只登记恢复尺寸。
+    pub fn resize_web_terminal(
+        &self, app: &AppHandle, id: &str, connection: &str,
+        rows: u16, cols: u16, mobile: bool,
+    ) -> Result<(), String> {
+        if !mobile {
+            return self.resize_terminal(id, rows, cols, true, TerminalActor::Web);
         }
+        self.authorize(id, TerminalActor::Web, TerminalAction::Resize)
+            .map_err(|error| error.to_string())?;
+        let mut instances = self.lock_instances();
+        let instance = instances.get_mut(id).ok_or_else(|| TerminalAccessError::NotFound.to_string())?;
+        let size = crate::models::TerminalSize::new(rows, cols);
+        let current = crate::models::TerminalSize::new(instance.current_rows, instance.current_cols);
+        let mut takeover = instance.takeover.clone();
+        takeover.mobile_resize(connection, size, current);
+        instance.resize_viewport(size, Some((crate::models::TerminalViewport { size, takeover: true }, app)))?;
+        instance.takeover = takeover;
         Ok(())
+    }
+
+    /// 与普通输出订阅数量无关：电脑仍在查看时，最后一个手机离开也必须恢复。
+    pub fn release_web_takeover(&self, app: &AppHandle, id: &str, connection: &str) {
+        let mut instances = self.lock_instances();
+        let Some(instance) = instances.get_mut(id) else { return; };
+        let Some(viewport) = instance.takeover.release(connection) else { return; };
+        if let Err(error) = instance.resize_viewport(viewport.size, Some((viewport, app))) {
+            eprintln!("[terminal] Failed to restore viewport for {}: {}", id, error);
+        }
     }
 
     /// 渲染流控回执。属于只读查看链路，因此按 `View` 授权：
@@ -1495,12 +1546,13 @@ impl TerminalService {
 
     pub fn subscribe_web_output(
         &self, id: &str, web: &WebServiceState, limit: usize,
-    ) -> Result<Option<(String, tokio::sync::mpsc::UnboundedReceiver<crate::services::web_service::OutputData>, Vec<TerminalReplayFrame>)>, TerminalAccessError> {
+    ) -> Result<Option<(String, tokio::sync::mpsc::UnboundedReceiver<crate::services::web_service::WebTerminalEvent>, Vec<TerminalReplayFrame>, crate::models::TerminalViewport)>, TerminalAccessError> {
         self.authorize(id, TerminalActor::Web, TerminalAction::View)?;
         let instances = self.lock_instances();
         let instance = instances.get(id).ok_or(TerminalAccessError::NotFound)?;
         let buffer = instance.output_buffer.lock().unwrap_or_else(|e| e.into_inner());
-        Ok(web.subscribe_within_limit(id, limit).map(|(subscription, receiver)| (subscription, receiver, buffer.replay_frames())))
+        let viewport = instance.takeover.viewport(crate::models::TerminalSize::new(instance.current_rows, instance.current_cols));
+        Ok(web.subscribe_within_limit(id, limit).map(|(subscription, receiver)| (subscription, receiver, buffer.replay_frames(), viewport)))
     }
 
     /// 关闭终端的唯一入口（含授权）。成功后由 `teardown_terminal` 释放资源，
@@ -1719,6 +1771,7 @@ impl TerminalService {
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
             current_cols: init_cols,
+            takeover: Default::default(),
         });
         finalize_terminal_creation(
             self,
@@ -1810,12 +1863,8 @@ pub fn resize_terminal(
     rows: u16,
     cols: u16,
     terminal_service: State<TerminalService>,
-    web_service_state: State<WebServiceState>,
 ) -> Result<(), String> {
-    if web_service_state.get_subscriber_count(&id) > 0 {
-        return Ok(());
-    }
-    // Without an active Web takeover, the desktop remains the primary viewer.
+    // 是否接管由手机连接控制，普通网页查看不能阻止桌面调整尺寸。
     terminal_service.resize_terminal(&id, rows, cols, true, TerminalActor::Pc)
 }
 

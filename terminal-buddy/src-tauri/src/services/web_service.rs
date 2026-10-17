@@ -1,8 +1,15 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
+use crate::models::TerminalViewport;
 
 pub type OutputData = Arc<str>;
+
+#[derive(Clone)]
+pub enum WebTerminalEvent {
+    Output(OutputData),
+    Viewport(TerminalViewport),
+}
 
 /// `unsubscribe` 的结果，供 WS 收尾判断是否需要发送 takeover-ended。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +24,7 @@ pub enum UnsubscribeOutcome {
 
 pub struct WebServiceState {
     pub output_subscribers:
-        Arc<Mutex<HashMap<String, Vec<(String, mpsc::UnboundedSender<OutputData>)>>>>,
+        Arc<Mutex<HashMap<String, Vec<(String, mpsc::UnboundedSender<WebTerminalEvent>)>>>>,
     next_subscriber_id: Arc<Mutex<u64>>,
 }
 
@@ -31,7 +38,7 @@ impl WebServiceState {
 
     fn lock_subscribers(
         &self,
-    ) -> std::sync::MutexGuard<'_, HashMap<String, Vec<(String, mpsc::UnboundedSender<OutputData>)>>>
+    ) -> std::sync::MutexGuard<'_, HashMap<String, Vec<(String, mpsc::UnboundedSender<WebTerminalEvent>)>>>
     {
         self.output_subscribers
             .lock()
@@ -54,7 +61,7 @@ impl WebServiceState {
         &self,
         terminal_id: &str,
         max_per_terminal: usize,
-    ) -> Option<(String, mpsc::UnboundedReceiver<OutputData>)> {
+    ) -> Option<(String, mpsc::UnboundedReceiver<WebTerminalEvent>)> {
         let sub_id = self.next_id();
         let (tx, rx) = mpsc::unbounded_channel();
         let mut subs = self.lock_subscribers();
@@ -107,6 +114,14 @@ impl WebServiceState {
     }
 
     pub fn broadcast(&self, terminal_id: &str, data: &Arc<str>) {
+        self.broadcast_event(terminal_id, WebTerminalEvent::Output(data.clone()));
+    }
+
+    pub fn broadcast_viewport(&self, terminal_id: &str, viewport: TerminalViewport) {
+        self.broadcast_event(terminal_id, WebTerminalEvent::Viewport(viewport));
+    }
+
+    fn broadcast_event(&self, terminal_id: &str, event: WebTerminalEvent) {
         let mut subs = self.lock_subscribers();
         let Some(senders) = subs.get_mut(terminal_id) else {
             return;
@@ -114,7 +129,7 @@ impl WebServiceState {
         let mut dead = false;
         for (_, tx) in senders.iter() {
             // Arc clone is cheap — no string copy per subscriber
-            if tx.send(data.clone()).is_err() {
+            if tx.send(event.clone()).is_err() {
                 dead = true;
             }
         }

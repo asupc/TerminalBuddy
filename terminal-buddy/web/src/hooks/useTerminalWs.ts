@@ -31,6 +31,7 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
   const disposedRef = useRef(false);
+  const suspendedRef = useRef(false);
   const exitedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   // 每次连接都需要首个 resize 才会收到历史；成功发送后也保留最新尺寸供重连。
@@ -49,7 +50,7 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
   }, []);
 
   const connect = useCallback(async () => {
-    if (!terminalId || disposedRef.current) return;
+    if (!terminalId || disposedRef.current || suspendedRef.current) return;
     const { token, logout, setConnectionFatal } = useStore.getState();
     // 建连前检查 JWT：明确过期就不要带着死 token 重试 5 次
     if (isTokenExpired(token)) {
@@ -58,7 +59,7 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
       return;
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws/terminal/${terminalId}?token=${token}&replay=1`);
+    const ws = new WebSocket(`${proto}//${location.host}/ws/terminal/${terminalId}?token=${token}&replay=1&takeover=1&viewport=1`);
     wsRef.current = ws;
 
     ws.onmessage = (e) => {
@@ -99,7 +100,7 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
       if (wsRef.current !== ws) return;
       wsRef.current = null;
       cbRef.current.onClose?.();
-      if (disposedRef.current || exitedRef.current) return;
+      if (disposedRef.current || suspendedRef.current || exitedRef.current) return;
 
       if (retryRef.current >= MAX_RETRIES) {
         // 重试耗尽：存终态，不再永久「正在重连」；UI 提供手动重试/重新登录
@@ -142,10 +143,30 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
   useEffect(() => {
     retryRef.current = 0;
     disposedRef.current = false;
+    suspendedRef.current = false;
     exitedRef.current = false;
     void connect();
+    // 手机关闭/离开页面时立即释放尺寸控制；从浏览器往返缓存返回后重新接管。
+    const onPageHide = () => {
+      suspendedRef.current = true;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
+      cbRef.current.onClose?.();
+    };
+    const onPageShow = () => {
+      if (!suspendedRef.current || disposedRef.current || exitedRef.current) return;
+      suspendedRef.current = false;
+      retryRef.current = 0;
+      void connect();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('pageshow', onPageShow);
     return () => {
       disposedRef.current = true;
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('pageshow', onPageShow);
       if (timerRef.current) clearTimeout(timerRef.current);
       const ws = wsRef.current;
       wsRef.current = null;

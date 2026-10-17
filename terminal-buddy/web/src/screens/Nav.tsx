@@ -73,6 +73,10 @@ function canCloseSession(session: TerminalInfo): boolean {
   return session.owner === 'web' && session.creator !== 'desktop';
 }
 
+function isDesktopSession(session: TerminalInfo): boolean {
+  return session.owner === 'pc' || session.creator === 'desktop';
+}
+
 /** 会话行的呼吸灯底色：参考 PC 端 getWorkingDotColor；
  *  Web 暂未广播 working 状态，因此先按 profile.tabColor 计算底色，缺失时回退到主题强调色。 */
 function getSessionDotColor(
@@ -269,7 +273,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
   const openSession = (session: TerminalInfo) => {
     const name = session.profileName || getTypeInfo(session.terminalType).label;
-    if (session.owner === 'pc') {
+    if (isDesktopSession(session)) {
       setTakeover(session);
       return;
     }
@@ -349,7 +353,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         return;
       }
       if (action === 'open') {
-        if (session.owner === 'pc') setTakeover(session);
+        if (isDesktopSession(session)) setTakeover(session);
         else {
           const name = session.profileName || getTypeInfo(session.terminalType).label;
           setView({ screen: 'terminal', terminalId: session.id, profileName: name, loadingMode: session.loadingMode, owner: 'web' });
@@ -730,7 +734,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                         openSession(session);
                                       }
                                     }}
-                                    aria-label={`${name}，${session.owner === 'pc' ? '桌面端，接管' : '网页端，继续'}`}
+                                    aria-label={`${name}，${isDesktopSession(session) ? '电脑端，接管' : '网页端，继续'}`}
                                   >
                                     <span className="tree-arrow-placeholder" aria-hidden="true" />
                                     <span
@@ -1000,7 +1004,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       {sessionContextMenu && (() => {
         const session = sessions.find((s) => s.id === sessionContextMenu.sessionId);
         if (!session) return null;
-        const isPc = session.owner === 'pc';
+        const isTakeover = isDesktopSession(session);
         const canClose = canCloseSession(session);
         return (
           <div
@@ -1009,7 +1013,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
-            {isPc && (
+            {isTakeover && (
               <button
                 type="button"
                 className="context-menu-item"
@@ -1041,7 +1045,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
       {takeover && (
         <Dialog
-          title="接管 PC 端终端？"
+          title="接管电脑终端？"
           onClose={() => setTakeover(null)}
           footer={(
             <>
@@ -1056,7 +1060,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                     terminalId: session.id,
                     profileName: session.profileName || getTypeInfo(session.terminalType).label,
                     loadingMode: session.loadingMode,
-                    owner: 'pc',
+                    owner: session.owner,
                   });
                 }}
               >
@@ -1066,7 +1070,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           )}
         >
           <div className="web-dialog-desc">
-            「{takeover.profileName || getTypeInfo(takeover.terminalType).label}」正在电脑端运行。接管后终端会切到当前网页尺寸。
+            「{takeover.profileName || getTypeInfo(takeover.terminalType).label}」正在电脑端运行。接管后终端会按手机宽度排版，断开接管后恢复电脑尺寸，任务继续运行。
           </div>
         </Dialog>
       )}

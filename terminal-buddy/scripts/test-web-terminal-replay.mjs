@@ -10,6 +10,7 @@ const source = ts.transpileModule(
   { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } },
 ).outputText;
 const effects = [], timers = [], sockets = [], events = [];
+const lifecycle = new Map();
 const state = { token: 'fixture', reconnectNonce: 0, setConnectionFatal() {}, logout() {} };
 const useStore = Object.assign(selector => selector(state), { getState: () => state });
 
@@ -30,6 +31,10 @@ runInNewContext(source, {
   exports,
   WebSocket: Socket,
   location: { protocol: 'https:', host: 'terminal.example.com' },
+  window: {
+    addEventListener: (name, callback) => lifecycle.set(name, callback),
+    removeEventListener: name => lifecycle.delete(name),
+  },
   setTimeout: callback => { timers.push(callback); return timers.length; },
   clearTimeout() {},
   require: name => {
@@ -54,7 +59,7 @@ const hook = exports.useTerminalWs('terminal-id', {
 const cleanup = effects[0]();
 hook.sendResize(120, 30);
 sockets[0].open();
-assert.equal(sockets[0].url, 'wss://terminal.example.com/ws/terminal/terminal-id?token=fixture&replay=1');
+assert.equal(sockets[0].url, 'wss://terminal.example.com/ws/terminal/terminal-id?token=fixture&replay=1&takeover=1&viewport=1');
 assert.deepEqual(events, ['reset', 'resize'], 'Reset the old view before requesting history');
 assert.deepEqual(sockets[0].sent, [{ type: 'resize', cols: 120, rows: 30 }]);
 const frames = [{ data: 'wide screen', cols: 120, rows: 30 }, { data: 'phone', cols: 45, rows: 35 }];
@@ -72,8 +77,18 @@ sockets[1].open();
 assert.deepEqual(sockets[1].sent, [{ type: 'resize', cols: 45, rows: 35 }], 'Reconnect must resend the latest grid even without a new layout event');
 sockets[0].receive({ type: 'output', data: 'stale socket' });
 assert.deepEqual(output, ['live output']);
+lifecycle.get('pagehide')();
+assert.equal(sockets[1].readyState, 3, 'Leaving the mobile page closes its takeover socket immediately');
+assert.equal(timers.length, 1, 'Leaving the page does not schedule an automatic reconnect');
+lifecycle.get('pageshow')();
+await Promise.resolve();
+sockets[2].open();
+assert.deepEqual(sockets[2].sent, [{ type: 'resize', cols: 45, rows: 35 }], 'Returning to a cached page reclaims the latest mobile grid');
+hook.sendInput('中文输入\r');
+assert.deepEqual(sockets[2].sent.at(-1), { type: 'input', data: '中文输入\r' });
 cleanup();
-sockets[1].receive({ type: 'output', data: 'after unmount' });
+sockets[2].receive({ type: 'output', data: 'after unmount' });
 assert.deepEqual(output, ['live output']);
+assert.equal(lifecycle.size, 0, 'Unmount removes page lifecycle listeners');
 
 console.log('Web terminal replay checks passed: grid frames, legacy output, reset ordering, reconnect handshake and stale sockets.');

@@ -63,6 +63,8 @@ function connectEvents(): void {
   socket.onmessage = event => {
     try {
       const message = JSON.parse(String(event.data)) as { event: string; payload: unknown };
+      // 尺寸事件由终端自己的 WS 按输出顺序投递，避免跨连接迟到的事件抢回宽度。
+      if (message.event === 'terminal-web-resize' || message.event === 'terminal-web-takeover-ended') return;
       emitLocal(message.event, message.payload);
     } catch { console.warn('收到无法解析的服务端事件'); }
   };

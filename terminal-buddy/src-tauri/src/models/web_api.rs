@@ -133,6 +133,9 @@ pub enum WsClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum WsServerMessage {
+    /// 声明 viewport=1 的查看端按 PTY 实际尺寸渲染，避免电脑与手机抢宽度。
+    #[serde(rename = "viewport")]
+    Viewport { cols: u16, rows: u16, takeover: bool },
     #[serde(rename = "output")]
     Output { data: String },
     /// 按输出产生时的网格尺寸回放；仅发送给声明 replay=1 的客户端。

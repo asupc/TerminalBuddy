@@ -1,17 +1,20 @@
 use crate::commands::TerminalService;
 use crate::models::web_api::{MetaServerMessage, WsClientMessage, WsServerMessage};
-use crate::models::{TerminalAccessError, TerminalAction, TerminalActor, TerminalOwner};
-use crate::services::{UnsubscribeOutcome, WebServiceState};
+use crate::models::{TerminalAccessError, TerminalAction, TerminalActor, TerminalClientKind, TerminalOwner};
+use crate::services::WebServiceState;
+use crate::services::web_service::WebTerminalEvent;
 use crate::web::auth::verify_token;
+use crate::web::client_kind::client_kind_from_headers;
 use crate::web::server::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
+use axum::http::HeaderMap;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use crate::runtime::{Emitter, Manager};
+use crate::runtime::Manager;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{self, Instant, MissedTickBehavior};
 
@@ -60,6 +63,7 @@ pub async fn terminal_ws_handler(
     Path(terminal_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, axum::http::StatusCode> {
     let token = params
         .get("token")
@@ -81,13 +85,17 @@ pub async fn terminal_ws_handler(
         ts.terminal_owner(&terminal_id)
             .ok_or(axum::http::StatusCode::NOT_FOUND)?
     };
-    // 接入 PC 终端即「接管」：PTY 会切到手机尺寸（allow_shrink=true），电脑端
-    // 视图随之重排，因此收尾时要通知桌面端恢复。Web 自己的终端不算接管。
+    // 池归属只影响授权复核；Docker 的电脑会话也在 Web 池，接管按连接区分。
     let is_pc_takeover = owner == TerminalOwner::Pc;
     let replay_history = params.get("replay").is_some_and(|value| value == "1");
+    let mobile_takeover = params.get("takeover").map_or_else(
+        || client_kind_from_headers(&headers) == TerminalClientKind::Mobile,
+        |value| value == "1",
+    );
+    let viewport_aware = params.get("viewport").is_some_and(|value| value == "1");
 
     Ok(ws.on_upgrade(move |socket| {
-        handle_terminal_socket(socket, terminal_id, state, is_pc_takeover, replay_history)
+        handle_terminal_socket(socket, terminal_id, state, is_pc_takeover, replay_history, mobile_takeover, viewport_aware)
     }))
 }
 
@@ -97,6 +105,8 @@ async fn handle_terminal_socket(
     state: AppState,
     is_pc_takeover: bool,
     replay_history: bool,
+    mobile_takeover: bool,
+    viewport_aware: bool,
 ) {
     let Some(_connection_slot) = WsConnectionSlot::acquire() else {
         eprintln!(
@@ -114,7 +124,7 @@ async fn handle_terminal_socket(
     let subscription = state.app_handle.state::<TerminalService>().subscribe_web_output(
         &terminal_id, &web_state, MAX_PER_TERMINAL_WS_CONNECTIONS,
     ).ok().flatten();
-    let Some((sub_id, mut output_rx, mut history)) = subscription
+    let Some((sub_id, mut output_rx, mut history, viewport)) = subscription
     else {
         eprintln!(
             "[WS] Per-terminal connection limit reached for {}",
@@ -150,6 +160,14 @@ async fn handle_terminal_socket(
                 biased;
                 ready = &mut ready_rx, if !history_sent => {
                     if ready.is_ok() {
+                        if viewport_aware {
+                            let message = WsServerMessage::Viewport {
+                                rows: viewport.size.rows, cols: viewport.size.cols, takeover: viewport.takeover,
+                            };
+                            if let Ok(msg) = serde_json::to_string(&message) {
+                                if ws_sender.send(Message::Text(msg.into())).await.is_err() { break; }
+                            }
+                        }
                         let frames = std::mem::take(&mut history);
                         let message = if replay_history {
                             WsServerMessage::Replay { frames }
@@ -174,11 +192,21 @@ async fn handle_terminal_socket(
                 }
                 data = output_rx.recv(), if history_sent => {
                     match data {
-                        Some(data) => {
+                        Some(WebTerminalEvent::Output(data)) => {
                             // Manual JSON to avoid serde overhead on the hot path.
                             let msg = format!("{{\"type\":\"output\",\"data\":{}}}", serde_json::Value::String(data.to_string()));
                             if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                                 break;
+                            }
+                        }
+                        Some(WebTerminalEvent::Viewport(viewport)) => {
+                            if viewport_aware {
+                                let message = WsServerMessage::Viewport {
+                                    rows: viewport.size.rows, cols: viewport.size.cols, takeover: viewport.takeover,
+                                };
+                                if let Ok(msg) = serde_json::to_string(&message) {
+                                    if ws_sender.send(Message::Text(msg.into())).await.is_err() { break; }
+                                }
                             }
                         }
                         None => {
@@ -207,6 +235,7 @@ async fn handle_terminal_socket(
     // Forward WebSocket input → PTY
     let app = state.app_handle.clone();
     let tid = terminal_id.clone();
+    let connection_id = sub_id.clone();
     // 授权复核发生在外层循环，需要一份独立的错误通道句柄把原因告知手机端。
     let auth_error_tx = error_tx.clone();
     let mut recv_task = tokio::spawn(async move {
@@ -250,23 +279,12 @@ async fn handle_terminal_socket(
                             WsClientMessage::Resize { cols, rows } => {
                                 let cols = cols.clamp(1, 500);
                                 let rows = rows.clamp(1, 500);
-                                // 手机端允许缩小 PTY：让 PTY 列数跟随手机 xterm，
-                                // 否则 TUI（如 Claude Code）按更宽的列数绘制会在窄屏溢出。
-                                // 多端同看一终端时桌面视图会随之变化，属可接受折中。
+                                // 手机取得尺寸控制权，电脑在接管期间只登记恢复尺寸。
                                 let ts = app.state::<TerminalService>();
-                                match ts.resize_terminal(&tid, rows, cols, true, TerminalActor::Web)
-                                {
-                                    Ok(()) => {
-                                        let _ = app.emit(
-                                            "terminal-web-resize",
-                                            serde_json::json!({
-                                                "terminalId": tid,
-                                                "rows": rows,
-                                                "cols": cols,
-                                            }),
-                                        );
-                                    }
-                                    Err(error) => send_ws_error(&error_tx, error),
+                                if let Err(error) = ts.resize_web_terminal(
+                                    &app, &tid, &connection_id, rows, cols, mobile_takeover,
+                                ) {
+                                    send_ws_error(&error_tx, error);
                                 }
 
                                 // 首个 resize 到达 → 通知 send_task 可以回放历史输出了。
@@ -361,14 +379,9 @@ async fn handle_terminal_socket(
         }
     }
 
-    let outcome = web_state.unsubscribe(&terminal_id, &sub_id);
-    // 只有真正接管过 PC 终端、且本连接是最后一个订阅者时才通知桌面端恢复尺寸。
-    // `close_all` 之后 outcome 为 NotFound，终端已经关闭，无需再发恢复事件。
-    if is_pc_takeover && outcome == UnsubscribeOutcome::RemovedLast {
-        let _ = state
-            .app_handle
-            .emit("terminal-web-takeover-ended", &terminal_id);
-    }
+    web_state.unsubscribe(&terminal_id, &sub_id);
+    state.app_handle.state::<TerminalService>()
+        .release_web_takeover(&state.app_handle, &terminal_id, &sub_id);
     // 全局配额由 `_connection_slot` 在函数返回时归还，此处不再手工减计数。
 }
 
