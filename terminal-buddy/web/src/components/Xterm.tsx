@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { useTerminalWs } from '../hooks/useTerminalWs';
 import type { TerminalLoadingMode } from '../types';
 import InputBar from './InputBar';
+import { terminalPaste } from '../utils/terminalInput';
 import { PRESET_THEMES, type ColorTheme } from '../types';
 
 interface Props {
@@ -35,6 +36,7 @@ interface TouchScrollState {
  * - 手机触摸拖动桥接到 xterm 自带滚动管线，并补离手惯性
  */
 export default function Xterm({ terminalId, theme, loadingMode, onStateChange, onExited }: Props) {
+  const [inputTerminalId, setInputTerminalId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -88,6 +90,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       if (!term) return;
       const epoch = connectionEpochRef.current;
       replayingRef.current = true;
+      setInputTerminalId(null);
       let index = 0;
       const next = () => {
         if (termRef.current !== term || connectionEpochRef.current !== epoch) return;
@@ -100,6 +103,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
           return;
         }
         replayingRef.current = false;
+        setInputTerminalId(terminalId);
         fitViewportRef.current?.();
         if (bufRef.current.length) {
           const output = bufRef.current.join('');
@@ -111,6 +115,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       term.write('\x1bc', () => queueMicrotask(next));
     },
     onExited: () => {
+      setInputTerminalId(null);
       flushPending();
       writeOutput('\r\n\n[连接已结束]\r\n');
       onExitedRef.current?.();
@@ -124,10 +129,24 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       bufRef.current = [];
       // 旧服务端仍发送 output；同样先清空上次画面，避免历史叠加。
       termRef.current?.write('\x1bc');
+      setInputTerminalId(terminalId);
       onStateRef.current?.(true);
     },
-    onClose: () => onStateRef.current?.(false),
+    onClose: () => {
+      connectionEpochRef.current += 1;
+      replayingRef.current = false;
+      setInputTerminalId(null);
+      onStateRef.current?.(false);
+    },
   });
+
+  const sendComposerInput = useCallback((data: string, asText = false): boolean => {
+    const term = termRef.current;
+    if (!term || replayingRef.current) return false;
+    const sent = sendInput(asText ? terminalPaste(data, term.modes.bracketedPasteMode) : data);
+    if (sent) term.scrollToBottom();
+    return sent;
+  }, [sendInput]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -379,7 +398,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
   return (
     <>
       <div ref={containerRef} className="xterm-container" />
-      <InputBar onSend={sendInput} />
+      <InputBar key={terminalId} connected={inputTerminalId === terminalId} onSend={sendComposerInput} onText={(text) => sendComposerInput(text, true)} />
     </>
   );
 }

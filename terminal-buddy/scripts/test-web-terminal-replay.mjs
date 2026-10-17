@@ -57,6 +57,7 @@ const hook = exports.useTerminalWs('terminal-id', {
   onExited() {},
 });
 const cleanup = effects[0]();
+assert.equal(hook.sendInput('not connected'), false, 'Unsent input must not be acknowledged');
 hook.sendResize(120, 30);
 sockets[0].open();
 assert.equal(sockets[0].url, 'wss://terminal.example.com/ws/terminal/terminal-id?token=fixture&replay=1&takeover=1&viewport=1');
@@ -84,9 +85,10 @@ lifecycle.get('pageshow')();
 await Promise.resolve();
 sockets[2].open();
 assert.deepEqual(sockets[2].sent, [{ type: 'resize', cols: 45, rows: 35 }], 'Returning to a cached page reclaims the latest mobile grid');
-hook.sendInput('中文输入\r');
+assert.equal(hook.sendInput('中文输入\r'), true);
 assert.deepEqual(sockets[2].sent.at(-1), { type: 'input', data: '中文输入\r' });
 cleanup();
+assert.equal(hook.sendInput('after unmount'), false);
 sockets[2].receive({ type: 'output', data: 'after unmount' });
 assert.deepEqual(output, ['live output']);
 assert.equal(lifecycle.size, 0, 'Unmount removes page lifecycle listeners');

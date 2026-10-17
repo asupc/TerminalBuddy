@@ -190,7 +190,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   // 「会话」tab 各分组的折叠状态，默认全部展开（与 PC 端 TabNav 行为一致）
   const [collapsedSessionGroups, setCollapsedSessionGroups] = useState<Set<string>>(() => new Set());
-  // 「连接」tab 各分组的折叠状态：首次拿到 profileGroups 时全部折叠（按用户偏好），之后保留手动切换
+  // 「连接」tab 首次展开服务器工作区，其他分组折叠；之后保留手动切换
   const [collapsedProfileGroups, setCollapsedProfileGroups] = useState<Set<string>>(() => new Set());
   const profileGroupsInitRef = useRef(false);
 
@@ -264,11 +264,11 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     });
   }, [profiles, projects]);
 
-  // 「连接」tab 分组首次加载时全部折叠（仅首次，后续手动切换不重置）
+  // 仅初始化首次加载的折叠状态，后续刷新保留用户的展开/折叠操作。
   useEffect(() => {
     if (profileGroupsInitRef.current || profileGroups.length === 0) return;
     profileGroupsInitRef.current = true;
-    setCollapsedProfileGroups(new Set(profileGroups.map((g) => g.name)));
+    setCollapsedProfileGroups(new Set(profileGroups.filter((g) => g.name !== '服务器工作区').map((g) => g.name)));
   }, [profileGroups]);
 
   const openSession = (session: TerminalInfo) => {

@@ -1,8 +1,11 @@
 import { useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { CornerDownLeft, Send, Trash2 } from 'lucide-react';
+import { diffTerminalInput } from '../utils/terminalInput';
 
 interface Props {
-  onSend: (data: string) => void;
+  connected: boolean;
+  onSend: (data: string) => boolean;
+  onText: (text: string) => boolean;
 }
 
 /** 手机上难输入的常用键，点击直接发送转义序列（易输入的符号走输入框） */
@@ -29,13 +32,12 @@ const SPECIAL_KEYS: { label: string; data: string; mode?: 'insert' }[] = [
   { label: '_', data: '_', mode: 'insert' },
 ];
 
-/**
- * 「先输入后发送」输入栏：写完一行点发送（默认补回车）；
- * + 特殊键芯片直接发转义序列。规避手机 IME 逐键捕获问题。
- */
-export default function InputBar({ onSend }: Props) {
+/** 输入即同步到终端；中文候选确认后同步，发送按钮只提交 Enter。 */
+export default function InputBar({ connected, onSend, onText }: Props) {
   const [value, setValue] = useState('');
-  const [autoEnter, setAutoEnter] = useState(true);
+  const valueRef = useRef('');
+  const syncedRef = useRef('');
+  const composingRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const inputId = useId();
 
@@ -44,27 +46,92 @@ export default function InputBar({ onSend }: Props) {
     element.style.height = `${Math.min(element.scrollHeight, 112)}px`;
   };
 
-  const submit = () => {
-    if (!value) return;
-    const text = value;
-    onSend(text + (autoEnter ? '\r' : ''));
+  const syncInput = (next: string): boolean => {
+    if (!connected || composingRef.current) return false;
+    const { erase, text } = diffTerminalInput(syncedRef.current, next);
+    if (erase) {
+      if (!onSend('\x7f'.repeat(erase))) return false;
+      syncedRef.current = Array.from(syncedRef.current).slice(0, -erase).join('');
+    }
+    if (text && !onText(text)) return false;
+    syncedRef.current = next;
+    return true;
+  };
+
+  const updateValue = (next: string) => {
+    valueRef.current = next;
+    setValue(next);
+    syncInput(next);
+  };
+
+  // 提交或导航后只清空本地跟踪，不能再把已经提交的文本从终端删掉。
+  const resetInput = () => {
+    valueRef.current = '';
+    syncedRef.current = '';
     setValue('');
     if (inputRef.current) inputRef.current.style.height = '44px';
+  };
+
+  const submit = () => {
+    if (!syncInput(inputRef.current?.value ?? valueRef.current)) return;
+    if (!onSend('\r')) return;
+    resetInput();
     inputRef.current?.focus();
   };
 
   const insertAtCursor = (text: string) => {
     const input = inputRef.current;
-    if (!input) return;
+    if (!input || !connected || composingRef.current) return;
     const start = input.selectionStart;
     const end = input.selectionEnd;
-    setValue((current) => current.slice(0, start) + text + current.slice(end));
+    updateValue(valueRef.current.slice(0, start) + text + valueRef.current.slice(end));
     requestAnimationFrame(() => {
       const nextCursor = start + text.length;
       input.focus();
       input.setSelectionRange(nextCursor, nextCursor);
       resizeInput(input);
     });
+  };
+
+  const sendKey = (data: string) => {
+    if (data === '\r') {
+      submit();
+      return;
+    }
+    const input = inputRef.current;
+    if (input && valueRef.current && ['\x1b[D', '\x1b[C', '\x1b[H', '\x1b[F'].includes(data)) {
+      if (!connected || composingRef.current) return;
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+      const previous = Array.from(valueRef.current.slice(0, start)).pop() ?? '';
+      const next = Array.from(valueRef.current.slice(end))[0] ?? '';
+      const position = data === '\x1b[H' ? 0
+        : data === '\x1b[F' ? valueRef.current.length
+          : data === '\x1b[D' ? start === end ? start - previous.length : start
+            : start === end ? end + next.length : end;
+      input.focus();
+      input.setSelectionRange(position, position);
+      return;
+    }
+    if (data === '\x7f' && valueRef.current) {
+      const input = inputRef.current;
+      if (!input || composingRef.current) return;
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+      const previous = Array.from(valueRef.current.slice(0, start)).pop() ?? '';
+      const from = start === end ? start - previous.length : start;
+      updateValue(valueRef.current.slice(0, from) + valueRef.current.slice(end));
+      requestAnimationFrame(() => {
+        input.focus();
+        input.setSelectionRange(from, from);
+        resizeInput(input);
+      });
+      return;
+    }
+    if (!syncInput(valueRef.current) || !onSend(data)) return;
+    // 历史、补全和导航可能改变终端的编辑内容或光标，下一次输入从当前位置开始跟踪。
+    if (data !== '\x0c') resetInput();
+    inputRef.current?.focus();
   };
 
   const preserveInputFocus = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -74,22 +141,28 @@ export default function InputBar({ onSend }: Props) {
   return (
     <div className="input-bar">
       <div className="input-row">
-        <label className="sr-only" htmlFor={inputId}>命令输入</label>
+        <label className="sr-only" htmlFor={inputId}>终端同步输入</label>
         <div className="command-input-shell">
           <textarea
             id={inputId}
             ref={inputRef}
             className="command-line"
             value={value}
-            placeholder="输入命令…"
+            placeholder={connected ? '输入文字，实时同步到上方终端…' : '终端连接中…'}
+            disabled={!connected}
             rows={1}
             onChange={(e) => {
-              setValue(e.target.value);
+              updateValue(e.target.value);
               resizeInput(e.target);
+            }}
+            onCompositionStart={() => { composingRef.current = true; }}
+            onCompositionEnd={(e) => {
+              composingRef.current = false;
+              updateValue(e.currentTarget.value);
             }}
             onKeyDown={(e) => {
               // Safari 确认中文候选时可能已清掉 isComposing，但仍发送 keyCode 229。
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
+              if (e.key === 'Enter' && !e.shiftKey && !composingRef.current && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
                 e.preventDefault();
                 submit();
               }
@@ -105,25 +178,26 @@ export default function InputBar({ onSend }: Props) {
             type="button"
             onPointerDown={preserveInputFocus}
             onClick={() => {
-              setValue('');
+              if (composingRef.current) return;
+              updateValue('');
               if (inputRef.current) inputRef.current.style.height = '44px';
               inputRef.current?.focus();
             }}
-            disabled={!value}
-            title="清空输入"
-            aria-label="清空输入"
+            disabled={!connected || !value}
+            title="清空同步输入"
+            aria-label="清空同步输入"
           >
             <Trash2 size={18} />
           </button>
         </div>
         <button
-          className={`composer-button auto-enter${autoEnter ? ' active' : ''}`}
+          className="composer-button"
           type="button"
           onPointerDown={preserveInputFocus}
-          onClick={() => setAutoEnter((v) => !v)}
-          title={autoEnter ? '发送后自动回车' : '发送时不回车'}
-          aria-label={autoEnter ? '自动回车已开启' : '自动回车已关闭'}
-          aria-pressed={autoEnter}
+          onClick={() => insertAtCursor('\n')}
+          disabled={!connected}
+          title="插入换行"
+          aria-label="插入换行"
         >
           <CornerDownLeft size={19} />
         </button>
@@ -132,9 +206,9 @@ export default function InputBar({ onSend }: Props) {
           type="button"
           onPointerDown={preserveInputFocus}
           onClick={submit}
-          disabled={!value}
-          title="发送命令"
-          aria-label="发送命令"
+          disabled={!connected}
+          title="发送回车，提交终端输入"
+          aria-label="发送回车，提交终端输入"
         >
           <Send size={18} />
           <span>发送</span>
@@ -147,7 +221,8 @@ export default function InputBar({ onSend }: Props) {
             className={`key${k.mode === 'insert' ? ' symbol' : ''}`}
             type="button"
             onPointerDown={preserveInputFocus}
-            onClick={() => k.mode === 'insert' ? insertAtCursor(k.data) : onSend(k.data)}
+            onClick={() => k.mode === 'insert' ? insertAtCursor(k.data) : sendKey(k.data)}
+            disabled={!connected}
             aria-label={k.mode === 'insert' ? `插入 ${k.label}` : `发送 ${k.label}`}
             title={k.mode === 'insert' ? `插入 ${k.label}` : `发送 ${k.label}`}
           >

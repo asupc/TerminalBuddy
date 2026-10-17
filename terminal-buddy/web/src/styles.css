@@ -1019,11 +1019,6 @@ textarea:focus-visible {
   visibility: hidden;
 }
 
-.auto-enter.active {
-  border-color: rgba(101, 213, 165, 0.4);
-  background: rgba(101, 213, 165, 0.09);
-  color: var(--accent);
-}
 
 .send-button {
   min-width: 88px;

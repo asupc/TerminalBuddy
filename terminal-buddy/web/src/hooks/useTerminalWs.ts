@@ -177,7 +177,9 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
   const sendInput = useCallback((data: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'input', data }));
+      return true;
     }
+    return false;
   }, []);
 
   const sendResize = useCallback((cols: number, rows: number) => {

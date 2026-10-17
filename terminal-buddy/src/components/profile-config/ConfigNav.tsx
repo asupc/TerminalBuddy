@@ -14,6 +14,7 @@ import { open as openDirectory } from '@tauri-apps/plugin-dialog';
 import { saveProjects } from '../../services/tauri';
 import type { Project } from '../../types';
 import { effectiveProfilePath, normalizeProjectPath } from '../../utils/projectPath';
+import { isDockerClient } from '../../services/platform';
 import './ConfigNav.css';
 
 const TYPE_ICONS: Record<string, string> = {
@@ -90,7 +91,10 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     window.addEventListener('navigation-width-changed', syncWidth);
     return () => window.removeEventListener('navigation-width-changed', syncWidth);
   }, [isSidebarMode]);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set([PINNED_GROUP_ID]));
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set([
+    PINNED_GROUP_ID,
+    ...(isDockerClient() ? ['服务器工作区'] : []),
+  ]));
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; profileId: string;
   } | null>(null);
