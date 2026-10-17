@@ -14,12 +14,14 @@ const { terminalPaste } = helpers;
 
 function fixture() {
   const slots = [], frames = [], sent = [], submitted = [];
-  let cursor = 0, tree, writable = true, connected = true, draft = '已有内容 ';
+  let cursor = 0, tree, writable = true, connected = true, draft = '已有内容 ', focusCalls = 0;
+  const doc = { activeElement: null };
   const input = {
     value: '', selectionStart: 0, selectionEnd: 0, scrollHeight: 44, style: {},
-    focus() {},
+    focus() { focusCalls++; doc.activeElement = this; },
     setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
   };
+  doc.activeElement = input;
   // Model a terminal editor: bracketed paste inserts text, while Enter submits it.
   const send = data => {
     if (!writable) return false;
@@ -44,9 +46,10 @@ function fixture() {
   runInNewContext(transpile('../web/src/components/InputBar.tsx'), {
     exports: component,
     requestAnimationFrame: callback => frames.push(callback),
-    document: { activeElement: input },
+    document: doc,
     require: name => {
       if (name === 'react') return {
+        useEffect: () => {}, // DOM focus guards are covered by test-web-terminal-keyboard.mjs.
         useState: initial => {
           const index = cursor++;
           if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
@@ -62,6 +65,7 @@ function fixture() {
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (name === 'lucide-react') return {};
       if (name === '../utils/terminalInput') return helpers;
+      if (name === '../utils/terminalKeyboard') return {};
       throw new Error('Unexpected import: ' + name);
     },
   });
@@ -92,6 +96,9 @@ function fixture() {
   const click = label => {
     const props = find(node => node.type === 'button' && node.props['aria-label'] === label);
     assert.ok(!props.disabled, `Button ${label} must be enabled`);
+    let prevented = false;
+    props.onPointerDown?.({ preventDefault() { prevented = true; } });
+    if (!prevented) doc.activeElement = null;
     props.onClick();
     render();
   };
@@ -99,6 +106,9 @@ function fixture() {
   return {
     sent, submitted, input, textarea, change, click,
     get draft() { return draft; },
+    get focused() { return doc.activeElement === input; },
+    get focusCalls() { return focusCalls; },
+    blurInput() { doc.activeElement = null; },
     composeStart() { textarea().onCompositionStart(); },
     composeEnd(text) { input.value = text; textarea().onCompositionEnd({ currentTarget: input }); render(); },
     enter(nativeEvent = {}) {
@@ -208,6 +218,22 @@ function fixture() {
   assert.deepEqual(f.submitted, ['新的命令']);
   f.click('发送回车，提交终端输入');
   assert.deepEqual(f.submitted, ['新的命令', ''], 'Empty input can confirm a terminal prompt');
+}
+
+{
+  const f = fixture();
+  f.change('ab', 1);
+  f.click('插入 /');
+  assert.equal(f.focused, true, 'Toolbar buttons preserve focus while actively typing');
+  f.blurInput();
+  f.click('插入 /');
+  f.click('发送 ←');
+  f.click('发送 Backspace');
+  f.click('清空同步输入');
+  f.click('发送 Ctrl+C');
+  f.click('发送回车，提交终端输入');
+  assert.equal(f.focused, false, 'Buttons never reopen an input that has been blurred after dismissal or scrolling');
+  assert.equal(f.focusCalls, 0, 'Neither immediate handlers nor animation frames force composer focus');
 }
 
 assert.equal(terminalPaste('plain', false), 'plain');

@@ -1,6 +1,7 @@
-import { useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Send, Trash2 } from 'lucide-react';
 import { diffTerminalInput } from '../utils/terminalInput';
+import { installInputKeyboardGuard } from '../utils/terminalKeyboard';
 
 interface Props {
   connected: boolean;
@@ -41,6 +42,11 @@ export default function InputBar({ connected, onSend, onText }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const inputId = useId();
 
+  useEffect(() => {
+    const input = inputRef.current;
+    if (input) return installInputKeyboardGuard(input);
+  }, []);
+
   const resizeInput = (element: HTMLTextAreaElement) => {
     element.style.height = '44px';
     element.style.height = `${Math.min(element.scrollHeight, 112)}px`;
@@ -76,7 +82,6 @@ export default function InputBar({ connected, onSend, onText }: Props) {
     if (!syncInput(inputRef.current?.value ?? valueRef.current)) return;
     if (!onSend('\r')) return;
     resetInput();
-    inputRef.current?.focus();
   };
 
   const insertAtCursor = (text: string) => {
@@ -87,7 +92,6 @@ export default function InputBar({ connected, onSend, onText }: Props) {
     updateValue(valueRef.current.slice(0, start) + text + valueRef.current.slice(end));
     requestAnimationFrame(() => {
       const nextCursor = start + text.length;
-      input.focus();
       input.setSelectionRange(nextCursor, nextCursor);
       resizeInput(input);
     });
@@ -109,7 +113,6 @@ export default function InputBar({ connected, onSend, onText }: Props) {
         : data === '\x1b[F' ? valueRef.current.length
           : data === '\x1b[D' ? start === end ? start - previous.length : start
             : start === end ? end + next.length : end;
-      input.focus();
       input.setSelectionRange(position, position);
       return;
     }
@@ -122,7 +125,6 @@ export default function InputBar({ connected, onSend, onText }: Props) {
       const from = start === end ? start - previous.length : start;
       updateValue(valueRef.current.slice(0, from) + valueRef.current.slice(end));
       requestAnimationFrame(() => {
-        input.focus();
         input.setSelectionRange(from, from);
         resizeInput(input);
       });
@@ -131,7 +133,6 @@ export default function InputBar({ connected, onSend, onText }: Props) {
     if (!syncInput(valueRef.current) || !onSend(data)) return;
     // 历史、补全和导航可能改变终端的编辑内容或光标，下一次输入从当前位置开始跟踪。
     if (data !== '\x0c') resetInput();
-    inputRef.current?.focus();
   };
 
   const preserveInputFocus = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -180,7 +181,6 @@ export default function InputBar({ connected, onSend, onText }: Props) {
               if (composingRef.current) return;
               updateValue('');
               if (inputRef.current) inputRef.current.style.height = '44px';
-              inputRef.current?.focus();
             }}
             disabled={!connected || !value}
             title="清空同步输入"
