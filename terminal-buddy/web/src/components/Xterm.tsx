@@ -7,6 +7,7 @@ import { useTerminalWs } from '../hooks/useTerminalWs';
 import type { TerminalLoadingMode } from '../types';
 import InputBar from './InputBar';
 import { terminalPaste } from '../utils/terminalInput';
+import { installTouchKeyboardGuard } from '../utils/terminalKeyboard';
 import { PRESET_THEMES, type ColorTheme } from '../types';
 
 interface Props {
@@ -206,6 +207,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
         })
       : null;
     term.open(containerRef.current);
+    const removeTouchKeyboardGuard = installTouchKeyboardGuard(term);
     fit.fit();
     sendResize(term.cols, term.rows); // 首帧 resize → 触发后端回放历史输出
 
@@ -378,6 +380,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       replayingRef.current = false;
       fitViewportRef.current = null;
       da1Handler?.dispose();
+      removeTouchKeyboardGuard();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;

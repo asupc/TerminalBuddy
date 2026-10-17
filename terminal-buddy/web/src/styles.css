@@ -972,16 +972,11 @@ textarea:focus-visible {
   line-height: 20px;
 }
 
-.command-line::placeholder {
-  color: var(--text-muted);
-}
-
 .command-line:focus {
   border-color: var(--accent-strong);
   box-shadow: 0 0 0 2px rgba(101, 213, 165, 0.08);
 }
 
-.composer-button,
 .send-button {
   display: inline-flex;
   height: 44px;
@@ -994,12 +989,6 @@ textarea:focus-visible {
     border-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard),
     opacity var(--motion-fast) var(--ease-standard);
-}
-
-.composer-button {
-  width: 44px;
-  background: var(--surface-raised);
-  color: var(--text-soft);
 }
 
 .clear-command {
@@ -1018,7 +1007,6 @@ textarea:focus-visible {
 .clear-command:disabled {
   visibility: hidden;
 }
-
 
 .send-button {
   min-width: 88px;
@@ -1449,7 +1437,6 @@ textarea:focus-visible {
   .btn:hover:not(:disabled),
   .icon-button:hover,
   .clear-command:hover:not(:disabled),
-  .composer-button:hover:not(:disabled),
   .special-keys .key:hover {
     border-color: #414a48;
     background: var(--surface-hover);
@@ -1495,7 +1482,6 @@ textarea:focus-visible {
 .btn:active:not(:disabled),
 .icon-button:active,
 .clear-command:active:not(:disabled),
-.composer-button:active,
 .special-keys .key:active,
 .new-session-button:active:not(:disabled),
 .instance-row:active {

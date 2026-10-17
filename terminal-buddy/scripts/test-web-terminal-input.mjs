@@ -166,9 +166,8 @@ function fixture() {
   f.click('插入 /');
   assert.equal(f.textarea().value, 'a/b');
   assert.equal(f.draft, '已有内容 a/b', 'Symbol chips use the same live synchronization');
-  f.click('插入换行');
-  assert.equal(f.textarea().value, 'a/\nb');
-  assert.equal(f.draft, '已有内容 a/\rb');
+  f.change('a/\nb');
+  assert.equal(f.draft, '已有内容 a/\rb', 'Typing a newline still uses bracketed paste');
   assert.deepEqual(f.submitted, []);
 }
 {

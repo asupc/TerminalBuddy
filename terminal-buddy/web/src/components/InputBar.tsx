@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { CornerDownLeft, Send, Trash2 } from 'lucide-react';
+import { Send, Trash2 } from 'lucide-react';
 import { diffTerminalInput } from '../utils/terminalInput';
 
 interface Props {
@@ -148,7 +148,6 @@ export default function InputBar({ connected, onSend, onText }: Props) {
             ref={inputRef}
             className="command-line"
             value={value}
-            placeholder={connected ? '输入文字，实时同步到上方终端…' : '终端连接中…'}
             disabled={!connected}
             rows={1}
             onChange={(e) => {
@@ -190,17 +189,6 @@ export default function InputBar({ connected, onSend, onText }: Props) {
             <Trash2 size={18} />
           </button>
         </div>
-        <button
-          className="composer-button"
-          type="button"
-          onPointerDown={preserveInputFocus}
-          onClick={() => insertAtCursor('\n')}
-          disabled={!connected}
-          title="插入换行"
-          aria-label="插入换行"
-        >
-          <CornerDownLeft size={19} />
-        </button>
         <button
           className="send-button"
           type="button"
