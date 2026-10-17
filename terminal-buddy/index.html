@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TerminalBuddy</title>
+    <script>
+      // 请求桌面站点的手机、iPad 也进入 Web 管理共用的触屏界面。
+      // 此脚本只在独立网页版生效，先于完整界面的模块加载执行。
+      if ('%MODE%' === 'browser' && window.location.pathname === '/') {
+        var touchScreen = window.matchMedia('(pointer: coarse) and (hover: none)').matches;
+        var iPad = /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1;
+        if (touchScreen || iPad) {
+          window.location.replace('/m/' + window.location.search + window.location.hash);
+        }
+      }
+    </script>
     <style>
       /* 内联启动样式：HTML 解析首帧即为深色，消除 WebView2 在 CSS/JS 加载期间的白屏。
          React createRoot().render() 挂载时会自动替换 #root 内容，无需手动清理。 */

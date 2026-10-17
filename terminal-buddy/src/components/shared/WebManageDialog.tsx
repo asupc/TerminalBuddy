@@ -11,6 +11,7 @@ import {
   openUrl,
 } from '../../services/tauri';
 import { getAppSettings } from '../../utils/settings';
+import { isBrowserClient } from '../../services/platform';
 import './WebManageDialog.css';
 
 interface CustomEndpoint {
@@ -115,6 +116,7 @@ const replaceUrlEndpoint = (url: string, customEndpoint: CustomEndpoint | null):
 };
 
 export const WebManageSettings: FC = () => {
+  const browserClient = isBrowserClient();
   const [customEndpoint, setCustomEndpoint] = useState<CustomEndpoint | null>(null);
   const [customEndpointDraft, setCustomEndpointDraft] = useState('');
   const [customEndpointError, setCustomEndpointError] = useState('');
@@ -279,9 +281,12 @@ export const WebManageSettings: FC = () => {
   return (
     <div className="web-manage-settings">
           <div className="web-dialog-intro">
-            <p className="web-dialog-desc">启用后可通过浏览器远程访问终端</p>
+            <p className="web-dialog-desc">{browserClient
+              ? '手机打开当前服务地址即可进入手机界面，使用相同密码登录'
+              : '启用后可通过浏览器远程访问终端'}</p>
           </div>
 
+          {!browserClient && <>
           <div className="web-field web-field-inline">
             <label className="web-label" htmlFor="web-api-port">端口</label>
             <input
@@ -317,6 +322,7 @@ export const WebManageSettings: FC = () => {
               onChange={(e) => setWebPassword(e.target.value)}
             />
           </div>
+          </>}
 
           {serverRunning && (
             <div className="web-field web-field-inline">
@@ -352,15 +358,15 @@ export const WebManageSettings: FC = () => {
 
           {serverError && <div className="web-error">{serverError}</div>}
 
-          {!serverRunning ? (
+          {!serverRunning && !browserClient ? (
             <button className="web-btn primary" onClick={handleToggleServer} disabled={serverLoading}>
               {serverLoading ? '处理中…' : '启动服务'}
             </button>
-          ) : (
+          ) : serverRunning ? (
             <>
-              <button className="web-btn danger" onClick={handleToggleServer} disabled={serverLoading}>
+              {!browserClient && <button className="web-btn danger" onClick={handleToggleServer} disabled={serverLoading}>
                 {serverLoading ? '处理中…' : '停止服务'}
-              </button>
+              </button>}
 
               <div className="web-access">
                 <div className="web-access-title">扫码或点击下方链接免密访问</div>
@@ -390,7 +396,7 @@ export const WebManageSettings: FC = () => {
                 )}
               </div>
             </>
-          )}
+          ) : null}
     </div>
   );
 };

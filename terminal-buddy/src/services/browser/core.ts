@@ -65,6 +65,16 @@ export async function invoke<T>(command: string, args: Record<string, unknown> =
   }
   if (command === 'acknowledge_terminal_output') return undefined as T;
   if (command === 'get_windows_build_number') return windowsBuildNumber as T;
+  // 独立服务端的手机界面与桌面版 Web 管理共用 web/，地址使用浏览器实际访问的
+  // 域名和映射端口，避免把容器内部 IP、9600 端口或桌面主页放进二维码。
+  if (command === 'get_web_server_address') return new URL('/m/', window.location.href).toString() as T;
+  if (command === 'get_web_quick_access_url') {
+    const token = getToken();
+    if (!token) throw new Error('请先登录后再生成手机访问链接');
+    const url = new URL('/m/', window.location.href);
+    url.searchParams.set('token', token);
+    return url.toString() as T;
+  }
   if (command === 'window_toggle_maximize') {
     if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
     return undefined as T;

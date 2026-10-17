@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
+  // 同时支持桌面版根路径和 Docker 版 /m/，资源相对于入口页面加载。
+  base: './',
   plugins: [react()],
   resolve: {
     // web/ has its own dependency tree. Keep parent-resolved packages on this React instance.
@@ -17,9 +19,6 @@ export default defineConfig({
     },
   },
   build: {
-    // 相对路径 base：同一份产物既部署在 / （Windows 桌面版 include_dir! 内嵌），
-    // 也部署在 /m/（Docker 版手机 SPA 子路径），资源引用都能正确解析。
-    base: './',
     outDir: 'dist',
   },
 });

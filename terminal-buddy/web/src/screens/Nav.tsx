@@ -39,6 +39,8 @@ const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
   powershell: { icon: SquareTerminal, label: 'PowerShell' },
   pwsh: { icon: SquareTerminal, label: 'PowerShell 7' },
   cmd: { icon: Command, label: 'CMD' },
+  bash: { icon: SquareTerminal, label: 'Bash' },
+  sh: { icon: SquareTerminal, label: 'Shell' },
   ssh: { icon: KeyRound, label: 'SSH' },
   docker: { icon: Box, label: 'Docker' },
   k8s: { icon: Network, label: 'Kubernetes' },
@@ -50,6 +52,8 @@ const TYPE_BADGE: Record<TerminalType, string> = {
   powershell: 'PS',
   pwsh: 'PS7',
   cmd: 'CMD',
+  bash: 'BASH',
+  sh: 'SH',
   ssh: 'SSH',
   docker: 'DK',
   k8s: 'K8S',
@@ -115,7 +119,9 @@ function buildPropertyRows(profile: Profile): PropertyRow[] {
       break;
     case 'powershell':
     case 'pwsh':
-    case 'cmd': {
+    case 'cmd':
+    case 'bash':
+    case 'sh': {
       if (profile.startupPath?.trim()) rows.push({ label: '起始路径', value: profile.startupPath });
       const cmds = (profile.startupCommands || []).filter((c) => c.trim());
       if (cmds.length > 0) rows.push({ label: '启动命令', value: cmds.join('\n') });
@@ -233,6 +239,10 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
   const profileGroups = useMemo(() => {
     const grouped = new Map<string, Profile[]>();
+    // Docker 中登记的项目可以没有连接配置，仍能进入项目目录启动 Shell。
+    for (const project of projects) {
+      if (project.path) grouped.set(project.name, []);
+    }
     for (const profile of profiles) {
       if (profile.terminalType === 'mstsc') continue; // mstsc 仅桌面端，Web 无法启动
       const group = profile.group?.trim() || '默认';
@@ -248,7 +258,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       if (b.name === '默认') return 1;
       return a.name.localeCompare(b.name, 'zh-CN');
     });
-  }, [profiles]);
+  }, [profiles, projects]);
 
   // 「连接」tab 分组首次加载时全部折叠（仅首次，后续手动切换不重置）
   useEffect(() => {
@@ -515,10 +525,10 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   }, [contextMenu, profiles, matchPresets]);
 
   // ===== 项目启动 =====
-  // 与 PC 端 projectForItem 一致：同名项目且配了目录与启动命令，分组才可按项目启动
+  // 登记了目录即可启动；未配置启动命令时进入该目录的默认 Shell。
   const projectForGroup = useCallback(
     (groupName: string) =>
-      projects.find((p) => p.name === groupName && p.path && p.startupCommand?.trim()),
+      projects.find((p) => p.name === groupName && p.path),
     [projects],
   );
 
@@ -770,12 +780,12 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                 </div>
               )
             : tab === 'profiles'
-              ? profiles.length === 0
+              ? profileGroups.length === 0
               ? (
                 <div className="session-empty-state">
                   <Server aria-hidden="true" />
                   <strong>暂无连接配置</strong>
-                  <small>请在桌面端 Terminal Buddy 添加连接</small>
+                  <small>请在电脑端添加连接或登记项目</small>
                 </div>
               )
               : (

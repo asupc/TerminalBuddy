@@ -9,6 +9,10 @@
     <meta name="theme-color" content="#0c0f10" />
     <title>Terminal Buddy</title>
     <script>
+      // /m 与 /m/ 使用同一入口；补齐斜杠，确保相对资源仍从 /m/assets/ 加载。
+      if (window.location.pathname === '/m') {
+        window.location.replace('/m/' + window.location.search + window.location.hash);
+      }
       // 手机浏览器地址栏高度会跳动，用 visualViewport 高度写一个 CSS 变量 --vh。
       function setVH() {
         var vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;

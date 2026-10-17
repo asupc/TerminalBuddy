@@ -1,4 +1,4 @@
-export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
+export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
 export type TerminalLoadingMode = 'default' | 'vsCode';
 export type ExtraParamMode = 'append' | 'independent';
 
@@ -18,9 +18,9 @@ export interface Profile {
   terminalType: TerminalType;
   /** 启动命令（用于启动参数预设的 commandMatch 匹配） */
   startupCommands?: string[];
-  /** 起始路径（powershell / cmd） */
+  /** 本地 Shell 起始路径 */
   startupPath?: string;
-  /** 环境变量（powershell / cmd） */
+  /** 本地 Shell 环境变量 */
   environmentVariables?: Record<string, string>;
   /** 主题 id */
   colorTheme?: string;
