@@ -236,6 +236,12 @@ Tauri 命令（`commands/llm_provider.rs` 新文件，`commands/mod.rs` 重导�
     "ANTHROPIC_BASE_URL": "https://ai-proxy.company.com/v1",
     "ANTHROPIC_AUTH_TOKEN": "<解密后的 Key>", // 按供应商 authType 二选一
     "ANTHROPIC_MODEL": "claude-opus-5-5",
+    // 四档映射 + 子代理全部锚定所选模型（同 CLAUDE_CODE_EFFORT_LEVEL 的穿透理由）：
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "claude-opus-5-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-5-5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-5-5",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5-5",
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "200000", // contextWindow 缺省时整键省略
     "CLAUDE_CODE_EFFORT_LEVEL": "xhigh" // 所有档位都写：压制用户级 settings.json 残留的同名值
   },

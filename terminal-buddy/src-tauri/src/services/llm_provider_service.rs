@@ -460,6 +460,9 @@ fn api_root(base_url: &str) -> String {
 /// 生成临时 settings JSON。**永不含 `hooks` 键**（用户级 hook 照常生效）。
 /// 所有档位都写 `env.CLAUDE_CODE_EFFORT_LEVEL`：该 env 键优先级最高，用户级
 /// settings.json 里残留的同名值会穿透临时文件未写的键，把所选档位压回去。
+/// 同理，四档 `ANTHROPIC_DEFAULT_*_MODEL` 与 `CLAUDE_CODE_SUBAGENT_MODEL` 也全部
+/// 写成所选模型：残留值会把 /model 档位切换、后台任务（Haiku）、子代理引到
+/// 当前供应商上不存在的模型。
 /// `level=max` 时不写 `effortLevel` / `modelSettings`（文件键仅收录到 xhigh）。
 /// 上下文窗口两键互斥：配置了真实窗口写 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`
 /// （auto-compact 按真实值触发）；未配置写 `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_
@@ -477,6 +480,17 @@ fn build_temp_settings(
     env.insert("ANTHROPIC_BASE_URL".to_string(), json!(api_root(&provider.base_url)));
     env.insert(provider.auth_type.clone(), json!(decrypted_key));
     env.insert("ANTHROPIC_MODEL".to_string(), json!(model_id));
+    // 档位映射与子代理模型全部锚定到所选模型：这些 env 键同样按 key 合并，
+    // 用户级 settings.json 的残留值会穿透未写键（同 CLAUDE_CODE_EFFORT_LEVEL）。
+    for key in [
+        "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    ] {
+        env.insert(key.to_string(), json!(model_id));
+    }
     if context_window > 0 {
         env.insert(
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(),
@@ -839,6 +853,23 @@ mod tests {
         let settings = build_temp_settings(&provider, "secret", "claude-opus-9", 0, 0, "high");
         assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "secret");
         assert!(settings["env"].get("ANTHROPIC_AUTH_TOKEN").is_none());
+    }
+
+    #[test]
+    fn temp_settings_pins_tier_and_subagent_models_to_selection() {
+        let provider = test_provider();
+        let settings = build_temp_settings(&provider, "secret", "glm-4.7", 0, 0, "high");
+        // 档位映射与子代理全部锚定所选模型：残留的同名值会穿透未写键。
+        for key in [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ] {
+            assert_eq!(settings["env"][key], "glm-4.7", "键 {} 未锚定所选模型", key);
+        }
     }
 
     #[test]
