@@ -62,6 +62,13 @@ function getTypeInfo(type: string) {
   return TYPE_INFO[type as TerminalType] ?? FALLBACK_TYPE;
 }
 
+/** 手机端能否关闭该会话：仅 Web 池里手机端自己创建的（creator === 'mobile'）
+ * 可关；电脑端创建的（'desktop'）不可关。旧后端无 creator 字段时视为可关，
+ * 保持与既有行为平滑兼容。PC 会话本来就不可关（后端矩阵拦截）。 */
+function canCloseSession(session: TerminalInfo): boolean {
+  return session.owner === 'web' && session.creator !== 'desktop';
+}
+
 /** 会话行的呼吸灯底色：参考 PC 端 getWorkingDotColor；
  *  Web 暂未广播 working 状态，因此先按 profile.tabColor 计算底色，缺失时回退到主题强调色。 */
 function getSessionDotColor(
@@ -179,6 +186,11 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
   const longPressTimer = useRef<number | null>(null);
   const longPressFired = useRef(false);
+  // 会话行独立的长按状态（与 profile 行的模式一致），触屏长按 500ms 出菜单
+  const sessionLongPressTimer = useRef<number | null>(null);
+  const sessionLongPressFired = useRef(false);
+  // 关闭会话前的确认弹窗（关闭会杀掉 PTY，防误触）
+  const [confirmClose, setConfirmClose] = useState<TerminalInfo | null>(null);
 
   useEffect(() => {
     void loadExtraParamPresets();
@@ -292,7 +304,14 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     [setView],
   );
 
-  // 关闭会话：仅 Web 拥有的会话可关（后端会校验 owner），meta WS 收到推送后自动更新列表
+  // 关闭会话：先弹确认（会杀掉 PTY 里正在运行的进程）。仅手机端可关的会话
+  // （creator === 'mobile' 或旧后端的 web 会话）能走到这里；后端还会再校验一次。
+  // meta WS 收到推送后自动更新列表。
+  const requestCloseSession = useCallback((session: TerminalInfo) => {
+    if (!canCloseSession(session)) return;
+    setConfirmClose(session);
+  }, []);
+
   const handleCloseSession = useCallback(async (sessionId: string) => {
     setError('');
     try {
@@ -309,15 +328,14 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     setSessionContextMenu({ sessionId, x: Math.max(8, clampedX), y: Math.max(8, clampedY) });
   }, []);
 
-  // 会话右键菜单动作：「以此配置新建终端」需要先确保 profiles 已加载
+  // 会话右键/长按菜单动作：「以此配置新建终端」需要先确保 profiles 已加载
   const handleSessionMenuAction = useCallback(
     async (action: 'open' | 'new' | 'close', sessionId: string) => {
       setSessionContextMenu(null);
       const session = sessions.find((s) => s.id === sessionId);
       if (!session) return;
       if (action === 'close') {
-        if (session.owner !== 'web') return;
-        await handleCloseSession(sessionId);
+        requestCloseSession(session);
         return;
       }
       if (action === 'open') {
@@ -346,7 +364,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         extraParamTagColor: session.extraParamTagColor,
       });
     },
-    [sessions, profiles.length, handleCloseSession, loadProfiles, createNew, setView],
+    [sessions, profiles.length, requestCloseSession, loadProfiles, createNew, setView],
   );
 
   // 切换 profile 属性面板折叠
@@ -430,6 +448,33 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
   const handleProfileTouchMove = () => {
     clearLongPress();
+  };
+
+  // ===== 会话行长按菜单（触屏右键等价物）=====
+  const clearSessionLongPress = () => {
+    if (sessionLongPressTimer.current !== null) {
+      window.clearTimeout(sessionLongPressTimer.current);
+      sessionLongPressTimer.current = null;
+    }
+  };
+
+  const handleSessionTouchStart = (e: TouchEvent, sessionId: string) => {
+    sessionLongPressFired.current = false;
+    const touch = e.touches[0];
+    clearSessionLongPress();
+    sessionLongPressTimer.current = window.setTimeout(() => {
+      sessionLongPressFired.current = true;
+      if (navigator.vibrate) navigator.vibrate(10);
+      showSessionMenu(sessionId, touch.clientX, touch.clientY);
+    }, 500);
+  };
+
+  const handleSessionTouchEnd = () => {
+    clearSessionLongPress();
+  };
+
+  const handleSessionTouchMove = () => {
+    clearSessionLongPress();
   };
 
   // 点击外部 / 滚动 关闭菜单
@@ -654,11 +699,21 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                     style={{ paddingLeft: 20 }}
                                     role="button"
                                     tabIndex={0}
-                                    onClick={() => openSession(session)}
+                                    onClick={() => {
+                                      // 长按刚触发了菜单，拦截紧随其来的 click，避免又打开会话
+                                      if (sessionLongPressFired.current) {
+                                        sessionLongPressFired.current = false;
+                                        return;
+                                      }
+                                      openSession(session);
+                                    }}
                                     onContextMenu={(e) => {
                                       e.preventDefault();
                                       showSessionMenu(session.id, e.clientX, e.clientY);
                                     }}
+                                    onTouchStart={(e) => handleSessionTouchStart(e, session.id)}
+                                    onTouchEnd={handleSessionTouchEnd}
+                                    onTouchMove={handleSessionTouchMove}
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter' || e.key === ' ') {
                                         e.preventDefault();
@@ -682,15 +737,19 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                       </span>
                                     )}
                                     <span className="tab-nav-name">{name}</span>
-                                    {session.owner === 'web' && <span className="tab-nav-owner-badge">WEB</span>}
+                                    {session.owner === 'web' && (
+                                      <span className="tab-nav-owner-badge">
+                                        {session.creator === 'mobile' ? '手机' : 'WEB'}
+                                      </span>
+                                    )}
                                     <span className="tree-item-end">
-                                      {session.owner === 'web' && (
+                                      {canCloseSession(session) && (
                                         <button
                                           type="button"
                                           className="tab-nav-close"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            void handleCloseSession(session.id);
+                                            requestCloseSession(session);
                                           }}
                                           aria-label="关闭"
                                           title="关闭"
@@ -932,7 +991,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         const session = sessions.find((s) => s.id === sessionContextMenu.sessionId);
         if (!session) return null;
         const isPc = session.owner === 'pc';
-        const canClose = session.owner === 'web';
+        const canClose = canCloseSession(session);
         return (
           <div
             className="session-context-menu"
@@ -998,6 +1057,33 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         >
           <div className="web-dialog-desc">
             「{takeover.profileName || getTypeInfo(takeover.terminalType).label}」正在电脑端运行。接管后终端会切到当前网页尺寸。
+          </div>
+        </Dialog>
+      )}
+
+      {/* 关闭会话确认：关闭会杀掉 PTY 里正在运行的进程，误触代价高 */}
+      {confirmClose && (
+        <Dialog
+          title="关闭连接？"
+          onClose={() => setConfirmClose(null)}
+          footer={(
+            <>
+              <button className="btn" onClick={() => setConfirmClose(null)}>取消</button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  const session = confirmClose;
+                  setConfirmClose(null);
+                  void handleCloseSession(session.id);
+                }}
+              >
+                关闭
+              </button>
+            </>
+          )}
+        >
+          <div className="web-dialog-desc">
+            「{confirmClose.profileName || getTypeInfo(confirmClose.terminalType).label}」的会话进程将被终止，且无法恢复。确定关闭吗？
           </div>
         </Dialog>
       )}

@@ -200,14 +200,56 @@ pub fn build_router(state: AppState) -> Router {
     #[cfg(not(feature = "desktop"))]
     let router = router.route("/api/auth/setup", post(handlers::auth_handler::setup_admin));
 
-    #[cfg(any(debug_assertions, not(feature = "desktop")))]
+    // 桌面版 debug：直连场景服务 web/dist（手机 SPA），完整界面走 vite dev server。
+    #[cfg(all(debug_assertions, feature = "desktop"))]
     let router = {
         use tower_http::services::{ServeDir, ServeFile};
-        let default_dist = if cfg!(feature = "desktop") { "/../web/dist" } else { "/../dist-web" };
-        let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| format!("{}{}", env!("CARGO_MANIFEST_DIR"), default_dist));
+        let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| format!("{}/../web/dist", env!("CARGO_MANIFEST_DIR")));
         router.fallback_service(
             ServeDir::new(&dist).not_found_service(ServeFile::new(std::path::Path::new(&dist).join("index.html"))),
         )
+    };
+
+    // 独立服务端（Docker）：/ 服务完整界面（dist-web），/m/ 服务手机 SPA（web/dist），
+    // 访问 / 时按 User-Agent 分流——手机 UA 自动跳转手机版。静态资源互不冲突
+    // （手机 SPA 以相对路径 base 构建，其资源都在 /m/ 前缀下）。
+    #[cfg(not(feature = "desktop"))]
+    let router = {
+        use axum::response::{IntoResponse, Redirect};
+        use tower_http::services::{ServeDir, ServeFile};
+        let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| format!("{}/../dist-web", env!("CARGO_MANIFEST_DIR")));
+        let mobile_dist = std::env::var("TERMINAL_BUDDY_MOBILE_DIST").unwrap_or_else(|_| format!("{}/../web/dist", env!("CARGO_MANIFEST_DIR")));
+        let index_path = std::path::Path::new(&dist).join("index.html");
+        let root_entry = move |headers: axum::http::HeaderMap| {
+            let index_path = index_path.clone();
+            async move {
+                if crate::web::client_kind::client_kind_from_headers(&headers)
+                    == crate::models::TerminalClientKind::Mobile
+                {
+                    return Redirect::to("/m/").into_response();
+                }
+                match tokio::fs::read(&index_path).await {
+                    Ok(bytes) => {
+                        ([("content-type", "text/html; charset=utf-8")], bytes).into_response()
+                    }
+                    Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
+                }
+            }
+        };
+        router
+            // 精确路由优先于 fallback：/ 在这里按设备分流，其余静态资源仍走 fallback。
+            .route("/", get(root_entry))
+            .nest_service(
+                "/m",
+                ServeDir::new(&mobile_dist).not_found_service(ServeFile::new(
+                    std::path::Path::new(&mobile_dist).join("index.html"),
+                )),
+            )
+            .fallback_service(
+                ServeDir::new(&dist).not_found_service(ServeFile::new(
+                    std::path::Path::new(&dist).join("index.html"),
+                )),
+            )
     };
 
     #[cfg(all(not(debug_assertions), feature = "desktop"))]

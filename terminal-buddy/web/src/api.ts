@@ -98,6 +98,48 @@ export async function login(
   return res.json();
 }
 
+/** 服务端认证状态（无需登录）：首次部署 setupRequired=true 时走创建管理员流程 */
+export interface AuthStatus {
+  setupRequired: boolean;
+  username: string;
+  pageTitle: string;
+}
+
+/** 拉取认证状态：登录页用它取用户名（免输入）与自定义标题；失败时静默用默认值 */
+export async function getAuthStatus(): Promise<AuthStatus> {
+  const res = await fetch(BASE + '/auth/status');
+  if (!res.ok) throw new Error('无法读取服务状态');
+  const j = (await res.json()) as Partial<AuthStatus>;
+  return {
+    setupRequired: j.setupRequired === true,
+    username: j.username || 'admin',
+    pageTitle: j.pageTitle || '',
+  };
+}
+
+/** 首次创建管理员密码（仅独立服务端/Docker 版提供；桌面版后端恒 false 不会调用） */
+export async function setupAdmin(
+  password: string,
+  confirmPassword: string,
+): Promise<{ token: string; username: string }> {
+  const res = await fetch(BASE + '/auth/setup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password, confirmPassword }),
+  });
+  if (!res.ok) {
+    let msg = '创建管理员失败';
+    try {
+      const j = await res.json();
+      if (j.message) msg = j.message;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 export interface CreateTerminalOptions {
   extraStartupParams?: string;
   extraStartupMode?: ExtraParamMode;

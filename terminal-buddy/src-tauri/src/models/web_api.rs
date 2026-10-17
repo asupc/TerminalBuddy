@@ -1,4 +1,4 @@
-use crate::models::TerminalOwner;
+use crate::models::{TerminalCreator, TerminalOwner};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +97,9 @@ pub struct TerminalInfo {
     pub terminal_type: String,
     pub loading_mode: String,
     pub owner: TerminalOwner,
+    /// 创建端设备（"desktop" | "mobile"）：手机端据此只显示自己创建会话的
+    /// 关闭入口；电脑端忽略此字段（可关 Web 池全部）。
+    pub creator: TerminalCreator,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_param_tag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

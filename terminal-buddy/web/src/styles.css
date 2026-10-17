@@ -320,6 +320,12 @@ textarea:focus-visible {
   color: var(--text-muted);
 }
 
+/* 表单字段下方的小字提示（如「密码至少需要 8 个字符」） */
+.field-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .err {
   min-height: 20px;
   margin: -8px 0 -4px;
@@ -2102,6 +2108,17 @@ textarea:focus-visible {
 .tab-nav-close:hover {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+
+/* 触屏没有 hover：关闭按钮常显，避免「隐形但可点」的误触暗雷 */
+@media (hover: none) {
+  .tab-nav-close {
+    opacity: 0.55;
+  }
+
+  .tab-nav-close:active {
+    opacity: 1;
+  }
 }
 
 .tab-nav-owner-badge {

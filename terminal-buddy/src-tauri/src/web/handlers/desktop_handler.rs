@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use futures_util::SinkExt;
 use std::{collections::{HashMap, HashSet}, path::PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use crate::{commands::{TerminalService, TerminalCloseReason}, models::{TerminalActor, TerminalAction, TerminalOwner}, runtime::{Emitter, EventBus, Manager}, services::PathService, web::{auth::{ClaimsFromRequest, verify_token}, error::ApiError, server::AppState}};
+use crate::{commands::{TerminalService, TerminalCloseReason}, models::{TerminalActor, TerminalAction, TerminalClientKind, TerminalCreator, TerminalOwner}, runtime::{Emitter, EventBus, Manager}, services::PathService, web::{auth::{ClaimsFromRequest, verify_token}, client_kind::client_kind_from_headers, error::ApiError, server::AppState}};
 
 #[path = "desktop_dispatch.rs"]
 mod desktop_dispatch;
@@ -100,7 +100,11 @@ pub async fn job(State(_state): State<AppState>, _claims: ClaimsFromRequest, Pat
     }))
 }
 
-pub async fn invoke(State(state): State<AppState>, _claims: ClaimsFromRequest, Path(command): Path<String>, Json(args): Json<Value>) -> Result<Json<Value>, ApiError> {
+pub async fn invoke(State(state): State<AppState>, _claims: ClaimsFromRequest, headers: axum::http::HeaderMap, Path(command): Path<String>, Json(args): Json<Value>) -> Result<Json<Value>, ApiError> {
+    // 请求方设备类型：创建终端时记录 creator、关闭终端时做 Web 池内的
+    // 手机端关闭权限细分。完整界面（电脑浏览器）通常为 Desktop；手机 UA
+    // 直接访问 /api 时按 UA 判定。
+    let client_kind = client_kind_from_headers(&headers);
     check_arguments(&command, &args, &state.app_handle)?;
     let git_mutation = matches!(command.as_str(), "git_pull" | "git_push_with_options" | "git_checkout_branch" | "git_commit_paths");
     let long_operation = git_mutation || matches!(command.as_str(), "probe_claude_mcp" | "claude_history_rescan");
@@ -119,16 +123,16 @@ pub async fn invoke(State(state): State<AppState>, _claims: ClaimsFromRequest, P
             map.insert(id.clone(), job.clone());
         }
         tokio::spawn(async move {
-            let outcome = execute(&command, args, state.app_handle).await.map_err(|error| format!("{:?}", error));
+            let outcome = execute(&command, args, client_kind, state.app_handle).await.map_err(|error| format!("{:?}", error));
             if let Some(lease) = lease { lease.finish(&outcome); }
             if let Ok(mut slot) = job.outcome.lock() { *slot = Some(outcome); }
         });
         return Ok(Json(json!({"$jobId":id})));
     }
-    Ok(Json(execute(&command, args, state.app_handle).await?))
+    Ok(Json(execute(&command, args, client_kind, state.app_handle).await?))
 }
 
-async fn execute(command: &str, args: Value, app: crate::runtime::AppHandle) -> Result<Value, ApiError> {
+async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, app: crate::runtime::AppHandle) -> Result<Value, ApiError> {
     let value = match command {
         "start_terminal" | "start_blank_terminal" => {
             let request: TerminalRequest = serde_json::from_value(args).map_err(|e| ApiError::BadRequest(e.to_string()))?;
@@ -140,17 +144,19 @@ async fn execute(command: &str, args: Value, app: crate::runtime::AppHandle) -> 
                 let profile = crate::services::ProfileService::get_profile(&request.profile_id).map_err(ApiError::BadRequest)?;
                 if let Some(path) = crate::services::ProfileService::effective_startup_path(&profile) { scoped_file(&path)?; }
             }
+            // 创建端设备按请求 UA 记录（手机端创建的会话手机端才能关）
+            let creator = match client_kind { TerminalClientKind::Mobile => TerminalCreator::Mobile, TerminalClientKind::Desktop => TerminalCreator::Desktop };
             crate::runtime::async_runtime::spawn_blocking(move || {
                 let service = app.state::<TerminalService>();
                 let id = if blank { service.create_blank_terminal(
                     if request.terminal_type.is_empty() { crate::commands::terminal::default_terminal_type() } else { &request.terminal_type },
                     request.display_name.as_deref(), None, request.initial_rows, request.initial_cols,
                     request.startup_path.as_deref(), request.initial_command.as_deref(), request.extra_param_tag.as_deref(),
-                    request.extra_param_tag_color.as_deref(), app.clone(), TerminalOwner::Web,
+                    request.extra_param_tag_color.as_deref(), app.clone(), TerminalOwner::Web, creator,
                 ) } else { service.create_terminal(
                     &request.profile_id, request.display_name.as_deref(), request.extra_startup_params.as_deref(), request.extra_startup_mode.as_deref(),
                     request.initial_rows, request.initial_cols, request.startup_path.as_deref(), request.extra_param_tag.as_deref(), request.extra_param_tag_color.as_deref(),
-                    app.clone(), TerminalOwner::Web,
+                    app.clone(), TerminalOwner::Web, creator,
                 ) }.map_err(ApiError::BadRequest)?;
                 if let Some(info) = service.list_terminals_info_for(TerminalActor::Web).into_iter().find(|i| i.id == id) {
                     let _ = app.emit("terminal-created", info);
@@ -180,7 +186,7 @@ async fn execute(command: &str, args: Value, app: crate::runtime::AppHandle) -> 
             result(app.state::<TerminalService>().update_terminal_display_name(&argument::<String>(&args,"id")?, &argument::<String>(&args,"displayName")?, TerminalActor::Web))?
         }
         "close_terminal" => {
-            app.state::<TerminalService>().close_terminal(&app, &argument::<String>(&args,"id")?, TerminalActor::Web, TerminalCloseReason::WebClose)
+            app.state::<TerminalService>().close_terminal(&app, &argument::<String>(&args,"id")?, TerminalActor::Web, client_kind, TerminalCloseReason::WebClose)
                 .map_err(|e| ApiError::Forbidden(e.to_string()))?;
             Value::Null
         }

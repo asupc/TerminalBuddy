@@ -17,6 +17,9 @@ export default defineConfig({
     },
   },
   build: {
+    // 相对路径 base：同一份产物既部署在 / （Windows 桌面版 include_dir! 内嵌），
+    // 也部署在 /m/（Docker 版手机 SPA 子路径），资源引用都能正确解析。
+    base: './',
     outDir: 'dist',
   },
 });

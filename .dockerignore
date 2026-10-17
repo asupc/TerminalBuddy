@@ -8,7 +8,6 @@
 **/dist
 **/dist-web
 terminal-buddy/src-tauri/resources
-terminal-buddy/web
 terminal-buddy/plugins
 server-data
 **/server-data

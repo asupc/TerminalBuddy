@@ -1,5 +1,7 @@
 use crate::models::web_api::TerminalInfo;
 use crate::models::Profile;
+use crate::models::TerminalClientKind;
+use crate::models::TerminalCreator;
 use crate::models::TerminalLoadingMode;
 use crate::models::TerminalOwner;
 use crate::models::{
@@ -7,7 +9,8 @@ use crate::models::{
     validate_k8s_name, validate_ssh_host, validate_ssh_key_path, validate_ssh_user,
 };
 use crate::models::{
-    is_terminal_action_allowed, TerminalAccessError, TerminalAction, TerminalActor,
+    is_terminal_action_allowed, is_web_close_allowed_by_client, TerminalAccessError,
+    TerminalAction, TerminalActor,
 };
 use crate::services::ssh_session_service::SshSessionService;
 use crate::services::ClaudeHookService;
@@ -144,6 +147,9 @@ pub struct TerminalInstance {
     pub display_name: String,
     pub group_override: Option<String>,
     pub owner: TerminalOwner,
+    /// 创建端设备（PC 桌面与电脑浏览器都记 Desktop）。仅用于 Web 池内的
+    /// 关闭权限细分：手机端不能关电脑端创建的会话。
+    pub creator: TerminalCreator,
     pub extra_param_tag: Option<String>,
     pub extra_param_tag_color: Option<String>,
     /// 启动时使用的额外参数（快照，供 Web 端「以此配置新建终端」复用）
@@ -724,6 +730,7 @@ struct NewTerminalSpec {
     display_name: String,
     group_override: Option<String>,
     owner: TerminalOwner,
+    creator: TerminalCreator,
     extra_param_tag: Option<String>,
     extra_param_tag_color: Option<String>,
     extra_startup_params: Option<String>,
@@ -1012,6 +1019,7 @@ impl TerminalService {
             display_name: String,
             loading_mode: String,
             owner: TerminalOwner,
+            creator: TerminalCreator,
             group_override: Option<String>,
             extra_param_tag: Option<String>,
             extra_param_tag_color: Option<String>,
@@ -1028,6 +1036,7 @@ impl TerminalService {
                     display_name: inst.display_name.clone(),
                     loading_mode: inst.backend.loading_mode().to_string(),
                     owner: inst.owner.clone(),
+                    creator: inst.creator,
                     group_override: inst.group_override.clone(),
                     extra_param_tag: inst.extra_param_tag.clone(),
                     extra_param_tag_color: inst.extra_param_tag_color.clone(),
@@ -1045,6 +1054,7 @@ impl TerminalService {
                      display_name,
                      loading_mode,
                      owner,
+                     creator,
                      group_override,
                      extra_param_tag,
                      extra_param_tag_color,
@@ -1068,6 +1078,7 @@ impl TerminalService {
                         loading_mode,
                         profile_id,
                         owner,
+                        creator,
                         extra_param_tag,
                         extra_param_tag_color,
                         extra_startup_params,
@@ -1102,6 +1113,7 @@ impl TerminalService {
             display_name,
             group_override,
             owner,
+            creator,
             extra_param_tag,
             extra_param_tag_color,
             extra_startup_params,
@@ -1160,6 +1172,7 @@ impl TerminalService {
             display_name,
             group_override,
             owner,
+            creator,
             extra_param_tag,
             extra_param_tag_color,
             extra_startup_params,
@@ -1207,6 +1220,7 @@ impl TerminalService {
         extra_param_tag_color: Option<&str>,
         app: AppHandle,
         owner: TerminalOwner,
+        creator: TerminalCreator,
     ) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!(
@@ -1287,6 +1301,7 @@ impl TerminalService {
                 display_name,
                 group_override: None,
                 owner,
+                creator,
                 extra_param_tag: extra_param_tag.map(str::to_string),
                 extra_param_tag_color: extra_param_tag_color.map(str::to_string),
                 extra_startup_params: extra_startup_params.map(str::to_string),
@@ -1460,9 +1475,24 @@ impl TerminalService {
         app: &AppHandle,
         id: &str,
         actor: TerminalActor,
+        client_kind: TerminalClientKind,
         reason: TerminalCloseReason,
     ) -> Result<(), TerminalAccessError> {
         self.authorize(id, actor, TerminalAction::Close)?;
+        // Web 池内关闭权限细分：手机端不能关电脑端创建的会话（PC actor 的
+        // 关闭不经过此判定，桌面端行为不变）。
+        if actor == TerminalActor::Web {
+            let creator = {
+                let instances = self.lock_instances();
+                instances
+                    .get(id)
+                    .map(|instance| instance.creator)
+                    .ok_or(TerminalAccessError::NotFound)?
+            };
+            if !is_web_close_allowed_by_client(creator, client_kind) {
+                return Err(TerminalAccessError::DeniedMobileClose);
+            }
+        }
         // teardown 幂等：并发的自然退出可能已经先收尾，那同样算关闭成功。
         teardown_terminal(app, id, reason);
         Ok(())
@@ -1510,6 +1540,7 @@ impl TerminalService {
         extra_param_tag_color: Option<&str>,
         app: AppHandle,
         owner: TerminalOwner,
+        creator: TerminalCreator,
     ) -> Result<String, String> {
         let terminal_id = Uuid::new_v4().to_string();
         log_debug(&format!(
@@ -1597,6 +1628,7 @@ impl TerminalService {
                     .filter(|group| !group.is_empty())
                     .map(str::to_string),
                 owner,
+                creator,
                 extra_param_tag: extra_param_tag.map(str::to_string),
                 extra_param_tag_color: extra_param_tag_color.map(str::to_string),
                 extra_startup_params: None,
@@ -1641,6 +1673,7 @@ impl TerminalService {
             display_name: display_name.to_string(),
             group_override: None,
             owner: TerminalOwner::Pc,
+            creator: TerminalCreator::Desktop,
             extra_param_tag: None,
             extra_param_tag_color: None,
             extra_startup_params: None,
@@ -1709,6 +1742,7 @@ pub async fn start_terminal(
             extra_param_tag_color.as_deref(),
             app,
             TerminalOwner::Pc,
+            TerminalCreator::Desktop,
         )
     })
     .await
@@ -1777,6 +1811,7 @@ pub fn close_terminal(
         &app,
         &id,
         TerminalActor::Pc,
+        TerminalClientKind::Desktop,
         TerminalCloseReason::DesktopClose,
     ) {
         // 关闭幂等：终端可能刚好自然退出，桌面端不需要看到错误。
@@ -1837,6 +1872,7 @@ pub async fn start_blank_terminal(
             extra_param_tag_color.as_deref(),
             app,
             TerminalOwner::Pc,
+            TerminalCreator::Desktop,
         )
     })
     .await

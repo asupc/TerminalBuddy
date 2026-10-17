@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod claude_hook_server;
+pub mod client_kind;
 pub mod error;
 pub mod handlers;
 pub mod rate_limit;

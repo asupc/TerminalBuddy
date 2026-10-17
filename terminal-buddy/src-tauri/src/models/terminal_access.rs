@@ -2,8 +2,11 @@
 //!
 //! REST handler、WebSocket handler 和 Tauri command 都必须调用本模块，
 //! 不允许各自硬编码 owner 比较，否则权限矩阵会再次漂移。
+//!
+//! 此外 Web 池内部按设备细分关闭权限（`is_web_close_allowed_by_client`）：
+//! 手机端只能关闭手机端创建的会话，电脑端可关闭 Web 池内全部会话。
 
-use super::TerminalOwner;
+use super::{TerminalCreator, TerminalOwner};
 
 /// 发起终端操作的一侧。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,6 +15,14 @@ pub enum TerminalActor {
     Pc,
     /// Web 端（REST + WebSocket，含手机浏览器）
     Web,
+}
+
+/// Web 端发起方的设备类型（按请求 User-Agent 判定），仅用于 Web 池内的
+/// 关闭权限细分。不进入 `TerminalActor`：Pc/Web 的池语义与既有矩阵不变。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalClientKind {
+    Desktop,
+    Mobile,
 }
 
 /// 终端上的操作类别。权限按操作粒度判定，不再使用单一的「只读」布尔。
@@ -78,6 +89,18 @@ pub fn is_terminal_action_allowed(
     }
 }
 
+/// Web 池内的关闭权限细分：手机端只能关闭手机端创建的会话；
+/// 电脑端（浏览器）可关闭 Web 池内全部会话。
+///
+/// 仅在 owner = Web 的终端上调用（owner = Pc 的 Close 已由上方矩阵对 Web
+/// actor 恒定拒绝，无需本函数）。查看 / 输入 / 调整尺寸不受本规则限制。
+pub fn is_web_close_allowed_by_client(
+    creator: TerminalCreator,
+    kind: TerminalClientKind,
+) -> bool {
+    !(kind == TerminalClientKind::Mobile && creator == TerminalCreator::Desktop)
+}
+
 /// 授权失败的原因。调用方据此区分 404 与 403，不需要对错误文本做字符串匹配。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalAccessError {
@@ -88,6 +111,8 @@ pub enum TerminalAccessError {
         actor: TerminalActor,
         action: TerminalAction,
     },
+    /// 手机端尝试关闭电脑端创建的 Web 池会话（Web 池内关闭权限细分）。
+    DeniedMobileClose,
 }
 
 impl std::fmt::Display for TerminalAccessError {
@@ -96,6 +121,9 @@ impl std::fmt::Display for TerminalAccessError {
             Self::NotFound => f.write_str("终端不存在或已关闭"),
             Self::Denied { actor, action } => {
                 f.write_str(&terminal_action_denied_message(*actor, *action))
+            }
+            Self::DeniedMobileClose => {
+                f.write_str("该会话由电脑端创建，手机端仅可关闭自己创建的会话。")
             }
         }
     }
@@ -226,5 +254,34 @@ mod tests {
             denied.to_string(),
             terminal_action_denied_message(TerminalActor::Web, TerminalAction::Close)
         );
+    }
+
+    /// Web 池内关闭细分：手机端只能关手机创建的会话，电脑端全放行。
+    #[test]
+    fn mobile_client_cannot_close_desktop_created_web_terminals() {
+        for (creator, kind, expected) in [
+            (TerminalCreator::Desktop, TerminalClientKind::Desktop, true),
+            (TerminalCreator::Desktop, TerminalClientKind::Mobile, false),
+            (TerminalCreator::Mobile, TerminalClientKind::Desktop, true),
+            (TerminalCreator::Mobile, TerminalClientKind::Mobile, true),
+        ] {
+            assert_eq!(
+                is_web_close_allowed_by_client(creator, kind),
+                expected,
+                "creator={:?} kind={:?} 应为 {}",
+                creator,
+                kind,
+                expected
+            );
+        }
+    }
+
+    /// 手机关电脑创建会话的拒绝文案必须自成一类，不与「桌面端标签页」文案混淆。
+    #[test]
+    fn mobile_close_denial_renders_actionable_chinese_text() {
+        let message = TerminalAccessError::DeniedMobileClose.to_string();
+        assert!(message.contains("电脑端创建"));
+        assert!(message.contains("手机端"));
+        assert!(!message.contains("桌面端"));
     }
 }

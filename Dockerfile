@@ -8,6 +8,12 @@ RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY terminal-buddy/index.html terminal-buddy/tsconfig*.json terminal-buddy/vite.config.ts ./
 COPY terminal-buddy/src ./src
 RUN npm run build:web:desktop
+# 手机 SPA（独立依赖树，构建产物 web/dist，部署在 /m/ 供手机访问）
+WORKDIR /build/mobile
+COPY terminal-buddy/web/package.json terminal-buddy/web/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY terminal-buddy/web ./
+RUN npm run build
 
 FROM rust:1-bookworm AS backend
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev libssh2-1-dev && rm -rf /var/lib/apt/lists/*
@@ -27,8 +33,10 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 COPY --from=backend /build/src-tauri/target/release/terminal-buddy-server /usr/local/bin/terminal-buddy-server
 COPY --from=frontend /build/frontend/dist-web /opt/terminal-buddy/web
+COPY --from=frontend /build/mobile/dist /opt/terminal-buddy/mobile
 ENV TERMINAL_BUDDY_DATA_DIR=/data \
     TERMINAL_BUDDY_WEB_DIST=/opt/terminal-buddy/web \
+    TERMINAL_BUDDY_MOBILE_DIST=/opt/terminal-buddy/mobile \
     TERMINAL_BUDDY_WORKSPACE_DIR=/workspace \
     TERMINAL_BUDDY_PORT=9600 \
     TERMINAL_BUDDY_USERNAME=admin \

@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useStore } from '../store';
 import type { TerminalLoadingMode } from '../types';
 import Xterm from '../components/Xterm';
+import { Dialog } from '../components/Dialog';
 import { resolveTheme } from '../types';
 
 interface Props {
@@ -29,12 +30,24 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
   const [everConnected, setEverConnected] = useState(false);
   const [exited, setExited] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // 关闭连接前的确认弹窗（会杀掉 PTY 进程，防菜单误触）
+  const [confirmClose, setConfirmClose] = useState(false);
 
   const goBack = () => setView({ screen: 'nav' });
 
-  const closeTerminal = async () => {
+  // 本端能否真正关闭这个会话：仅 Web 池里手机端自己创建的（creator === 'mobile'，
+  // 旧后端无该字段时视为可关）。电脑端创建的会话手机端只能「断开查看」。
+  const canClose =
+    owner === 'web' && session?.creator !== 'desktop';
+
+  const closeTerminal = () => {
     setMenuOpen(false);
-    if (owner === 'web') {
+    if (canClose) setConfirmClose(true);
+  };
+
+  const performClose = async () => {
+    setConfirmClose(false);
+    if (canClose) {
       // 自己的终端：真正关闭（杀掉 PTY）
       try {
         await api.deleteTerminal(terminalId);
@@ -42,7 +55,6 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
         /* 终端可能已退出，忽略 */
       }
     }
-    // 接管 PC 端的终端：只断开（电脑端继续运行），不关闭
     goBack();
   };
 
@@ -79,6 +91,9 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
           </span>
         </div>
         {owner === 'pc' && <span className="owner-badge">PC 接管</span>}
+        {owner === 'web' && session?.creator === 'desktop' && (
+          <span className="owner-badge">电脑会话</span>
+        )}
         <button
           className="icon-button"
           onClick={() => setMenuOpen((v) => !v)}
@@ -94,15 +109,46 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
         <>
           <div className="terminal-menu-mask" onClick={() => setMenuOpen(false)} />
           <div className="terminal-menu">
-            <button
-              className="terminal-menu-danger"
-              onClick={closeTerminal}
-            >
-              <Unplug size={17} />
-              {owner === 'web' ? '关闭连接' : '断开接管'}
-            </button>
+            {canClose ? (
+              <button
+                className="terminal-menu-danger"
+                onClick={closeTerminal}
+              >
+                <Unplug size={17} />
+                关闭连接
+              </button>
+            ) : (
+              <button
+                className="terminal-menu-danger"
+                onClick={() => {
+                  setMenuOpen(false);
+                  goBack();
+                }}
+              >
+                <Unplug size={17} />
+                {owner === 'pc' ? '断开接管' : '断开查看'}
+              </button>
+            )}
           </div>
         </>
+      )}
+
+      {/* 关闭确认：与连接列表的确认弹窗保持一致 */}
+      {confirmClose && (
+        <Dialog
+          title="关闭连接？"
+          onClose={() => setConfirmClose(false)}
+          footer={(
+            <>
+              <button className="btn" onClick={() => setConfirmClose(false)}>取消</button>
+              <button className="btn primary" onClick={() => void performClose()}>关闭</button>
+            </>
+          )}
+        >
+          <div className="web-dialog-desc">
+            「{profileName}」的会话进程将被终止，且无法恢复。确定关闭吗？
+          </div>
+        </Dialog>
       )}
 
       <div className="term-body" style={{ background: theme.background }}>
