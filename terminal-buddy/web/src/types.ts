@@ -1,5 +1,12 @@
 export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
 export type TerminalLoadingMode = 'default' | 'vsCode';
+
+/** 输出产生时的网格；重放电脑终端时必须先恢复该尺寸。 */
+export interface TerminalReplayFrame {
+  data: string;
+  cols: number;
+  rows: number;
+}
 export type ExtraParamMode = 'append' | 'independent';
 
 /** 项目（与后端 commands/profile.rs Project 同构，来自 GET /api/projects） */

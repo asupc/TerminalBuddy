@@ -41,6 +41,9 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
   const pendingRef = useRef<string[]>([]);
   const rafRef = useRef<number | null>(null);
   const bufRef = useRef<string[]>([]);
+  const replayingRef = useRef(false);
+  const connectionEpochRef = useRef(0);
+  const fitViewportRef = useRef<(() => void) | null>(null);
   const onStateRef = useRef(onStateChange);
   onStateRef.current = onStateChange;
   const onExitedRef = useRef(onExited);
@@ -61,7 +64,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
   const writeOutput = useCallback(
     (data: string) => {
       const term = termRef.current;
-      if (!term) {
+      if (!term || replayingRef.current) {
         bufRef.current.push(data);
         return;
       }
@@ -80,12 +83,49 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
 
   const { sendInput, sendResize } = useTerminalWs(terminalId, {
     onOutput: writeOutput,
+    onReplay: (frames) => {
+      const term = termRef.current;
+      if (!term) return;
+      const epoch = connectionEpochRef.current;
+      replayingRef.current = true;
+      let index = 0;
+      const next = () => {
+        if (termRef.current !== term || connectionEpochRef.current !== epoch) return;
+        const frame = frames[index++];
+        if (frame) {
+          // 光标绝对定位、边框和自动换行均按这一段原来的尺寸解释。
+          term.resize(frame.cols, frame.rows);
+          // resize 会同步清空 xterm 的 write 队列，须等当前回调退出后再推进。
+          term.write(frame.data, () => queueMicrotask(next));
+          return;
+        }
+        replayingRef.current = false;
+        fitViewportRef.current?.();
+        if (bufRef.current.length) {
+          const output = bufRef.current.join('');
+          bufRef.current = [];
+          writeOutput(output);
+        }
+      };
+      // 排在旧 write 队列之后重置，防止重连前的未完成输出混入新快照。
+      term.write('\x1bc', () => queueMicrotask(next));
+    },
     onExited: () => {
       flushPending();
-      termRef.current?.writeln('\r\n\n[连接已结束]');
+      writeOutput('\r\n\n[连接已结束]\r\n');
       onExitedRef.current?.();
     },
-    onConnected: () => onStateRef.current?.(true),
+    onConnected: () => {
+      connectionEpochRef.current += 1;
+      replayingRef.current = false;
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      pendingRef.current = [];
+      bufRef.current = [];
+      // 旧服务端仍发送 output；同样先清空上次画面，避免历史叠加。
+      termRef.current?.write('\x1bc');
+      onStateRef.current?.(true);
+    },
     onClose: () => onStateRef.current?.(false),
   });
 
@@ -154,7 +194,9 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
     let lastCols = term.cols;
     let lastRows = term.rows;
     const doFit = () => {
-      if (!termRef.current || !fitRef.current) return;
+      if (!termRef.current || !fitRef.current || replayingRef.current) return;
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect || rect.width < 1 || rect.height < 1) return;
       const nextFontSize = getFontSize();
       if (nextFontSize !== lastFontSize) {
         lastFontSize = nextFontSize;
@@ -167,10 +209,13 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
         sendResize(lastCols, lastRows);
       }
     };
+    fitViewportRef.current = doFit;
     const ro = new ResizeObserver(() => doFit());
     ro.observe(containerRef.current);
 
     term.onData((d) => {
+      // 历史中的终端能力/光标查询已被回答，回放时不能再注入当前运行的程序。
+      if (replayingRef.current) return;
       // 粘贴行尾必须写 CR：ConPTY 会把输入流里的 LF 当成带 Ctrl 修饰的 Enter，
       // 在开启 kitty 键盘协议的 TUI（如 pi）里被编码成 CSI 13;5u（Ctrl+Enter=提交），
       // 导致粘贴内容被逐行提交、或 CSI-u 序列被字面插进消息文本。
@@ -310,6 +355,9 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       rafRef.current = null;
       pendingRef.current = [];
       bufRef.current = [];
+      connectionEpochRef.current += 1;
+      replayingRef.current = false;
+      fitViewportRef.current = null;
       da1Handler?.dispose();
       term.dispose();
       termRef.current = null;
@@ -319,7 +367,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
 
   // 地址栏/横屏变化时重新 fit（visualViewport 触发 doFit 经 ResizeObserver）
   useEffect(() => {
-    const onResize = () => fitRef.current?.fit();
+    const onResize = () => fitViewportRef.current?.();
     window.visualViewport?.addEventListener('resize', onResize);
     window.addEventListener('orientationchange', onResize);
     return () => {

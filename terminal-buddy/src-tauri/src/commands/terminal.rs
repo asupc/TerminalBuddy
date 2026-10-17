@@ -1,4 +1,4 @@
-use crate::models::web_api::TerminalInfo;
+use crate::models::web_api::{TerminalInfo, TerminalReplayFrame};
 use crate::models::Profile;
 use crate::models::TerminalClientKind;
 use crate::models::TerminalCreator;
@@ -65,16 +65,26 @@ fn target_shell() -> &'static str {
     if cfg!(windows) { "cmd.exe" } else { "sh" }
 }
 
+struct TerminalOutputChunk {
+    data: Arc<str>,
+    rows: u16,
+    cols: u16,
+}
+
 struct TerminalOutputBuffer {
-    chunks: VecDeque<Arc<str>>,
+    chunks: VecDeque<TerminalOutputChunk>,
+    rows: u16,
+    cols: u16,
     bytes: usize,
     desktop_attached: bool,
 }
 
 impl TerminalOutputBuffer {
-    fn new() -> Self {
+    fn new(rows: u16, cols: u16) -> Self {
         Self {
             chunks: VecDeque::new(),
+            rows,
+            cols,
             bytes: 0,
             desktop_attached: false,
         }
@@ -84,14 +94,18 @@ impl TerminalOutputBuffer {
     /// listener has completed its initial snapshot handshake.
     fn push(&mut self, output: Arc<str>) -> bool {
         self.bytes += output.len();
-        self.chunks.push_back(output);
+        self.chunks.push_back(TerminalOutputChunk {
+            data: output,
+            rows: self.rows,
+            cols: self.cols,
+        });
         while self.chunks.len() > TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS
             || self.bytes > TERMINAL_OUTPUT_BUFFER_MAX_BYTES
         {
             let Some(removed) = self.chunks.pop_front() else {
                 break;
             };
-            self.bytes -= removed.len();
+            self.bytes -= removed.data.len();
         }
         self.desktop_attached
     }
@@ -99,9 +113,28 @@ impl TerminalOutputBuffer {
     fn collect(&self) -> String {
         let mut output = String::with_capacity(self.bytes);
         for chunk in &self.chunks {
-            output.push_str(chunk);
+            output.push_str(&chunk.data);
         }
         output
+    }
+
+    /// 相邻输出尺寸相同时合并，连接时才复制字符串，PTY 热路径仍复用 Arc。
+    fn replay_frames(&self) -> Vec<TerminalReplayFrame> {
+        let mut frames: Vec<TerminalReplayFrame> = Vec::new();
+        for chunk in &self.chunks {
+            if let Some(last) = frames.last_mut() {
+                if last.rows == chunk.rows && last.cols == chunk.cols {
+                    last.data.push_str(&chunk.data);
+                    continue;
+                }
+            }
+            frames.push(TerminalReplayFrame {
+                data: chunk.data.to_string(),
+                rows: chunk.rows,
+                cols: chunk.cols,
+            });
+        }
+        frames
     }
 
     /// Atomically split startup output from subsequent live events. Output
@@ -1164,7 +1197,7 @@ impl TerminalService {
         creation.reader = Some(backend_reader);
 
         creation.stage = "insert-instance";
-        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
+        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new(init_rows, init_cols)));
         let backend = creation.backend.take().expect("backend 刚刚存入守卫");
         self.insert_instance(TerminalInstance {
             id: terminal_id.clone(),
@@ -1395,7 +1428,11 @@ impl TerminalService {
             )
         };
         if new_rows != instance.current_rows || new_cols != instance.current_cols {
+            // 与订阅快照和输出入队共用缓冲锁，尺寸与对应输出一起记录。
+            let mut buffer = instance.output_buffer.lock().unwrap_or_else(|e| e.into_inner());
             instance.backend.resize(new_rows, new_cols)?;
+            buffer.rows = new_rows;
+            buffer.cols = new_cols;
             instance.current_rows = new_rows;
             instance.current_cols = new_cols;
             log_debug(&format!(
@@ -1458,12 +1495,12 @@ impl TerminalService {
 
     pub fn subscribe_web_output(
         &self, id: &str, web: &WebServiceState, limit: usize,
-    ) -> Result<Option<(String, tokio::sync::mpsc::UnboundedReceiver<crate::services::web_service::OutputData>, String)>, TerminalAccessError> {
+    ) -> Result<Option<(String, tokio::sync::mpsc::UnboundedReceiver<crate::services::web_service::OutputData>, Vec<TerminalReplayFrame>)>, TerminalAccessError> {
         self.authorize(id, TerminalActor::Web, TerminalAction::View)?;
         let instances = self.lock_instances();
         let instance = instances.get(id).ok_or(TerminalAccessError::NotFound)?;
         let buffer = instance.output_buffer.lock().unwrap_or_else(|e| e.into_inner());
-        Ok(web.subscribe_within_limit(id, limit).map(|(subscription, receiver)| (subscription, receiver, buffer.collect())))
+        Ok(web.subscribe_within_limit(id, limit).map(|(subscription, receiver)| (subscription, receiver, buffer.replay_frames())))
     }
 
     /// 关闭终端的唯一入口（含授权）。成功后由 `teardown_terminal` 释放资源，
@@ -1666,7 +1703,7 @@ impl TerminalService {
             "[create-handoff] start, id={}, name={}, size={}x{}",
             terminal_id, display_name, init_cols, init_rows
         ));
-        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new()));
+        let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new(init_rows, init_cols)));
         self.insert_instance(TerminalInstance {
             id: terminal_id.clone(),
             profile_id: String::new(),
@@ -1879,3 +1916,46 @@ pub async fn start_blank_terminal(
     .map_err(|error| format!("终端后台启动失败：{}", error))?
 }
 
+
+#[cfg(test)]
+mod replay_tests {
+    use super::*;
+
+    #[test]
+    fn history_preserves_grid_changes_and_coalesces_adjacent_output() {
+        let mut buffer = TerminalOutputBuffer::new(30, 120);
+        buffer.push(Arc::from("wide "));
+        buffer.push(Arc::from("screen"));
+        buffer.rows = 35;
+        buffer.cols = 45;
+        buffer.push(Arc::from("phone"));
+        buffer.rows = 30;
+        buffer.cols = 120;
+        buffer.push(Arc::from("desktop again"));
+        let frames = buffer.replay_frames();
+        assert_eq!(frames.len(), 3);
+        assert_eq!((&*frames[0].data, frames[0].rows, frames[0].cols), ("wide screen", 30, 120));
+        assert_eq!((&*frames[1].data, frames[1].rows, frames[1].cols), ("phone", 35, 45));
+        assert_eq!((&*frames[2].data, frames[2].rows, frames[2].cols), ("desktop again", 30, 120));
+        // 旧协议和桌面端依旧得到原始输出，快照不受后续追加影响。
+        assert_eq!(buffer.snapshot_and_attach(), "wide screenphonedesktop again");
+        buffer.push(Arc::from("new output"));
+        assert_eq!(frames[2].data, "desktop again");
+    }
+
+    #[test]
+    fn bounded_history_retains_dimensions_of_remaining_chunks() {
+        let mut buffer = TerminalOutputBuffer::new(30, 120);
+        buffer.push(Arc::from("old wide screen"));
+        buffer.rows = 35;
+        buffer.cols = 45;
+        for _ in 0..TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS {
+            buffer.push(Arc::from("x"));
+        }
+        let frames = buffer.replay_frames();
+        assert_eq!(frames.len(), 1);
+        assert_eq!((frames[0].rows, frames[0].cols), (35, 45));
+        assert_eq!(frames[0].data.len(), TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS);
+        assert_eq!(buffer.bytes, TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS);
+    }
+}

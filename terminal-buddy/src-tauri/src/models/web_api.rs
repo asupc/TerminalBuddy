@@ -135,10 +135,21 @@ pub enum WsClientMessage {
 pub enum WsServerMessage {
     #[serde(rename = "output")]
     Output { data: String },
+    /// 按输出产生时的网格尺寸回放；仅发送给声明 replay=1 的客户端。
+    #[serde(rename = "replay")]
+    Replay { frames: Vec<TerminalReplayFrame> },
     #[serde(rename = "exited")]
     Exited { code: i32 },
     #[serde(rename = "error")]
     Error { message: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalReplayFrame {
+    pub data: String,
+    pub cols: u16,
+    pub rows: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,4 +178,23 @@ pub struct StartTerminalRequest {
     /// profile_id 为空时注入的启动命令（项目自定义启动命令 / claude --resume）
     #[serde(default)]
     pub startup_command: Option<String>,
+}
+
+#[cfg(test)]
+mod replay_protocol_tests {
+    use super::*;
+
+    #[test]
+    fn replay_carries_grid_dimensions_and_legacy_output_stays_compatible() {
+        let replay = WsServerMessage::Replay {
+            frames: vec![TerminalReplayFrame { data: "画面".into(), cols: 120, rows: 30 }],
+        };
+        assert_eq!(serde_json::to_value(replay).unwrap(), serde_json::json!({
+            "type": "replay", "frames": [{ "data": "画面", "cols": 120, "rows": 30 }],
+        }));
+        assert_eq!(serde_json::to_value(WsServerMessage::Output { data: "output".into() }).unwrap(),
+            serde_json::json!({ "type": "output", "data": "output" }));
+        assert_eq!(serde_json::to_value(WsServerMessage::Replay { frames: vec![] }).unwrap(),
+            serde_json::json!({ "type": "replay", "frames": [] }));
+    }
 }

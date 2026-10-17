@@ -84,9 +84,10 @@ pub async fn terminal_ws_handler(
     // 接入 PC 终端即「接管」：PTY 会切到手机尺寸（allow_shrink=true），电脑端
     // 视图随之重排，因此收尾时要通知桌面端恢复。Web 自己的终端不算接管。
     let is_pc_takeover = owner == TerminalOwner::Pc;
+    let replay_history = params.get("replay").is_some_and(|value| value == "1");
 
     Ok(ws.on_upgrade(move |socket| {
-        handle_terminal_socket(socket, terminal_id, state, is_pc_takeover)
+        handle_terminal_socket(socket, terminal_id, state, is_pc_takeover, replay_history)
     }))
 }
 
@@ -95,6 +96,7 @@ async fn handle_terminal_socket(
     terminal_id: String,
     state: AppState,
     is_pc_takeover: bool,
+    replay_history: bool,
 ) {
     let Some(_connection_slot) = WsConnectionSlot::acquire() else {
         eprintln!(
@@ -112,7 +114,7 @@ async fn handle_terminal_socket(
     let subscription = state.app_handle.state::<TerminalService>().subscribe_web_output(
         &terminal_id, &web_state, MAX_PER_TERMINAL_WS_CONNECTIONS,
     ).ok().flatten();
-    let Some((sub_id, mut output_rx, history)) = subscription
+    let Some((sub_id, mut output_rx, mut history)) = subscription
     else {
         eprintln!(
             "[WS] Per-terminal connection limit reached for {}",
@@ -121,8 +123,8 @@ async fn handle_terminal_socket(
         return;
     };
 
-    // Peek historical output — sent AFTER the frontend's first resize so escape
-    // sequences (cursor positioning, etc.) are formatted for the correct size.
+    // 等首个 resize 后再发送历史；支持回放的客户端先恢复每段历史原来的网格，
+    // 然后适配手机尺寸，避免把电脑的光标定位序列直接放进窄屏解析。
 
     // recv_task → send_task: error messages channel.
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -147,9 +149,20 @@ async fn handle_terminal_socket(
             tokio::select! {
                 biased;
                 ready = &mut ready_rx, if !history_sent => {
-                    if ready.is_ok() && !history.is_empty() {
-                        if let Ok(msg) = serde_json::to_string(&WsServerMessage::Output { data: history.clone() }) {
-                            let _ = ws_sender.send(Message::Text(msg.into())).await;
+                    if ready.is_ok() {
+                        let frames = std::mem::take(&mut history);
+                        let message = if replay_history {
+                            WsServerMessage::Replay { frames }
+                        } else {
+                            // 旧版手机、完整网页和桌面客户端保持原来的 output 协议。
+                            WsServerMessage::Output {
+                                data: frames.into_iter().map(|frame| frame.data).collect(),
+                            }
+                        };
+                        if let Ok(msg) = serde_json::to_string(&message) {
+                            if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+                                break;
+                            }
                         }
                     }
                     history_sent = true;

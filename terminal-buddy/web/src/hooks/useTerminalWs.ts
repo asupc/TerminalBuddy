@@ -1,9 +1,11 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useStore } from '../store';
 import { isTokenExpired, probeAuth } from '../api';
+import type { TerminalReplayFrame } from '../types';
 
 interface Callbacks {
   onOutput: (data: string) => void;
+  onReplay: (frames: TerminalReplayFrame[]) => void;
   onExited: (code: number) => void;
   onConnected?: () => void;
   onClose?: () => void;
@@ -31,7 +33,8 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
   const disposedRef = useRef(false);
   const exitedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const pendingResizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  // 每次连接都需要首个 resize 才会收到历史；成功发送后也保留最新尺寸供重连。
+  const latestSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const cbRef = useRef(cb);
   cbRef.current = cb;
   // 「立即重试」计数：递增时下面的 effect 依赖变化，重建连接
@@ -39,9 +42,8 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
 
   const flushPendingResize = useCallback(() => {
     const ws = wsRef.current;
-    if (ws?.readyState === WebSocket.OPEN && pendingResizeRef.current) {
-      const { cols, rows } = pendingResizeRef.current;
-      pendingResizeRef.current = null;
+    if (ws?.readyState === WebSocket.OPEN && latestSizeRef.current) {
+      const { cols, rows } = latestSizeRef.current;
       ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     }
   }, []);
@@ -56,7 +58,7 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
       return;
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws/terminal/${terminalId}?token=${token}`);
+    const ws = new WebSocket(`${proto}//${location.host}/ws/terminal/${terminalId}?token=${token}&replay=1`);
     wsRef.current = ws;
 
     ws.onmessage = (e) => {
@@ -64,6 +66,9 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
       try {
         const m = JSON.parse(e.data);
         switch (m.type) {
+          case 'replay':
+            cbRef.current.onReplay(m.frames);
+            break;
           case 'output':
             cbRef.current.onOutput(m.data);
             break;
@@ -84,8 +89,8 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
       if (wsRef.current !== ws || disposedRef.current) return;
       retryRef.current = 0;
       useStore.getState().setConnectionFatal(null);
-      flushPendingResize();
       cbRef.current.onConnected?.();
+      flushPendingResize();
     };
 
     ws.onclose = () => {
@@ -155,10 +160,9 @@ export function useTerminalWs(terminalId: string | null, cb: Callbacks) {
   }, []);
 
   const sendResize = useCallback((cols: number, rows: number) => {
+    latestSizeRef.current = { cols, rows };
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'resize', cols, rows }));
-    } else {
-      pendingResizeRef.current = { cols, rows };
     }
   }, []);
 
