@@ -1,0 +1,27 @@
+.mobile-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px max(12px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  min-width: 0;
+}
+.mobile-settings-heading h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.mobile-settings-heading p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.provider-tabs {
+  display: flex;
+  gap: 8px;
+}
+.provider-tabs .btn {
+  flex: 1;
+}
+.mobile-settings [role='tabpanel'][hidden] {
+  display: none;
+}

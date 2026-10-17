@@ -19,6 +19,7 @@ import {
   Network,
   PanelLeftClose,
   Server,
+  Settings as SettingsIcon,
   SquareTerminal,
   X,
   type LucideIcon,
@@ -31,6 +32,7 @@ import { useStore } from '../store';
 import ClaudeHistory from './ClaudeHistory';
 import Files from './Files';
 import Projects from './Projects';
+import Settings from './Settings';
 import type { ExtraParamPreset, Profile, TerminalInfo, TerminalType } from '../types';
 
 const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
@@ -87,7 +89,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const navCollapsed = useStore((state) => state.navCollapsed);
   const toggleNavCollapsed = useStore((state) => state.toggleNavCollapsed);
 
-  const [tab, setTab] = useState<'sessions' | 'profiles' | 'history' | 'files'>('sessions');
+  const [tab, setTab] = useState<'sessions' | 'profiles' | 'history' | 'files' | 'settings'>('sessions');
   const [error, setError] = useState('');
   const [filesPath, setFilesPath] = useState<string>();
   const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
@@ -367,6 +369,15 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         >
           文件
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'settings'}
+          className={`nav-tab${tab === 'settings' ? ' active' : ''}`}
+          onClick={() => setTab('settings')}
+        >
+          设置
+        </button>
       </div>
 
       <main className="nav-body" id="main-content">
@@ -507,7 +518,9 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
               ? <Projects onOpenFiles={(path) => { setFilesPath(path); setTab('files'); }} />
               : tab === 'files'
                 ? <Files initialPath={filesPath} />
-                : <ClaudeHistory />}
+                : tab === 'settings'
+                  ? <Settings />
+                  : <ClaudeHistory />}
         </div>
       </main>
 
@@ -640,6 +653,12 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
               key: 'files' as const,
               label: '文件与 Git',
               icon: FolderGit2,
+              badge: 0,
+            },
+            {
+              key: 'settings' as const,
+              label: '设置',
+              icon: SettingsIcon,
               badge: 0,
             },
           ]

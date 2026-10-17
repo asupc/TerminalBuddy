@@ -292,3 +292,27 @@ export interface LlmLaunchTarget {
   isDefault: boolean;
   models: { id: string; effort: string; contextWindow: number }[];
 }
+
+/** 与完整网页的 Codex 供应商共用同一份后端配置，密钥只返回是否设置及尾号。 */
+export interface CodexProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  keySet: boolean;
+  keyTail: string;
+  model: string;
+  reasoningEffort: string;
+  contextWindow: number;
+  autoCompactTokenLimit: number;
+  disableResponseStorage: boolean;
+}
+export interface CodexProviderInput extends Omit<CodexProvider, 'id' | 'keySet' | 'keyTail'> {
+  id?: string;
+  apiKey?: string;
+}
+export interface CodexProviderState {
+  providers: CodexProvider[];
+  activeProviderId: string | null;
+  configDir: string;
+  configError: string | null;
+}

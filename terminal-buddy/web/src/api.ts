@@ -1,5 +1,7 @@
 import { useStore } from './store';
 import type {
+  CodexProviderInput,
+  CodexProviderState,
   ClaudeHistoryScanResult,
   ClaudeReplayPage,
   ClaudeSearchHit,
@@ -183,6 +185,14 @@ export const api = {
   orderLlmProviders: (ids: string[]) => req<LlmProvider[]>('/llm-providers/order', { method: 'PUT', body: JSON.stringify({ ids }) }),
   fetchLlmModels: (input: { providerId?: string; baseUrl: string; apiKey: string; modelsUrl: string }) =>
     req<{ id: string }[]>('/llm-providers/fetch-models', { method: 'POST', body: JSON.stringify(input) }),
+  getCodexProviderState: () => invoke<CodexProviderState>('get_codex_provider_state', {}),
+  saveCodexProvider: (input: CodexProviderInput, activate: boolean) =>
+    invoke<CodexProviderState>('save_codex_provider', { input, activate }),
+  activateCodexProvider: (id: string) => invoke<CodexProviderState>('activate_codex_provider', { id }),
+  deleteCodexProvider: (id: string) => invoke<CodexProviderState>('delete_codex_provider', { id }),
+  importCodexProvider: () => invoke<CodexProviderState>('import_codex_provider', {}),
+  fetchCodexModels: (baseUrl: string, apiKey: string, providerId?: string) =>
+    invoke<{ id: string }[]>('fetch_codex_provider_models', { baseUrl, apiKey, providerId }),
   getProfiles: () => req<Profile[]>('/profiles'),
   getProjects: () => req<Project[]>('/projects'),
   getTerminals: () => req<TerminalInfo[]>('/terminals'),

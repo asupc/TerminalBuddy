@@ -1809,9 +1809,11 @@ textarea:focus-visible {
   }
 }
 
-/* ===== Nav 标签页（会话 / 连接） ===== */
+/* ===== Nav 标签页 ===== */
 .nav-tabs {
   display: flex;
+  overflow-x: auto;
+  scrollbar-width: thin;
   gap: 4px;
   flex: 0 0 auto;
   padding: 6px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
@@ -1821,10 +1823,13 @@ textarea:focus-visible {
 
 .nav-tab {
   position: relative;
+  flex: 1 0 auto;
+  justify-content: center;
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 16px;
+  padding: 10px 10px;
   font-size: 14px;
   color: var(--text-muted);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
