@@ -41,6 +41,7 @@ interface AppState {
   // 启动参数预设（不持久化，从后端 ClientData 加载，与 PC 端共享）
   extraParamPresets: ExtraParamPreset[];
   presetsLoading: boolean;
+  presetsError: string | null;
   // 当前界面
   view: View;
   // 导航栏折叠状态（持久化；类似 PC 端 configPanelVisible）
@@ -65,6 +66,7 @@ interface AppState {
   addExtraParamPreset: (name: string, params: string, tagColor: string | null, commandMatch: string | null, mode: ExtraParamMode) => Promise<void>;
   updateExtraParamPreset: (id: string, patch: Partial<Omit<ExtraParamPreset, 'id'>>) => Promise<void>;
   removeExtraParamPreset: (id: string) => Promise<void>;
+  moveExtraParamPreset: (id: string, delta: number) => Promise<void>;
 }
 
 export const useStore = create<AppState>()(
@@ -79,13 +81,14 @@ export const useStore = create<AppState>()(
       connectionFatal: null,
       extraParamPresets: [],
       presetsLoading: false,
+      presetsError: null,
       view: { screen: 'nav' },
       navCollapsed: false,
       reconnectNonce: 0,
       setAuth: (token, username) => set({ token, username }),
       // 仅供 api.ts 的 401 handler 调用以清除过期 token；UI 已下线
       logout: () =>
-        set({ token: null, username: null, profiles: [], projects: [], sessions: [], extraParamPresets: [], view: { screen: 'nav' }, connectionFatal: null }),
+        set({ token: null, username: null, profiles: [], projects: [], sessions: [], extraParamPresets: [], presetsError: null, view: { screen: 'nav' }, connectionFatal: null }),
       setProfiles: (profiles) => set({ profiles }),
       setProjects: (projects) => set({ projects }),
       setSessions: (sessions) => set({ sessions }),
@@ -100,7 +103,7 @@ export const useStore = create<AppState>()(
       toggleNavCollapsed: () => set((s) => ({ navCollapsed: !s.navCollapsed })),
 
       loadExtraParamPresets: async () => {
-        set({ presetsLoading: true });
+        set({ presetsLoading: true, presetsError: null });
         try {
           const rawPresets = await api.getExtraParamPresets();
           const presets = rawPresets.map((preset) => ({
@@ -108,8 +111,8 @@ export const useStore = create<AppState>()(
             mode: preset.mode === 'independent' ? 'independent' as const : 'append' as const,
           }));
           set({ extraParamPresets: presets });
-        } catch {
-          /* 静默失败，不影响主流程 */
+        } catch (error) {
+          set({ presetsError: error instanceof Error ? error.message : '加载启动参数失败' });
         } finally {
           set({ presetsLoading: false });
         }
@@ -122,22 +125,30 @@ export const useStore = create<AppState>()(
           mode,
           tagColor,
           commandMatch,
+          enabled: true,
         };
         const next = [...get().extraParamPresets, preset];
-        set({ extraParamPresets: next });
-        await api.replaceExtraParamPresets(next);
+        const saved = await api.replaceExtraParamPresets(next);
+        set({ extraParamPresets: saved });
       },
       updateExtraParamPreset: async (id, patch) => {
         const next = get().extraParamPresets.map((p) =>
           p.id === id ? { ...p, ...patch } : p,
         );
-        set({ extraParamPresets: next });
-        await api.replaceExtraParamPresets(next);
+        const saved = await api.replaceExtraParamPresets(next);
+        set({ extraParamPresets: saved });
+      },
+      moveExtraParamPreset: async (id, delta) => {
+        const next = [...get().extraParamPresets];
+        const index = next.findIndex(p => p.id === id), target = index + delta;
+        if (index < 0 || target < 0 || target >= next.length) return;
+        [next[index], next[target]] = [next[target], next[index]];
+        set({ extraParamPresets: await api.replaceExtraParamPresets(next) });
       },
       removeExtraParamPreset: async (id) => {
         const next = get().extraParamPresets.filter((p) => p.id !== id);
-        set({ extraParamPresets: next });
-        await api.replaceExtraParamPresets(next);
+        const saved = await api.replaceExtraParamPresets(next);
+        set({ extraParamPresets: saved });
       },
     }),
     {

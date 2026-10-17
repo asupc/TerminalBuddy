@@ -3,7 +3,10 @@ import { ChevronRight, File, Folder, GitBranch, FolderGit2 } from 'lucide-react'
 import { api } from '../api';
 import { Dialog } from '../components/Dialog';
 import { useStore } from '../store';
+import { normalizePath } from '../utils/projects';
 import type { FileNode, GitBranch as GitBranchInfo, GitOperationStatus, GitRepositoryStatus } from '../types';
+
+const directoryKey = (path: string) => normalizePath(path, /^(?:[a-z]:|\\\\)/i.test(path));
 
 /** 目录加载态：children 已载入；expanded 由上层 Set 管理 */
 interface DirState {
@@ -23,47 +26,74 @@ function formatSize(bytes: number): string {
  * 项目文件树（Web 版）：只读浏览已登记项目目录 + 仓库级 Git 操作
  * （切换分支 / 提交全部变更 / 拉取 / 推送，长操作后台执行、轮询进度）。
  */
-export default function Files() {
+export default function Files({ initialPath }: { initialPath?: string }) {
   const projects = useStore((state) => state.projects);
 
   // 每个已展开目录的 children 缓存（含项目根）
   const [dirs, setDirs] = useState<Map<string, DirState>>(() => new Map());
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState('');
+  const focusedDirectory = useRef<HTMLDivElement>(null);
 
   const loadDir = useCallback(async (path: string) => {
     setDirs((prev) => {
       const next = new Map(prev);
-      next.set(path, { loading: true, children: prev.get(path)?.children ?? [] });
+      next.set(directoryKey(path), { loading: true, children: prev.get(directoryKey(path))?.children ?? [] });
       return next;
     });
     try {
       const children = await api.getFsList(path);
       setDirs((prev) => {
         const next = new Map(prev);
-        next.set(path, { loading: false, children });
+        next.set(directoryKey(path), { loading: false, children });
         return next;
       });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '读取目录失败');
       setDirs((prev) => {
         const next = new Map(prev);
-        next.set(path, { loading: false, children: [] });
+        next.set(directoryKey(path), { loading: false, children: [] });
         return next;
       });
     }
   }, []);
 
+  // 从项目菜单进入时，展开目标路径的全部父目录。
+  useEffect(() => {
+    if (!initialPath) return;
+    const windows = /^(?:[a-z]:|\\\\)/i.test(initialPath);
+    const path = normalizePath(initialPath, windows);
+    const project = projects.filter(p => {
+      const root = normalizePath(p.path, windows);
+      return p.path && (path === root || path.startsWith(root.replace(/\/$/, '') + '/'));
+    }).sort((a, b) => b.path.length - a.path.length)[0];
+    if (!project) { setError('该目录尚未登记到项目，请先添加对应的项目目录'); return; }
+    let current = project.path;
+    const paths = [current];
+    const relative = path.slice(normalizePath(project.path, windows).length).replace(/^\/+/, '');
+    for (const segment of relative.split('/').filter(Boolean)) {
+      current = current.replace(/[\\/]+$/, '') + '/' + segment;
+      paths.push(current);
+    }
+    setExpanded(new Set(paths.map(directoryKey)));
+    for (const directory of paths) void loadDir(directory);
+  }, [initialPath, projects, loadDir]);
+
+  useEffect(() => { focusedDirectory.current?.scrollIntoView({ block: 'nearest' }); }, [initialPath, dirs]);
+
+  const isFocused = (path: string) => !!initialPath && directoryKey(path) === directoryKey(initialPath);
+
   const toggleDir = useCallback(
     (path: string) => {
       setExpanded((prev) => {
         const next = new Set(prev);
-        if (next.has(path)) next.delete(path);
-        else next.add(path);
+        const key = directoryKey(path);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
         return next;
       });
       // 首次展开才加载；之后用缓存（Git 操作完成后可整树刷新）
-      if (!dirs.has(path)) void loadDir(path);
+      if (!dirs.has(directoryKey(path))) void loadDir(path);
     },
     [dirs, loadDir],
   );
@@ -74,16 +104,17 @@ export default function Files() {
   }, [expanded, loadDir]);
 
   const renderNodes = (parentPath: string, depth: number) => {
-    const state = dirs.get(parentPath);
+    const state = dirs.get(directoryKey(parentPath));
     if (!state || state.loading) {
       return depth === 0 ? null : <div className="files-loading" style={{ paddingLeft: depth * 14 + 20 }}>读取中…</div>;
     }
     return state.children.map((node) => {
-      const isOpen = expanded.has(node.path);
+      const isOpen = expanded.has(directoryKey(node.path));
       return (
         <div key={node.path}>
           <div
-            className="tree-item files-item"
+            ref={isFocused(node.path) ? focusedDirectory : undefined}
+            className={`tree-item files-item${isFocused(node.path) ? ' selected' : ''}`}
             style={{ paddingLeft: Math.min(depth, 8) * 14 + 20 }}
             role="button"
             tabIndex={0}
@@ -120,16 +151,17 @@ export default function Files() {
     <div className="files-screen">
       {error && <div className="nav-error" role="alert">{error}</div>}
       {projects.filter((p) => p.path).length === 0 ? (
-        <div className="claude-history-empty">暂无已登记项目，请先在桌面端配置项目目录</div>
+        <div className="claude-history-empty">暂无已登记项目，请先在“项目与命令”中添加项目</div>
       ) : (
         projects
           .filter((p) => p.path)
           .map((project) => {
-            const isOpen = expanded.has(project.path);
+            const isOpen = expanded.has(directoryKey(project.path));
             return (
               <div key={project.path} className="files-project">
                 <div
-                  className="tree-item files-root"
+                  ref={isFocused(project.path) ? focusedDirectory : undefined}
+                  className={`tree-item files-root${isFocused(project.path) ? ' selected' : ''}`}
                   role="button"
                   tabIndex={0}
                   aria-expanded={isOpen}

@@ -271,3 +271,14 @@
     flex: 1;
   }
 }
+
+.extra-params-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.extra-param-item.disabled .extra-param-tag-chip,
+.extra-param-item.disabled .extra-param-params { opacity: 0.5; }
+
+@media (max-width: 600px) {
+  .extra-param-item { flex-wrap: wrap; }
+  .extra-param-params { flex: 1 1 100px; }
+  .extra-param-item.editing .extra-param-editor { width: 100%; min-width: 0; }
+  .extra-param-input, .extra-param-input-name, .extra-param-input-match { flex: 1 1 100%; min-width: 0; }
+}

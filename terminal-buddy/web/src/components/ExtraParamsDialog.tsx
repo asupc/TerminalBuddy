@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Pencil, X } from 'lucide-react';
 import { useStore } from '../store';
 import { TAB_COLORS } from '../types';
@@ -90,7 +90,9 @@ function PresetEditor({
           className="extra-param-input extra-param-input-params"
           value={draft.params}
           onChange={(e) => onChange({ ...draft, params: e.target.value })}
-          placeholder={draft.mode === 'independent' ? '完整命令，如 claude --prod' : '参数，如 --prod'}
+          placeholder={
+            draft.mode === 'independent' ? '完整命令，如 claude --prod' : '参数，如 --prod'
+          }
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit();
           }}
@@ -119,10 +121,7 @@ function PresetEditor({
       </div>
       <div className="extra-param-editor-color">
         <span className="extra-param-editor-color-label">标签色</span>
-        <ColorPicker
-          value={draft.tagColor}
-          onChange={(c) => onChange({ ...draft, tagColor: c })}
-        />
+        <ColorPicker value={draft.tagColor} onChange={(c) => onChange({ ...draft, tagColor: c })} />
       </div>
       <div className="extra-param-editor-actions">
         <button
@@ -143,126 +142,250 @@ function PresetEditor({
   );
 }
 
-const emptyDraft: PresetDraft = { name: '', params: '', mode: 'append', tagColor: null, commandMatch: '' };
+const emptyDraft: PresetDraft = {
+  name: '',
+  params: '',
+  mode: 'append',
+  tagColor: null,
+  commandMatch: '',
+};
 
 export function ExtraParamsDialog({ onClose }: ExtraParamsDialogProps) {
-  const extraParamPresets = useStore((s) => s.extraParamPresets);
-  const addExtraParamPreset = useStore((s) => s.addExtraParamPreset);
-  const updateExtraParamPreset = useStore((s) => s.updateExtraParamPreset);
-  const removeExtraParamPreset = useStore((s) => s.removeExtraParamPreset);
+  const presets = useStore((s) => s.extraParamPresets);
+  const presetsLoading = useStore((s) => s.presetsLoading);
+  const presetsError = useStore((s) => s.presetsError);
+  const reload = useStore((s) => s.loadExtraParamPresets);
+  const add = useStore((s) => s.addExtraParamPreset);
+  const update = useStore((s) => s.updateExtraParamPreset);
+  const remove = useStore((s) => s.removeExtraParamPreset);
+  const move = useStore((s) => s.moveExtraParamPreset);
   const [draft, setDraft] = useState<PresetDraft>(emptyDraft);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<PresetDraft>(emptyDraft);
-
-  const handleAdd = () => {
+  const [pendingDelete, setPendingDelete] = useState<ExtraParamPreset | null>(null);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [error, setError] = useState('');
+  const run = async (action: () => Promise<void>) => {
+    if (busyRef.current) return false;
+    busyRef.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await action();
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      return false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+  const handleAdd = async () => {
     if (!draft.name.trim() || !draft.params.trim()) return;
-    void addExtraParamPreset(
-      draft.name.trim(),
-      draft.params.trim(),
-      draft.tagColor,
-      draft.commandMatch.trim() || null,
-      draft.mode,
-    );
-    setDraft(emptyDraft);
+    if (
+      await run(() =>
+        add(
+          draft.name.trim(),
+          draft.params.trim(),
+          draft.tagColor,
+          draft.commandMatch.trim() || null,
+          draft.mode,
+        ),
+      )
+    )
+      setDraft(emptyDraft);
   };
-
-  const startEdit = (preset: ExtraParamPreset) => {
-    setEditingId(preset.id);
-    setEditDraft({
-      name: preset.name,
-      params: preset.params,
-      mode: preset.mode ?? 'append',
-      tagColor: preset.tagColor,
-      commandMatch: preset.commandMatch ?? '',
-    });
+  const commitEdit = async () => {
+    if (!editingId || !editDraft.name.trim() || !editDraft.params.trim()) return;
+    if (
+      await run(() =>
+        update(editingId, {
+          name: editDraft.name.trim(),
+          params: editDraft.params.trim(),
+          mode: editDraft.mode,
+          tagColor: editDraft.tagColor,
+          commandMatch: editDraft.commandMatch.trim() || null,
+        }),
+      )
+    )
+      setEditingId(null);
   };
-
-  const commitEdit = () => {
-    if (!editingId) return;
-    if (!editDraft.name.trim() || !editDraft.params.trim()) return;
-    void updateExtraParamPreset(editingId, {
-      name: editDraft.name.trim(),
-      params: editDraft.params.trim(),
-      mode: editDraft.mode,
-      tagColor: editDraft.tagColor,
-      commandMatch: editDraft.commandMatch.trim() || null,
-    });
-    setEditingId(null);
-  };
-
-  const cancelEdit = () => setEditingId(null);
-
   return (
-    <Dialog
-      title="管理启动参数"
-      className="extra-params-dialog"
-      bodyClassName="extra-params-dialog-content"
-      onClose={onClose}
-    >
-      <div className="extra-params-input-section">
-        <PresetEditor draft={draft} onChange={setDraft} onSubmit={handleAdd} submitLabel="添加" />
-      </div>
-
-      <div className="extra-params-list">
-        <div className="extra-params-list-label">已有预设 ({extraParamPresets.length})</div>
-        {extraParamPresets.length === 0 ? (
-          <div className="extra-params-empty">暂无预设，在上方添加一个吧</div>
-        ) : (
-          extraParamPresets.map((preset) =>
-            editingId === preset.id ? (
-              <div key={preset.id} className="extra-param-item editing">
-                <PresetEditor
-                  draft={editDraft}
-                  onChange={setEditDraft}
-                  onSubmit={commitEdit}
-                  onCancel={cancelEdit}
-                  submitLabel="保存"
-                />
-              </div>
-            ) : (
-              <div key={preset.id} className="extra-param-item">
-                <span
-                  className="extra-param-tag-chip"
-                  style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
-                  title="tag"
-                >
-                  {preset.name}
-                </span>
-                <span className="extra-param-params">{preset.params}</span>
-                <span className={`extra-param-mode-badge ${preset.mode === 'independent' ? 'independent' : ''}`}>
-                  {preset.mode === 'independent' ? '独立命令' : '追加参数'}
-                </span>
-                {preset.commandMatch && (
-                  <span
-                    className="extra-param-match"
-                    title={`仅匹配启动命令包含「${preset.commandMatch}」的连接`}
-                  >
-                    {preset.commandMatch}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="extra-param-edit"
-                  onClick={() => startEdit(preset)}
-                  title="编辑"
-                  aria-label={`编辑 ${preset.name}`}
-                >
-                  <Pencil size={15} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className="extra-param-delete"
-                  onClick={() => removeExtraParamPreset(preset.id)}
-                  title="删除"
-                  aria-label={`删除 ${preset.name}`}
-                >
-                  <X size={15} aria-hidden="true" />
-                </button>
-              </div>
-            ),
-          )
+    <>
+      <Dialog
+        title="管理启动参数"
+        className="extra-params-dialog"
+        bodyClassName="extra-params-dialog-content"
+        onClose={() => {
+          if (!busy) onClose();
+        }}
+      >
+        {error && (
+          <div className="nav-error" role="alert">
+            {error}
+          </div>
         )}
-      </div>
-    </Dialog>
+        <div role="status">{presetsLoading ? '加载中…' : ''}</div>
+        {presetsError && (
+          <div className="nav-error" role="alert">
+            {presetsError}
+            <button
+              className="btn small"
+              disabled={busy || presetsLoading}
+              onClick={() => void reload()}
+            >
+              重试
+            </button>
+          </div>
+        )}
+        <fieldset
+          className="extra-params-fieldset"
+          disabled={busy || presetsLoading || !!presetsError}
+        >
+          <div className="extra-params-input-section">
+            <PresetEditor
+              draft={draft}
+              onChange={setDraft}
+              onSubmit={() => void handleAdd()}
+              submitLabel="添加"
+            />
+          </div>
+          <div className="extra-params-list">
+            <div className="extra-params-list-label">已有预设 ({presets.length})</div>
+            {!presets.length && (
+              <div className="extra-params-empty">暂无预设，在上方添加一个吧</div>
+            )}
+            {presets.map((preset, index) =>
+              editingId === preset.id ? (
+                <div key={preset.id} className="extra-param-item editing">
+                  <PresetEditor
+                    draft={editDraft}
+                    onChange={setEditDraft}
+                    onSubmit={() => void commitEdit()}
+                    onCancel={() => setEditingId(null)}
+                    submitLabel="保存"
+                  />
+                </div>
+              ) : (
+                <div
+                  key={preset.id}
+                  className={`extra-param-item${preset.enabled === false ? ' disabled' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={preset.enabled !== false}
+                    aria-label={`启用预设 ${preset.name}`}
+                    onChange={(e) =>
+                      void run(() => update(preset.id, { enabled: e.target.checked }))
+                    }
+                  />
+                  <span
+                    className="extra-param-tag-chip"
+                    style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
+                  >
+                    {preset.name}
+                  </span>
+                  <span className="extra-param-params">{preset.params}</span>
+                  <span
+                    className={`extra-param-mode-badge ${preset.mode === 'independent' ? 'independent' : ''}`}
+                  >
+                    {preset.mode === 'independent' ? '独立命令' : '追加参数'}
+                  </span>
+                  {preset.commandMatch && (
+                    <span
+                      className="extra-param-match"
+                      title={`仅匹配启动命令包含「${preset.commandMatch}」的连接`}
+                    >
+                      {preset.commandMatch}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="btn small"
+                    disabled={index === 0}
+                    aria-label={`上移预设 ${preset.name}`}
+                    onClick={() => void run(() => move(preset.id, -1))}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small"
+                    disabled={index === presets.length - 1}
+                    aria-label={`下移预设 ${preset.name}`}
+                    onClick={() => void run(() => move(preset.id, 1))}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    className="extra-param-edit"
+                    title="编辑"
+                    aria-label={`编辑 ${preset.name}`}
+                    onClick={() => {
+                      setEditingId(preset.id);
+                      setEditDraft({
+                        name: preset.name,
+                        params: preset.params,
+                        mode: preset.mode || 'append',
+                        tagColor: preset.tagColor,
+                        commandMatch: preset.commandMatch || '',
+                      });
+                    }}
+                  >
+                    <Pencil size={15} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="extra-param-delete"
+                    title="删除"
+                    aria-label={`删除 ${preset.name}`}
+                    onClick={() => {
+                      setPendingDelete(preset);
+                      setError('');
+                    }}
+                  >
+                    <X size={15} aria-hidden="true" />
+                  </button>
+                </div>
+              ),
+            )}
+          </div>
+        </fieldset>
+      </Dialog>
+      {pendingDelete && (
+        <Dialog
+          title="删除启动参数"
+          onClose={() => {
+            if (!busy) setPendingDelete(null);
+          }}
+          footer={
+            <>
+              <button className="btn" disabled={busy} onClick={() => setPendingDelete(null)}>
+                取消
+              </button>
+              <button
+                className="btn danger"
+                disabled={busy}
+                onClick={async () => {
+                  if (await run(() => remove(pendingDelete.id))) setPendingDelete(null);
+                }}
+              >
+                删除
+              </button>
+            </>
+          }
+        >
+          <p>确定删除“{pendingDelete.name}”？</p>
+          {error && (
+            <div className="nav-error" role="alert">
+              {error}
+            </div>
+          )}
+        </Dialog>
+      )}
+    </>
   );
 }

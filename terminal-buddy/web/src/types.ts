@@ -1,4 +1,4 @@
-export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
+export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'mstsc';
 export type TerminalLoadingMode = 'default' | 'vsCode';
 
 /** 输出产生时的网格；重放电脑终端时必须先恢复该尺寸。 */
@@ -35,12 +35,16 @@ export interface Profile {
   tabColor?: string | null;
   /** 终端窗口尺寸 */
   windowSize?: { width: number; height: number } | null;
+  pinned?: boolean;
+  createdAt?: string;
+  lastUsedAt?: string | null;
   // SSH
   sshHost?: string;
   sshPort?: number;
   sshUser?: string;
   sshAuthType?: 'password' | 'key' | string;
   sshKeyPath?: string;
+  sshPassword?: string | null;
   // Docker
   dockerContainerId?: string;
   dockerContainerName?: string;
@@ -53,6 +57,7 @@ export interface Profile {
   mstscPort?: number;
   mstscUser?: string;
   mstscResolution?: string;
+  mstscPassword?: string | null;
 }
 
 /** 存活终端实例（来自 GET /api/terminals 与 meta WS 推送） */
@@ -251,4 +256,39 @@ export interface GitOperationStatus {
   output: string;
   startedAt: number;
   finishedAt: number | null;
+}
+
+/** 与 Docker 完整界面共用的运行环境和 Claude 模型数据。 */
+export interface RuntimeInfo {
+  platform: string;
+  defaultTerminalType: TerminalType;
+}
+export interface LlmModelConfig {
+  id: string;
+  enabled: boolean;
+  contextWindow: number;
+  effortLevel: string;
+  maxOutputTokens: number;
+}
+export interface LlmProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  authType: string;
+  keySet: boolean;
+  keyTail: string;
+  isDefault: boolean;
+  defaultEffortLevel: string;
+  modelsUrl: string;
+  enabledModels: LlmModelConfig[];
+  sortIndex: number;
+}
+export interface LlmProviderInput extends Omit<LlmProvider, 'keySet' | 'keyTail'> {
+  apiKey?: string;
+}
+export interface LlmLaunchTarget {
+  providerId: string;
+  providerName: string;
+  isDefault: boolean;
+  models: { id: string; effort: string; contextWindow: number }[];
 }

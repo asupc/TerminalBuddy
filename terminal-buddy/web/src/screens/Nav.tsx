@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type MouseEvent,
   type TouchEvent,
 } from 'react';
 import {
@@ -22,18 +21,17 @@ import {
   Server,
   SquareTerminal,
   X,
-  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import appIcon from '../assets/app-icon.png';
 import { api, type CreateTerminalOptions } from '../api';
 import { Dialog } from '../components/Dialog';
 import { useMetaWs } from '../hooks/useMetaWs';
-import { useHasHover } from '../hooks/useMediaQuery';
 import { useStore } from '../store';
 import ClaudeHistory from './ClaudeHistory';
 import Files from './Files';
-import type { ExtraParamPreset, Profile, Project, TerminalInfo, TerminalType } from '../types';
+import Projects from './Projects';
+import type { ExtraParamPreset, Profile, TerminalInfo, TerminalType } from '../types';
 
 const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
   powershell: { icon: SquareTerminal, label: 'PowerShell' },
@@ -41,23 +39,11 @@ const TYPE_INFO: Record<TerminalType, { icon: LucideIcon; label: string }> = {
   cmd: { icon: Command, label: 'CMD' },
   bash: { icon: SquareTerminal, label: 'Bash' },
   sh: { icon: SquareTerminal, label: 'Shell' },
+  zsh: { icon: SquareTerminal, label: 'Zsh' },
   ssh: { icon: KeyRound, label: 'SSH' },
   docker: { icon: Box, label: 'Docker' },
   k8s: { icon: Network, label: 'Kubernetes' },
   mstsc: { icon: Monitor, label: '远程桌面' },
-};
-
-/** PC 端 ConfigNav 类型徽标（PS/PS7/CMD/SSH/DK/K8S/RDP） */
-const TYPE_BADGE: Record<TerminalType, string> = {
-  powershell: 'PS',
-  pwsh: 'PS7',
-  cmd: 'CMD',
-  bash: 'BASH',
-  sh: 'SH',
-  ssh: 'SSH',
-  docker: 'DK',
-  k8s: 'K8S',
-  mstsc: 'RDP',
 };
 
 const FALLBACK_TYPE = { icon: SquareTerminal, label: '终端' };
@@ -88,114 +74,27 @@ function getSessionDotColor(
   return { background: color };
 }
 
-interface PropertyRow {
-  label: string;
-  value: string;
-}
-
-/** 根据 profile 类型抽取可展示的属性行（与 PC 端 ConfigEditDialog 的字段顺序对齐） */
-function buildPropertyRows(profile: Profile): PropertyRow[] {
-  const rows: PropertyRow[] = [
-    { label: '分组', value: profile.group?.trim() || '默认' },
-    { label: '终端类型', value: getTypeInfo(profile.terminalType).label },
-  ];
-  switch (profile.terminalType) {
-    case 'ssh':
-      if (profile.sshHost) rows.push({ label: '主机地址', value: profile.sshHost });
-      if (profile.sshPort) rows.push({ label: '端口', value: String(profile.sshPort) });
-      if (profile.sshUser) rows.push({ label: '用户名', value: profile.sshUser });
-      if (profile.sshAuthType) {
-        rows.push({
-          label: '认证方式',
-          value: profile.sshAuthType === 'key' ? '密钥认证' : '密码认证',
-        });
-      }
-      if (profile.sshKeyPath) rows.push({ label: '密钥路径', value: profile.sshKeyPath });
-      break;
-    case 'docker':
-      if (profile.dockerContainerName) rows.push({ label: '容器名称', value: profile.dockerContainerName });
-      if (profile.dockerContainerId) rows.push({ label: '容器 ID', value: profile.dockerContainerId });
-      break;
-    case 'k8s':
-      if (profile.k8sNamespace) rows.push({ label: 'Namespace', value: profile.k8sNamespace });
-      if (profile.k8sPodName) rows.push({ label: 'Pod 名称', value: profile.k8sPodName });
-      if (profile.k8sContainerName) rows.push({ label: 'Container 名称', value: profile.k8sContainerName });
-      break;
-    case 'powershell':
-    case 'pwsh':
-    case 'cmd':
-    case 'bash':
-    case 'sh': {
-      if (profile.startupPath?.trim()) rows.push({ label: '起始路径', value: profile.startupPath });
-      const cmds = (profile.startupCommands || []).filter((c) => c.trim());
-      if (cmds.length > 0) rows.push({ label: '启动命令', value: cmds.join('\n') });
-      const envCount = Object.keys(profile.environmentVariables || {}).length;
-      if (envCount > 0) rows.push({ label: '环境变量', value: `${envCount} 项` });
-      break;
-    }
-    // mstsc 不在 Web 端出现；其它类型无额外属性
-  }
-  return rows;
-}
-
-function ProfileProperties({ profile }: { profile: Profile }) {
-  const rows = useMemo(() => buildPropertyRows(profile), [profile]);
-  if (rows.length === 0) {
-    return <div className="profile-properties profile-properties-empty">无额外属性</div>;
-  }
-  return (
-    <div className="profile-properties" role="group" aria-label="连接属性">
-      {rows.map((row) => (
-        <div className="profile-prop" key={row.label}>
-          <span className="profile-prop-label">{row.label}</span>
-          <span className="profile-prop-value">{row.value}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-interface ContextMenuState {
-  profileId: string;
-  x: number;
-  y: number;
-}
-
 export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen' | 'sidebar' }) {
   const profiles = useStore((state) => state.profiles);
   const setProfiles = useStore((state) => state.setProfiles);
-  const projects = useStore((state) => state.projects);
   const setProjects = useStore((state) => state.setProjects);
   const sessions = useStore((state) => state.sessions);
   const metaOnline = useStore((state) => state.metaOnline);
   const connectionFatal = useStore((state) => state.connectionFatal);
   const setView = useStore((state) => state.setView);
-  const extraParamPresets = useStore((state) => state.extraParamPresets);
   const loadExtraParamPresets = useStore((state) => state.loadExtraParamPresets);
   const view = useStore((state) => state.view);
   const navCollapsed = useStore((state) => state.navCollapsed);
   const toggleNavCollapsed = useStore((state) => state.toggleNavCollapsed);
-  const hasHover = useHasHover();
 
   const [tab, setTab] = useState<'sessions' | 'profiles' | 'history' | 'files'>('sessions');
   const [error, setError] = useState('');
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [filesPath, setFilesPath] = useState<string>();
   const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  // 项目分组启动菜单（⚡ 按钮或分组右键打开）
-  const [groupMenu, setGroupMenu] = useState<{ projectName: string; x: number; y: number } | null>(null);
   // 会话行右键菜单
   const [sessionContextMenu, setSessionContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
-  // 「连接」tab 中各 profile 的属性面板展开状态，默认全部折叠
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   // 「会话」tab 各分组的折叠状态，默认全部展开（与 PC 端 TabNav 行为一致）
   const [collapsedSessionGroups, setCollapsedSessionGroups] = useState<Set<string>>(() => new Set());
-  // 「连接」tab 首次展开服务器工作区，其他分组折叠；之后保留手动切换
-  const [collapsedProfileGroups, setCollapsedProfileGroups] = useState<Set<string>>(() => new Set());
-  const profileGroupsInitRef = useRef(false);
-
-  const longPressTimer = useRef<number | null>(null);
-  const longPressFired = useRef(false);
   // 会话行独立的长按状态（与 profile 行的模式一致），触屏长按 500ms 出菜单
   const sessionLongPressTimer = useRef<number | null>(null);
   const sessionLongPressFired = useRef(false);
@@ -215,14 +114,12 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     }
   }, [setProfiles]);
 
-  // 进入「项目与命令」/「历史」/「文件」tab 时加载 profiles 与项目列表
-  // （项目加载失败仅降级为不显示启动入口，不打扰主流程）
+  // 项目与命令由独立面板加载；历史与文件页复用项目列表。
   useEffect(() => {
-    if (tab === 'profiles' || tab === 'history' || tab === 'files') {
-      if (tab === 'profiles') void loadProfiles();
+    if (tab === 'history' || tab === 'files') {
       api.getProjects().then(setProjects).catch((err) => console.error('加载项目列表失败', err));
     }
-  }, [tab, loadProfiles, setProjects]);
+  }, [tab, setProjects]);
 
   useMetaWs();
 
@@ -240,36 +137,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       return a.name.localeCompare(b.name, 'zh-CN');
     });
   }, [sessions]);
-
-  const profileGroups = useMemo(() => {
-    const grouped = new Map<string, Profile[]>();
-    // Docker 中登记的项目可以没有连接配置，仍能进入项目目录启动 Shell。
-    for (const project of projects) {
-      if (project.path) grouped.set(project.name, []);
-    }
-    for (const profile of profiles) {
-      if (profile.terminalType === 'mstsc') continue; // mstsc 仅桌面端，Web 无法启动
-      const group = profile.group?.trim() || '默认';
-      const items = grouped.get(group);
-      if (items) items.push(profile);
-      else grouped.set(group, [profile]);
-    }
-    return Array.from(grouped, ([name, items]) => ({
-      name,
-      items: items.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
-    })).sort((a, b) => {
-      if (a.name === '默认') return -1;
-      if (b.name === '默认') return 1;
-      return a.name.localeCompare(b.name, 'zh-CN');
-    });
-  }, [profiles, projects]);
-
-  // 仅初始化首次加载的折叠状态，后续刷新保留用户的展开/折叠操作。
-  useEffect(() => {
-    if (profileGroupsInitRef.current || profileGroups.length === 0) return;
-    profileGroupsInitRef.current = true;
-    setCollapsedProfileGroups(new Set(profileGroups.filter((g) => g.name !== '服务器工作区').map((g) => g.name)));
-  }, [profileGroups]);
 
   const openSession = (session: TerminalInfo) => {
     const name = session.profileName || getTypeInfo(session.terminalType).label;
@@ -290,7 +157,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
   const createNew = useCallback(
     async (profile: Profile, preset?: ExtraParamPreset, extra?: CreateTerminalOptions) => {
-      setBusyId(profile.id);
       setError('');
       try {
         const options: CreateTerminalOptions | undefined = preset
@@ -311,8 +177,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         });
       } catch (createError) {
         setError(createError instanceof Error ? createError.message : '创建连接失败');
-      } finally {
-        setBusyId(null);
       }
     },
     [setView],
@@ -381,16 +245,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     [sessions, profiles.length, requestCloseSession, loadProfiles, createNew, setView],
   );
 
-  // 切换 profile 属性面板折叠
-  const toggleExpanded = useCallback((id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
   // 切换 session 分组折叠
   const toggleSessionGroup = useCallback((name: string) => {
     setCollapsedSessionGroups((prev) => {
@@ -400,69 +254,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       return next;
     });
   }, []);
-
-  // 切换「连接」tab 分组折叠
-  const toggleProfileGroup = useCallback((name: string) => {
-    setCollapsedProfileGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }, []);
-
-  // ===== profile 启动与菜单交互 =====
-  const clearLongPress = () => {
-    if (longPressTimer.current !== null) {
-      window.clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  };
-
-  const showMenuFor = (profileId: string, x: number, y: number) => {
-    // 防止菜单溢出视口右下边缘
-    const clampedX = Math.min(x, window.innerWidth - 220);
-    const clampedY = Math.min(y, window.innerHeight - 240);
-    setContextMenu({ profileId, x: Math.max(8, clampedX), y: Math.max(8, clampedY) });
-  };
-
-  const handleProfileClick = (profile: Profile) => {
-    if (longPressFired.current) {
-      // 长按刚触发了菜单，拦截紧随其来的 click，避免又启动
-      longPressFired.current = false;
-      return;
-    }
-    // 移动端：单击启动；桌面端：单击不启动（等双击）
-    if (!hasHover) void createNew(profile);
-  };
-
-  const handleProfileDoubleClick = (profile: Profile) => {
-    if (hasHover) void createNew(profile);
-  };
-
-  const handleProfileContextMenu = (e: MouseEvent, profile: Profile) => {
-    e.preventDefault(); // 始终阻止系统右键菜单
-    if (!hasHover) return; // 触摸端由长按处理
-    showMenuFor(profile.id, e.clientX, e.clientY);
-  };
-
-  const handleProfileTouchStart = (e: TouchEvent, profile: Profile) => {
-    longPressFired.current = false;
-    const touch = e.touches[0];
-    clearLongPress();
-    longPressTimer.current = window.setTimeout(() => {
-      longPressFired.current = true;
-      showMenuFor(profile.id, touch.clientX, touch.clientY);
-    }, 500);
-  };
-
-  const handleProfileTouchEnd = () => {
-    clearLongPress();
-  };
-
-  const handleProfileTouchMove = () => {
-    clearLongPress();
-  };
 
   // ===== 会话行长按菜单（触屏右键等价物）=====
   const clearSessionLongPress = () => {
@@ -493,11 +284,9 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
 
   // 点击外部 / 滚动 关闭菜单
   useEffect(() => {
-    if (!contextMenu && !sessionContextMenu && !groupMenu) return;
+    if (!sessionContextMenu) return;
     const close = () => {
-      setContextMenu(null);
       setSessionContextMenu(null);
-      setGroupMenu(null);
     };
     document.addEventListener('mousedown', close);
     document.addEventListener('touchstart', close, { passive: true });
@@ -507,76 +296,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       document.removeEventListener('touchstart', close);
       window.removeEventListener('scroll', close, true);
     };
-  }, [contextMenu, sessionContextMenu, groupMenu]);
-
-  // 启动参数预设匹配（commandMatch：预设的匹配串被某条启动命令包含才显示）
-  // 与 PC 端 matchingStartupPresets 同规则，配置与项目共用
-  const matchPresets = useCallback(
-    (commands: string[]) =>
-      extraParamPresets.filter((preset) => {
-        if (preset.enabled === false) return false;
-        if (!preset.commandMatch) return true;
-        const match = preset.commandMatch.toLowerCase();
-        return commands.some((cmd) => cmd.toLowerCase().includes(match));
-      }),
-    [extraParamPresets],
-  );
-
-  const matchingPresets = useMemo(() => {
-    if (!contextMenu) return [];
-    const profile = profiles.find((p) => p.id === contextMenu.profileId);
-    return matchPresets(profile?.startupCommands || []);
-  }, [contextMenu, profiles, matchPresets]);
-
-  // ===== 项目启动 =====
-  // 登记了目录即可启动；未配置启动命令时进入该目录的默认 Shell。
-  const projectForGroup = useCallback(
-    (groupName: string) =>
-      projects.find((p) => p.name === groupName && p.path),
-    [projects],
-  );
-
-  // 与 PC 端 projectStartupCommand 一致：independent 直接替换，否则拼接项目启动命令
-  const launchProject = useCallback(
-    async (project: Project, preset?: ExtraParamPreset) => {
-      setBusyId(`project:${project.name}`);
-      setError('');
-      try {
-        const startupCommand = preset?.mode === 'independent'
-          ? preset.params
-          : [project.startupCommand?.trim(), preset?.params].filter(Boolean).join(' ');
-        const info = await api.createTerminal('', {
-          displayName: project.name,
-          startupPath: project.path,
-          startupGroup: project.name,
-          startupCommand,
-          extraParamTag: preset?.name,
-          extraParamTagColor: preset?.tagColor,
-        });
-        setView({
-          screen: 'terminal',
-          terminalId: info.id,
-          profileName: info.profileName || project.name,
-          loadingMode: info.loadingMode,
-          owner: 'web',
-        });
-      } catch (launchError) {
-        setError(launchError instanceof Error ? launchError.message : '启动项目失败');
-      } finally {
-        setBusyId(null);
-      }
-    },
-    [setView],
-  );
-
-  const showGroupMenu = useCallback((projectName: string, x: number, y: number) => {
-    // 防止菜单溢出视口右下边缘
-    const clampedX = Math.min(x, window.innerWidth - 220);
-    const clampedY = Math.min(y, window.innerHeight - 240);
-    setGroupMenu({ projectName, x: Math.max(8, clampedX), y: Math.max(8, clampedY) });
-  }, []);
-
-  const menuProfile = contextMenu ? profiles.find((p) => p.id === contextMenu.profileId) : null;
+  }, [sessionContextMenu]);
 
   return (
     <div className={`screen nav-screen${variant === 'sidebar' ? ' sidebar-variant' : ''}${navCollapsed ? ' nav-collapsed' : ''}`}>
@@ -784,222 +504,12 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                 </div>
               )
             : tab === 'profiles'
-              ? profileGroups.length === 0
-              ? (
-                <div className="session-empty-state">
-                  <Server aria-hidden="true" />
-                  <strong>暂无连接配置</strong>
-                  <small>请在电脑端添加连接或登记项目</small>
-                </div>
-              )
-              : (
-                <div className="profile-tree" aria-label="所有连接">
-                  {profileGroups.map((group) => {
-                    const isGroupCollapsed = collapsedProfileGroups.has(group.name);
-                    const project = projectForGroup(group.name);
-                    const isGroupBusy = busyId === `project:${group.name}`;
-                    return (
-                      <div className="tree-node" key={group.name}>
-                        <div
-                          className="tree-item"
-                          style={{ paddingLeft: 8 }}
-                          role="button"
-                          tabIndex={0}
-                          aria-expanded={!isGroupCollapsed}
-                          onClick={() => toggleProfileGroup(group.name)}
-                          onContextMenu={(e) => {
-                            if (!project) return;
-                            e.preventDefault();
-                            showGroupMenu(project.name, e.clientX, e.clientY);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              toggleProfileGroup(group.name);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            className={`tree-arrow${isGroupCollapsed ? '' : ' expanded'}`}
-                            aria-label={isGroupCollapsed ? '展开分组' : '折叠分组'}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleProfileGroup(group.name);
-                            }}
-                            tabIndex={-1}
-                          >
-                            <ChevronRight size={12} aria-hidden="true" />
-                          </button>
-                          <span className="tree-name">{group.name}</span>
-                          <span className="tree-item-end">
-                            {isGroupBusy && <span className="tree-item-count">连接中…</span>}
-                            <span className="tree-item-count">{group.items.length}</span>
-                            {project && (
-                              <button
-                                type="button"
-                                className="tree-item-launch"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  showGroupMenu(project.name, e.clientX, e.clientY);
-                                }}
-                                aria-label={`启动项目 ${project.name}`}
-                                title={`启动项目 ${project.name}`}
-                              >
-                                <Zap size={13} aria-hidden="true" />
-                              </button>
-                            )}
-                          </span>
-                        </div>
-                        {!isGroupCollapsed && (
-                          <div className="tree-children">
-                            {group.items.map((profile) => {
-                              const type = TYPE_INFO[profile.terminalType] ?? FALLBACK_TYPE;
-                              const badge = TYPE_BADGE[profile.terminalType] ?? profile.terminalType.toUpperCase();
-                              const isBusy = busyId === profile.id;
-                              const isExpanded = expandedIds.has(profile.id);
-                              return (
-                                <div className="tree-node" key={profile.id}>
-                                  <div
-                                    className="tree-item"
-                                    style={{ paddingLeft: 20 }}
-                                    role="button"
-                                    tabIndex={0}
-                                    aria-busy={isBusy || undefined}
-                                    aria-label={profile.name}
-                                    onClick={() => handleProfileClick(profile)}
-                                    onDoubleClick={() => handleProfileDoubleClick(profile)}
-                                    onContextMenu={(e) => handleProfileContextMenu(e, profile)}
-                                    onTouchStart={(e) => handleProfileTouchStart(e, profile)}
-                                    onTouchEnd={handleProfileTouchEnd}
-                                    onTouchMove={handleProfileTouchMove}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter' || e.key === ' ') {
-                                        e.preventDefault();
-                                        handleProfileClick(profile);
-                                      }
-                                    }}
-                                  >
-                                    <button
-                                      type="button"
-                                      className={`tree-arrow${isExpanded ? ' expanded' : ''}`}
-                                      aria-label={isExpanded ? '收起属性' : '展开属性'}
-                                      aria-expanded={isExpanded}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleExpanded(profile.id);
-                                      }}
-                                      tabIndex={-1}
-                                    >
-                                      <ChevronRight size={12} aria-hidden="true" />
-                                    </button>
-                                    <span className="config-nav-icon-type">{badge}</span>
-                                    <span className="tree-name">{profile.name}</span>
-                                    <span className="tree-item-end">
-                                      {isBusy && (
-                                        <span className="tree-item-count">连接中…</span>
-                                      )}
-                                    </span>
-                                  </div>
-                                  {isExpanded && <ProfileProperties profile={profile} />}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )
+              ? <Projects onOpenFiles={(path) => { setFilesPath(path); setTab('files'); }} />
               : tab === 'files'
-                ? <Files />
+                ? <Files initialPath={filesPath} />
                 : <ClaudeHistory />}
         </div>
       </main>
-
-      {contextMenu && menuProfile && (
-        <div
-          className="profile-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            className="context-menu-item"
-            onClick={() => {
-              void createNew(menuProfile);
-              setContextMenu(null);
-            }}
-          >
-            启动
-          </button>
-          {matchingPresets.map((preset) => (
-            <button
-              type="button"
-              key={preset.id}
-              className="context-menu-item context-menu-item-preset"
-              onClick={() => {
-                void createNew(menuProfile, preset);
-                setContextMenu(null);
-              }}
-            >
-              启动
-              <span
-                className="context-menu-tag-chip"
-                style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
-              >
-                {preset.name}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {groupMenu && (() => {
-        const project = projects.find((p) => p.name === groupMenu.projectName);
-        if (!project) return null;
-        const presets = matchPresets([project.startupCommand || '']);
-        return (
-          <div
-            className="profile-context-menu"
-            style={{ left: groupMenu.x, top: groupMenu.y }}
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="context-menu-item"
-              onClick={() => {
-                void launchProject(project);
-                setGroupMenu(null);
-              }}
-            >
-              启动项目
-            </button>
-            {presets.map((preset) => (
-              <button
-                type="button"
-                key={preset.id}
-                className="context-menu-item context-menu-item-preset"
-                onClick={() => {
-                  void launchProject(project, preset);
-                  setGroupMenu(null);
-                }}
-              >
-                启动
-                <span
-                  className="context-menu-tag-chip"
-                  style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
-                >
-                  {preset.name}
-                </span>
-              </button>
-            ))}
-          </div>
-        );
-      })()}
 
       {sessionContextMenu && (() => {
         const session = sessions.find((s) => s.id === sessionContextMenu.sessionId);

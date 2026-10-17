@@ -11,6 +11,10 @@ import type {
   GitOperationStatus,
   GitRepositoryStatus,
   Profile,
+  RuntimeInfo,
+  LlmProvider,
+  LlmProviderInput,
+  LlmLaunchTarget,
   Project,
   TerminalInfo,
 } from './types';
@@ -155,7 +159,30 @@ export interface CreateTerminalOptions {
   startupCommand?: string;
 }
 
+// 复用完整界面的鉴权命令入口，增删改操作共用后端校验与持久化。
+function invoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  return req<T>('/desktop/invoke/' + command, { method: 'POST', body: JSON.stringify(args) });
+}
+
 export const api = {
+  getCommandTemplates: () => invoke<string>('get_command_templates', {}),
+  getRuntime: () => req<RuntimeInfo>('/runtime'),
+  createProfile: (name: string, group: string, terminalType: string) =>
+    invoke<Profile>('create_profile', { name, group, terminalType }),
+  updateProfile: (profile: Profile) => invoke<void>('update_profile', { profile }),
+  deleteProfile: (id: string) => invoke<void>('delete_profile', { id }),
+  saveProjects: (projects: Project[]) => invoke<void>('save_projects', { projects }),
+  getLlmLaunchTargets: () => req<LlmLaunchTarget[]>('/llm-providers/launch-targets'),
+  getLlmProviders: () => req<LlmProvider[]>('/llm-providers'),
+  saveLlmProvider: (input: LlmProviderInput) => req<LlmProvider>(
+    '/llm-providers' + (input.id ? '/' + encodeURIComponent(input.id) : ''),
+    { method: input.id ? 'PUT' : 'POST', body: JSON.stringify(input) },
+  ),
+  deleteLlmProvider: (id: string) => req<LlmProvider[]>('/llm-providers/' + encodeURIComponent(id), { method: 'DELETE' }),
+  setDefaultLlmProvider: (id: string) => req<LlmProvider[]>('/llm-providers/' + encodeURIComponent(id) + '/set-default', { method: 'POST' }),
+  orderLlmProviders: (ids: string[]) => req<LlmProvider[]>('/llm-providers/order', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  fetchLlmModels: (input: { providerId?: string; baseUrl: string; apiKey: string; modelsUrl: string }) =>
+    req<{ id: string }[]>('/llm-providers/fetch-models', { method: 'POST', body: JSON.stringify(input) }),
   getProfiles: () => req<Profile[]>('/profiles'),
   getProjects: () => req<Project[]>('/projects'),
   getTerminals: () => req<TerminalInfo[]>('/terminals'),
