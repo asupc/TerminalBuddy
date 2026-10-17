@@ -159,13 +159,61 @@ export function getLastNonBlankCell(line: ReturnType<Terminal['buffer']['active'
 
 export function getInputAtCursor(terminal: Terminal): string | null {
   const buffer = terminal.buffer.active;
-  const absY = buffer.baseY + buffer.cursorY;
-  const line = buffer.getLine(absY);
+  let absY = buffer.baseY + buffer.cursorY;
+  let line = buffer.getLine(absY);
   if (!line) return null;
 
-  const text = line.translateToString(true, 0, buffer.cursorX);
-  const promptIdx = text.lastIndexOf('>');
-  return (promptIdx >= 0 ? text.substring(promptIdx + 1) : text).trimStart();
+  // 保留末尾空格（如 git 后的参数边界），并拼回自动换行的提示符和命令。
+  let text = line.translateToString(false, 0, buffer.cursorX);
+  while (line.isWrapped && absY > 0) {
+    line = buffer.getLine(--absY);
+    if (!line) break;
+    text = line.translateToString(false) + text;
+  }
+
+  // Windows 使用 >，Bash / sh / zsh 常用 $、#、%。只取首个提示符，
+  // 避免把命令里的重定向符号或变量当成新的提示符。
+  const prompt = text.match(/^.*?(?:>|[$#%](?=\s|$))\s*/);
+  return (prompt ? text.substring(prompt[0].length) : text).trimStart();
+}
+
+/** 输入先于 PTY / WebSocket 回显到达；回显解析后再次刷新补全。 */
+export function installAutocompleteRefresh(terminal: Terminal, refresh: () => void, dismiss: () => void) {
+  let pending = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const cancel = () => {
+    pending = false;
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  };
+  const schedule = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      refresh();
+    }, 0);
+  };
+  const input = terminal.onData(data => {
+    if (!data) return;
+    if (data === '\x1b' || /[\r\n\x03\x04]/.test(data)) {
+      cancel();
+      dismiss();
+      return;
+    }
+    pending = true;
+    schedule();
+  });
+  const output = terminal.onWriteParsed(() => {
+    if (pending) schedule();
+  });
+  return {
+    cancel,
+    dispose: () => {
+      cancel();
+      input.dispose();
+      output.dispose();
+    },
+  };
 }
 
 export function getAutocompleteCompletion(command: string, input: string): string {

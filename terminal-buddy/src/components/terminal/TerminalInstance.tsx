@@ -27,7 +27,7 @@ import {
   fitFloatingElementToViewport,
   hasTuiInputChrome, allowsTerminalAutocomplete,
   getInputAtCursor, getAutocompleteCompletion,
-  getCommandSuggestions, installStableImeAnchor,
+  getCommandSuggestions, installAutocompleteRefresh, installStableImeAnchor,
   resolveCdTarget, detectAndTrackCd, SUGGESTION_KIND_LABEL,
   pasteFromClipboard, forceFitOf, setForceFit, syncImeAnchorOf, xtermCoreOf,
 } from './terminal-helpers';
@@ -106,6 +106,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const autocompletePopupRef = useRef<HTMLDivElement>(null);
   const autocompleteRef = useRef<typeof autocomplete>(null);
+  const autocompleteRefreshRef = useRef<ReturnType<typeof installAutocompleteRefresh> | null>(null);
   const colorThemeRef = useRef(colorTheme);
   const codexTuiRef = useRef(false);
   const rightClickPasteRef = useRef<RightClickPasteState>({
@@ -122,6 +123,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
   // 关闭补全面板；搜索面板关闭后把焦点还给终端（搜索框卸载后焦点会丢失）
   const closeAutocomplete = useCallback(() => {
+    autocompleteRefreshRef.current?.cancel();
     if (autocompleteRef.current?.searchable) {
       xtermRef.current?.focus();
     }
@@ -255,16 +257,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     let terminalOutputAttached = false;
     let workingDebounce: ReturnType<typeof setTimeout> | null = null;
     let workingFallback: ReturnType<typeof setTimeout> | null = null;
-    let autocompleteTimer: ReturnType<typeof setTimeout> | null = null;
     let resizeInFlight = false;
     let pendingPtyResize: { rows: number; cols: number } | null = null;
     let webTakeoverDimensions: { rows: number; cols: number } | null = null;
 
     const clearAutocomplete = () => {
-      if (autocompleteTimer) {
-        clearTimeout(autocompleteTimer);
-        autocompleteTimer = null;
-      }
+      autocompleteRefreshRef.current?.cancel();
       if (autocompleteRef.current) {
         closeAutocomplete();
       }
@@ -861,7 +859,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       // 打开补全面板。forceAll 时输入为空也显示全部命令（快捷键唤起，内置搜索框）
       const openAutocomplete = (forceAll = false) => {
         if (disposed) return;
-        if (!allowsTerminalAutocomplete(terminal)) {
+        if (readOnlyRef.current || !allowsTerminalAutocomplete(terminal)) {
           clearAutocomplete();
           return;
         }
@@ -895,13 +893,14 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         });
       };
 
-      // Autocomplete: update suggestions on keypress
-      terminal.onKey(() => {
-        if (autocompleteTimer) clearTimeout(autocompleteTimer);
-        autocompleteTimer = setTimeout(() => {
-          autocompleteTimer = null;
-          openAutocomplete();
-        }, 0);
+      const autocompleteRefresh = installAutocompleteRefresh(terminal, () => {
+        // 快捷键打开的搜索面板保留用户的搜索内容。
+        if (!autocompleteRef.current?.searchable) openAutocomplete();
+      }, clearAutocomplete);
+      autocompleteRefreshRef.current = autocompleteRefresh;
+      cleanupFns.push(() => {
+        autocompleteRefresh.dispose();
+        if (autocompleteRefreshRef.current === autocompleteRefresh) autocompleteRefreshRef.current = null;
       });
 
       const containerEl = terminalRef.current!;
@@ -916,7 +915,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         const completion = getAutocompleteCompletion(command, input);
         if (!completion) return false;
         onOutputRef.current(terminalId, completion);
-        updateAutocomplete(null);
+        clearAutocomplete();
         return true;
       };
 
@@ -990,7 +989,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
           if (autocompleteRef.current) {
             e.preventDefault();
             e.stopPropagation();
-            updateAutocomplete(null);
+            clearAutocomplete();
             return;
           }
         }
@@ -1342,10 +1341,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     return () => {
       disposed = true;
       cancelPendingClaudeNotifications(terminalId);
-      if (autocompleteTimer) {
-        clearTimeout(autocompleteTimer);
-        autocompleteTimer = null;
-      }
       if (workingDebounce) {
         clearTimeout(workingDebounce);
         workingDebounce = null;

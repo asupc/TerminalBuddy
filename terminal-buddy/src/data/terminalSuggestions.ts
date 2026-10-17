@@ -331,7 +331,7 @@ const normalizeName = (name: string | string[]) => Array.isArray(name) ? name : 
 function parseInput(input: string) {
   const normalized = input.trimStart();
   const endsWithSpace = /\s$/.test(normalized);
-  const tokens = normalized.length > 0 ? normalized.split(/\s+/) : [];
+  const tokens = normalized.length > 0 ? normalized.trimEnd().split(/\s+/) : [];
   return {
     normalized,
     tokens,
@@ -423,7 +423,7 @@ export function getVSCodeStyleTerminalSuggestions(input: string): SuggestionItem
 
   const pathTokens = parsed.completedTokens.slice(1);
   const currentNode = resolveNode(root.spec, pathTokens);
-  const prefix = `${parsed.completedTokens.join(' ')} `;
+  const prefix = parsed.normalized.slice(0, parsed.normalized.length - parsed.currentToken.length);
   const optionSources = currentNode === root.spec
     ? root.spec.options
     : [...(currentNode.options ?? []), ...(root.spec.options ?? [])];
