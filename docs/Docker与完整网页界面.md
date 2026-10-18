@@ -77,6 +77,12 @@ docker compose logs -f terminal-buddy
 
 网页内“本地终端”在容器中执行；项目路径使用容器里的 `/workspace/...`。连接宿主机或其他服务器使用 SSH。镜像包含 Bash、Git 与 SSH 客户端；Node、Python、Claude、Docker CLI、kubectl 等开发工具按实际使用需求扩展镜像。默认不挂载宿主 Docker socket。
 
+## 容器命令行工具版本
+
+在完整网页的“设置 → Agent & LLM → 容器环境”中，可查看 Claude Code 与 Codex CLI 的当前版本，未安装时可使用官方安装器一键安装。点击“检查更新”会查询两个工具的最新发布版本，分别显示有新版本、已是最新或当前版本较新；网络异常会提示重试并保留当前版本。“重新检测”只刷新容器本地安装状态。
+
+版本查询参考 CC Switch，使用官方 npm registry 的轻量 dist-tags 接口。Claude Code 仅在本地版本领先 latest 时比较 next 通道；版本按 SemVer 比较，避免把较新的预发布版误报为需要降级。
+
 ## 手机访问
 
 手机和电脑直接打开同一个 Docker 服务地址即可，无需扫码。手机自动进入 `/m/`，使用与桌面版“扩展与服务 → Web 管理”相同的手机界面：会话、项目与命令、历史、文件、设置，以及终端专用快捷键栏；电脑保持完整网页界面。两种界面使用相同的网页账号和密码验证。

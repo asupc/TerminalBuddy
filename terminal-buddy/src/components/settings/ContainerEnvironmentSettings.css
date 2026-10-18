@@ -9,8 +9,15 @@
 }
 
 .container-environment-toolbar {
+  flex-wrap: wrap;
   gap: 12px;
   padding: 8px 14px;
+}
+
+.container-environment-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .container-environment-tool {
@@ -56,12 +63,47 @@
   line-height: 20px;
 }
 
+.container-environment-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 2px;
+}
+
 .container-environment-version {
-  overflow: hidden;
   color: var(--text-secondary);
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.container-environment-version code {
+  color: var(--text-primary);
+  font-size: inherit;
+}
+
+.container-environment-update {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.container-environment-update svg {
+  flex-shrink: 0;
+}
+
+.container-environment-update.available,
+.container-environment-update.checking {
+  color: var(--accent);
+}
+
+.container-environment-update.upToDate,
+.container-environment-update.ahead {
+  color: var(--success);
 }
 
 .container-environment-list:has(.container-environment-action.primary) {

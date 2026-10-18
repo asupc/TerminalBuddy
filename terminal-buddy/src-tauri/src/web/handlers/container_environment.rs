@@ -1,6 +1,7 @@
 //! Docker 内的 CLI 检测与安装；仅执行固定的安装流程，不接受客户端命令或下载地址。
-use axum::{extract::State, http::StatusCode, Json};
-use serde::Serialize;
+use axum::{extract::{Query, State}, http::StatusCode, Json};
+use serde::{Deserialize, Serialize};
+use crate::services::cli_update_service::{check_update, CliUpdate};
 use std::{
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
@@ -102,6 +103,14 @@ struct CliStatus {
     status: &'static str,
     version: Option<String>,
     message: Option<String>,
+    update: Option<CliUpdate>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentQuery {
+    #[serde(default)]
+    check_updates: bool,
 }
 
 fn home() -> Result<PathBuf, String> {
@@ -193,12 +202,12 @@ fn cli_status(tool: CliTool) -> Result<CliStatus, String> {
         (state.running, state.error.clone())
     };
     if running {
-        return Ok(CliStatus { status: "installing", version: None, message: None });
+        return Ok(CliStatus { status: "installing", version: None, message: None, update: None });
     }
     let version = detect_cli(tool);
     let status = if version.is_some() { "installed" } else if error.is_some() { "failed" } else { "notInstalled" };
     let message = if version.is_some() { None } else { error };
-    Ok(CliStatus { status, version, message })
+    Ok(CliStatus { status, version, message, update: None })
 }
 
 fn environment() -> Result<Environment, String> {
@@ -211,11 +220,22 @@ fn environment() -> Result<Environment, String> {
 pub async fn status(
     State(_state): State<AppState>,
     _claims: ClaimsFromRequest,
+    Query(query): Query<EnvironmentQuery>,
 ) -> Result<Json<Environment>, ApiError> {
     ensure_docker()?;
-    tokio::task::spawn_blocking(environment).await
+    let mut environment = tokio::task::spawn_blocking(environment).await
         .map_err(|error| ApiError::Internal(error.to_string()))?
-        .map(Json).map_err(ApiError::Internal)
+        .map_err(ApiError::Internal)?;
+    if query.check_updates {
+        // 两个版本源独立查询，一个失败不会遮住另一个的结果；普通安装轮询只检测本地版本。
+        let (claude, codex) = tokio::join!(
+            check_update("@anthropic-ai/claude-code", environment.claude.version.as_deref(), &["next"]),
+            check_update("@openai/codex", environment.codex.version.as_deref(), &[]),
+        );
+        environment.claude.update = Some(claude);
+        environment.codex.update = Some(codex);
+    }
+    Ok(Json(environment))
 }
 
 pub async fn install(
