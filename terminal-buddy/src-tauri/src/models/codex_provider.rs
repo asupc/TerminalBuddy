@@ -1,5 +1,7 @@
 //! Codex 通用 API 供应商；密钥在应用数据中加密保存，前端只接收脱敏视图。
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::llm_provider::validate_base_url;
@@ -9,9 +11,7 @@ pub const CODEX_REASONING_EFFORTS: &[&str] = &[
     "", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 ];
 
-fn default_effort() -> String {
-    "high".to_string()
-}
+pub const DEFAULT_CODEX_REASONING_EFFORT: &str = "max";
 
 fn default_true() -> bool {
     true
@@ -31,8 +31,11 @@ pub struct CodexProvider {
     /// 最近更新的完整模型列表，与快速启动模型分开保存。
     #[serde(default)]
     pub available_models: Vec<String>,
-    #[serde(default = "default_effort")]
-    pub reasoning_effort: String,
+    /// 仅用于读取旧的供应商统一等级，新配置按模型保存。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub model_reasoning_efforts: BTreeMap<String, String>,
     /// 0 表示使用 Codex / 模型默认值。
     #[serde(default)]
     pub context_window: u32,
@@ -68,8 +71,11 @@ pub struct CodexProviderInput {
     pub models: Vec<String>,
     #[serde(default)]
     pub available_models: Option<Vec<String>>,
-    #[serde(default = "default_effort")]
-    pub reasoning_effort: String,
+    /// 兼容旧客户端输入；未配置的模型默认使用 MAX。
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub model_reasoning_efforts: BTreeMap<String, String>,
     #[serde(default)]
     pub context_window: u32,
     #[serde(default)]
@@ -89,7 +95,7 @@ pub struct CodexProviderView {
     pub model: String,
     pub models: Vec<String>,
     pub available_models: Vec<String>,
-    pub reasoning_effort: String,
+    pub model_reasoning_efforts: BTreeMap<String, String>,
     pub context_window: u32,
     pub auto_compact_token_limit: u32,
     pub disable_response_storage: bool,
@@ -148,9 +154,17 @@ impl CodexProviderInput {
             }
             if !models.contains(&id) { models.push(id); }
         }
-        let reasoning_effort = self.reasoning_effort.trim().to_string();
-        if !CODEX_REASONING_EFFORTS.contains(&reasoning_effort.as_str()) {
-            return Err("Codex 推理等级无效".to_string());
+        let mut model_reasoning_efforts = BTreeMap::new();
+        for id in &models {
+            let effort = self.model_reasoning_efforts.get(id)
+                .map(String::as_str)
+                .or(self.reasoning_effort.as_deref())
+                .unwrap_or(DEFAULT_CODEX_REASONING_EFFORT)
+                .trim();
+            if !CODEX_REASONING_EFFORTS.contains(&effort) {
+                return Err("Codex 推理等级无效".to_string());
+            }
+            model_reasoning_efforts.insert(id.clone(), effort.to_string());
         }
         if self.context_window > 0 && self.auto_compact_token_limit > self.context_window {
             return Err("自动压缩阈值不能大于上下文窗口".to_string());
@@ -176,7 +190,8 @@ impl CodexProviderInput {
                 model,
                 models,
                 available_models: normalize_available_models(self.available_models.unwrap_or_default())?,
-                reasoning_effort,
+                reasoning_effort: None,
+                model_reasoning_efforts,
                 context_window: self.context_window,
                 auto_compact_token_limit: self.auto_compact_token_limit,
                 disable_response_storage: self.disable_response_storage,
@@ -195,6 +210,13 @@ impl CodexProvider {
             if !ids.contains(id) { ids.push(id.clone()); }
         }
         ids
+    }
+
+    pub fn model_reasoning_effort(&self, model_id: &str) -> &str {
+        self.model_reasoning_efforts.get(model_id)
+            .map(String::as_str)
+            .or(self.reasoning_effort.as_deref())
+            .unwrap_or(DEFAULT_CODEX_REASONING_EFFORT)
     }
 
     pub fn to_view(&self, key: &str) -> CodexProviderView {
@@ -219,7 +241,12 @@ impl CodexProvider {
             model: self.model.clone(),
             models: self.model_ids(),
             available_models: self.available_models.clone(),
-            reasoning_effort: self.reasoning_effort.clone(),
+            model_reasoning_efforts: self.model_ids().into_iter()
+                .map(|id| {
+                    let effort = self.model_reasoning_effort(&id).to_string();
+                    (id, effort)
+                })
+                .collect(),
             context_window: self.context_window,
             auto_compact_token_limit: self.auto_compact_token_limit,
             disable_response_storage: self.disable_response_storage,

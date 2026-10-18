@@ -1,17 +1,19 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { CODEX_EFFORT_OPTIONS } from '../utils/codexLaunch';
 
 const buttonClass = 'btn';
 const descriptionClass = 'provider-description';
 
-export function CodexModelPicker({ models, selected, defaultModel, disabled, refreshing, onRefresh, onChange }: {
+export function CodexModelPicker({ models, selected, reasoningEfforts, defaultModel, disabled, refreshing, onRefresh, onChange }: {
   models: string[];
   selected: string[];
+  reasoningEfforts: string[];
   defaultModel: string;
   disabled: boolean;
   refreshing: boolean;
   onRefresh: () => void;
-  onChange: (selected: string[], defaultModel: string) => void;
+  onChange: (selected: string[], defaultModel: string, reasoningEfforts: string[]) => void;
 }) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [query, setQuery] = useState('');
@@ -45,16 +47,16 @@ export function CodexModelPicker({ models, selected, defaultModel, disabled, ref
   const visible = models.filter(id => id.toLowerCase().includes(query.trim().toLowerCase()));
   const configured = selected.map(id => id.trim()).filter(Boolean);
 
-  const update = (next: string[], preferred = defaultModel) => {
+  const update = (next: string[], preferred = defaultModel, efforts = reasoningEfforts) => {
     const ids = next.map(id => id.trim()).filter(Boolean);
-    onChange(next, ids.includes(preferred) ? preferred : ids[0] ?? '');
+    onChange(next, ids.includes(preferred) ? preferred : ids[0] ?? '', efforts);
   };
   const changeRow = (index: number, value: string) => {
     const next = selected.map((id, i) => i === index ? value : id);
     update(next, selected[index].trim() === defaultModel ? value.trim() : defaultModel);
   };
   const addRow = () => {
-    update([...selected, '']);
+    update([...selected, ''], defaultModel, [...reasoningEfforts, 'max']);
     setExpanded(null);
     requestAnimationFrame(() => inputRefs.current[selected.length]?.focus());
   };
@@ -86,6 +88,11 @@ export function CodexModelPicker({ models, selected, defaultModel, disabled, ref
               value={id} disabled={disabled} maxLength={256} autoComplete="off" autoCapitalize="none" spellCheck={false}
               placeholder="输入模型 ID，或从右侧列表选择" onChange={event => changeRow(index, event.target.value)}
               onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} />
+            <select className="codex-model-effort" aria-label={`模型推理等级 ${index + 1}`} title="推理等级"
+              value={reasoningEfforts[index] ?? 'max'} disabled={disabled}
+              onChange={event => update(selected, defaultModel, selected.map((_, i) => i === index ? event.target.value : reasoningEfforts[i] ?? 'max'))}>
+              {CODEX_EFFORT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
             <button type="button" className={buttonClass} disabled={disabled} aria-label={`展开模型列表 ${index + 1}`}
               aria-expanded={expanded === index} aria-controls={`${listId}-${index}`} onClick={() => {
                 setExpanded(expanded === index ? null : index); setQuery('');
@@ -95,7 +102,7 @@ export function CodexModelPicker({ models, selected, defaultModel, disabled, ref
               {id.trim() && defaultModel === id.trim() ? '默认模型' : '设为默认'}
             </button>
             <button type="button" className={`${buttonClass} danger`} disabled={disabled} aria-label={`删除模型 ${index + 1}`}
-              onClick={() => { update(selected.filter((_, i) => i !== index)); setExpanded(null); }}><Trash2 size={14} /></button>
+              onClick={() => { update(selected.filter((_, i) => i !== index), defaultModel, reasoningEfforts.filter((_, i) => i !== index)); setExpanded(null); }}><Trash2 size={14} /></button>
           </div>
           {expanded === index && <div className="codex-model-dropdown" id={`${listId}-${index}`}>
             <input aria-label={`搜索模型 ${index + 1}`} value={query} disabled={disabled} placeholder="搜索已保存的模型…"
@@ -114,7 +121,7 @@ export function CodexModelPicker({ models, selected, defaultModel, disabled, ref
         </div>
       ))}
       {!selected.length && <p className={descriptionClass}>点击“添加模型”新增一行，可手动输入或从模型列表中选择。</p>}
-      <p className={descriptionClass}>已配置 {new Set(configured).size} 个模型 · 已保存列表 {models.length} 个。选择后立即填入当前行，保存供应商后生效；默认模型用于常规启动。</p>
+      <p className={descriptionClass}>已配置 {new Set(configured).size} 个模型 · 已保存列表 {models.length} 个。选择后立即填入当前行，每个模型可单独设置推理等级，新增默认 MAX。保存供应商后生效；默认模型用于常规启动。</p>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import type { FetchedModel } from './claudeEnhance';
 export const CODEX_EFFORT_OPTIONS = [
   ['', '跟随模型默认'], ['none', '关闭 none'], ['minimal', '最低 minimal'],
   ['low', '低 low'], ['medium', '中 medium'], ['high', '高 high'],
-  ['xhigh', '极高 xhigh'], ['max', '最高 max'], ['ultra', '超高 ultra'],
+  ['xhigh', '极高 xhigh'], ['max', '最高 MAX'], ['ultra', '超高 ultra'],
 ] as const;
 
 export interface CodexProviderView {
@@ -16,7 +16,7 @@ export interface CodexProviderView {
   model: string;
   models: string[];
   availableModels: string[];
-  reasoningEffort: string;
+  modelReasoningEfforts: Record<string, string>;
   contextWindow: number;
   autoCompactTokenLimit: number;
   disableResponseStorage: boolean;
@@ -31,7 +31,7 @@ export interface CodexProviderInput {
   model: string;
   models: string[];
   availableModels: string[];
-  reasoningEffort: string;
+  modelReasoningEfforts: Record<string, string>;
   contextWindow: number;
   autoCompactTokenLimit: number;
   disableResponseStorage: boolean;

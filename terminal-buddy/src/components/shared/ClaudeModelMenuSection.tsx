@@ -45,7 +45,7 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
   const codexState = useAppStore(s => s.codexProviderState);
   const targets = useMemo<LlmLaunchTarget[]>(() => source === 'claude' ? claudeTargets : (codexState?.providers ?? []).map(provider => ({
     providerId: provider.id, providerName: provider.name, isDefault: codexState?.activeProviderId === provider.id,
-    models: (provider.models ?? [provider.model]).map(id => ({ id, effort: provider.reasoningEffort || '默认', contextWindow: provider.contextWindow })),
+    models: (provider.models ?? [provider.model]).map(id => ({ id, effort: (provider.modelReasoningEfforts[id] ?? 'max') || '默认', contextWindow: provider.contextWindow })),
   })), [source, claudeTargets, codexState]);
   const loaded = source === 'claude' ? claudeLoaded : codexState !== null;
   const [openSub, setOpenSub] = useState<string | null>(null);

@@ -298,7 +298,7 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
   const useCodex = commands.some(isCodexCommand);
   const menuTargets: LlmLaunchTarget[] = useCodex ? (codexState?.providers ?? []).map(provider => ({
     providerId: provider.id, providerName: provider.name, isDefault: codexState?.activeProviderId === provider.id,
-    models: (provider.models ?? [provider.model]).map(id => ({ id, effort: provider.reasoningEffort || '默认', contextWindow: provider.contextWindow })),
+    models: (provider.models ?? [provider.model]).map(id => ({ id, effort: (provider.modelReasoningEfforts[id] ?? 'max') || '默认', contextWindow: provider.contextWindow })),
   })) : targets;
   const item = (label: ReactNode, action: () => void, danger = false) => (
     <button

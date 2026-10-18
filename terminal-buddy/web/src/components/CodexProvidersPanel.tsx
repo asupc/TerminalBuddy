@@ -4,18 +4,15 @@ import type { CodexProvider, CodexProviderInput, CodexProviderState } from '../t
 import { Dialog } from './Dialog';
 import { ProviderPanel } from './ProviderPanel';
 import { CodexModelPicker } from './CodexModelPicker';
+import { CODEX_EFFORT_OPTIONS } from '../utils/codexLaunch';
 
-const EFFORTS = [
-  ['', '跟随模型默认'], ['none', '关闭 none'], ['minimal', '最低 minimal'],
-  ['low', '低 low'], ['medium', '中 medium'], ['high', '高 high'],
-  ['xhigh', '极高 xhigh'], ['max', '最高 max'], ['ultra', '超高 ultra'],
-];
 interface Draft extends CodexProviderInput {
   apiKey: string;
   keySet: boolean;
+  modelEfforts: string[];
 }
 const newDraft = (): Draft => ({
-  name: '', baseUrl: '', apiKey: '', model: '', models: [], availableModels: [], reasoningEffort: 'high',
+  name: '', baseUrl: '', apiKey: '', model: '', models: [], availableModels: [], modelReasoningEfforts: {}, modelEfforts: [],
   contextWindow: 0, autoCompactTokenLimit: 0, disableResponseStorage: true, keySet: false,
 });
 
@@ -68,7 +65,7 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
     setNotice('');
     setModels(provider?.availableModels ?? []);
     setPreset(provider?.baseUrl === 'https://api.openai.com/v1' ? 'openai' : 'custom');
-    setDraft(provider ? { ...provider, models: provider.models ?? [provider.model], availableModels: provider.availableModels ?? [], apiKey: '' } : newDraft());
+    setDraft(provider ? { ...provider, models: provider.models ?? [provider.model], availableModels: provider.availableModels ?? [], modelEfforts: (provider.models ?? [provider.model]).map(id => provider.modelReasoningEfforts[id] ?? 'max'), apiKey: '' } : newDraft());
   };
 
   const save = (activate: boolean) => {
@@ -81,7 +78,7 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
       model: draft.model.trim(),
       models: [...new Set(draft.models.map(id => id.trim()).filter(Boolean))],
       availableModels: models,
-      reasoningEffort: draft.reasoningEffort,
+      modelReasoningEfforts: Object.fromEntries(draft.models.map((id, index) => [id.trim(), draft.modelEfforts[index] ?? 'max']).filter(([id]) => id)),
       contextWindow: draft.contextWindow,
       autoCompactTokenLimit: draft.autoCompactTokenLimit,
       disableResponseStorage: draft.disableResponseStorage,
@@ -158,14 +155,9 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
                 placeholder={draft.keySet ? '留空保留已保存的密钥' : '输入 API 密钥'}
                 onChange={(e) => { setDraft({ ...draft, apiKey: e.target.value }); setModels([]); }} />
             </label>
-            <CodexModelPicker models={models} selected={draft.models} defaultModel={draft.model} disabled={busy}
+            <CodexModelPicker models={models} selected={draft.models} reasoningEfforts={draft.modelEfforts} defaultModel={draft.model} disabled={busy}
               refreshing={pending === 'fetch'} onRefresh={fetchModels}
-              onChange={(selected, model) => setDraft({ ...draft, models: selected, model })} />
-            <label>推理等级
-              <select value={draft.reasoningEffort} onChange={(e) => setDraft({ ...draft, reasoningEffort: e.target.value })}>
-                {EFFORTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-            </label>
+              onChange={(selected, model, modelEfforts) => setDraft({ ...draft, models: selected, model, modelEfforts })} />
             <details className="project-env">
               <summary>更多配置</summary>
               <div className="project-form">
@@ -195,8 +187,8 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
               <div className="provider-model-editor" key={provider.id}>
                 <strong>{provider.name}{isActive && '（使用中）'}</strong>
                 <small>{provider.baseUrl}</small>
-                <small>{provider.model} · {EFFORTS.find(([value]) => value === provider.reasoningEffort)?.[1] || provider.reasoningEffort}</small>
-                <div className="codex-provider-model-tags">{(provider.models ?? [provider.model]).map(id => <span key={id} title={id}>{id}</span>)}</div>
+                <small>默认：{provider.model}</small>
+                <div className="codex-provider-model-tags">{(provider.models ?? [provider.model]).map(id => <span key={id} title={id}>{id} · {CODEX_EFFORT_OPTIONS.find(([value]) => value === (provider.modelReasoningEfforts[id] ?? 'max'))?.[1]}</span>)}</div>
                 <small>密钥{provider.keySet ? `已设置（尾号 ${provider.keyTail}）` : '未设置'}</small>
                 <div className="project-row-actions">
                   <button className="btn small" disabled={busy || isActive} onClick={() => void run('activate', async () => {

@@ -95,10 +95,11 @@ fn build_config(current: &[u8], provider: &CodexProvider, key: &str) -> Result<V
     doc["disable_response_storage"] = value(provider.disable_response_storage);
     // 本流程把 Key 写进 auth.json，显式选择文件凭据存储以兼容原先使用 keyring 的配置。
     doc["cli_auth_credentials_store"] = value("file");
-    if provider.reasoning_effort.is_empty() {
+    let reasoning_effort = provider.model_reasoning_effort(&provider.model);
+    if reasoning_effort.is_empty() {
         doc.remove("model_reasoning_effort");
     } else {
-        doc["model_reasoning_effort"] = value(&provider.reasoning_effort);
+        doc["model_reasoning_effort"] = value(reasoning_effort);
     }
     for (name, tokens) in [
         ("model_context_window", provider.context_window),
@@ -272,11 +273,12 @@ impl ProviderStore {
                     .to_string(),
                 models: Vec::new(),
                 available_models: None,
-                reasoning_effort: doc
+                model_reasoning_efforts: Default::default(),
+                reasoning_effort: Some(doc
                     .get("model_reasoning_effort")
                     .and_then(Item::as_str)
                     .unwrap_or("")
-                    .to_string(),
+                    .to_string()),
                 context_window: number("model_context_window"),
                 auto_compact_token_limit: number("model_auto_compact_token_limit"),
                 disable_response_storage: doc
@@ -295,7 +297,7 @@ impl ProviderStore {
         let matches = |provider: &&CodexProvider| -> bool {
             provider.base_url.trim_end_matches('/') == live.base_url.trim_end_matches('/')
                 && provider.model == live.model
-                && provider.reasoning_effort == live.reasoning_effort
+                && Some(provider.model_reasoning_effort(&provider.model)) == live.reasoning_effort.as_deref()
                 && provider.context_window == live.context_window
                 && provider.auto_compact_token_limit == live.auto_compact_token_limit
                 && provider.disable_response_storage == live.disable_response_storage
@@ -433,7 +435,8 @@ impl ProviderStore {
         if !provider.model_ids().iter().any(|id| id == model_id) {
             return Err("Codex 模型已从供应商配置中移除，请重新选择模型启动".to_string());
         }
-        if !CODEX_REASONING_EFFORTS.contains(&provider.reasoning_effort.as_str()) {
+        let reasoning_effort = provider.model_reasoning_effort(model_id);
+        if !CODEX_REASONING_EFFORTS.contains(&reasoning_effort) {
             return Err("Codex 推理等级无效，请重新保存供应商配置".to_string());
         }
         let id = uuid::Uuid::parse_str(&provider.id)
@@ -457,8 +460,8 @@ impl ProviderStore {
         // -c 在新旧版 Codex 中均支持；不混用新版独立 profile 文件与旧版 profiles 表。
         // 参数只含非敏感配置，API 密钥始终留在受限权限的配置文件中。
         let mut command = format!("codex -c model_provider={} --model {}", launch_id, model);
-        if !provider.reasoning_effort.is_empty() {
-            command.push_str(&format!(" -c model_reasoning_effort={}", provider.reasoning_effort));
+        if !reasoning_effort.is_empty() {
+            command.push_str(&format!(" -c model_reasoning_effort={}", reasoning_effort));
         }
         command.push_str(&format!(" -c disable_response_storage={}", provider.disable_response_storage));
         for (name, tokens) in [("model_context_window", provider.context_window),
@@ -659,7 +662,8 @@ mod tests {
             model: "test-model".to_string(),
             models: Vec::new(),
             available_models: None,
-            reasoning_effort: "high".to_string(),
+            reasoning_effort: Some("high".to_string()),
+            model_reasoning_efforts: Default::default(),
             context_window: 0,
             auto_compact_token_limit: 0,
             disable_response_storage: true,
@@ -681,6 +685,82 @@ mod tests {
         let mut invalid = input("无效模型");
         invalid.models = vec!["bad model".into()];
         assert!(invalid.validate(None).is_err());
+    }
+
+    #[test]
+    fn model_efforts_persist_and_drive_launches_and_default_model_changes() {
+        let store = TestStore::new();
+        let mut draft = input("独立推理等级");
+        draft.reasoning_effort = None;
+        draft.models = vec!["second-model".into(), "third-model".into()];
+        draft.model_reasoning_efforts.insert("test-model".into(), "medium".into());
+        draft.model_reasoning_efforts.insert("second-model".into(), "low".into());
+        let state = store.0.save(draft.clone(), false).unwrap();
+        let id = state.providers[0].id.clone();
+        let reopened = store.0.view(&store.0.read().unwrap()).unwrap();
+        for (model, effort) in [("test-model", "medium"), ("second-model", "low"), ("third-model", "max")] {
+            assert_eq!(reopened.providers[0].model_reasoning_efforts[model], effort);
+            let command = store.0.prepare_launch(&id, model).unwrap();
+            assert!(command.contains(&format!("model_reasoning_effort={}", effort)), "{}", command);
+        }
+        assert_eq!(parse_config(&store.config()).unwrap()["model_reasoning_effort"].as_str(), Some("medium"));
+        assert_eq!(store.0.view(&store.0.read().unwrap()).unwrap().active_provider_id, Some(id.clone()));
+        draft.id = id.clone();
+        draft.api_key = None;
+        draft.model = "second-model".into();
+        draft.models = vec!["test-model".into(), "second-model".into()];
+        draft.model_reasoning_efforts.insert("third-model".into(), "max".into());
+        let updated = store.0.save(draft, false).unwrap();
+        assert_eq!(updated.active_provider_id, Some(id));
+        assert_eq!(parse_config(&store.config()).unwrap()["model_reasoning_effort"].as_str(), Some("low"));
+        assert!(!updated.providers[0].model_reasoning_efforts.contains_key("third-model"));
+        let disk: Value = serde_json::from_slice(&fs::read(&store.0.path).unwrap()).unwrap();
+        assert!(disk["providers"][0].get("reasoningEffort").is_none());
+        assert_eq!(disk["providers"][0]["modelReasoningEfforts"]["test-model"], "medium");
+    }
+
+    #[test]
+    fn legacy_efforts_are_preserved_and_new_models_default_to_max() {
+        let store = TestStore::new();
+        let mut draft = input("旧配置");
+        draft.models = vec!["second-model".into()];
+        let state = store.0.save(draft.clone(), false).unwrap();
+        let id = state.providers[0].id.clone();
+        let mut disk: Value = serde_json::from_slice(&fs::read(&store.0.path).unwrap()).unwrap();
+        let legacy = disk["providers"][0].as_object_mut().unwrap();
+        legacy.remove("modelReasoningEfforts");
+        legacy.insert("reasoningEffort".into(), json!("high"));
+        atomic_write_private(&store.0.path, &serde_json::to_vec(&disk).unwrap()).unwrap();
+        let state = store.0.view(&store.0.read().unwrap()).unwrap();
+        assert_eq!(state.active_provider_id, Some(id.clone()));
+        assert_eq!(state.providers[0].model_reasoning_efforts["test-model"], "high");
+        assert_eq!(state.providers[0].model_reasoning_efforts["second-model"], "high");
+        assert!(store.0.prepare_launch(&id, "second-model").unwrap().contains("model_reasoning_effort=high"));
+        draft.id = id;
+        draft.reasoning_effort = None;
+        draft.model_reasoning_efforts = state.providers[0].model_reasoning_efforts.clone();
+        draft.models.push("third-model".into());
+        let saved = store.0.save(draft, false).unwrap();
+        assert_eq!(saved.providers[0].model_reasoning_efforts["second-model"], "high");
+        assert_eq!(saved.providers[0].model_reasoning_efforts["third-model"], "max");
+        disk["providers"][0].as_object_mut().unwrap().remove("reasoningEffort");
+        atomic_write_private(&store.0.path, &serde_json::to_vec(&disk).unwrap()).unwrap();
+        let state = store.0.view(&store.0.read().unwrap()).unwrap();
+        assert_eq!(state.providers[0].model_reasoning_efforts["test-model"], "max");
+    }
+
+    #[test]
+    fn invalid_effort_on_non_default_model_is_rejected_without_writes() {
+        let store = TestStore::new();
+        store.0.save(input("当前配置"), false).unwrap();
+        let config = store.config();
+        let data = fs::read(&store.0.path).unwrap();
+        let mut draft = input("无效推理等级");
+        draft.models = vec!["second-model".into()];
+        draft.model_reasoning_efforts.insert("second-model".into(), "high && invalid-command".into());
+        assert!(store.0.save(draft, false).is_err());
+        assert_eq!(store.config(), config);
+        assert_eq!(fs::read(&store.0.path).unwrap(), data);
     }
 
     #[test]
@@ -813,7 +893,7 @@ mod tests {
         assert!(store.0.prepare_launch(&state.providers[0].id, "removed-model").is_err());
         assert_eq!(store.config(), before);
         let mut file = store.0.read().unwrap();
-        file.providers[0].reasoning_effort = "high && invalid-command".into();
+        file.providers[0].model_reasoning_efforts.insert("test-model".into(), "high && invalid-command".into());
         store.0.commit(&file, None).unwrap();
         assert!(store.0.prepare_launch(&state.providers[0].id, "test-model").is_err());
         assert_eq!(store.config(), before);
@@ -967,7 +1047,7 @@ mod tests {
         let store = TestStore::new();
         store.0.save(input("一"), false).unwrap();
         let mut second = input("二");
-        second.reasoning_effort.clear();
+        second.reasoning_effort = Some(String::new());
         second.context_window = 1_000_000;
         second.auto_compact_token_limit = 900_000;
         second.disable_response_storage = false;
@@ -1042,7 +1122,7 @@ mod tests {
         draft.auto_compact_token_limit = 101;
         assert!(draft.validate(None).is_err());
         let mut draft = input("测试");
-        draft.reasoning_effort = "unknown".to_string();
+        draft.reasoning_effort = Some("unknown".to_string());
         assert!(draft.validate(None).is_err());
         let (provider, _) = input("测试").validate(None).unwrap();
         assert!(provider.to_view("1234").key_tail.is_empty());

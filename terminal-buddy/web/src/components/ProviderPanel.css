@@ -84,6 +84,7 @@
 .codex-model-picker-tools { flex-wrap: wrap; }
 .codex-model-entry { min-width: 0; }
 .codex-model-input-row > input { flex: 1 1 160px; min-width: 0; }
+.codex-model-input-row > select.codex-model-effort { flex: 0 0 auto; width: auto; max-width: 150px; }
 .codex-model-input-row > button { flex-shrink: 0; }
 .codex-model-input-row .active { color: var(--accent); opacity: 1; }
 .codex-model-dropdown { margin-top: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }

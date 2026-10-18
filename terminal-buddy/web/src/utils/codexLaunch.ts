@@ -1,3 +1,9 @@
+export const CODEX_EFFORT_OPTIONS = [
+  ['', '跟随模型默认'], ['none', '关闭 none'], ['minimal', '最低 minimal'],
+  ['low', '低 low'], ['medium', '中 medium'], ['high', '高 high'],
+  ['xhigh', '极高 xhigh'], ['max', '最高 MAX'], ['ultra', '超高 ultra'],
+] as const;
+
 const CODEX_REF_PREFIX = '__TB_CODEX_REF__:';
 
 export function isCodexCommand(command: string): boolean {

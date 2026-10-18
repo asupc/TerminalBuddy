@@ -23,11 +23,12 @@ interface Editor extends CodexProviderInput {
   apiKey: string;
   keySet: boolean;
   keyTail: string;
+  modelEfforts: string[];
 }
 
 function emptyEditor(): Editor {
   return {
-    name: '', baseUrl: '', apiKey: '', model: '', models: [], availableModels: [], reasoningEffort: 'high',
+    name: '', baseUrl: '', apiKey: '', model: '', models: [], availableModels: [], modelReasoningEfforts: {}, modelEfforts: [],
     contextWindow: 0, autoCompactTokenLimit: 0, disableResponseStorage: true,
     keySet: false, keyTail: '',
   };
@@ -94,7 +95,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
     requestVersion.current += 1;
     setModels(provider?.availableModels ?? []);
     setPreset(provider?.baseUrl === 'https://api.openai.com/v1' ? 'openai' : 'custom');
-    setEditor(provider ? { ...provider, models: provider.models ?? [provider.model], availableModels: provider.availableModels ?? [], apiKey: '' } : emptyEditor());
+    setEditor(provider ? { ...provider, models: provider.models ?? [provider.model], availableModels: provider.availableModels ?? [], modelEfforts: (provider.models ?? [provider.model]).map(id => provider.modelReasoningEfforts[id] ?? 'max'), apiKey: '' } : emptyEditor());
   };
 
   const save = async (activate: boolean) => {
@@ -104,7 +105,8 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
       name: editor.name.trim(), baseUrl: editor.baseUrl.trim(),
       apiKey: editor.apiKey.trim() || undefined, model: editor.model.trim(), models: [...new Set(editor.models.map(id => id.trim()).filter(Boolean))],
       availableModels: models,
-      reasoningEffort: editor.reasoningEffort, contextWindow: editor.contextWindow,
+      modelReasoningEfforts: Object.fromEntries(editor.models.map((id, index) => [id.trim(), editor.modelEfforts[index] ?? 'max']).filter(([id]) => id)),
+      contextWindow: editor.contextWindow,
       autoCompactTokenLimit: editor.autoCompactTokenLimit,
       disableResponseStorage: editor.disableResponseStorage,
     };
@@ -142,6 +144,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
   };
 
   const busy = pending !== null;
+  const defaultEffort = editor?.modelEfforts[editor.models.findIndex(id => id.trim() === editor.model)] ?? 'max';
 
   return (
     <div className="claude-segment llm-providers-segment codex-providers-settings" aria-busy={busy}>
@@ -184,9 +187,8 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
               <div className="llm-provider-meta"><span title={provider.baseUrl}>{provider.baseUrl}</span></div>
               <div className="llm-provider-meta">
                 <span title={provider.model}>默认：{provider.model}</span>
-                <span className="llm-badge effort">{CODEX_EFFORT_OPTIONS.find(([level]) => level === provider.reasoningEffort)?.[1] ?? provider.reasoningEffort}</span>
               </div>
-              <div className="codex-provider-model-tags">{(provider.models ?? [provider.model]).map(id => <span key={id} className="llm-badge" title={id}>{id}</span>)}</div>
+              <div className="codex-provider-model-tags">{(provider.models ?? [provider.model]).map(id => <span key={id} className="llm-badge" title={id}>{id} · {CODEX_EFFORT_OPTIONS.find(([level]) => level === (provider.modelReasoningEfforts[id] ?? 'max'))?.[1]}</span>)}</div>
               <div className="llm-provider-meta"><span className="llm-key-tail">{provider.keySet ? `密钥已保存${provider.keyTail ? ` ····${provider.keyTail}` : ''}` : '未设置密钥'}</span></div>
               <div className="llm-provider-actions">
                 <button type="button" className="claude-segment-btn mini" disabled={busy || isActive} onClick={() => void mutate('activate', () => activateCodexProvider(provider.id), `已启用「${provider.name}」，重新启动 Codex 后生效`)}>{isActive && <Check size={12} />}{isActive ? '已启用' : '启用'}</button>
@@ -223,14 +225,9 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
             <label className="claude-form-row">API 密钥
               <input required={!editor.keySet} type="password" autoComplete="new-password" value={editor.apiKey} onChange={e => { setEditor({ ...editor, apiKey: e.target.value }); setModels([]); }} placeholder={editor.keySet ? `已保存${editor.keyTail ? `（····${editor.keyTail}）` : ''}，留空沿用` : '粘贴 API 密钥'} spellCheck={false} />
             </label>
-            <CodexModelPicker models={models} selected={editor.models} defaultModel={editor.model} disabled={busy}
+            <CodexModelPicker models={models} selected={editor.models} reasoningEfforts={editor.modelEfforts} defaultModel={editor.model} disabled={busy}
               refreshing={pending === 'fetch'} onRefresh={() => void fetchModels()}
-              onChange={(selected, model) => setEditor({ ...editor, models: selected, model })} />
-            <label className="claude-form-row">推理等级
-              <select value={editor.reasoningEffort} onChange={e => setEditor({ ...editor, reasoningEffort: e.target.value })}>
-                {CODEX_EFFORT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-            </label>
+              onChange={(selected, model, modelEfforts) => setEditor({ ...editor, models: selected, model, modelEfforts })} />
             <details className="codex-provider-advanced">
               <summary>更多配置</summary>
               <div className="claude-form-row-inline">
@@ -253,7 +250,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
             <pre>{[
               'model_provider = "custom"',
               'model = ' + JSON.stringify(editor.model),
-              ...(editor.reasoningEffort ? ['model_reasoning_effort = ' + JSON.stringify(editor.reasoningEffort)] : []),
+              ...(defaultEffort ? ['model_reasoning_effort = ' + JSON.stringify(defaultEffort)] : []),
               ...(editor.contextWindow ? ['model_context_window = ' + editor.contextWindow] : []),
               ...(editor.autoCompactTokenLimit ? ['model_auto_compact_token_limit = ' + editor.autoCompactTokenLimit] : []),
               'disable_response_storage = ' + editor.disableResponseStorage,

@@ -303,7 +303,7 @@ export interface CodexProvider {
   model: string;
   models: string[];
   availableModels: string[];
-  reasoningEffort: string;
+  modelReasoningEfforts: Record<string, string>;
   contextWindow: number;
   autoCompactTokenLimit: number;
   disableResponseStorage: boolean;
