@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ChevronRight,
   MoreHorizontal,
@@ -295,11 +295,12 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
   const showModels =
     (menuProfile ? LOCAL_TYPES.includes(menuProfile.terminalType) : !!menuProject?.path) &&
     commands.some(command => isClaudeCommand(command) || isCodexCommand(command));
-  const useCodex = commands.some(isCodexCommand);
-  const menuTargets: LlmLaunchTarget[] = useCodex ? (codexState?.providers ?? []).map(provider => ({
+  const modelSources: Array<'claude' | 'codex'> = !showModels ? []
+    : commands.some(isClaudeCommand) ? ['claude', 'codex'] : ['codex', 'claude'];
+  const codexTargets: LlmLaunchTarget[] = (codexState?.providers ?? []).map(provider => ({
     providerId: provider.id, providerName: provider.name, isDefault: codexState?.activeProviderId === provider.id,
     models: (provider.models ?? [provider.model]).map(id => ({ id, effort: (provider.modelReasoningEfforts[id] ?? 'max') || '默认', contextWindow: provider.contextWindow })),
-  })) : targets;
+  }));
   const item = (label: ReactNode, action: () => void, danger = false) => (
     <button
       type="button"
@@ -329,62 +330,65 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
         </span>
       </button>
     ));
-  const modelItems = showModels && (
-    <>
-      <div className="context-menu-separator" role="separator" />
-      <div className="project-menu-heading">{useCodex ? 'Codex' : 'Claude'} 模型</div>
-      {modelsLoading && <div className="project-menu-heading">加载中…</div>}
-      {modelsError && (
-        <>
-          {item('重新加载模型', () => void refreshModels())}
-          <div className="project-menu-error" role="alert">
-            {modelsError}
+  const modelItems = modelSources.map(source => {
+    const useCodex = source === 'codex';
+    const menuTargets = useCodex ? codexTargets : targets;
+    return (
+      <Fragment key={source}>
+        <div className="context-menu-separator" role="separator" />
+        <div className="project-menu-heading">{useCodex ? 'Codex' : 'Claude'} 模型</div>
+        {modelsLoading && <div className="project-menu-heading">加载中…</div>}
+        {modelsError && (
+          <>
+            {item('重新加载模型', () => void refreshModels())}
+            <div className="project-menu-error" role="alert">
+              {modelsError}
+            </div>
+          </>
+        )}
+        {menuTargets.map((target) => (
+          <div key={target.providerId}>
+            <div className="project-menu-heading">
+              {target.providerName}
+              {target.isDefault && '（默认）'}
+            </div>
+            {target.models.map((model) => (
+              <button
+                type="button"
+                role="menuitem"
+                key={model.id}
+                className="context-menu-item"
+                disabled={busy}
+                onClick={() =>
+                  void run(() => {
+                    const command = useCodex ? buildCodexRefCommand(target.providerId, model.id, commands) : modelCommand(target.providerId, model.id, commands);
+                    return menuProfile
+                      ? openTerminal(menuProfile.id, {
+                          extraStartupParams: command,
+                          extraStartupMode: 'independent',
+                        })
+                      : openTerminal('', {
+                          displayName: menuProject!.name,
+                          startupPath: menuProject!.path,
+                          startupGroup: menuProject!.name,
+                          startupCommand: command,
+                        });
+                  })
+                }
+              >
+                <span className="project-menu-model">{model.id}</span>
+                <small>{model.effort}</small>
+              </button>
+            ))}
           </div>
-        </>
-      )}
-      {menuTargets.map((target) => (
-        <div key={target.providerId}>
-          <div className="project-menu-heading">
-            {target.providerName}
-            {target.isDefault && '（默认）'}
-          </div>
-          {target.models.map((model) => (
-            <button
-              type="button"
-              role="menuitem"
-              key={model.id}
-              className="context-menu-item"
-              disabled={busy}
-              onClick={() =>
-                void run(() => {
-                  const command = useCodex ? buildCodexRefCommand(target.providerId, model.id, commands) : modelCommand(target.providerId, model.id, commands);
-                  return menuProfile
-                    ? openTerminal(menuProfile.id, {
-                        extraStartupParams: command,
-                        extraStartupMode: 'independent',
-                      })
-                    : openTerminal('', {
-                        displayName: menuProject!.name,
-                        startupPath: menuProject!.path,
-                        startupGroup: menuProject!.name,
-                        startupCommand: command,
-                      });
-                })
-              }
-            >
-              <span className="project-menu-model">{model.id}</span>
-              <small>{model.effort}</small>
-            </button>
-          ))}
-        </div>
-      ))}
-      {item('配置模型供应商…', () => {
-        setMenu(null);
-        setManageModels(useCodex ? 'codex' : 'claude');
-      })}
-      <div className="context-menu-separator" role="separator" />
-    </>
-  );
+        ))}
+        {item('配置模型供应商…', () => {
+          setMenu(null);
+          setManageModels(source);
+        })}
+      </Fragment>
+    );
+  });
   const blankBind = bindMenu({ kind: 'blank' });
   const hasGroupProfiles =
     menuGroup !== undefined && profiles.some((p) => (p.group?.trim() || '默认') === menuGroup);

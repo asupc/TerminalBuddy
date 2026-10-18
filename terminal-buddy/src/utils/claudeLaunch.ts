@@ -1,5 +1,7 @@
 import type { Profile } from '../types';
 
+export const DEFAULT_CLAUDE_COMMAND = 'claude --dangerously-skip-permissions';
+
 const LOCAL_SHELL_TYPES: string[] = ['powershell', 'pwsh', 'cmd'];
 
 /** 引用可注入的本地 shell 类型全集（后端 ssh/docker/k8s 分支丢弃引用，不在此列）。 */
@@ -63,11 +65,12 @@ function stripClaudeRefConflictArgs(args: string): string {
 /**
  * 模型引用启动（independent 整条替换启动命令）时，从项目/连接的原启动命令里
  * 继承 claude 的参数（如 --dangerously-skip-permissions），冲突参数剔除。
- * 接受项目 startupCommand（string）或连接 startup_commands（string[]），无 claude 返回 ''。
+ * 接受项目 startupCommand（string）或连接 startup_commands（string[]）。
+ * 无 Claude 命令时使用调用方指定的默认命令；历史恢复未指定时仍返回空参数。
  */
-export function inheritableClaudeArgs(source: string | string[] | undefined): string {
+export function inheritableClaudeArgs(source: string | string[] | undefined, fallbackCommand = ''): string {
   const commands = typeof source === 'string' ? [source] : (source ?? []);
-  const claudeCommand = commands.find(isClaudeCommand);
+  const claudeCommand = commands.find(isClaudeCommand) ?? fallbackCommand;
   if (!claudeCommand) return '';
   return stripClaudeRefConflictArgs(claudeArgsFromCommand(claudeCommand));
 }

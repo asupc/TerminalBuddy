@@ -1,6 +1,8 @@
 import { api } from '../api';
 import type { ExtraParamPreset, Profile, Project } from '../types';
 
+export const DEFAULT_CLAUDE_COMMAND = 'claude --dangerously-skip-permissions';
+
 export const PINNED_GROUP = '__pinned__';
 export const LOCAL_TYPES = ['powershell', 'pwsh', 'cmd', 'bash', 'sh', 'zsh'];
 
@@ -48,9 +50,9 @@ export function isClaudeCommand(command: string): boolean {
   return /(?:^|[\s"'=])claude(?:\.cmd|\.exe|\.bat)?(?=$|[\s"'=])/i.test(command);
 }
 
-/** 模型引用替换整条命令，继承原 Claude 参数并移除冲突的模型设置。 */
+/** 模型引用替换整条命令，继承原 Claude 参数；跨工具启动使用默认命令。 */
 export function modelCommand(providerId: string, modelId: string, commands: string[]): string {
-  const command = commands.find(isClaudeCommand) || '';
+  const command = commands.find(isClaudeCommand) ?? DEFAULT_CLAUDE_COMMAND;
   const match = /(?:[\s"'=]|^)claude(?:\.cmd|\.exe|\.bat)?["']?(?=$|\s)/i.exec(command);
   const args = match
     ? command.slice(match.index + match[0].length).split(/&&|\|\||;|\|/, 1)[0]

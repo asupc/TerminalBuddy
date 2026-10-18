@@ -6,7 +6,7 @@ import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
-import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
+import { DEFAULT_CLAUDE_COMMAND, inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
 import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
@@ -337,7 +337,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
    * 原 claude 命令的参数（如 --dangerously-skip-permissions）继承到引用命令后。 */
   const startProfileWithModel = (profile: Profile, providerId: string, modelId: string) => {
     closeContextMenu();
-    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands)), undefined, undefined, undefined, undefined, 'independent');
+    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, DEFAULT_CLAUDE_COMMAND)), undefined, undefined, undefined, undefined, 'independent');
   };
 
   /** 分组模型启动：走 blank 链（恒为本地 shell），引用命令整条注入，模型名由 tab tag 呈现；
@@ -346,7 +346,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     closeContextMenu();
     try {
       await openTerminalInDir(project.path, {
-        command: buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(project.startupCommand)),
+        command: buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(project.startupCommand, DEFAULT_CLAUDE_COMMAND)),
         name: project.name,
         groupName: project.name,
       });
@@ -371,6 +371,27 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     useAppStore.getState().setProviderSettingsTab(source);
     closeContextMenu();
     openSettingsDialog('llm-providers');
+  };
+
+  // 当前启动工具的供应商排在前面，另一类供应商用于直接切换工具启动。
+  const modelMenuSections = (
+    commands: string[],
+    onPickModel: (source: 'claude' | 'codex', providerId: string, modelId: string) => void,
+  ) => {
+    const sources: Array<'claude' | 'codex'> = commands.some(isClaudeCommand)
+      ? ['claude', 'codex']
+      : commands.some(isCodexCommand) ? ['codex', 'claude'] : [];
+    return sources.map(source => (
+      <ClaudeModelMenuSection
+        key={source}
+        source={source}
+        itemClassName="context-menu-item"
+        separatorClassName="context-menu-separator"
+        title={source === 'claude' ? 'Claude 模型' : 'Codex 模型'}
+        onPickModel={(providerId, modelId) => onPickModel(source, providerId, modelId)}
+        onGotoProviders={() => gotoProvidersSettings(source)}
+      />
+    ));
   };
 
   const handleFinishRenameProfile = async () => {
@@ -572,21 +593,10 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             // 仅本地 shell 类型显示模型区：后端 ssh/docker/k8s 分支会丢弃引用；
             // Claude / Codex 引用命令会整体替换 startup_commands。
             if (!target || !isModelRefLocalType(target.terminalType)) return null;
-            if (target.startupCommands.some(isCodexCommand)) return (
-              <ClaudeModelMenuSection source="codex" itemClassName="context-menu-item" separatorClassName="context-menu-separator"
-                title="Codex 模型" onPickModel={(providerId, modelId) => startProfileWithCodexModel(target, providerId, modelId)}
-                onGotoProviders={() => gotoProvidersSettings('codex')} />
-            );
-            if (!target.startupCommands.some(isClaudeCommand)) return null;
-            return (
-              <ClaudeModelMenuSection
-                itemClassName="context-menu-item"
-                separatorClassName="context-menu-separator"
-                title="Claude 模型"
-                onPickModel={(providerId, modelId) => startProfileWithModel(target, providerId, modelId)}
-                onGotoProviders={gotoProvidersSettings}
-              />
-            );
+            return modelMenuSections(target.startupCommands, (source, providerId, modelId) => {
+              if (source === 'claude') startProfileWithModel(target, providerId, modelId);
+              else startProfileWithCodexModel(target, providerId, modelId);
+            });
           })()}
           <div className="context-menu-item" onClick={() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
@@ -662,20 +672,10 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                 try { await openTerminalInDir(project.path); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
-              {isCodexCommand(command) && (
-                <ClaudeModelMenuSection source="codex" itemClassName="context-menu-item" separatorClassName="context-menu-separator"
-                  title="Codex 模型" onPickModel={(providerId, modelId) => void startProjectWithCodexModel(project, providerId, modelId)}
-                  onGotoProviders={() => gotoProvidersSettings('codex')} />
-              )}
-              {isClaudeCommand(command) && (
-                <ClaudeModelMenuSection
-                  itemClassName="context-menu-item"
-                  separatorClassName="context-menu-separator"
-                  title="Claude 模型"
-                  onPickModel={(providerId, modelId) => void startProjectWithModel(project, providerId, modelId)}
-                  onGotoProviders={gotoProvidersSettings}
-                />
-              )}
+              {modelMenuSections([command], (source, providerId, modelId) => {
+                if (source === 'claude') void startProjectWithModel(project, providerId, modelId);
+                else void startProjectWithCodexModel(project, providerId, modelId);
+              })}
               <div className="context-menu-separator" />
               <div className="context-menu-item" onClick={async () => {
                 closeContextMenu();

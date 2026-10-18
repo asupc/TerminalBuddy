@@ -32,11 +32,31 @@ for (const utils of [desktop, mobile]) {
   assert.equal(command.replace(/\s+/g, ' '), '__TB_CODEX_REF__:provider:vendor/model:variant --sandbox workspace-write --dangerously-bypass-hook-trust');
   assert.equal(utils.buildCodexRefCommand('p', 'm', 'codex --profile=old --model=old --config="model=old" --verbose').replace(/\s+/g, ' '), '__TB_CODEX_REF__:p:m --verbose');
   assert.equal(utils.buildCodexRefCommand('p', 'm', 'codex --oss --local-provider ollama --remote ws://example.invalid --remote-auth-token-env REMOTE --sandbox workspace-write').replace(/\s+/g, ' '), '__TB_CODEX_REF__:p:m --sandbox workspace-write');
-  assert.equal(utils.buildCodexRefCommand('p', 'm', 'claude --verbose'), '__TB_CODEX_REF__:p:m');
+  for (const source of [undefined, [], 'claude --model old --verbose', ['echo before', 'claude --resume session']]) {
+    assert.equal(utils.buildCodexRefCommand('p', 'm', source), '__TB_CODEX_REF__:p:m --dangerously-bypass-approvals-and-sandbox');
+  }
+  assert.equal(utils.buildCodexRefCommand('p', 'm', 'codex'), '__TB_CODEX_REF__:p:m');
+  assert.equal(utils.buildCodexRefCommand('p', 'm', utils.DEFAULT_CODEX_COMMAND), '__TB_CODEX_REF__:p:m --dangerously-bypass-approvals-and-sandbox');
 }
 assert.deepEqual(desktop.parseModelRef('  __TB_CODEX_REF__:p:vendor/model:variant --resume'), { providerId: 'p', modelId: 'vendor/model:variant' });
 assert.deepEqual(desktop.parseModelRef('__TB_CLAUDE_REF__:p:claude-model'), { providerId: 'p', modelId: 'claude-model' });
 for (const command of ['codex', '__TB_CODEX_REF__:missing', '__TB_CODEX_REF__::model', '__TB_CODEX_REF__:p:']) {
   assert.equal(desktop.parseCodexRef(command), null);
 }
-console.log('PASS: 桌面与手机 Codex 引用、参数继承、冲突配置剔除及模型标签解析');
+console.log('PASS: 桌面与手机 Codex 引用、参数继承、冲突配置剔除、跨工具默认命令及模型标签解析');
+
+const mobileProjects = load('web/src/utils/projects.ts', { '../api': { api: {} } });
+for (const source of [[], ['codex --model old --sandbox read-only'], ['echo before', 'codex --resume session']]) {
+  assert.equal(claude.inheritableClaudeArgs(source, claude.DEFAULT_CLAUDE_COMMAND), '--dangerously-skip-permissions');
+  assert.equal(mobileProjects.modelCommand('p', 'm', source), '__TB_CLAUDE_REF__:p:m --dangerously-skip-permissions');
+  assert.equal(claude.inheritableClaudeArgs(source), '', '历史恢复仍由已有参数控制');
+}
+for (const [source, expected] of [
+  [['claude'], ''],
+  [['claude --model old --effort high --settings="old file" --resume session'], '--resume session'],
+  [[claude.DEFAULT_CLAUDE_COMMAND], '--dangerously-skip-permissions'],
+]) {
+  assert.equal(claude.inheritableClaudeArgs(source, claude.DEFAULT_CLAUDE_COMMAND), expected);
+  assert.equal(mobileProjects.modelCommand('p', 'm', source), ['__TB_CLAUDE_REF__:p:m', expected].filter(Boolean).join(' '));
+}
+console.log('PASS: 双端 Codex 切换 Claude 使用默认命令，同类参数和历史恢复保持原行为');
