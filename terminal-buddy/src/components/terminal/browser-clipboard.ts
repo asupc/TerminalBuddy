@@ -20,11 +20,34 @@ export function installBrowserClipboard(terminal: Terminal, options: BrowserClip
   element.setAttribute('data-native-context-menu', '');
 
   // xterm 会把 textarea 移到鼠标下供浏览器显示编辑菜单；菜单打开时保留这个位置。
-  const openMenu = () => element.setAttribute('data-native-context-menu-open', '');
+  const openMenu = (event: MouseEvent) => {
+    element.setAttribute('data-native-context-menu-open', '');
+    // 右键 mousedown 不再交给 xterm；Firefox 原本在该事件中准备编辑菜单，
+    // 因此这里也要把公开的 textarea 放到鼠标下，保留原生复制/粘贴入口。
+    const textarea = terminal.textarea;
+    const screen = element.querySelector<HTMLElement>('.xterm-screen');
+    if (!textarea || !screen) return;
+    const { left, top } = screen.getBoundingClientRect();
+    Object.assign(textarea.style, {
+      width: '20px', height: '20px', zIndex: '1000',
+      left: (event.clientX - left - 10) + 'px',
+      top: (event.clientY - top - 10) + 'px',
+    });
+    textarea.value = terminal.getSelection();
+    textarea.focus();
+    textarea.select();
+  };
   const closeMenu = () => element.removeAttribute('data-native-context-menu-open');
   const onMouseDown = (event: MouseEvent) => {
-    if (event.button === 2) openMenu();
-    else closeMenu();
+    if (event.button === 2) {
+      openMenu(event);
+      // 只阻止鼠标协议上报，保留浏览器默认菜单。否则 Codex 等 TUI 会收到
+      // 右键并尝试读取服务器剪贴板，报 clipboard text is unavailable。
+      event.stopImmediatePropagation();
+    } else closeMenu();
+  };
+  const onRightMouseEvent = (event: MouseEvent) => {
+    if (event.button === 2) event.stopImmediatePropagation();
   };
   const onPaste = (event: ClipboardEvent) => {
     event.preventDefault();
@@ -51,6 +74,8 @@ export function installBrowserClipboard(terminal: Terminal, options: BrowserClip
   };
 
   element.addEventListener('mousedown', onMouseDown, true);
+  element.addEventListener('mouseup', onRightMouseEvent, true);
+  element.addEventListener('auxclick', onRightMouseEvent, true);
   element.addEventListener('contextmenu', openMenu, true);
   element.addEventListener('paste', onPaste, true);
   element.ownerDocument.addEventListener('pointerdown', closeMenu, true);
@@ -60,6 +85,8 @@ export function installBrowserClipboard(terminal: Terminal, options: BrowserClip
     closeMenu();
     element.removeAttribute('data-native-context-menu');
     element.removeEventListener('mousedown', onMouseDown, true);
+    element.removeEventListener('mouseup', onRightMouseEvent, true);
+    element.removeEventListener('auxclick', onRightMouseEvent, true);
     element.removeEventListener('contextmenu', openMenu, true);
     element.removeEventListener('paste', onPaste, true);
     element.ownerDocument.removeEventListener('pointerdown', closeMenu, true);

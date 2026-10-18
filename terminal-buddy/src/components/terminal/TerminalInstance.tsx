@@ -1156,7 +1156,10 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       };
 
       const handleRightMouseDown = (e: MouseEvent) => {
-        if (e.button !== 2) return;
+        if (browserClient || e.button !== 2) return;
+        // 右键由本地菜单/粘贴处理，不能同时上报给 Codex 等启用鼠标协议的 TUI。
+        suppressRightClickEvent(e);
+        terminal.focus();
         // 每次右键手势开始时先复位，保证 mousedown/contextmenu 只粘贴一次
         rightClickPasteRef.current.gestureHandled = false;
         if (!shouldAutoPasteOnRightClick()) return;
@@ -1164,18 +1167,17 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         // Handle auto paste before xterm moves/focuses its hidden textarea for
         // the native context menu; otherwise a later paste path can join in.
         rightClickPasteRef.current.gestureHandled = true;
-        suppressRightClickEvent(e);
         requestRightClickPaste();
       };
 
       const handleRightMouseUp = (e: MouseEvent) => {
-        if (e.button === 2 && isSuppressingNativePaste()) {
+        if (!browserClient && e.button === 2) {
           suppressRightClickEvent(e);
         }
       };
 
       const handleRightAuxClick = (e: MouseEvent) => {
-        if (e.button === 2 && isSuppressingNativePaste()) {
+        if (!browserClient && e.button === 2) {
           suppressRightClickEvent(e);
         }
       };
@@ -1189,7 +1191,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const handleContextMenu = (e: MouseEvent) => {
         // 放行到 xterm 的原生菜单处理器，再由浏览器菜单触发 paste。
         if (browserClient) return;
-        e.preventDefault();
+        suppressRightClickEvent(e);
         // In readOnly mode, block paste but still allow copy from context menu
         if (shouldAutoPasteOnRightClick()) {
           suppressRightClickEvent(e);

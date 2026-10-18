@@ -27,15 +27,20 @@ class Element extends DomEvents {
   setAttribute(name, value) { this.attributes.set(name, value); }
   removeAttribute(name) { this.attributes.delete(name); }
   hasAttribute(name) { return this.attributes.has(name); }
+  querySelector(selector) {
+    assert.equal(selector, '.xterm-screen');
+    return { getBoundingClientRect: () => ({ left: 50, top: 80 }) };
+  }
 }
 const event = (type, data = {}) => Object.assign(new Event(type, { cancelable: true }), data);
 const pasteEvent = (text = '', files = []) => event('paste', {
   clipboardData: { files, getData: format => format === 'text/plain' ? text : '' },
 });
-function fixture(overrides = {}) {
-  const calls = { texts: [], files: [], uploads: [], errors: [], focus: 0 };
+function fixture(overrides = {}, selection = '') {
+  const calls = { texts: [], files: [], uploads: [], errors: [], focus: 0, selects: 0 };
   const element = new Element();
-  const terminal = { element, paste: text => calls.texts.push(text), focus: () => calls.focus++ };
+  const textarea = { value: '', style: {}, focus: () => calls.focus++, select: () => calls.selects++ };
+  const terminal = { element, textarea, getSelection: () => selection, paste: text => calls.texts.push(text), focus: () => calls.focus++ };
   let writable = true;
   const dispose = installBrowserClipboard(terminal, {
     canPaste: () => writable,
@@ -44,7 +49,7 @@ function fixture(overrides = {}) {
     onError: error => calls.errors.push(error),
     ...overrides,
   });
-  return { element, calls, dispose, readOnly: () => { writable = false; } };
+  return { element, textarea, calls, dispose, readOnly: () => { writable = false; } };
 }
 const settle = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
 
@@ -62,20 +67,53 @@ const settle = async () => { for (let i = 0; i < 5; i++) await Promise.resolve()
   f.dispose();
 }
 {
-  const f = fixture();
+  const f = fixture({}, '选中的内容');
   assert.equal(f.element.hasAttribute('data-native-context-menu'), true);
-  const e = event('contextmenu');
+  const e = event('contextmenu', { clientX: 100, clientY: 110 });
   f.element.dispatchEvent(e);
   assert.equal(e.defaultPrevented, false, 'native context menu must remain available');
+  assert.equal(f.textarea.value, '选中的内容', 'Native Copy must use the terminal selection');
+  assert.equal(f.textarea.style.left, '40px');
+  assert.equal(f.textarea.style.top, '20px');
+  assert.equal(f.calls.selects, 1, 'The textarea must be ready before the browser opens its editing menu');
   assert.equal(f.element.hasAttribute('data-native-context-menu-open'), true);
   f.element.ownerDocument.dispatchEvent(event('keydown'));
   assert.equal(f.element.hasAttribute('data-native-context-menu-open'), false);
-  f.element.dispatchEvent(event('mousedown', { button: 2 }));
+  f.element.dispatchEvent(event('mousedown', { button: 2, clientX: 120, clientY: 130 }));
   assert.equal(f.element.hasAttribute('data-native-context-menu-open'), true);
+  assert.equal(f.textarea.style.left, '60px');
+  assert.equal(f.textarea.style.top, '40px');
+  assert.equal(f.calls.selects, 2, 'Firefox needs the textarea ready on mousedown, before contextmenu');
   f.element.dispatchEvent(pasteEvent('right click'));
   assert.equal(f.element.hasAttribute('data-native-context-menu-open'), false);
   f.dispose();
   assert.equal(f.element.hasAttribute('data-native-context-menu'), false);
+}
+// A context menu gesture belongs to the browser, even when the TUI enables mouse reporting.
+{
+  const f = fixture();
+  const reported = [];
+  for (const type of ['mousedown', 'mouseup', 'auxclick']) {
+    f.element.addEventListener(type, e => reported.push([type, e.button]));
+    const right = event(type, { button: 2 });
+    f.element.dispatchEvent(right);
+    assert.equal(right.defaultPrevented, false, 'Right click must keep the browser menu available');
+    for (const button of [0, 1]) f.element.dispatchEvent(event(type, { button }));
+  }
+  assert.deepEqual(reported, [
+    ['mousedown', 0], ['mousedown', 1],
+    ['mouseup', 0], ['mouseup', 1],
+    ['auxclick', 0], ['auxclick', 1],
+  ], 'Right clicks must not reach the TUI clipboard handler; other buttons still work');
+  let keys = 0;
+  f.element.addEventListener('keydown', () => keys++);
+  f.element.dispatchEvent(event('keydown', { key: 'a' }));
+  assert.equal(keys, 1, 'Normal typing must still reach xterm after a right click');
+  f.element.dispatchEvent(pasteEvent('client clipboard'));
+  assert.deepEqual(f.calls.texts, ['client clipboard']);
+  f.dispose();
+  f.element.dispatchEvent(event('mousedown', { button: 2 }));
+  assert.deepEqual(reported.at(-1), ['mousedown', 2], 'Disposal removes the mouse guard');
 }
 {
   const f = fixture();
@@ -125,4 +163,4 @@ for (const shortcut of [
   { key: 'c', ctrlKey: true }, { key: 'Insert' },
 ]) assert.equal(isBrowserPasteShortcut({ ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...shortcut }), false);
 
-console.log('Browser clipboard regression checks passed: native menu, single paste, shortcuts, readonly, image upload, async permissions, disposal and errors.');
+console.log('Browser clipboard regression checks passed: local right clicks, native menu, selection, continued typing, single paste, shortcuts, readonly, image upload, async permissions, disposal and errors.');
