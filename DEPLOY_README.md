@@ -320,15 +320,16 @@ Docker 网页版顶部的“容器环境”按钮位于检查更新按钮旁。�
 安装使用各工具的官方安装器，Claude 使用 stable 通道，在后台执行；关闭弹框不会中断，
 重复请求不会创建多个安装进程，失败后可查看原因并重试。
 
-同时检查提供 `ps` 命令的 `procps` 依赖，实际查询服务进程，区分可用、缺失和查询失败。
-缺失或异常时，可点击“一键安装”，通过已挂载的 Docker socket 以 root 身份为当前容器补装。
+镜像在构建时预装提供 `ps` 命令的 `procps` 依赖，重新构建镜像或创建容器后仍然可用，无需手动安装。
+环境检测会实际查询服务进程，区分可用、缺失和查询失败。旧版或自定义镜像缺失该依赖时，
+可点击“一键安装”，通过已挂载的 Docker socket 以 root 身份为当前容器补装。
 安装在后台执行，关闭弹框不会中断，重复请求会被拦截，完成后自动重新检测；失败时显示原因并允许重试。
 安装仅使用固定的 `procps` 包命令，目标容器由服务端识别，不接受客户端传入的容器 ID 或命令。
 
 一键安装需要容器内 Docker CLI 能访问挂载到 `/var/run/docker.sock` 的宿主机 Docker。
 “手动安装方法”保留了可复制的宿主机命令，自定义容器名需替换其中的 `terminal-buddy`。
-镜像不预装 `procps`，由“容器环境检测”按需检测和安装。部署脚本不会因缺少 `ps` 而中止。
-安装保存在当前容器的可写层，重启容器会保留；重新创建容器后请重新检测，缺失时再次安装。
+旧镜像的一键补装保存在当前容器的可写层，重启容器会保留；要在重建容器后继续保留，
+请更新源码、重新构建并使用已内置 `procps` 的新版镜像。
 
 Claude 安装在容器用户的 `~/.local/bin` 和 `~/.local/share/claude`，不依赖宿主机 Claude 或 SSH。
 现有部署已挂载完整的 `/home/terminalbuddy`，所以安装和用户配置会在重建容器后保留。
@@ -360,9 +361,9 @@ AES-GCM 加密存储，网页不会读取回完整 API 密钥；编辑密钥留�
 
 ## Codex 启动提示找不到 ps
 
-如果容器内运行 `codex` 时出现 `failed to invoke ps for pid-managed app server: No such file or directory`，说明容器缺少 `ps` 命令。`procps` 为按需安装的系统依赖，不随镜像预装。
+如果旧版或自定义镜像内运行 `codex` 时出现 `failed to invoke ps for pid-managed app server: No such file or directory`，说明容器缺少 `ps` 命令。新版 Dockerfile 已预装 `procps`，更新源码后重新构建镜像并重建容器即可长期解决。
 
-在网页顶部打开“容器环境”，找到“procps（ps 命令）”卡片并点击“一键安装”。后台安装完成后会自动重新检测，确认“已经可用”后，在原终端重新运行 `codex`，无需重启服务。
+暂时不更新镜像时，可在网页顶部打开“容器环境”，找到“procps（ps 命令）”卡片并点击“一键安装”。后台安装完成后会自动重新检测，确认“已经可用”后，在原终端重新运行 `codex`，无需重启服务。
 
 使用 `deploy-centos.sh` 更新功能时，默认只构建当前目录的源码，不会自动拉取最新代码。请先更新实际部署分支，再完整部署：
 
@@ -372,7 +373,7 @@ git pull --ff-only
 ./deploy-centos.sh
 ```
 
-首次部署带有检测和一键安装功能的版本时，需要构建包含新界面及接口的镜像；`--no-build` 只复用现有镜像，不会更新功能。部署过程不检查或自动安装 `procps`。
+更新时必须重新构建镜像并重建容器，才能使用镜像内置的 `procps`；`--no-build` 只复用现有镜像，不会加入新依赖。使用仓库默认 Compose 配置时，可执行 `docker compose up -d --build`。
 
 一键安装不可用时，可以展开卡片中的“手动安装方法”，或在 Docker 宿主机执行以下命令：
 
@@ -381,6 +382,6 @@ docker exec --user root terminal-buddy sh -lc 'apt-get update && apt-get install
 docker exec --user terminalbuddy terminal-buddy sh -c 'command -v ps && ps -p "$$" -o pid=,ppid=,args='
 ```
 
-补装后，在原网页终端重新运行 `codex`。安装仅对当前容器生效，重新创建容器后若缺失，请再次从“容器环境”安装。
+补装后，在原网页终端重新运行 `codex`。补装仅对当前容器生效；后续请更新为已内置 `procps` 的新版镜像，避免每次重建容器都要安装。
 
 暂时无法安装系统包时，可先执行 `codex --no-daemon`，按报错提示跳过后台服务。恢复或分叉会话时，对原命令保留全部参数并加上 `--no-daemon`。

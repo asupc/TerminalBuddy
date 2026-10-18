@@ -24,8 +24,9 @@ COPY terminal-buddy/src-tauri/portable-pty-patched ./portable-pty-patched
 RUN cargo build --locked --release --no-default-features --features server --bin terminal-buddy-server
 
 FROM debian:bookworm-slim
+# procps 提供 Codex 后台服务依赖的 ps 命令，随运行镜像预装。
 # /root 仅开放路径穿越，供 /root/... 工作区在容器内按宿主机同路径挂载。
-RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client libssl3 libssh2-1 tini && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client libssl3 libssh2-1 tini procps && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1000 --shell /bin/bash terminalbuddy \
     && mkdir -p /data /workspace && chown terminalbuddy:terminalbuddy /data /workspace \
     && chmod 0711 /root
