@@ -14,11 +14,6 @@
   padding: 8px 14px;
 }
 
-.container-environment-toolbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
 
 .container-environment-tool {
   padding: 12px 14px;
@@ -106,13 +101,10 @@
   color: var(--success);
 }
 
-.container-environment-list:has(.container-environment-action.primary) {
-  --container-environment-controls-width: 188px;
-}
-
 .container-environment-controls {
   display: flex;
-  width: var(--container-environment-controls-width, 88px);
+  width: 220px;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
 }
@@ -146,7 +138,8 @@
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
-.container-environment-status.installing {
+.container-environment-status.installing,
+.container-environment-status.updating {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }

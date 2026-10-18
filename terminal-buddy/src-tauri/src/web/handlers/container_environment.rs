@@ -1,7 +1,7 @@
-//! Docker 内的 CLI 检测与安装；仅执行固定的安装流程，不接受客户端命令或下载地址。
-use axum::{extract::{Query, State}, http::StatusCode, Json};
+//! Docker 内的 CLI 检测、安装与更新；只使用固定的官方版本源和安装器。
+use axum::{extract::{Path as ApiPath, Query, State}, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
-use crate::services::cli_update_service::{check_update, CliUpdate};
+use crate::services::cli_update_service::{check_update, compare_versions, refresh_update_state, CliUpdate};
 use std::{
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
@@ -13,8 +13,9 @@ use std::{
 
 use crate::web::{auth::ClaimsFromRequest, error::ApiError, server::AppState};
 
-#[derive(Clone, Copy)]
-enum CliTool {
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CliTool {
     Claude,
     Codex,
 }
@@ -34,6 +35,20 @@ impl CliTool {
         }
     }
 
+    fn package(self) -> &'static str {
+        match self {
+            Self::Claude => "@anthropic-ai/claude-code",
+            Self::Codex => "@openai/codex",
+        }
+    }
+
+    fn preview_tags(self) -> &'static [&'static str] {
+        match self {
+            Self::Claude => &["next"],
+            Self::Codex => &[],
+        }
+    }
+
     fn installer_url(self) -> &'static str {
         match self {
             Self::Claude => "https://claude.ai/install.sh",
@@ -41,11 +56,11 @@ impl CliTool {
         }
     }
 
-    fn installer_command(self, script: &Path, home: &Path) -> Command {
+    fn installer_command(self, script: &Path, home: &Path, target: Option<&str>) -> Command {
         match self {
             Self::Claude => {
                 let mut command = Command::new("bash");
-                command.arg(script).arg("stable");
+                command.arg(script).arg(target.unwrap_or("stable"));
                 command
             }
             Self::Codex => {
@@ -53,16 +68,26 @@ impl CliTool {
                 command.arg(script)
                     .env("CODEX_NON_INTERACTIVE", "1")
                     .env("CODEX_INSTALL_DIR", home.join(".local/bin"));
+                if let Some(version) = target { command.arg("--release").arg(version); }
                 command
             }
         }
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Operation {
+    Install,
+    Update,
+}
+
 #[derive(Default)]
 struct Installation {
-    running: bool,
+    operation: Option<Operation>,
+    previous_version: Option<String>,
     error: Option<String>,
+    update: Option<CliUpdate>,
+    updated_version: Option<String>,
 }
 
 fn installation(tool: CliTool) -> &'static Mutex<Installation> {
@@ -99,11 +124,12 @@ pub struct Environment {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CliStatus {
+pub struct CliStatus {
     status: &'static str,
     version: Option<String>,
     message: Option<String>,
     update: Option<CliUpdate>,
+    updated_version: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -196,18 +222,31 @@ fn detect_candidates(tool: CliTool, candidates: Vec<PathBuf>) -> Option<String> 
     None
 }
 
-fn cli_status(tool: CliTool) -> Result<CliStatus, String> {
-    let (running, error) = {
-        let state = installation(tool).lock().map_err(|_| "安装状态不可用")?;
-        (state.running, state.error.clone())
+fn status_from_snapshot(
+    operation: Option<Operation>,
+    version: Option<String>,
+    error: Option<String>,
+    update: Option<CliUpdate>,
+    updated_version: Option<String>,
+) -> CliStatus {
+    let status = match operation {
+        Some(Operation::Install) => "installing",
+        Some(Operation::Update) => "updating",
+        None if version.is_some() => "installed",
+        None if error.is_some() => "failed",
+        None => "notInstalled",
     };
-    if running {
-        return Ok(CliStatus { status: "installing", version: None, message: None, update: None });
-    }
-    let version = detect_cli(tool);
-    let status = if version.is_some() { "installed" } else if error.is_some() { "failed" } else { "notInstalled" };
-    let message = if version.is_some() { None } else { error };
-    Ok(CliStatus { status, version, message, update: None })
+    let update = update.map(|value| refresh_update_state(value, version.as_deref()));
+    CliStatus { status, version, message: error, update, updated_version }
+}
+
+fn cli_status(tool: CliTool) -> Result<CliStatus, String> {
+    let (operation, previous_version, error, update, updated_version) = {
+        let state = installation(tool).lock().map_err(|_| "工具状态不可用")?;
+        (state.operation, state.previous_version.clone(), state.error.clone(), state.update.clone(), state.updated_version.clone())
+    };
+    let version = if operation.is_some() { previous_version } else { detect_cli(tool) };
+    Ok(status_from_snapshot(operation, version, error, update, updated_version))
 }
 
 fn environment() -> Result<Environment, String> {
@@ -217,62 +256,112 @@ fn environment() -> Result<Environment, String> {
     })
 }
 
+async fn load_status(tool: CliTool, check_updates: bool) -> Result<CliStatus, ApiError> {
+    let status = tokio::task::spawn_blocking(move || cli_status(tool)).await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map_err(ApiError::Internal)?;
+    if !check_updates { return Ok(status); }
+    if matches!(status.status, "installing" | "updating") {
+        return Err(ApiError::Conflict(format!("{} 正在安装或更新，请等待完成", tool.name())));
+    }
+    let update = check_update(tool.package(), status.version.as_deref(), tool.preview_tags()).await;
+    tokio::task::spawn_blocking(move || {
+        {
+            let mut state = installation(tool).lock().map_err(|_| "工具状态不可用".to_string())?;
+            // 其他页面可能已启动更新，迟到的检查结果不能覆盖进行中的任务。
+            if state.operation.is_none() { state.update = Some(update); }
+        }
+        cli_status(tool)
+    }).await.map_err(|error| ApiError::Internal(error.to_string()))?
+        .map_err(ApiError::Internal)
+}
+
 pub async fn status(
     State(_state): State<AppState>,
     _claims: ClaimsFromRequest,
     Query(query): Query<EnvironmentQuery>,
 ) -> Result<Json<Environment>, ApiError> {
     ensure_docker()?;
-    let mut environment = tokio::task::spawn_blocking(environment).await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .map_err(ApiError::Internal)?;
     if query.check_updates {
-        // 两个版本源独立查询，一个失败不会遮住另一个的结果；普通安装轮询只检测本地版本。
-        let (claude, codex) = tokio::join!(
-            check_update("@anthropic-ai/claude-code", environment.claude.version.as_deref(), &["next"]),
-            check_update("@openai/codex", environment.codex.version.as_deref(), &[]),
-        );
-        environment.claude.update = Some(claude);
-        environment.codex.update = Some(codex);
+        let (claude, codex) = tokio::try_join!(load_status(CliTool::Claude, true), load_status(CliTool::Codex, true))?;
+        return Ok(Json(Environment { claude, codex }));
     }
-    Ok(Json(environment))
+    tokio::task::spawn_blocking(environment).await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map(Json).map_err(ApiError::Internal)
+}
+
+pub async fn tool_status(
+    State(_state): State<AppState>,
+    _claims: ClaimsFromRequest,
+    ApiPath(tool): ApiPath<CliTool>,
+    Query(query): Query<EnvironmentQuery>,
+) -> Result<Json<CliStatus>, ApiError> {
+    ensure_docker()?;
+    load_status(tool, query.check_updates).await.map(Json)
 }
 
 pub async fn install(
     State(_state): State<AppState>,
     _claims: ClaimsFromRequest,
-) -> Result<(StatusCode, Json<Environment>), ApiError> {
-    start_install(CliTool::Claude).await
+    ApiPath(tool): ApiPath<CliTool>,
+) -> Result<(StatusCode, Json<CliStatus>), ApiError> {
+    start_operation(tool, Operation::Install).await
 }
 
-pub async fn install_codex(
+pub async fn update(
     State(_state): State<AppState>,
     _claims: ClaimsFromRequest,
-) -> Result<(StatusCode, Json<Environment>), ApiError> {
-    start_install(CliTool::Codex).await
+    ApiPath(tool): ApiPath<CliTool>,
+) -> Result<(StatusCode, Json<CliStatus>), ApiError> {
+    start_operation(tool, Operation::Update).await
 }
 
-async fn start_install(tool: CliTool) -> Result<(StatusCode, Json<Environment>), ApiError> {
-    ensure_docker()?;
-    {
-        let mut state = installation(tool).lock().map_err(|_| ApiError::Internal("安装状态不可用".into()))?;
-        if state.running { return Err(ApiError::Conflict(format!("{} 正在安装，请等待完成", tool.name()))); }
-        state.running = true;
-        state.error = None;
+fn update_target(current: Option<&str>, update: Option<&CliUpdate>) -> Result<String, ApiError> {
+    let current = current.ok_or_else(|| ApiError::BadRequest("工具尚未安装，请先安装".into()))?;
+    let target = update.and_then(|update| update.latest_version.as_deref())
+        .ok_or_else(|| ApiError::Conflict("请先检查更新，再重试更新".into()))?;
+    if compare_versions(target, current) != Some(std::cmp::Ordering::Greater) {
+        return Err(ApiError::Conflict("当前版本已变化或没有可用更新，请重新检查更新".into()));
     }
-    // HTTP 立即返回，下载和安装不占用 30 秒请求超时窗口；关闭弹框也不会打断安装。
+    Ok(target.to_string())
+}
+
+async fn start_operation(tool: CliTool, operation: Operation) -> Result<(StatusCode, Json<CliStatus>), ApiError> {
+    ensure_docker()?;
+    let target = tokio::task::spawn_blocking(move || {
+        let mut state = installation(tool).lock().map_err(|_| ApiError::Internal("工具状态不可用".into()))?;
+        if state.operation.is_some() {
+            return Err(ApiError::Conflict(format!("{} 正在安装或更新，请等待完成", tool.name())));
+        }
+        let current = detect_cli(tool);
+        let target = if operation == Operation::Update {
+            Some(update_target(current.as_deref(), state.update.as_ref())?)
+        } else { None };
+        state.operation = Some(operation);
+        state.previous_version = current;
+        state.error = None;
+        state.updated_version = None;
+        Ok(target)
+    }).await.map_err(|error| ApiError::Internal(error.to_string()))??;
+    // HTTP 立即返回，两个工具使用独立任务锁，下载与安装均在阻塞线程池中运行。
     tokio::spawn(async move {
-        let result = tokio::task::spawn_blocking(move || run_install(tool)).await
-            .unwrap_or_else(|error| Err(format!("安装任务异常：{error}")));
+        let result = tokio::task::spawn_blocking(move || run_install(tool, target.as_deref())).await
+            .unwrap_or_else(|error| Err(format!("工具任务异常：{error}")));
         if let Ok(mut state) = installation(tool).lock() {
-            state.running = false;
-            state.error = result.err();
+            state.operation = None;
+            match result {
+                Ok(version) => {
+                    if operation == Operation::Update { state.updated_version = Some(version); }
+                }
+                Err(error) => {
+                    state.error = Some(if operation == Operation::Update { format!("更新失败：{error}") } else { error });
+                }
+            }
         }
     });
-    let environment = tokio::task::spawn_blocking(environment).await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .map_err(ApiError::Internal)?;
-    Ok((StatusCode::ACCEPTED, Json(environment)))
+    let status = load_status(tool, false).await?;
+    Ok((StatusCode::ACCEPTED, Json(status)))
 }
 
 struct InstallDirectory(PathBuf);
@@ -314,8 +403,21 @@ fn run_logged(name: &str, command: &mut Command, log: &Path, timeout: Duration) 
     Ok(())
 }
 
-fn run_install(tool: CliTool) -> Result<(), String> {
-    if detect_cli(tool).is_some() { return Ok(()); }
+fn validate_installed_version(tool: CliTool, version: Option<String>, target: Option<&str>) -> Result<String, String> {
+    let version = version.ok_or_else(|| format!("安装程序已结束，但 {} 未能正常运行，请检查容器环境后重试", tool.name()))?;
+    if let Some(target) = target {
+        if !matches!(compare_versions(&version, target), Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)) {
+            return Err(format!("{} 当前版本仍为 {version}，未达到目标版本 {target}，请重试", tool.name()));
+        }
+    }
+    Ok(version)
+}
+
+fn run_install(tool: CliTool, target: Option<&str>) -> Result<String, String> {
+    // 更新必须重新执行安装器，不能命中已安装时的快捷返回。
+    if target.is_none() {
+        if let Some(version) = detect_cli(tool) { return Ok(version); }
+    }
     let home = home()?;
     fs::create_dir_all(home.join(".local/bin")).map_err(|error| format!("安装目录不可写：{error}"))?;
     let dir = InstallDirectory::create(tool.binary())?;
@@ -325,9 +427,10 @@ fn run_install(tool: CliTool) -> Result<(), String> {
         "--fail", "--silent", "--show-error", "--location", "--proto", "=https",
         "--connect-timeout", "15", "--max-time", "90", "--retry", "2", "--output",
     ]).arg(&script).arg(tool.installer_url()), &log, Duration::from_secs(120))?;
-    run_logged(tool.name(), &mut tool.installer_command(&script, &home), &log, Duration::from_secs(600))?;
-    detect_cli(tool).ok_or_else(|| format!("安装程序已结束，但 {} 未能正常运行，请检查容器环境后重试", tool.name()))?;
-    Ok(())
+    run_logged(tool.name(), &mut tool.installer_command(&script, &home, target), &log, Duration::from_secs(600))?;
+    // 只核验安装目录中的入口，避免从 PATH 中读到另一份旧安装而误报成功。
+    let version = detect_candidates(tool, vec![home.join(".local/bin").join(tool.binary())]);
+    validate_installed_version(tool, version, target)
 }
 
 #[cfg(test)]
@@ -368,7 +471,7 @@ mod tests {
     #[test]
     fn codex_installer_is_non_interactive_and_uses_the_terminal_path() {
         let home = Path::new("/home/test user");
-        let command = CliTool::Codex.installer_command(Path::new("/tmp/install.sh"), home);
+        let command = CliTool::Codex.installer_command(Path::new("/tmp/install.sh"), home, None);
         let variables: std::collections::HashMap<_, _> = command.get_envs().collect();
         assert_eq!(variables[std::ffi::OsStr::new("CODEX_NON_INTERACTIVE")], Some(std::ffi::OsStr::new("1")));
         assert_eq!(variables[std::ffi::OsStr::new("CODEX_INSTALL_DIR")], Some(home.join(".local/bin").as_os_str()));
@@ -420,4 +523,71 @@ mod tests {
             assert!(child.try_wait().unwrap().is_some());
         }
     }
+
+    fn available_update(version: &str) -> CliUpdate {
+        CliUpdate {
+            latest_version: Some(version.into()),
+            state: crate::services::cli_update_service::CliUpdateState::Available,
+            message: None,
+        }
+    }
+
+    #[test]
+    fn updates_pin_the_checked_version_in_both_official_installers() {
+        let home = Path::new("/home/test user");
+        let script = Path::new("/tmp/test installer.sh");
+        let claude = CliTool::Claude.installer_command(script, home, Some("2.1.302"));
+        let codex = CliTool::Codex.installer_command(script, home, Some("0.163.0"));
+        assert_eq!(claude.get_args().collect::<Vec<_>>(), [script.as_os_str(), std::ffi::OsStr::new("2.1.302")]);
+        assert_eq!(codex.get_args().collect::<Vec<_>>(), [script.as_os_str(), std::ffi::OsStr::new("--release"), std::ffi::OsStr::new("0.163.0")]);
+        let variables: std::collections::HashMap<_, _> = codex.get_envs().collect();
+        assert_eq!(variables[std::ffi::OsStr::new("CODEX_NON_INTERACTIVE")], Some(std::ffi::OsStr::new("1")));
+        assert_eq!(variables[std::ffi::OsStr::new("CODEX_INSTALL_DIR")], Some(home.join(".local/bin").as_os_str()));
+    }
+
+    #[test]
+    fn update_requires_a_checked_version_newer_than_the_actual_installation() {
+        let update = available_update("0.163.0");
+        assert_eq!(update_target(Some("0.162.0"), Some(&update)).unwrap(), "0.163.0");
+        assert!(matches!(update_target(None, Some(&update)), Err(ApiError::BadRequest(_))));
+        assert!(matches!(update_target(Some("0.162.0"), None), Err(ApiError::Conflict(_))));
+        for current in ["0.163.0", "0.164.0-alpha.1", "0.162.0+dev.1"] {
+            assert!(matches!(update_target(Some(current), Some(&update)), Err(ApiError::Conflict(_))), "{current}");
+        }
+    }
+
+    #[test]
+    fn an_unchanged_or_missing_version_cannot_be_reported_as_a_successful_update() {
+        assert!(validate_installed_version(CliTool::Codex, None, Some("0.163.0")).is_err());
+        let error = validate_installed_version(CliTool::Codex, Some("0.162.0".into()), Some("0.163.0")).unwrap_err();
+        assert!(error.contains("0.162.0"));
+        assert!(error.contains("0.163.0"));
+        for version in ["0.163.0", "0.164.0"] {
+            assert_eq!(validate_installed_version(CliTool::Codex, Some(version.into()), Some("0.163.0")).unwrap(), version);
+        }
+    }
+
+    #[test]
+    fn update_status_preserves_the_previous_version_and_reports_the_verified_result() {
+        use crate::services::cli_update_service::CliUpdateState;
+        let running = status_from_snapshot(Some(Operation::Update), Some("0.162.0".into()), None, Some(available_update("0.163.0")), None);
+        assert_eq!(running.status, "updating");
+        assert_eq!(running.version.as_deref(), Some("0.162.0"));
+        let done = status_from_snapshot(None, Some("0.163.0".into()), None, Some(available_update("0.163.0")), Some("0.163.0".into()));
+        assert_eq!(done.status, "installed");
+        assert_eq!(done.updated_version.as_deref(), Some("0.163.0"));
+        assert_eq!(done.update.unwrap().state, CliUpdateState::UpToDate);
+    }
+
+    #[test]
+    fn failed_updates_keep_the_working_version_and_expose_the_error_for_retry() {
+        use crate::services::cli_update_service::CliUpdateState;
+        let failed = status_from_snapshot(None, Some("0.162.0".into()), Some("更新失败：下载失败".into()), Some(available_update("0.163.0")), None);
+        assert_eq!(failed.status, "installed");
+        assert_eq!(failed.version.as_deref(), Some("0.162.0"));
+        assert_eq!(failed.message.as_deref(), Some("更新失败：下载失败"));
+        assert_eq!(failed.update.unwrap().state, CliUpdateState::Available);
+        assert!(failed.updated_version.is_none());
+    }
+
 }

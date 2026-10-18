@@ -3,7 +3,7 @@ import { request } from './connection';
 export type ContainerCli = 'claude' | 'codex';
 
 export interface ContainerCliStatus {
-  status: 'installed' | 'notInstalled' | 'installing' | 'failed';
+  status: 'installed' | 'notInstalled' | 'installing' | 'updating' | 'failed';
   version: string | null;
   message: string | null;
   update: {
@@ -11,17 +11,19 @@ export interface ContainerCliStatus {
     state: 'available' | 'upToDate' | 'ahead' | 'unknown' | 'failed';
     message: string | null;
   } | null;
+  updatedVersion: string | null;
 }
 
 export type ContainerEnvironment = Record<ContainerCli, ContainerCliStatus>;
 
-export const getContainerEnvironment = (checkUpdates = false) =>
-  request<ContainerEnvironment>(
-    checkUpdates ? '/api/container/environment?checkUpdates=true' : '/api/container/environment',
-  );
+export const getContainerEnvironment = () =>
+  request<ContainerEnvironment>('/api/container/environment');
 
-export const installContainerClaude = () =>
-  request<ContainerEnvironment>('/api/container/environment/claude/install', { method: 'POST' });
+export const getContainerCli = (tool: ContainerCli, checkUpdates = false) =>
+  request<ContainerCliStatus>(`/api/container/environment/${tool}${checkUpdates ? '?checkUpdates=true' : ''}`);
 
-export const installContainerCodex = () =>
-  request<ContainerEnvironment>('/api/container/environment/codex/install', { method: 'POST' });
+export const installContainerCli = (tool: ContainerCli) =>
+  request<ContainerCliStatus>(`/api/container/environment/${tool}/install`, { method: 'POST' });
+
+export const updateContainerCli = (tool: ContainerCli) =>
+  request<ContainerCliStatus>(`/api/container/environment/${tool}/update`, { method: 'POST' });

@@ -40,7 +40,7 @@ fn is_development_build(version: &Version) -> bool {
     git_describe || parts.iter().any(|part| matches!(*part, "canary" | "nightly" | "dev" | "dirty" | "snapshot"))
 }
 
-fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
+pub(crate) fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
     let a = parse_version(a)?;
     let b = parse_version(b)?;
     // 开发构建的版本号可能落后，但实际代码更新，不能据此建议降级。
@@ -77,17 +77,23 @@ async fn fetch_dist_tags(client: &Client, url: &str) -> Result<Map<String, Value
     response.json().await.map_err(|_| "版本源返回了无效数据，请稍后重试".to_string())
 }
 
+pub(crate) fn refresh_update_state(mut update: CliUpdate, current: Option<&str>) -> CliUpdate {
+    if let Some(latest) = update.latest_version.as_deref() {
+        update.state = match current.and_then(|version| compare_versions(latest, version)) {
+            Some(Ordering::Greater) => CliUpdateState::Available,
+            Some(Ordering::Equal) => CliUpdateState::UpToDate,
+            Some(Ordering::Less) => CliUpdateState::Ahead,
+            None => CliUpdateState::Unknown,
+        };
+    }
+    update
+}
+
 fn update_from_tags(tags: Result<Map<String, Value>, String>, current: Option<&str>, preview_tags: &[&str]) -> CliUpdate {
     match tags.and_then(|tags| select_latest(&tags, current, preview_tags)) {
-        Ok(latest_version) => {
-            let state = match current.and_then(|version| compare_versions(&latest_version, version)) {
-                Some(Ordering::Greater) => CliUpdateState::Available,
-                Some(Ordering::Equal) => CliUpdateState::UpToDate,
-                Some(Ordering::Less) => CliUpdateState::Ahead,
-                None => CliUpdateState::Unknown,
-            };
-            CliUpdate { latest_version: Some(latest_version), state, message: None }
-        }
+        Ok(latest_version) => refresh_update_state(CliUpdate {
+            latest_version: Some(latest_version), state: CliUpdateState::Unknown, message: None,
+        }, current),
         Err(message) => CliUpdate { latest_version: None, state: CliUpdateState::Failed, message: Some(message) },
     }
 }
