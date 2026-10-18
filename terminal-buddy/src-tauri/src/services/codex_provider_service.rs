@@ -820,10 +820,10 @@ mod tests {
         .unwrap();
         atomic_write_private(
             &store.0.config_dir.join("codex-model-catalog.json"),
-            br#"{"note":"手工顶层键","models":[
+            r#"{"note":"手工顶层键","models":[
                 {"slug":"old-model","comp_hash":"keep","priority":7,
                  "supported_reasoning_levels":[{"effort":"low","description":"自定义低"},{"effort":"high","description":"自定义高"}]},
-                {"slug":"test-model","supported_reasoning_levels":[{"effort":"low","description":"保留"}]}]}"#,
+                {"slug":"test-model","supported_reasoning_levels":[{"effort":"low","description":"保留"}]}]}"#.as_bytes(),
         )
         .unwrap();
         let mut draft = input("合并目录");
