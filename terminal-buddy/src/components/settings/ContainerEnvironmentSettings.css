@@ -1,4 +1,4 @@
-.container-environment-dialog { width: min(480px, calc(100vw - 48px)); }
+.container-environment-settings { max-width: 720px; }
 .container-environment-intro { margin: 0 0 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
 .container-environment-tool { padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-secondary); }
 .container-environment-tool + .container-environment-tool { margin-top: 16px; }
@@ -11,9 +11,6 @@
 .container-environment-status.installed { color: var(--success); }
 .container-environment-status.failed { color: var(--error, #ef6b6b); }
 .container-environment-status.installing { color: var(--accent); }
-.container-environment-manual { margin-top: 12px; }
-.container-environment-manual > summary { color: var(--text-secondary); cursor: pointer; font-size: 12px; }
-.container-environment-command { margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .container-environment-version { margin: 14px 0 0; color: var(--text-primary); font-size: 12px; }
 .container-environment-hint { margin: 14px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
 .container-environment-hint code { color: var(--text-primary); }
@@ -25,7 +22,6 @@
 .container-environment-action.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .container-environment-action:disabled { opacity: .55; cursor: default; }
 .container-environment-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.container-environment-footer-note { flex: 1; color: var(--text-tertiary); font-size: 11px; }
 .container-environment-spin { animation: container-environment-spin 1s linear infinite; }
 @keyframes container-environment-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .container-environment-spin { animation: none; } }

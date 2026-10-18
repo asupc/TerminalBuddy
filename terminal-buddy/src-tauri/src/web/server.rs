@@ -63,7 +63,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/container/environment", get(handlers::container_environment::status))
         .route("/api/container/environment/claude/install", post(handlers::container_environment::install))
         .route("/api/container/environment/codex/install", post(handlers::container_environment::install_codex))
-        .route("/api/container/environment/procps/install", post(handlers::container_environment::install_procps))
         .route("/api/container/claude/providers", get(handlers::claude_provider_handler::list).post(handlers::claude_provider_handler::create))
         .route("/api/container/claude/providers/import-current", post(handlers::claude_provider_handler::import_current))
         .route("/api/container/claude/providers/deactivate", post(handlers::claude_provider_handler::deactivate))

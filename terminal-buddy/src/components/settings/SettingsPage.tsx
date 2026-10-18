@@ -4,6 +4,7 @@ import {
   BrainCircuit,
   MessageSquareMore,
   Boxes,
+  Container,
   Database,
   FileJson,
   FileX2,
@@ -48,6 +49,7 @@ const BotNotificationSettings = lazy(() => import('./BotNotificationSettings').t
 const HookSettings = lazy(() => import('./HookSettings').then(module => ({ default: module.HookSettings })));
 const WebManageSettings = lazy(() => import('../shared/WebManageDialog').then(module => ({ default: module.WebManageSettings })));
 const ExtraParamsSettings = lazy(() => import('./ExtraParamsSettings').then(module => ({ default: module.ExtraParamsSettings })));
+const ContainerEnvironmentSettings = lazy(() => import('./ContainerEnvironmentSettings').then(module => ({ default: module.ContainerEnvironmentSettings })));
 const LlmProvidersSettings = lazy(() => import('./LlmProvidersSettings').then(module => ({ default: module.LlmProvidersSettings })));
 const ClaudeSettingsEditor = lazy(() => import('../claude-panel/segments/ClaudeSettingsSegment').then(module => ({ default: module.ClaudeSettingsSegment })));
 const WebAuthSettings = lazy(() => import('./WebAuthSettings').then(module => ({ default: module.WebAuthSettings })));
@@ -101,6 +103,7 @@ type SettingsSectionId =
   | 'web-management'
   | 'bot-notifications'
   | 'extra-params'
+  | 'container-environment'
   | 'llm-providers'
   | 'claude-settings';
 
@@ -143,8 +146,9 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
   },
   {
     id: 'ai',
-    label: 'Claude & AI',
+    label: 'Agent & LLM',
     sections: [
+      { id: 'container-environment', label: '容器环境检测', icon: Container, description: '检测并安装容器内的 Claude Code 与 Codex CLI', keywords: ['docker', 'container', 'environment', 'claude', 'codex', 'cli', '安装', '环境'] },
       { id: 'llm-providers', label: '模型供应商', icon: Boxes, description: 'Claude 与 Codex 供应商的端点、密钥与模型配置', keywords: ['ai', 'provider', 'model', 'deepseek', 'anthropic', 'codex', 'api'] },
       { id: 'claude-settings', label: 'Claude 默认配置', icon: FileJson, description: '用户级 settings.json 图形化配置、官方说明与快照备份', keywords: ['claude', 'settings.json', 'effort', 'token', 'context'] },
       { id: 'ai-usage', label: 'AI 用量', icon: BrainCircuit, description: '模型 Token 消耗量、调用会话折线与用量统计', keywords: ['usage', 'token', 'cost', 'stats'] },
@@ -164,11 +168,11 @@ const SECTION_GROUPS: ReadonlyArray<SettingsGroup> = [
 
 export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
   const [settings, setSettings] = useState<AppSettings>(getAppSettings);
-  // 「网页认证」分区仅 Docker 网页版显示；App 在 WebEntry 完成运行时探测后才渲染，此值在组件生命周期内恒定
+  // 「网页认证」与「容器环境检测」仅 Docker 网页版显示；运行时探测在 App 渲染前完成
   const dockerClient = isDockerClient();
   const visibleGroups = useMemo(
     () => dockerClient ? SECTION_GROUPS
-      : SECTION_GROUPS.map(group => ({ ...group, sections: group.sections.filter(section => section.id !== 'web-auth') })),
+      : SECTION_GROUPS.map(group => ({ ...group, sections: group.sections.filter(section => section.id !== 'web-auth' && section.id !== 'container-environment') })),
     [dockerClient],
   );
   const visibleSections = useMemo(() => visibleGroups.flatMap(group => group.sections), [visibleGroups]);
@@ -344,6 +348,14 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         return <BotNotificationSettings />;
       case 'extra-params':
         return <ExtraParamsSettings />;
+      case 'container-environment':
+        return <ContainerEnvironmentSettings
+          active={activeSection === 'container-environment'}
+          onConfigureModels={() => {
+            useAppStore.getState().setProviderSettingsTab('claude');
+            selectSection('llm-providers');
+          }}
+        />;
       case 'llm-providers':
         return <LlmProvidersSettings />;
       case 'claude-settings':

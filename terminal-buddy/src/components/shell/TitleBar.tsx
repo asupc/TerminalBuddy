@@ -32,8 +32,7 @@ import { UpdatePopover, type UpdateCheckStatus } from '../settings/UpdatePopover
 import { APP_VERSION } from '../../version';
 import appIcon from '../../assets/app-icon.png';
 import './TitleBar.css';
-import { isBrowserClient, isDockerClient } from '../../services/platform';
-import { ContainerEnvironmentButton } from '../browser/ContainerEnvironment';
+import { isBrowserClient } from '../../services/platform';
 import {
   APP_OPACITY_PREVIEW_EVENT,
   applyTheme,
@@ -338,7 +337,6 @@ export const TitleBar: FC<TitleBarProps> = ({
       </div>
       <div className="titlebar-right">
         <div className="titlebar-action-group">
-          {isDockerClient() && <ContainerEnvironmentButton />}
           <div
             className="ai-usage-trigger"
             onMouseEnter={handleRefreshEnter}
