@@ -195,17 +195,13 @@ export const LlmProvidersSegment: FC = () => {
       setEditor(current => {
         if (!current) return current;
         const existing = new Map(current.models.map(model => [model.id, model]));
-        const merged: ModelRow[] = [];
-        // 已配置但未返回的模型置顶保留，避免配好后被刷掉。
-        for (const model of current.models) {
-          if (!fetched.some(item => item.id === model.id)) merged.push({ ...model });
-        }
-        for (const item of fetched) {
+        // 只保留供应商实际返回的模型：已不存在的模型连同其配置一并清除。
+        const merged: ModelRow[] = fetched.map(item => {
           const prev = existing.get(item.id);
-          merged.push(prev
+          return prev
             ? { ...prev, isNew: false }
-            : { id: item.id, enabled: true, contextWindow: 0, effortLevel: '', maxOutputTokens: 0, isNew: true });
-        }
+            : { id: item.id, enabled: false, contextWindow: 0, effortLevel: '', maxOutputTokens: 0, isNew: true };
+        });
         return { ...current, models: merged };
       });
       showToast(`拉取到 ${fetched.length} 个模型`, 'success');
@@ -237,7 +233,7 @@ export const LlmProvidersSegment: FC = () => {
 
   // 模型列表显示集：按搜索词过滤（输入即过滤），已勾选的稳定排在前面。
   // 仅作用于显示层，不改动 editor.models 本身，勾选状态与保存顺序不受影响；
-  // 「⟳ 获取模型列表」按 id 合并时同样保留原勾选（doFetch 展开prev）。
+  // 「⟳ 获取模型列表」按 id 合并时保留仍存在的原勾选（doFetch 展开prev）。
   const query = modelQuery.trim().toLowerCase();
   const visibleModels = editor
     ? (query
@@ -334,26 +330,26 @@ export const LlmProvidersSegment: FC = () => {
           <label className="claude-form-row">自定义模型列表端点（可选）
             <input value={editor.modelsUrl} onChange={e => setEditor({ ...editor, modelsUrl: e.target.value })} placeholder="留空则按 {base}/v1/models 等候选自动尝试" spellCheck={false} />
           </label>
-          <div className="claude-segment-toolbar">
-            <button type="button" className="claude-segment-btn" disabled={fetching} onClick={() => void doFetch()}>
+          <div className="llm-model-searchbar">
+            <button type="button" className="claude-segment-btn llm-model-fetch" disabled={fetching} onClick={() => void doFetch()}>
               {fetching ? '拉取中…' : '⟳ 获取模型列表'}
             </button>
             {editor.providerId && editor.keySet && !editor.apiKey.trim() && (
               <span className="llm-provider-hint">密钥留空时用已保存密钥拉取</span>
             )}
+            {editor.models.length > 0 && (
+              <>
+                <span className="llm-provider-hint llm-model-count">{visibleModels.length}/{editor.models.length}</span>
+                <input
+                  className="llm-model-search"
+                  value={modelQuery}
+                  onChange={e => setModelQuery(e.target.value)}
+                  placeholder="搜索模型 ID…"
+                  spellCheck={false}
+                />
+              </>
+            )}
           </div>
-          {editor.models.length > 0 && (
-            <div className="llm-model-searchbar">
-              <input
-                className="llm-model-search"
-                value={modelQuery}
-                onChange={e => setModelQuery(e.target.value)}
-                placeholder="搜索模型 ID…"
-                spellCheck={false}
-              />
-              <span className="llm-provider-hint">{visibleModels.length}/{editor.models.length}</span>
-            </div>
-          )}
           {editor.models.length > 0 && (
             <div className="llm-model-table">
               <div className="llm-model-row head">

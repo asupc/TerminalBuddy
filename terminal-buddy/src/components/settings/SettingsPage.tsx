@@ -56,6 +56,36 @@ interface SettingsPageProps {
   onClose: () => void;
 }
 
+const SETTINGS_DIALOG_SIZE_KEY = 'settings.dialogSize';
+
+interface SettingsDialogSize {
+  width: number;
+  height: number;
+}
+
+function readSettingsDialogSize(): SettingsDialogSize | null {
+  try {
+    const raw = localStorage.getItem(SETTINGS_DIALOG_SIZE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SettingsDialogSize> | null;
+    if (
+      !parsed
+      || typeof parsed.width !== 'number'
+      || typeof parsed.height !== 'number'
+      || !Number.isFinite(parsed.width)
+      || !Number.isFinite(parsed.height)
+    ) {
+      return null;
+    }
+    return {
+      width: Math.min(parsed.width, Math.max(0, window.innerWidth - 48)),
+      height: Math.min(parsed.height, Math.max(0, window.innerHeight - 48)),
+    };
+  } catch {
+    return null;
+  }
+}
+
 type SettingsSectionId =
   | 'behavior'
   | 'appearance'
@@ -153,6 +183,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
     () => new Set<SettingsSectionId>([initialSection && visibleSections.some(section => section.id === initialSection) ? initialSection : 'behavior']),
   );
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const [dialogSize, setDialogSize] = useState<SettingsDialogSize | null>(readSettingsDialogSize);
 
   const navButtonRefs = useRef<Partial<Record<SettingsSectionId, HTMLButtonElement | null>>>({});
   const dataPathLoadedRef = useRef(false);
@@ -160,6 +191,16 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
 
   const askConfirm = (message: string, onConfirm: () => void) => {
     setConfirmDialog({ message, onConfirm });
+  };
+
+  const persistDialogSize = (size: SettingsDialogSize) => {
+    const rounded = { width: Math.round(size.width), height: Math.round(size.height) };
+    setDialogSize(rounded);
+    try {
+      localStorage.setItem(SETTINGS_DIALOG_SIZE_KEY, JSON.stringify(rounded));
+    } catch {
+      // 本地存储不可用时仅本次会话内生效
+    }
   };
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
@@ -323,6 +364,9 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         className="settings-dialog"
         titleClassName="settings-dialog-heading"
         bodyClassName="settings-dialog-shell"
+        resizable
+        style={dialogSize ? { ...dialogSize, boxSizing: 'border-box' } : undefined}
+        onResizeEnd={persistDialogSize}
         onClose={onClose}
       >
         <div className="settings-page">

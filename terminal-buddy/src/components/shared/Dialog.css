@@ -133,6 +133,39 @@
   stroke-width: 1.8;
 }
 
+.tb-dialog-surface-resizable {
+  position: relative;
+}
+
+.tb-dialog-resize-handle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  touch-action: none;
+  color: var(--text-tertiary);
+  opacity: 0.6;
+  background: linear-gradient(135deg,
+    transparent 0 42%,
+    currentColor 42% 50%,
+    transparent 50% 62%,
+    currentColor 62% 70%,
+    transparent 70%);
+  transition: opacity var(--motion-fast) var(--ease-standard);
+}
+
+.tb-dialog-resize-handle:hover,
+.tb-dialog-positioner.resizing .tb-dialog-resize-handle {
+  opacity: 1;
+}
+
+.tb-dialog-positioner.resizing {
+  will-change: transform;
+}
+
 .tb-dialog-body {
   min-width: 0;
   min-height: 0;

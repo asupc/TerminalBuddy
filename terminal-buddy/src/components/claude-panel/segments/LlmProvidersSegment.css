@@ -107,8 +107,17 @@
   gap: 8px;
 }
 
+.llm-model-fetch {
+  flex: none;
+  white-space: nowrap;
+}
+
+.llm-model-count {
+  margin-left: auto;
+}
+
 .llm-model-search {
-  flex: 1;
+  flex: 0 1 320px;
   min-width: 0;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
