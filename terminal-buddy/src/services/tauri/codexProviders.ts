@@ -15,6 +15,7 @@ export interface CodexProviderView {
   keyTail: string;
   model: string;
   models: string[];
+  availableModels: string[];
   reasoningEffort: string;
   contextWindow: number;
   autoCompactTokenLimit: number;
@@ -29,6 +30,7 @@ export interface CodexProviderInput {
   apiKey?: string;
   model: string;
   models: string[];
+  availableModels: string[];
   reasoningEffort: string;
   contextWindow: number;
   autoCompactTokenLimit: number;

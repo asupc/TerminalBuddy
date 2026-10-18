@@ -14,7 +14,7 @@ use super::crypto_service::{decrypt_secret_field, encrypt_secret_field};
 use super::llm_provider_service::{self, FetchedModel};
 use super::path_service::PathService;
 use crate::models::codex_provider::{
-    CodexProvider, CodexProviderFile, CodexProviderInput, CodexProviderState, CODEX_REASONING_EFFORTS,
+    normalize_available_models, CodexProvider, CodexProviderFile, CodexProviderInput, CodexProviderState, CODEX_REASONING_EFFORTS,
 };
 use crate::models::llm_provider::validate_base_url;
 
@@ -271,6 +271,7 @@ impl ProviderStore {
                     .unwrap_or("")
                     .to_string(),
                 models: Vec::new(),
+                available_models: None,
                 reasoning_effort: doc
                     .get("model_reasoning_effort")
                     .and_then(Item::as_str)
@@ -377,7 +378,16 @@ impl ProviderStore {
             || file.providers.is_empty()
             || previous
                 .is_some_and(|p| self.active_id(&file).ok().flatten().as_deref() == Some(&p.id));
+        let keep_available_models = input.available_models.is_none();
         let (mut provider, key) = input.validate(previous_key.as_deref())?;
+        if keep_available_models {
+            if let Some(previous) = previous.filter(|p| {
+                p.base_url.trim_end_matches('/') == provider.base_url.trim_end_matches('/')
+                    && key_for(p).is_ok_and(|saved| saved == key)
+            }) {
+                provider.available_models = previous.available_models.clone();
+            }
+        }
         provider.created_at = previous
             .map(|p| p.created_at.clone())
             .unwrap_or_else(|| Utc::now().to_rfc3339());
@@ -396,6 +406,22 @@ impl ProviderStore {
         }
         self.commit(&file, should_activate.then_some(&provider))?;
         self.view(&file)
+    }
+
+    /// 只更新与本次请求相同地址和密钥的供应商，避免在途请求覆盖已修改的配置。
+    fn cache_models(&self, id: &str, base_url: &str, key: &str, models: Vec<String>) -> Result<(), String> {
+        let mut file = self.read()?;
+        let Some(provider) = file.providers.iter_mut().find(|p| p.id == id) else {
+            return Ok(());
+        };
+        if provider.base_url.trim_end_matches('/') != base_url.trim_end_matches('/')
+            || key_for(provider)? != key {
+            return Ok(());
+        }
+        provider.available_models = normalize_available_models(models)?;
+        provider.updated_at = Utc::now().to_rfc3339();
+        // 更新列表不改写或重新启用 Codex 的当前配置。
+        self.commit(&file, None)
     }
 
     /// 注册独立供应商；CLI 参数选择本次会话的供应商，不切换全局默认及登录凭据。
@@ -560,6 +586,7 @@ pub async fn fetch_models(
     provider_id: Option<String>,
 ) -> Result<Vec<FetchedModel>, String> {
     let base_url = validate_base_url(&base_url)?;
+    let lookup_id = provider_id.clone();
     let key = crate::runtime::async_runtime::spawn_blocking(move || {
         let _guard = config_lock().lock().map_err(|_| lock_error())?;
         if !api_key.trim().is_empty() {
@@ -570,13 +597,22 @@ pub async fn fetch_models(
         let provider = file
             .providers
             .iter()
-            .find(|p| Some(&p.id) == provider_id.as_ref())
+            .find(|p| Some(&p.id) == lookup_id.as_ref())
             .ok_or_else(|| "请先填写 API 密钥".to_string())?;
         key_for(provider)
     })
     .await
     .map_err(|error| format!("读取 Codex 密钥失败：{}", error))??;
-    llm_provider_service::fetch_provider_models(&base_url, &key, "", None).await
+    let fetched = llm_provider_service::fetch_provider_models(&base_url, &key, "", None).await?;
+    let ids = normalize_available_models(fetched.into_iter().map(|model| model.id).collect())?;
+    if let Some(id) = provider_id.filter(|id| !id.is_empty()) {
+        let models = ids.clone();
+        crate::runtime::async_runtime::spawn_blocking(move || {
+            let _guard = config_lock().lock().map_err(|_| lock_error())?;
+            store()?.cache_models(&id, &base_url, &key, models)
+        }).await.map_err(|error| format!("保存 Codex 模型列表失败：{}", error))??;
+    }
+    Ok(ids.into_iter().map(|id| FetchedModel { id }).collect())
 }
 
 #[cfg(test)]
@@ -622,6 +658,7 @@ mod tests {
             api_key: Some("sk-codex-test-secret-1234".to_string()),
             model: "test-model".to_string(),
             models: Vec::new(),
+            available_models: None,
             reasoning_effort: "high".to_string(),
             context_window: 0,
             auto_compact_token_limit: 0,
@@ -644,6 +681,81 @@ mod tests {
         let mut invalid = input("无效模型");
         invalid.models = vec!["bad model".into()];
         assert!(invalid.validate(None).is_err());
+    }
+
+    #[test]
+    fn available_catalog_is_persisted_separately_from_launch_models() {
+        let store = TestStore::new();
+        let mut draft = input("保存模型列表");
+        // 列表允许超过已配置模型的 200 个限制，且不会自动加入启动菜单。
+        let catalog: Vec<String> = (0..250).map(|i| format!("model-{}", i)).collect();
+        draft.available_models = Some(catalog.clone());
+        let state = store.0.save(draft, false).unwrap();
+        assert_eq!(state.providers[0].available_models, catalog);
+        assert_eq!(state.providers[0].models, vec!["test-model"]);
+        let reopened = store.0.view(&store.0.read().unwrap()).unwrap();
+        assert_eq!(reopened.providers[0].available_models, catalog);
+        let mut legacy: Value = serde_json::from_slice(&fs::read(&store.0.path).unwrap()).unwrap();
+        legacy["providers"][0].as_object_mut().unwrap().remove("availableModels");
+        atomic_write_private(&store.0.path, &serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert!(store.0.view(&store.0.read().unwrap()).unwrap().providers[0].available_models.is_empty());
+        let mut invalid = input("无效列表");
+        invalid.available_models = Some(vec!["bad model".into()]);
+        assert!(invalid.validate(None).is_err());
+    }
+
+    #[test]
+    fn updating_catalog_keeps_live_config_and_ignores_outdated_requests() {
+        let store = TestStore::new();
+        let state = store.0.save(input("更新模型列表"), false).unwrap();
+        let id = &state.providers[0].id;
+        let config = store.config();
+        let auth = store.auth();
+        let url = "https://api.example.com/v1/";
+        let key = "sk-codex-test-secret-1234";
+        store.0.cache_models(id, url, key, vec![" model-a ".into(), "model-a".into(), "model-b".into()]).unwrap();
+        let reopened = store.0.view(&store.0.read().unwrap()).unwrap();
+        assert_eq!(reopened.providers[0].available_models, vec!["model-a", "model-b"]);
+        assert_eq!(reopened.providers[0].models, vec!["test-model"]);
+        assert_eq!(reopened.active_provider_id, state.active_provider_id);
+        assert_eq!(store.config(), config);
+        assert_eq!(store.auth(), auth);
+        let data = fs::read(&store.0.path).unwrap();
+        for (request_id, request_url, request_key) in [
+            (id.as_str(), "https://other.example/v1", key),
+            (id.as_str(), url, "different-key"),
+            ("deleted-provider", url, key),
+        ] {
+            store.0.cache_models(request_id, request_url, request_key, vec!["stale-model".into()]).unwrap();
+            assert_eq!(fs::read(&store.0.path).unwrap(), data);
+        }
+        store.0.cache_models(id, url, key, Vec::new()).unwrap();
+        assert!(store.0.view(&store.0.read().unwrap()).unwrap().providers[0].available_models.is_empty());
+    }
+
+    #[test]
+    fn saving_legacy_input_preserves_catalog_until_credentials_change_or_explicit_clear() {
+        let store = TestStore::new();
+        let mut draft = input("兼容旧客户端");
+        draft.available_models = Some(vec!["model-a".into()]);
+        let state = store.0.save(draft, false).unwrap();
+        let mut legacy = input("修改名称");
+        legacy.id = state.providers[0].id.clone();
+        legacy.api_key = None;
+        let state = store.0.save(legacy.clone(), false).unwrap();
+        assert_eq!(state.providers[0].available_models, vec!["model-a"]);
+        let mut other_url = legacy.clone();
+        other_url.base_url = "https://other.example/v1".into();
+        assert!(store.0.save(other_url, false).unwrap().providers[0].available_models.is_empty());
+        legacy.available_models = Some(vec!["model-b".into()]);
+        store.0.save(legacy.clone(), false).unwrap();
+        legacy.available_models = Some(Vec::new());
+        assert!(store.0.save(legacy.clone(), false).unwrap().providers[0].available_models.is_empty());
+        legacy.available_models = Some(vec!["model-c".into()]);
+        store.0.save(legacy.clone(), false).unwrap();
+        legacy.available_models = None;
+        legacy.api_key = Some("sk-replaced-key".into());
+        assert!(store.0.save(legacy, false).unwrap().providers[0].available_models.is_empty());
     }
 
     #[test]

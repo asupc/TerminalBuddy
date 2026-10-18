@@ -28,6 +28,9 @@ pub struct CodexProvider {
     /// 可快速启动的模型；旧配置自动包含原默认模型。
     #[serde(default)]
     pub models: Vec<String>,
+    /// 最近更新的完整模型列表，与快速启动模型分开保存。
+    #[serde(default)]
+    pub available_models: Vec<String>,
     #[serde(default = "default_effort")]
     pub reasoning_effort: String,
     /// 0 表示使用 Codex / 模型默认值。
@@ -63,6 +66,8 @@ pub struct CodexProviderInput {
     pub model: String,
     #[serde(default)]
     pub models: Vec<String>,
+    #[serde(default)]
+    pub available_models: Option<Vec<String>>,
     #[serde(default = "default_effort")]
     pub reasoning_effort: String,
     #[serde(default)]
@@ -83,6 +88,7 @@ pub struct CodexProviderView {
     pub key_tail: String,
     pub model: String,
     pub models: Vec<String>,
+    pub available_models: Vec<String>,
     pub reasoning_effort: String,
     pub context_window: u32,
     pub auto_compact_token_limit: u32,
@@ -96,6 +102,22 @@ pub struct CodexProviderState {
     pub active_provider_id: Option<String>,
     pub config_dir: String,
     pub config_error: Option<String>,
+}
+
+pub fn normalize_available_models(ids: Vec<String>) -> Result<Vec<String>, String> {
+    if ids.len() > 10000 {
+        return Err("模型列表不能超过 10000 个模型".to_string());
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut models = Vec::new();
+    for id in ids {
+        let id = id.trim().to_string();
+        if id.is_empty() || id.len() > 256 || id.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err("模型 ID 不能为空、不能超过 256 字节，且不能包含空白或控制字符".to_string());
+        }
+        if seen.insert(id.clone()) { models.push(id); }
+    }
+    Ok(models)
 }
 
 impl CodexProviderInput {
@@ -153,6 +175,7 @@ impl CodexProviderInput {
                 api_key: String::new(),
                 model,
                 models,
+                available_models: normalize_available_models(self.available_models.unwrap_or_default())?,
                 reasoning_effort,
                 context_window: self.context_window,
                 auto_compact_token_limit: self.auto_compact_token_limit,
@@ -195,6 +218,7 @@ impl CodexProvider {
             key_tail,
             model: self.model.clone(),
             models: self.model_ids(),
+            available_models: self.available_models.clone(),
             reasoning_effort: self.reasoning_effort.clone(),
             context_window: self.context_window,
             auto_compact_token_limit: self.auto_compact_token_limit,

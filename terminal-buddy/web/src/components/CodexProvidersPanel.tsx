@@ -15,7 +15,7 @@ interface Draft extends CodexProviderInput {
   keySet: boolean;
 }
 const newDraft = (): Draft => ({
-  name: '', baseUrl: '', apiKey: '', model: '', models: [], reasoningEffort: 'high',
+  name: '', baseUrl: '', apiKey: '', model: '', models: [], availableModels: [], reasoningEffort: 'high',
   contextWindow: 0, autoCompactTokenLimit: 0, disableResponseStorage: true, keySet: false,
 });
 
@@ -66,9 +66,9 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
   const edit = (provider?: CodexProvider) => {
     setError('');
     setNotice('');
-    setModels([]);
+    setModels(provider?.availableModels ?? []);
     setPreset(provider?.baseUrl === 'https://api.openai.com/v1' ? 'openai' : 'custom');
-    setDraft(provider ? { ...provider, models: provider.models ?? [provider.model], apiKey: '' } : newDraft());
+    setDraft(provider ? { ...provider, models: provider.models ?? [provider.model], availableModels: provider.availableModels ?? [], apiKey: '' } : newDraft());
   };
 
   const save = (activate: boolean) => {
@@ -79,7 +79,8 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
       baseUrl: draft.baseUrl.trim(),
       apiKey: draft.apiKey.trim() || undefined,
       model: draft.model.trim(),
-      models: draft.models,
+      models: [...new Set(draft.models.map(id => id.trim()).filter(Boolean))],
+      availableModels: models,
       reasoningEffort: draft.reasoningEffort,
       contextWindow: draft.contextWindow,
       autoCompactTokenLimit: draft.autoCompactTokenLimit,
@@ -107,8 +108,11 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
     }
     void run('fetch', async () => {
       const fetched = await api.fetchCodexModels(draft.baseUrl.trim(), draft.apiKey.trim(), draft.id);
-      setModels(fetched.map((model) => model.id));
-      setNotice(fetched.length ? `已获取 ${fetched.length} 个模型，可勾选多个模型` : '未获取到模型，可手动填写模型 ID');
+      const next = draft.id ? await api.getCodexProviderState() : null;
+      if (!mountedRef.current) return;
+      setModels([...new Set(fetched.map(model => model.id))]);
+      if (next) setState(next);
+      setNotice(fetched.length ? `已更新 ${fetched.length} 个模型，可在每行的模型列表中选择` : '未获取到模型，可手动填写模型 ID');
     });
   };
 
@@ -154,8 +158,8 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
                 placeholder={draft.keySet ? '留空保留已保存的密钥' : '输入 API 密钥'}
                 onChange={(e) => { setDraft({ ...draft, apiKey: e.target.value }); setModels([]); }} />
             </label>
-            <button className="btn" type="button" onClick={fetchModels}>{pending === 'fetch' ? '获取中…' : '从供应商拉取模型'}</button>
             <CodexModelPicker models={models} selected={draft.models} defaultModel={draft.model} disabled={busy}
+              refreshing={pending === 'fetch'} onRefresh={fetchModels}
               onChange={(selected, model) => setDraft({ ...draft, models: selected, model })} />
             <label>推理等级
               <select value={draft.reasoningEffort} onChange={(e) => setDraft({ ...draft, reasoningEffort: e.target.value })}>

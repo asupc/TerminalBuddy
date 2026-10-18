@@ -27,7 +27,7 @@ interface Editor extends CodexProviderInput {
 
 function emptyEditor(): Editor {
   return {
-    name: '', baseUrl: '', apiKey: '', model: '', models: [], reasoningEffort: 'high',
+    name: '', baseUrl: '', apiKey: '', model: '', models: [], availableModels: [], reasoningEffort: 'high',
     contextWindow: 0, autoCompactTokenLimit: 0, disableResponseStorage: true,
     keySet: false, keyTail: '',
   };
@@ -92,9 +92,9 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
 
   const edit = (provider?: CodexProviderView) => {
     requestVersion.current += 1;
-    setModels([]);
+    setModels(provider?.availableModels ?? []);
     setPreset(provider?.baseUrl === 'https://api.openai.com/v1' ? 'openai' : 'custom');
-    setEditor(provider ? { ...provider, models: provider.models ?? [provider.model], apiKey: '' } : emptyEditor());
+    setEditor(provider ? { ...provider, models: provider.models ?? [provider.model], availableModels: provider.availableModels ?? [], apiKey: '' } : emptyEditor());
   };
 
   const save = async (activate: boolean) => {
@@ -102,7 +102,8 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
     const input: CodexProviderInput = {
       id: editor.id,
       name: editor.name.trim(), baseUrl: editor.baseUrl.trim(),
-      apiKey: editor.apiKey.trim() || undefined, model: editor.model.trim(), models: editor.models,
+      apiKey: editor.apiKey.trim() || undefined, model: editor.model.trim(), models: [...new Set(editor.models.map(id => id.trim()).filter(Boolean))],
+      availableModels: models,
       reasoningEffort: editor.reasoningEffort, contextWindow: editor.contextWindow,
       autoCompactTokenLimit: editor.autoCompactTokenLimit,
       disableResponseStorage: editor.disableResponseStorage,
@@ -126,9 +127,12 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
     const version = ++requestVersion.current;
     try {
       const fetched = await fetchCodexProviderModels(editor.baseUrl.trim(), editor.apiKey.trim(), editor.id);
+      const next = editor.id ? await getCodexProviderState() : null;
       if (version !== requestVersion.current) return;
-      setModels([...new Set(fetched.map(model => model.id))]);
-      showToast(fetched.length ? `已获取 ${fetched.length} 个模型，可勾选多个模型` : '未获取到模型，可手动填写模型 ID', fetched.length ? 'success' : 'info');
+      const ids = [...new Set(fetched.map(model => model.id))];
+      setModels(ids);
+      if (next) { setState(next); setCodexProviderState(next); }
+      showToast(fetched.length ? `已更新 ${fetched.length} 个模型，可在每行的模型列表中选择` : '未获取到模型，可手动填写模型 ID', fetched.length ? 'success' : 'info');
     } catch (error) {
       if (version === requestVersion.current) showToast(`${String(error)}；也可手动填写模型 ID`, 'error');
     } finally {
@@ -219,11 +223,8 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
             <label className="claude-form-row">API 密钥
               <input required={!editor.keySet} type="password" autoComplete="new-password" value={editor.apiKey} onChange={e => { setEditor({ ...editor, apiKey: e.target.value }); setModels([]); }} placeholder={editor.keySet ? `已保存${editor.keyTail ? `（····${editor.keyTail}）` : ''}，留空沿用` : '粘贴 API 密钥'} spellCheck={false} />
             </label>
-            <div className="claude-segment-toolbar">
-              <span className="claude-segment-title">模型配置</span>
-              <button type="button" className="claude-segment-btn" onClick={() => void fetchModels()}>{pending === 'fetch' ? '获取中…' : '获取模型列表'}</button>
-            </div>
             <CodexModelPicker models={models} selected={editor.models} defaultModel={editor.model} disabled={busy}
+              refreshing={pending === 'fetch'} onRefresh={() => void fetchModels()}
               onChange={(selected, model) => setEditor({ ...editor, models: selected, model })} />
             <label className="claude-form-row">推理等级
               <select value={editor.reasoningEffort} onChange={e => setEditor({ ...editor, reasoningEffort: e.target.value })}>
