@@ -1,7 +1,7 @@
 import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { FileText, X } from 'lucide-react';
-import { isTerminalWorking, useAppStore } from '../../stores/appStore';
+import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, writeFileContent, readFileContent } from '../../services/tauri';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -607,10 +607,10 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
               <span className="tab-nav-group-count">{claudeReplayTabs.length}</span>
             </div>
             {!collapsedGroups.has("replay-group") && claudeReplayTabs.map(tab => (
-              <div key={tab.sessionId} className={`tab-nav-settings-btn tab-nav-replay-item ${activeSpecialTab === "claude-replay" && claudeReplayTab?.sessionId === tab.sessionId ? "active" : ""}`}
-                onClick={() => openClaudeReplayTab(tab)} title={tab.title}>
+              <div key={sessionReplayTabKey(tab)} className={`tab-nav-settings-btn tab-nav-replay-item ${activeSpecialTab === "claude-replay" && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? "active" : ""}`}
+                onClick={() => openClaudeReplayTab(tab)} title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}>
                 <span className="tab-nav-name">{tab.title}</span>
-                <button type="button" className="tree-item-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId); }}
+                <button type="button" className="tree-item-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}
                   title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>
               </div>
             ))}

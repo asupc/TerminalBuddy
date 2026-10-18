@@ -107,7 +107,7 @@ pub async fn invoke(State(state): State<AppState>, _claims: ClaimsFromRequest, h
     let client_kind = client_kind_from_headers(&headers);
     check_arguments(&command, &args, &state.app_handle)?;
     let git_mutation = matches!(command.as_str(), "git_pull" | "git_push_with_options" | "git_checkout_branch" | "git_commit_paths");
-    let long_operation = git_mutation || matches!(command.as_str(), "probe_claude_mcp" | "claude_history_rescan");
+    let long_operation = git_mutation || matches!(command.as_str(), "probe_claude_mcp" | "claude_history_rescan" | "codex_history_rescan");
     if long_operation {
         let lease = if git_mutation {
             let path = args.get("path").or_else(|| args.get("options").and_then(|v| v.get("path"))).and_then(Value::as_str)

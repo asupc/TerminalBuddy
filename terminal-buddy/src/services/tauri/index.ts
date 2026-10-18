@@ -5,6 +5,7 @@ export * from './claudeAssets';
 export * from './claudeConfig';
 export * from './claudeEnhance';
 export * from './claudeHistory';
+export * from './codexHistory';
 export * from './claudeHook';
 export * from './claudeMcp';
 export * from './clientData';

@@ -325,8 +325,8 @@ export const TitleBar: FC<TitleBarProps> = ({
               <button
                 className={`titlebar-nav-btn ${historyPanelVisible ? 'active' : ''}`}
                 onClick={onToggleHistoryPanel}
-                title={historyPanelVisible ? '隐藏 Claude Code 会话' : '显示 Claude Code 会话'}
-                aria-label={historyPanelVisible ? '隐藏 Claude Code 会话' : '显示 Claude Code 会话'}
+                title={historyPanelVisible ? '隐藏 Claude Code / Codex 会话' : '显示 Claude Code / Codex 会话'}
+                aria-label={historyPanelVisible ? '隐藏 Claude Code / Codex 会话' : '显示 Claude Code / Codex 会话'}
                 aria-pressed={historyPanelVisible}
               >
                 <History aria-hidden="true" />

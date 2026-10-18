@@ -1,15 +1,11 @@
 import { FC, useCallback, useEffect, useRef, useState } from 'react';
-import {
-  getClaudeReplay,
-  deleteClaudeSessionRecord,
-  type ClaudeReplayMessage,
-} from '../../services/tauri';
+import type { ClaudeReplayMessage } from '../../services/tauri';
 import type { ClaudeReplayTab } from '../../stores/appStore';
 import { useAppStore } from '../../stores/appStore';
 import { projectForDirectory } from '../../utils/projectPath';
 import { ConfirmDialog } from '../shared/Dialog';
 import { ClaudeExportDialog } from './ClaudeExportDialog';
-import { resumeClaudeSession } from './resumeClaudeSession';
+import { sessionHistory } from '../../services/sessionHistory';
 import './ReplayPage.css';
 
 const PAGE_SIZE = 50;
@@ -32,6 +28,8 @@ const ROLE_LABEL: Record<string, string> = {
 
 /** 会话回放（特殊标签页）：JSONL 渲染成对话流，分页加载，可锚定搜索命中。 */
 export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
+  const provider = tab.provider ?? 'claude';
+  const history = sessionHistory(provider);
   const showToast = useAppStore(s => s.showToast);
   const projects = useAppStore(s => s.projects);
   const [messages, setMessages] = useState<ClaudeReplayMessage[]>([]);
@@ -46,25 +44,29 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
   const [exportOpen, setExportOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const loadingRef = useRef(false);
+  const pageRequestRef = useRef(0);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   // 载入下一页（offset = 当前已载入条数）；focusSeq 存在时循环载入直到覆盖该条
   const loadPage = useCallback(async (offset: number, autoCoverSeq?: number): Promise<void> => {
     if (loadingRef.current) return;
     loadingRef.current = true;
+    const request = ++pageRequestRef.current;
     setLoading(true);
     try {
       let currentOffset = offset;
       let first = offset === 0;
       for (;;) {
-        const page = await getClaudeReplay(tab.sessionId, currentOffset, PAGE_SIZE);
+        const page = await history.replay(tab.sessionId, currentOffset, PAGE_SIZE);
+        if (request !== pageRequestRef.current) return;
         setTotal(page.total);
         setTitle(page.title);
         setProjectDir(page.projectDir);
         setModel(page.model);
         setInputTokens(page.inputTokens);
         setOutputTokens(page.outputTokens);
-        setMessages(prev => first ? page.messages : [...prev, ...page.messages]);
+        const replace = first;
+        setMessages(prev => replace ? page.messages : [...prev, ...page.messages]);
         first = false;
         currentOffset += page.messages.length;
         const lastSeq = page.messages[page.messages.length - 1]?.seq ?? -1;
@@ -74,19 +76,25 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
           && lastSeq < autoCoverSeq;
         if (!needMore) break;
       }
-      setError('');
+      if (request === pageRequestRef.current) setError('');
     } catch (err) {
-      setError(String(err));
+      if (request === pageRequestRef.current) setError(String(err));
     } finally {
-      loadingRef.current = false;
-      setLoading(false);
+      if (request === pageRequestRef.current) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
     }
-  }, [tab.sessionId]);
+  }, [history, tab.sessionId]);
 
   useEffect(() => {
     setMessages([]);
     setTotal(0);
     void loadPage(0, tab.focusSeq);
+    return () => {
+      pageRequestRef.current += 1;
+      loadingRef.current = false;
+    };
   }, [tab.sessionId, tab.focusSeq, loadPage]);
 
   // 自动填充未占满的可视区域；滚动接近底部时继续加载下一页。
@@ -109,13 +117,13 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
 
   const handleDelete = useCallback(async () => {
     try {
-      await deleteClaudeSessionRecord(tab.sessionId);
+      await history.delete(tab.sessionId);
       showToast('会话记录已移入回收目录', 'success');
       onClose();
     } catch (error) {
       showToast(`删除失败: ${String(error)}`, 'error');
     }
-  }, [tab.sessionId, onClose, showToast]);
+  }, [history, tab.sessionId, onClose, showToast]);
 
   const tokens = inputTokens + outputTokens;
 
@@ -137,7 +145,7 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
           <button
             type="button"
             className="claude-replay-action primary"
-            onClick={() => void resumeClaudeSession({
+            onClick={() => void history.resume({
               sessionId: tab.sessionId,
               title,
               projectDir,
@@ -162,7 +170,7 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
             className={`claude-replay-msg role-${message.role}${tab.focusSeq === message.seq ? ' focused' : ''}`}
           >
             <div className="claude-replay-msg-head">
-              <span className="claude-replay-role">● {ROLE_LABEL[message.role] ?? message.role}</span>
+              <span className="claude-replay-role">● {message.role === 'assistant' ? (provider === 'codex' ? 'Codex' : 'Claude') : ROLE_LABEL[message.role] ?? message.role}</span>
               {formatTime(message.timestamp) && <span className="claude-replay-time">{formatTime(message.timestamp)}</span>}
               {message.toolName && <span className="claude-replay-toolname">{message.toolName}</span>}
             </div>
@@ -202,6 +210,7 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
 
       {exportOpen && (
         <ClaudeExportDialog
+          provider={provider}
           sessionId={tab.sessionId}
           title={title}
           onClose={() => setExportOpen(false)}

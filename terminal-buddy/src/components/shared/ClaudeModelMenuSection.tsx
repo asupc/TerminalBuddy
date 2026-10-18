@@ -10,7 +10,7 @@ import './ClaudeModelMenuSection.css';
 const SUB_CLOSE_DELAY = 120;
 
 interface ClaudeModelMenuSectionProps {
-  /** 启动菜单的数据源；历史恢复继续使用 Claude。 */
+  /** 启动与历史恢复菜单的数据源。 */
   source?: 'claude' | 'codex';
   /** 一级菜单项容器类名（两种右键菜单样式不同，调用方传入） */
   itemClassName: string;

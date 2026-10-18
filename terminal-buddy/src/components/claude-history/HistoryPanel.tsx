@@ -19,12 +19,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
-  listClaudeHistory,
-  rescanClaudeHistory,
-  searchClaudeHistory,
-  renameClaudeSessionRecord,
-  setClaudeSessionFlags,
-  deleteClaudeSessionRecords,
   openInExplorer,
   getBackendAppSettings,
   saveConfigNavWidth,
@@ -43,12 +37,12 @@ import { ConfirmDialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { ClaudeExportDialog } from './ClaudeExportDialog';
 import {
-  pickClaudeProfile,
-  resumeClaudeSession,
   type ClaudeVendorRef,
   type ResumeLaunchPreset,
 } from './resumeClaudeSession';
-import type { ExtraParamPreset, Project } from '../../types';
+import type { ExtraParamPreset, Project, SessionHistoryProvider } from '../../types';
+import { sessionHistory } from '../../services/sessionHistory';
+import { resumedCodexSessionId } from '../../utils/codexLaunch';
 import './HistoryPanel.css';
 
 interface ContextMenuState {
@@ -130,11 +124,22 @@ const MenuItem: FC<MenuItemProps> = ({ icon: Icon, label, hint, danger, preset, 
   </div>
 );
 
-/** Claude Code 会话面板：列表 + 全文检索 + 右键管理 + 双击恢复。 */
-export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isActive = true }) => {
+/** Claude Code / Codex 会话面板：列表、检索、回放与恢复共用同一套交互。 */
+export const HistoryPanel: FC<HistoryPanelProps> = props => {
+  const [provider, setProvider] = useState<SessionHistoryProvider>('claude');
+  return <HistoryPanelContent key={provider} {...props} provider={provider} onProviderChange={setProvider} />;
+};
+
+const HistoryPanelContent: FC<HistoryPanelProps & {
+  provider: SessionHistoryProvider;
+  onProviderChange: (provider: SessionHistoryProvider) => void;
+}> = ({ isSidebarMode = false, isActive = true, provider, onProviderChange }) => {
+  const history = sessionHistory(provider);
   const showToast = useAppStore(s => s.showToast);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
+  const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
+  const sessions = useAppStore(s => s.sessions);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
   const profiles = useAppStore(s => s.profiles);
@@ -174,17 +179,18 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
   // 指针最后一次按下是否落在本面板内：快捷键只认这个，不认面板是否可见
   const pointerInPanelRef = useRef(false);
   const initialLoadRef = useRef(false);
+  const scanPromiseRef = useRef<Promise<ClaudeHistoryScanResult> | null>(null);
   const loadRequestRef = useRef(0);
   const searchRequestRef = useRef(0);
 
   useEffect(() => {
     setScopeDismissed(false);
-  }, [activeSessionId, activeSpecialTab, claudeReplayTab?.sessionId]);
+  }, [activeSessionId, activeSpecialTab, claudeReplayTab?.sessionId, claudeReplayTab?.provider]);
 
   // 模型菜单数据源：挂载时加载，右键打开时用缓存。
   useEffect(() => {
-    void refreshClaudeLaunchTargets();
-  }, [refreshClaudeLaunchTargets]);
+    void (provider === 'claude' ? refreshClaudeLaunchTargets() : refreshCodexLaunchTargets());
+  }, [provider, refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
 
   useEffect(() => {
     searchRequestRef.current += 1;
@@ -195,6 +201,11 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
     setSelectedIds(new Set());
     selectionAnchor.current = null;
   }, [activeScope]);
+
+  useEffect(() => () => {
+    loadRequestRef.current += 1;
+    searchRequestRef.current += 1;
+  }, []);
 
   // 宽度与其余侧栏面板共用一套：侧栏风格下都是 configNavWidth，拖完互相广播同步
   const { width, setWidth, isResizing, resizeHandleProps } = useResizablePanel({
@@ -247,20 +258,26 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
     const request = ++loadRequestRef.current;
     setLoading(true);
     try {
-      if (withRescan) {
-        const scan = await rescanClaudeHistory();
-        if (request === loadRequestRef.current) setPendingCount(scan.pending);
+      if (withRescan && !scanPromiseRef.current) scanPromiseRef.current = history.rescan();
+      const scanPromise = scanPromiseRef.current;
+      if (scanPromise) {
+        try {
+          const scan = await scanPromise;
+          if (request === loadRequestRef.current) setPendingCount(scan.pending);
+        } finally {
+          if (scanPromiseRef.current === scanPromise) scanPromiseRef.current = null;
+        }
       }
-      const nextItems = await listClaudeHistory(includeArchived, activeScope);
+      const nextItems = await history.list(includeArchived, activeScope);
       if (request !== loadRequestRef.current) return;
       setItems(nextItems);
       setLoaded(true);
     } catch (error) {
-      if (request === loadRequestRef.current) showToast(`加载 Claude Code 会话失败: ${String(error)}`, 'error');
+      if (request === loadRequestRef.current) showToast(`加载 ${history.label} 会话失败: ${String(error)}`, 'error');
     } finally {
       if (request === loadRequestRef.current) setLoading(false);
     }
-  }, [includeArchived, activeScope, showToast]);
+  }, [history, includeArchived, activeScope, showToast]);
 
   // 首次进入扫描 + 索引；之后（如切换归档开关）只重取列表，不重扫
   useEffect(() => {
@@ -271,14 +288,14 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
   // 扫描只处理最近一批，剩余由后台补齐任务分批索引；每批完成广播一次，
   // 这里跟着重取列表即可，绝不能再触发 rescan（否则补齐任务层层叠加）。
   useEffect(() => {
-    const unlisten = listen<ClaudeHistoryScanResult>('claude-history-indexed', event => {
+    const unlisten = listen<ClaudeHistoryScanResult>(history.indexedEvent, event => {
       setPendingCount(event.payload.pending);
       void load(false);
     });
     return () => {
       void unlisten.then(fn => fn());
     };
-  }, [load]);
+  }, [history, load]);
 
   // 点击空白关闭右键菜单
   useEffect(() => {
@@ -308,11 +325,17 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
   // 会话 → 运行中终端映射（terminalId → claudeSessionId 反查）
   const liveTerminalBySession = useMemo(() => {
     const map = new Map<string, string>();
-    for (const [terminalId, claudeId] of Object.entries(claudeSessionIds)) {
-      map.set(claudeId, terminalId);
+    if (provider === 'claude') {
+      for (const [terminalId, claudeId] of Object.entries(claudeSessionIds)) map.set(claudeId, terminalId);
+    } else {
+      for (const session of sessions) {
+        if (session.extraParamMode !== 'independent') continue;
+        const id = resumedCodexSessionId(session.extraParams);
+        if (id) map.set(id, session.id);
+      }
     }
     return map;
-  }, [claudeSessionIds]);
+  }, [provider, sessions, claudeSessionIds]);
 
   const filteredItems = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -352,16 +375,18 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
     setSearching(true);
     setFulltextQuery(keyword);
     try {
-      const hits = await searchClaudeHistory(keyword, activeScope);
+      const hits = await history.search(keyword, activeScope);
       if (request === searchRequestRef.current) setFulltextHits(hits);
     } catch (error) {
       if (request === searchRequestRef.current) showToast(`全文检索失败: ${String(error)}`, 'error');
     } finally {
       if (request === searchRequestRef.current) setSearching(false);
     }
-  }, [query, activeScope, showToast]);
+  }, [history, query, activeScope, showToast]);
 
   const exitFulltext = useCallback(() => {
+    searchRequestRef.current += 1;
+    setSearching(false);
     setFulltextHits(null);
     setFulltextQuery('');
   }, []);
@@ -371,15 +396,15 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
    * 比对启动命令）。另排除 independent 预设：它整体替换启动命令（如 codex），接不上 --resume。
    */
   const presetsFor = useCallback((item: ClaudeSessionItem) => {
-    const profile = pickClaudeProfile(profiles, item.projectDir);
+    const profile = history.pickProfile(profiles, item.projectDir);
     // 没有匹配连接时，按空白终端回退路径实际要跑的命令判定 commandMatch
-    const commands = (profile?.startupCommands ?? ['claude']).map(cmd => cmd.toLowerCase());
+    const commands = (profile?.startupCommands ?? [provider]).map(cmd => cmd.toLowerCase());
     return extraParamPresets.filter(preset => {
       if (!preset.enabled || preset.mode !== 'append') return false;
       const match = preset.commandMatch?.toLowerCase();
       return !match || commands.some(cmd => cmd.includes(match));
     });
-  }, [extraParamPresets, profiles]);
+  }, [history, provider, extraParamPresets, profiles]);
 
   const handleResume = useCallback((item: ClaudeSessionItem, preset?: ExtraParamPreset) => {
     const launchPreset: ResumeLaunchPreset | undefined = preset && {
@@ -387,24 +412,24 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
       params: preset.params,
       tagColor: preset.tagColor,
     };
-    void resumeClaudeSession({
+    void history.resume({
       sessionId: item.sessionId,
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
     }, launchPreset).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
-  }, [showToast]);
+  }, [history, showToast]);
 
   const handleResumeWithModel = useCallback((item: ClaudeSessionItem, vendorRef: ClaudeVendorRef) => {
-    void resumeClaudeSession({
+    void history.resume({
       sessionId: item.sessionId,
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
     }, undefined, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
-  }, [showToast]);
+  }, [history, showToast]);
 
   const handleReplay = useCallback((sessionId: string, title: string, projectDir: string, focusSeq?: number) => {
-    openClaudeReplayTab({ sessionId, title, projectDir, focusSeq });
-  }, [openClaudeReplayTab]);
+    openClaudeReplayTab({ sessionId, title, projectDir, focusSeq, provider });
+  }, [openClaudeReplayTab, provider]);
 
   const openContextMenu = useCallback((e: React.MouseEvent, item: ClaudeSessionItem) => {
     e.preventDefault();
@@ -425,42 +450,42 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
     options: { starred?: boolean; archived?: boolean },
   ) => {
     try {
-      await setClaudeSessionFlags(item.sessionId, options);
+      await history.setFlags(item.sessionId, options);
       await load(false);
     } catch (error) {
       showToast(`操作失败: ${String(error)}`, 'error');
     }
-  }, [load, showToast]);
+  }, [history, load, showToast]);
 
   const handleRenameSubmit = useCallback(async (item: ClaudeSessionItem) => {
     const title = renameValue.trim();
     setRenamingId(null);
     if (!title || title === (item.customTitle || item.title)) return;
     try {
-      await renameClaudeSessionRecord(item.sessionId, title);
+      await history.rename(item.sessionId, title);
       await load(false);
     } catch (error) {
       showToast(`重命名失败: ${String(error)}`, 'error');
     }
-  }, [renameValue, load, showToast]);
+  }, [history, renameValue, load, showToast]);
 
   const handleDelete = useCallback(async (targets: ClaudeSessionItem[]) => {
     try {
-      await deleteClaudeSessionRecords(targets.map(item => item.sessionId));
+      await history.deleteMany(targets.map(item => item.sessionId));
       setDeleteTarget([]);
       setSelectedIds(new Set());
       setSelectedId(null);
       showToast('已删除 ' + targets.length + ' 条记录', 'success');
       await load(false);
     } catch (error) { showToast(`删除失败: ${String(error)}`, 'error'); }
-  }, [load, showToast]);
+  }, [history, load, showToast]);
 
   const handleBulkFlag = useCallback(async (targets: ClaudeSessionItem[], options: { starred?: boolean; archived?: boolean }) => {
-    const results = await Promise.allSettled(targets.map(item => setClaudeSessionFlags(item.sessionId, options)));
+    const results = await Promise.allSettled(targets.map(item => history.setFlags(item.sessionId, options)));
     const failures = results.filter(result => result.status === 'rejected');
     if (failures.length) showToast(`${failures.length} 条操作失败`, 'error');
     await load(false);
-  }, [load, showToast]);
+  }, [history, load, showToast]);
 
   const visibleSessionIds = useMemo(() => groups.flatMap(([dir, list]) =>
     isGroupExpanded(toggledDirs, dir, Boolean(activeScope)) || query.trim() ? list.map(item => item.sessionId) : []
@@ -564,8 +589,33 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
       style={{ width }}
     >
       <div className="panel-titlebar">
-        <span className="panel-title">Claude Code 会话</span>
+        <span className="panel-title">会话历史</span>
         <span className="panel-title-count">{items.length}</span>
+      </div>
+      <div className="session-history-tabs" role="tablist" aria-label="会话来源">
+        {(['claude', 'codex'] as const).map(source => (
+          <button
+            key={source}
+            id={`session-history-tab-${source}`}
+            type="button"
+            role="tab"
+            aria-selected={provider === source}
+            aria-controls="session-history-list"
+            tabIndex={provider === source ? 0 : -1}
+            className={`session-history-tab${provider === source ? ' active' : ''}`}
+            onClick={() => onProviderChange(source)}
+            onKeyDown={event => {
+              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault();
+                const next = source === 'claude' ? 'codex' : 'claude';
+                onProviderChange(next);
+                requestAnimationFrame(() => document.getElementById(`session-history-tab-${next}`)?.focus());
+              }
+            }}
+          >
+            {sessionHistory(source).label}
+          </button>
+        ))}
       </div>
       <div className="claude-hist-toolbar">
         <input
@@ -651,8 +701,8 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
         <button type="button" className="danger" onClick={() => setDeleteTarget(selectedItems)}>删除所选</button>
         <button type="button" onClick={() => { setSelectedIds(new Set()); setSelectedId(null); }}>取消选择</button>
       </div>}
-      <div className="claude-hist-list">
-        {!loaded && loading && <div className="claude-hist-empty">正在扫描 ~/.claude 会话记录…</div>}
+      <div id="session-history-list" className="claude-hist-list" role="tabpanel" aria-labelledby={`session-history-tab-${provider}`}>
+        {!loaded && loading && <div className="claude-hist-empty">正在扫描 {history.home} 会话记录…</div>}
         {loaded && !loading && items.length === 0 && (
           <div className="claude-hist-empty">暂无历史会话记录</div>
         )}
@@ -768,6 +818,7 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
             />
           ))}
           <ClaudeModelMenuSection
+            source={provider}
             itemClassName="claude-hist-context-item"
             separatorClassName="claude-hist-context-sep"
             title="指定模型恢复"
@@ -776,7 +827,7 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
               setContextMenu(null);
               handleResumeWithModel(item, { providerId, modelId });
             }}
-            onGotoProviders={() => { setContextMenu(null); useAppStore.getState().setProviderSettingsTab('claude'); openSettingsDialog('llm-providers'); }}
+            onGotoProviders={() => { setContextMenu(null); useAppStore.getState().setProviderSettingsTab(provider); openSettingsDialog('llm-providers'); }}
           />
           <MenuItem
             icon={Eye}
@@ -848,6 +899,7 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
 
       {exportTarget && (
         <ClaudeExportDialog
+          provider={provider}
           sessionId={exportTarget.sessionId}
           title={itemTitle(exportTarget)}
           onClose={() => setExportTarget(null)}

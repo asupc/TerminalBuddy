@@ -441,6 +441,9 @@ pub fn run() {
             claude_history_rescan, claude_history_list, claude_history_search,
             claude_history_get_replay, claude_history_rename, claude_history_set_flags,
             claude_history_delete, claude_history_delete_many, claude_history_export,
+            codex_history_rescan, codex_history_list, codex_history_search,
+            codex_history_get_replay, codex_history_rename, codex_history_set_flags,
+            codex_history_delete, codex_history_delete_many, codex_history_export,
             // Claude 配置 / 资产库 / MCP（三期）
             list_claude_projects, list_claude_memory_files, read_claude_memory_file,
             write_claude_memory_file, create_claude_memory_file, delete_claude_memory_file,

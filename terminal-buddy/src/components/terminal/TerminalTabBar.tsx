@@ -1,6 +1,6 @@
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
 import { FileText, GitBranch, History, X } from 'lucide-react';
-import { isTerminalWorking, useAppStore } from '../../stores/appStore';
+import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
@@ -332,11 +332,11 @@ export const TerminalTabBar: FC = () => {
       )}
       {claudeReplayTabs.length > 0 && <span className="terminal-replay-group-label">会话详情</span>}
       {claudeReplayTabs.map(tab => (
-        <div key={tab.sessionId} className={`terminal-tab ${activeSpecialTab === 'claude-replay' && claudeReplayTab?.sessionId === tab.sessionId ? 'active' : ''}`}
-          onClick={() => openClaudeReplayTab(tab)} title={tab.title}>
+        <div key={sessionReplayTabKey(tab)} className={`terminal-tab ${activeSpecialTab === 'claude-replay' && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? 'active' : ''}`}
+          onClick={() => openClaudeReplayTab(tab)} title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}>
           <History className="terminal-tab-history-icon" aria-hidden="true" />
           <span className="terminal-tab-name">{tab.title}</span>
-          <button className="terminal-tab-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId); }}
+          <button className="terminal-tab-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}
             title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>
         </div>
       ))}

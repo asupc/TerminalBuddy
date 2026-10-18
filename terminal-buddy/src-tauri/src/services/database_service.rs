@@ -208,6 +208,13 @@ impl DatabaseService {
                 .commit()
                 .map_err(|error| format!("提交 Claude 索引状态表迁移失败: {}", error))?;
         }
+        if !Self::has_migration(connection, "codex-history-v1")? {
+            let transaction = connection.transaction().map_err(|error| format!("开始 Codex 历史迁移失败: {error}"))?;
+            crate::services::codex_history_service::init_codex_schema(&transaction)?;
+            Self::complete_migration(&transaction, "codex-history-v1")?;
+            transaction.commit().map_err(|error| format!("提交 Codex 历史迁移失败: {error}"))?;
+        }
+
         Ok(())
     }
 

@@ -16,6 +16,8 @@ pub mod claude_settings_service;
 pub mod client_data_service;
 pub mod cli_update_service;
 pub mod codex_catalog;
+pub mod codex_history_service;
+mod codex_transcript;
 pub mod codex_provider_service;
 pub mod crypto_service;
 pub mod database_service;

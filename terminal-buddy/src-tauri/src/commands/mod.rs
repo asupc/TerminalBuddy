@@ -7,6 +7,7 @@ pub mod claude_mcp;
 pub mod claude_session;
 pub mod client_data;
 pub mod codex_provider;
+pub mod codex_history;
 #[cfg(feature = "desktop")]
 pub mod clipboard;
 #[cfg(feature = "desktop")]
@@ -40,6 +41,7 @@ pub use claude_mcp::*;
 pub use claude_session::*;
 pub use client_data::*;
 pub use codex_provider::*;
+pub use codex_history::*;
 #[cfg(feature = "desktop")]
 pub use clipboard::*;
 #[cfg(feature = "desktop")]

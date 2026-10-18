@@ -342,6 +342,13 @@ if (import.meta.env.MODE === 'browser-demo' && typeof window !== 'undefined' && 
       case 'get_pending_claude_hook_decisions':
         return [];
 
+      // Codex 演示模式没有本地转录；保持空列表，入口仍可正常切换。
+      case 'codex_history_list':
+      case 'codex_history_search':
+        return [];
+      case 'codex_history_rescan':
+        return { scanned: 0, updated: 0, total: 0, pending: 0 };
+
       // ===== Claude History =====
       case 'claude_history_list':
         return [

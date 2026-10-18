@@ -8,7 +8,6 @@
 use crate::services::claude_config_service::normalized_dir_expr;
 use crate::services::{DatabaseService, PathService};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -40,79 +39,14 @@ const ANALYZER_VERSION: i64 = 2;
 // 对外数据结构
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeSessionItem {
-    pub session_id: String,
-    pub project_dir: String,
-    pub file_path: String,
-    pub title: String,
-    pub custom_title: Option<String>,
-    pub started_at: Option<i64>,
-    pub updated_at: i64,
-    pub message_count: i64,
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    pub model: Option<String>,
-    pub starred: bool,
-    pub archived: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeSearchHit {
-    pub session_id: String,
-    pub title: String,
-    pub project_dir: String,
-    pub snippet: String,
-    pub seq: i64,
-    pub timestamp: Option<i64>,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeReplayTool {
-    pub name: String,
-    pub summary: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeReplayMessage {
-    pub seq: i64,
-    /// "user" | "assistant" | "tool"
-    pub role: String,
-    pub timestamp: Option<i64>,
-    pub text: String,
-    pub tools: Vec<ClaudeReplayTool>,
-    /// tool 结果对应的工具名（多个用「、」连接）
-    pub tool_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeReplayPage {
-    pub total: i64,
-    pub messages: Vec<ClaudeReplayMessage>,
-    pub title: String,
-    pub project_dir: String,
-    pub model: Option<String>,
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    pub started_at: Option<i64>,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeHistoryScanResult {
-    pub scanned: i64,
-    pub updated: i64,
-    pub total: i64,
-    /// 本批之后仍需索引的会话文件数（后台补齐据此判断是否还没扫完）
-    pub pending: i64,
-}
+pub use crate::models::session_history::{
+    SessionHistoryItem as ClaudeSessionItem,
+    SessionSearchHit as ClaudeSearchHit,
+    SessionReplayTool as ClaudeReplayTool,
+    SessionReplayMessage as ClaudeReplayMessage,
+    SessionReplayPage as ClaudeReplayPage,
+    SessionHistoryScanResult as ClaudeHistoryScanResult,
+};
 
 // ---------------------------------------------------------------------------
 // 纯解析逻辑（可测）
@@ -553,6 +487,17 @@ pub fn render_markdown(
     message_count: usize,
     messages: &[ClaudeReplayMessage],
 ) -> String {
+    render_markdown_for_assistant(title, project_dir, model, message_count, messages, "Claude")
+}
+
+pub(super) fn render_markdown_for_assistant(
+    title: &str,
+    project_dir: &str,
+    model: Option<&str>,
+    message_count: usize,
+    messages: &[ClaudeReplayMessage],
+    assistant: &str,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!("# {}\n\n", title));
     if !project_dir.is_empty() {
@@ -566,7 +511,7 @@ pub fn render_markdown(
     for message in messages {
         let (role_label, time) = match message.role.as_str() {
             "user" => ("你", message.timestamp),
-            "assistant" => ("Claude", message.timestamp),
+            "assistant" => (assistant, message.timestamp),
             _ => ("工具结果", message.timestamp),
         };
         out.push_str(&format!("## {}", role_label));
@@ -1244,7 +1189,7 @@ pub fn set_flags(session_id: &str, starred: Option<bool>, archived: Option<bool>
 }
 
 /// 跨盘移动失败时退化为复制 + 删除。
-fn move_to_trash(path: &Path, trash_dir: &Path) -> Result<PathBuf, String> {
+pub(super) fn move_to_trash(path: &Path, trash_dir: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(trash_dir).map_err(|error| format!("创建回收目录失败: {}", error))?;
     let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("session");
     let timestamp = chrono::Utc::now().timestamp_millis();
@@ -1306,7 +1251,7 @@ fn restore_moved_files(moved_files: &[(PathBuf, PathBuf)]) -> Result<(), String>
     }
 }
 
-fn with_file_restore_error(error: String, moved_files: &[(PathBuf, PathBuf)]) -> String {
+pub(super) fn with_file_restore_error(error: String, moved_files: &[(PathBuf, PathBuf)]) -> String {
     match restore_moved_files(moved_files) {
         Ok(()) => error,
         Err(restore_error) => format!("{}；同时恢复会话文件失败：{}", error, restore_error),

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Profile, TerminalSession, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem } from "../types";
+import type { Profile, TerminalSession, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem, SessionHistoryProvider } from "../types";
 import { readClientData, writeClientData } from "../services/tauri";
 import { createProfilesSlice } from "./slices/profilesSlice";
 import { createFileTreeSlice } from "./slices/fileTreeSlice";
@@ -36,12 +36,15 @@ export interface GitHistoryTab {
 }
 
 export interface ClaudeReplayTab {
+	provider?: SessionHistoryProvider;
 	sessionId: string;
 	title: string;
 	projectDir?: string;
 	/** 从全文检索命中跳入时，锚定到该条消息 */
 	focusSeq?: number;
 }
+
+export { sessionReplayTabKey } from '../utils/sessionHistory';
 
 export type WorkspaceSpecialTab = "git-history" | "claude-replay" | null;
 
@@ -253,7 +256,7 @@ export interface AppState {
 	claudeReplayTab: ClaudeReplayTab | null;
 	claudeReplayTabs: ClaudeReplayTab[];
 	openClaudeReplayTab: (tab: ClaudeReplayTab) => void;
-	closeClaudeReplayTab: (sessionId?: string) => void;
+	closeClaudeReplayTab: (sessionId?: string, provider?: SessionHistoryProvider) => void;
 	activeSpecialTab: WorkspaceSpecialTab;
 	setActiveSpecialTab: (tab: WorkspaceSpecialTab) => void;
 

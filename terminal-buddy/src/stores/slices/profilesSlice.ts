@@ -1,3 +1,4 @@
+import { sessionReplayTabKey } from '../../utils/sessionHistory';
 import type { StoreApi } from "zustand";
 import type { AppState } from "../appStore";
 import { getAppSettings, saveAppSettings } from "../../utils/settings";
@@ -68,16 +69,17 @@ export const createProfilesSlice = (
 			activeSpecialTab: state.activeSpecialTab === "git-history" ? null : state.activeSpecialTab,
 		})),
 	openClaudeReplayTab: (tab) => set((state) => ({
-		claudeReplayTabs: state.claudeReplayTabs.some(item => item.sessionId === tab.sessionId)
-			? state.claudeReplayTabs.map(item => item.sessionId === tab.sessionId ? tab : item)
+		claudeReplayTabs: state.claudeReplayTabs.some(item => sessionReplayTabKey(item) === sessionReplayTabKey(tab))
+			? state.claudeReplayTabs.map(item => sessionReplayTabKey(item) === sessionReplayTabKey(tab) ? tab : item)
 			: [...state.claudeReplayTabs, tab],
 		claudeReplayTab: tab,
 		activeSpecialTab: "claude-replay",
 	})),
-	closeClaudeReplayTab: (sessionId) => set((state) => {
-		const target = sessionId ?? state.claudeReplayTab?.sessionId;
-		const remaining = state.claudeReplayTabs.filter(item => item.sessionId !== target);
-		const wasActive = state.claudeReplayTab?.sessionId === target;
+	closeClaudeReplayTab: (sessionId, provider) => set((state) => {
+		const target = sessionId ? sessionReplayTabKey({ sessionId, provider })
+			: state.claudeReplayTab ? sessionReplayTabKey(state.claudeReplayTab) : undefined;
+		const remaining = state.claudeReplayTabs.filter(item => sessionReplayTabKey(item) !== target);
+		const wasActive = Boolean(state.claudeReplayTab && sessionReplayTabKey(state.claudeReplayTab) === target);
 		return {
 			claudeReplayTabs: remaining,
 			claudeReplayTab: wasActive ? (remaining[remaining.length - 1] ?? null) : state.claudeReplayTab,

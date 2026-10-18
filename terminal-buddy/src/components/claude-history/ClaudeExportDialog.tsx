@@ -1,10 +1,12 @@
 import { FC, useState } from 'react';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { exportClaudeSession } from '../../services/tauri';
+import { sessionHistory } from '../../services/sessionHistory';
+import type { SessionHistoryProvider } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 import { Dialog } from '../shared/Dialog';
 
 interface ClaudeExportDialogProps {
+  provider?: SessionHistoryProvider;
   sessionId: string;
   title: string;
   onClose: () => void;
@@ -12,7 +14,7 @@ interface ClaudeExportDialogProps {
 }
 
 /** 会话导出：Markdown（对话+工具摘要）/ JSONL（原始转录）。 */
-export const ClaudeExportDialog: FC<ClaudeExportDialogProps> = ({ sessionId, title, onClose, onExported }) => {
+export const ClaudeExportDialog: FC<ClaudeExportDialogProps> = ({ provider = 'claude', sessionId, title, onClose, onExported }) => {
   const showToast = useAppStore(s => s.showToast);
   const [format, setFormat] = useState<'markdown' | 'jsonl'>('markdown');
   const [busy, setBusy] = useState(false);
@@ -30,7 +32,7 @@ export const ClaudeExportDialog: FC<ClaudeExportDialogProps> = ({ sessionId, tit
     if (!destPath) return;
     setBusy(true);
     try {
-      await exportClaudeSession(sessionId, format, destPath);
+      await sessionHistory(provider).export(sessionId, format, destPath);
       showToast('导出完成', 'success');
       onExported?.();
       onClose();

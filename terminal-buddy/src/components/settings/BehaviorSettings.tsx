@@ -288,8 +288,8 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
 
         <div className="settings-row">
           <div className="settings-row-info">
-            <div className="settings-row-title">启动时展开 Claude Code 会话面板</div>
-            <p className="settings-row-desc">默认风格下启动即显示 Claude Code 会话列，标题栏按钮可随时切换</p>
+            <div className="settings-row-title">启动时展开 Claude Code / Codex 会话面板</div>
+            <p className="settings-row-desc">默认风格下启动即显示 Claude Code / Codex 会话列，标题栏按钮可随时切换</p>
           </div>
           <div className="settings-row-ctrl">
             <label className="settings-toggle">
@@ -298,7 +298,7 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
                 checked={settings.historyPanelAutoExpand}
                 onChange={(e) => updateSetting('historyPanelAutoExpand', e.target.checked)}
               />
-              <span className="hook-sr-only">启动时展开 Claude Code 会话面板</span>
+              <span className="hook-sr-only">启动时展开 Claude Code / Codex 会话面板</span>
             </label>
           </div>
         </div>

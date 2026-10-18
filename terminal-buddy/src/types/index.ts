@@ -1,3 +1,5 @@
+export type SessionHistoryProvider = 'claude' | 'codex';
+
 export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
 export type ExtraParamMode = 'append' | 'independent';
 

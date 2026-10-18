@@ -15,7 +15,7 @@ const NAV_ITEMS = [
   { id: 'config', label: '项目与命令', icon: Server },
   { id: 'files', label: '文件与 Git', icon: Files },
   { id: 'tabs', label: '会话标签', icon: ListTree },
-  { id: 'history', label: 'Claude Code 会话', icon: History },
+  { id: 'history', label: 'Claude Code / Codex 会话', icon: History },
 ] as const;
 
 export const ActivityBar: FC<ActivityBarProps> = ({

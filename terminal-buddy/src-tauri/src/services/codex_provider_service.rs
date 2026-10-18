@@ -30,7 +30,7 @@ fn lock_error() -> String {
     "Codex 供应商配置锁不可用，请重试".to_string()
 }
 
-fn resolve_config_dir() -> Result<PathBuf, String> {
+pub(super) fn resolve_config_dir() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("CODEX_HOME").filter(|path| !path.is_empty()) {
         let path = PathBuf::from(path);
         return if path.is_absolute() {
