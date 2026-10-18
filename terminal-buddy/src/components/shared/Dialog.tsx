@@ -65,6 +65,10 @@ export interface DialogProps {
   leaveDurationMs?: number;
   /** 受控模式下，离场动画结束后调用一次。父级可借此销毁外层包装。 */
   onExit?: () => void;
+  /** 右下角显示缩放把手，允许拖拽调整弹窗尺寸。 */
+  resizable?: boolean;
+  /** 缩放结束后的最终尺寸（border-box），用于外部持久化。 */
+  onResizeEnd?: (size: { width: number; height: number }) => void;
 }
 
 export function Dialog({
@@ -91,6 +95,8 @@ export function Dialog({
   open,
   leaveDurationMs = 160,
   onExit,
+  resizable = false,
+  onResizeEnd,
 }: DialogProps) {
   const titleId = useId();
   const stackIdRef = useRef(Symbol('dialog'));
@@ -104,6 +110,9 @@ export function Dialog({
   onExitRef.current = onExit;
   const offsetRef = useRef({ x: 0, y: 0 });
   const dragCleanupRef = useRef<(() => void) | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const onResizeEndRef = useRef(onResizeEnd);
+  onResizeEndRef.current = onResizeEnd;
   // 受控 open 模式下的内部状态：mounted 控制是否渲染，phase 控制动画阶段
   const isControlled = open !== undefined;
   const [mounted, setMounted] = useState(!isControlled || open !== false);
@@ -215,6 +224,7 @@ export function Dialog({
       const index = dialogStack.lastIndexOf(stackId);
       if (index >= 0) dialogStack.splice(index, 1);
       dragCleanupRef.current?.();
+      resizeCleanupRef.current?.();
       if (autoFocus && previouslyFocused?.isConnected) previouslyFocused.focus();
     };
   }, [autoFocus, modal]);
@@ -284,6 +294,81 @@ export function Dialog({
     dragCleanupRef.current = cleanup;
   };
 
+  const handleResizeStart = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    const positioner = positionerRef.current;
+    const surface = surfaceRef.current;
+    if (!positioner || !surface) return;
+    event.preventDefault();
+
+    resizeCleanupRef.current?.();
+    const pointerId = event.pointerId;
+    const startClient = { x: event.clientX, y: event.clientY };
+    const startRect = surface.getBoundingClientRect();
+    const computed = window.getComputedStyle(surface);
+    const minWidth = parseFloat(computed.minWidth) || 280;
+    const minHeight = parseFloat(computed.minHeight) || 160;
+    const maxWidth = Math.max(minWidth, window.innerWidth - 48);
+    const maxHeight = Math.max(minHeight, window.innerHeight - 48);
+    const startOffset = { ...offsetRef.current };
+    const previousUserSelect = document.body.style.userSelect;
+    // 统一换算成 border-box，避免首帧因边框宽度产生跳变。
+    surface.style.boxSizing = 'border-box';
+    surface.style.width = `${startRect.width}px`;
+    surface.style.height = `${startRect.height}px`;
+    let latestClient = startClient;
+    let latestSize = { width: startRect.width, height: startRect.height };
+    let frame: number | null = null;
+
+    const applySize = () => {
+      frame = null;
+      const width = Math.min(Math.max(startRect.width + latestClient.x - startClient.x, minWidth), maxWidth);
+      const height = Math.min(Math.max(startRect.height + latestClient.y - startClient.y, minHeight), maxHeight);
+      latestSize = { width, height };
+      surface.style.width = `${width}px`;
+      surface.style.height = `${height}px`;
+      // 弹窗由 flex 居中，尺寸变化会让左上角自动偏移差值的一半；用拖拽位移抵消以锚定左上角。
+      offsetRef.current = {
+        x: startOffset.x + (width - startRect.width) / 2,
+        y: startOffset.y + (height - startRect.height) / 2,
+      };
+      positioner.style.transform = `translate3d(${offsetRef.current.x}px, ${offsetRef.current.y}px, 0)`;
+    };
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      latestClient = { x: moveEvent.clientX, y: moveEvent.clientY };
+      if (frame === null) frame = requestAnimationFrame(applySize);
+    };
+
+    const cleanup = () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+        applySize();
+      }
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', handlePointerEnd);
+      document.removeEventListener('pointercancel', handlePointerEnd);
+      window.removeEventListener('blur', cleanup);
+      document.body.style.userSelect = previousUserSelect;
+      positioner.classList.remove('resizing');
+      resizeCleanupRef.current = null;
+      onResizeEndRef.current?.(latestSize);
+    };
+
+    const handlePointerEnd = (endEvent: PointerEvent) => {
+      if (endEvent.pointerId === pointerId) cleanup();
+    };
+
+    positioner.classList.add('resizing');
+    document.body.style.userSelect = 'none';
+    document.addEventListener('pointermove', handlePointerMove, { passive: true });
+    document.addEventListener('pointerup', handlePointerEnd);
+    document.addEventListener('pointercancel', handlePointerEnd);
+    window.addEventListener('blur', cleanup);
+    resizeCleanupRef.current = cleanup;
+  };
+
   const hasTitle = title !== undefined && title !== null && title !== '';
   const accessibleName = !hasTitle ? (ariaLabel ?? '弹窗') : ariaLabel;
   const surfaceContent = (
@@ -312,11 +397,18 @@ export function Dialog({
       {footer !== undefined && (
         <footer className={joinClassNames('tb-dialog-footer', footerClassName)}>{footer}</footer>
       )}
+      {resizable && (
+        <span
+          className="tb-dialog-resize-handle"
+          aria-hidden="true"
+          onPointerDown={handleResizeStart}
+        />
+      )}
     </>
   );
 
   const sharedSurfaceProps = {
-    className: joinClassNames('tb-dialog-surface', className),
+    className: joinClassNames('tb-dialog-surface', resizable && 'tb-dialog-surface-resizable', className),
     style,
     role,
     'aria-modal': modal,
