@@ -61,13 +61,44 @@
   margin-left: 6px;
 }
 
-.claude-model-effort.effort-max {
-  background: var(--accent);
+/* 推理强度使用固定色阶，避免随主题强调色变化；白字在深浅主题下均清晰。 */
+.claude-model-effort.effort-none {
+  background: #64748b;
+  color: #fff;
+}
+
+.claude-model-effort.effort-minimal {
+  background: #0e7490;
+  color: #fff;
+}
+
+.claude-model-effort.effort-low {
+  background: #15803d;
+  color: #fff;
+}
+
+.claude-model-effort.effort-medium {
+  background: #2563eb;
+  color: #fff;
+}
+
+.claude-model-effort.effort-high {
+  background: #a16207;
   color: #fff;
 }
 
 .claude-model-effort.effort-xhigh {
-  background: #7c5cd6;
+  background: #c2410c;
+  color: #fff;
+}
+
+.claude-model-effort.effort-max {
+  background: #be123c;
+  color: #fff;
+}
+
+.claude-model-effort.effort-ultra {
+  background: #7c3aed;
   color: #fff;
 }
 
