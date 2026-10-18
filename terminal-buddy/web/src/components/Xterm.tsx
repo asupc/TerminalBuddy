@@ -198,6 +198,9 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
     term.loadAddon(fit);
     term.loadAddon(uni);
     term.unicode.activeVersion = '11';
+    // XTVERSION 的 DCS 回包经 WebSocket 延迟抵达时，可能被 Codex 当作普通输入。
+    // 手机端跳过可选的版本探测，避免输入框混入 >|xterm.js(...)。
+    const xtVersionHandler = term.parser.registerCsiHandler({ prefix: '>', final: 'q' }, () => true);
     const da1Handler = loadingMode === 'vsCode'
       ? term.parser.registerCsiHandler({ final: 'c' }, (params) => {
           if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
@@ -394,6 +397,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       connectionEpochRef.current += 1;
       replayingRef.current = false;
       fitViewportRef.current = null;
+      xtVersionHandler.dispose();
       da1Handler?.dispose();
       removeMouseGuard();
       removeTouchKeyboardGuard();

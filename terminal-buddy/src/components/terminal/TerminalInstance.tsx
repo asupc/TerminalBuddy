@@ -455,6 +455,11 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       terminal.loadAddon(unicode11Addon);
       terminal.unicode.activeVersion = '11';
+      if (isBrowserClient()) {
+        // WebSocket 延迟可能使 XTVERSION 回包落入 Codex 的输入框，跳过可选的版本探测。
+        const xtVersionHandler = terminal.parser.registerCsiHandler({ prefix: '>', final: 'q' }, () => true);
+        cleanupFns.push(() => xtVersionHandler.dispose());
+      }
       if (usesVsCodeTerminal) {
         const da1Handler = terminal.parser.registerCsiHandler({ final: 'c' }, params => {
           if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
