@@ -1,4 +1,5 @@
-import { FC, useState } from 'react';
+import { FC } from 'react';
+import { useAppStore } from '../../stores/appStore';
 import { LlmProvidersSegment } from '../claude-panel/segments/LlmProvidersSegment';
 import { CodexProvidersSettings } from './CodexProvidersSettings';
 import './LlmProvidersSettings.css';
@@ -16,7 +17,8 @@ const PROVIDER_TABS: ReadonlyArray<{ id: ProviderTabId; label: string }> = [
  * 两个 panel 都常驻挂载，切换分页不丢编辑状态。
  */
 export const LlmProvidersSettings: FC = () => {
-  const [tab, setTab] = useState<ProviderTabId>('claude');
+  const tab = useAppStore(s => s.providerSettingsTab);
+  const setTab = useAppStore(s => s.setProviderSettingsTab);
 
   return (
     <div className="llm-providers-settings">

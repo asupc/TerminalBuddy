@@ -14,7 +14,7 @@ use super::crypto_service::{decrypt_secret_field, encrypt_secret_field};
 use super::llm_provider_service::{self, FetchedModel};
 use super::path_service::PathService;
 use crate::models::codex_provider::{
-    CodexProvider, CodexProviderFile, CodexProviderInput, CodexProviderState,
+    CodexProvider, CodexProviderFile, CodexProviderInput, CodexProviderState, CODEX_REASONING_EFFORTS,
 };
 use crate::models::llm_provider::validate_base_url;
 
@@ -270,6 +270,7 @@ impl ProviderStore {
                     .and_then(Item::as_str)
                     .unwrap_or("")
                     .to_string(),
+                models: Vec::new(),
                 reasoning_effort: doc
                     .get("model_reasoning_effort")
                     .and_then(Item::as_str)
@@ -397,6 +398,50 @@ impl ProviderStore {
         self.view(&file)
     }
 
+    /// 注册独立供应商；CLI 参数选择本次会话的供应商，不切换全局默认及登录凭据。
+    fn prepare_launch(&self, provider_id: &str, model_id: &str) -> Result<String, String> {
+        let model = crate::models::profile_validation::quote_cmd_argument("Codex 模型", model_id)?;
+        let file = self.read()?;
+        let provider = file.providers.iter().find(|p| p.id == provider_id)
+            .ok_or_else(|| "Codex 供应商已被删除，请重新选择模型启动".to_string())?;
+        if !provider.model_ids().iter().any(|id| id == model_id) {
+            return Err("Codex 模型已从供应商配置中移除，请重新选择模型启动".to_string());
+        }
+        if !CODEX_REASONING_EFFORTS.contains(&provider.reasoning_effort.as_str()) {
+            return Err("Codex 推理等级无效，请重新保存供应商配置".to_string());
+        }
+        let id = uuid::Uuid::parse_str(&provider.id)
+            .map_err(|_| "Codex 供应商 ID 无效，请重新添加".to_string())?;
+        let launch_id = format!("terminal_buddy_{}", id.simple());
+        let path = self.config_dir.join("config.toml");
+        let current = read_optional(&path)?.unwrap_or_default();
+        let mut doc = parse_config(&current)?;
+        if doc.get("model_providers").is_some_and(|item| !item.is_table()) {
+            return Err("Codex model_providers 必须是 TOML 表；原文件未更改".to_string());
+        }
+        if !doc.contains_key("model_providers") {
+            doc["model_providers"] = Item::Table(Table::new());
+        }
+        let selected = parse_config(&build_config(b"", provider, &key_for(provider)?)?)?;
+        doc["model_providers"][&launch_id] = selected["model_providers"][PROVIDER_ID].clone();
+        let updated = doc.to_string().into_bytes();
+        if updated != current {
+            write_transaction(&[(path, updated)], Some(&self.config_dir.join(BACKUP_DIR)), atomic_write_private)?;
+        }
+        // -c 在新旧版 Codex 中均支持；不混用新版独立 profile 文件与旧版 profiles 表。
+        // 参数只含非敏感配置，API 密钥始终留在受限权限的配置文件中。
+        let mut command = format!("codex -c model_provider={} --model {}", launch_id, model);
+        if !provider.reasoning_effort.is_empty() {
+            command.push_str(&format!(" -c model_reasoning_effort={}", provider.reasoning_effort));
+        }
+        command.push_str(&format!(" -c disable_response_storage={}", provider.disable_response_storage));
+        for (name, tokens) in [("model_context_window", provider.context_window),
+            ("model_auto_compact_token_limit", provider.auto_compact_token_limit)] {
+            if tokens > 0 { command.push_str(&format!(" -c {}={}", name, tokens)); }
+        }
+        Ok(command)
+    }
+
     fn activate(&self, id: &str) -> Result<CodexProviderState, String> {
         let mut file = self.read()?;
         let provider = file
@@ -423,7 +468,22 @@ impl ProviderStore {
         if file.current_provider_id.as_deref() == Some(id) {
             file.current_provider_id = None;
         }
-        self.commit(&file, None)?;
+        // 删除快速启动注册的供应商表，避免已删除供应商的密钥留在当前配置中。
+        let path = self.config_dir.join("config.toml");
+        let mut config = read_optional(&path)?.map(|bytes| parse_config(&bytes)).transpose()?;
+        let removed = uuid::Uuid::parse_str(id).ok().is_some_and(|uuid| {
+            config.as_mut().and_then(|doc| doc.get_mut("model_providers"))
+                .and_then(Item::as_table_mut)
+                .and_then(|table| table.remove(&format!("terminal_buddy_{}", uuid.simple())))
+                .is_some()
+        });
+        if removed {
+            let bytes = serde_json::to_vec_pretty(&file).map_err(|_| "编码 Codex 供应商失败".to_string())?;
+            write_transaction(&[(path, config.unwrap().to_string().into_bytes()), (self.path.clone(), bytes)],
+                Some(&self.config_dir.join(BACKUP_DIR)), atomic_write_private)?;
+        } else {
+            self.commit(&file, None)?;
+        }
         self.view(&file)
     }
 
@@ -446,6 +506,23 @@ impl ProviderStore {
         self.commit(&file, None)?;
         self.view(&file)
     }
+}
+
+pub const CODEX_REF_PREFIX: &str = "__TB_CODEX_REF__:";
+
+/// 启动记录仅保存供应商/模型引用，密钥不会出现在命令或终端日志中。
+pub fn expand_leading_codex_ref(command: &str) -> Result<String, String> {
+    let trimmed = command.trim_start();
+    let Some(rest) = trimmed.strip_prefix(CODEX_REF_PREFIX) else { return Ok(command.to_string()); };
+    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let (provider_id, model_id) = rest[..end].split_once(':')
+        .filter(|(p, m)| !p.is_empty() && !m.is_empty())
+        .ok_or_else(|| "Codex 模型引用无效，请重新选择模型启动".to_string())?;
+    let _guard = config_lock().lock().map_err(|_| lock_error())?;
+    let mut expanded = store()?.prepare_launch(provider_id, model_id)?;
+    let suffix = rest[end..].trim_start();
+    if !suffix.is_empty() { expanded.push(' '); expanded.push_str(suffix); }
+    Ok(expanded)
 }
 
 pub fn get_provider_state() -> Result<CodexProviderState, String> {
@@ -544,11 +621,92 @@ mod tests {
             base_url: "https://api.example.com/v1".to_string(),
             api_key: Some("sk-codex-test-secret-1234".to_string()),
             model: "test-model".to_string(),
+            models: Vec::new(),
             reasoning_effort: "high".to_string(),
             context_window: 0,
             auto_compact_token_limit: 0,
             disable_response_storage: true,
         }
+    }
+
+    #[test]
+    fn multiple_models_are_normalized_and_legacy_files_still_work() {
+        let store = TestStore::new();
+        let mut draft = input("多模型");
+        draft.models = vec![" second-model ".into(), "test-model".into(), "second-model".into()];
+        let state = store.0.save(draft, false).unwrap();
+        assert_eq!(state.providers[0].models, vec!["test-model", "second-model"]);
+        let mut old: Value = serde_json::from_slice(&fs::read(&store.0.path).unwrap()).unwrap();
+        old["providers"][0].as_object_mut().unwrap().remove("models");
+        atomic_write_private(&store.0.path, &serde_json::to_vec(&old).unwrap()).unwrap();
+        let state = store.0.view(&store.0.read().unwrap()).unwrap();
+        assert_eq!(state.providers[0].models, vec!["test-model"]);
+        let mut invalid = input("无效模型");
+        invalid.models = vec!["bad model".into()];
+        assert!(invalid.validate(None).is_err());
+    }
+
+    #[test]
+    fn model_launch_keeps_global_default_auth_and_other_profiles() {
+        let store = TestStore::new();
+        let first = store.0.save(input("默认供应商"), false).unwrap();
+        let mut draft = input("另一个供应商");
+        draft.base_url = "https://other.example/v1".into();
+        draft.api_key = Some("sk-other-provider-secret".into());
+        draft.models = vec!["second-model".into()];
+        draft.context_window = 128000;
+        let second = store.0.save(draft, false).unwrap();
+        let id = &second.providers[1].id;
+        let auth = store.auth();
+        let data = fs::read(&store.0.path).unwrap();
+        let mut doc = parse_config(&store.config()).unwrap();
+        doc["profiles"] = Item::Table(Table::new());
+        doc["profiles"]["user_profile"] = Item::Table(Table::new());
+        doc["profiles"]["user_profile"]["model"] = value("user-model");
+        atomic_write_private(&store.0.config_dir.join("config.toml"), doc.to_string().as_bytes()).unwrap();
+        let command = store.0.prepare_launch(id, "second-model").unwrap();
+        assert!(command.starts_with("codex -c model_provider=terminal_buddy_"));
+        assert!(command.contains("second-model"));
+        assert!(command.contains("model_context_window=128000"));
+        assert!(!command.contains("secret"));
+        assert!(!command.contains("https://"));
+        let current = parse_config(&store.config()).unwrap();
+        assert_eq!(current["model"].as_str(), Some("test-model"));
+        assert_eq!(current["profiles"]["user_profile"]["model"].as_str(), Some("user-model"));
+        assert_eq!(store.auth(), auth);
+        assert_eq!(fs::read(&store.0.path).unwrap(), data);
+        assert_eq!(store.0.view(&store.0.read().unwrap()).unwrap().active_provider_id, first.active_provider_id);
+        let launch_id = format!("terminal_buddy_{}", uuid::Uuid::parse_str(id).unwrap().simple());
+        assert_eq!(current["model_providers"][&launch_id]["base_url"].as_str(), Some("https://other.example/v1"));
+        assert_eq!(current["model_providers"][&launch_id]["experimental_bearer_token"].as_str(), Some("sk-other-provider-secret"));
+        let before = store.config();
+        assert_eq!(store.0.prepare_launch(id, "second-model").unwrap(), command);
+        assert_eq!(store.config(), before);
+        store.0.prepare_launch(&first.providers[0].id, "test-model").unwrap();
+        let current = parse_config(&store.config()).unwrap();
+        assert!(current["model_providers"].get(&launch_id).is_some());
+        assert_eq!(store.auth(), auth);
+        store.0.delete(id).unwrap();
+        let current = parse_config(&store.config()).unwrap();
+        assert!(current["model_providers"].get(&launch_id).is_none());
+        assert!(!String::from_utf8(store.config()).unwrap().contains("sk-other-provider-secret"));
+    }
+
+    #[test]
+    fn missing_provider_or_removed_model_never_changes_launch_config() {
+        let store = TestStore::new();
+        let state = store.0.save(input("供应商"), false).unwrap();
+        let before = store.config();
+        assert!(store.0.prepare_launch("missing", "test-model").is_err());
+        assert!(store.0.prepare_launch(&state.providers[0].id, "removed-model").is_err());
+        assert_eq!(store.config(), before);
+        let mut file = store.0.read().unwrap();
+        file.providers[0].reasoning_effort = "high && invalid-command".into();
+        store.0.commit(&file, None).unwrap();
+        assert!(store.0.prepare_launch(&state.providers[0].id, "test-model").is_err());
+        assert_eq!(store.config(), before);
+        assert!(expand_leading_codex_ref("__TB_CODEX_REF__:bad").is_err());
+        assert_eq!(expand_leading_codex_ref("codex --resume").unwrap(), "codex --resume");
     }
 
     #[test]

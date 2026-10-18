@@ -47,3 +47,55 @@
 .provider-panel .btn.small {
   min-height: 44px;
 }
+
+.codex-provider-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.codex-provider-presets button {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  text-align: left;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.codex-provider-presets button.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.codex-provider-presets small { color: var(--text-soft); line-height: 1.5; }
+.codex-model-picker { display: flex; flex-direction: column; gap: 10px; }
+.codex-model-picker-heading, .codex-model-picker-tools, .codex-model-manual, .codex-model-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.codex-model-picker-heading { justify-content: space-between; font-size: 12px; }
+.codex-model-picker-heading span { color: var(--text-soft); }
+.codex-model-manual input, .codex-model-picker-tools input { flex: 1; min-width: 0; }
+.codex-model-picker-list { max-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.codex-model-picker-row { padding: 7px 10px; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.codex-model-picker-row:last-child { border-bottom: 0; }
+.codex-model-picker-row.selected { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.codex-model-picker-row label { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; flex: 1; font-size: 12px; cursor: pointer; }
+.codex-model-picker-row label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); }
+.codex-model-picker-row input[type="checkbox"] { flex: 0 0 auto; width: auto; }
+.codex-model-picker-row button { flex-shrink: 0; }
+.codex-config-preview strong { display: block; margin: 10px 0; font-size: 12px; }
+.codex-config-preview pre { margin: 0; padding: 12px; border-radius: 6px; background: var(--surface-raised); color: var(--text-soft); font-size: 12px; overflow: auto; }
+@media (max-width: 640px) {
+  .codex-provider-presets { grid-template-columns: 1fr; }
+}
+
+.codex-provider-model-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.codex-provider-model-tags span { font: 11px monospace; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }

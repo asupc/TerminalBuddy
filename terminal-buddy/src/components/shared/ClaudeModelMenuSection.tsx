@@ -1,4 +1,4 @@
-import { FC, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { FC, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight, Cpu, ServerCog } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
@@ -10,6 +10,8 @@ import './ClaudeModelMenuSection.css';
 const SUB_CLOSE_DELAY = 120;
 
 interface ClaudeModelMenuSectionProps {
+  /** 启动菜单的数据源；历史恢复继续使用 Claude。 */
+  source?: 'claude' | 'codex';
   /** 一级菜单项容器类名（两种右键菜单样式不同，调用方传入） */
   itemClassName: string;
   /** 分隔线类名 */
@@ -31,14 +33,21 @@ interface ClaudeModelMenuSectionProps {
  * （菜单过高时可滚），留在其内部会被裁掉，只留下横向滚动条。
  */
 export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
+  source = 'claude',
   itemClassName,
   separatorClassName,
   title,
   onPickModel,
   onGotoProviders,
 }) => {
-  const targets = useAppStore(s => s.claudeLaunchTargets);
-  const loaded = useAppStore(s => s.claudeLaunchTargetsLoaded);
+  const claudeTargets = useAppStore(s => s.claudeLaunchTargets);
+  const claudeLoaded = useAppStore(s => s.claudeLaunchTargetsLoaded);
+  const codexState = useAppStore(s => s.codexProviderState);
+  const targets = useMemo<LlmLaunchTarget[]>(() => source === 'claude' ? claudeTargets : (codexState?.providers ?? []).map(provider => ({
+    providerId: provider.id, providerName: provider.name, isDefault: codexState?.activeProviderId === provider.id,
+    models: (provider.models ?? [provider.model]).map(id => ({ id, effort: provider.reasoningEffort || '默认', contextWindow: provider.contextWindow })),
+  })), [source, claudeTargets, codexState]);
+  const loaded = source === 'claude' ? claudeLoaded : codexState !== null;
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [subPos, setSubPos] = useState<{ left: number; top: number } | null>(null);
   const anchorRef = useRef<DOMRect | null>(null);

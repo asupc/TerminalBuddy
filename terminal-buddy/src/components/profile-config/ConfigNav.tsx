@@ -5,6 +5,7 @@ import { openProjectTerminal, openTerminalInDir } from '../../utils/openTerminal
 import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
+import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
 import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
 import type { ExtraParamMode, Profile } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
@@ -57,6 +58,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const setDragProfileId = useAppStore(s => s.setDragProfileId);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const showToast = useAppStore(s => s.showToast);
+  const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
@@ -68,7 +70,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   // 模型菜单数据源：挂载时加载，右键打开时用缓存。
   useEffect(() => {
     void refreshClaudeLaunchTargets();
-  }, [refreshClaudeLaunchTargets]);
+    void refreshCodexLaunchTargets();
+  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {
@@ -352,7 +355,20 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     }
   };
 
-  const gotoProvidersSettings = () => {
+  const startProfileWithCodexModel = (profile: Profile, providerId: string, modelId: string) => {
+    closeContextMenu();
+    onStartTerminal(profile, buildCodexRefCommand(providerId, modelId, profile.startupCommands), undefined, undefined, undefined, undefined, 'independent');
+  };
+
+  const startProjectWithCodexModel = async (project: Project, providerId: string, modelId: string) => {
+    closeContextMenu();
+    try {
+      await openTerminalInDir(project.path, { command: buildCodexRefCommand(providerId, modelId, project.startupCommand), name: project.name, groupName: project.name });
+    } catch (error) { showToast('Codex 模型启动失败：' + String(error), 'error'); }
+  };
+
+  const gotoProvidersSettings = (source: 'claude' | 'codex' = 'claude') => {
+    useAppStore.getState().setProviderSettingsTab(source);
     closeContextMenu();
     openSettingsDialog('llm-providers');
   };
@@ -554,8 +570,13 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           {(() => {
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             // 仅本地 shell 类型显示模型区：后端 ssh/docker/k8s 分支会丢弃引用；
-            // 启动命令里跑 claude 的连接才有意义（引用命令整条替换 startup_commands）。
+            // Claude / Codex 引用命令会整体替换 startup_commands。
             if (!target || !isModelRefLocalType(target.terminalType)) return null;
+            if (target.startupCommands.some(isCodexCommand)) return (
+              <ClaudeModelMenuSection source="codex" itemClassName="context-menu-item" separatorClassName="context-menu-separator"
+                title="Codex 模型" onPickModel={(providerId, modelId) => startProfileWithCodexModel(target, providerId, modelId)}
+                onGotoProviders={() => gotoProvidersSettings('codex')} />
+            );
             if (!target.startupCommands.some(isClaudeCommand)) return null;
             return (
               <ClaudeModelMenuSection
@@ -641,6 +662,11 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                 try { await openTerminalInDir(project.path); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
+              {isCodexCommand(command) && (
+                <ClaudeModelMenuSection source="codex" itemClassName="context-menu-item" separatorClassName="context-menu-separator"
+                  title="Codex 模型" onPickModel={(providerId, modelId) => void startProjectWithCodexModel(project, providerId, modelId)}
+                  onGotoProviders={() => gotoProvidersSettings('codex')} />
+              )}
               {isClaudeCommand(command) && (
                 <ClaudeModelMenuSection
                   itemClassName="context-menu-item"

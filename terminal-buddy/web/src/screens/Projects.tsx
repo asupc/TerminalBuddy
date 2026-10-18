@@ -12,6 +12,8 @@ import {
 import { api, type CreateTerminalOptions } from '../api';
 import { Dialog } from '../components/Dialog';
 import { ExtraParamsDialog } from '../components/ExtraParamsDialog';
+import { CodexProvidersPanel } from '../components/CodexProvidersPanel';
+import { buildCodexRefCommand, isCodexCommand } from '../utils/codexLaunch';
 import { LlmProvidersDialog } from '../components/LlmProvidersDialog';
 import { ProfileEditorDialog } from '../components/ProfileEditorDialog';
 import { ProjectContextMenu } from '../components/ProjectContextMenu';
@@ -19,7 +21,7 @@ import { ProjectEditorDialog } from '../components/ProjectEditorDialog';
 import { useLongPressMenu } from '../hooks/useLongPressMenu';
 import { useHasHover } from '../hooks/useMediaQuery';
 import { useStore } from '../store';
-import type { ExtraParamPreset, LlmLaunchTarget, Profile, Project, RuntimeInfo } from '../types';
+import type { CodexProviderState, ExtraParamPreset, LlmLaunchTarget, Profile, Project, RuntimeInfo } from '../types';
 import {
   createProfileFrom,
   effectiveProfilePath,
@@ -116,7 +118,8 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
   const [rename, setRename] = useState('');
   const [deleting, setDeleting] = useState<Target | null>(null);
   const [managePresets, setManagePresets] = useState(false);
-  const [manageModels, setManageModels] = useState(false);
+  const [manageModels, setManageModels] = useState<'claude' | 'codex' | null>(null);
+  const [codexState, setCodexState] = useState<CodexProviderState | null>(null);
   const [targets, setTargets] = useState<LlmLaunchTarget[]>([]);
   const [modelsError, setModelsError] = useState('');
   const [modelsLoading, setModelsLoading] = useState(true);
@@ -129,7 +132,12 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
     setModelsLoading(true);
     setModelsError('');
     try {
-      setTargets(await api.getLlmLaunchTargets());
+      const results = await Promise.allSettled([api.getLlmLaunchTargets(), api.getCodexProviderState()]);
+      const [claude, codex] = results;
+      if (claude.status === 'fulfilled') setTargets(claude.value);
+      if (codex.status === 'fulfilled') setCodexState(codex.value);
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
     } catch (reason) {
       setModelsError(reason instanceof Error ? reason.message : '加载模型失败');
     } finally {
@@ -286,7 +294,12 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
   const path = menuProfile ? effectiveProfilePath(menuProfile, projects) : menuProject?.path || '';
   const showModels =
     (menuProfile ? LOCAL_TYPES.includes(menuProfile.terminalType) : !!menuProject?.path) &&
-    commands.some(isClaudeCommand);
+    commands.some(command => isClaudeCommand(command) || isCodexCommand(command));
+  const useCodex = commands.some(isCodexCommand);
+  const menuTargets: LlmLaunchTarget[] = useCodex ? (codexState?.providers ?? []).map(provider => ({
+    providerId: provider.id, providerName: provider.name, isDefault: codexState?.activeProviderId === provider.id,
+    models: (provider.models ?? [provider.model]).map(id => ({ id, effort: provider.reasoningEffort || '默认', contextWindow: provider.contextWindow })),
+  })) : targets;
   const item = (label: ReactNode, action: () => void, danger = false) => (
     <button
       type="button"
@@ -319,7 +332,7 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
   const modelItems = showModels && (
     <>
       <div className="context-menu-separator" role="separator" />
-      <div className="project-menu-heading">Claude 模型</div>
+      <div className="project-menu-heading">{useCodex ? 'Codex' : 'Claude'} 模型</div>
       {modelsLoading && <div className="project-menu-heading">加载中…</div>}
       {modelsError && (
         <>
@@ -329,7 +342,7 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
           </div>
         </>
       )}
-      {targets.map((target) => (
+      {menuTargets.map((target) => (
         <div key={target.providerId}>
           <div className="project-menu-heading">
             {target.providerName}
@@ -344,7 +357,7 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
               disabled={busy}
               onClick={() =>
                 void run(() => {
-                  const command = modelCommand(target.providerId, model.id, commands);
+                  const command = useCodex ? buildCodexRefCommand(target.providerId, model.id, commands) : modelCommand(target.providerId, model.id, commands);
                   return menuProfile
                     ? openTerminal(menuProfile.id, {
                         extraStartupParams: command,
@@ -367,7 +380,7 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
       ))}
       {item('配置模型供应商…', () => {
         setMenu(null);
-        setManageModels(true);
+        setManageModels(useCodex ? 'codex' : 'claude');
       })}
       <div className="context-menu-separator" role="separator" />
     </>
@@ -699,7 +712,7 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
               })}
               {item('模型供应商', () => {
                 setMenu(null);
-                setManageModels(true);
+                setManageModels('claude');
               })}
             </>
           )}
@@ -833,9 +846,10 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
         </Dialog>
       )}
       {managePresets && <ExtraParamsDialog onClose={() => setManagePresets(false)} />}
-      {manageModels && (
-        <LlmProvidersDialog onClose={() => setManageModels(false)} onChanged={refreshModels} />
+      {manageModels === 'claude' && (
+        <LlmProvidersDialog onClose={() => setManageModels(null)} onChanged={refreshModels} />
       )}
+      {manageModels === 'codex' && <CodexProvidersPanel active onClose={() => { setManageModels(null); void refreshModels(); }} />}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FC } from 'react';
+import { useCallback, useEffect, useRef, useState, type FC } from 'react';
 import {
   CODEX_EFFORT_OPTIONS,
   activateCodexProvider,
@@ -12,7 +12,9 @@ import {
   type CodexProviderView,
 } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
-import { ConfirmDialog } from '../shared/Dialog';
+import { Plus, RefreshCw, Download, Pencil, Trash2, Server, Check } from 'lucide-react';
+import { CodexModelPicker } from './CodexModelPicker';
+import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import '../claude-panel/segments/shared.css';
 import '../claude-panel/segments/LlmProvidersSegment.css';
 import './CodexProvidersSettings.css';
@@ -25,7 +27,7 @@ interface Editor extends CodexProviderInput {
 
 function emptyEditor(): Editor {
   return {
-    name: '', baseUrl: '', apiKey: '', model: '', reasoningEffort: 'high',
+    name: '', baseUrl: '', apiKey: '', model: '', models: [], reasoningEffort: 'high',
     contextWindow: 0, autoCompactTokenLimit: 0, disableResponseStorage: true,
     keySet: false, keyTail: '',
   };
@@ -43,14 +45,17 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
   const [deleteTarget, setDeleteTarget] = useState<CodexProviderView | null>(null);
   const pendingRef = useRef(false);
   const requestVersion = useRef(0);
-  const modelsId = useId();
+  const setCodexProviderState = useAppStore(s => s.setCodexProviderState);
+  const [preset, setPreset] = useState('custom');
 
   const load = useCallback(async () => {
     if (pendingRef.current) return;
     pendingRef.current = true;
     setPending('load');
     try {
-      setState(await getCodexProviderState());
+      const next = await getCodexProviderState();
+      setState(next);
+      setCodexProviderState(next);
       setLoadError('');
     } catch (error) {
       setLoadError(String(error));
@@ -58,7 +63,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
       pendingRef.current = false;
       setPending(null);
     }
-  }, []);
+  }, [setCodexProviderState]);
 
   useEffect(() => {
     if (active) void load();
@@ -73,6 +78,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
     try {
       const next = await task();
       setState(next);
+      setCodexProviderState(next);
       setLoadError('');
       if (closeEditor) { setEditor(null); setModels([]); }
       showToast(message, 'success');
@@ -87,7 +93,8 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
   const edit = (provider?: CodexProviderView) => {
     requestVersion.current += 1;
     setModels([]);
-    setEditor(provider ? { ...provider, apiKey: '' } : emptyEditor());
+    setPreset(provider?.baseUrl === 'https://api.openai.com/v1' ? 'openai' : 'custom');
+    setEditor(provider ? { ...provider, models: provider.models ?? [provider.model], apiKey: '' } : emptyEditor());
   };
 
   const save = async (activate: boolean) => {
@@ -95,13 +102,13 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
     const input: CodexProviderInput = {
       id: editor.id,
       name: editor.name.trim(), baseUrl: editor.baseUrl.trim(),
-      apiKey: editor.apiKey.trim() || undefined, model: editor.model.trim(),
+      apiKey: editor.apiKey.trim() || undefined, model: editor.model.trim(), models: editor.models,
       reasoningEffort: editor.reasoningEffort, contextWindow: editor.contextWindow,
       autoCompactTokenLimit: editor.autoCompactTokenLimit,
       disableResponseStorage: editor.disableResponseStorage,
     };
     if (!input.name || !input.baseUrl || !input.model || (!editor.keySet && !input.apiKey)) {
-      showToast('请填写供应商名称、API 地址、密钥和模型 ID', 'error');
+      showToast('请填写供应商名称、API 地址和密钥，并至少选择一个模型', 'error');
       return;
     }
     const willActivate = activate || state?.providers.length === 0 || (!!editor.id && state?.activeProviderId === editor.id);
@@ -120,8 +127,8 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
     try {
       const fetched = await fetchCodexProviderModels(editor.baseUrl.trim(), editor.apiKey.trim(), editor.id);
       if (version !== requestVersion.current) return;
-      setModels(fetched.map(model => model.id));
-      showToast(fetched.length ? `已获取 ${fetched.length} 个模型，可在模型输入框中选择` : '未获取到模型，可手动填写模型 ID', fetched.length ? 'success' : 'info');
+      setModels([...new Set(fetched.map(model => model.id))]);
+      showToast(fetched.length ? `已获取 ${fetched.length} 个模型，可勾选多个模型` : '未获取到模型，可手动填写模型 ID', fetched.length ? 'success' : 'info');
     } catch (error) {
       if (version === requestVersion.current) showToast(`${String(error)}；也可手动填写模型 ID`, 'error');
     } finally {
@@ -137,14 +144,14 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
       <div className="claude-segment-toolbar">
         <span className="claude-segment-title">Codex 供应商</span>
         <span className="claude-segment-actions">
-          <button type="button" className="claude-segment-btn" disabled={busy || !state} onClick={() => edit()}>＋ 新增供应商</button>
-          <button type="button" className="claude-segment-btn" disabled={busy || !state} onClick={() => void mutate('import', importCodexProvider, '已导入当前 Codex 配置')}>导入当前配置</button>
-          <button type="button" className="claude-segment-btn" disabled={busy} aria-label="刷新 Codex 供应商" onClick={() => void load()}>↻</button>
+          <button type="button" className="claude-segment-btn" disabled={busy || !state} onClick={() => edit()}><Plus size={14} /> 添加供应商</button>
+          <button type="button" className="claude-segment-btn" disabled={busy || !state} onClick={() => void mutate('import', importCodexProvider, '已导入当前 Codex 配置')}><Download size={14} /> 导入当前配置</button>
+          <button type="button" className="claude-segment-btn" disabled={busy} aria-label="刷新 Codex 供应商" onClick={() => void load()}><RefreshCw size={14} /></button>
         </span>
       </div>
 
       <p className="codex-provider-description">
-        配置支持 Responses API 的通用供应商，启用后供新启动的 Codex 使用。首次添加会自动启用。
+        管理多个 Codex 供应商，为每个供应商选择可用模型。右键项目或 Codex 启动配置，即可按模型快速启动。
       </p>
       {state && <p className="codex-provider-path" title={state.configDir}>配置目录：{state.configDir}</p>}
       {(loadError || state?.configError) && <div className="codex-provider-error" role="alert">{loadError || state?.configError}</div>}
@@ -163,22 +170,24 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
         {state?.providers.map(provider => {
           const isActive = state.activeProviderId === provider.id;
           return (
-            <div key={provider.id} className={`llm-provider-card${editor?.id === provider.id ? ' editing' : ''}`}>
+            <div key={provider.id} className={`llm-provider-card codex-provider-card${isActive ? ' is-active' : ''}`}>
               <div className="llm-provider-head">
+                <span className="codex-provider-avatar"><Server size={18} /></span>
                 <span className="llm-provider-name" title={provider.name}>{provider.name}</span>
                 {isActive && <span className="llm-badge default">使用中</span>}
                 {editor?.id === provider.id && <span className="llm-badge editing">编辑中</span>}
               </div>
               <div className="llm-provider-meta"><span title={provider.baseUrl}>{provider.baseUrl}</span></div>
               <div className="llm-provider-meta">
-                <span title={provider.model}>{provider.model}</span>
+                <span title={provider.model}>默认：{provider.model}</span>
                 <span className="llm-badge effort">{CODEX_EFFORT_OPTIONS.find(([level]) => level === provider.reasoningEffort)?.[1] ?? provider.reasoningEffort}</span>
               </div>
+              <div className="codex-provider-model-tags">{(provider.models ?? [provider.model]).map(id => <span key={id} className="llm-badge" title={id}>{id}</span>)}</div>
               <div className="llm-provider-meta"><span className="llm-key-tail">{provider.keySet ? `密钥已保存${provider.keyTail ? ` ····${provider.keyTail}` : ''}` : '未设置密钥'}</span></div>
               <div className="llm-provider-actions">
-                <button type="button" className="claude-segment-btn mini" disabled={busy || isActive} onClick={() => void mutate('activate', () => activateCodexProvider(provider.id), `已启用「${provider.name}」，重新启动 Codex 后生效`)}>{isActive ? '已启用' : '启用'}</button>
-                <button type="button" className="claude-segment-btn mini" disabled={busy} onClick={() => edit(provider)}>编辑</button>
-                <button type="button" className="claude-segment-btn mini danger" disabled={busy || isActive} title={isActive ? '请先启用其他供应商后删除' : undefined} onClick={() => setDeleteTarget(provider)}>删除</button>
+                <button type="button" className="claude-segment-btn mini" disabled={busy || isActive} onClick={() => void mutate('activate', () => activateCodexProvider(provider.id), `已启用「${provider.name}」，重新启动 Codex 后生效`)}>{isActive && <Check size={12} />}{isActive ? '已启用' : '启用'}</button>
+                <button type="button" className="claude-segment-btn mini" disabled={busy} onClick={() => edit(provider)}><Pencil size={12} /> 编辑</button>
+                <button type="button" className="claude-segment-btn mini danger" disabled={busy || isActive} title={isActive ? '请先启用其他供应商后删除' : undefined} onClick={() => setDeleteTarget(provider)}><Trash2 size={12} /> 删除</button>
               </div>
             </div>
           );
@@ -186,8 +195,20 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
       </div>
 
       {editor && (
-        <form className="llm-provider-editor" onSubmit={event => { event.preventDefault(); void save(false); }}>
-          <div className="llm-provider-editor-title">{editor.id ? '编辑 Codex 供应商' : '新增 Codex 供应商'}</div>
+        <Dialog title={editor.id ? '编辑 Codex 供应商' : '添加 Codex 供应商'} className="codex-provider-dialog" closeDisabled={busy}
+          onClose={() => { requestVersion.current += 1; setEditor(null); setModels([]); }}
+          onSubmit={event => { event.preventDefault(); void save(false); }}
+          footer={<>
+            <button type="button" className="btn-secondary" disabled={busy} onClick={() => { requestVersion.current += 1; setEditor(null); setModels([]); }}>取消</button>
+            <button type="submit" className="btn-secondary" disabled={busy}>{pending === 'save' ? '保存中…' : '保存'}</button>
+            <button type="button" className="btn-primary" disabled={busy} onClick={event => { if (event.currentTarget.form?.reportValidity()) void save(true); }}>保存并启用</button>
+          </>}>
+          {!editor.id && <div className="codex-provider-presets" role="group" aria-label="供应商预设">
+            {[['custom', '自定义供应商', '兼容 Responses API 的中转站或私有服务'], ['openai', 'OpenAI 官方 API', '使用 OpenAI API 密钥连接']].map(([id, name, hint]) => <button key={id} type="button" disabled={busy}
+              className={preset === id ? 'selected' : ''} onClick={() => { setPreset(id); setModels([]); setEditor({ ...editor, name: id === 'openai' ? 'OpenAI' : '', baseUrl: id === 'openai' ? 'https://api.openai.com/v1' : '' }); }}>
+              <strong>{name}</strong><small>{hint}</small>
+            </button>)}
+          </div>}
           <fieldset className="codex-provider-fields" disabled={busy}>
             <label className="claude-form-row">名称
               <input required maxLength={80} value={editor.name} onChange={e => setEditor({ ...editor, name: e.target.value })} placeholder="如：公司中转站" />
@@ -198,21 +219,17 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
             <label className="claude-form-row">API 密钥
               <input required={!editor.keySet} type="password" autoComplete="new-password" value={editor.apiKey} onChange={e => { setEditor({ ...editor, apiKey: e.target.value }); setModels([]); }} placeholder={editor.keySet ? `已保存${editor.keyTail ? `（····${editor.keyTail}）` : ''}，留空沿用` : '粘贴 API 密钥'} spellCheck={false} />
             </label>
-            <div className="claude-form-row-inline">
-              <label className="claude-form-row">模型 ID
-                <input required maxLength={256} list={modelsId} value={editor.model} onChange={e => setEditor({ ...editor, model: e.target.value })} placeholder="填写或选择供应商支持的模型 ID" spellCheck={false} />
-                <datalist id={modelsId}>{models.map(model => <option key={model} value={model} />)}</datalist>
-              </label>
-              <label className="claude-form-row">推理等级
-                <select value={editor.reasoningEffort} onChange={e => setEditor({ ...editor, reasoningEffort: e.target.value })}>
-                  {CODEX_EFFORT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </label>
-            </div>
             <div className="claude-segment-toolbar">
-              <button type="button" className="claude-segment-btn" onClick={() => void fetchModels()}>{pending === 'fetch' ? '获取中…' : '⟳ 获取模型列表'}</button>
-              <span className="llm-provider-hint">也可手动填写；推理等级需由所选模型支持</span>
+              <span className="claude-segment-title">模型配置</span>
+              <button type="button" className="claude-segment-btn" onClick={() => void fetchModels()}>{pending === 'fetch' ? '获取中…' : '获取模型列表'}</button>
             </div>
+            <CodexModelPicker models={models} selected={editor.models} defaultModel={editor.model} disabled={busy}
+              onChange={(selected, model) => setEditor({ ...editor, models: selected, model })} />
+            <label className="claude-form-row">推理等级
+              <select value={editor.reasoningEffort} onChange={e => setEditor({ ...editor, reasoningEffort: e.target.value })}>
+                {CODEX_EFFORT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
             <details className="codex-provider-advanced">
               <summary>更多配置</summary>
               <div className="claude-form-row-inline">
@@ -227,12 +244,27 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
             </details>
           </fieldset>
           <p className="codex-provider-description">{editor.id && state?.activeProviderId === editor.id ? '修改当前供应商并保存后，会同步更新 Codex 配置。' : '启用时自动备份原配置，并保留 MCP 等其他设置。'}</p>
-          <div className="llm-provider-editor-actions">
-            <button type="button" className="btn-secondary" disabled={busy} onClick={() => { requestVersion.current += 1; setEditor(null); setModels([]); }}>取消</button>
-            <button type="submit" className="btn-secondary" disabled={busy}>{pending === 'save' ? '保存中…' : '保存'}</button>
-            <button type="button" className="btn-primary" disabled={busy} onClick={event => { if (event.currentTarget.form?.reportValidity()) void save(true); }}>保存并启用</button>
-          </div>
-        </form>
+          <details className="codex-provider-advanced codex-config-preview">
+            <summary>配置预览</summary>
+            <strong>auth.json</strong>
+            <pre>{JSON.stringify({ OPENAI_API_KEY: editor.keySet ? '（沿用已保存密钥）' : '（使用上方 API 密钥）' }, null, 2)}</pre>
+            <strong>config.toml</strong>
+            <pre>{[
+              'model_provider = "custom"',
+              'model = ' + JSON.stringify(editor.model),
+              ...(editor.reasoningEffort ? ['model_reasoning_effort = ' + JSON.stringify(editor.reasoningEffort)] : []),
+              ...(editor.contextWindow ? ['model_context_window = ' + editor.contextWindow] : []),
+              ...(editor.autoCompactTokenLimit ? ['model_auto_compact_token_limit = ' + editor.autoCompactTokenLimit] : []),
+              'disable_response_storage = ' + editor.disableResponseStorage,
+              '', '[model_providers.custom]',
+              'name = ' + JSON.stringify(editor.name),
+              'base_url = ' + JSON.stringify(editor.baseUrl),
+              'wire_api = "responses"',
+              'experimental_bearer_token = "（使用已保存密钥）"',
+              'requires_openai_auth = false',
+            ].join('\n')}</pre>
+          </details>
+        </Dialog>
       )}
 
       {deleteTarget && (

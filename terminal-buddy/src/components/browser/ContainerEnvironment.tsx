@@ -230,7 +230,7 @@ export function ContainerEnvironmentButton() {
             </div>
           </details>
         </>}
-        <p className="container-environment-hint">安装仅对当前容器生效；重建容器后请重新检测，缺失时再次安装。</p>
+        <p className="container-environment-hint">新版镜像已内置 procps，重建容器后仍然可用；旧版镜像可通过“一键安装”临时补齐。</p>
         <div className="container-environment-actions">
           <button type="button" className="container-environment-action" disabled={checking || procpsInstalling} onClick={() => { void refresh(); }}>
             <RefreshCw size={14} className={checking ? 'container-environment-spin' : undefined} aria-hidden="true" />

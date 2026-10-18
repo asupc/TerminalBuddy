@@ -634,6 +634,9 @@ fn legacy_temp_settings_missing(command: &str) -> bool {
 /// 展开单条命令开头的引用标记并登记 `terminalId → 临时文件` 映射。
 /// 不含引用的命令原样返回；引用失效（供应商被删）或旧路径残留则拒绝启动。
 pub fn expand_leading_claude_ref(command: &str, terminal_id: &str) -> Result<String, String> {
+    if command.trim_start().starts_with(super::codex_provider_service::CODEX_REF_PREFIX) {
+        return super::codex_provider_service::expand_leading_codex_ref(command);
+    }
     let Some((provider_id, model_id, token_end)) = parse_claude_ref(command) else {
         // 旧路径兜底：含旧版绝对路径形态且文件已不存在 → 拒绝，不静默降级；
         // 文件尚存则按普通命令原样放行。
