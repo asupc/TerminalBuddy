@@ -1,6 +1,8 @@
 .settings-dialog {
   width: min(1240px, calc(100vw - 48px));
   height: min(760px, calc(100vh - 48px));
+  min-width: min(640px, calc(100vw - 48px));
+  min-height: min(420px, calc(100vh - 48px));
 }
 
 .settings-dialog-shell {
