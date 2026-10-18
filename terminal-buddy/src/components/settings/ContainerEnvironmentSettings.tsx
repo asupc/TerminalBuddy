@@ -13,10 +13,9 @@ const tools = [
 
 interface ContainerEnvironmentSettingsProps {
   active: boolean;
-  onConfigureModels: () => void;
 }
 
-export function ContainerEnvironmentSettings({ active, onConfigureModels }: ContainerEnvironmentSettingsProps) {
+export function ContainerEnvironmentSettings({ active }: ContainerEnvironmentSettingsProps) {
   const [environment, setEnvironment] = useState<ContainerEnvironment | null>(null);
   const [checking, setChecking] = useState(false);
   const [starting, setStarting] = useState<Record<ContainerCli, boolean>>({ claude: false, codex: false });
@@ -85,48 +84,60 @@ export function ContainerEnvironmentSettings({ active, onConfigureModels }: Cont
 
   return (
     <div className="container-environment-settings">
-      <p className="container-environment-intro">检测当前容器中的命令行工具，缺失时可按提示安装。</p>
-      {error && <p className="container-environment-error" role="alert">{error}</p>}
-      {tools.map(tool => {
-        const cli = environment?.[tool.id];
-        const toolInstalling = starting[tool.id] || cli?.status === 'installing';
-        const statusText = toolInstalling ? '正在安装…'
-          : cli?.status === 'installed' ? '已经安装'
-            : cli?.status === 'failed' ? '安装失败'
-              : cli ? '没有安装' : checking ? '正在检测…' : '等待检测';
-        const installError = cli?.status === 'installed' ? null : installErrors[tool.id] || cli?.message;
+      <div className="settings-card-group container-environment-list">
+        <div className="card-group-header container-environment-toolbar">
+          <span className="card-group-title">命令行工具</span>
+          <button type="button" className="container-environment-action" disabled={checking} onClick={() => { void refresh(); }}>
+            <RefreshCw size={14} className={checking ? 'container-environment-spin' : undefined} aria-hidden="true" />
+            {checking ? '检测中…' : '重新检测'}
+          </button>
+        </div>
+        {error && <p className="container-environment-error container-environment-check-error" role="alert">{error}</p>}
+        {tools.map(tool => {
+          const cli = environment?.[tool.id];
+          const toolInstalling = starting[tool.id] || cli?.status === 'installing';
+          const statusText = toolInstalling ? '正在安装…'
+            : cli?.status === 'installed' ? '已安装'
+              : cli?.status === 'failed' ? '安装失败'
+                : cli ? '未安装' : checking ? '正在检测…' : '等待检测';
+          const installError = cli?.status === 'installed' ? null : installErrors[tool.id] || cli?.message;
 
-        return <section key={tool.id} className="container-environment-tool" aria-label={tool.name}>
-          <div className="container-environment-tool-header">
-            <span className="container-environment-tool-icon"><TerminalSquare size={22} aria-hidden="true" /></span>
-            <div className="container-environment-tool-name"><strong>{tool.name}</strong><span>AI 编程助手</span></div>
-            <span className={`container-environment-status ${toolInstalling ? 'installing' : cli?.status ?? 'checking'}`} role="status" aria-live="polite">
-              {toolInstalling ? <LoaderCircle size={14} className="container-environment-spin" aria-hidden="true" />
-                : cli?.status === 'installed' ? <CheckCircle2 size={14} aria-hidden="true" />
-                  : <CircleAlert size={14} aria-hidden="true" />}
-              {statusText}
-            </span>
-          </div>
-          {cli?.version && <p className="container-environment-version">当前版本：{cli.version}</p>}
-          {toolInstalling && <p className="container-environment-hint">正在下载并安装，请稍候。离开设置页不会中断安装。</p>}
-          {cli?.status === 'installed' && <p className="container-environment-hint">在网页终端输入 <code>{tool.id}</code> 即可启动。</p>}
-          {installError && <p className="container-environment-error" role="alert">{installError}</p>}
-          <div className="container-environment-actions">
-            {tool.id === 'claude' && <button type="button" className="container-environment-action" onClick={onConfigureModels}>模型配置</button>}
-            <button type="button" className="container-environment-action" disabled={checking || toolInstalling} onClick={() => { void refresh(); }}>
-              <RefreshCw size={14} className={checking ? 'container-environment-spin' : undefined} aria-hidden="true" />
-              {checking ? '检测中…' : '重新检测'}
-            </button>
-            {cli && cli.status !== 'installed' && <button
-              type="button" className="container-environment-action primary" disabled={toolInstalling || checking} onClick={() => { void install(tool); }}
-            >
-              {toolInstalling ? <LoaderCircle size={14} className="container-environment-spin" aria-hidden="true" /> : <Download size={14} aria-hidden="true" />}
-              {toolInstalling ? '安装中…' : cli.status === 'failed' ? '重试安装' : '一键安装'}
-            </button>}
-          </div>
-        </section>;
-      })}
-      <p className="container-environment-hint">Claude Code 和 Codex CLI 使用官方安装器安装在容器用户目录中。</p>
+          return <section key={tool.id} className="container-environment-tool" aria-label={tool.name}>
+            <div className="container-environment-tool-header">
+              <span className="container-environment-tool-icon"><TerminalSquare size={18} aria-hidden="true" /></span>
+              <div className="container-environment-tool-details">
+                <div className="container-environment-tool-name">
+                  <strong>{tool.name}</strong>
+                  {cli?.version && <span className="container-environment-version" title={`当前版本：${cli.version}`}>{cli.version}</span>}
+                </div>
+                <p className="container-environment-hint">
+                  {toolInstalling ? '正在下载安装，离开设置页不会中断。'
+                    : cli?.status === 'installed' ? <>在终端输入 <code>{tool.id}</code> 即可启动</>
+                      : cli ? '使用官方安装器安装到容器用户目录'
+                        : '检测容器中的安装状态与版本'}
+                </p>
+              </div>
+              <div className="container-environment-controls">
+                <span className={`container-environment-status ${toolInstalling ? 'installing' : cli?.status ?? 'checking'}`} role="status" aria-live="polite">
+                  {toolInstalling || (!cli && checking) ? <LoaderCircle size={14} className="container-environment-spin" aria-hidden="true" />
+                    : cli?.status === 'installed' ? <CheckCircle2 size={14} aria-hidden="true" />
+                      : <CircleAlert size={14} aria-hidden="true" />}
+                  {statusText}
+                </span>
+                {cli && cli.status !== 'installed' && <button
+                  type="button" className="container-environment-action primary" disabled={toolInstalling || checking} onClick={() => { void install(tool); }}
+                  aria-label={`${cli.status === 'failed' ? '重试安装' : '安装'} ${tool.name}`}
+                >
+                  {toolInstalling ? <LoaderCircle size={14} className="container-environment-spin" aria-hidden="true" /> : <Download size={14} aria-hidden="true" />}
+                  {toolInstalling ? '安装中…' : cli.status === 'failed' ? '重试安装' : '一键安装'}
+                </button>}
+              </div>
+            </div>
+            {installError && <p className="container-environment-error container-environment-install-error" role="alert">{installError}</p>}
+          </section>;
+        })}
+      </div>
+      <p className="container-environment-hint container-environment-footer">工具安装在当前容器的用户目录中，安装完成后可直接在网页终端使用。</p>
     </div>
   );
 }
