@@ -25,6 +25,9 @@ pub struct CodexProvider {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    /// 可快速启动的模型；旧配置自动包含原默认模型。
+    #[serde(default)]
+    pub models: Vec<String>,
     #[serde(default = "default_effort")]
     pub reasoning_effort: String,
     /// 0 表示使用 Codex / 模型默认值。
@@ -58,6 +61,8 @@ pub struct CodexProviderInput {
     #[serde(default)]
     pub api_key: Option<String>,
     pub model: String,
+    #[serde(default)]
+    pub models: Vec<String>,
     #[serde(default = "default_effort")]
     pub reasoning_effort: String,
     #[serde(default)]
@@ -77,6 +82,7 @@ pub struct CodexProviderView {
     pub key_set: bool,
     pub key_tail: String,
     pub model: String,
+    pub models: Vec<String>,
     pub reasoning_effort: String,
     pub context_window: u32,
     pub auto_compact_token_limit: u32,
@@ -109,6 +115,17 @@ impl CodexProviderInput {
                 "模型 ID 不能为空、不能超过 256 字节，且不能包含空白或控制字符".to_string(),
             );
         }
+        if self.models.len() > 200 {
+            return Err("每个供应商最多配置 200 个模型".to_string());
+        }
+        let mut models = vec![model.clone()];
+        for id in self.models {
+            let id = id.trim().to_string();
+            if id.is_empty() || id.len() > 256 || id.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                return Err("模型 ID 不能为空、不能超过 256 字节，且不能包含空白或控制字符".to_string());
+            }
+            if !models.contains(&id) { models.push(id); }
+        }
         let reasoning_effort = self.reasoning_effort.trim().to_string();
         if !CODEX_REASONING_EFFORTS.contains(&reasoning_effort.as_str()) {
             return Err("Codex 推理等级无效".to_string());
@@ -135,6 +152,7 @@ impl CodexProviderInput {
                 base_url,
                 api_key: String::new(),
                 model,
+                models,
                 reasoning_effort,
                 context_window: self.context_window,
                 auto_compact_token_limit: self.auto_compact_token_limit,
@@ -148,6 +166,14 @@ impl CodexProviderInput {
 }
 
 impl CodexProvider {
+    pub fn model_ids(&self) -> Vec<String> {
+        let mut ids = vec![self.model.clone()];
+        for id in &self.models {
+            if !ids.contains(id) { ids.push(id.clone()); }
+        }
+        ids
+    }
+
     pub fn to_view(&self, key: &str) -> CodexProviderView {
         // 短密钥不展示，避免末四位等于完整密钥。
         let key_tail = if key.chars().count() > 4 {
@@ -168,6 +194,7 @@ impl CodexProvider {
             key_set: !key.is_empty(),
             key_tail,
             model: self.model.clone(),
+            models: self.model_ids(),
             reasoning_effort: self.reasoning_effort.clone(),
             context_window: self.context_window,
             auto_compact_token_limit: self.auto_compact_token_limit,

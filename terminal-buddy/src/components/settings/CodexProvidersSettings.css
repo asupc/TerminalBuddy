@@ -61,3 +61,138 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.codex-providers-settings .claude-segment-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.codex-providers-settings .codex-provider-card.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-primary));
+}
+
+.codex-provider-avatar {
+  display: inline-flex;
+  padding: 7px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--accent);
+}
+
+.codex-provider-model-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 80px;
+  overflow: auto;
+}
+
+.codex-provider-model-tags .llm-badge {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.codex-provider-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.codex-provider-dialog .tb-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.codex-provider-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.codex-provider-presets button {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  text-align: left;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.codex-provider-presets button.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+}
+
+.codex-provider-presets small { color: var(--text-secondary); line-height: 1.5; }
+.codex-model-picker { display: flex; flex-direction: column; gap: 10px; }
+.codex-model-picker-heading, .codex-model-picker-tools, .codex-model-manual, .codex-model-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.codex-model-picker-heading { justify-content: space-between; font-size: 12px; }
+.codex-model-picker-heading span { color: var(--text-secondary); }
+.codex-model-manual input, .codex-model-picker-tools input { flex: 1; min-width: 0; }
+.codex-model-picker-list { max-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.codex-model-picker-row { padding: 7px 10px; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.codex-model-picker-row:last-child { border-bottom: 0; }
+.codex-model-picker-row.selected { background: color-mix(in srgb, var(--accent) 6%, var(--bg-secondary)); }
+.codex-model-picker-row label { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; font-size: 12px; cursor: pointer; }
+.codex-model-picker-row label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); }
+.codex-model-picker-row input[type="checkbox"] { flex: 0 0 auto; width: auto; }
+.codex-model-picker-row button { flex-shrink: 0; }
+.codex-config-preview strong { display: block; margin: 10px 0; font-size: 12px; }
+.codex-config-preview pre { margin: 0; padding: 12px; border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12px; overflow: auto; }
+@media (max-width: 640px) {
+  .codex-provider-presets { grid-template-columns: 1fr; }
+  .codex-provider-dialog .claude-form-row-inline { flex-direction: column; }
+}
+
+.codex-provider-dialog .claude-form-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0;
+}
+
+.codex-provider-dialog input:not([type='checkbox']),
+.codex-provider-dialog select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.codex-provider-dialog .claude-segment-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+.codex-provider-dialog .claude-segment-toolbar {
+  justify-content: space-between;
+}
+
+.codex-provider-dialog .codex-model-picker-row .active {
+  color: var(--accent);
+  opacity: 1;
+}

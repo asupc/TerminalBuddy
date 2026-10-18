@@ -776,7 +776,7 @@ export const HistoryPanel: FC<HistoryPanelProps> = ({ isSidebarMode = false, isA
               setContextMenu(null);
               handleResumeWithModel(item, { providerId, modelId });
             }}
-            onGotoProviders={() => { setContextMenu(null); openSettingsDialog('llm-providers'); }}
+            onGotoProviders={() => { setContextMenu(null); useAppStore.getState().setProviderSettingsTab('claude'); openSettingsDialog('llm-providers'); }}
           />
           <MenuItem
             icon={Eye}

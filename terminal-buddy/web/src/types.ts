@@ -301,6 +301,7 @@ export interface CodexProvider {
   keySet: boolean;
   keyTail: string;
   model: string;
+  models: string[];
   reasoningEffort: string;
   contextWindow: number;
   autoCompactTokenLimit: number;

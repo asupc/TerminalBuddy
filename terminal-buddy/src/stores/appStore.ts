@@ -8,7 +8,7 @@ import { createTabsSlice } from "./slices/tabsSlice";
 import { createTransfersSlice } from "./slices/transfersSlice";
 import { createWindowSlice } from "./slices/windowSlice";
 import { createClaudeLaunchSlice } from "./slices/claudeLaunchSlice";
-import type { LlmLaunchTarget } from "../services/tauri";
+import type { CodexProviderState, LlmLaunchTarget } from "../services/tauri";
 
 interface SavedTab {
 	profileId: string;
@@ -394,6 +394,11 @@ export interface AppState {
 	clearCompletedTransfersByProfile: (profileId: string) => void;
 
 	// Claude 模型启动：右键菜单数据源（挂载 + 供应商变更时刷新，右键打开时用缓存）
+	codexProviderState: CodexProviderState | null;
+	refreshCodexLaunchTargets: () => Promise<void>;
+	setCodexProviderState: (state: CodexProviderState) => void;
+	providerSettingsTab: "claude" | "codex";
+	setProviderSettingsTab: (tab: "claude" | "codex") => void;
 	claudeLaunchTargets: LlmLaunchTarget[];
 	claudeLaunchTargetsLoaded: boolean;
 	refreshClaudeLaunchTargets: () => Promise<void>;

@@ -4,7 +4,7 @@ import { isTerminalWorking, useAppStore } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
-import { parseClaudeRef } from '../../utils/claudeLaunch';
+import { parseModelRef } from '../../utils/codexLaunch';
 import { isDockerClient } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
 import './TerminalTabBar.css';
@@ -287,7 +287,7 @@ export const TerminalTabBar: FC = () => {
                 </span>
               )}
               {session.sessionType !== 'editor' && (() => {
-                const modelRef = parseClaudeRef(session.extraParams ?? '');
+                const modelRef = parseModelRef(session.extraParams ?? '');
                 return modelRef ? (
                   <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
                 ) : null;

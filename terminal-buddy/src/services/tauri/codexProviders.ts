@@ -14,6 +14,7 @@ export interface CodexProviderView {
   keySet: boolean;
   keyTail: string;
   model: string;
+  models: string[];
   reasoningEffort: string;
   contextWindow: number;
   autoCompactTokenLimit: number;
@@ -27,6 +28,7 @@ export interface CodexProviderInput {
   /** 留空沿用已保存的密钥。 */
   apiKey?: string;
   model: string;
+  models: string[];
   reasoningEffort: string;
   contextWindow: number;
   autoCompactTokenLimit: number;

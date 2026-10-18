@@ -3,6 +3,7 @@ import { api } from '../api';
 import type { CodexProvider, CodexProviderInput, CodexProviderState } from '../types';
 import { Dialog } from './Dialog';
 import { ProviderPanel } from './ProviderPanel';
+import { CodexModelPicker } from './CodexModelPicker';
 
 const EFFORTS = [
   ['', '跟随模型默认'], ['none', '关闭 none'], ['minimal', '最低 minimal'],
@@ -14,11 +15,11 @@ interface Draft extends CodexProviderInput {
   keySet: boolean;
 }
 const newDraft = (): Draft => ({
-  name: '', baseUrl: '', apiKey: '', model: '', reasoningEffort: 'high',
+  name: '', baseUrl: '', apiKey: '', model: '', models: [], reasoningEffort: 'high',
   contextWindow: 0, autoCompactTokenLimit: 0, disableResponseStorage: true, keySet: false,
 });
 
-export function CodexProvidersPanel({ active }: { active: boolean }) {
+export function CodexProvidersPanel({ active, onClose }: { active: boolean; onClose?: () => void }) {
   const [state, setState] = useState<CodexProviderState | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [models, setModels] = useState<string[]>([]);
@@ -29,7 +30,7 @@ export function CodexProvidersPanel({ active }: { active: boolean }) {
   const busyRef = useRef(false);
   const mountedRef = useRef(false);
   const formId = useId();
-  const modelsId = useId();
+  const [preset, setPreset] = useState('custom');
   const busy = pending !== null;
 
   useEffect(() => {
@@ -66,7 +67,8 @@ export function CodexProvidersPanel({ active }: { active: boolean }) {
     setError('');
     setNotice('');
     setModels([]);
-    setDraft(provider ? { ...provider, apiKey: '' } : newDraft());
+    setPreset(provider?.baseUrl === 'https://api.openai.com/v1' ? 'openai' : 'custom');
+    setDraft(provider ? { ...provider, models: provider.models ?? [provider.model], apiKey: '' } : newDraft());
   };
 
   const save = (activate: boolean) => {
@@ -77,13 +79,14 @@ export function CodexProvidersPanel({ active }: { active: boolean }) {
       baseUrl: draft.baseUrl.trim(),
       apiKey: draft.apiKey.trim() || undefined,
       model: draft.model.trim(),
+      models: draft.models,
       reasoningEffort: draft.reasoningEffort,
       contextWindow: draft.contextWindow,
       autoCompactTokenLimit: draft.autoCompactTokenLimit,
       disableResponseStorage: draft.disableResponseStorage,
     };
     if (!input.name || !input.baseUrl || !input.model || (!draft.keySet && !input.apiKey)) {
-      setError('请填写供应商名称、API 地址、密钥和模型 ID');
+      setError('请填写供应商名称、API 地址和密钥，并至少选择一个模型');
       return;
     }
     const willActivate = activate || state?.providers.length === 0 || (!!draft.id && state?.activeProviderId === draft.id);
@@ -105,12 +108,13 @@ export function CodexProvidersPanel({ active }: { active: boolean }) {
     void run('fetch', async () => {
       const fetched = await api.fetchCodexModels(draft.baseUrl.trim(), draft.apiKey.trim(), draft.id);
       setModels(fetched.map((model) => model.id));
-      setNotice(fetched.length ? `已获取 ${fetched.length} 个模型，可在模型输入框中选择` : '未获取到模型，可手动填写模型 ID');
+      setNotice(fetched.length ? `已获取 ${fetched.length} 个模型，可勾选多个模型` : '未获取到模型，可手动填写模型 ID');
     });
   };
 
   return (
     <ProviderPanel
+      onClose={onClose}
       title={draft ? (draft.id ? '编辑 Codex 供应商' : '添加 Codex 供应商') : 'Codex 供应商'}
       footer={draft ? <>
         <button className="btn" disabled={busy} onClick={() => { setDraft(null); setModels([]); setError(''); setNotice(''); }}>返回</button>
@@ -128,13 +132,16 @@ export function CodexProvidersPanel({ active }: { active: boolean }) {
         <button className="btn primary" disabled={busy || !state} onClick={() => edit()}>添加供应商</button>
       </>}
     >
-      <p className="provider-description">配置支持 Responses API 的供应商，启用后供新启动的 Codex 使用。首次添加会自动启用。</p>
+      <p className="provider-description">管理多个 Codex 供应商，为每个供应商选择可用模型。右键或长按项目、Codex 启动配置，即可按模型快速启动。</p>
       {error && <div className="nav-error" role="alert">{error}</div>}
       {state?.configError && <div className="nav-error" role="alert">{state.configError}</div>}
       {notice && <div className="provider-notice" role="status">{notice}</div>}
       {draft ? (
         <form id={formId} className="project-form" onSubmit={(event) => { event.preventDefault(); save(false); }}>
           <fieldset disabled={busy}>
+            {!draft.id && <div className="codex-provider-presets" role="group" aria-label="供应商预设">
+              {[['custom', '自定义供应商'], ['openai', 'OpenAI 官方 API']].map(([id, name]) => <button type="button" key={id} className={preset === id ? 'selected' : ''} onClick={() => { setPreset(id); setModels([]); setDraft({ ...draft, name: id === 'openai' ? 'OpenAI' : '', baseUrl: id === 'openai' ? 'https://api.openai.com/v1' : '' }); }}>{name}</button>)}
+            </div>}
             <label>名称 *
               <input required maxLength={80} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
             </label>
@@ -147,12 +154,9 @@ export function CodexProvidersPanel({ active }: { active: boolean }) {
                 placeholder={draft.keySet ? '留空保留已保存的密钥' : '输入 API 密钥'}
                 onChange={(e) => { setDraft({ ...draft, apiKey: e.target.value }); setModels([]); }} />
             </label>
-            <label>模型 ID *
-              <input required maxLength={256} list={modelsId} value={draft.model} spellCheck={false} autoCapitalize="none"
-                placeholder="填写或选择供应商支持的模型 ID" onChange={(e) => setDraft({ ...draft, model: e.target.value })} />
-              <datalist id={modelsId}>{models.map((model) => <option key={model} value={model} />)}</datalist>
-            </label>
             <button className="btn" type="button" onClick={fetchModels}>{pending === 'fetch' ? '获取中…' : '从供应商拉取模型'}</button>
+            <CodexModelPicker models={models} selected={draft.models} defaultModel={draft.model} disabled={busy}
+              onChange={(selected, model) => setDraft({ ...draft, models: selected, model })} />
             <label>推理等级
               <select value={draft.reasoningEffort} onChange={(e) => setDraft({ ...draft, reasoningEffort: e.target.value })}>
                 {EFFORTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -188,6 +192,7 @@ export function CodexProvidersPanel({ active }: { active: boolean }) {
                 <strong>{provider.name}{isActive && '（使用中）'}</strong>
                 <small>{provider.baseUrl}</small>
                 <small>{provider.model} · {EFFORTS.find(([value]) => value === provider.reasoningEffort)?.[1] || provider.reasoningEffort}</small>
+                <div className="codex-provider-model-tags">{(provider.models ?? [provider.model]).map(id => <span key={id} title={id}>{id}</span>)}</div>
                 <small>密钥{provider.keySet ? `已设置（尾号 ${provider.keyTail}）` : '未设置'}</small>
                 <div className="project-row-actions">
                   <button className="btn small" disabled={busy || isActive} onClick={() => void run('activate', async () => {
