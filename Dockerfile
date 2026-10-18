@@ -9,7 +9,8 @@ COPY terminal-buddy/index.html terminal-buddy/tsconfig*.json terminal-buddy/vite
 COPY terminal-buddy/src ./src
 RUN npm run build:web:desktop
 # 手机 SPA（独立依赖树，构建产物 web/dist，部署在 /m/ 供手机访问）
-WORKDIR /build/mobile
+# 保留 web/ 与 src/ 的相对位置，供手机端复用桌面端工具代码。
+WORKDIR /build/frontend/web
 COPY terminal-buddy/web/package.json terminal-buddy/web/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY terminal-buddy/web ./
@@ -34,7 +35,7 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 COPY --from=backend /build/src-tauri/target/release/terminal-buddy-server /usr/local/bin/terminal-buddy-server
 COPY --from=frontend /build/frontend/dist-web /opt/terminal-buddy/web
-COPY --from=frontend /build/mobile/dist /opt/terminal-buddy/mobile
+COPY --from=frontend /build/frontend/web/dist /opt/terminal-buddy/mobile
 ENV TERMINAL_BUDDY_DATA_DIR=/data \
     TERMINAL_BUDDY_WEB_DIST=/opt/terminal-buddy/web \
     TERMINAL_BUDDY_MOBILE_DIST=/opt/terminal-buddy/mobile \
