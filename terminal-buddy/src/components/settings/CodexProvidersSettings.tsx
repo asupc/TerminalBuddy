@@ -159,6 +159,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
 
       <p className="codex-provider-description">
         管理多个 Codex 供应商，为每个供应商选择可用模型。右键项目或 Codex 启动配置，即可按模型快速启动。
+        保存或启用时会自动生成模型目录（model_catalog_json），为所有模型声明全部推理等级。
       </p>
       {state && <p className="codex-provider-path" title={state.configDir}>配置目录：{state.configDir}</p>}
       {(loadError || state?.configError) && <div className="codex-provider-error" role="alert">{loadError || state?.configError}</div>}
@@ -241,7 +242,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
               <label className="codex-provider-checkbox"><input type="checkbox" checked={editor.disableResponseStorage} onChange={e => setEditor({ ...editor, disableResponseStorage: e.target.checked })} />禁用响应存储</label>
             </details>
           </fieldset>
-          <p className="codex-provider-description">{editor.id && state?.activeProviderId === editor.id ? '修改当前供应商并保存后，会同步更新 Codex 配置。' : '启用时自动备份原配置，并保留 MCP 等其他设置。'}</p>
+          <p className="codex-provider-description">{editor.id && state?.activeProviderId === editor.id ? '修改当前供应商并保存后，会同步更新 Codex 配置。' : '启用时自动备份原配置，并保留 MCP 等其他设置。'}保存或启用时自动生成模型目录，所有模型声明全部推理等级。</p>
           <details className="codex-provider-advanced codex-config-preview">
             <summary>配置预览</summary>
             <strong>auth.json</strong>
@@ -254,6 +255,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
               ...(editor.contextWindow ? ['model_context_window = ' + editor.contextWindow] : []),
               ...(editor.autoCompactTokenLimit ? ['model_auto_compact_token_limit = ' + editor.autoCompactTokenLimit] : []),
               'disable_response_storage = ' + editor.disableResponseStorage,
+              'model_catalog_json = "terminal-buddy-codex-models.json"',
               '', '[model_providers.custom]',
               'name = ' + JSON.stringify(editor.name),
               'base_url = ' + JSON.stringify(editor.baseUrl),

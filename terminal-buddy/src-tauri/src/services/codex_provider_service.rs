@@ -58,7 +58,7 @@ fn store() -> Result<ProviderStore, String> {
     })
 }
 
-fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, String> {
+pub(super) fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, String> {
     match fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -340,7 +340,14 @@ impl ProviderStore {
             let path = self.config_dir.join("config.toml");
             let current = read_optional(&path)?.unwrap_or_default();
             let key = key_for(provider)?;
-            writes.push((path, build_config(&current, provider, &key)?));
+            // 先同步模型目录再收集写入项：目录损坏时本次不写任何文件。
+            let mut doc = parse_config(&build_config(&current, provider, &key)?)?;
+            let (catalog_path, catalog, catalog_changed) =
+                super::codex_catalog::sync_catalog(&mut doc, &self.config_dir, provider)?;
+            writes.push((path, doc.to_string().into_bytes()));
+            if catalog_changed {
+                writes.push((catalog_path, catalog));
+            }
             // 保留 auth.json 的通用 API Key 形态，兼容仍从该文件取 Key 的旧版客户端。
             let auth = serde_json::to_vec_pretty(&json!({"OPENAI_API_KEY": key}))
                 .map_err(|_| "编码 Codex 凭据失败".to_string())?;
@@ -453,9 +460,19 @@ impl ProviderStore {
         }
         let selected = parse_config(&build_config(b"", provider, &key_for(provider)?)?)?;
         doc["model_providers"][&launch_id] = selected["model_providers"][PROVIDER_ID].clone();
+        // 同步模型目录；config 或目录任一有变化才写入，避免重复启动产生冗余备份。
+        let (catalog_path, catalog, catalog_changed) =
+            super::codex_catalog::sync_catalog(&mut doc, &self.config_dir, provider)?;
         let updated = doc.to_string().into_bytes();
+        let mut writes = Vec::new();
         if updated != current {
-            write_transaction(&[(path, updated)], Some(&self.config_dir.join(BACKUP_DIR)), atomic_write_private)?;
+            writes.push((path, updated));
+        }
+        if catalog_changed {
+            writes.push((catalog_path, catalog));
+        }
+        if !writes.is_empty() {
+            write_transaction(&writes, Some(&self.config_dir.join(BACKUP_DIR)), atomic_write_private)?;
         }
         // -c 在新旧版 Codex 中均支持；不混用新版独立 profile 文件与旧版 profiles 表。
         // 参数只含非敏感配置，API 密钥始终留在受限权限的配置文件中。
@@ -621,6 +638,7 @@ pub async fn fetch_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::codex_catalog::CATALOG_FILENAME;
     use std::cell::Cell;
 
     struct TestStore(ProviderStore);
@@ -761,6 +779,171 @@ mod tests {
         assert!(store.0.save(draft, false).is_err());
         assert_eq!(store.config(), config);
         assert_eq!(fs::read(&store.0.path).unwrap(), data);
+    }
+
+    #[test]
+    fn activation_generates_catalog_with_all_reasoning_levels() {
+        let store = TestStore::new();
+        store.0.save(input("目录生成"), false).unwrap();
+        assert_eq!(
+            parse_config(&store.config()).unwrap()["model_catalog_json"].as_str(),
+            Some(CATALOG_FILENAME)
+        );
+        let catalog: Value = serde_json::from_slice(
+            &fs::read(store.0.config_dir.join(CATALOG_FILENAME)).unwrap(),
+        )
+        .unwrap();
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["slug"].as_str(), Some("test-model"));
+        assert_eq!(models[0]["shell_type"].as_str(), Some("shell_command"));
+        assert_eq!(models[0]["context_window"].as_u64(), Some(258400));
+        assert_eq!(models[0]["max_context_window"].as_u64(), Some(258400));
+        assert!(models[0]["base_instructions"].as_str().unwrap().contains("You are Codex"));
+        let efforts: Vec<&str> = models[0]["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["effort"].as_str().unwrap())
+            .collect();
+        assert_eq!(efforts, ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+    }
+
+    #[test]
+    fn existing_catalog_entries_are_topped_up_and_fields_preserved() {
+        let store = TestStore::new();
+        // 单引号 TOML 字面量：路径含反斜杠（Windows）时无需转义。
+        atomic_write_private(
+            &store.0.config_dir.join("config.toml"),
+            b"model_catalog_json = 'codex-model-catalog.json'\n",
+        )
+        .unwrap();
+        atomic_write_private(
+            &store.0.config_dir.join("codex-model-catalog.json"),
+            br#"{"note":"手工顶层键","models":[
+                {"slug":"old-model","comp_hash":"keep","priority":7,
+                 "supported_reasoning_levels":[{"effort":"low","description":"自定义低"},{"effort":"high","description":"自定义高"}]},
+                {"slug":"test-model","supported_reasoning_levels":[{"effort":"low","description":"保留"}]}]}"#,
+        )
+        .unwrap();
+        let mut draft = input("合并目录");
+        draft.models = vec!["second-model".into()];
+        draft.context_window = 300000;
+        store.0.save(draft, true).unwrap();
+        // 已配置的目录路径原样使用，不生成默认文件。
+        assert_eq!(
+            parse_config(&store.config()).unwrap()["model_catalog_json"].as_str(),
+            Some("codex-model-catalog.json")
+        );
+        assert!(!store.0.config_dir.join(CATALOG_FILENAME).exists());
+        let catalog: Value = serde_json::from_slice(
+            &fs::read(store.0.config_dir.join("codex-model-catalog.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(catalog["note"].as_str(), Some("手工顶层键"));
+        let models = catalog["models"].as_array().unwrap();
+        let slugs: Vec<&str> = models.iter().map(|entry| entry["slug"].as_str().unwrap()).collect();
+        assert_eq!(slugs, ["old-model", "test-model", "second-model"]);
+        // 旧条目补齐 8 档，已有档位的描述与额外字段原样保留。
+        assert_eq!(models[0]["supported_reasoning_levels"].as_array().unwrap().len(), 8);
+        assert_eq!(
+            models[0]["supported_reasoning_levels"].as_array().unwrap()[0]["description"].as_str(),
+            Some("自定义低")
+        );
+        assert_eq!(models[0]["comp_hash"].as_str(), Some("keep"));
+        assert_eq!(models[0]["priority"].as_i64(), Some(7));
+        assert_eq!(
+            models[1]["supported_reasoning_levels"].as_array().unwrap()[0]["description"].as_str(),
+            Some("保留")
+        );
+        // 新模型用模板追加在末尾，窗口取供应商配置。
+        assert_eq!(models[2]["context_window"].as_u64(), Some(300000));
+        assert!(models[2]["description"].as_str().unwrap().contains("Terminal Buddy"));
+    }
+
+    #[test]
+    fn custom_catalog_path_is_updated_in_place() {
+        let store = TestStore::new();
+        let external = store.0.path.parent().unwrap().join("external-catalog.json");
+        let config = format!("model_catalog_json = '{}'\n", external.display());
+        atomic_write_private(&store.0.config_dir.join("config.toml"), config.as_bytes()).unwrap();
+        atomic_write_private(&external, br#"{"models":[]}"#).unwrap();
+        store.0.save(input("绝对路径"), true).unwrap();
+        let catalog: Value = serde_json::from_slice(&fs::read(&external).unwrap()).unwrap();
+        assert_eq!(catalog["models"].as_array().unwrap().len(), 1);
+        // 绝对路径就地更新，不落到 Codex 配置目录。
+        assert!(!store.0.config_dir.join(CATALOG_FILENAME).exists());
+        assert_eq!(
+            parse_config(&store.config()).unwrap()["model_catalog_json"].as_str(),
+            Some(external.to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn broken_catalog_aborts_save_without_writes() {
+        let store = TestStore::new();
+        let config = b"model_catalog_json = 'codex-model-catalog.json'\n";
+        atomic_write_private(&store.0.config_dir.join("config.toml"), config).unwrap();
+        atomic_write_private(&store.0.config_dir.join("codex-model-catalog.json"), b"{\"models\": [").unwrap();
+        let error = store.0.save(input("损坏目录"), true).unwrap_err();
+        assert!(error.contains("模型目录"), "{}", error);
+        assert_eq!(fs::read(&store.0.config_dir.join("config.toml")).unwrap(), config);
+        assert_eq!(
+            fs::read(&store.0.config_dir.join("codex-model-catalog.json")).unwrap(),
+            b"{\"models\": ["
+        );
+        assert!(!store.0.path.exists());
+    }
+
+    #[test]
+    fn prepare_launch_syncs_catalog_and_stays_idempotent() {
+        let store = TestStore::new();
+        let state = store.0.save(input("快速启动"), false).unwrap();
+        let id = state.providers[0].id.clone();
+        let command = store.0.prepare_launch(&id, "test-model").unwrap();
+        // 模拟旧机器：外部清掉目录键与目录文件后，启动时应自动恢复。
+        let mut doc = parse_config(&store.config()).unwrap();
+        doc.remove("model_catalog_json");
+        atomic_write_private(&store.0.config_dir.join("config.toml"), doc.to_string().as_bytes()).unwrap();
+        fs::remove_file(store.0.config_dir.join(CATALOG_FILENAME)).unwrap();
+        assert_eq!(store.0.prepare_launch(&id, "test-model").unwrap(), command);
+        assert_eq!(
+            parse_config(&store.config()).unwrap()["model_catalog_json"].as_str(),
+            Some(CATALOG_FILENAME)
+        );
+        assert!(store.0.config_dir.join(CATALOG_FILENAME).exists());
+        // 无变化时零写入：config / 目录字节与备份目录数量都不变。
+        let config_before = store.config();
+        let catalog_before = fs::read(store.0.config_dir.join(CATALOG_FILENAME)).unwrap();
+        let backups = fs::read_dir(store.0.config_dir.join(BACKUP_DIR)).unwrap().count();
+        store.0.prepare_launch(&id, "test-model").unwrap();
+        assert_eq!(store.config(), config_before);
+        assert_eq!(fs::read(store.0.config_dir.join(CATALOG_FILENAME)).unwrap(), catalog_before);
+        assert_eq!(fs::read_dir(store.0.config_dir.join(BACKUP_DIR)).unwrap().count(), backups);
+        // 只丢目录文件时仅重建目录，config 不重写。
+        fs::remove_file(store.0.config_dir.join(CATALOG_FILENAME)).unwrap();
+        let config_before = store.config();
+        store.0.prepare_launch(&id, "test-model").unwrap();
+        assert_eq!(store.config(), config_before);
+        assert!(store.0.config_dir.join(CATALOG_FILENAME).exists());
+    }
+
+    #[test]
+    fn backup_directory_contains_catalog_file() {
+        let store = TestStore::new();
+        let config = b"model_catalog_json = 'codex-model-catalog.json'\n";
+        let catalog = br#"{"models":[{"slug":"old-model","supported_reasoning_levels":[]}]}"#;
+        atomic_write_private(&store.0.config_dir.join("config.toml"), config).unwrap();
+        atomic_write_private(&store.0.config_dir.join("codex-model-catalog.json"), catalog).unwrap();
+        store.0.save(input("备份目录"), true).unwrap();
+        let backup = fs::read_dir(store.0.config_dir.join(BACKUP_DIR))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(fs::read(backup.join("config.toml")).unwrap(), config);
+        assert_eq!(fs::read(backup.join("codex-model-catalog.json")).unwrap(), catalog);
     }
 
     #[test]

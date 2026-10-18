@@ -14,6 +14,7 @@ pub mod claude_mcp_service;
 pub mod claude_provider_service;
 pub mod claude_settings_service;
 pub mod client_data_service;
+pub mod codex_catalog;
 pub mod codex_provider_service;
 pub mod crypto_service;
 pub mod database_service;

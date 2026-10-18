@@ -133,7 +133,7 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
         <button className="btn primary" disabled={busy || !state} onClick={() => edit()}>添加供应商</button>
       </>}
     >
-      <p className="provider-description">管理多个 Codex 供应商，为每个供应商选择可用模型。右键或长按项目、Codex 启动配置，即可按模型快速启动。</p>
+      <p className="provider-description">管理多个 Codex 供应商，为每个供应商选择可用模型。右键或长按项目、Codex 启动配置，即可按模型快速启动。保存或启用时会自动生成模型目录（model_catalog_json），为所有模型声明全部推理等级。</p>
       {error && <div className="nav-error" role="alert">{error}</div>}
       {state?.configError && <div className="nav-error" role="alert">{state.configError}</div>}
       {notice && <div className="provider-notice" role="status">{notice}</div>}
@@ -174,7 +174,7 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
               </div>
             </details>
           </fieldset>
-          <p className="provider-description">启用时自动备份原配置，并保留 MCP 等其他设置。修改当前供应商并保存后，会同步更新 Codex 配置。</p>
+          <p className="provider-description">启用时自动备份原配置，并保留 MCP 等其他设置。修改当前供应商并保存后，会同步更新 Codex 配置。保存或启用时自动生成模型目录，所有模型声明全部推理等级。</p>
         </form>
       ) : (
         <div className="project-form" aria-busy={busy}>
