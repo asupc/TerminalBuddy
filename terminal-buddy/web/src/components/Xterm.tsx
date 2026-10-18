@@ -8,6 +8,7 @@ import type { TerminalLoadingMode } from '../types';
 import InputBar from './InputBar';
 import { terminalPaste } from '../utils/terminalInput';
 import { installTouchKeyboardGuard } from '../utils/terminalKeyboard';
+import { installTerminalMouseGuard } from '../../../src/utils/terminalMouse';
 import { PRESET_THEMES, type ColorTheme } from '../types';
 
 interface Props {
@@ -22,6 +23,7 @@ interface Props {
 interface TouchScrollState {
   startX: number;
   startY: number;
+  lastX: number;
   lastY: number;
   lastTime: number;
   velocity: number;
@@ -207,6 +209,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
         })
       : null;
     term.open(containerRef.current);
+    const removeMouseGuard = installTerminalMouseGuard(term);
     const removeTouchKeyboardGuard = installTouchKeyboardGuard(term);
     fit.fit();
     sendResize(term.cols, term.rows); // 首帧 resize → 触发后端回放历史输出
@@ -277,20 +280,22 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
         momentumFrame = null;
       }
     };
-    const dispatchWheel = (deltaY: number) => {
-      if (!scrollTarget || !Number.isFinite(deltaY) || Math.abs(deltaY) < 0.01) return;
+    const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
+      if (!scrollTarget || ![deltaY, clientX, clientY].every(Number.isFinite) || Math.abs(deltaY) < 0.01) return;
       scrollTarget.dispatchEvent(
         new WheelEvent('wheel', {
           deltaY,
+          clientX,
+          clientY,
           deltaMode: WheelEvent.DOM_DELTA_PIXEL,
           bubbles: true,
           cancelable: true,
         }),
       );
     };
-    const startMomentum = (velocity: number) => {
+    const startMomentum = (velocity: number, clientX: number, clientY: number) => {
       stopMomentum();
-      if (Math.abs(velocity) < 0.04) return;
+      if (!Number.isFinite(velocity) || Math.abs(velocity) < 0.04) return;
 
       let lastTime = performance.now();
       let currentVelocity = velocity;
@@ -298,7 +303,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
         const dt = Math.min(32, now - lastTime);
         lastTime = now;
 
-        dispatchWheel(currentVelocity * dt);
+        dispatchWheel(currentVelocity * dt, clientX, clientY);
         currentVelocity *= Math.pow(0.92, dt / 16.67);
 
         if (Math.abs(currentVelocity) > 0.015) {
@@ -309,7 +314,9 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       };
       momentumFrame = requestAnimationFrame(step);
     };
+    // 触摸只走本桥接，阻止 document 上的 xterm Gesture 再处理同一次滑动和惯性。
     const onTouchStart = (event: TouchEvent) => {
+      event.stopPropagation();
       stopMomentum();
       if (event.touches.length !== 1) {
         touchScroll = null;
@@ -321,6 +328,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       touchScroll = {
         startX: touch.clientX,
         startY: touch.clientY,
+        lastX: touch.clientX,
         lastY: touch.clientY,
         lastTime: now,
         velocity: 0,
@@ -328,6 +336,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       };
     };
     const onTouchMove = (event: TouchEvent) => {
+      event.stopPropagation();
       if (!touchScroll || event.touches.length !== 1) return;
 
       const touch = event.touches.item(0);
@@ -351,13 +360,19 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       const rawDeltaY = (touch.clientY - touchScroll.lastY) * touchSign;
       const deltaY = rawDeltaY * TOUCH_SCROLL_GAIN;
       const dt = Math.max(1, now - touchScroll.lastTime);
+      touchScroll.lastX = touch.clientX;
       touchScroll.lastY = touch.clientY;
       touchScroll.lastTime = now;
       touchScroll.velocity = deltaY / dt;
-      dispatchWheel(deltaY);
+      dispatchWheel(deltaY, touch.clientX, touch.clientY);
     };
-    const onTouchEnd = () => {
-      if (touchScroll?.isVerticalScroll) startMomentum(touchScroll.velocity);
+    const onTouchEnd = (event: TouchEvent) => {
+      event.stopPropagation();
+      if (event.type === 'touchcancel') {
+        stopMomentum();
+      } else if (touchScroll?.isVerticalScroll) {
+        startMomentum(touchScroll.velocity, touchScroll.lastX, touchScroll.lastY);
+      }
       touchScroll = null;
     };
     term.element?.addEventListener('touchstart', onTouchStart, { passive: true });
@@ -380,6 +395,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
       replayingRef.current = false;
       fitViewportRef.current = null;
       da1Handler?.dispose();
+      removeMouseGuard();
       removeTouchKeyboardGuard();
       term.dispose();
       termRef.current = null;

@@ -17,6 +17,7 @@ import { getAllSuggestions, getTerminalSuggestions } from '../../data/commandTem
 import { bootLog } from '../../utils/bootLog';
 import { useAppStore } from '../../stores/appStore';
 import { isLightBackground, normalizeAnsiForLightBackground, type TerminalColors } from '../../utils/terminalTheme';
+import { installTerminalMouseGuard } from '../../utils/terminalMouse';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
@@ -485,6 +486,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
       const tOpen = performance.now();
       terminal.open(terminalRef.current!);
+      cleanupFns.push(installTerminalMouseGuard(terminal));
       void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
       // dispose 后 xterm 会永久回退到 CPU canvas 渲染器（字形抗锯齿变化、滚动卡顿，
