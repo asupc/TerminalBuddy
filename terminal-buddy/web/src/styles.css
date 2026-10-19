@@ -3035,7 +3035,7 @@ textarea:focus-visible {
   border-color: var(--accent);
 }
 
-/* 摘要会话标签：摘要独占第一行，工具与模型标签在第二行。 */
+/* AI 会话固定两行：摘要或项目名称在第一行，工具与模型标签在第二行。 */
 .tab-nav-item.tab-nav-task-item {
   align-items: flex-start;
   gap: 6px;
@@ -3054,6 +3054,7 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .tab-nav-task-meta {
@@ -3062,6 +3063,8 @@ textarea:focus-visible {
   gap: 5px;
   min-width: 0;
   min-height: 18px;
+  flex-shrink: 0;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: 10px;
   line-height: 16px;
@@ -3079,6 +3082,12 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
   font-weight: 600;
+}
+
+.tab-nav-task-provider[data-provider="codex"] {
+  border-color: color-mix(in srgb, var(--success, #65d5a5) 42%, transparent);
+  background: color-mix(in srgb, var(--success, #65d5a5) 14%, transparent);
+  color: var(--success, #65d5a5);
 }
 
 .tab-nav-task-provider[data-provider="claude"] {
@@ -3108,6 +3117,8 @@ textarea:focus-visible {
 
 .tab-nav-task-summary {
   display: block;
+  flex-shrink: 0;
+  min-height: 18px;
   overflow: hidden;
   color: inherit;
   font-size: 12px;

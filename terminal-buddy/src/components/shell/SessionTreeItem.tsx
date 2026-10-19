@@ -1,5 +1,6 @@
 import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
-import { parseModelRef } from '../../utils/codexLaunch';
+import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
+import { effectiveProfilePath, projectForDirectory } from '../../utils/projectPath';
 import { SessionTaskLabel } from './SessionTaskLabel';
 import { FC } from 'react';
 import { ChevronRight, X } from 'lucide-react';
@@ -44,6 +45,8 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
 }) => {
   const sessions = useAppStore(s => s.sessions);
   const profiles = useAppStore(s => s.profiles);
+  const projects = useAppStore(s => s.projects);
+  const sessionDirectories = useAppStore(s => s.sessionDirectories);
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
@@ -143,8 +146,15 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
         const childSession = child.data as TerminalSession | undefined;
         const task = childSession?.sessionType !== 'editor' ? taskSummaries[child.id] : undefined;
         const profile = profiles.find(profile => profile.id === childSession?.profileId);
-        const fallbackModel = parseModelRef(childSession?.extraParams ?? '')?.modelId
-          || profile?.startupCommands.map(command => parseModelRef(command)?.modelId).find(Boolean);
+        const launchInfo = childSession?.sessionType !== 'editor'
+          ? getTaskLaunchInfo(childSession?.extraParams, profile?.startupCommands, childSession?.extraParamMode)
+          : undefined;
+        const provider = task?.provider ?? launchInfo?.provider;
+        const startupPath = childSession?.startupPath || (profile ? effectiveProfilePath(profile, projects) : '')
+          || sessionDirectories[child.id] || '';
+        const project = projectForDirectory(projects, startupPath)
+          ?? projects.find(project => project.name === (childSession?.groupName || profile?.group));
+        const fallbackName = project?.name || childSession?.profileName || child.label;
         return (
           <div key={child.id}>
             {renamingSessionId === child.id ? (
@@ -168,9 +178,9 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               </div>
             ) : (
               <div
-                className={`tree-item tab-nav-item${task ? ' tab-nav-task-item' : ''} ${activeSpecialTab === null && activeSessionId === child.id ? 'active' : ''}`}
+                className={`tree-item tab-nav-item${provider ? ' tab-nav-task-item' : ''} ${activeSpecialTab === null && activeSessionId === child.id ? 'active' : ''}`}
                 style={{ paddingLeft: `${indent + 12}px` }}
-                title={task && childSession?.createdAt ? `${childSession.profileName} · 运行 ${formatDuration(Date.now() - childSession.createdAt)}` : undefined}
+                title={provider && childSession?.createdAt ? `${childSession.profileName} · 运行 ${formatDuration(Date.now() - childSession.createdAt)}` : undefined}
                 onMouseDown={() => { useAppStore.getState().setLastClickRegion('tab'); }}
                 onClick={() => {
                   const store = useAppStore.getState();
@@ -189,8 +199,8 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                 onContextMenu={(e) => onContextMenu(e, child.id)}
               >
                 {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
-                {task ? (
-                  <SessionTaskLabel task={task} fallbackModel={fallbackModel} color={childSession?.tabColor} />
+                {provider ? (
+                  <SessionTaskLabel task={task} fallbackName={fallbackName} fallbackProvider={provider} fallbackModel={launchInfo?.model} color={childSession?.tabColor} />
                 ) : (
                 <span className="tree-name" title={child.label} style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
                   {child.label}

@@ -1,4 +1,4 @@
-import { taskLaunchModel, terminalTaskTitle } from '../utils/terminalTaskTitle';
+import { getTaskLaunchInfo, terminalTaskTitle } from '../utils/terminalTaskTitle';
 import { SessionTaskLabel } from '../components/SessionTaskLabel';
 import {
   useCallback,
@@ -78,6 +78,7 @@ function getSessionDotColor(
 
 export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen' | 'sidebar' }) {
   const profiles = useStore((state) => state.profiles);
+  const projects = useStore((state) => state.projects);
   const setProfiles = useStore((state) => state.setProfiles);
   const setProjects = useStore((state) => state.setProjects);
   const sessions = useStore((state) => state.sessions);
@@ -90,6 +91,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const toggleNavCollapsed = useStore((state) => state.toggleNavCollapsed);
 
   const [tab, setTab] = useState<'sessions' | 'profiles' | 'history' | 'files' | 'settings'>('sessions');
+  const [sessionMetadataReady, setSessionMetadataReady] = useState(false);
   const taskSummaries = useStore(state => state.taskSummaries);
   const [error, setError] = useState('');
   const [filesPath, setFilesPath] = useState<string>();
@@ -117,7 +119,18 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     }
   }, [setProfiles]);
 
-  // 项目与命令由独立面板加载；历史与文件页复用项目列表。
+  // 首次展示前先取得启动配置，避免先出现单行名称再跳成两行。
+  useEffect(() => {
+    let disposed = false;
+    void Promise.allSettled([
+      loadProfiles(),
+      api.getProjects().then(setProjects).catch((err) => console.error('加载项目列表失败', err)),
+    ]).then(() => {
+      if (!disposed) setSessionMetadataReady(true);
+    });
+    return () => { disposed = true; };
+  }, [loadProfiles, setProjects]);
+
   useEffect(() => {
     if (tab === 'history' || tab === 'files') {
       api.getProjects().then(setProjects).catch((err) => console.error('加载项目列表失败', err));
@@ -385,7 +398,9 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           {error && <div className="nav-error" role="alert">{error}</div>}
 
           {tab === 'sessions'
-            ? sessions.length === 0
+            ? !sessionMetadataReady
+              ? <div className="session-empty-state" role="status">正在加载会话信息…</div>
+              : sessions.length === 0
               ? (
                 <div className="session-empty-state">
                   <Server aria-hidden="true" />
@@ -438,12 +453,18 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                               const name = session.profileName || getTypeInfo(session.terminalType).label;
                               const task = taskSummaries[session.id];
                               const profile = profiles.find(profile => profile.id === session.profileId);
-                              const fallbackModel = [session.extraStartupParams, ...(profile?.startupCommands ?? [])].map(taskLaunchModel).find(Boolean);
+                              const project = projects.find(project => project.name === (profile?.group || session.group))
+                                ?? projects.find(project => project.name === session.profileName);
+                              const startupCommands = profile?.startupCommands
+                                ?? (project?.startupCommand ? [project.startupCommand] : []);
+                              const launchInfo = getTaskLaunchInfo(session.extraStartupParams, startupCommands, session.extraStartupMode);
+                              const provider = task?.provider ?? launchInfo?.provider;
+                              const fallbackName = project?.name || name;
                               const isActive = activeTerminalId === session.id;
                               return (
                                 <div className="tree-node" key={session.id}>
                                   <div
-                                    className={`tree-item tab-nav-item${task ? ' tab-nav-task-item' : ''}${isActive ? ' active' : ''}`}
+                                    className={`tree-item tab-nav-item${provider ? ' tab-nav-task-item' : ''}${isActive ? ' active' : ''}`}
                                     style={{ paddingLeft: 20 }}
                                     role="button"
                                     tabIndex={0}
@@ -476,7 +497,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                       aria-hidden="true"
                                       style={getSessionDotColor(profiles, session.profileId)}
                                     />
-                                    {session.extraParamTag && !task && (
+                                    {session.extraParamTag && !provider && (
                                       <span
                                         className="tab-nav-tag-chip"
                                         style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
@@ -484,8 +505,8 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                         {session.extraParamTag}
                                       </span>
                                     )}
-                                    {task ? (
-                                      <SessionTaskLabel task={task} fallbackModel={fallbackModel} color={profile?.tabColor} />
+                                    {provider ? (
+                                      <SessionTaskLabel task={task} fallbackName={fallbackName} fallbackProvider={provider} fallbackModel={launchInfo?.model} color={profile?.tabColor} />
                                     ) : <span className="tab-nav-name" title={name}>{name}</span>}
                                     {session.owner === 'web' && (
                                       <span className="tab-nav-owner-badge">

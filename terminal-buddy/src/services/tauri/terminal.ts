@@ -57,6 +57,8 @@ export interface BackendTerminalInfo {
   owner: 'pc' | 'web';
   extraParamTag?: string;
   extraParamTagColor?: string;
+  extraStartupParams?: string;
+  extraStartupMode?: ExtraParamMode;
 }
 
 /** 列出后端当前存活的终端会话，供桌面端启动后与页签对账。 */

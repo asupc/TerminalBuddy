@@ -353,8 +353,8 @@ function App() {
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
-    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; groupId?: string; groupName?: string; extraParamTag?: string; extraParamTagColor?: string; activate?: boolean }>('terminal-created', (event) => {
-      const { id, profileId, profileName, terminalType, owner, groupId, groupName, activate } = event.payload;
+    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; groupId?: string; groupName?: string; group?: string; extraParamTag?: string; extraParamTagColor?: string; extraStartupParams?: string; extraStartupMode?: ExtraParamMode; activate?: boolean }>('terminal-created', (event) => {
+      const { id, profileId, profileName, terminalType, owner, groupId, groupName = event.payload.group, extraStartupParams, extraStartupMode, extraParamTag, extraParamTagColor, activate } = event.payload;
       const store = useAppStore.getState();
       let resolvedGroupId = groupId || 'default';
       if (groupId && groupName) {
@@ -380,6 +380,10 @@ function App() {
           owner,
           groupId: groupId ? resolvedGroupId : existingSession.groupId,
           groupName: groupName ?? existingSession.groupName,
+          extraParams: extraStartupParams ?? existingSession.extraParams,
+          extraParamMode: extraStartupMode ?? existingSession.extraParamMode,
+          extraParamTag: extraParamTag ?? existingSession.extraParamTag,
+          extraParamTagColor: extraParamTagColor ?? existingSession.extraParamTagColor,
         });
         return;
       }
@@ -395,6 +399,10 @@ function App() {
         groupId: resolvedGroupId,
         groupName,
         owner,
+        extraParams: extraStartupParams,
+        extraParamMode: extraStartupMode,
+        extraParamTag,
+        extraParamTagColor,
       }, !activate);
     });
 

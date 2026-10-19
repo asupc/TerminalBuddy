@@ -1709,8 +1709,14 @@ impl TerminalService {
                 creator,
                 extra_param_tag: extra_param_tag.map(str::to_string),
                 extra_param_tag_color: extra_param_tag_color.map(str::to_string),
-                extra_startup_params: None,
-                extra_startup_mode: None,
+                // 保留原始启动命令，摘要生成前及刷新页面后也能识别工具和模型。
+                extra_startup_params: initial_command
+                    .map(str::trim)
+                    .filter(|command| !command.is_empty())
+                    .map(str::to_string),
+                extra_startup_mode: initial_command
+                    .filter(|command| !command.trim().is_empty())
+                    .map(|_| "independent".to_string()),
                 terminal_type: effective_type.to_string(),
                 startup_path,
                 profile_env: Vec::new(),

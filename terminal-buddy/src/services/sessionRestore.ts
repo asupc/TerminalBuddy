@@ -228,8 +228,17 @@ export async function reconcileBackendSessions() {
     const store = useAppStore.getState();
     // 占位会话还没回填成真实 terminalId，此时补建会和它撞成两个页签。
     if (store.sessions.some(session => session.starting)) return;
-    if (store.sessions.some(session => session.id === terminal.id)) {
-      store.updateSession(terminal.id, { profileName: terminal.profileName, owner: terminal.owner });
+    const existingSession = store.sessions.find(session => session.id === terminal.id);
+    if (existingSession) {
+      store.updateSession(terminal.id, {
+        profileName: terminal.profileName,
+        owner: terminal.owner,
+        groupName: existingSession.groupName || terminal.group || undefined,
+        extraParams: terminal.extraStartupParams ?? existingSession.extraParams,
+        extraParamMode: terminal.extraStartupMode ?? existingSession.extraParamMode,
+        extraParamTag: terminal.extraParamTag ?? existingSession.extraParamTag,
+        extraParamTagColor: terminal.extraParamTagColor ?? existingSession.extraParamTagColor,
+      });
       continue;
     }
     const profile = store.profiles.find(item => item.id === terminal.profileId);
@@ -245,7 +254,12 @@ export async function reconcileBackendSessions() {
       colorTheme: { background: theme.background, foreground: theme.foreground },
       tabColor: profile?.tabColor || null,
       groupId: 'default',
+      groupName: terminal.group || undefined,
       owner: terminal.owner,
+      extraParams: terminal.extraStartupParams,
+      extraParamMode: terminal.extraStartupMode,
+      extraParamTag: terminal.extraParamTag,
+      extraParamTagColor: terminal.extraParamTagColor,
     }, keepActive);
   }
 }

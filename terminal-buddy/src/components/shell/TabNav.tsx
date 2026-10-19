@@ -7,7 +7,7 @@ import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWi
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getIndicatorLight, getIndicatorClassName, getIndicatorColor, getIndicatorTitle } from '../../utils/claudeIndicator';
-import { parseModelRef } from '../../utils/codexLaunch';
+import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
@@ -189,6 +189,9 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           ...toTreeItems(node.children),
           ...node.items.map(session => {
             const isEditor = session.sessionType === 'editor';
+            const profile = profiles.find(profile => profile.id === session.profileId);
+            const hasTaskLabel = !isEditor && Boolean(taskSummaries[session.id]
+              || getTaskLaunchInfo(session.extraParams, profile?.startupCommands, session.extraParamMode));
             return {
               id: session.id,
               label: session.profileName,
@@ -216,7 +219,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                           />
                         );
                       })()}
-                      {session.extraParamTag && !taskSummaries[session.id] && (
+                      {session.extraParamTag && !hasTaskLabel && (
                         <span
                           className="tab-nav-tag-chip"
                           style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
@@ -225,13 +228,6 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                           {session.extraParamTag}
                         </span>
                       )}
-                      {(() => {
-                        if (taskSummaries[session.id]) return null;
-                        const modelRef = parseModelRef(session.extraParams ?? '');
-                        return modelRef ? (
-                          <span className="tab-nav-model-chip" title="供应商模型">{modelRef.modelId}</span>
-                        ) : null;
-                      })()}
                     </>
                   )}
                 </>
