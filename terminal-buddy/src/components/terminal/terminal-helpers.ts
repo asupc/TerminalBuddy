@@ -294,8 +294,15 @@ export function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null
 
     // 真实光标落在输入区内（如 Claude Code 输入框内移动光标）→ 锚点跟随光标
     if (cursorViewportY >= y && cursorViewportY <= inputBottomY) {
+      // Ink 类 TUI 有时只用纵向移动把光标挪回输入行，列号仍是上一帧写状态栏
+      // 时留下的右侧位置。直接采用 cursorX 会把 IME 候选窗甩到最右，并让
+      // textarea 撑出屏幕导致终端横向滚动。用光标所在行的真实文本末端夹紧。
+      const cursorLine = buffer.getLine(buffer.viewportY + cursorViewportY);
+      const lineEnd = getLastNonBlankCell(cursorLine, terminal.cols);
+      const minX = cursorViewportY === y ? promptEnd : 0;
+      const maxX = Math.max(lineEnd, minX);
       return {
-        x: Math.min(buffer.cursorX, terminal.cols - 1),
+        x: Math.min(Math.max(minX, Math.min(buffer.cursorX, maxX)), terminal.cols - 1),
         y: cursorViewportY,
         widthCells: 1,
         inputTopY: y,
@@ -488,6 +495,17 @@ export function installStableImeAnchor(terminal: Terminal, shouldUsePromptAnchor
     compositionView.style.lineHeight = anchor.lineHeight;
     compositionView.style.fontFamily = anchor.fontFamily;
     compositionView.style.fontSize = anchor.fontSize;
+
+    // 与 xterm 原生 updateCompositionElements 一致：把组合预览限制在屏幕
+    // 剩余宽度内。否则长拼音串会把 compositionView/textarea 撑出 .xterm，
+    // 浏览器为露出焦点元素横向滚动该 overflow:hidden 容器，整屏内容左飘。
+    const cell = core?._renderService?.dimensions?.css?.cell;
+    if (cell?.width) {
+      const remaining = Math.max(terminal.cols * cell.width - pxNumber(anchor.left), 1);
+      compositionView.style.maxWidth = `${remaining}px`;
+      compositionView.style.overflow = 'hidden';
+      compositionView.style.direction = 'rtl';
+    }
 
     const bounds = compositionView.getBoundingClientRect();
     const width = Math.max(bounds.width, pxNumber(anchor.width), 1);
