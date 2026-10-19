@@ -2,15 +2,12 @@ import type { TerminalTaskSummary } from '../../stores/taskSummaryStore';
 
 interface SessionTaskLabelProps {
   task: TerminalTaskSummary;
-  connectionName: string;
   fallbackModel?: string;
-  tag?: string;
-  tagColor?: string | null;
   color?: string | null;
 }
 
-/** 第一行显示任务摘要，第二行提供工具、模型和连接信息。 */
-export function SessionTaskLabel({ task, connectionName, fallbackModel, tag, tagColor, color }: SessionTaskLabelProps) {
+/** 第一行显示任务摘要，第二行仅显示工具与模型标签。 */
+export function SessionTaskLabel({ task, fallbackModel, color }: SessionTaskLabelProps) {
   const provider = task.provider === 'codex' ? 'Codex' : 'Claude';
   const model = task.model || fallbackModel || '模型待识别';
   return (
@@ -19,8 +16,6 @@ export function SessionTaskLabel({ task, connectionName, fallbackModel, tag, tag
       <span className="tab-nav-task-meta">
         <span className="tab-nav-task-provider" data-provider={task.provider}>{provider}</span>
         <span className="tab-nav-task-model" data-pending={!task.model && !fallbackModel || undefined} title={model}>{model}</span>
-        <span className="tab-nav-task-connection" title={`启动连接：${connectionName}`}>{connectionName}</span>
-        {tag && <span className="tab-nav-tag-chip" title="启动参数预设" style={tagColor ? { backgroundColor: tagColor } : undefined}>{tag}</span>}
       </span>
     </span>
   );

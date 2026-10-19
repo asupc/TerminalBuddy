@@ -143,8 +143,6 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
         const childSession = child.data as TerminalSession | undefined;
         const task = childSession?.sessionType !== 'editor' ? taskSummaries[child.id] : undefined;
         const profile = profiles.find(profile => profile.id === childSession?.profileId);
-        // 展示启动此会话的具体连接，不能用连接所属的工作区或分组名称替代。
-        const connectionName = profile?.name || childSession?.profileName || child.label;
         const fallbackModel = parseModelRef(childSession?.extraParams ?? '')?.modelId
           || profile?.startupCommands.map(command => parseModelRef(command)?.modelId).find(Boolean);
         return (
@@ -192,8 +190,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               >
                 {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
                 {task ? (
-                  <SessionTaskLabel task={task} connectionName={connectionName} fallbackModel={fallbackModel}
-                    tag={childSession?.extraParamTag} tagColor={childSession?.extraParamTagColor} color={childSession?.tabColor} />
+                  <SessionTaskLabel task={task} fallbackModel={fallbackModel} color={childSession?.tabColor} />
                 ) : (
                 <span className="tree-name" title={child.label} style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
                   {child.label}

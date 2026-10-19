@@ -544,7 +544,7 @@
   margin-left: 2px;
 }
 
-/* 摘要会话标签：摘要独占第一行，工具、模型、启动连接在第二行。 */
+/* 摘要会话标签：摘要独占第一行，工具与模型标签在第二行。 */
 .tab-nav-item.tab-nav-task-item {
   align-items: flex-start;
   gap: 6px;
@@ -598,7 +598,6 @@
 
 .tab-nav-task-model {
   flex: 0 1 auto;
-  max-width: 40%;
   min-width: 0;
   height: 18px;
   padding: 0 5px;
@@ -614,18 +613,6 @@
   border-color: var(--border);
   background: color-mix(in srgb, var(--border) 35%, transparent);
   color: var(--text-muted, var(--text-secondary));
-}
-
-.tab-nav-task-connection {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tab-nav-task-meta > .tab-nav-tag-chip {
-  flex-shrink: 1;
-  max-width: 52px;
 }
 
 .tab-nav-task-summary {

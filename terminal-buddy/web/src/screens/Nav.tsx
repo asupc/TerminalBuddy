@@ -438,7 +438,6 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                               const name = session.profileName || getTypeInfo(session.terminalType).label;
                               const task = taskSummaries[session.id];
                               const profile = profiles.find(profile => profile.id === session.profileId);
-                              const connectionName = profile?.name || name;
                               const fallbackModel = [session.extraStartupParams, ...(profile?.startupCommands ?? [])].map(taskLaunchModel).find(Boolean);
                               const isActive = activeTerminalId === session.id;
                               return (
@@ -486,8 +485,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                       </span>
                                     )}
                                     {task ? (
-                                      <SessionTaskLabel task={task} connectionName={connectionName} fallbackModel={fallbackModel}
-                                        tag={session.extraParamTag} tagColor={session.extraParamTagColor} color={profile?.tabColor} />
+                                      <SessionTaskLabel task={task} fallbackModel={fallbackModel} color={profile?.tabColor} />
                                     ) : <span className="tab-nav-name" title={name}>{name}</span>}
                                     {session.owner === 'web' && (
                                       <span className="tab-nav-owner-badge">
