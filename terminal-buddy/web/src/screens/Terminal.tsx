@@ -35,10 +35,8 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
 
   const goBack = () => setView({ screen: 'nav' });
 
-  // 本端能否真正关闭这个会话：仅 Web 池里手机端自己创建的（creator === 'mobile'，
-  // 旧后端无该字段时视为可关）。电脑端创建的会话手机端只能「断开接管」。
-  const canClose =
-    owner === 'web' && session?.creator !== 'desktop';
+  // Web 池会话均可关闭，与创建端设备无关。
+  const canClose = owner === 'web';
 
   const closeTerminal = () => {
     setMenuOpen(false);
@@ -48,7 +46,7 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
   const performClose = async () => {
     setConfirmClose(false);
     if (canClose) {
-      // 自己的终端：真正关闭（杀掉 PTY）
+      // 关闭 Web 池终端（杀掉 PTY）
       try {
         await api.deleteTerminal(terminalId);
       } catch {

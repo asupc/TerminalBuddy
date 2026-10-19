@@ -12,7 +12,7 @@ use axum::{
 };
 use crate::runtime::{Emitter, Manager};
 
-/// 列出 Web 端有权查看的终端：非共享模式下只有 Web（手机）自己创建的，
+/// 列出 Web 端有权查看的终端：非共享模式下只有 Web 池创建的，
 /// 共享模式下才包含 PC 端的。前端按 owner 区分「继续」（Web，直接接入）
 /// 和「接管」（PC，接入时 PTY 切到手机尺寸）。
 pub async fn list(
@@ -26,8 +26,7 @@ pub async fn list(
 /// 新建终端：归属 Web（手机）池，与 PC 端互不共享，避免不同尺寸视图抢一个 PTY。
 /// profile_id 为空时走项目启动路径：PowerShell 空白终端 + 启动目录 + 注入启动命令，
 /// 与 PC 端 openProjectTerminal 的 startBlankTerminal 链路一致。
-/// 创建端设备按请求 User-Agent 记录（手机 SPA 创建 → Mobile），供手机端
-/// 关闭权限细分使用。
+/// 创建端设备按请求 User-Agent 记录（手机 SPA 创建 → Mobile），用于来源标识与接管提示。
 pub async fn start(
     State(state): State<AppState>,
     _claims: ClaimsFromRequest,
@@ -86,14 +85,12 @@ pub async fn start(
     Ok(Json(info))
 }
 
-/// 关闭终端：只能关 Web 池的，PC 端的终端手机端即使在共享模式下也无权关闭
-/// （「接管」不等于「关闭 PC 终端」）。Web 池内再按设备细分：手机端只能关
-/// 手机端自己创建的会话，电脑端可关全部。资源释放与事件发送统一由
-/// `TerminalService::close_terminal` 负责，这里不再重复清理订阅者或补发事件。
+/// 关闭 Web 池终端：手机和电脑浏览器均可关闭，与创建端设备无关。
+/// PC 端终端即使在共享模式下也无权关闭（「接管」不等于「关闭 PC 终端」）。
+/// 资源释放与事件发送统一由 `TerminalService::close_terminal` 负责。
 pub async fn close(
     State(state): State<AppState>,
     _claims: ClaimsFromRequest,
-    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let ts = state.app_handle.state::<TerminalService>();
@@ -101,14 +98,11 @@ pub async fn close(
         &state.app_handle,
         &id,
         TerminalActor::Web,
-        client_kind_from_headers(&headers),
         TerminalCloseReason::WebClose,
     )
     .map_err(|error| match error {
         TerminalAccessError::NotFound => ApiError::NotFound(error.to_string()),
-        TerminalAccessError::Denied { .. } | TerminalAccessError::DeniedMobileClose => {
-            ApiError::Forbidden(error.to_string())
-        }
+        TerminalAccessError::Denied { .. } => ApiError::Forbidden(error.to_string()),
     })?;
     Ok(Json(serde_json::json!({ "closed": true })))
 }

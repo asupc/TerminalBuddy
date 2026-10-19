@@ -69,7 +69,7 @@ export interface TerminalInfo {
   terminalType: TerminalType;
   loadingMode: TerminalLoadingMode;
   owner: 'pc' | 'web';
-  /** 创建端设备：手机端只能关闭 mobile 创建的会话（旧后端无此字段 → 视为可关） */
+  /** 创建端设备：用于来源标识与接管提示，关闭权限按 owner 判定。 */
   creator?: 'desktop' | 'mobile';
   /** 启动参数预设的 tag（启动时快照，跨端可见、刷新不丢） */
   extraParamTag?: string;

@@ -1,12 +1,7 @@
 //! Web 端设备类型识别：按请求 User-Agent 判定发起方是手机还是电脑。
 //!
-//! 供两处使用：
-//! - 创建终端时记录 `TerminalCreator`（「谁创建的」）；
-//! - 关闭终端时判定 `TerminalClientKind`（「谁来关」），配合
-//!   `terminal_access::is_web_close_allowed_by_client` 实现手机端关闭权限细分。
-//!
-//! 这是产品行为限制（防手机误关电脑上的会话），不是安全边界——
-//! User-Agent 可被伪造，但同一管理员账号下无防伪造诉求。
+//! 用于创建终端时记录 `TerminalCreator`（「谁创建的」），以及选择手机版
+//! 界面和终端接管尺寸。设备类型不参与终端关闭权限判定。
 
 use axum::http::{header, HeaderMap};
 use crate::models::TerminalClientKind;
@@ -25,7 +20,7 @@ const MOBILE_UA_KEYWORDS: [&str; 7] = [
     "Windows Phone",
 ];
 
-/// 按 User-Agent 字符串判定设备类型；缺失 UA 时按电脑处理（保守：不限制关闭）。
+/// 按 User-Agent 字符串判定设备类型；缺失 UA 时按电脑处理。
 pub fn client_kind_from_user_agent(ua: &str) -> TerminalClientKind {
     if MOBILE_UA_KEYWORDS.iter().any(|keyword| ua.contains(keyword)) {
         TerminalClientKind::Mobile

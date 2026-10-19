@@ -1,6 +1,5 @@
 use crate::models::web_api::{TerminalInfo, TerminalReplayFrame};
 use crate::models::Profile;
-use crate::models::TerminalClientKind;
 use crate::models::TerminalCreator;
 use crate::models::TerminalLoadingMode;
 use crate::models::TerminalOwner;
@@ -9,8 +8,7 @@ use crate::models::{
     validate_k8s_name, validate_ssh_host, validate_ssh_key_path, validate_ssh_user,
 };
 use crate::models::{
-    is_terminal_action_allowed, is_web_close_allowed_by_client, TerminalAccessError,
-    TerminalAction, TerminalActor,
+    is_terminal_action_allowed, TerminalAccessError, TerminalAction, TerminalActor,
 };
 use crate::services::ssh_session_service::SshSessionService;
 use crate::services::ClaudeHookService;
@@ -180,8 +178,7 @@ pub struct TerminalInstance {
     pub display_name: String,
     pub group_override: Option<String>,
     pub owner: TerminalOwner,
-    /// 创建端设备（PC 桌面与电脑浏览器都记 Desktop）。仅用于 Web 池内的
-    /// 关闭权限细分：手机端不能关电脑端创建的会话。
+    /// 创建端设备（PC 桌面与电脑浏览器都记 Desktop），用于来源标识与接管提示。
     pub creator: TerminalCreator,
     takeover: crate::models::TerminalTakeover,
     pub extra_param_tag: Option<String>,
@@ -1564,24 +1561,9 @@ impl TerminalService {
         app: &AppHandle,
         id: &str,
         actor: TerminalActor,
-        client_kind: TerminalClientKind,
         reason: TerminalCloseReason,
     ) -> Result<(), TerminalAccessError> {
         self.authorize(id, actor, TerminalAction::Close)?;
-        // Web 池内关闭权限细分：手机端不能关电脑端创建的会话（PC actor 的
-        // 关闭不经过此判定，桌面端行为不变）。
-        if actor == TerminalActor::Web {
-            let creator = {
-                let instances = self.lock_instances();
-                instances
-                    .get(id)
-                    .map(|instance| instance.creator)
-                    .ok_or(TerminalAccessError::NotFound)?
-            };
-            if !is_web_close_allowed_by_client(creator, client_kind) {
-                return Err(TerminalAccessError::DeniedMobileClose);
-            }
-        }
         // teardown 幂等：并发的自然退出可能已经先收尾，那同样算关闭成功。
         teardown_terminal(app, id, reason);
         Ok(())
@@ -1897,7 +1879,6 @@ pub fn close_terminal(
         &app,
         &id,
         TerminalActor::Pc,
-        TerminalClientKind::Desktop,
         TerminalCloseReason::DesktopClose,
     ) {
         // 关闭幂等：终端可能刚好自然退出，桌面端不需要看到错误。

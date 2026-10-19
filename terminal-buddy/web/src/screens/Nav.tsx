@@ -54,11 +54,9 @@ function getTypeInfo(type: string) {
   return TYPE_INFO[type as TerminalType] ?? FALLBACK_TYPE;
 }
 
-/** 手机端能否关闭该会话：仅 Web 池里手机端自己创建的（creator === 'mobile'）
- * 可关；电脑端创建的（'desktop'）不可关。旧后端无 creator 字段时视为可关，
- * 保持与既有行为平滑兼容。PC 会话本来就不可关（后端矩阵拦截）。 */
+/** 手机端可关闭 Web 池内的全部会话，与创建端设备无关。 */
 function canCloseSession(session: TerminalInfo): boolean {
-  return session.owner === 'web' && session.creator !== 'desktop';
+  return session.owner === 'web';
 }
 
 function isDesktopSession(session: TerminalInfo): boolean {
@@ -184,8 +182,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     [setView],
   );
 
-  // 关闭会话：先弹确认（会杀掉 PTY 里正在运行的进程）。仅手机端可关的会话
-  // （creator === 'mobile' 或旧后端的 web 会话）能走到这里；后端还会再校验一次。
+  // 关闭 Web 池会话前先弹确认（会杀掉 PTY 里正在运行的进程），后端统一校验权限。
   // meta WS 收到推送后自动更新列表。
   const requestCloseSession = useCallback((session: TerminalInfo) => {
     if (!canCloseSession(session)) return;
