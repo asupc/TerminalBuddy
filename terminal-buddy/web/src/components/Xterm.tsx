@@ -157,10 +157,10 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
     const ua = (navigator as { userAgentData?: { platform?: string }; userAgent: string });
     const isWindows = /Windows/i.test(ua.userAgentData?.platform || ua.userAgent || '');
     // iPadOS 13+ 在桌面 Safari 上 UA 标自己是 MacIntel，靠多点触控特征识别。
-    // iPad Safari 对合成 wheel 事件的 deltaY 解读与 PC 相反，需要对翻号后再派发。
+    // iPad Safari 的合成 wheel 兼容补偿只用于本地历史区滚动。
     const isIPad = /iPad/.test(ua.userAgent) ||
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    const touchSign = isIPad ? -1 : 1;
+    const scrollbackTouchSign = isIPad ? -1 : 1;
     let buildNumber: number | null = null;
     if (isWindows) {
       const m = ua.userAgent.match(/Build\/(\d+)/);
@@ -285,9 +285,15 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
     };
     const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
       if (!scrollTarget || ![deltaY, clientX, clientY].every(Number.isFinite) || Math.abs(deltaY) < 0.01) return;
+      const mouseMode = term.modes.mouseTrackingMode;
+      const reportsWheel = mouseMode === 'vt200' || mouseMode === 'drag' || mouseMode === 'any';
+      // Codex 等 TUI 直接按 deltaY 的符号生成鼠标报告；备用屏幕也会转成方向键。
+      // 这些路径不经过历史区的浏览器兼容处理，须将手指位移反向转换为滚轮方向。
+      // 拖动和惯性都在此按当前模式转换，避免离手后方向再次反转。
+      const applicationScroll = reportsWheel || term.buffer.active.type === 'alternate';
       scrollTarget.dispatchEvent(
         new WheelEvent('wheel', {
-          deltaY,
+          deltaY: deltaY * (applicationScroll ? -1 : scrollbackTouchSign),
           clientX,
           clientY,
           deltaMode: WheelEvent.DOM_DELTA_PIXEL,
@@ -360,7 +366,7 @@ export default function Xterm({ terminalId, theme, loadingMode, onStateChange, o
 
       if (event.cancelable) event.preventDefault();
       const now = performance.now();
-      const rawDeltaY = (touch.clientY - touchScroll.lastY) * touchSign;
+      const rawDeltaY = touch.clientY - touchScroll.lastY;
       const deltaY = rawDeltaY * TOUCH_SCROLL_GAIN;
       const dt = Math.max(1, now - touchScroll.lastTime);
       touchScroll.lastX = touch.clientX;
