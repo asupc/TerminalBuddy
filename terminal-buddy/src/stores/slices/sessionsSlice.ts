@@ -33,6 +33,16 @@ export function flushPendingSaveTabs(): Promise<void> {
 	return _saveTabsInFlight;
 }
 
+/**
+ * 仅在存在待写入变更时落盘。
+ * 启动恢复前不能无条件调用 `flushPendingSaveTabs()`：新页面 store 还是空的，
+ * 无条件写会把还留在磁盘上的旧页签覆盖成空文件。
+ */
+export function flushPendingSaveTabsIfAny(): Promise<void> {
+	if (_saveTabsTimer) return flushPendingSaveTabs();
+	return _saveTabsInFlight;
+}
+
 // --- Draft management ---
 
 export interface DraftEntry {
@@ -174,7 +184,9 @@ export const createSessionsSlice = (
 				}
 			}
 			// 恢复流程在 _skipSaveTabs 下清理旧会话，不能把半成品页签写盘。
-			if (!state._skipSaveTabs) debouncedSaveTabs();
+			// 正常关闭会话必须立即落盘（而不是 300ms 防抖）：关闭最后一个会话后，
+			// 容器重启恢复或页面刷新若读到旧页签，会把刚关掉的会话重新创建出来。
+			if (!state._skipSaveTabs) queueMicrotask(() => { void flushPendingSaveTabs(); });
 			return {
 				sessions,
 				activeSessionId,

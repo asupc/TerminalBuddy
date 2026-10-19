@@ -10,6 +10,7 @@ import {
   writeToTerminal,
 } from './tauri';
 import { loadSavedTabs, saveTabsToStorage, useAppStore } from '../stores/appStore';
+import { flushPendingSaveTabsIfAny } from '../stores/slices/sessionsSlice';
 import { getAppSettings, isAppSettingsInitialized } from '../utils/settings';
 import { containsClaudeRef, isClaudeCommand } from '../utils/claudeLaunch';
 import { showAlert } from './dialog';
@@ -294,6 +295,9 @@ async function runBrowserSessionRestore(): Promise<BrowserSessionRestoreOutcome>
   // 服务端仍存活：普通刷新只接回，不重复创建 PTY。
   if (live.length > 0) return 'not-needed';
 
+  // 用户刚关闭会话时页签保存可能还在防抖窗口内。先落盘，避免恢复读到旧列表，
+  // 把刚关掉的会话重新创建出来。
+  await flushPendingSaveTabsIfAny();
   const { tabs, activeIndex } = await loadSavedTabs();
   // PC 端页签由桌面端负责恢复，浏览器不越权重建。
   const terminalTabs = tabs.filter(tab => tab.sessionType !== 'editor' && tab.owner !== 'pc');
