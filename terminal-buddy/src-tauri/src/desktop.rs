@@ -438,6 +438,8 @@ pub fn run() {
             start_terminal,
             start_mstsc,
             get_claude_sessions_for_terminals,
+            claim_web_session_restore,
+            release_web_session_restore,
             get_terminal_task_summaries,
             save_show_task_summary,
             claude_history_rescan, claude_history_list, claude_history_search,

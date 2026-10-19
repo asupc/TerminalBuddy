@@ -77,6 +77,8 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle) -> Result<Valu
         "get_terminal_task_summaries" => result(crate::commands::claude_session::get_terminal_task_summaries(argument(&args, "terminalIds")?, app.state::<crate::commands::TerminalService>()).await),
         "save_show_task_summary" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::settings::save_show_task_summary(argument(&args, "enabled")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "get_claude_sessions_for_terminals" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::claude_session::get_claude_sessions_for_terminals(argument(&args, "terminalIds")?, app.state::<crate::commands::TerminalService>()))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        "claim_web_session_restore" => data(crate::commands::session_restore::claim_web_session_restore()),
+        "release_web_session_restore" => data(crate::commands::session_restore::release_web_session_restore()),
         "read_client_data" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::client_data::read_client_data(argument(&args, "key")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "write_client_data" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::client_data::write_client_data(argument(&args, "key")?, argument(&args, "content")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "list_directory" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::fs::list_directory(argument(&args, "path")?, argument(&args, "exclusions")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,

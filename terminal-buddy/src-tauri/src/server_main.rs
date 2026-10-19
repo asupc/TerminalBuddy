@@ -48,6 +48,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let app = AppHandle::new();
+    // 周期性登记存活终端的 Claude 会话 ID：即使用户关闭了浏览器，容器重启后
+    // 也能按旧 terminal ID 找回会话并执行 claude --resume。
+    {
+        let registry_app = app.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(10));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticker.tick().await;
+                let app = registry_app.clone();
+                match tokio::task::spawn_blocking(move || {
+                    commands::claude_session::refresh_claude_session_registry(&app)
+                }).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => eprintln!("Claude 会话登记失败：{}", error),
+                    Err(error) => eprintln!("Claude 会话登记任务失败：{}", error),
+                }
+            }
+        });
+    }
     match web::claude_hook_server::bind() {
         Ok(listener) => { tokio::spawn(web::claude_hook_server::run(app.clone(), listener)); }
         Err(error) => eprintln!("Claude Hook 服务未启动：{}", error),
@@ -65,6 +85,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(not(unix))]
         let _ = tokio::signal::ctrl_c().await;
+        // 退出前再登记一次，覆盖“刚启动不久、还没等到周期扫描”的 Claude 会话；
+        // 此时 PTY 尚未 teardown，进程树仍然可见。
+        let registry_app = shutdown_app.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            commands::claude_session::refresh_claude_session_registry(&registry_app)
+        }).await;
         terminal_buddy_lib::runtime::shutdown(&shutdown_app);
         let _ = shutdown_tx.send(true);
     });

@@ -27,6 +27,8 @@ interface SavedTab {
 	extraParamTag?: string;
 	extraParamTagColor?: string | null;
 	directory?: string;
+	/** 后端终端 ID（editor 页签没有）。浏览器重启后用它回查持久化的 Claude 会话 ID。 */
+	terminalId?: string;
 	claudeSessionId?: string;
 }
 
@@ -88,6 +90,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 			sessionType: s.sessionType,
 			isDirty: s.sessionType === "editor" ? false : undefined,
 			owner: s.owner,
+			terminalId: s.sessionType === "editor" ? undefined : s.id,
 			startupPath: s.startupPath,
 			extraParams: s.extraParams,
 			extraParamMode: s.extraParamMode,
@@ -145,6 +148,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 		extraParamTag: typeof tab.extraParamTag === "string" ? tab.extraParamTag : undefined,
 		extraParamTagColor: typeof tab.extraParamTagColor === "string" ? tab.extraParamTagColor : null,
 		directory: typeof tab.directory === "string" ? tab.directory : undefined,
+		terminalId: typeof tab.terminalId === "string" && tab.terminalId ? tab.terminalId : undefined,
 		claudeSessionId: typeof tab.claudeSessionId === "string" ? tab.claudeSessionId : undefined,
 	};
 }

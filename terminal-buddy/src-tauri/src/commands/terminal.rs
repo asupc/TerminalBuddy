@@ -1938,6 +1938,9 @@ pub async fn start_blank_terminal(
     initial_command: Option<String>,
     extra_param_tag: Option<String>,
     extra_param_tag_color: Option<String>,
+    // 项目启动的空白终端需要把项目名写入后端分组，容器重启恢复后
+    // 手机端 `GET /terminals` 才能继续按项目分组展示。
+    group_override: Option<String>,
     app: AppHandle,
     terminal_service: State<'_, TerminalService>,
 ) -> Result<String, String> {
@@ -1946,7 +1949,7 @@ pub async fn start_blank_terminal(
         terminal_service.create_blank_terminal(
             &terminal_type,
             display_name.as_deref(),
-            None,
+            group_override.as_deref(),
             initial_rows,
             initial_cols,
             startup_path.as_deref(),

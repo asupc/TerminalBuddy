@@ -64,7 +64,15 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
     if let Some(path) = args.get("options").and_then(|v| v.get("path")).and_then(Value::as_str) { scoped_file(path)?; }
     if matches!(command, "get_claude_sessions_for_terminals" | "get_terminal_task_summaries") {
         let ids: Vec<String> = argument(args, "terminalIds")?;
-        for id in ids { app.state::<TerminalService>().authorize(&id, TerminalActor::Web, TerminalAction::View).map_err(|e| ApiError::Forbidden(e.to_string()))?; }
+        let service = app.state::<TerminalService>();
+        for id in ids {
+            // 已结束的 terminal ID 只用于回查持久化会话登记表（容器重启后恢复页签），
+            // 不参与权限判定；仍存活的终端继续严格鉴权。
+            if service.terminal_owner(&id).is_some() {
+                service.authorize(&id, TerminalActor::Web, TerminalAction::View)
+                    .map_err(|e| ApiError::Forbidden(e.to_string()))?;
+            }
+        }
     }
     Ok(())
 }
@@ -78,6 +86,8 @@ struct TerminalRequest {
     #[serde(default)] initial_rows: u16,
     #[serde(default)] initial_cols: u16,
     startup_path: Option<String>, initial_command: Option<String>, extra_param_tag: Option<String>, extra_param_tag_color: Option<String>,
+    /// 项目启动的空白终端归属分组（桌面端浏览器版恢复页签时带上项目名）。
+    group_override: Option<String>,
 }
 
 struct Job {
@@ -149,7 +159,7 @@ async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, ap
                 let service = app.state::<TerminalService>();
                 let id = if blank { service.create_blank_terminal(
                     if request.terminal_type.is_empty() { crate::commands::terminal::default_terminal_type() } else { &request.terminal_type },
-                    request.display_name.as_deref(), None, request.initial_rows, request.initial_cols,
+                    request.display_name.as_deref(), request.group_override.as_deref(), request.initial_rows, request.initial_cols,
                     request.startup_path.as_deref(), request.initial_command.as_deref(), request.extra_param_tag.as_deref(),
                     request.extra_param_tag_color.as_deref(), app.clone(), TerminalOwner::Web, creator,
                 ) } else { service.create_terminal(

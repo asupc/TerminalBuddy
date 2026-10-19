@@ -26,7 +26,12 @@ export async function openTerminalInDir(dir?: string, options?: {
     estCols = Math.max(2, Math.floor((content.clientWidth - 20) / 8.4));
     estRows = Math.max(1, Math.floor((content.clientHeight - 20) / 17));
   }
-  const terminalId = await startBlankTerminal(defaultShellType(), estRows, estCols, dir, options?.name, options?.command);
+  const terminalId = await startBlankTerminal(
+    defaultShellType(), estRows, estCols, dir, options?.name, options?.command,
+    undefined, undefined,
+    // 项目启动时把项目名写进后端分组，手机端与重启恢复都依赖它。
+    options?.groupName,
+  );
   useAppStore.getState().addSession({
     id: terminalId,
     profileId: '',

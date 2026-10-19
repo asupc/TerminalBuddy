@@ -159,6 +159,8 @@ export async function resumeClaudeSession(
         vendorRef ? 'independent' : 'append',
       ),
       onStarted: (terminalId) => {
+        // 记录本次恢复的会话 ID：Docker 容器重启后靠它重新拼出 --resume。
+        useAppStore.getState().setClaudeSessionId(terminalId, session.sessionId);
         if (session.projectDir) useAppStore.getState().setSessionDirectory(terminalId, session.projectDir);
         void updateProfileLastUsed(profile.id).catch(error => {
           console.error('更新连接最近使用时间失败:', error);
@@ -195,8 +197,11 @@ export async function resumeClaudeSession(
       vendorRef ? launchParams : `claude ${launchParams}`,
       effectivePreset?.name,
       effectivePreset?.tagColor ?? null,
+      project?.name,
     ),
     onStarted: (terminalId) => {
+      // 空白终端路径同样记录会话 ID，保证重启恢复时能续接。
+      useAppStore.getState().setClaudeSessionId(terminalId, session.sessionId);
       if (session.projectDir) useAppStore.getState().setSessionDirectory(terminalId, session.projectDir);
     },
   });

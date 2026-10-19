@@ -41,8 +41,9 @@ export async function onClaudeNotificationActivated(callback: (terminalId: strin
   return listenTauri<string>('claude-notification-activated', callback);
 }
 
-export async function startBlankTerminal(terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string, initialCommand?: string, extraParamTag?: string, extraParamTagColor?: string | null): Promise<string> {
-  return invoke('start_blank_terminal', { terminalType, displayName: displayName || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, initialCommand: initialCommand || null, extraParamTag: extraParamTag || null, extraParamTagColor: extraParamTagColor ?? null });
+export async function startBlankTerminal(terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc', initialRows?: number, initialCols?: number, startupPath?: string, displayName?: string, initialCommand?: string, extraParamTag?: string, extraParamTagColor?: string | null, groupName?: string): Promise<string> {
+  // groupName 写入后端分组（项目启动传项目名），容器重启恢复后手机端才能按项目分组。
+  return invoke('start_blank_terminal', { terminalType, displayName: displayName || null, initialRows: initialRows || 0, initialCols: initialCols || 0, startupPath: startupPath || null, initialCommand: initialCommand || null, extraParamTag: extraParamTag || null, extraParamTagColor: extraParamTagColor ?? null, groupOverride: groupName || null });
 }
 
 /** 后端存活终端（与 Rust `TerminalInfo` 的 camelCase 序列化一致）。 */

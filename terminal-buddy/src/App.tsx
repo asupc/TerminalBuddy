@@ -28,7 +28,7 @@ import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
 import { initializeClaudeNotificationActions } from './services/claudeNotification';
 import { initAppHotkeys, registerHotkeyAction } from './services/hotkeys';
-import { restoreTabs, launchTerminalSession, reconcileBackendSessions } from './services/sessionRestore';
+import { restoreTabs, launchTerminalSession, reconcileBackendSessions, markStartupRestoreComplete, scheduleBrowserResync } from './services/sessionRestore';
 import { useExitConfirm } from './hooks/useExitConfirm';
 import { clientTerminalOwner, isBrowserClient } from './services/platform';
 
@@ -216,7 +216,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    (async () => {
+    void (async () => {
       await migrateLocalStorageToBackend();
 
       const theme = await initTheme();
@@ -268,7 +268,10 @@ function App() {
       // 恢复完成后补一次账：启动期间（WebView 就绪前）建立的会话没有 terminal-created
       // 事件可收，默认终端 handoff 冷启动就属于这一类。
       await reconcileBackendSessions();
-    })();
+    })().finally(() => {
+      // 启动流程结束（成功或失败）后才允许 web-resync 走重启恢复，避免与初始恢复并发。
+      markStartupRestoreComplete();
+    });
   }, []);
 
   // 退出前保存 Claude Code 终端的 session ID（仅在设置开启时）
@@ -410,7 +413,11 @@ function App() {
       useAppStore.getState().removeSession(event.payload);
     });
     const unlistenResync = isBrowserClient()
-      ? listen('web-resync', () => { void reconcileBackendSessions(); })
+      ? listen('web-resync', () => { scheduleBrowserResync(); })
+      : Promise.resolve(() => {});
+    // 事件连接（重新）建立只可能发生在页面加载或容器重启后：此时才允许按保存的页签恢复。
+    const unlistenConnected = isBrowserClient()
+      ? listen('web-connected', () => { scheduleBrowserResync({ allowRestore: true }); })
       : Promise.resolve(() => {});
 
     // Listen for tray exit request to show confirmation dialog
@@ -432,6 +439,7 @@ function App() {
       unlistenCreated.then((f) => f());
       unlistenClosed.then((f) => f());
       unlistenResync.then((f) => f());
+      unlistenConnected.then((f) => f());
       unlistenTrayExit.then((f) => f());
       unlistenTrayFallback.then((f) => f());
     };

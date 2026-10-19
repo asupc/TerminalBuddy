@@ -56,7 +56,7 @@ export async function resumeCodexSession(
     }),
     start: (rows, cols) => profile
       ? startTerminal(profile.id, command, rows, cols, name, session.projectDir, preset?.name, preset?.tagColor ?? null, 'independent')
-      : startBlankTerminal(defaultShellType(), rows, cols, session.projectDir, name, command, preset?.name, preset?.tagColor ?? null),
+      : startBlankTerminal(defaultShellType(), rows, cols, session.projectDir, name, command, preset?.name, preset?.tagColor ?? null, project?.name),
     onStarted: terminalId => {
       useAppStore.getState().setSessionDirectory(terminalId, session.projectDir);
       if (profile) void updateProfileLastUsed(profile.id).catch(console.error);

@@ -173,7 +173,8 @@ export const createSessionsSlice = (
 					activeSessionId = splitSlots.find((s) => s.sessionId !== null)?.sessionId ?? null;
 				}
 			}
-			debouncedSaveTabs();
+			// 恢复流程在 _skipSaveTabs 下清理旧会话，不能把半成品页签写盘。
+			if (!state._skipSaveTabs) debouncedSaveTabs();
 			return {
 				sessions,
 				activeSessionId,
@@ -231,7 +232,8 @@ export const createSessionsSlice = (
 	updateSession: (id, updates) =>
 		set((state) => {
 			const newSessions = state.sessions.map((s) => (s.id === id ? { ...s, ...updates } : s));
-			debouncedSaveTabs();
+			// 恢复期间 terminal-created 会回填会话信息，此时只改内存、由恢复末尾统一落盘。
+			if (!state._skipSaveTabs) debouncedSaveTabs();
 			return { sessions: newSessions };
 		}),
 	ensureEditorGroup: () =>
@@ -323,15 +325,26 @@ export const createSessionsSlice = (
 	},
 	sessionDirectories: {},
 	setSessionDirectory: (sessionId, path) =>
-		set((state) => ({
-			sessionDirectories: { ...state.sessionDirectories, [sessionId]: path },
-			...(state.activeSessionId === sessionId ? { currentDirectory: path } : {}),
-		})),
+		set((state) => {
+			// 目录是重启后按原 cwd 恢复 Claude 会话的必要信息，变化时立即落盘。
+			if (state.sessionDirectories[sessionId] === path) return state;
+			if (!state._skipSaveTabs) debouncedSaveTabs();
+			return {
+				sessionDirectories: { ...state.sessionDirectories, [sessionId]: path },
+				...(state.activeSessionId === sessionId ? { currentDirectory: path } : {}),
+			};
+		}),
 	claudeSessionIds: {},
 	setClaudeSessionId: (sessionId, claudeSessionId) =>
-		set((state) => ({
-			claudeSessionIds: { ...state.claudeSessionIds, [sessionId]: claudeSessionId },
-		})),
+		set((state) => {
+			// Docker 下没有桌面端「退出前快照」这一时机，必须在会话 ID 变化时持久化，
+			// 否则容器重启后页签无法用 --resume 续接。
+			if (state.claudeSessionIds[sessionId] === claudeSessionId) return state;
+			if (!state._skipSaveTabs) debouncedSaveTabs();
+			return {
+				claudeSessionIds: { ...state.claudeSessionIds, [sessionId]: claudeSessionId },
+			};
+		}),
 	terminalActivities: {},
 	terminalWebTakeovers: {},
 	setTerminalWebTakeover: (sessionId, active) =>

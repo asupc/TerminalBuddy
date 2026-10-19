@@ -42,3 +42,15 @@ export async function getWebServerAddress(): Promise<string> {
 export async function getWebQuickAccessUrl(): Promise<string> {
   return invoke('get_web_quick_access_url');
 }
+
+/**
+ * 容器重启后恢复页签的一次性服务端租约：多个浏览器同时打开时只允许一个客户端
+ * 重建 PTY / 执行 claude --resume。首个调用者返回 true。
+ */
+export async function claimWebSessionRestore(): Promise<boolean> {
+  return invoke('claim_web_session_restore');
+}
+
+export async function releaseWebSessionRestore(): Promise<void> {
+  return invoke('release_web_session_restore');
+}

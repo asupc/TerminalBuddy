@@ -1,6 +1,16 @@
-import { closeTerminal, getFileSize, listTerminals, startBlankTerminal, startTerminal, writeToTerminal } from './tauri';
+import {
+  claimWebSessionRestore,
+  closeTerminal,
+  getClaudeSessionsForTerminals,
+  getFileSize,
+  listTerminals,
+  releaseWebSessionRestore,
+  startBlankTerminal,
+  startTerminal,
+  writeToTerminal,
+} from './tauri';
 import { loadSavedTabs, saveTabsToStorage, useAppStore } from '../stores/appStore';
-import { getAppSettings } from '../utils/settings';
+import { getAppSettings, isAppSettingsInitialized } from '../utils/settings';
 import { containsClaudeRef, isClaudeCommand } from '../utils/claudeLaunch';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
@@ -8,6 +18,8 @@ import type { TerminalSession } from '../types';
 import { isBrowserClient, clientTerminalOwner } from './platform';
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
+/** extraParams 里历史遗留的 --resume 参数；UUID 至少 8 位才按会话 ID 处理。 */
+const SAVED_RESUME_RE = /--resume\s+([0-9a-fA-F-]{8,64})/;
 
 /** Estimate terminal rows/cols from the .terminal-content container size. */
 function estimateTerminalSize(): { rows: number; cols: number } {
@@ -35,6 +47,11 @@ type SavedTab = Awaited<ReturnType<typeof loadSavedTabs>>['tabs'][number];
 /** 恢复编辑器页签：文件仍存在则直接建会话，否则跳过。返回会话 id 或 undefined。 */
 async function restoreEditorTab(tab: SavedTab): Promise<string | undefined> {
   const store = useAppStore.getState();
+  // 浏览器刷新与容器重启恢复可能先后走到这里，已存在的 editor 会话直接复用。
+  const existing = store.sessions.find(
+    session => session.sessionType === 'editor' && session.profileId === tab.profileId,
+  );
+  if (existing) return existing.id;
   store.ensureEditorGroup();
   try {
     await getFileSize(tab.profileId);
@@ -61,18 +78,21 @@ async function restoreEditorTab(tab: SavedTab): Promise<string | undefined> {
 async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   const store = useAppStore.getState();
   const { rows: estRows, cols: estCols } = estimateTerminalSize();
-  // 清理 extraParams 中已有的 --resume 参数（防止历史数据叠加）
-  const paramsWithoutResume = (tab.extraParams || '')
-    .replace(/--resume\s+[0-9a-fA-F-]+/g, '');
+  const rawParams = tab.extraParams || '';
+  // 旧数据可能把 --resume 直接存进 extraParams（例如从历史会话恢复出来的页签）。
+  // 先取出 ID 再剥除：既避免重复拼接，也避免 claudeSessionId 缺失时丢失恢复意图。
+  const savedResumeId = rawParams.match(SAVED_RESUME_RE)?.[1];
+  const paramsWithoutResume = rawParams.replace(/--resume\s+[0-9a-fA-F-]+/g, '');
   const baseParams = tab.extraParamMode === 'independent'
     ? paramsWithoutResume.trim()
     : paramsWithoutResume.replace(/\s+/g, ' ').trim();
+  const resumeId = tab.claudeSessionId || savedResumeId;
   // 构建启动参数：临时追加 --resume（不存入 session，避免下次叠加）
   let launchParams = baseParams;
-  if (tab.claudeSessionId) {
+  if (resumeId) {
     const settings = getAppSettings();
     if (settings.autoResumeClaudeSession) {
-      const resumeParam = `--resume ${tab.claudeSessionId}`;
+      const resumeParam = `--resume ${resumeId}`;
       launchParams = launchParams ? `${launchParams} ${resumeParam}` : resumeParam;
     }
   }
@@ -98,6 +118,10 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
       startupPath,
       tab.profileName,
       blankCommand,
+      undefined,
+      undefined,
+      // 项目启动的空白终端依靠分组名归位；不传的话容器重启后会掉进“默认”。
+      tab.groupName,
     );
   store.addSession({
     id: terminalId,
@@ -116,8 +140,8 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     extraParamTagColor: tab.extraParamTagColor ?? null,
   }, true);
   // 保存 claudeSessionId 到 store
-  if (tab.claudeSessionId) {
-    store.setClaudeSessionId(terminalId, tab.claudeSessionId);
+  if (resumeId) {
+    store.setClaudeSessionId(terminalId, resumeId);
   }
   // 恢复上次记录的目录：本地 shell 直接用启动 cwd，避免恢复时额外写入
   // 可见的 cd 命令与后端启动命令（powershell/claude）发生竞态。
@@ -130,20 +154,33 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   return terminalId;
 }
 
-/** 恢复上次保存的页签：活动页签优先，其余并发池恢复，完成后统一落盘。 */
-export async function restoreTabs() {
-  const { tabs, activeIndex } = await loadSavedTabs();
-  if (isBrowserClient()) {
-    // 刷新只接回服务器存活会话，绝不能按桌面启动逻辑重复创建 PTY。
-    for (const tab of tabs) if (tab.sessionType === 'editor') await restoreEditorTab(tab);
-    await reconcileBackendSessions();
-    return;
-  }
-  if (tabs.length === 0) return;
+interface RestoreSavedTabsOptions {
+  /** 浏览器重启恢复：先移除后端已不存在的前端会话，避免新旧页签并存。 */
+  dropStaleSessions?: boolean;
+}
+
+/**
+ * 恢复页签集合：活动页签优先，其余并发池恢复，完成后统一落盘。
+ * 返回成功恢复的会话 id；空数组表示一个都没恢复（调用方可据此回滚一次性恢复锁）。
+ */
+async function restoreSavedTabs(
+  tabs: SavedTab[],
+  activeIndex: number,
+  options: RestoreSavedTabsOptions = {},
+): Promise<string[]> {
+  if (tabs.length === 0) return [];
   const restoredSessionIds: Array<string | undefined> = new Array(tabs.length);
   // 暂停逐次写入，恢复完后统一写一次
   useAppStore.setState({ _skipSaveTabs: true });
   try {
+    if (options.dropStaleSessions) {
+      // 容器重启后旧 PTY 已消失；先清掉前端残留，避免恢复期间新旧页签并存。
+      // removeSessions 已遵守 _skipSaveTabs，不会把中间状态写盘。
+      const staleIds = useAppStore.getState().sessions
+        .filter(session => session.sessionType !== 'editor')
+        .map(session => session.id);
+      if (staleIds.length > 0) useAppStore.getState().removeSessions(staleIds);
+    }
     const restoreTab = async (i: number) => {
       const tab = tabs[i];
       try {
@@ -201,6 +238,163 @@ export async function restoreTabs() {
     const { sessions, activeSessionId } = useAppStore.getState();
     saveTabsToStorage(sessions, activeSessionId);
   }
+  return restoredSessionIds.filter((id): id is string => id !== undefined);
+}
+
+/**
+ * 从服务端持久化登记表回填旧页签的 Claude 会话 ID。
+ * 容器重启后旧 terminalId 已不存在，只能按 ID 回查（登记表由服务端后台任务维护）。
+ */
+async function backfillClaudeSessionIds(tabs: SavedTab[]): Promise<void> {
+  const ids = [...new Set(tabs
+    .filter(tab => tab.sessionType !== 'editor' && tab.terminalId && !tab.claudeSessionId)
+    .map(tab => tab.terminalId!))];
+  if (ids.length === 0) return;
+  try {
+    const persisted = await getClaudeSessionsForTerminals(ids);
+    for (const tab of tabs) {
+      if (!tab.claudeSessionId && tab.terminalId && persisted[tab.terminalId]) {
+        tab.claudeSessionId = persisted[tab.terminalId];
+      }
+    }
+  } catch (error) {
+    console.error('回查 Claude 会话 ID 失败:', error);
+  }
+}
+
+export type BrowserSessionRestoreOutcome = 'not-needed' | 'restored' | 'claimed-elsewhere' | 'failed';
+
+let browserRestoreInFlight: Promise<BrowserSessionRestoreOutcome> | null = null;
+
+/**
+ * 浏览器端在「后端没有任何存活终端」时恢复上次页签（容器重启后的主路径）。
+ * 服务端一次性租约保证多个浏览器同时打开时只有一份 PTY / 一份 claude --resume。
+ */
+export function ensureBrowserSessionsRestored(): Promise<BrowserSessionRestoreOutcome> {
+  if (!browserRestoreInFlight) {
+    browserRestoreInFlight = runBrowserSessionRestore()
+      .finally(() => { browserRestoreInFlight = null; });
+  }
+  return browserRestoreInFlight;
+}
+
+async function runBrowserSessionRestore(): Promise<BrowserSessionRestoreOutcome> {
+  if (!isBrowserClient() || !isAppSettingsInitialized()) return 'not-needed';
+  const settings = getAppSettings();
+  // dev 下 Vite 重启频繁，自动拉起 claude --resume 会很吵；与启动恢复保持一致。
+  if (!settings.restoreTabsOnStartup || import.meta.env.DEV) return 'not-needed';
+
+  let live;
+  try {
+    live = await listTerminals();
+  } catch (error) {
+    console.error('列出后端终端失败:', error);
+    return 'failed';
+  }
+  // 服务端仍存活：普通刷新只接回，不重复创建 PTY。
+  if (live.length > 0) return 'not-needed';
+
+  const { tabs, activeIndex } = await loadSavedTabs();
+  // PC 端页签由桌面端负责恢复，浏览器不越权重建。
+  const terminalTabs = tabs.filter(tab => tab.sessionType !== 'editor' && tab.owner !== 'pc');
+  if (terminalTabs.length === 0) {
+    // 没有可恢复的 Web 页签时，顺手清掉前端残留的失效会话，避免一直显示“正在重连”。
+    await clearStaleBrowserSessions();
+    return 'not-needed';
+  }
+
+  let claimed = false;
+  try {
+    claimed = await claimWebSessionRestore();
+  } catch (error) {
+    console.error('申请恢复锁失败:', error);
+    return 'failed';
+  }
+  if (!claimed) return 'claimed-elsewhere';
+
+  try {
+    // 抢到锁后二次确认：另一个客户端可能刚恢复完成并释放租约。
+    if ((await listTerminals()).length > 0) return 'not-needed';
+    await backfillClaudeSessionIds(terminalTabs);
+    const savedActiveTab = tabs[activeIndex];
+    let activeTerminalIndex = savedActiveTab ? terminalTabs.indexOf(savedActiveTab) : -1;
+    if (activeTerminalIndex < 0) activeTerminalIndex = 0;
+    const restored = await restoreSavedTabs(terminalTabs, activeTerminalIndex, { dropStaleSessions: true });
+    if (restored.length === 0) {
+      console.error('浏览器页签恢复失败：没有任何页签恢复成功');
+      return 'failed';
+    }
+    return 'restored';
+  } catch (error) {
+    console.error('浏览器页签恢复失败:', error);
+    return 'failed';
+  } finally {
+    // 成功或失败都释放；服务端租约另有 TTL 兜底，防止客户端断线后永久占用。
+    await releaseWebSessionRestore().catch(() => {});
+  }
+}
+
+/** 关闭恢复开关但页面跨容器重启时，清掉前端残留的失效页签。 */
+async function clearStaleBrowserSessions(): Promise<void> {
+  if (!isBrowserClient()) return;
+  const terminals = await listTerminals().catch(() => null);
+  if (!terminals || terminals.length > 0) return;
+  const stale = useAppStore.getState().sessions.filter(session => session.sessionType !== 'editor');
+  if (stale.length > 0) {
+    useAppStore.getState().removeSessions(stale.map(session => session.id));
+  }
+}
+
+let resyncChain: Promise<void> = Promise.resolve();
+let startupRestoreComplete = false;
+
+/** 启动流程（含初始恢复与对账）结束后才允许 web-resync 走重启恢复逻辑。 */
+export function markStartupRestoreComplete(): void {
+  startupRestoreComplete = true;
+}
+
+interface BrowserResyncOptions {
+  /**
+   * 是否允许「后端无存活终端 → 按保存的页签重建」。
+   * 只有事件连接（重新）建立时才允许：这可能是容器重启，旧 PTY 已消失。
+   * 终端增删也会触发 web-resync，此时若允许恢复，用户关闭最后一个会话后会被立刻重建。
+   */
+  allowRestore?: boolean;
+}
+
+/**
+ * web-resync 在 socket 打开、终端增删和事件丢包时都会触发，可能连续多次到达。
+ * 串行处理，避免同一客户端并发执行恢复/对账。
+ */
+export function scheduleBrowserResync(options: BrowserResyncOptions = {}): void {
+  if (!isBrowserClient()) return;
+  resyncChain = resyncChain.then(async () => {
+    if (!startupRestoreComplete) return;
+    const settings = getAppSettings();
+    if (settings.restoreTabsOnStartup && !import.meta.env.DEV) {
+      if (options.allowRestore) await ensureBrowserSessionsRestored();
+    } else {
+      await clearStaleBrowserSessions();
+    }
+    await reconcileBackendSessions();
+  }).catch(error => {
+    console.error('网页会话重同步失败:', error);
+  });
+}
+
+/** 恢复上次保存的页签：活动页签优先，其余并发池恢复，完成后统一落盘。 */
+export async function restoreTabs() {
+  const { tabs, activeIndex } = await loadSavedTabs();
+  if (isBrowserClient()) {
+    // 每次页面加载都恢复 editor 页签（幂等）；终端页签只在服务端重启后重建。
+    for (const tab of tabs) {
+      if (tab.sessionType === 'editor') await restoreEditorTab(tab);
+    }
+    await ensureBrowserSessionsRestored();
+    await reconcileBackendSessions();
+    return;
+  }
+  await restoreSavedTabs(tabs, activeIndex);
 }
 
 /**
@@ -219,7 +413,10 @@ export async function reconcileBackendSessions() {
     console.error('Failed to list backend terminals:', error);
     return;
   }
-  if (isBrowserClient()) {
+  // 浏览器端只有拿到非空列表才能判断“哪些会话已失效”。容器重启窗口里后端可能
+  // 暂时为 0，此时按空列表清空会触发保存，把 web_saved_tabs 覆盖成空文件，
+  // 必须等恢复流程先跑完。
+  if (isBrowserClient() && terminals.length > 0) {
     const ids = new Set(terminals.map(terminal => terminal.id));
     useAppStore.getState().removeSessions(useAppStore.getState().sessions
       .filter(session => session.sessionType !== 'editor' && !session.starting && !ids.has(session.id)).map(session => session.id));

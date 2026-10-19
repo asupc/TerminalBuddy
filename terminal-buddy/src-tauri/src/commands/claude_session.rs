@@ -6,7 +6,11 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-use crate::runtime::{State};
+use crate::runtime::{AppHandle, Manager, State};
+
+fn now_ms() -> u64 {
+    chrono::Utc::now().timestamp_millis().max(0) as u64
+}
 
 /// Claude Code 会话文件结构 (位于 ~/.claude/sessions/<pid>.json)
 #[derive(Deserialize)]
@@ -98,16 +102,50 @@ pub(crate) fn discover_claude_sessions(
 }
 
 /// 批量获取多个终端的 Claude Code 会话 ID，只读取一次系统进程快照。
+///
+/// 已经结束的 terminal ID（容器重启后恢复页签的场景）回退到服务端持久化登记表；
+/// 仍存活的终端只信任实时进程发现结果——用户退出 Claude 回到 shell 后，
+/// 不能再把旧会话 ID 塞回去导致误 resume。
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_claude_sessions_for_terminals(
     terminal_ids: Vec<String>,
     service: State<'_, TerminalService>,
 ) -> Result<HashMap<String, String>, String> {
     let terminal_pids = terminal_processes(&terminal_ids, &service);
+    let live_ids: HashSet<String> = terminal_pids.iter().map(|(id, _)| id.clone()).collect();
     let settings = crate::services::SettingsService::get_settings();
     let root = crate::services::resolve_claude_config_dir(settings.claude_hook_config_dir.as_deref())?;
-    let roots = terminal_ids.into_iter().map(|id| (id, root.clone())).collect();
-    Ok(discover_claude_sessions(&terminal_pids, &roots))
+    let roots = terminal_pids.iter().map(|(id, _)| (id.clone(), root.clone())).collect();
+    let mut sessions = discover_claude_sessions(&terminal_pids, &roots);
+    let missing: Vec<String> = terminal_ids
+        .into_iter()
+        .filter(|id| !live_ids.contains(id) && !sessions.contains_key(id))
+        .collect();
+    if !missing.is_empty() {
+        sessions.extend(crate::services::claude_session_registry_service::lookup(&missing, now_ms()));
+    }
+    Ok(sessions)
+}
+
+/// 扫描所有存活终端并写入持久化登记表。由服务端后台任务周期性调用；
+/// 没有存活终端时直接返回，避免空转扫描 /proc。
+pub fn refresh_claude_session_registry(app: &AppHandle) -> Result<(), String> {
+    let service = app.state::<TerminalService>();
+    let terminal_pids: Vec<(String, u32)> = {
+        let instances = service.lock_instances();
+        instances
+            .iter()
+            .filter_map(|(id, instance)| instance.process_id().map(|pid| (id.clone(), pid)))
+            .collect()
+    };
+    if terminal_pids.is_empty() {
+        return Ok(());
+    }
+    let settings = crate::services::SettingsService::get_settings();
+    let root = crate::services::resolve_claude_config_dir(settings.claude_hook_config_dir.as_deref())?;
+    let roots = terminal_pids.iter().map(|(id, _)| (id.clone(), root.clone())).collect();
+    let discovered = discover_claude_sessions(&terminal_pids, &roots);
+    crate::services::claude_session_registry_service::merge(discovered, now_ms())
 }
 
 fn terminal_processes(ids: &[String], service: &TerminalService) -> Vec<(String, u32)> {

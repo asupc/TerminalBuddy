@@ -59,7 +59,12 @@ function connectEvents(): void {
   if (!token || eventSocket || !callbacks.size) return;
   const socket = new WebSocket(socketUrl('/ws/events'));
   eventSocket = socket;
-  socket.onopen = () => emitLocal('web-resync', null);
+  // 只有连接（重新）建立时才可能是服务端/容器重启，页签恢复只认这个信号；
+  // 终端增删引发的 web-resync 只做对账，否则关闭最后一个会话会立刻把它重建出来。
+  socket.onopen = () => {
+    emitLocal('web-connected', null);
+    emitLocal('web-resync', null);
+  };
   socket.onmessage = event => {
     try {
       const message = JSON.parse(String(event.data)) as { event: string; payload: unknown };

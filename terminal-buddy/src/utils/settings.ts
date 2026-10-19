@@ -198,6 +198,10 @@ export const previewAppOpacity = (skin: DecorativeThemeSkin, opacity: number) =>
   if (getEffectiveThemeSkin() === skin) applyAppOpacityValue(skin, opacity);
 };
 
+/** 客户端设置是否已从后端加载完成；web-resync 可能在启动初始化之前到达。 */
+let _appSettingsInitialized = false;
+export const isAppSettingsInitialized = (): boolean => _appSettingsInitialized;
+
 export const initAppSettings = async (): Promise<void> => {
   try {
     const raw = await readClientData('settings');
@@ -226,7 +230,11 @@ export const initAppSettings = async (): Promise<void> => {
       applyAppOpacity(getAppSettings());
       window.dispatchEvent(new CustomEvent('app-settings-changed'));
     }
-  } catch {}
+  } catch {
+    // 读取失败时继续使用默认值，与启动恢复的既有行为一致。
+  } finally {
+    _appSettingsInitialized = true;
+  }
 };
 
 export const saveAppSettings = (settings: AppSettings) => {
