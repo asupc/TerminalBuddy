@@ -3035,7 +3035,7 @@ textarea:focus-visible {
   border-color: var(--accent);
 }
 
-/* 摘要会话标签：工具、模型、项目在第一行，摘要独占第二行。 */
+/* 摘要会话标签：工具、模型、启动连接在第一行，摘要独占第二行。 */
 .tab-nav-item.tab-nav-task-item {
   align-items: flex-start;
   gap: 6px;
@@ -3045,7 +3045,7 @@ textarea:focus-visible {
 }
 
 .tab-nav-task-item > .tab-nav-dot {
-  margin-top: 4px;
+  margin-top: 5px;
 }
 
 .tab-nav-task-label {
@@ -3061,7 +3061,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 5px;
   min-width: 0;
-  min-height: 16px;
+  min-height: 18px;
   color: var(--text-muted);
   font-size: 10px;
   line-height: 16px;
@@ -3069,20 +3069,45 @@ textarea:focus-visible {
 }
 
 .tab-nav-task-provider {
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
-  color: var(--text);
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
   font-weight: 600;
+}
+
+.tab-nav-task-provider[data-provider="claude"] {
+  border-color: color-mix(in srgb, var(--warning, #d9a35f) 30%, transparent);
+  background: color-mix(in srgb, var(--warning, #d9a35f) 18%, transparent);
+  color: var(--warning, #d9a35f);
 }
 
 .tab-nav-task-model {
   flex: 0 1 auto;
-  max-width: 45%;
+  max-width: 40%;
   min-width: 0;
+  height: 18px;
+  padding: 0 5px;
   overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--blue, #70a7e5) 30%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--blue, #70a7e5) 16%, transparent);
+  color: var(--blue, #70a7e5);
   text-overflow: ellipsis;
 }
 
-.tab-nav-task-project {
+.tab-nav-task-model[data-pending="true"] {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--border) 35%, transparent);
+  color: var(--text-muted, var(--text-secondary));
+}
+
+.tab-nav-task-connection {
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;

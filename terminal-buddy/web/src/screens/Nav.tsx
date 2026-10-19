@@ -78,7 +78,6 @@ function getSessionDotColor(
 
 export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen' | 'sidebar' }) {
   const profiles = useStore((state) => state.profiles);
-  const projects = useStore((state) => state.projects);
   const setProfiles = useStore((state) => state.setProfiles);
   const setProjects = useStore((state) => state.setProjects);
   const sessions = useStore((state) => state.sessions);
@@ -439,7 +438,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                               const name = session.profileName || getTypeInfo(session.terminalType).label;
                               const task = taskSummaries[session.id];
                               const profile = profiles.find(profile => profile.id === session.profileId);
-                              const projectName = projects.find(project => project.name === session.group || project.name === profile?.group)?.name || name;
+                              const connectionName = profile?.name || name;
                               const fallbackModel = [session.extraStartupParams, ...(profile?.startupCommands ?? [])].map(taskLaunchModel).find(Boolean);
                               const isActive = activeTerminalId === session.id;
                               return (
@@ -487,7 +486,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                       </span>
                                     )}
                                     {task ? (
-                                      <SessionTaskLabel task={task} projectName={projectName} fallbackModel={fallbackModel}
+                                      <SessionTaskLabel task={task} connectionName={connectionName} fallbackModel={fallbackModel}
                                         tag={session.extraParamTag} tagColor={session.extraParamTagColor} color={profile?.tabColor} />
                                     ) : <span className="tab-nav-name" title={name}>{name}</span>}
                                     {session.owner === 'web' && (
