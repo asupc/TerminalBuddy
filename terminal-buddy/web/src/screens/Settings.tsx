@@ -1,3 +1,4 @@
+import { useStore } from '../store';
 import { useState } from 'react';
 import { CodexProvidersPanel } from '../components/CodexProvidersPanel';
 import { LlmProvidersPanel } from '../components/LlmProvidersPanel';
@@ -7,8 +8,21 @@ type ProviderTab = 'claude' | 'codex';
 
 export default function Settings() {
   const [tab, setTab] = useState<ProviderTab>('claude');
+  const enabled = useStore(state => state.showTaskSummary);
+  const saving = useStore(state => state.taskSummarySaving);
+  const error = useStore(state => state.taskSummaryError);
+  const setShowTaskSummary = useStore(state => state.setShowTaskSummary);
   return (
     <div className="mobile-settings">
+      <section className="mobile-task-summary-setting">
+        <label className="mobile-task-summary-toggle">
+          <span>显示任务摘要</span>
+          <input type="checkbox" role="switch" checked={enabled} disabled={saving}
+            onChange={event => { void setShowTaskSummary(event.target.checked); }} />
+        </label>
+        <p>在会话列表和窗口标题中显示当前 Claude / Codex 任务摘要。默认关闭，与桌面版同步；尚无摘要时显示原名称。</p>
+        {error && <p role="alert">{error}</p>}
+      </section>
       <header className="mobile-settings-heading">
         <h2>模型供应商</h2>
         <p>与完整网页共用供应商配置，可分别管理 Claude 和 Codex。</p>

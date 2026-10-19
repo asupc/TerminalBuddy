@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
+use std::path::PathBuf;
 use crate::runtime::{State};
 
 /// Claude Code 会话文件结构 (位于 ~/.claude/sessions/<pid>.json)
@@ -17,7 +18,7 @@ struct ClaudeSessionFile {
 }
 
 #[cfg(not(windows))]
-fn get_all_processes() -> Vec<(u32, u32, String)> {
+pub(crate) fn get_all_processes() -> Vec<(u32, u32, String)> {
     let Ok(entries) = fs::read_dir("/proc") else { return Vec::new(); };
     entries.flatten().filter_map(|entry| {
         let pid = entry.file_name().to_string_lossy().parse::<u32>().ok()?;
@@ -32,7 +33,7 @@ fn get_all_processes() -> Vec<(u32, u32, String)> {
 /// 一次性获取所有进程的父子关系，返回 (pid, parent_pid, name)
 /// 使用 Windows API CreateToolhelp32Snapshot（几十毫秒），远快于 PowerShell/WMIC
 #[cfg(windows)]
-fn get_all_processes() -> Vec<(u32, u32, String)> {
+pub(crate) fn get_all_processes() -> Vec<(u32, u32, String)> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -68,95 +69,68 @@ fn get_all_processes() -> Vec<(u32, u32, String)> {
     result
 }
 
-/// 在进程树中查找 Claude Code 进程（基于预加载的进程列表）
-/// 只匹配进程名包含 "claude" 的进程，排除 node（避免 IDE/codegraph 误报）
-fn find_claude_pids_in_tree(
-    parent_pid: u32,
-    all_processes: &[(u32, u32, String)],
-    visited: &mut HashSet<u32>,
-) -> Vec<u32> {
-    let mut result = Vec::new();
-    if visited.contains(&parent_pid) {
-        return result;
-    }
-    visited.insert(parent_pid);
-
-    for &(pid, ppid, ref name) in all_processes {
-        if ppid == parent_pid {
-            if name.contains("claude") {
-                // 检查这个进程是否有对应的 session 文件
-                let home = dirs::home_dir().unwrap_or_default();
-                let session_file = home
-                    .join(".claude")
-                    .join("sessions")
-                    .join(format!("{}.json", pid));
-                if session_file.exists() {
-                    result.push(pid);
+/// 按终端进程树精确发现会话；兼容 CLAUDE_CONFIG_DIR 与 node 启动的 CLI。
+pub(crate) fn discover_claude_sessions(
+    terminal_pids: &[(String, u32)],
+    config_dirs: &HashMap<String, PathBuf>,
+) -> HashMap<String, String> {
+    if terminal_pids.is_empty() { return HashMap::new(); }
+    let all_processes = get_all_processes();
+    let mut result = HashMap::new();
+    for (terminal_id, root_pid) in terminal_pids {
+        let Some(config_dir) = config_dirs.get(terminal_id) else { continue; };
+        let mut pending = vec![*root_pid];
+        let mut visited = HashSet::new();
+        let mut best: Option<ClaudeSessionFile> = None;
+        while let Some(pid) = pending.pop() {
+            if !visited.insert(pid) { continue; }
+            pending.extend(all_processes.iter().filter(|(_, parent, _)| *parent == pid).map(|(child, _, _)| *child));
+            let file = config_dir.join("sessions").join(format!("{}.json", pid));
+            if let Some(session) = fs::read_to_string(file).ok().and_then(|content| serde_json::from_str::<ClaudeSessionFile>(&content).ok()) {
+                if best.as_ref().map_or(true, |old| session.updated_at > old.updated_at) {
+                    best = Some(session);
                 }
             }
-            // 递归查找子进程（即使当前进程不是 claude，子进程也可能是）
-            result.extend(find_claude_pids_in_tree(pid, all_processes, visited));
         }
+        if let Some(session) = best { result.insert(terminal_id.clone(), session.session_id); }
     }
-
     result
 }
 
-/// 批量获取多个终端的 Claude Code 会话 ID
-/// 只调用一次 CreateToolhelp32Snapshot，对所有终端在内存中查找，避免 N 次进程快照
+/// 批量获取多个终端的 Claude Code 会话 ID，只读取一次系统进程快照。
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_claude_sessions_for_terminals(
     terminal_ids: Vec<String>,
     service: State<'_, TerminalService>,
 ) -> Result<HashMap<String, String>, String> {
-    // 1. 一次性获取所有终端的 PID
-    let terminal_pids: Vec<(String, u32)> = {
-        let instances = service.lock_instances();
-        terminal_ids
-            .iter()
-            .filter_map(|id| {
-                instances
-                    .get(id)
-                    .and_then(|instance| instance.process_id())
-                    .map(|pid| (id.clone(), pid))
-            })
-            .collect()
-    };
+    let terminal_pids = terminal_processes(&terminal_ids, &service);
+    let settings = crate::services::SettingsService::get_settings();
+    let root = crate::services::resolve_claude_config_dir(settings.claude_hook_config_dir.as_deref())?;
+    let roots = terminal_ids.into_iter().map(|id| (id, root.clone())).collect();
+    Ok(discover_claude_sessions(&terminal_pids, &roots))
+}
 
-    if terminal_pids.is_empty() {
-        return Ok(HashMap::new());
-    }
+fn terminal_processes(ids: &[String], service: &TerminalService) -> Vec<(String, u32)> {
+    let instances = service.lock_instances();
+    ids.iter().filter_map(|id| instances.get(id).and_then(|instance| instance.process_id()).map(|pid| (id.clone(), pid))).collect()
+}
 
-    // 2. 一次性获取所有进程（Windows API，几十毫秒）
-    let all_processes = get_all_processes();
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalTaskSummaries {
+    enabled: bool,
+    summaries: HashMap<String, crate::services::terminal_task_service::TerminalTaskSummary>,
+}
 
-    // 3. 对每个终端在进程树中查找 Claude session
-    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
-    let sessions_dir = home.join(".claude").join("sessions");
-
-    let mut result = HashMap::new();
-
-    for (terminal_id, pid) in &terminal_pids {
-        let mut visited = HashSet::new();
-        let claude_pids = find_claude_pids_in_tree(*pid, &all_processes, &mut visited);
-
-        let mut best: Option<(String, u64)> = None;
-        for claude_pid in claude_pids {
-            let session_file = sessions_dir.join(format!("{}.json", claude_pid));
-            if let Ok(content) = fs::read_to_string(&session_file) {
-                if let Ok(session) = serde_json::from_str::<ClaudeSessionFile>(&content) {
-                    match &best {
-                        Some((_, ts)) if session.updated_at <= *ts => {}
-                        _ => best = Some((session.session_id.clone(), session.updated_at)),
-                    }
-                }
-            }
-        }
-
-        if let Some((id, _)) = best {
-            result.insert(terminal_id.clone(), id);
-        }
-    }
-
-    Ok(result)
+/// 前端只传终端 ID；会话 ID 和文件路径始终由服务端发现。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn get_terminal_task_summaries(
+    terminal_ids: Vec<String>,
+    service: State<'_, TerminalService>,
+) -> Result<TerminalTaskSummaries, String> {
+    let enabled = crate::services::SettingsService::get_settings().show_task_summary;
+    if !enabled { return Ok(TerminalTaskSummaries { enabled, summaries: HashMap::new() }); }
+    let pids = terminal_processes(&terminal_ids, &service);
+    let summaries = super::claude_task(move || Ok(crate::services::terminal_task_service::summaries(pids))).await?;
+    Ok(TerminalTaskSummaries { enabled, summaries })
 }

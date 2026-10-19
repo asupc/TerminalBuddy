@@ -318,3 +318,14 @@ export interface CodexProviderState {
   configDir: string;
   configError: string | null;
 }
+
+export interface TerminalTaskSummary {
+  provider: 'claude' | 'codex';
+  sessionId: string;
+  summary: string;
+}
+
+export interface TerminalTaskSummaries {
+  enabled: boolean;
+  summaries: Record<string, TerminalTaskSummary>;
+}

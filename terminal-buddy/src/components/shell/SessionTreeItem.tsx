@@ -145,10 +145,10 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                   className="tree-rename-input"
                   value={renameValue}
                   onChange={(e) => onRenameValueChange(e.target.value)}
-                  onBlur={() => onRenameSubmit(child.id, child.label)}
+                  onBlur={() => onRenameSubmit(child.id, (child.data as TerminalSession | undefined)?.profileName ?? child.label)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
-                      onRenameSubmit(child.id, child.label);
+                      onRenameSubmit(child.id, (child.data as TerminalSession | undefined)?.profileName ?? child.label);
                     } else if (e.key === 'Escape') {
                       onRenameCancel();
                     }
@@ -178,7 +178,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                 onContextMenu={(e) => onContextMenu(e, child.id)}
               >
                 {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
-                <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
+                <span className="tree-name" title={child.label} style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
                   {child.label}
                   {(() => {
                     const childSession = child.data as TerminalSession | undefined;

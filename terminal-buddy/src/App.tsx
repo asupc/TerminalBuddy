@@ -1,3 +1,4 @@
+import { useTerminalTaskSummaries } from './hooks/useTerminalTaskSummaries';
 ﻿import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
@@ -55,6 +56,7 @@ import type { ExtraParamMode, Profile } from './types';
 import { PRESET_THEMES } from './types';
 
 function App() {
+  useTerminalTaskSummaries();
   const setProfiles = useAppStore(s => s.setProfiles);
   const setProjects = useAppStore(s => s.setProjects);
   const addSession = useAppStore(s => s.addSession);

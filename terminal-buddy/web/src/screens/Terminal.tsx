@@ -1,3 +1,4 @@
+import { terminalTaskTitle } from '../utils/terminalTaskTitle';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, MoreHorizontal, Unplug } from 'lucide-react';
 import { api } from '../api';
@@ -16,6 +17,7 @@ interface Props {
 
 export default function Terminal({ terminalId, profileName, loadingMode, owner }: Props) {
   const setView = useStore((s) => s.setView);
+  const task = useStore(state => state.taskSummaries[terminalId]);
   const session = useStore((s) => s.sessions.find((x) => x.id === terminalId));
   const connectionFatal = useStore((s) => s.connectionFatal);
   const retryFailedConnection = useStore((s) => s.retryFailedConnection);
@@ -37,6 +39,14 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
 
   // Web 池会话均可关闭，与创建端设备无关。
   const canClose = owner === 'web';
+  const displayTitle = terminalTaskTitle(session?.profileName || profileName, task);
+
+  useEffect(() => {
+    if (!task) return;
+    const previous = document.title;
+    document.title = `${displayTitle} — ${previous}`;
+    return () => { document.title = previous; };
+  }, [displayTitle, task]);
 
   const closeTerminal = () => {
     setMenuOpen(false);
@@ -70,7 +80,7 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
           <ArrowLeft size={20} />
         </button>
         <div className="terminal-title">
-          <span className="title">{profileName}</span>
+          <span className="title" title={displayTitle}>{displayTitle}</span>
           {session?.extraParamTag && (
             <span
               className="session-tag-chip"

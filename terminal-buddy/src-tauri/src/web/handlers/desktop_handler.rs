@@ -62,7 +62,7 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
         if let Some(path) = args.get(*key).and_then(Value::as_str).filter(|p| !p.trim().is_empty()) { scoped_file(path)?; }
     }
     if let Some(path) = args.get("options").and_then(|v| v.get("path")).and_then(Value::as_str) { scoped_file(path)?; }
-    if command == "get_claude_sessions_for_terminals" {
+    if matches!(command, "get_claude_sessions_for_terminals" | "get_terminal_task_summaries") {
         let ids: Vec<String> = argument(args, "terminalIds")?;
         for id in ids { app.state::<TerminalService>().authorize(&id, TerminalActor::Web, TerminalAction::View).map_err(|e| ApiError::Forbidden(e.to_string()))?; }
     }

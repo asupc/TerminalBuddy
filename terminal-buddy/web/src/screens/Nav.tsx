@@ -1,3 +1,4 @@
+import { terminalTaskTitle } from '../utils/terminalTaskTitle';
 import {
   useCallback,
   useEffect,
@@ -88,6 +89,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const toggleNavCollapsed = useStore((state) => state.toggleNavCollapsed);
 
   const [tab, setTab] = useState<'sessions' | 'profiles' | 'history' | 'files' | 'settings'>('sessions');
+  const taskSummaries = useStore(state => state.taskSummaries);
   const [error, setError] = useState('');
   const [filesPath, setFilesPath] = useState<string>();
   const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
@@ -139,7 +141,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   }, [sessions]);
 
   const openSession = (session: TerminalInfo) => {
-    const name = session.profileName || getTypeInfo(session.terminalType).label;
+    const name = terminalTaskTitle(session.profileName || getTypeInfo(session.terminalType).label, taskSummaries[session.id]);
     if (isDesktopSession(session)) {
       setTakeover(session);
       return;
@@ -218,7 +220,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       if (action === 'open') {
         if (isDesktopSession(session)) setTakeover(session);
         else {
-          const name = session.profileName || getTypeInfo(session.terminalType).label;
+          const name = terminalTaskTitle(session.profileName || getTypeInfo(session.terminalType).label, taskSummaries[session.id]);
           setView({ screen: 'terminal', terminalId: session.id, profileName: name, loadingMode: session.loadingMode, owner: 'web' });
         }
         return;
@@ -432,7 +434,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                         {!isCollapsed && (
                           <div className="tree-children">
                             {group.items.map((session) => {
-                              const name = session.profileName || getTypeInfo(session.terminalType).label;
+                              const name = terminalTaskTitle(session.profileName || getTypeInfo(session.terminalType).label, taskSummaries[session.id]);
                               const isActive = activeTerminalId === session.id;
                               return (
                                 <div className="tree-node" key={session.id}>

@@ -17,6 +17,7 @@ export async function getBackendAppSettings(): Promise<{
   configNavWidth: number;
   fileNavWidth: number;
   enableTabNavigation: boolean;
+  showTaskSummary: boolean;
   singleInstance: boolean;
   claudeHookConfigDir: string | null;
 }> {

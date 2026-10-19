@@ -608,6 +608,7 @@ fn release_terminal_resources(
 ) {
     // hook token + pending decision + 待确认通知卡片，本身幂等。
     ClaudeHookService::unregister_terminal(terminal_id);
+    let task_log_dir = crate::services::terminal_task_service::forget_terminal(terminal_id);
     // 模型终端的临时 --settings 文件与映射条目，幂等（无映射时为 no-op）。
     crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(terminal_id);
     // SSH 终端才有 session，其余为 no-op。
@@ -615,12 +616,14 @@ fn release_terminal_resources(
     // 丢弃 Web 订阅者 → 各 WS 的 recv() 返回 None → 向手机端发送 Exited。
     app.state::<WebServiceState>().close_all(terminal_id);
     let Some(mut backend) = backend else {
+        if let Some(dir) = task_log_dir { let _ = fs::remove_dir_all(dir); }
         return;
     };
     let terminal_id = terminal_id.to_string();
     let _cleanup_task = crate::runtime::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
         let exit_code = backend.close();
+        if let Some(dir) = task_log_dir { let _ = fs::remove_dir_all(dir); }
         log_debug(&format!(
             "[teardown] backend closed, id={}, reason={}, exit_code={}, elapsed_ms={}",
             terminal_id,
@@ -1197,6 +1200,10 @@ impl TerminalService {
         let env_vars = build_terminal_env(&terminal_id, Some(&profile_env));
         creation.hook_registered = true;
 
+        let init_commands = crate::services::terminal_task_service::prepare_launch(
+            &terminal_id, &terminal_type, startup_path.as_deref(), &env_vars, init_commands,
+        );
+
         creation.stage = "spawn-backend";
         let loading_mode = SettingsService::get_settings().terminal_loading_mode;
         log_debug(&format!(
@@ -1738,6 +1745,9 @@ impl TerminalService {
             terminal_id, display_name, init_cols, init_rows
         ));
         let output_buffer = Arc::new(Mutex::new(TerminalOutputBuffer::new(init_rows, init_cols)));
+        crate::services::terminal_task_service::prepare_launch(
+            &terminal_id, default_terminal_type(), None, &[], Vec::new(),
+        );
         self.insert_instance(TerminalInstance {
             id: terminal_id.clone(),
             profile_id: String::new(),
