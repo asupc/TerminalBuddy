@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAppStore } from '../stores/appStore';
+import { isBrowserClient } from '../services/platform';
 import { refreshTaskSummaries, terminalDisplayTitle, useTaskSummaryStore } from '../stores/taskSummaryStore';
 
 export function useTerminalTaskSummaries() {
@@ -44,6 +45,8 @@ export function useTerminalTaskSummaries() {
     ? terminalDisplayTitle(activeSession.profileName, task)
     : null;
   useEffect(() => {
+    // 浏览器标签页由主页标题设置管理，任务摘要只更新桌面窗口标题。
+    if (isBrowserClient()) return;
     if (!title && !titleChanged.current) return;
     if (title && !titleChanged.current) baseTitle.current = document.title || 'TerminalBuddy';
     titleChanged.current = title !== null;

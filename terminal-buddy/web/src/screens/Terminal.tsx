@@ -41,13 +41,6 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
   const canClose = owner === 'web';
   const displayTitle = terminalTaskTitle(session?.profileName || profileName, task);
 
-  useEffect(() => {
-    if (!task) return;
-    const previous = document.title;
-    document.title = `${displayTitle} — ${previous}`;
-    return () => { document.title = previous; };
-  }, [displayTitle, task]);
-
   const closeTerminal = () => {
     setMenuOpen(false);
     if (canClose) setConfirmClose(true);
