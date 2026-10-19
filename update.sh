@@ -9,6 +9,7 @@ IMAGE="${TB_FNOS_IMAGE:-terminal-buddy:server}"
 SOURCE_DIR="${PWD}"
 HEALTH_TIMEOUT="${TB_UPDATE_HEALTH_TIMEOUT:-180}"
 DETACH=0
+KEEP_SHELL=1
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
@@ -25,12 +26,15 @@ usage() {
   --image IMAGE:TAG      成功后发布的镜像标签，默认 terminal-buddy:server
   --health-timeout SEC   新旧服务健康检查的最长等待秒数，默认 180
   --detach              启动独立更新容器后立即返回，不跟随日志
+  --exit-on-success     更新成功后直接结束脚本，不进入交互式 Bash
   -h, --help            显示帮助
 
 不执行 git pull。构建时旧服务继续运行，切换和快照备份期间会短暂中断。
 可从宿主机或自己的网页终端执行；网页连接断开后，更新与失败回退仍会继续。
 需能访问 /var/run/docker.sock；宿主机账号无权限时使用 sudo bash update.sh。
 更新日志、data/home 快照保存在独立更新容器中，不会自动删除。
+交互终端中更新成功后会进入 Bash 命令行，保留窗口并可继续操作。
+更新自身容器时原网页终端仍会断开；需要保留窗口时请从飞牛 SSH 终端运行。
 HELP
 }
 
@@ -41,6 +45,7 @@ while [ "$#" -gt 0 ]; do
     --image) IMAGE="${2:?--image 需要镜像标签}"; shift ;;
     --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout 需要秒数}"; shift ;;
     --detach) DETACH=1 ;;
+    --exit-on-success) KEEP_SHELL=0 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "未知参数：$1（运行 bash update.sh --help 查看用法）" ;;
   esac
@@ -177,3 +182,9 @@ docker logs --follow "${UPDATER}" || true
 EXIT_CODE="$(docker wait "${UPDATER}")"
 [ "${EXIT_CODE}" = 0 ] || fail "更新未完成，退出码 ${EXIT_CODE}；回退结果与恢复材料位置见 docker logs ${UPDATER}"
 log "更新完成：${CONTAINER}"
+if [ "${KEEP_SHELL}" = 1 ] && [ -t 0 ] && [ -t 1 ]; then
+  log "终端已保留，可以继续输入命令；输入 exit 返回上级命令行或关闭窗口"
+  # 更新已完成，移除脚本专用清理和信号处理，再交给交互式 shell。
+  trap - EXIT HUP INT TERM
+  exec /bin/bash -i
+fi

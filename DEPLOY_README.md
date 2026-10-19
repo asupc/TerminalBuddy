@@ -151,7 +151,8 @@ sudo 密码来源（按优先级）：环境变量 `TB_FNOS_PASSWORD` → 凭据
 
 ```bash
 cd /vol1/1000/docker/terminal-buddy/workspace/terminal-buddy
-bash update.sh                       # 构建当前源码并更新，不执行 git pull
+bash update.sh                       # 构建当前源码并更新，成功后保留交互式命令行
+bash update.sh --exit-on-success     # 成功后结束脚本，适合自动化调用
 bash update.sh --detach              # 启动独立切换任务后返回
 bash update.sh --container terminal-buddy --health-timeout 300
 ```
@@ -160,6 +161,12 @@ bash update.sh --container terminal-buddy --health-timeout 300
 `--source-dir /实际源码目录` 指定。宿主机账号没有 Docker 权限时使用 `sudo bash update.sh`。
 支持 `TB_FNOS_CONTAINER`、`TB_FNOS_IMAGE` 和 `TB_UPDATE_HEALTH_TIMEOUT` 环境变量，
 完整选项见 `bash update.sh --help`。
+
+默认在交互终端中更新成功后进入 Bash 命令行，窗口保留，可继续输入命令；
+输入 `exit` 才返回上级命令行或关闭窗口。无交互终端时直接返回，
+也可用 `--exit-on-success` 显式关闭这一行为。
+如果是在被更新容器自身的网页终端里运行，旧容器停止时原终端进程仍会终止；
+需要在更新前后保留同一个窗口，请从飞牛 SSH 终端执行。
 
 更新沿用现有容器的端口、环境变量、网络、工作目录、Docker socket 附加组和绑定挂载，
 不会重新生成 Compose 或覆盖 `.env`。适用于 `deploy-fnos.sh` 创建的绑定挂载部署；
