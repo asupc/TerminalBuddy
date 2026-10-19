@@ -3035,7 +3035,7 @@ textarea:focus-visible {
   border-color: var(--accent);
 }
 
-/* 摘要会话标签：工具、模型、启动连接在第一行，摘要独占第二行。 */
+/* 摘要会话标签：摘要独占第一行，工具、模型、启动连接在第二行。 */
 .tab-nav-item.tab-nav-task-item {
   align-items: flex-start;
   gap: 6px;
