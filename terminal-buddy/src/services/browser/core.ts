@@ -1,5 +1,6 @@
 import { emitLocal, getToken, logout, request, serverPlatform, windowsBuildNumber, socketUrl, uploadFiles } from './connection';
-import { isTerminalUpdating } from './updateState';
+import { hasUpdatingTerminals } from './updateState';
+import { forgetTerminalBuddyUpdateOutput, handleTerminalBuddyUpdateOutput } from './updateMonitor';
 
 interface TerminalConnection {
   socket: WebSocket;
@@ -24,6 +25,7 @@ export async function subscribeTerminal(id: string, callback: (output: string) =
     current.callbacks.delete(callback);
     if (current.callbacks.size) return;
     current.closed = true; clearTimeout(current.retry); current.socket.close(); terminals.delete(id);
+    forgetTerminalBuddyUpdateOutput(id);
   };
 }
 
@@ -39,10 +41,13 @@ function attach(id: string, connection: TerminalConnection): void {
         emitLocal('terminal-web-takeover-ended', id);
       }
     }
-    if (message.type === 'output') connection.callbacks.forEach(callback => callback(message.data ?? ''));
+    if (message.type === 'output') {
+      handleTerminalBuddyUpdateOutput(id, message.data ?? '');
+      connection.callbacks.forEach(callback => callback(message.data ?? ''));
+    }
     if (message.type === 'error') console.error(message.message);
     // 自更新停止旧容器时会收到 exited；此时保留会话并持续重连，由更新监视层接管显示。
-    if (message.type === 'exited' && !isTerminalUpdating(id)) {
+    if (message.type === 'exited' && !hasUpdatingTerminals()) {
       connection.closed = true;
       emitLocal('terminal-closed', id);
     }
@@ -50,8 +55,8 @@ function attach(id: string, connection: TerminalConnection): void {
   socket.onclose = () => {
     if (connection.closed || !getToken()) return;
     connection.retry = setTimeout(() => {
-      // 重连时重置画面，再接收服务器滚动历史，避免显示两份输出。
-      connection.callbacks.forEach(callback => callback('\x1bc'));
+      // 自更新时保留画面；普通重连清屏后再接收滚动历史。
+      if (!hasUpdatingTerminals()) connection.callbacks.forEach(callback => callback('\x1bc'));
       connection.socket = new WebSocket(socketUrl(`/ws/terminal/${encodeURIComponent(id)}?viewport=1&takeover=0`));
       attach(id, connection);
     }, 1500);

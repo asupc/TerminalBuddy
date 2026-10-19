@@ -23,12 +23,28 @@ write_update_status() {
 
 # 完整更新日志放在持久数据目录；新版服务启动后通过受认证保护的 API 读取。
 mkdir -p "${UPDATE_PUBLIC_DIR}"
-: > "${UPDATE_LOG}"
+# 仅首次启动时初始化；自动重试回退不能覆盖上次的构建与切换日志。
+if [ ! -f "${STATE}/log-initialized" ]; then
+  if [ -f /tmp/tb-update-build.log ]; then
+    cat /tmp/tb-update-build.log > "${UPDATE_LOG}"
+  else
+    : > "${UPDATE_LOG}"
+  fi
+  touch "${STATE}/log-initialized"
+fi
 chmod 0755 "${UPDATE_PUBLIC_DIR}"
 chmod 0644 "${UPDATE_LOG}"
 write_update_status running
+exec 3>&1
 exec > >(tee -a "${UPDATE_LOG}") 2>&1
-chmod 0644 "${UPDATE_LOG}"
+LOG_WRITER_PID=$!
+
+# 先等日志全部写入，再发布终态，保证网页拿到终态时也能读到最后一行。
+complete_update_status() {
+  exec 1>&3 2>&3 3>&-
+  wait "${LOG_WRITER_PID}" || true
+  write_update_status "$1"
+}
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 fail() { printf '[错误] %s\n' "$*" >&2; exit 1; }
@@ -58,7 +74,12 @@ restore_directory() {
   [ -f "${archive}" ] || return 1
   # 仅清空预先确认的两个绑定目录；保留挂载点本身、目录属主及权限。
   case "${path}" in /data|/home/terminalbuddy) ;; *) return 1 ;; esac
-  find "${path}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
+  if [ "${path}" = /data ]; then
+    # 更新记录不属于业务快照；保留目录及打开的日志文件，供旧服务恢复后继续读取。
+    find "${path}" -mindepth 1 -maxdepth 1 ! -name .terminal-buddy-update -exec rm -rf -- {} + || return 1
+  else
+    find "${path}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
+  fi
   tar --acls --xattrs --numeric-owner --same-owner -xpf "${archive}" -C "${path}" || return 1
 }
 
@@ -155,7 +176,6 @@ finish() {
   trap '' HUP INT TERM
   set +e
   if [ -f "${STATE}/committed" ]; then
-    write_update_status updated || true
     chmod 0644 "${UPDATE_LOG}" 2>/dev/null || true
     docker update --restart=no "${UPDATER}" >/dev/null 2>&1
     if [ "${KEEP_ROLLBACK}" = 1 ]; then
@@ -163,22 +183,23 @@ finish() {
     else
       schedule_cleanup || log "警告：自动清理任务启动失败，请稍后手动清理 ${BACKUP_NAME} 与 ${UPDATER}"
     fi
+    complete_update_status updated || true
     exit 0
   fi
   [ "${code}" -ne 0 ] || code=1
   if rollback; then
     printf 'rolled-back\n' > "${STATE}/result"
-    write_update_status rolled-back || true
     chmod 0644 "${UPDATE_LOG}" 2>/dev/null || true
     docker update --restart=no "${UPDATER}" >/dev/null 2>&1
     log "更新失败，原服务已保留或恢复；更新任务与快照保留供排查"
+    complete_update_status rolled-back || true
     exit "${code}"
   fi
   printf 'rollback-failed\n' > "${STATE}/result"
-  write_update_status rollback-failed || true
   chmod 0644 "${UPDATE_LOG}" 2>/dev/null || true
   log "回退未完成，Docker 将自动重启更新任务继续恢复。请勿删除原容器或本更新容器。" >&2
   log "查看日志：docker logs ${UPDATER}；恢复材料：${UPDATER}:${STATE}/" >&2
+  complete_update_status rollback-failed || true
   exit 2
 }
 trap finish EXIT

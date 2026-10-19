@@ -17,6 +17,7 @@ import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { TerminalSession } from '../types';
 import { isBrowserClient, clientTerminalOwner } from './platform';
+import { hasUpdatingTerminals } from './browser/updateState';
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
 /** extraParams 里历史遗留的 --resume 参数；UUID 至少 8 位才按会话 ID 处理。 */
@@ -271,19 +272,19 @@ let browserRestoreInFlight: Promise<BrowserSessionRestoreOutcome> | null = null;
  * 浏览器端在「后端没有任何存活终端」时恢复上次页签（容器重启后的主路径）。
  * 服务端一次性租约保证多个浏览器同时打开时只有一份 PTY / 一份 claude --resume。
  */
-export function ensureBrowserSessionsRestored(): Promise<BrowserSessionRestoreOutcome> {
+export function ensureBrowserSessionsRestored(afterUpdate = false): Promise<BrowserSessionRestoreOutcome> {
   if (!browserRestoreInFlight) {
-    browserRestoreInFlight = runBrowserSessionRestore()
+    browserRestoreInFlight = runBrowserSessionRestore(afterUpdate)
       .finally(() => { browserRestoreInFlight = null; });
   }
   return browserRestoreInFlight;
 }
 
-async function runBrowserSessionRestore(): Promise<BrowserSessionRestoreOutcome> {
+async function runBrowserSessionRestore(afterUpdate: boolean): Promise<BrowserSessionRestoreOutcome> {
   if (!isBrowserClient() || !isAppSettingsInitialized()) return 'not-needed';
   const settings = getAppSettings();
   // dev 下 Vite 重启频繁，自动拉起 claude --resume 会很吵；与启动恢复保持一致。
-  if (!settings.restoreTabsOnStartup || import.meta.env.DEV) return 'not-needed';
+  if (!afterUpdate && (hasUpdatingTerminals() || !settings.restoreTabsOnStartup || import.meta.env.DEV)) return 'not-needed';
 
   let live;
   try {
@@ -338,9 +339,18 @@ async function runBrowserSessionRestore(): Promise<BrowserSessionRestoreOutcome>
   }
 }
 
+/** 显式自更新后恢复当前网页连接，不刷新页面，也不依赖启动恢复开关。 */
+export async function reconnectBrowserAfterUpdate(): Promise<boolean> {
+  await resyncChain;
+  const outcome = await ensureBrowserSessionsRestored(true);
+  if (outcome === 'failed' || outcome === 'claimed-elsewhere') return false;
+  await reconcileBackendSessions(true);
+  return (await listTerminals()).length > 0;
+}
+
 /** 关闭恢复开关但页面跨容器重启时，清掉前端残留的失效页签。 */
 async function clearStaleBrowserSessions(): Promise<void> {
-  if (!isBrowserClient()) return;
+  if (!isBrowserClient() || hasUpdatingTerminals()) return;
   const terminals = await listTerminals().catch(() => null);
   if (!terminals || terminals.length > 0) return;
   const stale = useAppStore.getState().sessions.filter(session => session.sessionType !== 'editor');
@@ -373,7 +383,7 @@ interface BrowserResyncOptions {
 export function scheduleBrowserResync(options: BrowserResyncOptions = {}): void {
   if (!isBrowserClient()) return;
   resyncChain = resyncChain.then(async () => {
-    if (!startupRestoreComplete) return;
+    if (!startupRestoreComplete || hasUpdatingTerminals()) return;
     const settings = getAppSettings();
     if (settings.restoreTabsOnStartup && !import.meta.env.DEV) {
       if (options.allowRestore) await ensureBrowserSessionsRestored();
@@ -409,7 +419,8 @@ export async function restoreTabs() {
  * 加载完成（约 rust+415ms）。事件发进还没有监听器的窗口就被丢弃，双击的 bat 于是
  * 在一间看不见的会话里跑完。启动流程末尾按后端真实存活列表补一次账。
  */
-export async function reconcileBackendSessions() {
+export async function reconcileBackendSessions(afterUpdate = false) {
+  if (hasUpdatingTerminals() && !afterUpdate) return;
   let terminals;
   try {
     terminals = await listTerminals();

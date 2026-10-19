@@ -23,8 +23,8 @@ emit_update_marker() {
   printf '\033]7777;terminal-buddy-update;%s;%s\033\\' "${phase}" "${RUN_ID:-unknown}"
 }
 fail() {
-  emit_update_marker end
   printf '[错误] %s\n' "$*" >&2
+  emit_update_marker failed
   exit 1
 }
 # 所有操作固定使用飞牛本机的 Docker，避免 context 指向其他主机。
@@ -52,7 +52,7 @@ data/home 快照会保存在独立更新容器中供回退和排查，不会自�
 可设置 TB_UPDATE_KEEP_ROLLBACK=1 或使用 --keep-rollback 保留成功更新的回退材料；
 TB_UPDATE_CLEANUP_DELAY 可调整清理前保留秒数（默认 10 秒）。
 交互终端中更新成功后会进入 Bash 命令行，保留窗口并可继续操作。
-更新自身容器时原网页终端仍会断开；需要保留窗口时请从飞牛 SSH 终端运行。
+更新自身容器时原 PTY 会结束；完整网页保留日志面板，服务恢复后自动创建终端连接。
 HELP
 }
 
@@ -163,8 +163,6 @@ RUN_ID="$(date -u '+%Y%m%d%H%M%S')-$$-${RANDOM}"
 CANDIDATE_IMAGE="${IMAGE}-update-${RUN_ID}"
 BACKUP_NAME="${CONTAINER}-backup-${RUN_ID}"
 CANDIDATE_NAME="${CONTAINER}-candidate-${RUN_ID}"
-# 让浏览器端在旧容器停止前进入自更新监视模式，保留窗口并持续重连。
-emit_update_marker start
 if docker inspect --type container "${UPDATER}" >/dev/null 2>&1; then
   case "$(docker inspect --format '{{.State.Status}}' "${UPDATER}")" in
     exited)
@@ -197,9 +195,13 @@ docker create --name "${UPDATER}" --network none --user 0 --workdir /tmp \
 
 # 只清理尚未启动的更新任务；启动后无论终端断开还是 Ctrl+C，都由它继续负责。
 WORKER_STARTED=0
+BUILD_LOG=''
 cleanup() {
+  local code="$?"
+  [ -z "${BUILD_LOG}" ] || rm -f -- "${BUILD_LOG}"
   if [ "${WORKER_STARTED}" = 0 ]; then
     docker rm "${UPDATER}" >/dev/null 2>&1 || true
+    [ "${code}" = 0 ] || emit_update_marker failed
   fi
 }
 trap cleanup EXIT
@@ -208,8 +210,13 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 docker cp "${WORKER_SCRIPT}" "${UPDATER}:/tmp/tb-update-worker.sh"
 
-log "使用当前源码构建：${SOURCE_DIR}（原服务保持运行，不执行 git pull）"
-if ! docker build --file "${SOURCE_DIR}/Dockerfile" --tag "${CANDIDATE_IMAGE}" "${SOURCE_DIR}"; then
+# 在旧服务停止前通知网页；plain 输出可完整回放，不依赖 TTY 动态刷新。
+emit_update_marker start
+BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/terminal-buddy-build.XXXXXX")"
+if ! {
+  log "使用当前源码构建：${SOURCE_DIR}（原服务保持运行，不执行 git pull）"
+  docker build --progress=plain --file "${SOURCE_DIR}/Dockerfile" --tag "${CANDIDATE_IMAGE}" "${SOURCE_DIR}"
+} 2>&1 | tee "${BUILD_LOG}"; then
   fail "镜像构建失败，原容器、原镜像标签及数据均未切换"
 fi
 # 构建可能很久：切换前再次确认目标还是同一个运行中的容器。
@@ -218,13 +225,19 @@ fi
   || fail "构建期间原容器已被其他操作改变，停止本次更新"
 
 emit_update_marker switch
-log "启动独立更新任务；浏览器窗口会保持更新监视并自动重连"
-log "新版网页会显示本地构建日志与独立更新容器日志，并在完成后自动重连"
-if [ "${KEEP_ROLLBACK}" = 1 ]; then
-  log "原容器将保留为 ${BACKUP_NAME}；快照保存在更新容器 /tmp/terminal-buddy-update/"
-else
-  log "更新成功后 ${CLEANUP_DELAY} 秒将自动清理旧容器、更新容器和临时镜像标签"
-fi
+{
+  log "启动独立更新任务；浏览器窗口会保持更新监视并自动重连"
+  log "构建和切换日志将持久保存，服务恢复后自动补齐，并重新连接终端"
+  if [ "${KEEP_ROLLBACK}" = 1 ]; then
+    log "原容器将保留为 ${BACKUP_NAME}；快照保存在更新容器 /tmp/terminal-buddy-update/"
+  else
+    log "更新成功后 ${CLEANUP_DELAY} 秒将自动清理旧容器、更新容器和临时镜像标签"
+  fi
+} | tee -a "${BUILD_LOG}"
+# worker 启动时将构建日志写入持久目录，再继续追加切换和回退日志。
+docker cp "${BUILD_LOG}" "${UPDATER}:/tmp/tb-update-build.log"
+rm -f -- "${BUILD_LOG}"
+BUILD_LOG=''
 # 先解除本进程的清理职责，避免 start 成功的一瞬间终端被关闭而误删更新任务。
 WORKER_STARTED=1
 if ! docker start "${UPDATER}" >/dev/null; then

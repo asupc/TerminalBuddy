@@ -47,7 +47,9 @@ pub async fn status(
         if status.update_id != query.id {
             return Err(ApiError::NotFound("更新记录不存在".to_string()));
         }
-        let log = std::fs::read_to_string(dir.join("update.log")).unwrap_or_default();
+        let log = std::fs::read(dir.join("update.log"))
+            .map_err(|_| ApiError::Internal("读取更新日志失败".to_string()))?;
+        let log = String::from_utf8_lossy(&log).into_owned();
         Ok(Json(UpdateStatusResponse {
             update_id: status.update_id,
             status: status.status,
