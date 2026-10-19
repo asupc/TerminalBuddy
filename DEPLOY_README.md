@@ -12,6 +12,8 @@
 | --- | --- |
 | `deploy-centos.sh` | **发起端（→ CentOS）**：拉代码 → 免密认证 → 打包上传 → 目标机执行 → 自检。可在任意装了 ssh/scp/tar/curl 的机器上跑 |
 | `deploy-fnos.sh` | **发起端（→ 飞牛 fnOS）**：打包源码 → 上传 → 飞牛上构建镜像并重建容器 → 自检 |
+| `update.sh` | **飞牛本地更新**：使用当前目录源码构建镜像，由独立容器切换服务，失败自动恢复原容器与数据 |
+| `scripts/update-fnos-container.sh` | `update.sh` 的独立更新执行体：克隆原部署配置、备份数据、切换与故障恢复 |
 | `scripts/deploy-centos-remote.sh` | CentOS 目标端执行体（上传后以 root 运行）：解压、生成 compose、基础镜像兜底、构建/载入镜像、重建容器、健康检查 |
 | `scripts/deploy-fnos-remote.sh` | 飞牛目标端执行体（上传后以 sudo 运行）：目录属主、生成 compose、构建/载入镜像、重建容器 |
 
@@ -141,6 +143,52 @@ sudo 密码来源（按优先级）：环境变量 `TB_FNOS_PASSWORD` → 凭据
 - **Docker socket**：飞牛该 socket 的 GID 为 994，脚本自动读取并写入 `group_add`。
 - **基础镜像兜底**（在飞牛上构建时使用）：本地命中 → 离线备份
   （`<应用目录>/base-images/`）→ 备用镜像源，避免飞牛镜像加速源故障时构建第一步就失败。
+
+### 在飞牛上用当前源码更新自己（update.sh）
+
+在包含 `Dockerfile` 和 `terminal-buddy/` 的源码根目录执行。既可在飞牛 SSH 终端中运行，
+也可在 TerminalBuddy 自己的网页终端中运行：
+
+```bash
+cd /vol1/1000/docker/terminal-buddy/workspace/terminal-buddy
+bash update.sh                       # 构建当前源码并更新，不执行 git pull
+bash update.sh --detach              # 启动独立切换任务后返回
+bash update.sh --container terminal-buddy --health-timeout 300
+```
+
+源码也可位于原部署的 `/vol1/1000/docker/terminal-buddy/src`，或通过
+`--source-dir /实际源码目录` 指定。宿主机账号没有 Docker 权限时使用 `sudo bash update.sh`。
+支持 `TB_FNOS_CONTAINER`、`TB_FNOS_IMAGE` 和 `TB_UPDATE_HEALTH_TIMEOUT` 环境变量，
+完整选项见 `bash update.sh --help`。
+
+更新沿用现有容器的端口、环境变量、网络、工作目录、Docker socket 附加组和绑定挂载，
+不会重新生成 Compose 或覆盖 `.env`。适用于 `deploy-fnos.sh` 创建的绑定挂载部署；
+自动删除容器、命名卷、静态 IP、嵌套数据挂载等无法安全原样恢复的配置会在切换前拒绝。
+
+恢复流程：
+
+1. 检查当前源码和原服务；使用独立标签构建镜像，构建失败时旧服务继续运行。
+2. 由固定名称 `terminal-buddy-updater` 的独立容器执行后续操作，防止并发更新。
+   网页终端断开不影响切换；更新任务意外退出或 Docker 重启后会继续恢复未完成的切换。
+3. 先创建停止状态的候选容器，再停旧服务，将完整 `/data` 和 `/home/terminalbuddy`
+   备份到更新容器中，包含 SQLite、登录密钥、CLI 安装和配置。停机时间包含快照耗时，
+   请为两份目录的快照预留磁盘空间；项目工作区不参与快照恢复。
+4. 保留并重命名旧容器，启动新版，通过 Docker 健康检查、连续 HTTP 检查、目录写入和
+   Docker socket 检查后才发布正式镜像标签。
+5. 切换失败时先移除新版，恢复启动前的数据快照，再恢复原容器名称、重启策略并启动，
+   确认旧服务健康。回退暂时失败时，独立任务会自动重试，恢复材料持续保留。
+
+```bash
+docker logs -f terminal-buddy-updater   # 重连后查看更新或回退结果
+docker cp terminal-buddy-updater:/tmp/terminal-buddy-update/ ./terminal-buddy-update-backup
+```
+
+成功更新后，旧容器保留为 `terminal-buddy-backup-<本次编号>`，保持停止且禁用自动重启；
+旧镜像和快照也保留。再次更新时，上一更新容器会改名为
+`terminal-buddy-updater-history-<编号>`，保留原日志与快照。
+需要排查时，快照目录中的 `result` 为 `updated`、`rolled-back` 或 `rollback-failed`，
+`original-container.json` 保存更新前的完整容器配置。这些文件包含用户数据和配置，
+应与正式数据采用相同的保管方式。此脚本用于更新已有健康服务，首次部署仍使用 `deploy-fnos.sh`。
 
 ### 首次登录
 
