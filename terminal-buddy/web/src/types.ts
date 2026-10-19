@@ -323,6 +323,7 @@ export interface TerminalTaskSummary {
   provider: 'claude' | 'codex';
   sessionId: string;
   summary: string;
+  model?: string;
 }
 
 export interface TerminalTaskSummaries {

@@ -1,4 +1,4 @@
-import { terminalDisplayTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
+import { terminalTabTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
 import { FileText, GitBranch, History, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
@@ -294,7 +294,7 @@ export const TerminalTabBar: FC = () => {
                   <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
                 ) : null;
               })()}
-              <span className="terminal-tab-name" title={terminalDisplayTitle(session.profileName, taskSummaries[session.id])} style={session.tabColor ? { color: session.tabColor } : undefined}>{terminalDisplayTitle(session.profileName, taskSummaries[session.id])}</span>
+              <span className="terminal-tab-name" title={terminalTabTitle(session.profileName, taskSummaries[session.id])} style={session.tabColor ? { color: session.tabColor } : undefined}>{terminalTabTitle(session.profileName, taskSummaries[session.id])}</span>
               {/* Docker 端所有会话都来自网页端，Web 标签没有区分度，故隐藏 */}
               {session.owner === 'web' && !isDockerClient() && <span className="terminal-owner-badge">Web</span>}
               {session.owner !== 'web' && terminalWebTakeovers[session.id] && (

@@ -543,3 +543,82 @@
   font-size: 11px;
   margin-left: 2px;
 }
+
+/* 摘要会话标签：工具、模型、项目在第一行，摘要独占第二行。 */
+.tab-nav-item.tab-nav-task-item {
+  align-items: flex-start;
+  gap: 6px;
+  min-height: 48px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.tab-nav-task-item > .tab-nav-dot {
+  margin-top: 4px;
+}
+
+.tab-nav-task-label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tab-nav-task-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 16px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.tab-nav-task-provider {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tab-nav-task-model {
+  flex: 0 1 auto;
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-nav-task-project {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-nav-task-meta > .tab-nav-tag-chip {
+  flex-shrink: 1;
+  max-width: 52px;
+}
+
+.tab-nav-task-summary {
+  display: block;
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-nav-task-item > .tree-item-end {
+  margin-top: 1px;
+}
+
+.tab-nav-task-item > .tab-nav-owner-badge,
+.tab-nav-task-item > .tab-nav-takeover-badge {
+  margin-top: 3px;
+}

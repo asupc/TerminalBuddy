@@ -1,4 +1,4 @@
-import { terminalDisplayTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
+import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { FileText, X } from 'lucide-react';
@@ -191,7 +191,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
             const isEditor = session.sessionType === 'editor';
             return {
               id: session.id,
-              label: terminalDisplayTitle(session.profileName, taskSummaries[session.id]),
+              label: session.profileName,
               icon: (
                 <>
                   {isEditor ? (
@@ -216,7 +216,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                           />
                         );
                       })()}
-                      {session.extraParamTag && (
+                      {session.extraParamTag && !taskSummaries[session.id] && (
                         <span
                           className="tab-nav-tag-chip"
                           style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
@@ -226,6 +226,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                         </span>
                       )}
                       {(() => {
+                        if (taskSummaries[session.id]) return null;
                         const modelRef = parseModelRef(session.extraParams ?? '');
                         return modelRef ? (
                           <span className="tab-nav-model-chip" title="供应商模型">{modelRef.modelId}</span>

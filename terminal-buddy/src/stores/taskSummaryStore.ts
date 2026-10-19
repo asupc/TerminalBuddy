@@ -5,6 +5,7 @@ export interface TerminalTaskSummary {
   provider: 'claude' | 'codex';
   sessionId: string;
   summary: string;
+  model?: string;
 }
 
 interface TaskSummaryState {
@@ -49,7 +50,12 @@ export async function setTaskSummaryEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-/** 摘要放在前面，窄侧栏也能区分同一项目的窗口；原名称保持独立。 */
+/** 横向会话标签只显示摘要，未取得摘要时显示原名称。 */
+export function terminalTabTitle(name: string, task?: TerminalTaskSummary): string {
+  return task?.summary || name;
+}
+
+/** 活动窗口和分屏标题保留原名称作为上下文。 */
 export function terminalDisplayTitle(name: string, task?: TerminalTaskSummary): string {
   return task?.summary ? `${task.summary} · ${name}` : name;
 }

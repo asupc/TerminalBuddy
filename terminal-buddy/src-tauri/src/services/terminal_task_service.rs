@@ -17,6 +17,8 @@ pub struct TerminalTaskSummary {
     pub provider: String,
     pub session_id: String,
     pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -34,6 +36,7 @@ struct TrackedTerminal {
     transcript: Option<PathBuf>,
     stamp: Option<(SystemTime, u64)>,
     title: Option<String>,
+    model: Option<String>,
 }
 
 fn terminals() -> &'static Mutex<HashMap<String, TrackedTerminal>> {
@@ -76,6 +79,7 @@ fn bind(tracked: &mut TrackedTerminal, provider: &str, session_id: &str) {
     tracked.transcript = None;
     tracked.stamp = None;
     tracked.title = None;
+    tracked.model = None;
     tracked.prompt = None;
 }
 
@@ -230,11 +234,16 @@ fn resolve_title(
         let stamp = fs::metadata(path).ok().and_then(|meta| Some((meta.modified().ok()?, meta.len())));
         if stamp.is_some() && stamp != tracked.stamp {
             if let Some(content) = transcript_excerpt(path) {
-                tracked.title = if provider == "claude" {
+                let (title, model) = if provider == "claude" {
                     let analysis = claude_history_service::analyze_transcript(&content);
                     let title = claude_history_service::display_title(None, analysis.title.as_deref(), analysis.first_prompt.as_deref(), "");
-                    compact_title(&title)
-                } else { codex_transcript::parse(&content).title.and_then(|value| compact_title(&value)) };
+                    (compact_title(&title), analysis.model)
+                } else {
+                    let transcript = codex_transcript::parse(&content);
+                    (transcript.title.and_then(|value| compact_title(&value)), transcript.model)
+                };
+                tracked.title = title;
+                tracked.model = model;
                 tracked.stamp = stamp;
             }
         }
@@ -243,7 +252,7 @@ fn resolve_title(
         registries.entry(root.clone()).or_insert_with(|| codex_history_service::thread_names(root)).get(&id).cloned()
     } else { None };
     let summary = custom.or(registry).or_else(|| tracked.title.clone()).or_else(|| tracked.prompt.clone())?;
-    Some(TerminalTaskSummary { provider, session_id: id, summary })
+    Some(TerminalTaskSummary { provider, session_id: id, summary, model: tracked.model.clone() })
 }
 
 pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalTaskSummary> {

@@ -1,4 +1,5 @@
-import { terminalTaskTitle } from '../utils/terminalTaskTitle';
+import { taskLaunchModel, terminalTaskTitle } from '../utils/terminalTaskTitle';
+import { SessionTaskLabel } from '../components/SessionTaskLabel';
 import {
   useCallback,
   useEffect,
@@ -77,6 +78,7 @@ function getSessionDotColor(
 
 export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen' | 'sidebar' }) {
   const profiles = useStore((state) => state.profiles);
+  const projects = useStore((state) => state.projects);
   const setProfiles = useStore((state) => state.setProfiles);
   const setProjects = useStore((state) => state.setProjects);
   const sessions = useStore((state) => state.sessions);
@@ -434,12 +436,16 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                         {!isCollapsed && (
                           <div className="tree-children">
                             {group.items.map((session) => {
-                              const name = terminalTaskTitle(session.profileName || getTypeInfo(session.terminalType).label, taskSummaries[session.id]);
+                              const name = session.profileName || getTypeInfo(session.terminalType).label;
+                              const task = taskSummaries[session.id];
+                              const profile = profiles.find(profile => profile.id === session.profileId);
+                              const projectName = projects.find(project => project.name === session.group || project.name === profile?.group)?.name || name;
+                              const fallbackModel = [session.extraStartupParams, ...(profile?.startupCommands ?? [])].map(taskLaunchModel).find(Boolean);
                               const isActive = activeTerminalId === session.id;
                               return (
                                 <div className="tree-node" key={session.id}>
                                   <div
-                                    className={`tree-item tab-nav-item${isActive ? ' active' : ''}`}
+                                    className={`tree-item tab-nav-item${task ? ' tab-nav-task-item' : ''}${isActive ? ' active' : ''}`}
                                     style={{ paddingLeft: 20 }}
                                     role="button"
                                     tabIndex={0}
@@ -472,7 +478,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                       aria-hidden="true"
                                       style={getSessionDotColor(profiles, session.profileId)}
                                     />
-                                    {session.extraParamTag && (
+                                    {session.extraParamTag && !task && (
                                       <span
                                         className="tab-nav-tag-chip"
                                         style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
@@ -480,7 +486,10 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                         {session.extraParamTag}
                                       </span>
                                     )}
-                                    <span className="tab-nav-name">{name}</span>
+                                    {task ? (
+                                      <SessionTaskLabel task={task} projectName={projectName} fallbackModel={fallbackModel}
+                                        tag={session.extraParamTag} tagColor={session.extraParamTagColor} color={profile?.tabColor} />
+                                    ) : <span className="tab-nav-name" title={name}>{name}</span>}
                                     {session.owner === 'web' && (
                                       <span className="tab-nav-owner-badge">
                                         {session.creator === 'mobile' ? '手机' : 'WEB'}
