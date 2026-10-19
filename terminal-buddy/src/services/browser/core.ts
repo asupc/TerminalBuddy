@@ -1,4 +1,5 @@
 import { emitLocal, getToken, logout, request, serverPlatform, windowsBuildNumber, socketUrl, uploadFiles } from './connection';
+import { isTerminalUpdating } from './updateState';
 
 interface TerminalConnection {
   socket: WebSocket;
@@ -40,7 +41,11 @@ function attach(id: string, connection: TerminalConnection): void {
     }
     if (message.type === 'output') connection.callbacks.forEach(callback => callback(message.data ?? ''));
     if (message.type === 'error') console.error(message.message);
-    if (message.type === 'exited') { connection.closed = true; emitLocal('terminal-closed', id); }
+    // 自更新停止旧容器时会收到 exited；此时保留会话并持续重连，由更新监视层接管显示。
+    if (message.type === 'exited' && !isTerminalUpdating(id)) {
+      connection.closed = true;
+      emitLocal('terminal-closed', id);
+    }
   };
   socket.onclose = () => {
     if (connection.closed || !getToken()) return;

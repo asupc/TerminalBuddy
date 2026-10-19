@@ -4,6 +4,8 @@ const callbacks = new Map<string, Set<EventCallback>>();
 // 关掉浏览器 token 就没了，用户每次重新打开都要登录——即使后端 JWT 还有 30 天有效期。
 // localStorage 则在关闭浏览器、重启服务端（签名密钥持久化在数据目录 jwt.key）后依然保留，
 // 只要 JWT 没到期就能直接恢复登录。
+import { hasUpdatingTerminals, isTerminalUpdating } from './updateState';
+
 let token = localStorage.getItem('terminalBuddy.webToken') ?? '';
 let eventSocket: WebSocket | null = null;
 let retry: ReturnType<typeof setTimeout> | undefined;
@@ -59,17 +61,20 @@ function connectEvents(): void {
   if (!token || eventSocket || !callbacks.size) return;
   const socket = new WebSocket(socketUrl('/ws/events'));
   eventSocket = socket;
-  // 只有连接（重新）建立时才可能是服务端/容器重启，页签恢复只认这个信号；
-  // 终端增删引发的 web-resync 只做对账，否则关闭最后一个会话会立刻把它重建出来。
+  // 自更新期间旧终端 ID 会消失；暂不触发页签恢复/对账，保留当前窗口显示更新日志。
+  // 非更新期的连接重建仍按新逻辑同时发送 connected 与 resync。
   socket.onopen = () => {
+    if (hasUpdatingTerminals()) return;
     emitLocal('web-connected', null);
     emitLocal('web-resync', null);
+  };
   };
   socket.onmessage = event => {
     try {
       const message = JSON.parse(String(event.data)) as { event: string; payload: unknown };
       // 尺寸事件由终端自己的 WS 按输出顺序投递，避免跨连接迟到的事件抢回宽度。
       if (message.event === 'terminal-web-resize' || message.event === 'terminal-web-takeover-ended') return;
+      if (message.event === 'terminal-closed' && typeof message.payload === 'string' && isTerminalUpdating(message.payload)) return;
       emitLocal(message.event, message.payload);
     } catch { console.warn('收到无法解析的服务端事件'); }
   };

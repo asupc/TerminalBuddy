@@ -37,6 +37,15 @@ import { usePtyResize } from './hooks/usePtyResize';
 import { useDragDrop } from './hooks/useDragDrop';
 import { installBrowserClipboard, isBrowserPasteShortcut } from './browser-clipboard';
 import { uploadFiles } from '../../services/browser/connection';
+import {
+  getTerminalBuddyUpdateStatus,
+  keepUpdateMarkerTail,
+  parseTerminalBuddyUpdateMarkers,
+  terminalBuddyUpdateText,
+  type TerminalBuddyUpdatePhase,
+  type TerminalBuddyUpdateStatus,
+} from '../../services/browser/updateMonitor';
+import { markTerminalUpdating } from '../../services/browser/updateState';
 
 
 interface TerminalInstanceProps {
@@ -98,6 +107,18 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
+  const [updateId, setUpdateId] = useState<string | null>(null);
+  const [updatePhase, setUpdatePhase] = useState<TerminalBuddyUpdatePhase>('start');
+  const [updateOnline, setUpdateOnline] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<TerminalBuddyUpdateStatus>('running');
+  const [updateLocalLog, setUpdateLocalLog] = useState('');
+  const [updateServerLog, setUpdateServerLog] = useState('');
+  const updateMarkerBufferRef = useRef('');
+  const updateIdRef = useRef<string | null>(null);
+  const updatePhaseRef = useRef<TerminalBuddyUpdatePhase>('start');
+  const updateSawOutageRef = useRef(false);
+  const updateRecoveredCountRef = useRef(0);
+  const updateLogRef = useRef<HTMLPreElement | null>(null);
   // 快捷键唤起面板内搜索框的关键字（自动弹出面板不使用）
   const [autocompleteSearch, setAutocompleteSearch] = useState('');
   const isSsh = useAppStore(s => s.sessions.find(sess => sess.id === terminalId)?.terminalType === 'ssh');
@@ -131,6 +152,99 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     updateAutocomplete(null);
   }, [updateAutocomplete]);
   colorThemeRef.current = colorTheme;
+
+  const handleUpdateOutput = useCallback((output: string) => {
+    if (!output) return;
+    const combined = updateMarkerBufferRef.current + output;
+    const markers = parseTerminalBuddyUpdateMarkers(combined);
+    for (const marker of markers) {
+      if (marker.phase === 'end') {
+        updateIdRef.current = null;
+        updatePhaseRef.current = 'start';
+        markTerminalUpdating(terminalId, false);
+        setUpdateId(null);
+        setUpdatePhase('start');
+        setUpdateLocalLog('');
+        setUpdateServerLog('');
+        updateMarkerBufferRef.current = '';
+        return;
+      }
+      if (!updateIdRef.current) {
+        updateIdRef.current = marker.id;
+        markTerminalUpdating(terminalId, true);
+        setUpdateId(marker.id);
+        setUpdateLocalLog('');
+        setUpdateServerLog('');
+      }
+      updatePhaseRef.current = marker.phase;
+      setUpdatePhase(marker.phase);
+    }
+    updateMarkerBufferRef.current = keepUpdateMarkerTail(combined);
+    if (!updateIdRef.current) return;
+    const text = terminalBuddyUpdateText(output);
+    if (!text) return;
+    setUpdateLocalLog(previous => previous + text);
+  }, [terminalId]);
+
+  useEffect(() => {
+    if (!updateId) return;
+    let stopped = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    let finalTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      if (stopped) return;
+      try {
+        const result = await getTerminalBuddyUpdateStatus(updateId);
+        if (stopped) return;
+        updateSawOutageRef.current = false;
+        updateRecoveredCountRef.current = 0;
+        setUpdateOnline(true);
+        setUpdateStatus(result.status);
+        setUpdateServerLog(result.log);
+        if (result.status !== 'running') {
+          finalTimer = setTimeout(() => window.location.reload(), 2500);
+          return;
+        }
+      } catch {
+        if (stopped) return;
+        setUpdateOnline(false);
+        // 回滚到没有状态接口的旧镜像时，用 health + 已观测停机判断服务已恢复。
+        if (updatePhaseRef.current === 'switch') {
+          try {
+            const health = await fetch('/api/health');
+            if (!health.ok) {
+              updateSawOutageRef.current = true;
+              updateRecoveredCountRef.current = 0;
+            } else if (updateSawOutageRef.current) {
+              updateRecoveredCountRef.current += 1;
+              if (updateRecoveredCountRef.current >= 3) {
+                setUpdateStatus('recovered');
+                finalTimer = setTimeout(() => window.location.reload(), 2500);
+                return;
+              }
+            }
+          } catch {
+            updateSawOutageRef.current = true;
+            updateRecoveredCountRef.current = 0;
+          }
+        }
+      }
+      pollTimer = setTimeout(() => { void poll(); }, 2000);
+    };
+
+    void poll();
+    return () => {
+      stopped = true;
+      if (pollTimer) clearTimeout(pollTimer);
+      if (finalTimer) clearTimeout(finalTimer);
+    };
+  }, [updateId]);
+
+  useEffect(() => {
+    const element = updateLogRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [updateLocalLog, updateServerLog]);
 
   const sendPastedText = useCallback((text: string): boolean => {
     if (readOnlyRef.current || !text) return false;
@@ -368,6 +482,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
 
     const handleOutput = (output: string) => {
       if (disposed || !output) return;
+      handleUpdateOutput(output);
       if (!codexTuiRef.current && /OpenAI Codex|codex-cli/.test(output)) {
         codexTuiRef.current = true;
       }
@@ -1363,7 +1478,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [terminalId]);
+  }, [terminalId, handleUpdateOutput]);
 
   usePtyResize({
     terminalRef,
@@ -1655,6 +1770,32 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
               }}
             />
           </div>
+        </div>
+      )}
+      {updateId && (
+        <div className="terminal-update-monitor" role="status" aria-live="polite">
+          <div className="terminal-update-header">
+            <span className="terminal-update-dot" data-online={updateOnline} />
+            <span className="terminal-update-title">
+              TerminalBuddy 正在自更新（{updatePhase === 'switch' ? '切换服务' : '构建镜像'}）
+            </span>
+            <span className="terminal-update-status">
+              {updateStatus === 'running'
+                ? updateOnline || updatePhase === 'start'
+                  ? '更新中'
+                  : '服务暂不可用，持续自动重连…'
+                : updateStatus === 'updated'
+                  ? '更新完成，正在重新连接…'
+                  : updateStatus === 'rolled-back'
+                    ? '更新失败，已回退并重新连接…'
+                    : updateStatus === 'rollback-failed'
+                      ? '回退未完成，正在继续恢复…'
+                      : '服务已恢复，正在重新连接…'}
+            </span>
+          </div>
+          <pre className="terminal-update-log" ref={updateLogRef}>
+            {`${updateLocalLog}\n${updateServerLog ? `\n── 独立更新容器日志 ──\n${updateServerLog}` : ''}`}
+          </pre>
         </div>
       )}
       <ServerMonitor terminalId={terminalId} isSsh={isSsh} isActive={Boolean(isActive)} />

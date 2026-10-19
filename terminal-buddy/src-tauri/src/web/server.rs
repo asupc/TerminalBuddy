@@ -75,6 +75,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/desktop/file", get(handlers::desktop_handler::file))
         .route("/ws/events", get(handlers::desktop_handler::events))
         .route("/api/health", get(|| async { "正常" }))
+        .route("/api/update/status", get(handlers::update_handler::status))
         // 机器人平台回调使用各自签名的 Token，不走 Web API JWT
         .route(
             "/api/bot/feishu/events",

@@ -5,7 +5,31 @@ set -euo pipefail
 umask 077
 
 STATE=/tmp/terminal-buddy-update
+UPDATE_PUBLIC_DIR=/data/.terminal-buddy-update
+UPDATE_LOG="${UPDATE_PUBLIC_DIR}/update.log"
+UPDATE_STATUS="${UPDATE_PUBLIC_DIR}/status.json"
+UPDATE_ID="${UPDATE_ID:-}"
+KEEP_ROLLBACK="${KEEP_ROLLBACK:-0}"
+CLEANUP_DELAY="${CLEANUP_DELAY:-10}"
+CLEANUP_NAME="${CLEANUP_NAME:-${UPDATER}-cleanup}"
 mkdir -p "${STATE}"
+
+write_update_status() {
+  local status="$1"
+  printf '{"updateId":"%s","status":"%s"}\n' "${UPDATE_ID}" "${status}" > "${UPDATE_STATUS}.tmp"
+  mv "${UPDATE_STATUS}.tmp" "${UPDATE_STATUS}"
+  chmod 0644 "${UPDATE_STATUS}"
+}
+
+# 完整更新日志放在持久数据目录；新版服务启动后通过受认证保护的 API 读取。
+mkdir -p "${UPDATE_PUBLIC_DIR}"
+: > "${UPDATE_LOG}"
+chmod 0755 "${UPDATE_PUBLIC_DIR}"
+chmod 0644 "${UPDATE_LOG}"
+write_update_status running
+exec > >(tee -a "${UPDATE_LOG}") 2>&1
+chmod 0644 "${UPDATE_LOG}"
+
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 fail() { printf '[错误] %s\n' "$*" >&2; exit 1; }
 docker() { command docker --host unix:///var/run/docker.sock "$@"; }
@@ -92,6 +116,38 @@ rollback() {
   log "回退成功：原容器已恢复名称、重启策略，且健康检查通过"
 }
 
+# 成功提交后启动一个 AutoRemove 清理容器，由它等待本容器退出并删除回退容器。
+# 这样即使 update.sh 使用 --detach 或原网页终端已断开，也不会留下成功的更新容器。
+schedule_cleanup() {
+  local status
+  [ "${KEEP_ROLLBACK}" = 0 ] || return 0
+  if docker inspect --type container "${CLEANUP_NAME}" >/dev/null 2>&1; then
+    status="$(docker inspect --format '{{.State.Status}}' "${CLEANUP_NAME}")"
+    [ "${status}" = removing ] && return 0
+    if [ "${status}" != running ]; then
+      docker start "${CLEANUP_NAME}" >/dev/null || return 1
+    fi
+  else
+    rm -f "${STATE}/cleanup-scheduled"
+    docker create --rm --name "${CLEANUP_NAME}" --network none --user 0 --workdir /tmp \
+      --volume /var/run/docker.sock:/var/run/docker.sock --restart=no \
+      --env UPDATER="${UPDATER}" --env BACKUP_NAME="${BACKUP_NAME}" \
+      --env CANDIDATE_IMAGE="${CANDIDATE_IMAGE}" --env CLEANUP_DELAY="${CLEANUP_DELAY}" \
+      --label "terminal-buddy.update.target=${CONTAINER}" \
+      --entrypoint /bin/bash "${OLD_IMAGE_ID}" -euc '
+        code="$(docker wait "${UPDATER}")"
+        [ "${code}" = 0 ] || exit 0
+        sleep "${CLEANUP_DELAY}"
+        docker rm "${BACKUP_NAME}" >/dev/null 2>&1 || true
+        docker image rm "${CANDIDATE_IMAGE}" "${CANDIDATE_IMAGE}-rollback" >/dev/null 2>&1 || true
+        docker rm "${UPDATER}" >/dev/null
+      ' >/dev/null || return 1
+    docker start "${CLEANUP_NAME}" >/dev/null || return 1
+  fi
+  touch "${STATE}/cleanup-scheduled"
+  sync -f "${STATE}"
+}
+
 finish() {
   local code="$?"
   trap - EXIT
@@ -99,17 +155,28 @@ finish() {
   trap '' HUP INT TERM
   set +e
   if [ -f "${STATE}/committed" ]; then
+    write_update_status updated || true
+    chmod 0644 "${UPDATE_LOG}" 2>/dev/null || true
     docker update --restart=no "${UPDATER}" >/dev/null 2>&1
+    if [ "${KEEP_ROLLBACK}" = 1 ]; then
+      log "更新已提交；旧容器、快照与日志保留供回退排查"
+    else
+      schedule_cleanup || log "警告：自动清理任务启动失败，请稍后手动清理 ${BACKUP_NAME} 与 ${UPDATER}"
+    fi
     exit 0
   fi
   [ "${code}" -ne 0 ] || code=1
   if rollback; then
     printf 'rolled-back\n' > "${STATE}/result"
+    write_update_status rolled-back || true
+    chmod 0644 "${UPDATE_LOG}" 2>/dev/null || true
     docker update --restart=no "${UPDATER}" >/dev/null 2>&1
     log "更新失败，原服务已保留或恢复；更新任务与快照保留供排查"
     exit "${code}"
   fi
   printf 'rollback-failed\n' > "${STATE}/result"
+  write_update_status rollback-failed || true
+  chmod 0644 "${UPDATE_LOG}" 2>/dev/null || true
   log "回退未完成，Docker 将自动重启更新任务继续恢复。请勿删除原容器或本更新容器。" >&2
   log "查看日志：docker logs ${UPDATER}；恢复材料：${UPDATER}:${STATE}/" >&2
   exit 2
@@ -190,7 +257,8 @@ docker update --restart=no "${OLD_ID}" >/dev/null
 log "停止旧服务，备份 data/home（含 SQLite、密钥和 CLI 配置；备份期间暂停服务）"
 docker stop --time 20 "${OLD_ID}" >/dev/null
 [ "$(docker inspect --format '{{.State.Running}}' "${OLD_ID}")" = false ] || fail "旧容器未停止"
-tar --acls --xattrs --numeric-owner -cpf "${STATE}/data.tar" -C /data .
+tar --acls --xattrs --numeric-owner --exclude=./.terminal-buddy-update \
+  -cpf "${STATE}/data.tar" -C /data .
 tar --acls --xattrs --numeric-owner -cpf "${STATE}/home.tar" -C /home/terminalbuddy .
 touch "${STATE}/snapshot-complete"
 
@@ -220,5 +288,9 @@ printf 'updated\n' > "${STATE}/result"
 touch "${STATE}/committed"
 sync -f "${STATE}"
 log "更新成功：${CONTAINER}，镜像 ${NEW_IMAGE_ID:0:19}"
-log "旧容器 ${BACKUP_NAME} 保持停止且禁止自动重启；旧镜像、data/home 快照均已保留"
-log "快照导出：docker cp ${UPDATER}:${STATE}/ ./terminal-buddy-update-backup"
+if [ "${KEEP_ROLLBACK}" = 1 ]; then
+  log "旧容器 ${BACKUP_NAME} 保持停止且禁止自动重启；旧镜像、data/home 快照均已保留"
+  log "快照导出：docker cp ${UPDATER}:${STATE}/ ./terminal-buddy-update-backup"
+else
+  log "${CLEANUP_DELAY} 秒后自动清理旧容器、更新容器和临时镜像标签"
+fi

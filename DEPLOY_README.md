@@ -154,15 +154,21 @@ cd /vol1/1000/docker/terminal-buddy/workspace/terminal-buddy
 bash update.sh                       # 构建当前源码并更新，成功后保留交互式命令行
 bash update.sh --exit-on-success     # 成功后结束脚本，适合自动化调用
 bash update.sh --detach              # 启动独立切换任务后返回
+bash update.sh --keep-rollback       # 成功后保留旧容器与快照，暂缓自动清理
 bash update.sh --container terminal-buddy --health-timeout 300
 ```
 
 源码也可位于原部署的 `/vol1/1000/docker/terminal-buddy/src`，或通过
 `--source-dir /实际源码目录` 指定。宿主机账号没有 Docker 权限时使用 `sudo bash update.sh`。
-支持 `TB_FNOS_CONTAINER`、`TB_FNOS_IMAGE` 和 `TB_UPDATE_HEALTH_TIMEOUT` 环境变量，
+支持 `TB_FNOS_CONTAINER`、`TB_FNOS_IMAGE`、`TB_UPDATE_HEALTH_TIMEOUT`、
+`TB_UPDATE_KEEP_ROLLBACK` 和 `TB_UPDATE_CLEANUP_DELAY` 环境变量，
 完整选项见 `bash update.sh --help`。
 
-默认在交互终端中更新成功后进入 Bash 命令行，窗口保留，可继续输入命令；
+在 TerminalBuddy 完整网页终端里发起更新时，窗口不会因旧容器停止而关闭；页面会进入
+自更新监视模式，持续自动重连，合并显示本地构建日志与独立更新容器完整日志，
+完成后自动重新载入新版界面。
+
+在宿主机交互终端中更新成功后进入 Bash 命令行，窗口保留，可继续输入命令；
 输入 `exit` 才返回上级命令行或关闭窗口。无交互终端时直接返回，
 也可用 `--exit-on-success` 显式关闭这一行为。
 如果是在被更新容器自身的网页终端里运行，旧容器停止时原终端进程仍会终止；
@@ -184,18 +190,23 @@ bash update.sh --container terminal-buddy --health-timeout 300
    Docker socket 检查后才发布正式镜像标签。
 5. 切换失败时先移除新版，恢复启动前的数据快照，再恢复原容器名称、重启策略并启动，
    确认旧服务健康。回退暂时失败时，独立任务会自动重试，恢复材料持续保留。
+6. 默认成功后由临时 AutoRemove 清理容器等待 10 秒，再删除旧容器、更新容器和
+   临时镜像标签；`--keep-rollback` 或 `TB_UPDATE_KEEP_ROLLBACK=1` 可保留这些材料，
+   `TB_UPDATE_CLEANUP_DELAY` 可调整清理前的保留秒数。
 
 ```bash
 docker logs -f terminal-buddy-updater   # 重连后查看更新或回退结果
 docker cp terminal-buddy-updater:/tmp/terminal-buddy-update/ ./terminal-buddy-update-backup
 ```
 
-成功更新后，旧容器保留为 `terminal-buddy-backup-<本次编号>`，保持停止且禁用自动重启；
-旧镜像和快照也保留。再次更新时，上一更新容器会改名为
-`terminal-buddy-updater-history-<编号>`，保留原日志与快照。
-需要排查时，快照目录中的 `result` 为 `updated`、`rolled-back` 或 `rollback-failed`，
-`original-container.json` 保存更新前的完整容器配置。这些文件包含用户数据和配置，
-应与正式数据采用相同的保管方式。此脚本用于更新已有健康服务，首次部署仍使用 `deploy-fnos.sh`。
+默认成功更新会在短暂延迟后自动删除 `terminal-buddy-backup-<本次编号>`、
+`terminal-buddy-updater` 以及本次更新的临时镜像标签，不留下成功更新的容器残留。
+如果使用 `--keep-rollback`，旧容器保持停止且禁用自动重启；旧镜像和快照保留，
+再次更新时上一更新容器也会按要求保留或清理。
+失败或回退材料不会在成功前删除；需要排查时，快照目录中的 `result` 为
+`updated`、`rolled-back` 或 `rollback-failed`，`original-container.json` 保存更新前的
+完整容器配置。这些文件包含用户数据和配置，应与正式数据采用相同的保管方式。
+此脚本用于更新已有健康服务，首次部署仍使用 `deploy-fnos.sh`。
 
 ### 首次登录
 
