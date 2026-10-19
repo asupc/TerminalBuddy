@@ -80,10 +80,14 @@ case "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "${OLD_ID}")" in
 esac
 
 # 飞牛部署使用绑定挂载。对无法原样克隆的部署提前拒绝，保留旧服务。
+# inspect 会在模板输出后追加换行；先捕获结果，同时确保读取失败能直接报错。
+MOUNT_ROWS="$(docker inspect --format '{{range .Mounts}}{{printf "%s|%s|%s|%t\n" .Type .Source .Destination .RW}}{{end}}' "${OLD_ID}")" \
+  || fail "无法读取原容器的挂载信息"
 HAS_DATA=0
 HAS_HOME=0
 HAS_SOCKET=0
 while IFS='|' read -r type source destination writable; do
+  [ -n "${type}${source}${destination}${writable}" ] || continue
   [ "${type}" = bind ] || fail "仅支持 deploy-fnos.sh 的绑定挂载部署，发现 ${type}：${destination}"
   case "${destination}" in
     /data) [ "${writable}" = true ] || fail '/data 必须可写'; HAS_DATA=1 ;;
@@ -95,7 +99,7 @@ while IFS='|' read -r type source destination writable; do
     /tmp|/tmp/*) fail "更新任务需要独立的 /tmp，原容器不能绑定挂载此目录" ;;
     /data/*|/home/terminalbuddy/*) fail "快照目录中存在嵌套挂载，无法安全恢复：${destination}" ;;
   esac
-done < <(docker inspect --format '{{range .Mounts}}{{printf "%s|%s|%s|%t\n" .Type .Source .Destination .RW}}{{end}}' "${OLD_ID}")
+done <<< "${MOUNT_ROWS}"
 [ "${HAS_DATA}${HAS_HOME}${HAS_SOCKET}" = 111 ] || fail "原容器必须挂载 /data、/home/terminalbuddy 和 Docker socket"
 [ -z "$(docker inspect --format '{{range $name, $net := .NetworkSettings.Networks}}{{if $net.IPAMConfig}}{{$name}}{{end}}{{end}}' "${OLD_ID}")" ] \
   || fail "原容器配置了静态 IP，保留旧容器时无法安全复用地址，请先改为动态地址"
