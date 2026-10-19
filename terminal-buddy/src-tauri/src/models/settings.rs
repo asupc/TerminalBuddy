@@ -82,6 +82,8 @@ pub struct AppSettings {
     pub file_nav_width: u32,
     #[serde(default = "default_enable_tab_navigation")]
     pub enable_tab_navigation: bool,
+    #[serde(default)]
+    pub show_task_summary: bool,
     #[serde(default = "default_single_instance")]
     pub single_instance: bool,
     #[serde(default = "default_web_api_enabled")]
