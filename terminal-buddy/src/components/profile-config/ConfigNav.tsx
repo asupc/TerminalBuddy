@@ -735,7 +735,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
               <label htmlFor="project-edit-path">项目路径 *</label>
               <div className="input-with-button">
                 <input id="project-edit-path" value={projectPath} onChange={event => { setProjectPath(event.target.value); setProjectError(''); }} placeholder={'C:\\Projects\\MyProject'} />
-                <button type="button" className="browse-btn" onClick={() => void openDirectory({ directory: true, multiple: false }).then(path => {
+                <button type="button" className="browse-btn" onClick={() => void openDirectory({ directory: true, multiple: false, defaultPath: projectPath || undefined }).then(path => {
                   if (typeof path === 'string') { setProjectPath(path); setProjectError(''); }
                 }).catch(error => setProjectError('浏览目录失败：' + String(error)))}>浏览</button>
               </div>

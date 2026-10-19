@@ -410,7 +410,6 @@ export function ProfileEditorDialog({
       </Dialog>
       {browsing && (
         <ServerPathPicker
-          projects={projects}
           initialPath={draft.startupPath || projects.find((p) => p.name === draft.group)?.path}
           onClose={() => setBrowsing(false)}
           onPick={(path) => {

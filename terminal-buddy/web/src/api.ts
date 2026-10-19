@@ -14,6 +14,7 @@ import type {
   GitRepositoryStatus,
   Profile,
   RuntimeInfo,
+  ServerDirectory,
   LlmProvider,
   LlmProviderInput,
   LlmLaunchTarget,
@@ -251,7 +252,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ sessionIds }),
     }),
-  // ----- 项目文件树 / Git -----
+  // ----- 服务器目录选择 / 项目文件树 / Git -----
+  getFsRoots: () => req<ServerDirectory[]>('/fs/roots'),
+  getFsDirectories: (path: string) =>
+    req<ServerDirectory[]>(`/fs/directories?path=${encodeURIComponent(path)}`),
   getFsList: (path: string) =>
     req<FileNode[]>(`/fs/list?path=${encodeURIComponent(path)}`),
   getGitStatus: (repo: string) =>

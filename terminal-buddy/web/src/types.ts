@@ -17,6 +17,12 @@ export interface Project {
   startupCommand: string;
 }
 
+/** 服务器目录选择器入口或子目录；仅包含目录名称与路径。 */
+export interface ServerDirectory {
+  name: string;
+  path: string;
+}
+
 /** 连接配置（与后端 Profile 同构，仅取 Web 端会用到的字段；其余字段均视作可选以兼容精简场景） */
 export interface Profile {
   id: string;

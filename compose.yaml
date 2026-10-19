@@ -10,6 +10,7 @@ services:
     environment:
       TERMINAL_BUDDY_USERNAME: ${TERMINAL_BUDDY_USERNAME:-admin}
       TERMINAL_BUDDY_WORKSPACE_DIR: ${TERMINAL_BUDDY_CONTAINER_WORKSPACE:-/workspace}
+      TERMINAL_BUDDY_BROWSE_ROOTS: ${TERMINAL_BUDDY_BROWSE_ROOTS:-}
       DOCKER_HOST: unix:///var/run/docker.sock
     # Linux 上填写 stat -c '%g' /var/run/docker.sock 的结果；Docker Desktop 通常为 0。
     group_add:

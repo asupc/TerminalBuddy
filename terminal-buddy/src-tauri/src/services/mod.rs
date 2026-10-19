@@ -21,6 +21,7 @@ mod codex_transcript;
 pub mod codex_provider_service;
 pub mod crypto_service;
 pub mod database_service;
+pub mod directory_browser_service;
 pub mod default_terminal_protocol;
 #[cfg(feature = "desktop")]
 pub mod default_terminal_service;

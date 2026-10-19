@@ -123,7 +123,6 @@ export function ProjectEditorDialog({
       </Dialog>
       {browsing && (
         <ServerPathPicker
-          projects={projects}
           initialPath={path}
           onClose={() => setBrowsing(false)}
           onPick={(value) => {

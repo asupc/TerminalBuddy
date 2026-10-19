@@ -88,6 +88,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/profiles", get(handlers::profile_handler::list))
         // 项目只读列表 —— Web 端「启动项目」用（目录 + 自定义启动命令）
         .route("/api/projects", get(handlers::profile_handler::list_projects))
+        // 目录选择器独立发现浏览入口，仅列出目录。
+        .route("/api/fs/roots", get(handlers::fs_handler::roots))
+        .route("/api/fs/directories", get(handlers::fs_handler::directories))
         // 项目文件树（只读浏览，白名单=已登记项目目录）
         .route("/api/fs/list", get(handlers::fs_handler::list))
         // Git：状态 / 分支为同步查询；切换 / 提交 / 拉取 / 推送为后台任务 + 轮询
