@@ -1,3 +1,4 @@
+import { terminalDisplayTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { FC, Fragment, useCallback, useState, useEffect, useRef, lazy, Suspense } from 'react';
 import type { CSSProperties } from 'react';
 import { LoaderCircle, SquareTerminal, X } from 'lucide-react';
@@ -37,6 +38,7 @@ const ClaudeReplayPage = lazy(() => import('../claude-history/ReplayPage').then(
 
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
+  const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const gitHistoryTab = useAppStore(s => s.gitHistoryTab);
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
@@ -194,7 +196,7 @@ export const TerminalPanel: FC = () => {
               className={`pane-working-dot ${isTerminalWorking(terminalActivities[session.id]) ? 'on' : ''}`}
               style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
             />
-            <span className="pane-name" title={session.profileName}>{session.profileName}</span>
+            <span className="pane-name" title={terminalDisplayTitle(session.profileName, taskSummaries[session.id])}>{terminalDisplayTitle(session.profileName, taskSummaries[session.id])}</span>
             <button
               className="pane-close"
               title="关闭分屏"

@@ -1,3 +1,7 @@
+import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
+import { parseModelRef } from '../../utils/codexLaunch';
+import { effectiveProfilePath, projectForDirectory } from '../../utils/projectPath';
+import { SessionTaskLabel } from './SessionTaskLabel';
 import { FC } from 'react';
 import { ChevronRight, X } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
@@ -40,6 +44,10 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
   onContextMenu,
 }) => {
   const sessions = useAppStore(s => s.sessions);
+  const profiles = useAppStore(s => s.profiles);
+  const projects = useAppStore(s => s.projects);
+  const directories = useAppStore(s => s.sessionDirectories);
+  const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const terminalActivities = useAppStore(s => s.terminalActivities);
@@ -135,6 +143,15 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
           );
         }
         // Leaf node: session
+        const childSession = child.data as TerminalSession | undefined;
+        const task = childSession?.sessionType !== 'editor' ? taskSummaries[child.id] : undefined;
+        const profile = profiles.find(profile => profile.id === childSession?.profileId);
+        const directory = childSession?.startupPath || directories[child.id] || (profile ? effectiveProfilePath(profile, projects) : '');
+        const projectName = projectForDirectory(projects, directory)?.name
+          || projects.find(project => project.name === childSession?.groupName || project.name === profile?.group)?.name
+          || childSession?.profileName || child.label;
+        const fallbackModel = parseModelRef(childSession?.extraParams ?? '')?.modelId
+          || profile?.startupCommands.map(command => parseModelRef(command)?.modelId).find(Boolean);
         return (
           <div key={child.id}>
             {renamingSessionId === child.id ? (
@@ -145,10 +162,10 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                   className="tree-rename-input"
                   value={renameValue}
                   onChange={(e) => onRenameValueChange(e.target.value)}
-                  onBlur={() => onRenameSubmit(child.id, child.label)}
+                  onBlur={() => onRenameSubmit(child.id, (child.data as TerminalSession | undefined)?.profileName ?? child.label)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
-                      onRenameSubmit(child.id, child.label);
+                      onRenameSubmit(child.id, (child.data as TerminalSession | undefined)?.profileName ?? child.label);
                     } else if (e.key === 'Escape') {
                       onRenameCancel();
                     }
@@ -158,8 +175,9 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               </div>
             ) : (
               <div
-                className={`tree-item tab-nav-item ${activeSpecialTab === null && activeSessionId === child.id ? 'active' : ''}`}
+                className={`tree-item tab-nav-item${task ? ' tab-nav-task-item' : ''} ${activeSpecialTab === null && activeSessionId === child.id ? 'active' : ''}`}
                 style={{ paddingLeft: `${indent + 12}px` }}
+                title={task && childSession?.createdAt ? `${childSession.profileName} · 运行 ${formatDuration(Date.now() - childSession.createdAt)}` : undefined}
                 onMouseDown={() => { useAppStore.getState().setLastClickRegion('tab'); }}
                 onClick={() => {
                   const store = useAppStore.getState();
@@ -178,7 +196,11 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                 onContextMenu={(e) => onContextMenu(e, child.id)}
               >
                 {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
-                <span className="tree-name" style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
+                {task ? (
+                  <SessionTaskLabel task={task} projectName={projectName} fallbackModel={fallbackModel}
+                    tag={childSession?.extraParamTag} tagColor={childSession?.extraParamTagColor} color={childSession?.tabColor} />
+                ) : (
+                <span className="tree-name" title={child.label} style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
                   {child.label}
                   {(() => {
                     const childSession = child.data as TerminalSession | undefined;
@@ -188,6 +210,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                     return null;
                   })()}
                 </span>
+                )}
                 {(child.data as any)?.owner === 'web' && !isDockerClient() && <span className="tab-nav-owner-badge">Web</span>}
                 {(child.data as any)?.owner !== 'web' && terminalWebTakeovers[child.id] && (
                   <span className="tab-nav-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>

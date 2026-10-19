@@ -1,3 +1,4 @@
+import { setTaskSummaryEnabled, useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { FC } from 'react';
 import { BREATHING_LIGHT_COLORS } from '../../types';
 import { type AppSettings, type BreathingLightColorMode } from '../../utils/settings';
@@ -8,12 +9,30 @@ interface AppearanceSettingsProps {
 }
 
 export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, updateSetting }) => {
+  const summaryEnabled = useTaskSummaryStore(state => state.enabled);
+  const summarySaving = useTaskSummaryStore(state => state.saving);
+  const summaryError = useTaskSummaryStore(state => state.error);
   return (
     <div className="settings-general">
       {/* 卡片组 1: 界面布局与主题 */}
       <div className="settings-card-group">
         <div className="card-group-header">
           <span className="card-group-title">界面布局与主题</span>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">显示任务摘要</div>
+            <p className="settings-row-desc">在窗口标题和会话标签中显示当前 Claude / Codex 会话摘要，方便区分同一项目的多个任务。默认关闭，与手机版同步；尚无摘要时显示原名称。</p>
+            {summaryError && <p className="settings-row-desc" role="alert">{summaryError}</p>}
+          </div>
+          <div className="settings-row-ctrl">
+            <label className="settings-toggle">
+              <input type="checkbox" checked={summaryEnabled} disabled={summarySaving}
+                onChange={event => { void setTaskSummaryEnabled(event.target.checked); }} />
+              <span className="hook-sr-only">显示任务摘要</span>
+            </label>
+          </div>
         </div>
 
         <div className="settings-row">

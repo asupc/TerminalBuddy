@@ -118,6 +118,11 @@ fn read_autostart_registry() -> bool {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+pub fn save_show_task_summary(enabled: bool) -> Result<(), String> {
+    SettingsService::mutate_settings(|settings| settings.show_task_summary = enabled)
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_app_settings() -> AppSettings {
     SettingsService::get_settings()
 }

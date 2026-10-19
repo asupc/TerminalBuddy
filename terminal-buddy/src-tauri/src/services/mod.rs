@@ -34,6 +34,8 @@ pub mod settings_service;
 pub mod ssh_session_service;
 pub mod ssh_transfer;
 pub mod template_service;
+pub mod terminal_task_service;
+mod terminal_task_process;
 pub mod update_service;
 #[cfg(feature = "desktop")]
 pub mod vscode_terminal_service;

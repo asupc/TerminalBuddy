@@ -568,3 +568,10 @@
     transition: none;
   }
 }
+
+.titlebar-title {
+  max-width: min(38vw, 480px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

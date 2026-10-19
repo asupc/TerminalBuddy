@@ -19,6 +19,7 @@ import type {
   LlmLaunchTarget,
   Project,
   TerminalInfo,
+  TerminalTaskSummaries,
 } from './types';
 
 const BASE = '/api';
@@ -167,6 +168,8 @@ function invoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
 }
 
 export const api = {
+  getTerminalTaskSummaries: (terminalIds: string[]) => invoke<TerminalTaskSummaries>('get_terminal_task_summaries', { terminalIds }),
+  setShowTaskSummary: (enabled: boolean) => invoke<void>('save_show_task_summary', { enabled }),
   getCommandTemplates: () => invoke<string>('get_command_templates', {}),
   getRuntime: () => req<RuntimeInfo>('/runtime'),
   createProfile: (name: string, group: string, terminalType: string) =>

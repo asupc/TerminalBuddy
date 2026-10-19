@@ -62,7 +62,7 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
         if let Some(path) = args.get(*key).and_then(Value::as_str).filter(|p| !p.trim().is_empty()) { scoped_file(path)?; }
     }
     if let Some(path) = args.get("options").and_then(|v| v.get("path")).and_then(Value::as_str) { scoped_file(path)?; }
-    if command == "get_claude_sessions_for_terminals" {
+    if matches!(command, "get_claude_sessions_for_terminals" | "get_terminal_task_summaries") {
         let ids: Vec<String> = argument(args, "terminalIds")?;
         for id in ids { app.state::<TerminalService>().authorize(&id, TerminalActor::Web, TerminalAction::View).map_err(|e| ApiError::Forbidden(e.to_string()))?; }
     }
@@ -101,9 +101,8 @@ pub async fn job(State(_state): State<AppState>, _claims: ClaimsFromRequest, Pat
 }
 
 pub async fn invoke(State(state): State<AppState>, _claims: ClaimsFromRequest, headers: axum::http::HeaderMap, Path(command): Path<String>, Json(args): Json<Value>) -> Result<Json<Value>, ApiError> {
-    // 请求方设备类型：创建终端时记录 creator、关闭终端时做 Web 池内的
-    // 手机端关闭权限细分。完整界面（电脑浏览器）通常为 Desktop；手机 UA
-    // 直接访问 /api 时按 UA 判定。
+    // 请求方设备类型用于创建终端时记录 creator，供来源标识与接管提示使用。
+    // 完整界面（电脑浏览器）通常为 Desktop；手机直接访问 /api 时按 UA 判定。
     let client_kind = client_kind_from_headers(&headers);
     check_arguments(&command, &args, &state.app_handle)?;
     let git_mutation = matches!(command.as_str(), "git_pull" | "git_push_with_options" | "git_checkout_branch" | "git_commit_paths");
@@ -186,7 +185,7 @@ async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, ap
             result(app.state::<TerminalService>().update_terminal_display_name(&argument::<String>(&args,"id")?, &argument::<String>(&args,"displayName")?, TerminalActor::Web))?
         }
         "close_terminal" => {
-            app.state::<TerminalService>().close_terminal(&app, &argument::<String>(&args,"id")?, TerminalActor::Web, client_kind, TerminalCloseReason::WebClose)
+            app.state::<TerminalService>().close_terminal(&app, &argument::<String>(&args,"id")?, TerminalActor::Web, TerminalCloseReason::WebClose)
                 .map_err(|e| ApiError::Forbidden(e.to_string()))?;
             Value::Null
         }

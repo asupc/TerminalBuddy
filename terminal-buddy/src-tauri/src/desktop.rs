@@ -438,6 +438,8 @@ pub fn run() {
             start_terminal,
             start_mstsc,
             get_claude_sessions_for_terminals,
+            get_terminal_task_summaries,
+            save_show_task_summary,
             claude_history_rescan, claude_history_list, claude_history_search,
             claude_history_get_replay, claude_history_rename, claude_history_set_flags,
             claude_history_delete, claude_history_delete_many, claude_history_export,

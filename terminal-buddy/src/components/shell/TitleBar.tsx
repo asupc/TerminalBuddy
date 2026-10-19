@@ -1,3 +1,4 @@
+import { terminalDisplayTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { FC, useState, useRef, useEffect } from 'react';
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
@@ -104,6 +105,11 @@ export const TitleBar: FC<TitleBarProps> = ({
   lastCheckedAt,
   onUpdateLastChecked,
 }) => {
+  const activeSession = useAppStore(state => state.sessions.find(session => session.id === state.activeSessionId));
+  const activeTask = useTaskSummaryStore(state => activeSession ? state.summaries[activeSession.id] : undefined);
+  const activeSpecialTab = useAppStore(state => state.activeSpecialTab);
+  const windowTitle = activeSession && activeTask && !activeSpecialTab
+    ? terminalDisplayTitle(activeSession.profileName, activeTask) : 'TerminalBuddy';
   const [aiUsageHover, setAiUsageHover] = useState(false);
   const [updateHover, setUpdateHover] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
@@ -299,7 +305,7 @@ export const TitleBar: FC<TitleBarProps> = ({
     <div className="titlebar" data-tauri-drag-region="deep">
       <div className="titlebar-left">
         <img className="titlebar-logo" src={appIcon} alt="" draggable={false} />
-        <span className="titlebar-title">TerminalBuddy</span>
+        <span className="titlebar-title" title={windowTitle}>{windowTitle}</span>
         <span className="titlebar-version">v{APP_VERSION}</span>
         <div className="titlebar-nav-btns">
           {uiStyle === 'default' && (

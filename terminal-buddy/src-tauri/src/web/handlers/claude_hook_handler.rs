@@ -145,6 +145,9 @@ fn emit_terminal_event(
     request: &ClaudeHookRequest,
     phase: &str,
 ) {
+    crate::services::terminal_task_service::record_claude_session(
+        terminal_id, &request.session_id, request.prompt.as_deref(),
+    );
     let (task_title, summary) = task_content(terminal_id, request);
     let event = ClaudeHookTerminalEvent {
         event_id: uuid::Uuid::new_v4().to_string(),

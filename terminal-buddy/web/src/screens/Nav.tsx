@@ -1,3 +1,5 @@
+import { taskLaunchModel, terminalTaskTitle } from '../utils/terminalTaskTitle';
+import { SessionTaskLabel } from '../components/SessionTaskLabel';
 import {
   useCallback,
   useEffect,
@@ -54,11 +56,9 @@ function getTypeInfo(type: string) {
   return TYPE_INFO[type as TerminalType] ?? FALLBACK_TYPE;
 }
 
-/** 手机端能否关闭该会话：仅 Web 池里手机端自己创建的（creator === 'mobile'）
- * 可关；电脑端创建的（'desktop'）不可关。旧后端无 creator 字段时视为可关，
- * 保持与既有行为平滑兼容。PC 会话本来就不可关（后端矩阵拦截）。 */
+/** 手机端可关闭 Web 池内的全部会话，与创建端设备无关。 */
 function canCloseSession(session: TerminalInfo): boolean {
-  return session.owner === 'web' && session.creator !== 'desktop';
+  return session.owner === 'web';
 }
 
 function isDesktopSession(session: TerminalInfo): boolean {
@@ -78,6 +78,7 @@ function getSessionDotColor(
 
 export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen' | 'sidebar' }) {
   const profiles = useStore((state) => state.profiles);
+  const projects = useStore((state) => state.projects);
   const setProfiles = useStore((state) => state.setProfiles);
   const setProjects = useStore((state) => state.setProjects);
   const sessions = useStore((state) => state.sessions);
@@ -90,6 +91,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const toggleNavCollapsed = useStore((state) => state.toggleNavCollapsed);
 
   const [tab, setTab] = useState<'sessions' | 'profiles' | 'history' | 'files' | 'settings'>('sessions');
+  const taskSummaries = useStore(state => state.taskSummaries);
   const [error, setError] = useState('');
   const [filesPath, setFilesPath] = useState<string>();
   const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
@@ -141,7 +143,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   }, [sessions]);
 
   const openSession = (session: TerminalInfo) => {
-    const name = session.profileName || getTypeInfo(session.terminalType).label;
+    const name = terminalTaskTitle(session.profileName || getTypeInfo(session.terminalType).label, taskSummaries[session.id]);
     if (isDesktopSession(session)) {
       setTakeover(session);
       return;
@@ -184,8 +186,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     [setView],
   );
 
-  // 关闭会话：先弹确认（会杀掉 PTY 里正在运行的进程）。仅手机端可关的会话
-  // （creator === 'mobile' 或旧后端的 web 会话）能走到这里；后端还会再校验一次。
+  // 关闭 Web 池会话前先弹确认（会杀掉 PTY 里正在运行的进程），后端统一校验权限。
   // meta WS 收到推送后自动更新列表。
   const requestCloseSession = useCallback((session: TerminalInfo) => {
     if (!canCloseSession(session)) return;
@@ -221,7 +222,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       if (action === 'open') {
         if (isDesktopSession(session)) setTakeover(session);
         else {
-          const name = session.profileName || getTypeInfo(session.terminalType).label;
+          const name = terminalTaskTitle(session.profileName || getTypeInfo(session.terminalType).label, taskSummaries[session.id]);
           setView({ screen: 'terminal', terminalId: session.id, profileName: name, loadingMode: session.loadingMode, owner: 'web' });
         }
         return;
@@ -436,11 +437,15 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                           <div className="tree-children">
                             {group.items.map((session) => {
                               const name = session.profileName || getTypeInfo(session.terminalType).label;
+                              const task = taskSummaries[session.id];
+                              const profile = profiles.find(profile => profile.id === session.profileId);
+                              const projectName = projects.find(project => project.name === session.group || project.name === profile?.group)?.name || name;
+                              const fallbackModel = [session.extraStartupParams, ...(profile?.startupCommands ?? [])].map(taskLaunchModel).find(Boolean);
                               const isActive = activeTerminalId === session.id;
                               return (
                                 <div className="tree-node" key={session.id}>
                                   <div
-                                    className={`tree-item tab-nav-item${isActive ? ' active' : ''}`}
+                                    className={`tree-item tab-nav-item${task ? ' tab-nav-task-item' : ''}${isActive ? ' active' : ''}`}
                                     style={{ paddingLeft: 20 }}
                                     role="button"
                                     tabIndex={0}
@@ -473,7 +478,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                       aria-hidden="true"
                                       style={getSessionDotColor(profiles, session.profileId)}
                                     />
-                                    {session.extraParamTag && (
+                                    {session.extraParamTag && !task && (
                                       <span
                                         className="tab-nav-tag-chip"
                                         style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
@@ -481,7 +486,10 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                         {session.extraParamTag}
                                       </span>
                                     )}
-                                    <span className="tab-nav-name">{name}</span>
+                                    {task ? (
+                                      <SessionTaskLabel task={task} projectName={projectName} fallbackModel={fallbackModel}
+                                        tag={session.extraParamTag} tagColor={session.extraParamTagColor} color={profile?.tabColor} />
+                                    ) : <span className="tab-nav-name" title={name}>{name}</span>}
                                     {session.owner === 'web' && (
                                       <span className="tab-nav-owner-badge">
                                         {session.creator === 'mobile' ? '手机' : 'WEB'}

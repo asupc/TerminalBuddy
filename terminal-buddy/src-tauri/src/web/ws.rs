@@ -77,10 +77,7 @@ pub async fn terminal_ws_handler(
         ts.authorize(&terminal_id, TerminalActor::Web, TerminalAction::View)
             .map_err(|error| match error {
                 TerminalAccessError::NotFound => axum::http::StatusCode::NOT_FOUND,
-                // View 授权实际不会返回 DeniedMobileClose（它只在关闭路径产生），
-                // 这里仅为了枚举穷尽性统一按无权限处理。
-                TerminalAccessError::Denied { .. }
-                | TerminalAccessError::DeniedMobileClose => axum::http::StatusCode::FORBIDDEN,
+                TerminalAccessError::Denied { .. } => axum::http::StatusCode::FORBIDDEN,
             })?;
         ts.terminal_owner(&terminal_id)
             .ok_or(axum::http::StatusCode::NOT_FOUND)?

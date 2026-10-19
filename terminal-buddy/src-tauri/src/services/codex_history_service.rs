@@ -141,7 +141,7 @@ fn collect_files(root: &Path) -> Result<Vec<SessionFile>, String> {
     Ok(files)
 }
 
-fn thread_names(root: &Path) -> HashMap<String, String> {
+pub(super) fn thread_names(root: &Path) -> HashMap<String, String> {
     let path = root.join("session_index.jsonl");
     // registry 只用来补标题；缺失、损坏或过大都不影响 rollout 本身。
     if !fs::metadata(&path).is_ok_and(|meta| meta.len() <= 8 * 1024 * 1024) {

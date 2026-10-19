@@ -1,3 +1,4 @@
+import { useTaskSummaries } from './hooks/useTaskSummaries';
 import { useEffect } from 'react';
 import { useStore } from './store';
 import { useDualPane } from './hooks/useMediaQuery';
@@ -31,6 +32,7 @@ function applyUrlTokenOnce() {
 applyUrlTokenOnce();
 
 export default function App() {
+  useTaskSummaries();
   const token = useStore((s) => s.token);
   const view = useStore((s) => s.view);
   const dualPane = useDualPane();

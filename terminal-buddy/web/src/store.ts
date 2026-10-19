@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from './api';
-import type { ExtraParamMode, ExtraParamPreset, Profile, Project, TerminalInfo, TerminalLoadingMode } from './types';
+import type { ExtraParamMode, ExtraParamPreset, Profile, Project, TerminalInfo, TerminalLoadingMode, TerminalTaskSummary } from './types';
 
 export type View =
   | { screen: 'nav' }
@@ -35,6 +35,12 @@ interface AppState {
   /** 项目列表（项目与命令 / Claude 历史分组共用） */
   projects: Project[];
   sessions: TerminalInfo[];
+  showTaskSummary: boolean;
+  taskSummaries: Record<string, TerminalTaskSummary>;
+  taskSummarySaving: boolean;
+  taskSummaryError: string | null;
+  refreshTaskSummaries: (terminalIds: string[]) => Promise<void>;
+  setShowTaskSummary: (enabled: boolean) => Promise<void>;
   metaOnline: boolean;
   /** WS 重试耗尽 / 登录过期的终态；非 null 时 UI 显示重试/重登入口。 */
   connectionFatal: ConnectionFatal | null;
@@ -69,6 +75,8 @@ interface AppState {
   moveExtraParamPreset: (id: string, delta: number) => Promise<void>;
 }
 
+let taskSettingsRevision = 0;
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -77,6 +85,34 @@ export const useStore = create<AppState>()(
       profiles: [],
       projects: [],
       sessions: [],
+      showTaskSummary: false,
+      taskSummaries: {},
+      taskSummarySaving: false,
+      taskSummaryError: null,
+      refreshTaskSummaries: async (terminalIds) => {
+        const revision = taskSettingsRevision;
+        const token = get().token;
+        const result = await api.getTerminalTaskSummaries(terminalIds);
+        if (get().token !== token || revision !== taskSettingsRevision || get().taskSummarySaving) return;
+        if (get().showTaskSummary !== result.enabled || JSON.stringify(get().taskSummaries) !== JSON.stringify(result.summaries)) {
+          set({ showTaskSummary: result.enabled, taskSummaries: result.enabled ? result.summaries : {} });
+        }
+      },
+      setShowTaskSummary: async (enabled) => {
+        if (get().taskSummarySaving) return;
+        taskSettingsRevision += 1;
+        set({ taskSummarySaving: true, taskSummaryError: null });
+        try {
+          await api.setShowTaskSummary(enabled);
+          taskSettingsRevision += 1;
+          set({ showTaskSummary: enabled, ...(!enabled ? { taskSummaries: {} } : {}) });
+              } catch (error) {
+          set({ taskSummaryError: `保存任务摘要设置失败：${String(error)}` });
+        } finally {
+          set({ taskSummarySaving: false });
+          window.dispatchEvent(new Event('terminal-task-summary-changed'));
+        }
+      },
       metaOnline: false,
       connectionFatal: null,
       extraParamPresets: [],
@@ -88,7 +124,7 @@ export const useStore = create<AppState>()(
       setAuth: (token, username) => set({ token, username }),
       // 仅供 api.ts 的 401 handler 调用以清除过期 token；UI 已下线
       logout: () =>
-        set({ token: null, username: null, profiles: [], projects: [], sessions: [], extraParamPresets: [], presetsError: null, view: { screen: 'nav' }, connectionFatal: null }),
+        set({ token: null, username: null, profiles: [], projects: [], sessions: [], showTaskSummary: false, taskSummaries: {}, extraParamPresets: [], presetsError: null, view: { screen: 'nav' }, connectionFatal: null }),
       setProfiles: (profiles) => set({ profiles }),
       setProjects: (projects) => set({ projects }),
       setSessions: (sessions) => set({ sessions }),

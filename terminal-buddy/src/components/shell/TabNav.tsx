@@ -1,3 +1,4 @@
+import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { FileText, X } from 'lucide-react';
@@ -28,6 +29,7 @@ interface TabSidebarProps {
 
 export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
   const sessions = useAppStore(s => s.sessions);
+  const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const projects = useAppStore(s => s.projects);
   const tabGroups = useAppStore(s => s.groups);
   const activeSessionId = useAppStore(s => s.activeSessionId);
@@ -214,7 +216,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                           />
                         );
                       })()}
-                      {session.extraParamTag && (
+                      {session.extraParamTag && !taskSummaries[session.id] && (
                         <span
                           className="tab-nav-tag-chip"
                           style={session.extraParamTagColor ? { backgroundColor: session.extraParamTagColor } : undefined}
@@ -224,6 +226,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                         </span>
                       )}
                       {(() => {
+                        if (taskSummaries[session.id]) return null;
                         const modelRef = parseModelRef(session.extraParams ?? '');
                         return modelRef ? (
                           <span className="tab-nav-model-chip" title="供应商模型">{modelRef.modelId}</span>
@@ -262,7 +265,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     }
 
     return items;
-  }, [sessions, profiles, tabGroups, terminalActivities, settingsVersion]);
+  }, [sessions, profiles, tabGroups, terminalActivities, settingsVersion, taskSummaries]);
 
   // Mirror the project/profile grouping in the configuration navigation.
   const submenuTree = useMemo(() => {
