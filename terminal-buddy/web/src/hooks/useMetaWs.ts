@@ -50,7 +50,10 @@ export function useMetaWs() {
         try {
           const m = JSON.parse(e.data);
           if (m.type === 'sessions') {
-            setSessions((m.terminals as TerminalInfo[]) ?? []);
+            const terminals = (m.terminals as TerminalInfo[]) ?? [];
+            setSessions(terminals);
+            // 对账：清掉已消失终端的呼吸灯活动。
+            useStore.getState().pruneTerminalActivities(terminals.map((t) => t.id));
           }
         } catch {
           /* ignore malformed */

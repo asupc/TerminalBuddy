@@ -1,4 +1,7 @@
 import { getTaskLaunchInfo, terminalTaskTitle } from '../utils/terminalTaskTitle';
+import { withoutResumeArgs } from '../utils/commandParams';
+import { copyText } from '../utils/clipboard';
+import { effectiveProfilePath } from '../utils/projects';
 import { SessionTaskLabel } from '../components/SessionTaskLabel';
 import {
   useCallback,
@@ -30,6 +33,7 @@ import appIcon from '../assets/app-icon.png';
 import { api, type CreateTerminalOptions } from '../api';
 import { Dialog } from '../components/Dialog';
 import { useMetaWs } from '../hooks/useMetaWs';
+import { useActivityWs } from '../hooks/useActivityWs';
 import { useStore } from '../store';
 import ClaudeHistory from './ClaudeHistory';
 import Files from './Files';
@@ -66,7 +70,8 @@ function isDesktopSession(session: TerminalInfo): boolean {
 }
 
 /** 会话行的呼吸灯底色：参考 PC 端 getWorkingDotColor；
- *  Web 暂未广播 working 状态，因此先按 profile.tabColor 计算底色，缺失时回退到主题强调色。 */
+ *  活动状态经 /ws/events 的 hook 事件驱动（见 useActivityWs），无活动时按 profile.tabColor
+ *  计算底色，缺失时回退到主题强调色。 */
 function getSessionDotColor(
   profiles: Profile[],
   profileId: string | undefined,
@@ -74,6 +79,16 @@ function getSessionDotColor(
   const profile = profileId ? profiles.find((p) => p.id === profileId) : undefined;
   const color = profile?.tabColor || 'var(--accent)';
   return { background: color };
+}
+
+/** running/attention 呼吸、failed 静态红；超时或无活动返回空（走静态底色）。 */
+const ACTIVITY_ACTIVE_MS = 3 * 60 * 1000;
+function sessionActivityClass(activity: { phase: string; occurredAt: number } | undefined): string {
+  if (!activity) return '';
+  if (activity.phase === 'running' || activity.phase === 'attention') {
+    return Date.now() - activity.occurredAt < ACTIVITY_ACTIVE_MS ? ' working' : '';
+  }
+  return activity.phase === 'failed' ? ' failed' : '';
 }
 
 export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen' | 'sidebar' }) {
@@ -93,7 +108,13 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const [tab, setTab] = useState<'sessions' | 'profiles' | 'history' | 'files' | 'settings'>('sessions');
   const [sessionMetadataReady, setSessionMetadataReady] = useState(false);
   const taskSummaries = useStore(state => state.taskSummaries);
+  const terminalActivities = useStore(state => state.terminalActivities);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const sessionNameOverrides = useStore(state => state.sessionNameOverrides);
+  // 会话重命名（纯前端覆盖）与「关闭其它」确认弹窗
+  const [renamingSession, setRenamingSession] = useState<{ id: string; name: string } | null>(null);
+  const [confirmCloseOthers, setConfirmCloseOthers] = useState<TerminalInfo | null>(null);
   const [filesPath, setFilesPath] = useState<string>();
   const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
   // 会话行右键菜单
@@ -138,6 +159,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   }, [tab, setProjects]);
 
   useMetaWs();
+  useActivityWs();
 
   const sessionGroups = useMemo(() => {
     const grouped = new Map<string, TerminalInfo[]>();
@@ -205,6 +227,26 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
     setConfirmClose(session);
   }, []);
 
+  /** 项目空白终端链（profileId 为空）：与 Projects 屏的 launchProject 同构。 */
+  const createNewFromBlank = useCallback(
+    async (options: CreateTerminalOptions) => {
+      setError('');
+      try {
+        const info = await api.createTerminal('', options);
+        setView({
+          screen: 'terminal',
+          terminalId: info.id,
+          profileName: info.profileName || options.displayName || '终端',
+          loadingMode: info.loadingMode,
+          owner: 'web',
+        });
+      } catch (createError) {
+        setError(createError instanceof Error ? createError.message : '创建连接失败');
+      }
+    },
+    [setView],
+  );
+
   const handleCloseSession = useCallback(async (sessionId: string) => {
     setError('');
     try {
@@ -239,9 +281,21 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         }
         return;
       }
-      // action === 'new'：按原 profile 起一个新终端
+      // action === 'new'：按原 profile 起一个新终端；项目空白终端会话回退项目目录。
       if (!session.profileId) {
-        setError('无法定位该终端的配置');
+        const project = useStore.getState().projects.find((p) => p.name === session.group);
+        const startupPath = project?.path;
+        if (!startupPath) {
+          setError('无法定位该终端的配置或项目目录');
+          return;
+        }
+        await createNewFromBlank({
+          displayName: session.profileName || project.name,
+          startupPath,
+          startupGroup: project.name,
+          // 从历史恢复的会话快照含 --resume，新建终端必须剥除，避免续接旧会话。
+          startupCommand: withoutResumeArgs(session.extraStartupParams ?? undefined),
+        });
         return;
       }
       if (profiles.length === 0) await loadProfiles();
@@ -251,7 +305,8 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         return;
       }
       await createNew(profile, undefined, {
-        extraStartupParams: session.extraStartupParams,
+        // 从历史恢复的会话快照含 --resume，新建终端必须剥除，避免续接旧会话。
+        extraStartupParams: withoutResumeArgs(session.extraStartupParams ?? undefined),
         extraStartupMode: session.extraStartupMode,
         extraParamTag: session.extraParamTag,
         extraParamTagColor: session.extraParamTagColor,
@@ -396,6 +451,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       <main className="nav-body" id="main-content">
         <div className="nav-shell">
           {error && <div className="nav-error" role="alert">{error}</div>}
+          {notice && <div className="nav-error" role="status" style={{ color: 'var(--accent)' }}>{notice}</div>}
 
           {tab === 'sessions'
             ? !sessionMetadataReady
@@ -450,13 +506,13 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                         {!isCollapsed && (
                           <div className="tree-children">
                             {group.items.map((session) => {
-                              const name = session.profileName || getTypeInfo(session.terminalType).label;
+                              const name = sessionNameOverrides[session.id]
+                                ?? (session.profileName || getTypeInfo(session.terminalType).label);
                               const task = taskSummaries[session.id];
                               const profile = profiles.find(profile => profile.id === session.profileId);
                               const project = projects.find(project => project.name === (profile?.group || session.group))
                                 ?? projects.find(project => project.name === session.profileName);
-                              const startupCommands = profile?.startupCommands
-                                ?? (project?.startupCommand ? [project.startupCommand] : []);
+                              const startupCommands = profile?.startupCommands ?? [];
                               const launchInfo = getTaskLaunchInfo(session.extraStartupParams, startupCommands, session.extraStartupMode);
                               const provider = task?.provider ?? launchInfo?.provider;
                               const fallbackName = project?.name || name;
@@ -493,9 +549,13 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                   >
                                     <span className="tree-arrow-placeholder" aria-hidden="true" />
                                     <span
-                                      className="tab-nav-dot"
+                                      className={`tab-nav-dot${sessionActivityClass(terminalActivities[session.id])}`}
                                       aria-hidden="true"
-                                      style={getSessionDotColor(profiles, session.profileId)}
+                                      style={
+                                        terminalActivities[session.id] && sessionActivityClass(terminalActivities[session.id])
+                                          ? undefined
+                                          : getSessionDotColor(profiles, session.profileId)
+                                      }
                                     />
                                     {session.extraParamTag && !provider && (
                                       <span
@@ -555,6 +615,14 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
         if (!session) return null;
         const isTakeover = isDesktopSession(session);
         const canClose = canCloseSession(session);
+        const otherClosable = sessions.filter((s) => s.id !== session.id && canCloseSession(s));
+        // 复制启动路径：配置会话取配置有效路径，项目空白会话回退项目目录。
+        const menuProfile = session.profileId ? profiles.find((p) => p.id === session.profileId) : undefined;
+        const menuProject = projects.find((p) => p.name === session.group);
+        const startupPath = menuProfile
+          ? effectiveProfilePath(menuProfile, projects)
+          : (menuProject?.path || '');
+        const displayName = sessionNameOverrides[session.id] ?? session.profileName;
         return (
           <div
             className="session-context-menu"
@@ -578,6 +646,50 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
             >
               以此配置新建终端
             </button>
+            <button
+              type="button"
+              className="context-menu-item"
+              onClick={() => {
+                setSessionContextMenu(null);
+                setRenamingSession({ id: session.id, name: displayName || '' });
+              }}
+            >
+              重命名
+            </button>
+            <button
+              type="button"
+              className="context-menu-item"
+              onClick={() => {
+                setSessionContextMenu(null);
+                void copyText(displayName || '').then((ok) => setNotice(ok ? '配置名已复制' : '复制失败'));
+              }}
+            >
+              复制配置名
+            </button>
+            {startupPath && (
+              <button
+                type="button"
+                className="context-menu-item"
+                onClick={() => {
+                  setSessionContextMenu(null);
+                  void copyText(startupPath).then((ok) => setNotice(ok ? '启动路径已复制' : '复制失败'));
+                }}
+              >
+                复制启动路径
+              </button>
+            )}
+            {canClose && otherClosable.length > 0 && (
+              <button
+                type="button"
+                className="context-menu-item"
+                onClick={() => {
+                  setSessionContextMenu(null);
+                  setConfirmCloseOthers(session);
+                }}
+              >
+                关闭其它
+              </button>
+            )}
             {canClose && <div className="context-menu-separator" />}
             {canClose && (
               <button
@@ -591,6 +703,74 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           </div>
         );
       })()}
+
+      {renamingSession && (
+        <Dialog
+          title="重命名会话"
+          onClose={() => setRenamingSession(null)}
+          footer={(
+            <>
+              <button className="btn" onClick={() => setRenamingSession(null)}>取消</button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  useStore.getState().setSessionNameOverride(renamingSession.id, renamingSession.name || null);
+                  setRenamingSession(null);
+                }}
+              >
+                保存
+              </button>
+            </>
+          )}
+        >
+          <label className="project-form" style={{ display: 'block' }}>
+            会话名称
+            <input
+              autoFocus
+              value={renamingSession.name}
+              onChange={(e) => setRenamingSession({ ...renamingSession, name: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  useStore.getState().setSessionNameOverride(renamingSession.id, renamingSession.name || null);
+                  setRenamingSession(null);
+                }
+              }}
+            />
+          </label>
+        </Dialog>
+      )}
+
+      {confirmCloseOthers && (
+        <Dialog
+          title="关闭其它会话"
+          onClose={() => setConfirmCloseOthers(null)}
+          footer={(
+            <>
+              <button className="btn" onClick={() => setConfirmCloseOthers(null)}>取消</button>
+              <button
+                className="btn danger"
+                onClick={() => {
+                  const target = confirmCloseOthers;
+                  setConfirmCloseOthers(null);
+                  void (async () => {
+                    const others = useStore.getState().sessions.filter(
+                      (s) => s.id !== target.id && canCloseSession(s),
+                    );
+                    for (const other of others) {
+                      try { await api.deleteTerminal(other.id); } catch { /* 逐个尽力关闭 */ }
+                    }
+                  })();
+                }}
+              >
+                关闭
+              </button>
+            </>
+          )}
+        >
+          <p>确定关闭其余 {sessions.filter((s) => s.id !== confirmCloseOthers.id && canCloseSession(s)).length} 个可关闭的会话吗？</p>
+        </Dialog>
+      )}
 
       {takeover && (
         <Dialog

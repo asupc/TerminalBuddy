@@ -93,7 +93,7 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
       setState(next);
       setDraft(null);
       setModels([]);
-      setNotice(willActivate ? '供应商已保存并启用，重新启动 Codex 后生效' : '供应商已保存');
+      setNotice(willActivate ? '供应商已保存并设为默认，重新启动 Codex 后生效' : '供应商已保存');
     });
   };
 
@@ -123,7 +123,7 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
         <button className="btn primary" disabled={busy} onClick={() => {
           const form = document.getElementById(formId) as HTMLFormElement | null;
           if (form?.reportValidity()) save(true);
-        }}>保存并启用</button>
+        }}>保存并设为默认</button>
       </> : <>
         <button className="btn" disabled={busy} onClick={() => void load()}>刷新</button>
         <button className="btn" disabled={busy || !state} onClick={() => void run('import', async () => {
@@ -133,7 +133,7 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
         <button className="btn primary" disabled={busy || !state} onClick={() => edit()}>添加供应商</button>
       </>}
     >
-      <p className="provider-description">管理多个 Codex 供应商，为每个供应商选择可用模型。右键或长按项目、Codex 启动配置，即可按模型快速启动。保存或启用时会自动生成模型目录（model_catalog_json），为所有模型声明全部推理等级。</p>
+      <p className="provider-description">管理多个 Codex 供应商，为每个供应商选择可用模型。右键或长按项目、Codex 启动配置，即可按模型快速启动。保存或设为默认时会自动生成模型目录（model_catalog_json），为所有模型声明全部推理等级。</p>
       {error && <div className="nav-error" role="alert">{error}</div>}
       {state?.configError && <div className="nav-error" role="alert">{state.configError}</div>}
       {notice && <div className="provider-notice" role="status">{notice}</div>}
@@ -174,29 +174,36 @@ export function CodexProvidersPanel({ active, onClose }: { active: boolean; onCl
               </div>
             </details>
           </fieldset>
-          <p className="provider-description">启用时自动备份原配置，并保留 MCP 等其他设置。修改当前供应商并保存后，会同步更新 Codex 配置。保存或启用时自动生成模型目录，所有模型声明全部推理等级。</p>
+          <p className="provider-description">设为默认时自动备份原配置，并保留 MCP 等其他设置。修改当前默认供应商并保存后，会同步更新 Codex 配置。保存或设为默认时自动生成模型目录，所有模型声明全部推理等级。</p>
         </form>
       ) : (
         <div className="project-form" aria-busy={busy}>
           {!state && pending === 'load' && <p className="provider-description">正在读取 Codex 配置…</p>}
           {state?.providers.length === 0 && <p className="provider-description">暂无 Codex 供应商，可添加供应商或导入已有配置。</p>}
-          {state && state.providers.length > 0 && !state.activeProviderId && !state.configError && <p className="provider-description">当前 Codex 配置与列表中的供应商不一致，可选择一项启用。</p>}
+          {state && state.providers.length > 0 && !state.activeProviderId && !state.configError && <p className="provider-description">当前未设置默认供应商，可选择一项设为默认；长按菜单仍可按模型快速启动。</p>}
           {state?.providers.map((provider) => {
             const isActive = state.activeProviderId === provider.id;
             return (
               <div className="provider-model-editor" key={provider.id}>
-                <strong>{provider.name}{isActive && '（使用中）'}</strong>
+                <strong>{provider.name}{isActive && '（默认）'}</strong>
                 <small>{provider.baseUrl}</small>
                 <small>默认：{provider.model}</small>
                 <div className="codex-provider-model-tags">{(provider.models ?? [provider.model]).map(id => <span key={id} title={id}>{id} · {CODEX_EFFORT_OPTIONS.find(([value]) => value === (provider.modelReasoningEfforts[id] ?? 'max'))?.[1]}</span>)}</div>
                 <small>密钥{provider.keySet ? `已设置（尾号 ${provider.keyTail}）` : '未设置'}</small>
                 <div className="project-row-actions">
-                  <button className="btn small" disabled={busy || isActive} onClick={() => void run('activate', async () => {
-                    setState(await api.activateCodexProvider(provider.id));
-                    setNotice(`已启用“${provider.name}”，重新启动 Codex 后生效`);
-                  })}>{isActive ? '已启用' : '启用'}</button>
+                  {isActive ? (
+                    <button className="btn small" disabled={busy} onClick={() => void run('clear-default', async () => {
+                      setState(await api.clearDefaultCodexProvider());
+                      setNotice('已取消默认供应商，Codex 将使用自身登录配置');
+                    })}>取消默认</button>
+                  ) : (
+                    <button className="btn small" disabled={busy} onClick={() => void run('activate', async () => {
+                      setState(await api.activateCodexProvider(provider.id));
+                      setNotice(`“${provider.name}”已设为默认，重新启动 Codex 后生效`);
+                    })}>设为默认</button>
+                  )}
                   <button className="btn small" disabled={busy} onClick={() => edit(provider)}>编辑</button>
-                  <button className="btn small danger" disabled={busy || isActive} title={isActive ? '请先启用其他供应商后删除' : undefined}
+                  <button className="btn small danger" disabled={busy || isActive} title={isActive ? '请先取消默认后再删除' : undefined}
                     onClick={() => setConfirmDelete(provider)}>删除</button>
                 </div>
               </div>

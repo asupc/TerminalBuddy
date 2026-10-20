@@ -1109,6 +1109,11 @@ textarea:focus-visible {
   transform: translate3d(0, 0, 0);
 }
 
+/* Claude 供应商编辑：与 Codex 供应商面板（project-editor-dialog）同宽。 */
+.web-dialog-positioner:has(.llm-provider-editor-dialog) {
+  width: min(100%, 580px);
+}
+
 .web-dialog-positioner.dragging {
   will-change: transform;
 }
@@ -3136,3 +3141,98 @@ textarea:focus-visible {
 .tab-nav-task-item > .tab-nav-takeover-badge {
   margin-top: 3px;
 }
+
+/* ===== 模型 ID 可搜索下拉（与 PC 端 ModelCombobox 同构） ===== */
+.model-combobox { position: relative; flex: 1; min-width: 0; }
+.model-combobox input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 8px 36px 8px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.model-combobox input:focus { outline: none; border-color: var(--accent); }
+.model-combobox input:disabled { opacity: 0.6; }
+.model-combobox-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.model-combobox-toggle:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.model-combobox-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+.model-combobox-toggle svg { transition: transform var(--motion-fast) var(--ease-standard); }
+.model-combobox-toggle.open svg { transform: rotate(180deg); }
+.model-combobox-empty {
+  padding: 8px 9px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.model-combobox-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.model-combobox-list button {
+  display: block;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-combobox-list button:hover,
+.model-combobox-list button.active { background: var(--surface-hover); }
+.model-combobox-list button[aria-selected='true'] { color: var(--accent); }
+
+/* ===== Claude 供应商行式模型编辑（Dialog 内） ===== */
+.llm-model-list { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.llm-model-row { display: flex; align-items: center; gap: 8px; }
+.llm-model-row .codex-model-effort { flex: 0 0 112px; }
+.llm-model-row .llm-model-number {
+  flex: 0 0 96px;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 8px 8px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+/* 会话呼吸灯：failed 静态红点（working 呼吸动画已存在） */
+.tab-nav-dot.failed { background: #f14c4c !important; box-shadow: 0 0 4px rgba(241, 76, 76, 0.6); }

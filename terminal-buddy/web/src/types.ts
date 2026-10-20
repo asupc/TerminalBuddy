@@ -9,12 +9,31 @@ export interface TerminalReplayFrame {
 }
 export type ExtraParamMode = 'append' | 'independent';
 
+/** 项目右键菜单可启动的 Agent；旧项目未配置时视为全部启用。 */
+export interface EnabledAgents {
+  claude: boolean;
+  codex: boolean;
+}
+
 /** 项目（与后端 commands/profile.rs Project 同构，来自 GET /api/projects） */
 export interface Project {
   name: string;
   path: string;
-  /** 自定义启动命令（如 claude）；空串表示仅进入目录 */
-  startupCommand: string;
+  enabledAgents?: EnabledAgents;
+}
+
+/** 项目启用 Agent 的兜底判断：未配置时与后端 serde 缺省一致（全部启用）。 */
+export function projectEnabledAgents(project: Project | undefined | null): Required<EnabledAgents> {
+  return {
+    claude: project?.enabledAgents?.claude ?? true,
+    codex: project?.enabledAgents?.codex ?? true,
+  };
+}
+
+/** 项目右键菜单展示的模型区顺序：按启用的 Agent 推导，未启用不展示。 */
+export function projectModelSources(project: Project | undefined | null): Array<'claude' | 'codex'> {
+  const agents = projectEnabledAgents(project);
+  return agents.claude && agents.codex ? ['claude', 'codex'] : agents.claude ? ['claude'] : agents.codex ? ['codex'] : [];
 }
 
 /** 服务器目录选择器入口或子目录；仅包含目录名称与路径。 */
@@ -268,6 +287,8 @@ export interface GitOperationStatus {
 export interface RuntimeInfo {
   platform: string;
   defaultTerminalType: TerminalType;
+  /** Agent 管理的基础启动命令（空串 = 内置默认），供模型启动与历史恢复兜底。 */
+  agentCommands?: { claude: string; codex: string };
 }
 export interface LlmModelConfig {
   id: string;

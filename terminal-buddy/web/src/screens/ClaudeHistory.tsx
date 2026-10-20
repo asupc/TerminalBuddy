@@ -10,7 +10,9 @@ import {
 import { api, exportClaudeSessionContent } from '../api';
 import { Dialog } from '../components/Dialog';
 import { useStore } from '../store';
-import type { ClaudeSearchHit, ClaudeSessionItem, Project } from '../types';
+import { copyText } from '../utils/clipboard';
+import { matchingPresets } from '../utils/projects';
+import type { ClaudeSearchHit, ClaudeSessionItem, LlmLaunchTarget, Project } from '../types';
 
 /** 与 PC 端 utils/projectPath.ts 同规则：路径归一后做「相等或子目录」匹配，最长项目优先 */
 function normalizeProjectPath(path: string): string {
@@ -90,6 +92,11 @@ export default function ClaudeHistory() {
   const [renaming, setRenaming] = useState<{ sessionId: string; value: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ single?: ClaudeSessionItem; batch?: string[] } | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
+  // 指定模型恢复：模型选择 Dialog（供应商 → 模型，手机端避免深层子菜单）
+  const [modelPicker, setModelPicker] = useState<ClaudeSessionItem | null>(null);
+  const [launchTargets, setLaunchTargets] = useState<LlmLaunchTarget[] | null>(null);
+  const [targetsLoading, setTargetsLoading] = useState(false);
+  const extraParamPresets = useStore((s) => s.extraParamPresets);
   // 多选批量操作（与 PC 端 v1.7.0 批量删除对齐）
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -146,9 +153,9 @@ export default function ClaudeHistory() {
     [setView],
   );
 
-  /** 恢复会话：在会话原目录起 PowerShell 并执行 claude --resume（依赖空白终端启动链路） */
-  const resumeSession = useCallback(
-    async (session: ClaudeSessionItem) => {
+  /** 恢复会话：在会话原目录起 PowerShell 执行给定命令（claude --resume，可带预设参数或模型引用） */
+  const resumeWith = useCallback(
+    async (session: ClaudeSessionItem, startupCommand: string) => {
       if (!session.projectDir) {
         setError('该会话没有项目目录，无法恢复');
         return;
@@ -160,7 +167,7 @@ export default function ClaudeHistory() {
           displayName: session.title,
           startupPath: session.projectDir,
           startupGroup: projectForDirectory(projects, session.projectDir)?.name,
-          startupCommand: `claude --resume ${session.sessionId}`,
+          startupCommand,
         });
         setView({
           screen: 'terminal',
@@ -176,6 +183,14 @@ export default function ClaudeHistory() {
       }
     },
     [projects, setView],
+  );
+
+  const resumeSession = useCallback(
+    (session: ClaudeSessionItem, presetParams?: string) => {
+      const suffix = presetParams?.trim() ? ` ${presetParams.trim()}` : '';
+      void resumeWith(session, `claude --resume ${session.sessionId}${suffix}`);
+    },
+    [resumeWith],
   );
 
   const patchLocal = useCallback((sessionId: string, patch: Partial<ClaudeSessionItem>) => {
@@ -537,11 +552,59 @@ export default function ClaudeHistory() {
             type="button"
             className="context-menu-item"
             onClick={() => {
-              void resumeSession(menuSession);
+              resumeSession(menuSession);
               setMenu(null);
             }}
           >
             恢复此会话
+          </button>
+          {/* 恢复 + 启动参数预设：仅 append 且匹配 claude 命令的预设（对齐 PC 端 HistoryPanel） */}
+          {matchingPresets(
+            extraParamPresets.filter((p) => p.mode === 'append'),
+            [`claude --resume ${menuSession.sessionId}`],
+          ).map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className="context-menu-item"
+              onClick={() => {
+                resumeSession(menuSession, preset.params);
+                setMenu(null);
+              }}
+            >
+              恢复
+              <span
+                className="context-menu-tag-chip"
+                style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
+              >
+                {preset.name}
+              </span>
+            </button>
+          ))}
+          <button
+            type="button"
+            className="context-menu-item"
+            onClick={() => {
+              setMenu(null);
+              setModelPicker(menuSession);
+              setTargetsLoading(true);
+              api.getLlmLaunchTargets()
+                .then(setLaunchTargets)
+                .catch(() => setLaunchTargets([]))
+                .finally(() => setTargetsLoading(false));
+            }}
+          >
+            指定模型恢复…
+          </button>
+          <button
+            type="button"
+            className="context-menu-item"
+            onClick={() => {
+              void copyText(menuSession.sessionId).then((ok) => { if (!ok) setError('复制会话 ID 失败'); });
+              setMenu(null);
+            }}
+          >
+            复制会话 ID
           </button>
           <button
             type="button"
@@ -606,6 +669,45 @@ export default function ClaudeHistory() {
             删除
           </button>
         </div>
+      )}
+
+      {modelPicker && (
+        <Dialog
+          title="指定模型恢复"
+          onClose={() => setModelPicker(null)}
+          footer={<button className="btn" onClick={() => setModelPicker(null)}>关闭</button>}
+        >
+          <div className="project-form">
+            {targetsLoading && <p>加载模型中…</p>}
+            {!targetsLoading && (launchTargets?.length ?? 0) === 0 && (
+              <p>暂无可用模型供应商，请先在设置中配置模型供应商。</p>
+            )}
+            {(launchTargets ?? []).map((target) => (
+              <div key={target.providerId}>
+                <p className="provider-description">
+                  {target.providerName}
+                  {target.isDefault ? '（默认）' : ''}
+                </p>
+                {target.models.map((model) => (
+                  <button
+                    key={model.id}
+                    type="button"
+                    className="btn small model-resume-option"
+                    onClick={() => {
+                      const session = modelPicker;
+                      setModelPicker(null);
+                      // 模型引用 + --resume：后端 create_blank_terminal 展开 REF 后追加尾参。
+                      void resumeWith(session, `__TB_CLAUDE_REF__:${target.providerId}:${model.id} --resume ${session.sessionId}`);
+                    }}
+                  >
+                    <span className="model-resume-id">{model.id}</span>
+                    <small>{model.effort}</small>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </Dialog>
       )}
 
       {renaming && (

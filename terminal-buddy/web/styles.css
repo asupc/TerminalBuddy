@@ -1,0 +1,15 @@
+
+/* 指定模型恢复：模型选项按钮 */
+.model-resume-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.model-resume-option .model-resume-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

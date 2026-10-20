@@ -186,6 +186,7 @@ export const api = {
   ),
   deleteLlmProvider: (id: string) => req<LlmProvider[]>('/llm-providers/' + encodeURIComponent(id), { method: 'DELETE' }),
   setDefaultLlmProvider: (id: string) => req<LlmProvider[]>('/llm-providers/' + encodeURIComponent(id) + '/set-default', { method: 'POST' }),
+  clearDefaultLlmProvider: () => req<LlmProvider[]>('/llm-providers/clear-default', { method: 'POST' }),
   orderLlmProviders: (ids: string[]) => req<LlmProvider[]>('/llm-providers/order', { method: 'PUT', body: JSON.stringify({ ids }) }),
   fetchLlmModels: (input: { providerId?: string; baseUrl: string; apiKey: string; modelsUrl: string }) =>
     req<{ id: string }[]>('/llm-providers/fetch-models', { method: 'POST', body: JSON.stringify(input) }),
@@ -193,6 +194,7 @@ export const api = {
   saveCodexProvider: (input: CodexProviderInput, activate: boolean) =>
     invoke<CodexProviderState>('save_codex_provider', { input, activate }),
   activateCodexProvider: (id: string) => invoke<CodexProviderState>('activate_codex_provider', { id }),
+  clearDefaultCodexProvider: () => invoke<CodexProviderState>('clear_default_codex_provider', {}),
   deleteCodexProvider: (id: string) => invoke<CodexProviderState>('delete_codex_provider', { id }),
   importCodexProvider: () => invoke<CodexProviderState>('import_codex_provider', {}),
   fetchCodexModels: (baseUrl: string, apiKey: string, providerId?: string) =>

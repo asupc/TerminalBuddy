@@ -22,6 +22,7 @@ import { useLongPressMenu } from '../hooks/useLongPressMenu';
 import { useHasHover } from '../hooks/useMediaQuery';
 import { useStore } from '../store';
 import type { CodexProviderState, ExtraParamPreset, LlmLaunchTarget, Profile, Project, RuntimeInfo } from '../types';
+import { projectModelSources } from '../types';
 import {
   createProfileFrom,
   effectiveProfilePath,
@@ -150,7 +151,10 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
       .finally(() => setLoading(false));
     api
       .getRuntime()
-      .then(setRuntime)
+      .then((runtime) => {
+        setRuntime(runtime);
+        if (runtime.agentCommands) useStore.getState().setAgentCommands(runtime.agentCommands);
+      })
       .catch((reason) => setError('读取服务器环境失败：' + String(reason)));
     void refreshModels();
   }, [refresh, refreshModels]);
@@ -195,19 +199,12 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
           : undefined,
       ),
     );
-  const launchProject = (project: Project, preset?: ExtraParamPreset, shellOnly = false) =>
+  const launchProject = (project: Project) =>
     void run(() =>
       openTerminal('', {
         displayName: project.name,
         startupPath: project.path,
         startupGroup: project.name,
-        startupCommand: shellOnly
-          ? ''
-          : preset?.mode === 'independent'
-            ? preset.params
-            : [project.startupCommand?.trim(), preset?.params].filter(Boolean).join(' '),
-        extraParamTag: preset?.name,
-        extraParamTagColor: preset?.tagColor,
       }),
     );
   const openMenu = (target: Target, x: number, y: number) => {
@@ -231,7 +228,7 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
     setEditingProject({
       project:
         projects.find((p) => p.name === name) ||
-        (name ? { name, path: '', startupCommand: '' } : null),
+        (name ? { name, path: '' } : null),
       name,
     });
   };
@@ -289,14 +286,18 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
     menuTarget?.kind === 'profile' ? profiles.find((p) => p.id === menuTarget.id) : undefined;
   const menuGroup = menu?.target.kind === 'group' ? menu.target.name : undefined;
   const menuProject = projects.find((p) => p.name === menuGroup);
-  const commands = menuProfile?.startupCommands || [menuProject?.startupCommand || ''];
+  const commands = menuProfile?.startupCommands ?? [];
   const availablePresets = matchingPresets(presets, commands);
   const path = menuProfile ? effectiveProfilePath(menuProfile, projects) : menuProject?.path || '';
-  const showModels =
-    (menuProfile ? LOCAL_TYPES.includes(menuProfile.terminalType) : !!menuProject?.path) &&
-    commands.some(command => isClaudeCommand(command) || isCodexCommand(command));
+  // 模型区：配置按本地类型 + 启动命令内容推导；项目按本地路径 + 启用的 Agent 推导。
+  const showModels = menuProfile
+    ? LOCAL_TYPES.includes(menuProfile.terminalType) &&
+      commands.some(command => isClaudeCommand(command) || isCodexCommand(command))
+    : !!menuProject?.path;
   const modelSources: Array<'claude' | 'codex'> = !showModels ? []
-    : commands.some(isClaudeCommand) ? ['claude', 'codex'] : ['codex', 'claude'];
+    : menuProfile
+      ? (commands.some(isClaudeCommand) ? ['claude', 'codex'] : ['codex', 'claude'])
+      : projectModelSources(menuProject);
   const codexTargets: LlmLaunchTarget[] = (codexState?.providers ?? []).map(provider => ({
     providerId: provider.id, providerName: provider.name, isDefault: codexState?.activeProviderId === provider.id,
     models: (provider.models ?? [provider.model]).map(id => ({ id, effort: (provider.modelReasoningEfforts[id] ?? 'max') || '默认', contextWindow: provider.contextWindow })),
@@ -507,12 +508,12 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
                     {project && (
                       <button
                         className="tree-item-launch"
-                        aria-label={`启动项目 ${project.name}`}
-                        title={`启动项目 ${project.name}`}
+                        aria-label={`在项目目录打开终端 ${project.name}`}
+                        title={`在项目目录打开终端 ${project.name}`}
                         disabled={busy}
                         onClick={(e) => {
                           e.stopPropagation();
-                          openMenu({ kind: 'group', name: group.name }, e.clientX, e.clientY);
+                          launchProject(project);
                         }}
                       >
                         <Zap size={15} />
@@ -681,9 +682,7 @@ export default function Projects({ onOpenFiles }: { onOpenFiles: (path: string) 
             <>
               {menuProject?.path && (
                 <>
-                  {item('启动项目', () => launchProject(menuProject))}
-                  {presetItems((p) => launchProject(menuProject, p))}
-                  {item('命令行', () => launchProject(menuProject, undefined, true))}
+                  {item('命令行', () => launchProject(menuProject))}
                   {modelItems}
                   <div className="context-menu-separator" role="separator" />
                   {item('打开目录', () => {

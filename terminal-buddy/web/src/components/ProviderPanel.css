@@ -74,6 +74,45 @@
 
 .codex-provider-presets small { color: var(--text-soft); line-height: 1.5; }
 .codex-model-picker { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.codex-model-list { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+/* 模型行拖拽排序：Pointer 事件同时覆盖鼠标与触屏 */
+.model-drag-row { position: relative; min-width: 0; }
+.model-drag-row.dragging { opacity: 0.55; }
+.model-drag-row.drop-before::before,
+.model-drag-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.model-drag-row.drop-before::before { top: -6px; }
+.model-drag-row.drop-after::after { bottom: -6px; }
+.model-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  cursor: grab;
+  opacity: 0.7;
+  touch-action: none;
+}
+.model-drag-handle:hover,
+.model-drag-handle:focus-visible {
+  opacity: 1;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: none;
+}
+.model-drag-handle:active { cursor: grabbing; }
 .codex-model-picker-heading, .codex-model-picker-tools, .codex-model-input-row {
   display: flex;
   align-items: center;

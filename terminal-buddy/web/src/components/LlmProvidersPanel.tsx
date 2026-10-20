@@ -1,11 +1,14 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { GripVertical, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '../api';
-import type { LlmProvider, LlmProviderInput } from '../types';
+import type { LlmModelConfig, LlmProvider, LlmProviderInput } from '../types';
+import { useDragReorder } from '../hooks/useDragReorder';
 import { Dialog } from './Dialog';
+import { ModelCombobox } from './ModelCombobox';
 import { ProviderPanel } from './ProviderPanel';
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const newModel = (id: string) => ({
+const newModel = (id: string): LlmModelConfig => ({
   id,
   enabled: true,
   contextWindow: 0,
@@ -24,14 +27,23 @@ export function LlmProvidersPanel({
 }) {
   const [providers, setProviders] = useState<LlmProvider[]>([]);
   const [draft, setDraft] = useState<LlmProviderInput | null>(null);
-  const [modelId, setModelId] = useState('');
-  const [modelQuery, setModelQuery] = useState('');
+  const [available, setAvailable] = useState<string[]>([]);
   const formId = useId();
   const busyRef = useRef(false);
   const [confirmDelete, setConfirmDelete] = useState<LlmProvider | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const { containerRef: modelListRef, startDrag, dragClass } = useDragReorder((from, to) => {
+    setDraft(current => {
+      if (!current) return current;
+      const next = [...current.enabledModels];
+      const [moved] = next.splice(from, 1);
+      if (!moved) return current;
+      next.splice(to, 0, moved);
+      return { ...current, enabledModels: next };
+    });
+  });
   useEffect(() => {
     if (!active || busyRef.current) return;
     let mounted = true;
@@ -68,8 +80,7 @@ export function LlmProvidersPanel({
   };
   const edit = (provider?: LlmProvider) => {
     setError('');
-    setModelId('');
-    setModelQuery('');
+    setAvailable([]);
     setDraft(
       provider
         ? {
@@ -81,7 +92,8 @@ export function LlmProvidersPanel({
             isDefault: provider.isDefault,
             defaultEffortLevel: provider.defaultEffortLevel,
             modelsUrl: provider.modelsUrl,
-            enabledModels: provider.enabledModels.map((m) => ({ ...m })),
+            // 行式编辑：行存在即启用，未启用的旧条目不进入编辑视图（保存后清除）。
+            enabledModels: provider.enabledModels.filter((m) => m.enabled).map((m) => ({ ...m })),
             sortIndex: provider.sortIndex,
           }
         : {
@@ -100,8 +112,15 @@ export function LlmProvidersPanel({
   };
   const save = () => {
     if (!draft) return;
-    if (modelId.trim()) {
-      setError('请先添加模型，或清空未添加的模型 ID');
+    const enabledModels = draft.enabledModels
+      .filter((model) => model.id.trim())
+      .map((model) => ({ ...model, id: model.id.trim(), enabled: true }));
+    const duplicate = enabledModels.find(
+      (model, index) => enabledModels.findIndex((other) => other.id === model.id) !== index,
+    );
+    if (duplicate) {
+      // 后端也会拒绝重复模型；这里提前提示，避免请求往返后才看到错误。
+      setError(`模型「${duplicate.id}」重复，请删除重复项后再保存`);
       return;
     }
     void run(async () => {
@@ -111,6 +130,7 @@ export function LlmProvidersPanel({
         baseUrl: draft.baseUrl.trim(),
         modelsUrl: draft.modelsUrl.trim(),
         apiKey: draft.apiKey?.trim() || undefined,
+        enabledModels,
       });
       setProviders(await api.getLlmProviders());
       await onChanged?.();
@@ -124,15 +144,143 @@ export function LlmProvidersPanel({
       setProviders(await api.orderLlmProviders(ids));
       await onChanged?.();
     });
+  const updateModel = (index: number, patch: Partial<LlmModelConfig>) => {
+    setDraft((current) =>
+      current
+        ? {
+            ...current,
+            enabledModels: current.enabledModels.map((model, i) =>
+              i === index ? { ...model, ...patch } : model,
+            ),
+          }
+        : current,
+    );
+  };
+  const fetchModels = () => {
+    if (!draft) return;
+    void run(async () => {
+      const models = await api.fetchLlmModels({
+        providerId: draft.id || undefined,
+        baseUrl: draft.baseUrl.trim(),
+        apiKey: draft.apiKey?.trim() || '',
+        modelsUrl: draft.modelsUrl.trim(),
+      });
+      setAvailable(models.map((m) => m.id));
+    });
+  };
+
   return (
     <>
       <ProviderPanel
-        title={draft ? (draft.id ? '编辑模型供应商' : '添加模型供应商') : '模型供应商'}
+        title="模型供应商"
         onClose={onClose ? () => {
           if (!busy) onClose();
         } : undefined}
         footer={
-          draft ? (
+          <>
+            {onClose && <button className="btn" onClick={onClose} disabled={busy}>关闭</button>}
+            <button className="btn" disabled={busy || loading} onClick={() => void run(async () => {
+              setProviders(await api.getLlmProviders());
+            })}>刷新</button>
+            <button className="btn primary" disabled={busy || loading} onClick={() => edit()}>
+              添加供应商
+            </button>
+          </>
+        }
+      >
+        {error && !draft && (
+          <div className="nav-error" role="alert">
+            {error}
+          </div>
+        )}
+        <div className="project-form">
+          {loading ? (
+            <p>加载中…</p>
+          ) : (
+            !providers.length && <p>暂无模型供应商，添加后可从长按菜单选择模型启动 Claude。</p>
+          )}
+          {providers.map((provider, index) => (
+            <div className="provider-model-editor" key={provider.id}>
+              <strong>
+                {provider.name}
+                {provider.isDefault && '（默认）'}
+              </strong>
+              <small>{provider.baseUrl}</small>
+              <small>
+                {provider.enabledModels.filter((m) => m.enabled).length} 个启用模型 · 密钥
+                {provider.keySet ? `已设置（尾号 ${provider.keyTail}）` : '未设置'}
+              </small>
+              <div className="project-row-actions">
+                <button className="btn small" disabled={busy} onClick={() => edit(provider)}>
+                  编辑
+                </button>
+                {provider.isDefault ? (
+                  <button
+                    className="btn small"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        setProviders(await api.clearDefaultLlmProvider());
+                        await onChanged?.();
+                      })
+                    }
+                  >
+                    取消默认
+                  </button>
+                ) : (
+                  <button
+                    className="btn small"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        setProviders(await api.setDefaultLlmProvider(provider.id));
+                        await onChanged?.();
+                      })
+                    }
+                  >
+                    设为默认
+                  </button>
+                )}
+                <button
+                  className="btn small"
+                  disabled={busy || index === 0}
+                  aria-label={`上移 ${provider.name}`}
+                  onClick={() => reorder(index, -1)}
+                >
+                  ↑
+                </button>
+                <button
+                  className="btn small"
+                  disabled={busy || index === providers.length - 1}
+                  aria-label={`下移 ${provider.name}`}
+                  onClick={() => reorder(index, 1)}
+                >
+                  ↓
+                </button>
+                <button
+                  className="btn small danger"
+                  disabled={busy}
+                  onClick={() => setConfirmDelete(provider)}
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </ProviderPanel>
+
+      {draft && (
+        <Dialog
+          title={draft.id ? `编辑模型供应商 · ${draft.name || '（未命名）'}` : '添加模型供应商'}
+          className="llm-provider-editor-dialog"
+          onClose={() => {
+            if (!busy) {
+              setDraft(null);
+              setError('');
+            }
+          }}
+          footer={
             <>
               <button
                 className="btn"
@@ -142,7 +290,7 @@ export function LlmProvidersPanel({
                   setError('');
                 }}
               >
-                返回
+                取消
               </button>
               <button
                 className="btn primary"
@@ -153,25 +301,8 @@ export function LlmProvidersPanel({
                 {busy ? '处理中…' : '保存'}
               </button>
             </>
-          ) : (
-            <>
-              {onClose && <button className="btn" onClick={onClose} disabled={busy}>关闭</button>}
-              <button className="btn" disabled={busy || loading} onClick={() => void run(async () => {
-                setProviders(await api.getLlmProviders());
-              })}>刷新</button>
-              <button className="btn primary" disabled={busy || loading} onClick={() => edit()}>
-                添加供应商
-              </button>
-            </>
-          )
-        }
-      >
-        {error && (
-          <div className="nav-error" role="alert">
-            {error}
-          </div>
-        )}
-        {draft ? (
+          }
+        >
           <form
             id={formId}
             className="project-form"
@@ -248,217 +379,101 @@ export function LlmProvidersPanel({
                 />
                 设为默认供应商
               </label>
-              <button
-                className="btn"
-                type="button"
-                onClick={() =>
-                  void run(async () => {
-                    const models = await api.fetchLlmModels({
-                      providerId: draft.id || undefined,
-                      baseUrl: draft.baseUrl.trim(),
-                      apiKey: draft.apiKey?.trim() || '',
-                      modelsUrl: draft.modelsUrl.trim(),
-                    });
-                    const known = new Set(draft.enabledModels.map((m) => m.id));
-                    setDraft({
-                      ...draft,
-                      enabledModels: [
-                        ...draft.enabledModels,
-                        ...models.filter((m) => !known.has(m.id)).map((m) => newModel(m.id)),
-                      ],
-                    });
-                  })
-                }
-              >
-                从供应商拉取模型
-              </button>
-              <div className="project-input-action">
-                <input
-                  aria-label="新模型 ID"
-                  placeholder="手动输入模型 ID"
-                  value={modelId}
-                  onChange={(e) => setModelId(e.target.value)}
-                />
+              <div className="codex-model-picker-tools">
+                <button className="btn" type="button" disabled={busy} onClick={fetchModels}>
+                  <RefreshCw size={14} /> 从供应商拉取模型
+                </button>
                 <button
                   className="btn"
                   type="button"
-                  disabled={!modelId.trim()}
-                  onClick={() => {
-                    if (draft.enabledModels.some((m) => m.id === modelId.trim())) {
-                      setError('模型 ID 已存在');
-                      return;
-                    }
-                    setDraft({
-                      ...draft,
-                      enabledModels: [...draft.enabledModels, newModel(modelId.trim())],
-                    });
-                    setModelId('');
-                    setError('');
-                  }}
+                  disabled={busy || draft.enabledModels.length >= 200}
+                  onClick={() => setDraft({ ...draft, enabledModels: [...draft.enabledModels, newModel('')] })}
                 >
-                  添加模型
+                  <Plus size={14} /> 添加模型
                 </button>
               </div>
-              {draft.enabledModels.length > 0 && (
-                <div className="provider-model-tools">
-                  <label>
-                    搜索模型
-                    <input type="search" value={modelQuery} onChange={(e) => setModelQuery(e.target.value)} placeholder="按模型 ID 搜索" />
-                  </label>
-                  <label className="project-checkbox">
-                    <input type="checkbox"
-                      checked={draft.enabledModels.every((model) => model.enabled)}
-                      ref={(element) => { if (element) element.indeterminate = draft.enabledModels.some((model) => model.enabled) && !draft.enabledModels.every((model) => model.enabled); }}
-                      onChange={(e) => setDraft({ ...draft, enabledModels: draft.enabledModels.map((model) => ({ ...model, enabled: e.target.checked })) })}
+              {draft.enabledModels.length > 0 && <div className="llm-model-list" ref={modelListRef}>
+                {draft.enabledModels.map((model, index) => (
+                  <div className={`llm-model-row model-drag-row${dragClass(index)}`} key={index} data-drag-index={index}>
+                    <span
+                      className="model-drag-handle"
+                      role="button"
+                      tabIndex={0}
+                      title="拖拽排序"
+                      aria-label={`拖拽排序模型 ${index + 1}`}
+                      onPointerDown={(event) => startDrag(event, index)}
+                    >
+                      <GripVertical size={14} aria-hidden="true" />
+                    </span>
+                    <ModelCombobox
+                      value={model.id}
+                      options={available}
+                      onChange={(value) => updateModel(index, { id: value })}
+                      ariaLabel={`模型 ID ${index + 1}`}
                     />
-                    全选模型（已启用 {draft.enabledModels.filter((model) => model.enabled).length} / {draft.enabledModels.length}）
-                  </label>
-                </div>
-              )}
-              {modelQuery.trim() && !draft.enabledModels.some((model) => model.id.toLowerCase().includes(modelQuery.trim().toLowerCase())) && <p className="provider-description">无匹配模型</p>}
-              {draft.enabledModels.map((model, index) => ({ model, index }))
-                .filter(({ model }) => model.id.toLowerCase().includes(modelQuery.trim().toLowerCase()))
-                .map(({ model, index }) => (
-                <div className="provider-model-editor" key={model.id}>
-                  <label className="project-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={model.enabled}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          enabledModels: draft.enabledModels.map((m, i) =>
-                            i === index ? { ...m, enabled: e.target.checked } : m,
-                          ),
-                        })
-                      }
-                    />
-                    <span>{model.id}</span>
-                  </label>
-                  <label>
-                    推理等级
                     <select
+                      className="codex-model-effort"
+                      aria-label={`模型推理等级 ${index + 1}`}
+                      title="推理等级"
                       value={model.effortLevel}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          enabledModels: draft.enabledModels.map((m, i) =>
-                            i === index ? { ...m, effortLevel: e.target.value } : m,
-                          ),
-                        })
-                      }
+                      onChange={(e) => updateModel(index, { effortLevel: e.target.value })}
                     >
                       <option value="">跟随供应商</option>
                       {EFFORTS.map((v) => (
                         <option key={v}>{v}</option>
                       ))}
                     </select>
-                  </label>
-                  <label>
-                    上下文窗口（0 表示不覆盖）
                     <input
                       type="number"
+                      className="llm-model-number"
+                      aria-label={`模型上下文 ${index + 1}`}
                       min={0}
-                      max={4294967295}
-                      step={1}
-                      value={model.contextWindow}
-                      onChange={(e) =>
+                      step={1000}
+                      value={model.contextWindow || ''}
+                      placeholder="上下文"
+                      title="模型真实上下文窗口（tokens），0 表示不覆盖"
+                      onChange={(e) => updateModel(index, { contextWindow: Number(e.target.value) || 0 })}
+                    />
+                    <input
+                      type="number"
+                      className="llm-model-number"
+                      aria-label={`模型最大输出 ${index + 1}`}
+                      min={0}
+                      step={1000}
+                      value={model.maxOutputTokens || ''}
+                      placeholder="输出上限"
+                      title="最大输出 tokens，0 表示不覆盖"
+                      onChange={(e) => updateModel(index, { maxOutputTokens: Number(e.target.value) || 0 })}
+                    />
+                    <button
+                      className="btn small danger"
+                      type="button"
+                      aria-label={`删除模型 ${index + 1}`}
+                      onClick={() =>
                         setDraft({
                           ...draft,
-                          enabledModels: draft.enabledModels.map((m, i) =>
-                            i === index ? { ...m, contextWindow: Number(e.target.value) } : m,
-                          ),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    最大输出 tokens（0 表示不覆盖）
-                    <input type="number" min={0} max={4294967295} step={1} value={model.maxOutputTokens}
-                      onChange={(e) => setDraft({ ...draft, enabledModels: draft.enabledModels.map((m, i) => i === index ? { ...m, maxOutputTokens: Number(e.target.value) } : m) })}
-                    />
-                  </label>
-                  <button
-                    className="btn small danger"
-                    type="button"
-                    onClick={() =>
-                      setDraft({
-                        ...draft,
-                        enabledModels: draft.enabledModels.filter((_, i) => i !== index),
-                      })
-                    }
-                  >
-                    移除模型
-                  </button>
-                </div>
-              ))}
-            </fieldset>
-          </form>
-        ) : (
-          <div className="project-form">
-            {loading ? (
-              <p>加载中…</p>
-            ) : (
-              !providers.length && <p>暂无模型供应商，添加后可从长按菜单选择模型启动 Claude。</p>
-            )}
-            {providers.map((provider, index) => (
-              <div className="provider-model-editor" key={provider.id}>
-                <strong>
-                  {provider.name}
-                  {provider.isDefault && '（默认）'}
-                </strong>
-                <small>{provider.baseUrl}</small>
-                <small>
-                  {provider.enabledModels.filter((m) => m.enabled).length} 个启用模型 · 密钥
-                  {provider.keySet ? `已设置（尾号 ${provider.keyTail}）` : '未设置'}
-                </small>
-                <div className="project-row-actions">
-                  <button className="btn small" disabled={busy} onClick={() => edit(provider)}>
-                    编辑
-                  </button>
-                  {!provider.isDefault && (
-                    <button
-                      className="btn small"
-                      disabled={busy}
-                      onClick={() =>
-                        void run(async () => {
-                          setProviders(await api.setDefaultLlmProvider(provider.id));
-                          await onChanged?.();
+                          enabledModels: draft.enabledModels.filter((_, i) => i !== index),
                         })
                       }
                     >
-                      设为默认
+                      <Trash2 size={14} />
                     </button>
-                  )}
-                  <button
-                    className="btn small"
-                    disabled={busy || index === 0}
-                    aria-label={`上移 ${provider.name}`}
-                    onClick={() => reorder(index, -1)}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    className="btn small"
-                    disabled={busy || index === providers.length - 1}
-                    aria-label={`下移 ${provider.name}`}
-                    onClick={() => reorder(index, 1)}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    className="btn small danger"
-                    disabled={busy}
-                    onClick={() => setConfirmDelete(provider)}
-                  >
-                    删除
-                  </button>
-                </div>
+                  </div>
+                ))}
+              </div>}
+              {!draft.enabledModels.length && (
+                <p className="provider-description">点击「添加模型」新增一行，可手动输入或先「从供应商拉取模型」再从下拉中选择。</p>
+              )}
+            </fieldset>
+            {error && (
+              <div className="nav-error" role="alert">
+                {error}
               </div>
-            ))}
-          </div>
-        )}
-      </ProviderPanel>
+            )}
+          </form>
+        </Dialog>
+      )}
+
       {confirmDelete && (
         <Dialog
           title="删除模型供应商"

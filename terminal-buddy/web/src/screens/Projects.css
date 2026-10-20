@@ -129,6 +129,20 @@
   color: var(--text-muted);
   overflow-wrap: anywhere;
 }
+/* Agent 启用开关：横向排列的两个复选框，与桌面端项目编辑保持一致的语义 */
+.project-agent-toggles {
+  display: flex;
+  gap: 22px;
+}
+.project-agent-toggle {
+  flex-direction: row !important;
+  align-items: center;
+  font-size: 14px !important;
+  cursor: pointer;
+}
+.project-agent-toggle input {
+  accent-color: var(--accent, #4f8cff);
+}
 .project-form .project-checkbox {
   flex-direction: row;
   align-items: center;

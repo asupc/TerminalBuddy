@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Profile, Project } from '../types';
+import { projectEnabledAgents } from '../types';
 import { saveProject } from '../utils/projects';
 import { Dialog } from './Dialog';
 import { ServerPathPicker } from './ServerPathPicker';
@@ -23,12 +24,12 @@ export function ProjectEditorDialog({
 }) {
   const [name, setName] = useState(original?.name || defaultName || '');
   const [path, setPath] = useState(original?.path || '');
-  const [command, setCommand] = useState(original?.startupCommand || '');
+  const [agents, setAgents] = useState(projectEnabledAgents(original));
   const [browsing, setBrowsing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submit = async () => {
-    const project = { name: name.trim(), path: path.trim(), startupCommand: command.trim() };
+    const project = { name: name.trim(), path: path.trim(), enabledAgents: { ...agents } };
     if (!project.name || !(windows ? /^(?:[a-z]:[\\/]|\\\\)/i : /^\//).test(project.path)) {
       setError('请输入项目名称和服务器绝对路径');
       return;
@@ -104,15 +105,25 @@ export function ProjectEditorDialog({
                 </button>
               </div>
             </label>
-            <label>
-              启动命令
-              <input
-                value={command}
-                onChange={(e) => setCommand(e.target.value)}
-                placeholder="例如 claude 或 npm run dev"
-              />
-            </label>
-            <small>在项目目录执行；留空仅打开终端。启动参数会按此命令匹配。</small>
+            <div className="project-agent-toggles">
+              <label className="project-agent-toggle">
+                <input
+                  type="checkbox"
+                  checked={agents.claude}
+                  onChange={(e) => setAgents((value) => ({ ...value, claude: e.target.checked }))}
+                />
+                Claude Code
+              </label>
+              <label className="project-agent-toggle">
+                <input
+                  type="checkbox"
+                  checked={agents.codex}
+                  onChange={(e) => setAgents((value) => ({ ...value, codex: e.target.checked }))}
+                />
+                Codex
+              </label>
+            </div>
+            <small>长按项目时可按启用的 Agent 展开供应商与模型启动。</small>
           </fieldset>
           {error && (
             <div className="nav-error" role="alert">

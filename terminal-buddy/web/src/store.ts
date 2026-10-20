@@ -48,6 +48,12 @@ interface AppState {
   extraParamPresets: ExtraParamPreset[];
   presetsLoading: boolean;
   presetsError: string | null;
+  /** Agent 管理的基础启动命令（空串 = 内置默认，经 /api/runtime 同步），供模型启动兜底。 */
+  agentCommands: { claude: string; codex: string };
+  /** 终端活动状态（呼吸灯数据源，/ws/events 的 claude hook 事件驱动）。 */
+  terminalActivities: Record<string, { phase: string; occurredAt: number }>;
+  /** 会话显示名覆盖（纯前端重命名，与 PC 端行为一致；持久化到 localStorage）。 */
+  sessionNameOverrides: Record<string, string>;
   // 当前界面
   view: View;
   // 导航栏折叠状态（持久化；类似 PC 端 configPanelVisible）
@@ -67,6 +73,12 @@ interface AppState {
   setView: (v: View) => void;
   setNavCollapsed: (collapsed: boolean) => void;
   toggleNavCollapsed: () => void;
+  setAgentCommands: (commands: { claude: string; codex: string }) => void;
+  applyTerminalActivity: (terminalId: string, phase: string, occurredAt: number) => void;
+  clearTerminalActivity: (terminalId: string) => void;
+  pruneTerminalActivities: (aliveIds: string[]) => void;
+  pruneExpiredActivities: (timeoutMs: number) => void;
+  setSessionNameOverride: (sessionId: string, name: string | null) => void;
 
   loadExtraParamPresets: () => Promise<void>;
   addExtraParamPreset: (name: string, params: string, tagColor: string | null, commandMatch: string | null, mode: ExtraParamMode) => Promise<void>;
@@ -137,6 +149,52 @@ export const useStore = create<AppState>()(
       setView: (view) => set({ view }),
       setNavCollapsed: (navCollapsed) => set({ navCollapsed }),
       toggleNavCollapsed: () => set((s) => ({ navCollapsed: !s.navCollapsed })),
+      agentCommands: { claude: '', codex: '' },
+      setAgentCommands: (commands) => set({ agentCommands: commands }),
+      terminalActivities: {},
+      sessionNameOverrides: {},
+      setSessionNameOverride: (sessionId, name) =>
+        set((s) => {
+          const next = { ...s.sessionNameOverrides };
+          if (name && name.trim()) next[sessionId] = name.trim();
+          else delete next[sessionId];
+          return { ...s, sessionNameOverrides: next };
+        }),
+      applyTerminalActivity: (terminalId, phase, occurredAt) =>
+        set((s) => ({
+          terminalActivities: { ...s.terminalActivities, [terminalId]: { phase, occurredAt } },
+        })),
+      clearTerminalActivity: (terminalId) =>
+        set((s) => {
+          if (!(terminalId in s.terminalActivities)) return s;
+          const next = { ...s.terminalActivities };
+          delete next[terminalId];
+          return { ...s, terminalActivities: next };
+        }),
+      pruneTerminalActivities: (aliveIds) =>
+        set((s) => {
+          const alive = new Set(aliveIds);
+          const next: typeof s.terminalActivities = {};
+          for (const [id, activity] of Object.entries(s.terminalActivities)) {
+            if (alive.has(id)) next[id] = activity;
+          }
+          return { ...s, terminalActivities: next };
+        }),
+      pruneExpiredActivities: (timeoutMs) =>
+        set((s) => {
+          const now = Date.now();
+          let changed = false;
+          const next: typeof s.terminalActivities = {};
+          for (const [id, activity] of Object.entries(s.terminalActivities)) {
+            const busy = activity.phase === 'running' || activity.phase === 'attention';
+            if (busy && now - activity.occurredAt > timeoutMs) {
+              changed = true;
+              continue;
+            }
+            next[id] = activity;
+          }
+          return changed ? { ...s, terminalActivities: next } : s;
+        }),
 
       loadExtraParamPresets: async () => {
         set({ presetsLoading: true, presetsError: null });
@@ -190,7 +248,7 @@ export const useStore = create<AppState>()(
     {
       name: 'terminalbuddy_mobile_auth',
       // 持久化登录态与导航折叠偏好，profiles/sessions/presets/view 每次进入重新获取
-      partialize: (s) => ({ token: s.token, username: s.username, navCollapsed: s.navCollapsed }),
+      partialize: (s) => ({ token: s.token, username: s.username, navCollapsed: s.navCollapsed, sessionNameOverrides: s.sessionNameOverrides }),
     },
   ),
 );
