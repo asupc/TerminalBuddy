@@ -1,3 +1,4 @@
+pub mod agent_cli_service;
 pub mod atomic_file;
 pub mod bot_binding_service;
 pub mod bot_channel;

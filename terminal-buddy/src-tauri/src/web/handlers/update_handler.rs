@@ -17,12 +17,13 @@ struct UpdateStatusFile {
     status: String,
 }
 
+/// 公开 handler 的返回类型须为 pub，否则 server 变体编译时因私有类型泄露报错。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateStatusResponse {
-    update_id: String,
-    status: String,
-    log: String,
+    pub update_id: String,
+    pub status: String,
+    pub log: String,
 }
 
 /// 读取独立更新容器写入 /data 的更新状态与完整日志。

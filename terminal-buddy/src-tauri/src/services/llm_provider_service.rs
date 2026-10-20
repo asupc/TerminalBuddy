@@ -140,7 +140,6 @@ pub fn save_provider(input: LlmProviderInput) -> Result<LlmProviderView, String>
             .iter()
             .position(|provider| provider.id == id)
             .ok_or_else(|| "供应商不存在，可能已被删除".to_string())?;
-        let was_default = file.providers[slot_index].is_default;
         if file.providers[slot_index].created_at.is_empty() {
             provider.created_at = now.clone();
         } else {
@@ -152,11 +151,6 @@ pub fn save_provider(input: LlmProviderInput) -> Result<LlmProviderView, String>
             for other in file.providers.iter_mut() {
                 other.is_default = other.id == id;
             }
-        } else if was_default
-            && !file.providers.iter().any(|other| other.id != id && other.is_default)
-        {
-            // 取消唯一的默认：保持至少一个默认（sortIndex 最小的接任）。
-            provider.is_default = true;
         }
         file.providers[slot_index] = provider.clone();
     } else {
@@ -177,7 +171,7 @@ pub fn save_provider(input: LlmProviderInput) -> Result<LlmProviderView, String>
     to_view(&provider)
 }
 
-/// 删除供应商。删除默认供应商时 `sortIndex` 最小的剩余供应商自动接任默认。
+/// 删除供应商。删除默认供应商后允许没有默认（右键菜单不再平铺任何模型）。
 /// 不阻止删除：引用该供应商的页签快照在启动/恢复时按失效分支提示。
 pub fn delete_provider(id: &str) -> Result<Vec<LlmProviderView>, String> {
     let _guard = providers_lock().lock().map_err(|_| lock_error())?;
@@ -187,14 +181,7 @@ pub fn delete_provider(id: &str) -> Result<Vec<LlmProviderView>, String> {
         .iter()
         .position(|provider| provider.id == id)
         .ok_or_else(|| "供应商不存在，可能已被删除".to_string())?;
-    let was_default = file.providers[position].is_default;
     file.providers.remove(position);
-    if was_default {
-        if let Some(next) = file.providers.iter_mut().min_by_key(|provider| provider.sort_index) {
-            next.is_default = true;
-            next.updated_at = Utc::now().to_rfc3339();
-        }
-    }
     sort_providers(&mut file.providers);
     write_providers_file(&file)?;
     file.providers.iter().map(to_view).collect()
@@ -215,6 +202,21 @@ pub fn set_default_provider(id: &str) -> Result<Vec<LlmProviderView>, String> {
         }
     }
     sort_providers(&mut file.providers);
+    write_providers_file(&file)?;
+    file.providers.iter().map(to_view).collect()
+}
+
+/// 取消所有默认标记：允许没有默认供应商，此时右键菜单不平铺任何模型。
+pub fn clear_default_provider() -> Result<Vec<LlmProviderView>, String> {
+    let _guard = providers_lock().lock().map_err(|_| lock_error())?;
+    let mut file = read_providers_file()?;
+    let now = Utc::now().to_rfc3339();
+    for provider in file.providers.iter_mut() {
+        if provider.is_default {
+            provider.is_default = false;
+            provider.updated_at.clone_from(&now);
+        }
+    }
     write_providers_file(&file)?;
     file.providers.iter().map(to_view).collect()
 }
@@ -946,10 +948,16 @@ mod tests {
             // 落盘加密
             let raw = fs::read_to_string(providers_path().unwrap()).unwrap();
             assert!(!raw.contains("secret-a") && !raw.contains("secret-b"));
-            // 删除默认 → sortIndex 最小的接任
+            // 删除默认 → 允许没有默认（右键菜单不平铺任何模型）
             let remaining = delete_provider(&saved_first.id).unwrap();
             assert_eq!(remaining.len(), 1);
-            assert!(remaining[0].is_default);
+            assert!(!remaining[0].is_default);
+            // 显式取消默认同样允许空默认；再设默认恢复唯一标记
+            set_default_provider(&saved_second.id).unwrap();
+            let cleared = clear_default_provider().unwrap();
+            assert!(cleared.iter().all(|provider| !provider.is_default));
+            let restored = set_default_provider(&saved_second.id).unwrap();
+            assert!(restored.iter().filter(|provider| provider.is_default).count() == 1);
         });
     }
 
@@ -1038,12 +1046,17 @@ mod tests {
             let command = format!("__TB_CLAUDE_REF__:{}:m1 --resume deadbeef", saved.id);
             let expanded = expand_leading_claude_ref(&command, "term-1").unwrap();
             assert!(expanded.starts_with("claude --settings "), "实际：{}", expanded);
-            assert!(expanded.contains("--model m1 --effort high --resume deadbeef"), "实际：{}", expanded);
+            // 引号风格随平台（quote_cmd_argument）：Windows 双引号、POSIX 单引号。
+            #[cfg(windows)]
+            let expected_args = "--model m1 --effort high --resume deadbeef";
+            #[cfg(not(windows))]
+            let expected_args = "--model 'm1' --effort high --resume deadbeef";
+            assert!(expanded.contains(expected_args), "实际：{}", expanded);
             // 临时文件真实存在且无 hooks
             let path: PathBuf = expanded
                 .split_whitespace()
                 .nth(2)
-                .map(|token| token.trim_matches('"').to_string())
+                .map(|token| token.trim_matches(|c| c == '"' || c == '\'').to_string())
                 .map(PathBuf::from)
                 .unwrap();
             let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();

@@ -25,7 +25,7 @@ pub struct CodexProvider {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
-    /// 可快速启动的模型；旧配置自动包含原默认模型。
+    /// 可快速启动的模型，按用户配置顺序保存；旧配置自动包含原默认模型。
     #[serde(default)]
     pub models: Vec<String>,
     /// 最近更新的完整模型列表，与快速启动模型分开保存。
@@ -146,13 +146,17 @@ impl CodexProviderInput {
         if self.models.len() > 200 {
             return Err("每个供应商最多配置 200 个模型".to_string());
         }
-        let mut models = vec![model.clone()];
+        // 保留前端配置顺序；默认模型必须存在，旧客户端未带上时补到首位。
+        let mut models: Vec<String> = Vec::new();
         for id in self.models {
             let id = id.trim().to_string();
             if id.is_empty() || id.len() > 256 || id.chars().any(|c| c.is_whitespace() || c.is_control()) {
                 return Err("模型 ID 不能为空、不能超过 256 字节，且不能包含空白或控制字符".to_string());
             }
             if !models.contains(&id) { models.push(id); }
+        }
+        if !models.contains(&model) {
+            models.insert(0, model.clone());
         }
         let mut model_reasoning_efforts = BTreeMap::new();
         for id in &models {
@@ -204,10 +208,11 @@ impl CodexProviderInput {
 }
 
 impl CodexProvider {
+    /// 按配置顺序返回模型；旧数据缺默认模型时补到首位。
     pub fn model_ids(&self) -> Vec<String> {
-        let mut ids = vec![self.model.clone()];
-        for id in &self.models {
-            if !ids.contains(id) { ids.push(id.clone()); }
+        let mut ids = self.models.clone();
+        if !ids.iter().any(|id| id == &self.model) {
+            ids.insert(0, self.model.clone());
         }
         ids
     }

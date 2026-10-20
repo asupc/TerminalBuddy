@@ -4,6 +4,8 @@
 //! 是两套独立数据源：本文件只管 JSON 落盘与校验，不读写用户级 `settings.json`。
 //! 启动时走 `--settings` 临时文件按官方优先级覆盖基线，天然兼容。
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::profile_validation::reject_control_chars;
@@ -244,8 +246,13 @@ impl LlmProviderInput {
         }
         let models_url = validate_models_url(&self.models_url)?;
         let mut enabled_models = Vec::with_capacity(self.enabled_models.len());
+        let mut seen_models = HashSet::with_capacity(self.enabled_models.len());
         for model in &self.enabled_models {
-            enabled_models.push(validate_model_config(model)?);
+            let model = validate_model_config(model)?;
+            if !seen_models.insert(model.id.clone()) {
+                return Err(format!("模型「{}」重复，请删除重复项后再保存", model.id));
+            }
+            enabled_models.push(model);
         }
         Ok((
             LlmProvider {
@@ -374,6 +381,21 @@ mod tests {
         let mut input = valid_input();
         input.enabled_models[0].id = "a".repeat(257);
         assert!(input.validate(None).is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_model_ids_after_trimming() {
+        let mut input = valid_input();
+        input.enabled_models.push(LlmModelConfig {
+            id: " claude-opus-5-5 ".to_string(),
+            enabled: true,
+            context_window: 0,
+            effort_level: String::new(),
+            max_output_tokens: 0,
+        });
+        let error = input.validate(None).expect_err("重复模型应被拒绝");
+        assert!(error.contains("claude-opus-5-5"), "{error}");
+        assert!(error.contains("重复"), "{error}");
     }
 
     #[test]

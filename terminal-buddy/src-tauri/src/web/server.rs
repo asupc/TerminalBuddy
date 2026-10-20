@@ -195,6 +195,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/llm-providers/{id}/set-default",
             post(handlers::llm_provider_handler::set_default),
         )
+        .route(
+            "/api/llm-providers/clear-default",
+            post(handlers::llm_provider_handler::clear_default),
+        )
         // 会话列表实时同步（meta WS，App 级单连接）
         .route("/ws/meta", get(ws::meta_ws_handler))
         // 终端 I/O（per-terminal WS）

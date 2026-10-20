@@ -110,6 +110,19 @@ pub async fn set_default(
     no_store_json(&providers)
 }
 
+/// 取消默认供应商：允许没有默认，右键菜单不再平铺任何模型。
+pub async fn clear_default(
+    State(_state): State<AppState>,
+    _claims: ClaimsFromRequest,
+) -> Result<Response, ApiError> {
+    let providers =
+        tokio::task::spawn_blocking(llm_provider_service::clear_default_provider)
+            .await
+            .map_err(|error| ApiError::Internal(format!("保存任务执行失败: {}", error)))?
+            .map_err(ApiError::Internal)?;
+    no_store_json(&providers)
+}
+
 pub async fn update_order(
     State(_state): State<AppState>,
     _claims: ClaimsFromRequest,

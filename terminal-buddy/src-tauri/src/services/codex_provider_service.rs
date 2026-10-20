@@ -500,6 +500,66 @@ impl ProviderStore {
         self.view(&file)
     }
 
+    /// 取消默认供应商：撤掉本应用写入全局 Codex 配置的模型/供应商选择与凭据，
+    /// 已保存的供应商卡片保留，可随时重新设为默认。
+    fn clear_default(&self) -> Result<CodexProviderState, String> {
+        let mut file = self.read()?;
+        file.current_provider_id = None;
+        let config_path = self.config_dir.join("config.toml");
+        let auth_path = self.config_dir.join("auth.json");
+        let mut writes = Vec::new();
+        if let Some(bytes) = read_optional(&config_path)? {
+            let mut doc = parse_config(&bytes)?;
+            if doc
+                .get("model_providers")
+                .is_some_and(|item| !item.is_table())
+            {
+                return Err("Codex model_providers 必须是 TOML 表；原文件未更改".to_string());
+            }
+            for key in [
+                "model_provider",
+                "model",
+                "model_reasoning_effort",
+                "model_context_window",
+                "model_auto_compact_token_limit",
+                "disable_response_storage",
+            ] {
+                doc.remove(key);
+            }
+            if let Some(table) = doc.get_mut("model_providers").and_then(Item::as_table_mut) {
+                table.remove(PROVIDER_ID);
+            }
+            let updated = doc.to_string().into_bytes();
+            if updated != bytes {
+                writes.push((config_path, updated));
+            }
+        }
+        if let Some(bytes) = read_optional(&auth_path)? {
+            let mut auth: Value = serde_json::from_slice(&bytes)
+                .map_err(|_| "Codex auth.json 不是有效 JSON，请修复后重试".to_string())?;
+            if auth
+                .as_object_mut()
+                .is_some_and(|object| object.remove("OPENAI_API_KEY").is_some())
+            {
+                writes.push((
+                    auth_path,
+                    serde_json::to_vec_pretty(&auth)
+                        .map_err(|_| "编码 Codex 凭据失败".to_string())?,
+                ));
+            }
+        }
+        writes.push((
+            self.path.clone(),
+            serde_json::to_vec_pretty(&file).map_err(|_| "编码 Codex 供应商失败".to_string())?,
+        ));
+        write_transaction(
+            &writes,
+            Some(&self.config_dir.join(BACKUP_DIR)),
+            atomic_write_private,
+        )?;
+        self.view(&file)
+    }
+
     fn delete(&self, id: &str) -> Result<CodexProviderState, String> {
         let mut file = self.read()?;
         if self.active_id(&file)?.as_deref() == Some(id) {
@@ -588,6 +648,11 @@ pub fn save_provider(
 pub fn activate_provider(id: &str) -> Result<CodexProviderState, String> {
     let _guard = config_lock().lock().map_err(|_| lock_error())?;
     store()?.activate(id)
+}
+
+pub fn clear_default_provider() -> Result<CodexProviderState, String> {
+    let _guard = config_lock().lock().map_err(|_| lock_error())?;
+    store()?.clear_default()
 }
 
 pub fn delete_provider(id: &str) -> Result<CodexProviderState, String> {
@@ -689,12 +754,41 @@ mod tests {
     }
 
     #[test]
+    fn configured_model_order_is_preserved_across_saves() {
+        let store = TestStore::new();
+        let mut draft = input("排序");
+        draft.models = vec![
+            "third-model".into(),
+            "test-model".into(),
+            "second-model".into(),
+        ];
+        let state = store.0.save(draft, false).unwrap();
+        assert_eq!(
+            state.providers[0].models,
+            vec!["third-model", "test-model", "second-model"]
+        );
+        // 重启后从磁盘读取仍保持同一顺序，右键菜单据此展示。
+        let reopened = store.0.view(&store.0.read().unwrap()).unwrap();
+        assert_eq!(
+            reopened.providers[0].models,
+            vec!["third-model", "test-model", "second-model"]
+        );
+        // 默认模型不在列表时补到首位，兼容旧客户端。
+        let mut legacy = input("旧数据");
+        legacy.model = "second-model".into();
+        legacy.models = vec!["test-model".into()];
+        let saved = store.0.save(legacy, false).unwrap();
+        assert_eq!(saved.providers[1].models, vec!["second-model", "test-model"]);
+    }
+
+    #[test]
     fn multiple_models_are_normalized_and_legacy_files_still_work() {
         let store = TestStore::new();
         let mut draft = input("多模型");
         draft.models = vec![" second-model ".into(), "test-model".into(), "second-model".into()];
         let state = store.0.save(draft, false).unwrap();
-        assert_eq!(state.providers[0].models, vec!["test-model", "second-model"]);
+        // 保留配置顺序（默认模型已在列表中时不再提前）。
+        assert_eq!(state.providers[0].models, vec!["second-model", "test-model"]);
         let mut old: Value = serde_json::from_slice(&fs::read(&store.0.path).unwrap()).unwrap();
         old["providers"][0].as_object_mut().unwrap().remove("models");
         atomic_write_private(&store.0.path, &serde_json::to_vec(&old).unwrap()).unwrap();
@@ -1248,6 +1342,39 @@ mod tests {
             Some(900_000)
         );
         assert_eq!(doc["disable_response_storage"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn clear_default_removes_live_selection_but_keeps_saved_provider() {
+        let store = TestStore::new();
+        let state = store.0.save(input("默认供应商"), false).unwrap();
+        let id = state.providers[0].id.clone();
+        assert_eq!(state.active_provider_id.as_deref(), Some(id.as_str()));
+        let cleared = store.0.clear_default().unwrap();
+        assert!(cleared.active_provider_id.is_none());
+        assert_eq!(cleared.providers.len(), 1);
+        let doc = parse_config(&store.config()).unwrap();
+        for key in [
+            "model_provider",
+            "model",
+            "model_reasoning_effort",
+            "disable_response_storage",
+        ] {
+            assert!(doc.get(key).is_none(), "{} 应被移除", key);
+        }
+        assert!(doc
+            .get("model_providers")
+            .and_then(Item::as_table)
+            .map_or(true, |table| table.get(PROVIDER_ID).is_none()));
+        let auth: Value = serde_json::from_slice(&store.auth()).unwrap();
+        assert!(auth.get("OPENAI_API_KEY").is_none());
+        // 卡片保留，再次设为默认时恢复全局配置与凭据。
+        let reactivated = store.0.activate(&id).unwrap();
+        assert_eq!(reactivated.active_provider_id.as_deref(), Some(id.as_str()));
+        let doc = parse_config(&store.config()).unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some(PROVIDER_ID));
+        let auth: Value = serde_json::from_slice(&store.auth()).unwrap();
+        assert_eq!(auth["OPENAI_API_KEY"], "sk-codex-test-secret-1234");
     }
 
     #[test]

@@ -54,8 +54,32 @@ pub fn import_all_profiles(path: String) -> Result<Vec<Profile>, String> {
 pub struct Project {
     pub name: String,
     pub path: String,
-    #[serde(default)]
+    /// 旧版项目的启动命令：仅用于兼容读取旧 projects.json，保存时空值不落盘。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub startup_command: String,
+    /// 项目右键菜单可启动的 Agent（Claude Code / Codex），默认两者都启用。
+    #[serde(default)]
+    pub enabled_agents: EnabledAgents,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnabledAgents {
+    #[serde(default = "default_true")]
+    pub claude: bool,
+    #[serde(default = "default_true")]
+    pub codex: bool,
+}
+
+/// 与 serde 缺省保持一致：未配置的旧项目两个 Agent 都启用。
+impl Default for EnabledAgents {
+    fn default() -> Self {
+        Self { claude: true, codex: true }
+    }
 }
 
 fn projects_file() -> Result<std::path::PathBuf, String> {
@@ -77,6 +101,7 @@ pub fn get_projects() -> Result<Vec<Project>, String> {
             projects.push(Project {
                 name: name.to_string(),
                 startup_command: String::new(),
+                enabled_agents: EnabledAgents::default(),
                 path: if Path::new(&profile.startup_path).is_absolute() {
                     profile.startup_path.clone()
                 } else { String::new() },
@@ -103,4 +128,42 @@ pub fn save_projects(projects: Vec<Project>) -> Result<(), String> {
     fs::write(&tmp, serde_json::to_vec_pretty(&projects).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     fs::rename(tmp, file).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_project_json_keeps_both_agents_enabled_by_default() {
+        // 旧版 projects.json 只有 name/path/startupCommand，读取后两个 Agent 默认启用。
+        let legacy = r#"[{"name":"demo","path":"C:\\demo","startupCommand":"claude"}]"#;
+        let projects: Vec<Project> = serde_json::from_str(legacy).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].startup_command, "claude");
+        assert_eq!(projects[0].enabled_agents, EnabledAgents { claude: true, codex: true });
+
+        // enabledAgents 部分字段缺失时，缺的字段按启用处理。
+        let partial = r#"[{"name":"demo","path":"/demo","enabledAgents":{"claude":false}}]"#;
+        let projects: Vec<Project> = serde_json::from_str(partial).unwrap();
+        assert!(!projects[0].enabled_agents.claude);
+        assert!(projects[0].enabled_agents.codex);
+    }
+
+    #[test]
+    fn empty_startup_command_is_not_written_back() {
+        let project = Project {
+            name: "demo".into(),
+            path: "/demo".into(),
+            startup_command: String::new(),
+            enabled_agents: EnabledAgents { claude: false, codex: true },
+        };
+        let json = serde_json::to_value(&project).unwrap();
+        assert!(json.get("startupCommand").is_none());
+        assert_eq!(json["enabledAgents"]["claude"], false);
+        assert_eq!(json["enabledAgents"]["codex"], true);
+        // round-trip 保持一致。
+        let restored: Project = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.enabled_agents, project.enabled_agents);
+    }
 }

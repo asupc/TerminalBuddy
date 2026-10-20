@@ -22,6 +22,12 @@ pub async fn activate_codex_provider(id: String) -> Result<CodexProviderState, S
     claude_task(move || codex_provider_service::activate_provider(&id)).await
 }
 
+/// 取消默认供应商：恢复 Codex 自身登录/默认配置，但保留已保存的供应商。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn clear_default_codex_provider() -> Result<CodexProviderState, String> {
+    claude_task(codex_provider_service::clear_default_provider).await
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn delete_codex_provider(id: String) -> Result<CodexProviderState, String> {
     claude_task(move || codex_provider_service::delete_provider(&id)).await

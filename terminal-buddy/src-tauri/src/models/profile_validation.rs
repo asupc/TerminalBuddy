@@ -265,55 +265,107 @@ mod tests {
     use super::*;
 
     /// 合法的普通值不加引号，原样通过；空值必须显式变成 `""`，否则参数会消失。
+    /// POSIX 分支统一单引号包裹，无「按需加引号」概念，内部单引号转义为 `'\''`。
     #[test]
     fn quotes_only_when_needed() {
-        assert_eq!(quote_cmd_argument("字段", "id_rsa"), Ok("id_rsa".into()));
-        assert_eq!(
-            quote_cmd_argument("字段", "C:\\Users\\dev\\.ssh\\id_rsa"),
-            Ok("C:\\Users\\dev\\.ssh\\id_rsa".into())
-        );
-        assert_eq!(quote_cmd_argument("字段", ""), Ok("\"\"".into()));
+        #[cfg(windows)]
+        {
+            assert_eq!(quote_cmd_argument("字段", "id_rsa"), Ok("id_rsa".into()));
+            assert_eq!(
+                quote_cmd_argument("字段", "C:\\Users\\dev\\.ssh\\id_rsa"),
+                Ok("C:\\Users\\dev\\.ssh\\id_rsa".into())
+            );
+            assert_eq!(quote_cmd_argument("字段", ""), Ok("\"\"".into()));
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(quote_cmd_argument("字段", "id_rsa"), Ok("'id_rsa'".into()));
+            assert_eq!(
+                quote_cmd_argument("字段", "C:\\Users\\dev\\.ssh\\id_rsa"),
+                Ok("'C:\\Users\\dev\\.ssh\\id_rsa'".into())
+            );
+            assert_eq!(quote_cmd_argument("字段", ""), Ok("''".into()));
+            assert_eq!(quote_cmd_argument("字段", "a'b"), Ok("'a'\\''b'".into()));
+        }
     }
 
     /// 验收标准：含空格和中文的合法 key path 必须能正常工作。
     #[test]
     fn quotes_paths_with_spaces_and_chinese() {
-        assert_eq!(
-            quote_cmd_argument("字段", "C:\\my keys\\id_ed25519"),
-            Ok("\"C:\\my keys\\id_ed25519\"".into())
-        );
-        assert_eq!(
-            quote_cmd_argument("字段", "D:\\密钥 目录\\张三.pem"),
-            Ok("\"D:\\密钥 目录\\张三.pem\"".into())
-        );
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                quote_cmd_argument("字段", "C:\\my keys\\id_ed25519"),
+                Ok("\"C:\\my keys\\id_ed25519\"".into())
+            );
+            assert_eq!(
+                quote_cmd_argument("字段", "D:\\密钥 目录\\张三.pem"),
+                Ok("\"D:\\密钥 目录\\张三.pem\"".into())
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                quote_cmd_argument("字段", "C:\\my keys\\id_ed25519"),
+                Ok("'C:\\my keys\\id_ed25519'".into())
+            );
+            assert_eq!(
+                quote_cmd_argument("字段", "D:\\密钥 目录\\张三.pem"),
+                Ok("'D:\\密钥 目录\\张三.pem'".into())
+            );
+        }
     }
 
     /// 引号内结尾的反斜杠必须成对，否则目标程序的 CRT 会把 `\"` 当成转义引号，
-    /// 把后面的内容一起吞进同一个参数。
+    /// 把后面的内容一起吞进同一个参数。POSIX 单引号内反斜杠是普通字符，原样保留。
     #[test]
     fn doubles_trailing_backslashes_inside_quotes() {
-        assert_eq!(
-            quote_cmd_argument("字段", "C:\\my dir\\"),
-            Ok("\"C:\\my dir\\\\\"".into())
-        );
-        assert_eq!(
-            quote_cmd_argument("字段", "C:\\my dir\\\\"),
-            Ok("\"C:\\my dir\\\\\\\\\"".into())
-        );
-        // 不需要加引号时不动结尾反斜杠：没有引号就不存在 `\"` 歧义。
-        assert_eq!(
-            quote_cmd_argument("字段", "C:\\dir\\"),
-            Ok("C:\\dir\\".into())
-        );
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                quote_cmd_argument("字段", "C:\\my dir\\"),
+                Ok("\"C:\\my dir\\\\\"".into())
+            );
+            assert_eq!(
+                quote_cmd_argument("字段", "C:\\my dir\\\\"),
+                Ok("\"C:\\my dir\\\\\\\\\"".into())
+            );
+            // 不需要加引号时不动结尾反斜杠：没有引号就不存在 `\"` 歧义。
+            assert_eq!(
+                quote_cmd_argument("字段", "C:\\dir\\"),
+                Ok("C:\\dir\\".into())
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                quote_cmd_argument("字段", "C:\\my dir\\"),
+                Ok("'C:\\my dir\\'".into())
+            );
+            assert_eq!(
+                quote_cmd_argument("字段", "C:\\my dir\\\\"),
+                Ok("'C:\\my dir\\\\'".into())
+            );
+        }
     }
 
-    /// `"` 和 `%` 无法靠 cmd.exe 引号隔离，只能拒绝。
+    /// `"` 和 `%` 无法靠 cmd.exe 引号隔离，只能拒绝；POSIX 单引号内它们是普通字符。
     #[test]
     fn rejects_unquotable_characters() {
+        #[cfg(windows)]
         for value in ["a\"b", "%USERPROFILE%\\id_rsa", "50%", "\""] {
             assert!(
                 quote_cmd_argument("字段", value).is_err(),
                 "「{}」应当被拒绝",
+                value
+            );
+        }
+        #[cfg(not(windows))]
+        for value in ["a\"b", "%USERPROFILE%\\id_rsa", "50%", "\""] {
+            assert_eq!(
+                quote_cmd_argument("字段", value),
+                Ok(format!("'{}'", value)),
+                "「{}」应当被单引号原样保留",
                 value
             );
         }
@@ -332,7 +384,11 @@ mod tests {
         // 元字符本身允许出现在路径里，但必须落进引号区间才不会改变命令结构。
         for value in ["a&calc", "a|calc", "a>out", "a<in", "a^b", "a(b)"] {
             let quoted = quote_cmd_argument("字段", value).expect("应当通过并加引号");
-            assert_eq!(quoted, format!("\"{}\"", value), "原值：{}", value);
+            #[cfg(windows)]
+            let expected = format!("\"{}\"", value);
+            #[cfg(not(windows))]
+            let expected = format!("'{}'", value);
+            assert_eq!(quoted, expected, "原值：{}", value);
         }
     }
 
@@ -452,16 +508,30 @@ mod tests {
                 value
             );
         }
-        for value in [
-            "%USERPROFILE%\\.ssh\\id_rsa",
-            "a\"b",
-            "-i",
-            "C:\\keys\\id_rsa\r\ncalc",
-        ] {
+        // `-i`（参数伪装）与控制字符的拒绝与平台无关。
+        for value in ["-i", "C:\\keys\\id_rsa\r\ncalc"] {
             assert!(
                 validate_ssh_key_path(value).is_err(),
                 "「{}」应当被拒绝",
                 value.escape_debug()
+            );
+        }
+        // `%` / `"` 仅 cmd.exe 无法安全转义；POSIX 单引号内是普通字符。
+        #[cfg(windows)]
+        for value in ["%USERPROFILE%\\.ssh\\id_rsa", "a\"b"] {
+            assert!(
+                validate_ssh_key_path(value).is_err(),
+                "「{}」应当被拒绝",
+                value.escape_debug()
+            );
+        }
+        #[cfg(not(windows))]
+        for value in ["%USERPROFILE%\\.ssh\\id_rsa", "a\"b"] {
+            assert_eq!(
+                validate_ssh_key_path(value),
+                Ok(()),
+                "「{}」在 POSIX 引号内应当被接受",
+                value
             );
         }
     }
@@ -605,8 +675,16 @@ mod tests {
         assert!(err.contains("Kubernetes Pod"), "实际错误：{}", err);
         assert!(err.contains("全小写"), "实际错误：{}", err);
 
+        // 引号转义错误同样要带字段名：Windows 走 `"`/`%` 拒绝分支，
+        // POSIX 分支不会拒绝这两个字符，改用控制字符错误验证同一份文案管线。
+        #[cfg(windows)]
         let err = quote_cmd_argument("SSH 私钥路径", "%USERPROFILE%\\id_rsa").unwrap_err();
+        #[cfg(not(windows))]
+        let err = quote_cmd_argument("SSH 私钥路径", "a\rb").unwrap_err();
         assert!(err.contains("SSH 私钥路径"), "实际错误：{}", err);
+        #[cfg(windows)]
         assert!(err.contains("无法被安全转义"), "实际错误：{}", err);
+        #[cfg(not(windows))]
+        assert!(err.contains("控制字符"), "实际错误：{}", err);
     }
 }

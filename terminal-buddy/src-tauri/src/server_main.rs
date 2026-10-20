@@ -44,6 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         commands::save_projects(vec![commands::profile::Project {
             name: "服务器工作区".to_string(), path: workspace.to_string_lossy().to_string(),
             startup_command: String::new(),
+            enabled_agents: commands::profile::EnabledAgents::default(),
         }])?;
     }
 

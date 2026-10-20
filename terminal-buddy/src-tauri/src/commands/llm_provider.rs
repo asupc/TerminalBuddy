@@ -26,6 +26,12 @@ pub async fn set_default_llm_provider(id: String) -> Result<Vec<LlmProviderView>
     claude_task(move || llm_provider_service::set_default_provider(&id)).await
 }
 
+/// 取消默认供应商：允许没有默认，此时右键菜单不平铺任何模型。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn clear_default_llm_provider() -> Result<Vec<LlmProviderView>, String> {
+    claude_task(llm_provider_service::clear_default_provider).await
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn update_llm_provider_order(ids: Vec<String>) -> Result<Vec<LlmProviderView>, String> {
     claude_task(move || llm_provider_service::update_provider_order(&ids)).await
