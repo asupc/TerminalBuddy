@@ -1,0 +1,81 @@
+/* 模型 ID 可搜索下拉：结构对齐 ProjectPicker，风格适配供应商表单行内场景 */
+.model-combobox { position: relative; flex: 1; min-width: 0; }
+.model-combobox input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height-md);
+  padding: 8px 34px 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.model-combobox-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.model-combobox-toggle:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text-primary); }
+.model-combobox-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+.model-combobox-toggle svg { transition: transform var(--motion-fast, 120ms) var(--ease-standard, ease); }
+.model-combobox-toggle.open svg { transform: rotate(180deg); }
+.model-combobox-empty {
+  padding: 7px 9px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.model-combobox input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.model-combobox input:disabled { opacity: 0.6; cursor: not-allowed; }
+.model-combobox-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-dialog);
+}
+.model-combobox-list button {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-combobox-list button:hover,
+.model-combobox-list button.active { background: var(--bg-tertiary); }
+.model-combobox-list button[aria-selected="true"] { color: var(--accent); }
+.model-combobox-list button:disabled { opacity: 0.5; cursor: not-allowed; }

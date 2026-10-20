@@ -85,6 +85,11 @@ export function setDefaultLlmProvider(id: string): Promise<LlmProviderView[]> {
   return invoke('set_default_llm_provider', { id });
 }
 
+/** 取消默认供应商：允许没有默认，右键菜单不再平铺任何模型。 */
+export function clearDefaultLlmProvider(): Promise<LlmProviderView[]> {
+  return invoke('clear_default_llm_provider');
+}
+
 /**
  * 一期无拖拽排序 UI（新建按序追加 sortIndex），本函数暂无调用方，仅保留桥接
  * 供后续迭代使用；覆盖率脚本按 invoke 字面量统计，故仍计入覆盖。

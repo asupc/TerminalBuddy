@@ -1,7 +1,6 @@
 import { useAppStore } from '../stores/appStore';
 import { startBlankTerminal } from '../services/tauri';
-import type { ExtraParamPreset, Project } from '../types';
-import { projectStartupCommand } from './startupPresets';
+import type { Project } from '../types';
 import { defaultShellType } from '../services/platform';
 
 /**
@@ -53,15 +52,12 @@ export async function openTerminalInDir(dir?: string, options?: {
   if (dir) st.setSessionDirectory(terminalId, dir);
 }
 
-/** 项目启动统一入口：使用项目目录、命令及预设标签，不创建持久化配置。 */
-export async function openProjectTerminal(project: Project, preset?: ExtraParamPreset): Promise<void> {
+/** 项目启动统一入口：在项目目录打开空白终端（命令行入口），不创建持久化配置。 */
+export async function openProjectTerminal(project: Project): Promise<void> {
   try {
     await openTerminalInDir(project.path, {
-      command: projectStartupCommand(project, preset),
       name: project.name,
       groupName: project.name,
-      presetTag: preset?.name,
-      presetTagColor: preset?.tagColor,
     });
   } catch (error) {
     useAppStore.getState().showToast('启动项目失败：' + String(error), 'error');

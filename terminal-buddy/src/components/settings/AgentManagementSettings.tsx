@@ -1,22 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpCircle, CheckCircle2, CircleAlert, Download, LoaderCircle, RefreshCw, TerminalSquare } from 'lucide-react';
+import { ArrowUpCircle, CheckCircle2, CircleAlert, Download, LoaderCircle, RefreshCw, Save, TerminalSquare } from 'lucide-react';
 import {
-  getContainerCli, getContainerEnvironment, installContainerCli, updateContainerCli,
-  type ContainerCli, type ContainerCliStatus, type ContainerEnvironment,
-} from '../../services/browser/containerEnvironment';
-import './ContainerEnvironmentSettings.css';
+  getAgentCli, getAgentCliEnvironment, installAgentCli, updateAgentCli,
+  type AgentCli, type AgentCliStatus, type AgentCliEnvironment,
+} from '../../services/agentCli';
+import { saveAgentCommands } from '../../services/tauri';
+import { useAppStore } from '../../stores/appStore';
+import { DEFAULT_CLAUDE_COMMAND } from '../../utils/claudeLaunch';
+import { DEFAULT_CODEX_COMMAND } from '../../utils/codexLaunch';
+import './AgentManagementSettings.css';
 
 const tools = [
-  { id: 'claude', name: 'Claude Code' },
-  { id: 'codex', name: 'Codex CLI' },
+  { id: 'claude', name: 'Claude Code', defaultCommand: DEFAULT_CLAUDE_COMMAND },
+  { id: 'codex', name: 'Codex CLI', defaultCommand: DEFAULT_CODEX_COMMAND },
 ] as const;
 type ToolAction = 'check' | 'install' | 'update';
 
-function isRunning(cli: ContainerCliStatus | undefined): boolean {
+function isRunning(cli: AgentCliStatus | undefined): boolean {
   return cli?.status === 'installing' || cli?.status === 'updating';
 }
 
-function preserveUpdate(previous: ContainerCliStatus | undefined, next: ContainerCliStatus): ContainerCliStatus {
+function preserveUpdate(previous: AgentCliStatus | undefined, next: AgentCliStatus): AgentCliStatus {
   return {
     ...next,
     update: next.update ?? (
@@ -25,19 +29,34 @@ function preserveUpdate(previous: ContainerCliStatus | undefined, next: Containe
   };
 }
 
-interface ContainerEnvironmentSettingsProps {
+interface AgentManagementSettingsProps {
   active: boolean;
 }
 
-export function ContainerEnvironmentSettings({ active }: ContainerEnvironmentSettingsProps) {
-  const [environment, setEnvironment] = useState<ContainerEnvironment | null>(null);
+export function AgentManagementSettings({ active }: AgentManagementSettingsProps) {
+  const [environment, setEnvironment] = useState<AgentCliEnvironment | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [actions, setActions] = useState<Record<ContainerCli, ToolAction | null>>({ claude: null, codex: null });
-  const [errors, setErrors] = useState<Record<ContainerCli, string>>({ claude: '', codex: '' });
+  const [actions, setActions] = useState<Record<AgentCli, ToolAction | null>>({ claude: null, codex: null });
+  const [errors, setErrors] = useState<Record<AgentCli, string>>({ claude: '', codex: '' });
   const [error, setError] = useState('');
   const refreshPending = useRef(false);
-  const busyTools = useRef(new Set<ContainerCli>());
-  const revisions = useRef<Record<ContainerCli, number>>({ claude: 0, codex: 0 });
+  const busyTools = useRef(new Set<AgentCli>());
+  const revisions = useRef<Record<AgentCli, number>>({ claude: 0, codex: 0 });
+
+  const agentCommands = useAppStore(state => state.agentCommands);
+  const setAgentCommands = useAppStore(state => state.setAgentCommands);
+  const [commands, setCommands] = useState<Record<AgentCli, string>>({ claude: '', codex: '' });
+  const [commandsDirty, setCommandsDirty] = useState<Record<AgentCli, boolean>>({ claude: false, codex: false });
+  const [savingCommand, setSavingCommand] = useState<AgentCli | null>(null);
+  const [commandsMessage, setCommandsMessage] = useState<Record<AgentCli, string>>({ claude: '', codex: '' });
+
+  useEffect(() => {
+    // 只同步未编辑的条目，避免覆盖另一个工具正在输入的内容。
+    setCommands(current => ({
+      claude: commandsDirty.claude ? current.claude : agentCommands.claude,
+      codex: commandsDirty.codex ? current.codex : agentCommands.codex,
+    }));
+  }, [agentCommands, commandsDirty]);
 
   const refresh = useCallback(async () => {
     if (refreshPending.current) return;
@@ -45,7 +64,7 @@ export function ContainerEnvironmentSettings({ active }: ContainerEnvironmentSet
     setRefreshing(true);
     const requestedRevisions = { ...revisions.current };
     try {
-      const value = await getContainerEnvironment();
+      const value = await getAgentCliEnvironment();
       setEnvironment(current => {
         if (!current) return value;
         const next = { ...current };
@@ -79,24 +98,24 @@ export function ContainerEnvironmentSettings({ active }: ContainerEnvironmentSet
     return () => window.clearInterval(timer);
   }, [working, refresh]);
 
-  const runAction = async (tool: ContainerCli, action: ToolAction) => {
+  const runAction = async (tool: AgentCli, action: ToolAction) => {
     if (busyTools.current.has(tool) || isRunning(environment?.[tool])) return;
     busyTools.current.add(tool);
     revisions.current[tool] += 1;
     setActions(value => ({ ...value, [tool]: action }));
     setErrors(value => ({ ...value, [tool]: '' }));
-    const apply = (value: ContainerCliStatus) => {
+    const apply = (value: AgentCliStatus) => {
       setEnvironment(current => current ? { ...current, [tool]: value } : current);
     };
     try {
-      const value = await (action === 'check' ? getContainerCli(tool, true)
-        : action === 'update' ? updateContainerCli(tool) : installContainerCli(tool));
+      const value = await (action === 'check' ? getAgentCli(tool, true)
+        : action === 'update' ? updateAgentCli(tool) : installAgentCli(tool));
       apply(value);
     } catch (reason) {
       if (action !== 'check') {
         // 请求响应丢失时，后台任务可能已经启动，先恢复该条目的实际状态。
         try {
-          const value = await getContainerCli(tool);
+          const value = await getAgentCli(tool);
           apply(value);
           if (isRunning(value) || (action === 'update' && value.updatedVersion && value.updatedVersion === value.version && value.version !== environment?.[tool]?.version)) return;
         } catch { /* 保留下方原始错误，允许重新检测或重试。 */ }
@@ -110,9 +129,33 @@ export function ContainerEnvironmentSettings({ active }: ContainerEnvironmentSet
     }
   };
 
+  const saveCommand = async (tool: AgentCli) => {
+    if (savingCommand) return;
+    setSavingCommand(tool);
+    setCommandsMessage(value => ({ ...value, [tool]: '' }));
+    try {
+      const command = commands[tool].trim();
+      // save_agent_commands 一次写两个值：当前工具用草稿，另一个工具沿用已保存值，
+      // 避免把用户尚未保存的另一侧编辑一并写回。
+      const next = { ...agentCommands, [tool]: command };
+      await saveAgentCommands(next.claude, next.codex);
+      setAgentCommands(next);
+      setCommands(value => ({ ...value, [tool]: command }));
+      setCommandsDirty(value => ({ ...value, [tool]: false }));
+      setCommandsMessage(value => ({ ...value, [tool]: '已保存' }));
+    } catch (reason) {
+      setCommandsMessage(value => ({
+        ...value,
+        [tool]: reason instanceof Error ? reason.message : '保存失败，请重试',
+      }));
+    } finally {
+      setSavingCommand(null);
+    }
+  };
+
   return (
-    <div className="container-environment-settings">
-      <div className="settings-card-group container-environment-list">
+    <div className="agent-management-settings">
+      <div className="settings-card-group container-environment-list agent-cli-list">
         <div className="card-group-header container-environment-toolbar">
           <span className="card-group-title">命令行工具</span>
           <button type="button" className="container-environment-action" disabled={refreshing} onClick={() => { void refresh(); }}>
@@ -163,7 +206,7 @@ export function ContainerEnvironmentSettings({ active }: ContainerEnvironmentSet
                   {updating ? '正在下载安装新版本，离开设置页不会中断。'
                     : installing ? '正在下载安装，离开设置页不会中断。'
                       : cli?.status === 'installed' ? <>在终端输入 <code>{tool.id}</code> 即可启动</>
-                        : cli ? '使用官方安装器安装到容器用户目录' : '检测容器中的安装状态与版本'}
+                        : cli ? '使用官方安装器安装' : '检测安装状态与版本'}
                 </p>
                 {updateText && <p className={`container-environment-update ${checking ? 'checking' : updated && update?.state !== 'available' ? 'upToDate' : update?.state}`} role="status" aria-live="polite">
                   {checking ? <LoaderCircle size={13} className="container-environment-spin" aria-hidden="true" />
@@ -190,11 +233,50 @@ export function ContainerEnvironmentSettings({ active }: ContainerEnvironmentSet
                 </button>}
               </div>
             </div>
+            <div className="agent-command-field">
+              <label className="agent-command-label" htmlFor={`agent-command-${tool.id}`}>基础启动命令</label>
+              <div className="agent-command-editor">
+                <input
+                  id={`agent-command-${tool.id}`}
+                  value={commands[tool.id]}
+                  placeholder={tool.defaultCommand}
+                  spellCheck={false}
+                  disabled={savingCommand !== null}
+                  onChange={event => {
+                    setCommands(value => ({ ...value, [tool.id]: event.target.value }));
+                    setCommandsDirty(value => (value[tool.id] ? value : { ...value, [tool.id]: true }));
+                    setCommandsMessage(value => ({ ...value, [tool.id]: '' }));
+                  }}
+                />
+                <button
+                  type="button"
+                  className="container-environment-action primary"
+                  disabled={!commandsDirty[tool.id] || savingCommand !== null}
+                  onClick={() => { void saveCommand(tool.id); }}
+                >
+                  {savingCommand === tool.id
+                    ? <LoaderCircle size={14} className="container-environment-spin" aria-hidden="true" />
+                    : <Save size={14} aria-hidden="true" />}
+                  {savingCommand === tool.id ? '保存中…' : '保存'}
+                </button>
+              </div>
+              <p className="agent-command-hint">
+                项目按模型启动 Agent 与历史会话恢复时，以此命令为基础继承参数（如
+                <code> --dangerously-skip-permissions</code>）；留空使用内置默认。
+              </p>
+              {commandsMessage[tool.id] && (
+                <span
+                  className={commandsMessage[tool.id] === '已保存' ? 'agent-command-saved' : 'container-environment-error'}
+                  role="status"
+                  aria-live="polite"
+                >{commandsMessage[tool.id]}</span>
+              )}
+            </div>
             {toolError && <p className="container-environment-error container-environment-install-error" role="alert">{toolError}</p>}
           </section>;
         })}
       </div>
-      <p className="container-environment-hint container-environment-footer">每个工具可独立检查和更新；更新成功后会自动显示实际安装的版本。</p>
+      <p className="container-environment-hint container-environment-footer">每个工具可独立检查、更新与保存基础命令；更新成功后会自动显示实际安装的版本。</p>
     </div>
   );
 }

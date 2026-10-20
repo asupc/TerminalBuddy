@@ -9,6 +9,7 @@ import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { showAlert } from '../../services/dialog';
+import { supportsSystemExplorerOpen } from '../../services/platform';
 import { GitOperationsHost, type GitContextAction, type GitOperationsHostHandle } from '../git/GitOperationsHost';
 import { getGitOperation, subscribeGitOperations } from '../../services/gitOperationState';
 import { getCachedGitRepositoryStatus, loadGitRepositoryStatus, subscribeGitRepositoryStatus } from '../../services/gitStatusCache';
@@ -771,9 +772,11 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
               }}>
                 在当前目录打开命令窗口
               </div>
-              <div className="context-menu-item" onClick={() => handleShowCurrentDirInExplorer(ctxMenu.dir)}>
-                在文件资源管理器中显示
-              </div>
+              {supportsSystemExplorerOpen() && (
+                <div className="context-menu-item" onClick={() => handleShowCurrentDirInExplorer(ctxMenu.dir)}>
+                  在文件资源管理器中显示
+                </div>
+              )}
               {ctxMenu.root && (
                 <>
                   <div className="context-menu-separator" />
@@ -787,10 +790,12 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
           {ctxMenu.path && (
             <>
               <div className="context-menu-separator" />
-              <div className="context-menu-item" onClick={handleShowInExplorer}>
-                在文件资源管理器中显示
-              </div>
-              {!ctxMenu.isDir && (
+              {supportsSystemExplorerOpen() && (
+                <div className="context-menu-item" onClick={handleShowInExplorer}>
+                  在文件资源管理器中显示
+                </div>
+              )}
+              {!ctxMenu.isDir && supportsSystemExplorerOpen() && (
                 <div className="context-menu-item" onClick={handleOpenInSystem}>
                   在系统中打开
                 </div>

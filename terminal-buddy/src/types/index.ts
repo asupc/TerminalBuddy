@@ -3,10 +3,30 @@ export type SessionHistoryProvider = 'claude' | 'codex';
 export type TerminalType = 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s' | 'editor' | 'mstsc';
 export type ExtraParamMode = 'append' | 'independent';
 
+/** 项目右键菜单可启动的 Agent；旧项目未配置时视为全部启用。 */
+export interface EnabledAgents {
+  claude: boolean;
+  codex: boolean;
+}
+
 export interface Project {
   name: string;
   path: string;
-  startupCommand?: string;
+  enabledAgents?: EnabledAgents;
+}
+
+/** 项目启用 Agent 的兜底判断：未配置时与后端 serde 缺省一致（全部启用）。 */
+export function projectEnabledAgents(project: Project | undefined | null): Required<EnabledAgents> {
+  return {
+    claude: project?.enabledAgents?.claude ?? true,
+    codex: project?.enabledAgents?.codex ?? true,
+  };
+}
+
+/** 项目右键菜单展示的模型区顺序：按启用的 Agent 推导，未启用不展示。 */
+export function projectModelSources(project: Project | undefined | null): Array<'claude' | 'codex'> {
+  const agents = projectEnabledAgents(project);
+  return agents.claude && agents.codex ? ['claude', 'codex'] : agents.claude ? ['claude'] : agents.codex ? ['codex'] : [];
 }
 
 export interface Profile {

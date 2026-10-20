@@ -354,7 +354,8 @@ textarea:focus-visible,
   padding: 10px 18px;
   border-radius: 8px;
   font-size: 13px;
-  z-index: 10000;
+  /* Dialog 从 10000 起分层；Toast 必须始终盖在弹窗之上。 */
+  z-index: 30000;
   color: #fff;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   animation: tb-toast-in 0.18s ease-out;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { supportsSystemExplorerOpen } from '../../services/platform';
 import {
   AlertTriangle,
   Check,
@@ -312,6 +313,10 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
 
   const revealInvalidSettings = async () => {
     if (!status?.settingsPath) return;
+    if (!supportsSystemExplorerOpen()) {
+      showToast('浏览器模式暂不支持打开本地文件夹', 'info');
+      return;
+    }
     try {
       await openInExplorer(status.settingsPath);
     } catch (reason) {

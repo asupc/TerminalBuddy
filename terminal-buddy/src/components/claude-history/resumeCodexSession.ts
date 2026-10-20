@@ -4,6 +4,7 @@ import { clientTerminalOwner, defaultShellType } from '../../services/platform';
 import { effectiveProfilePath, normalizeProjectPath, projectForDirectory } from '../../utils/projectPath';
 import { isModelRefLocalType } from '../../utils/claudeLaunch';
 import { buildCodexResumeCommand, isCodexCommand, parseCodexRef, resumedCodexSessionId } from '../../utils/codexLaunch';
+import { currentCodexCommand } from '../../utils/agentCommands';
 import { PRESET_THEMES, type Profile } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 import { focusTerminalById, type ResumableClaudeSession, type ResumeLaunchPreset, type ClaudeVendorRef } from './resumeClaudeSession';
@@ -38,7 +39,7 @@ export async function resumeCodexSession(
   if (!session.projectDir) throw new Error('该会话缺少工作目录，无法恢复');
   const profile = pickCodexProfile(store.profiles, session.projectDir);
   const project = projectForDirectory(store.projects, session.projectDir);
-  const command = buildCodexResumeCommand(session.sessionId, profile?.startupCommands ?? project?.startupCommand, vendorRef, preset?.params);
+  const command = buildCodexResumeCommand(session.sessionId, profile?.startupCommands ?? currentCodexCommand(), vendorRef, preset?.params);
   const name = session.title || 'Codex 会话';
   const terminalType = profile?.terminalType ?? defaultShellType();
   const theme = PRESET_THEMES.find(item => item.id === profile?.colorTheme) ?? PRESET_THEMES[0];

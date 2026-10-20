@@ -56,6 +56,10 @@ export function activateCodexProvider(id: string): Promise<CodexProviderState> {
   return invoke('activate_codex_provider', { id });
 }
 
+export function clearDefaultCodexProvider(): Promise<CodexProviderState> {
+  return invoke('clear_default_codex_provider');
+}
+
 export function deleteCodexProvider(id: string): Promise<CodexProviderState> {
   return invoke('delete_codex_provider', { id });
 }

@@ -197,3 +197,16 @@
   cursor: pointer;
 }
 .project-edit-dialog .browse-btn:hover { background: var(--accent); border-color: var(--accent); }
+
+/* Agent 启用开关：横向排列的两个复选框 */
+.project-edit-dialog .project-edit-agents { display: flex; gap: 20px; }
+.project-edit-dialog .project-edit-agent-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+}
+.project-edit-dialog .project-edit-agent-toggle input { width: auto; min-height: 0; accent-color: var(--accent); cursor: pointer; }

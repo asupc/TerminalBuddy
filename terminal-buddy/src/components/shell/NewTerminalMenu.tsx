@@ -4,9 +4,8 @@ import { saveEnableTabNavigation } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
-import type { ExtraParamMode, Profile, Project } from '../../types';
+import type { ExtraParamMode, Profile } from '../../types';
 import { matchingStartupPresets } from '../../utils/startupPresets';
-import { openProjectTerminal } from '../../utils/openTerminalInDir';
 
 interface NewTerminalMenuProps {
   x: number;
@@ -44,14 +43,8 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
 }) => {
   const presets = useAppStore(state => state.extraParamPresets);
   const [submenuLeft, setSubmenuLeft] = useState(x);
-  const projects = useAppStore(state => state.projects);
-  const [hoveredTarget, setHoveredTarget] = useState<{ target: Profile | Project; x: number; y: number } | null>(null);
-  const matchingPresets = (target: Profile | Project) => matchingStartupPresets(presets,
-    'startupCommands' in target ? target.startupCommands : [target.startupCommand || '']);
-
-  const projectForItem = (item: TreeItem) => item.isGroup && item.id !== '__pinned__'
-    ? projects.find(project => project.name === item.id && project.path && project.startupCommand?.trim())
-    : undefined;
+  const [hoveredTarget, setHoveredTarget] = useState<{ target: Profile; x: number; y: number } | null>(null);
+  const matchingPresets = (target: Profile) => matchingStartupPresets(presets, target.startupCommands);
 
   const handleSelect = (item: TreeItem) => {
     if (item.data) {
@@ -64,11 +57,9 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
 
   const handleTargetHover = (event: React.MouseEvent) => {
     const row = (event.target as HTMLElement).closest<HTMLElement>('.tree-item');
-    const marker = row?.querySelector<HTMLElement>('[data-profile-id], [data-project-name]');
-    const target = marker?.dataset.projectName
-      ? projects.find(project => project.name === marker.dataset.projectName)
-      : marker && visibleSubmenuItems.find(item => item.id === marker.dataset.profileId)?.data as Profile | undefined;
-    if (!target || ('startupCommands' in target && matchingPresets(target).length === 0)) {
+    const marker = row?.querySelector<HTMLElement>('[data-profile-id]');
+    const target = marker && visibleSubmenuItems.find(item => item.id === marker.dataset.profileId)?.data as Profile | undefined;
+    if (!target || matchingPresets(target).length === 0) {
       setHoveredTarget(null);
       return;
     }
@@ -124,23 +115,11 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
                 onToggle={onToggleGroup}
                 selectedId={highlightedIndex >= 0 ? visibleSubmenuItems[highlightedIndex]?.id : undefined}
                 onSelect={handleSelect}
-                onContextMenu={(event, item) => {
-                  if (!projectForItem(item)) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  handleTargetHover(event);
-                }}
-                renderEnd={item => {
-                  const project = projectForItem(item);
-                  if (project) return (
-                    <span data-project-name={project.name} className="submenu-profile-end"><span className="submenu-arrow">›</span></span>
-                  );
-                  return item.data && 'group' in (item.data as object) ? (
-                    <span data-profile-id={(item.data as Profile).id} className="submenu-profile-end">
-                      {matchingPresets(item.data as Profile).length > 0 && <span className="submenu-arrow">›</span>}
-                    </span>
-                  ) : null;
-                }}
+                renderEnd={item => item.data && 'group' in (item.data as object) ? (
+                  <span data-profile-id={(item.data as Profile).id} className="submenu-profile-end">
+                    {matchingPresets(item.data as Profile).length > 0 && <span className="submenu-arrow">›</span>}
+                  </span>
+                ) : null}
                 className="submenu-tree"
                 indent={12}
               />
@@ -152,21 +131,10 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
               style={{ left: hoveredTarget.x, top: hoveredTarget.y, maxHeight: `calc(100vh - ${hoveredTarget.y + 8}px)` }}
               onMouseLeave={() => setHoveredTarget(null)}
             >
-              {!('startupCommands' in hoveredTarget.target) && (
-                <div className="context-menu-item" onClick={event => {
-                  event.stopPropagation();
-                  if (!('startupCommands' in hoveredTarget.target)) void openProjectTerminal(hoveredTarget.target);
-                  onClose();
-                }}>启动项目</div>
-              )}
               {matchingPresets(hoveredTarget.target).map(preset => (
                 <div key={preset.id} className="context-menu-item" onClick={event => {
                   event.stopPropagation();
-                  if ('startupCommands' in hoveredTarget.target) {
-                    onStartTerminal(hoveredTarget.target, preset.params, preset.name, undefined, preset.name, preset.tagColor, preset.mode);
-                  } else {
-                    void openProjectTerminal(hoveredTarget.target, preset);
-                  }
+                  onStartTerminal(hoveredTarget.target, preset.params, preset.name, undefined, preset.name, preset.tagColor, preset.mode);
                   onClose();
                 }}>
                   <span className="new-terminal-preset-dot" style={{ backgroundColor: preset.tagColor || 'var(--accent)' }} />

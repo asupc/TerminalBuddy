@@ -209,3 +209,133 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ===== 供应商编辑 Dialog（与 Codex 供应商弹窗同宽同排版） ===== */
+.llm-provider-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+.llm-provider-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.llm-provider-dialog .claude-form-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0;
+}
+.llm-provider-dialog .claude-form-row input:not([type='checkbox']),
+.llm-provider-dialog .claude-form-row select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.llm-provider-dialog .claude-form-row-inline { gap: 12px; }
+.llm-provider-dialog .claude-segment-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+.llm-model-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.llm-model-dialog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+}
+.llm-model-dialog-heading strong { font-size: 13px; color: var(--text-primary); }
+.llm-model-list,
+.codex-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.llm-model-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.llm-model-entry .model-combobox { flex: 1 1 160px; }
+.llm-model-effort-input,
+.llm-model-ctx-input {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 6px 9px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.llm-model-effort-input { width: 130px; }
+.llm-model-ctx-input { width: 110px; }
+.llm-model-entry .model-combobox input { font-size: 12.5px; }
+
+/* ===== 模型行拖拽排序（Pointer 事件，兼容鼠标与触屏） ===== */
+.model-drag-row { position: relative; min-width: 0; }
+.model-drag-row.dragging { opacity: 0.55; }
+.model-drag-row.drop-before::before,
+.model-drag-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.model-drag-row.drop-before::before { top: -6px; }
+.model-drag-row.drop-after::after { bottom: -6px; }
+.model-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 22px;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: grab;
+  opacity: 0.6;
+  touch-action: none;
+  transition: opacity var(--motion-fast) var(--ease-standard), background-color var(--motion-fast) var(--ease-standard);
+}
+.model-drag-handle:hover,
+.model-drag-handle:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: none;
+}
+.model-drag-handle:active { cursor: grabbing; }
+
+@media (max-width: 640px) {
+  .llm-provider-dialog .claude-form-row-inline { flex-direction: column; }
+  .llm-model-entry { flex-wrap: wrap; }
+  .llm-model-entry .model-combobox { flex-basis: calc(100% - 26px); }
+}

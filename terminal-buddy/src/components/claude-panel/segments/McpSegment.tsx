@@ -13,6 +13,7 @@ import {
   type ClaudeProjectInfo,
 } from '../../../services/tauri';
 import { useAppStore } from '../../../stores/appStore';
+import { supportsSystemExplorerOpen } from '../../../services/platform';
 import { pickScopedProject, useClaudeProjectScope } from '../../../hooks/useClaudeProjectScope';
 import { ConfirmDialog, Dialog } from '../../shared/Dialog';
 
@@ -247,7 +248,9 @@ export const McpSegment: FC = () => {
         </button>
         <span className="claude-segment-actions">
           <button type="button" className="claude-segment-btn" onClick={() => setEditor(emptyEditor())}>＋ 新增</button>
-          <button type="button" className="claude-segment-btn" title="打开配置文件位置" onClick={() => void openConfigLocation()}>📂</button>
+          {supportsSystemExplorerOpen() && (
+            <button type="button" className="claude-segment-btn" title="打开配置文件位置" onClick={() => void openConfigLocation()}>📂</button>
+          )}
           <button type="button" className="claude-segment-btn" disabled={loading} onClick={() => void load()}>↻</button>
         </span>
       </div>

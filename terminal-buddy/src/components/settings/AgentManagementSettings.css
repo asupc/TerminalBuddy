@@ -247,3 +247,42 @@
 @media (prefers-reduced-motion: reduce) {
   .container-environment-spin { animation: none; }
 }
+
+/* ===== 基础启动命令：跟随各自的命令行工具卡片 ===== */
+.agent-management-settings { display: flex; flex-direction: column; gap: 14px; }
+.agent-command-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-subtle);
+}
+.agent-command-label { color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.agent-command-editor { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.agent-command-editor input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-height-md);
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.agent-command-editor input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.agent-command-editor input:disabled { opacity: 0.6; }
+.agent-command-hint { margin: 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.6; }
+.agent-command-hint code { padding: 1px 4px; border-radius: 4px; background: var(--bg-tertiary); }
+.agent-command-saved { color: var(--success, #56d364); font-size: 12.5px; }
+
+@container (max-width: 560px) {
+  .agent-command-editor { flex-wrap: wrap; }
+  .agent-command-editor input { flex-basis: 100%; }
+}

@@ -33,6 +33,7 @@ import { useActiveTabProjectDirectory } from '../../hooks/useActiveTabProjectDir
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
+import { supportsSystemExplorerOpen } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
 import { ClaudeExportDialog } from './ClaudeExportDialog';
@@ -885,6 +886,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
               setContextMenu(null);
             }}
           />
+          {supportsSystemExplorerOpen() && (
           <MenuItem
             icon={FolderOpen}
             label="打开所在文件夹"
@@ -893,6 +895,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
               setContextMenu(null);
             }}
           />
+          )}
           </>}
         </div>
       )}

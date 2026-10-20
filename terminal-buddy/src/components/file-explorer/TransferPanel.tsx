@@ -1,6 +1,7 @@
 import { FC, useMemo, useState, useEffect } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { openInExplorer } from '../../services/tauri';
+import { supportsSystemExplorerOpen } from '../../services/platform';
 import type { TransferItem } from '../../types';
 
 function formatSize(bytes: number): string {
@@ -132,6 +133,7 @@ export const TransferPanel: FC<TransferPanelProps> = ({ terminalId, profileId })
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
+          {supportsSystemExplorerOpen() && (
           <div className="context-menu-item" onClick={() => {
             const path = contextMenu.item.localPath.replace(/\//g, '\\');
             const sep = path.lastIndexOf('\\');
@@ -141,6 +143,7 @@ export const TransferPanel: FC<TransferPanelProps> = ({ terminalId, profileId })
           }}>
             在资源管理器中打开
           </div>
+          )}
         </div>
       )}
     </div>

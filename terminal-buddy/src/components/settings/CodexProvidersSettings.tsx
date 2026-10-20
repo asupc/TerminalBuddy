@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FC } from 'react';
 import {
   CODEX_EFFORT_OPTIONS,
   activateCodexProvider,
+  clearDefaultCodexProvider,
   deleteCodexProvider,
   fetchCodexProviderModels,
   getCodexProviderState,
@@ -12,7 +13,7 @@ import {
   type CodexProviderView,
 } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
-import { Plus, RefreshCw, Download, Pencil, Trash2, Server, Check } from 'lucide-react';
+import { Plus, RefreshCw, Download, Pencil, Trash2, Server } from 'lucide-react';
 import { CodexModelPicker } from './CodexModelPicker';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import '../claude-panel/segments/shared.css';
@@ -115,7 +116,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
       return;
     }
     const willActivate = activate || state?.providers.length === 0 || (!!editor.id && state?.activeProviderId === editor.id);
-    await mutate('save', () => saveCodexProvider(input, activate), willActivate ? '供应商已保存并启用，重新启动 Codex 后生效' : '供应商已保存', true);
+    await mutate('save', () => saveCodexProvider(input, activate), willActivate ? '供应商已保存并设为默认，重新启动 Codex 后生效' : '供应商已保存', true);
   };
 
   const fetchModels = async () => {
@@ -159,7 +160,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
 
       <p className="codex-provider-description">
         管理多个 Codex 供应商，为每个供应商选择可用模型。右键项目或 Codex 启动配置，即可按模型快速启动。
-        保存或启用时会自动生成模型目录（model_catalog_json），为所有模型声明全部推理等级。
+        保存或设为默认时会自动生成模型目录（model_catalog_json），为所有模型声明全部推理等级。
       </p>
       {state && <p className="codex-provider-path" title={state.configDir}>配置目录：{state.configDir}</p>}
       {(loadError || state?.configError) && <div className="codex-provider-error" role="alert">{loadError || state?.configError}</div>}
@@ -171,7 +172,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
         </div>
       )}
       {state && state.providers.length > 0 && !state.activeProviderId && !state.configError && (
-        <p className="codex-provider-description">当前 Codex 配置与列表中的供应商不一致，可选择一项启用。</p>
+        <p className="codex-provider-description">当前未设置默认供应商，可选择一项设为默认；右键菜单仍可按模型快速启动。</p>
       )}
 
       <div className="llm-provider-list">
@@ -182,7 +183,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
               <div className="llm-provider-head">
                 <span className="codex-provider-avatar"><Server size={18} /></span>
                 <span className="llm-provider-name" title={provider.name}>{provider.name}</span>
-                {isActive && <span className="llm-badge default">使用中</span>}
+                {isActive && <span className="llm-badge default">默认</span>}
                 {editor?.id === provider.id && <span className="llm-badge editing">编辑中</span>}
               </div>
               <div className="llm-provider-meta"><span title={provider.baseUrl}>{provider.baseUrl}</span></div>
@@ -192,9 +193,11 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
               <div className="codex-provider-model-tags">{(provider.models ?? [provider.model]).map(id => <span key={id} className="llm-badge" title={id}>{id} · {CODEX_EFFORT_OPTIONS.find(([level]) => level === (provider.modelReasoningEfforts[id] ?? 'max'))?.[1]}</span>)}</div>
               <div className="llm-provider-meta"><span className="llm-key-tail">{provider.keySet ? `密钥已保存${provider.keyTail ? ` ····${provider.keyTail}` : ''}` : '未设置密钥'}</span></div>
               <div className="llm-provider-actions">
-                <button type="button" className="claude-segment-btn mini" disabled={busy || isActive} onClick={() => void mutate('activate', () => activateCodexProvider(provider.id), `已启用「${provider.name}」，重新启动 Codex 后生效`)}>{isActive && <Check size={12} />}{isActive ? '已启用' : '启用'}</button>
+                {isActive
+                  ? <button type="button" className="claude-segment-btn mini" disabled={busy} onClick={() => void mutate('clear-default', clearDefaultCodexProvider, '已取消默认供应商，Codex 将使用自身登录配置')}>取消默认</button>
+                  : <button type="button" className="claude-segment-btn mini" disabled={busy} onClick={() => void mutate('activate', () => activateCodexProvider(provider.id), `「${provider.name}」已设为默认，重新启动 Codex 后生效`)}>设为默认</button>}
                 <button type="button" className="claude-segment-btn mini" disabled={busy} onClick={() => edit(provider)}><Pencil size={12} /> 编辑</button>
-                <button type="button" className="claude-segment-btn mini danger" disabled={busy || isActive} title={isActive ? '请先启用其他供应商后删除' : undefined} onClick={() => setDeleteTarget(provider)}><Trash2 size={12} /> 删除</button>
+                <button type="button" className="claude-segment-btn mini danger" disabled={busy || isActive} title={isActive ? '请先取消默认后再删除' : undefined} onClick={() => setDeleteTarget(provider)}><Trash2 size={12} /> 删除</button>
               </div>
             </div>
           );
@@ -208,7 +211,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
           footer={<>
             <button type="button" className="btn-secondary" disabled={busy} onClick={() => { requestVersion.current += 1; setEditor(null); setModels([]); }}>取消</button>
             <button type="submit" className="btn-secondary" disabled={busy}>{pending === 'save' ? '保存中…' : '保存'}</button>
-            <button type="button" className="btn-primary" disabled={busy} onClick={event => { if (event.currentTarget.form?.reportValidity()) void save(true); }}>保存并启用</button>
+            <button type="button" className="btn-primary" disabled={busy} onClick={event => { if (event.currentTarget.form?.reportValidity()) void save(true); }}>保存并设为默认</button>
           </>}>
           {!editor.id && <div className="codex-provider-presets" role="group" aria-label="供应商预设">
             {[['custom', '自定义供应商', '兼容 Responses API 的中转站或私有服务'], ['openai', 'OpenAI 官方 API', '使用 OpenAI API 密钥连接']].map(([id, name, hint]) => <button key={id} type="button" disabled={busy}
@@ -242,7 +245,7 @@ export const CodexProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
               <label className="codex-provider-checkbox"><input type="checkbox" checked={editor.disableResponseStorage} onChange={e => setEditor({ ...editor, disableResponseStorage: e.target.checked })} />禁用响应存储</label>
             </details>
           </fieldset>
-          <p className="codex-provider-description">{editor.id && state?.activeProviderId === editor.id ? '修改当前供应商并保存后，会同步更新 Codex 配置。' : '启用时自动备份原配置，并保留 MCP 等其他设置。'}保存或启用时自动生成模型目录，所有模型声明全部推理等级。</p>
+          <p className="codex-provider-description">{editor.id && state?.activeProviderId === editor.id ? '修改当前默认供应商并保存后，会同步更新 Codex 配置。' : '设为默认时自动备份原配置，并保留 MCP 等其他设置。'}保存或设为默认时自动生成模型目录，所有模型声明全部推理等级。</p>
           <details className="codex-provider-advanced codex-config-preview">
             <summary>配置预览</summary>
             <strong>auth.json</strong>

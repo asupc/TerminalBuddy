@@ -1,10 +1,11 @@
 import { useAppStore } from '../../stores/appStore';
 import { effectiveProfilePath } from '../../utils/projectPath';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
-import { projectStartupCommand } from '../../utils/startupPresets';
+import { withoutResumeArgs } from '../../utils/commandParams';
 import { FC } from 'react';
 import { openInExplorer } from '../../services/tauri';
 import type { ExtraParamMode, Profile, TerminalSession } from '../../types';
+import { supportsSystemExplorerOpen } from '../../services/platform';
 
 interface TabContextMenuProps {
   x: number;
@@ -50,7 +51,8 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
           if (profile) {
             onStartTerminal(
               profile,
-              session.extraParams,
+              // 从历史恢复的会话 extraParams 含 --resume，新建终端必须剥除，避免续接旧会话。
+              withoutResumeArgs(session.extraParams),
               session.extraParamTag,
               session.profileName,
               session.extraParamTag,
@@ -65,7 +67,7 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
               ? state.extraParamPresets.find(item => item.name === session.extraParamTag)
               : undefined;
             const path = session.startupPath ?? (project?.path || state.sessionDirectories[sessionId]);
-            const command = session.extraParams ?? (project ? projectStartupCommand(project, preset) : undefined);
+            const command = withoutResumeArgs(session.extraParams) ?? preset?.params;
             void openTerminalInDir(path, {
               command,
               name: session.profileName,
@@ -94,11 +96,13 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
         if (!isLocal || !path) return null;
         return (
           <>
-            <div className="context-menu-item" onClick={async () => {
-              onClose();
-              try { await openInExplorer(path); }
-              catch (err) { console.error(err); }
-            }}>打开目录</div>
+            {supportsSystemExplorerOpen() && (
+              <div className="context-menu-item" onClick={async () => {
+                onClose();
+                try { await openInExplorer(path); }
+                catch (err) { console.error(err); }
+              }}>打开目录</div>
+            )}
             <div className="context-menu-item" onClick={() => {
               navigator.clipboard.writeText(path).catch(() => {});
               onClose();

@@ -1,13 +1,15 @@
 import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { buildClaudeRefCommand, deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
-import { openProjectTerminal, openTerminalInDir } from '../../utils/openTerminalInDir';
+import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
-import { DEFAULT_CLAUDE_COMMAND, inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
-import type { ExtraParamMode, Profile } from '../../types';
+import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
+import { currentClaudeCommand, currentCodexCommand } from '../../utils/agentCommands';
+import type { EnabledAgents, ExtraParamMode, Profile } from '../../types';
+import { projectEnabledAgents, projectModelSources } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
@@ -15,7 +17,7 @@ import { open as openDirectory } from '@tauri-apps/plugin-dialog';
 import { saveProjects } from '../../services/tauri';
 import type { Project } from '../../types';
 import { effectiveProfilePath, normalizeProjectPath } from '../../utils/projectPath';
-import { isDockerClient } from '../../services/platform';
+import { isDockerClient, supportsSystemExplorerOpen } from '../../services/platform';
 import './ConfigNav.css';
 
 const TYPE_ICONS: Record<string, string> = {
@@ -114,7 +116,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const [editingProject, setEditingProject] = useState<Project | null | undefined>();
   const [projectName, setProjectName] = useState('');
   const [projectPath, setProjectPath] = useState('');
-  const [projectStartupCommand, setProjectStartupCommand] = useState('');
+  const [projectAgents, setProjectAgents] = useState<Required<EnabledAgents>>({ claude: true, codex: true });
   const [projectError, setProjectError] = useState('');
 
   // Build project nodes and their profiles
@@ -291,7 +293,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     setEditingProject(project);
     setProjectName(project?.name || name || '');
     setProjectPath(project?.path || '');
-    setProjectStartupCommand(project?.startupCommand || '');
+    setProjectAgents(projectEnabledAgents(project));
     setProjectError('');
     closeContextMenu();
   };
@@ -305,7 +307,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     if (projects.some(p => p.name.toLowerCase() === name.toLowerCase() && p.name !== editingProject?.name)) {
       setProjectError('项目名称已存在'); return;
     }
-    const updated = [...projects.filter(p => p.name !== editingProject?.name), { name, path, startupCommand: projectStartupCommand.trim() }];
+    const updated = [...projects.filter(p => p.name !== editingProject?.name), { name, path, enabledAgents: { ...projectAgents } }];
     // Legacy projects with no inferred path remain visible until edited; only persist valid paths.
     try {
       await saveProjects(updated.filter(p => p.path.trim()));
@@ -328,25 +330,20 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     } catch (error) { setProjectError(String(error)); }
   };
 
-  const startProject = async (project: Project, preset?: typeof extraParamPresets[number]) => {
-    closeContextMenu();
-    await openProjectTerminal(project, preset);
-  };
-
   /** 叶子模型启动：引用命令整体替换 startup_commands（independent），shell/路径/env 仍生效，
    * 原 claude 命令的参数（如 --dangerously-skip-permissions）继承到引用命令后。 */
   const startProfileWithModel = (profile: Profile, providerId: string, modelId: string) => {
     closeContextMenu();
-    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, DEFAULT_CLAUDE_COMMAND)), undefined, undefined, undefined, undefined, 'independent');
+    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, currentClaudeCommand())), undefined, undefined, undefined, undefined, 'independent');
   };
 
   /** 分组模型启动：走 blank 链（恒为本地 shell），引用命令整条注入，模型名由 tab tag 呈现；
-   * 项目启动命令里 claude 的参数一并继承。 */
+   * Agent 管理的基础命令参数（如 --dangerously-skip-permissions）一并继承。 */
   const startProjectWithModel = async (project: Project, providerId: string, modelId: string) => {
     closeContextMenu();
     try {
       await openTerminalInDir(project.path, {
-        command: buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(project.startupCommand, DEFAULT_CLAUDE_COMMAND)),
+        command: buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(undefined, currentClaudeCommand())),
         name: project.name,
         groupName: project.name,
       });
@@ -363,7 +360,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const startProjectWithCodexModel = async (project: Project, providerId: string, modelId: string) => {
     closeContextMenu();
     try {
-      await openTerminalInDir(project.path, { command: buildCodexRefCommand(providerId, modelId, project.startupCommand), name: project.name, groupName: project.name });
+      await openTerminalInDir(project.path, { command: buildCodexRefCommand(providerId, modelId, currentCodexCommand()), name: project.name, groupName: project.name });
     } catch (error) { showToast('Codex 模型启动失败：' + String(error), 'error'); }
   };
 
@@ -373,14 +370,15 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     openSettingsDialog('llm-providers');
   };
 
-  // 当前启动工具的供应商排在前面，另一类供应商用于直接切换工具启动。
+  // 连接配置按启动命令内容推导模型区：当前工具的供应商排在前面，另一类供应商用于直接切换工具启动。
+  const commandModelSources = (commands: string[]): Array<'claude' | 'codex'> => commands.some(isClaudeCommand)
+    ? ['claude', 'codex']
+    : commands.some(isCodexCommand) ? ['codex', 'claude'] : [];
+
   const modelMenuSections = (
-    commands: string[],
+    sources: Array<'claude' | 'codex'>,
     onPickModel: (source: 'claude' | 'codex', providerId: string, modelId: string) => void,
   ) => {
-    const sources: Array<'claude' | 'codex'> = commands.some(isClaudeCommand)
-      ? ['claude', 'codex']
-      : commands.some(isCodexCommand) ? ['codex', 'claude'] : [];
     return sources.map(source => (
       <ClaudeModelMenuSection
         key={source}
@@ -593,7 +591,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             // 仅本地 shell 类型显示模型区：后端 ssh/docker/k8s 分支会丢弃引用；
             // Claude / Codex 引用命令会整体替换 startup_commands。
             if (!target || !isModelRefLocalType(target.terminalType)) return null;
-            return modelMenuSections(target.startupCommands, (source, providerId, modelId) => {
+            return modelMenuSections(commandModelSources(target.startupCommands), (source, providerId, modelId) => {
               if (source === 'claude') startProfileWithModel(target, providerId, modelId);
               else startProfileWithCodexModel(target, providerId, modelId);
             });
@@ -608,14 +606,16 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             if (!target || !isLocalProfile(target) || !hasStartupPath(target)) return null;
             return (
               <>
-                <div className="context-menu-item" onClick={async () => {
-                  const t = profiles.find((p) => p.id === contextMenu.profileId);
-                  closeContextMenu();
-                  if (t) {
-                    try { await openInExplorer(effectiveProfilePath(t, projects)); }
-                    catch (err) { console.error(err); }
-                  }
-                }}>打开目录</div>
+                {supportsSystemExplorerOpen() && (
+                  <div className="context-menu-item" onClick={async () => {
+                    const t = profiles.find((p) => p.id === contextMenu.profileId);
+                    closeContextMenu();
+                    if (t) {
+                      try { await openInExplorer(effectiveProfilePath(t, projects)); }
+                      catch (err) { console.error(err); }
+                    }
+                  }}>打开目录</div>
+                )}
                 <div className="context-menu-item" onClick={() => {
                   const t = profiles.find((p) => p.id === contextMenu.profileId);
                   if (t) navigator.clipboard.writeText(effectiveProfilePath(t, projects)).catch(() => {});
@@ -659,29 +659,24 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           {(() => {
             const project = projects.find(item => item.name === groupContextMenu.group);
             if (!project?.path) return null;
-            const command = project.startupCommand?.trim() || '';
             return <>
-              <div className="context-menu-item" onClick={() => void startProject(project)}>启动项目</div>
-              {matchingStartupPresets(extraParamPresets, [command]).map(preset => (
-                <div key={preset.id} className="context-menu-item" onClick={() => void startProject(project, preset)}>
-                  启动<span className="config-nav-preset-chip" style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}>{preset.name}</span>
-                </div>
-              ))}
               <div className="context-menu-item" onClick={async () => {
                 closeContextMenu();
                 try { await openTerminalInDir(project.path); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
-              {modelMenuSections([command], (source, providerId, modelId) => {
+              {modelMenuSections(projectModelSources(project), (source, providerId, modelId) => {
                 if (source === 'claude') void startProjectWithModel(project, providerId, modelId);
                 else void startProjectWithCodexModel(project, providerId, modelId);
               })}
               <div className="context-menu-separator" />
-              <div className="context-menu-item" onClick={async () => {
-                closeContextMenu();
-                try { await openInExplorer(project.path); }
-                catch (err) { console.error(err); }
-              }}>打开目录</div>
+              {supportsSystemExplorerOpen() && (
+                <div className="context-menu-item" onClick={async () => {
+                  closeContextMenu();
+                  try { await openInExplorer(project.path); }
+                  catch (err) { console.error(err); }
+                }}>打开目录</div>
+              )}
               <div className="context-menu-item" onClick={() => {
                 navigator.clipboard.writeText(project.path).catch(() => {});
                 closeContextMenu();
@@ -741,9 +736,18 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
               </div>
             </div>
             <div className="form-group">
-              <label htmlFor="project-edit-command">启动命令</label>
-              <input id="project-edit-command" value={projectStartupCommand} onChange={event => setProjectStartupCommand(event.target.value)} placeholder="例如 claude 或 npm run dev" />
-              <small>在项目目录的 PowerShell 中执行；右键菜单根据此命令匹配启动参数。留空仅打开终端。</small>
+              <label>启用的 Agent</label>
+              <div className="project-edit-agents">
+                <label className="project-edit-agent-toggle">
+                  <input type="checkbox" checked={projectAgents.claude} onChange={event => setProjectAgents(value => ({ ...value, claude: event.target.checked }))} />
+                  Claude Code
+                </label>
+                <label className="project-edit-agent-toggle">
+                  <input type="checkbox" checked={projectAgents.codex} onChange={event => setProjectAgents(value => ({ ...value, codex: event.target.checked }))} />
+                  Codex
+                </label>
+              </div>
+              <small>右键项目时可按启用的 Agent 展开供应商与模型启动；基础命令在设置 → Agent 管理中配置。</small>
             </div>
             {projectError && <div className="error" role="alert">{projectError}</div>}
           </form>

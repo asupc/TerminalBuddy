@@ -149,17 +149,15 @@ export const MOCK_PROJECTS: Project[] = [
   {
     name: 'Vue3 电商管理后台',
     path: 'D:\\Projects\\shop-admin',
-    startupCommand: 'pnpm run dev',
   },
   {
     name: 'SpringCloud 订单中心',
     path: 'D:\\Backend\\order-service',
-    startupCommand: 'mvn spring-boot:run',
   },
   {
     name: 'TerminalBuddy',
     path: 'D:\\gitee\\TerminalBuddy',
-    startupCommand: 'npm run dev',
+    enabledAgents: { claude: true, codex: false },
   },
 ];
 

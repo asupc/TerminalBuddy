@@ -3,6 +3,7 @@ import { launchTerminalSession } from '../../services/sessionRestore';
 import { clientTerminalOwner } from '../../services/platform';
 import { effectiveProfilePath, normalizeProjectPath, projectForDirectory } from '../../utils/projectPath';
 import { inheritableClaudeArgs, isClaudeLaunchProfile } from '../../utils/claudeLaunch';
+import { currentClaudeCommand } from '../../utils/agentCommands';
 import { PRESET_THEMES, type Profile } from '../../types';
 import { useAppStore } from '../../stores/appStore';
 
@@ -111,8 +112,8 @@ export async function resumeClaudeSession(
   const name = session.title || 'Claude 会话';
   const profile = pickClaudeProfile(store.profiles, session.projectDir);
   const project = projectForDirectory(store.projects, session.projectDir);
-  // 指定模型恢复时继承所选连接（无则项目）启动命令里 claude 的参数，如 --dangerously-skip-permissions。
-  const inheritArgs = inheritableClaudeArgs(profile?.startupCommands ?? project?.startupCommand);
+  // 指定模型恢复时继承所选连接启动命令里 claude 的参数（无连接时取 Agent 管理的基础命令）。
+  const inheritArgs = inheritableClaudeArgs(profile?.startupCommands, currentClaudeCommand());
   const resumeArg = `--resume ${session.sessionId}`;
   // 快照里存整条含引用的命令（不含 --resume，恢复时临时拼）。
   const snapshotParams = vendorRef

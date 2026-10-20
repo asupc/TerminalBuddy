@@ -18,10 +18,9 @@ import { PRESET_THEMES } from '../types';
 import type { TerminalSession } from '../types';
 import { isBrowserClient, clientTerminalOwner } from './platform';
 import { hasUpdatingTerminals } from './browser/updateState';
+import { stripResumeArgs } from '../utils/commandParams';
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
-/** extraParams 里历史遗留的 --resume 参数；UUID 至少 8 位才按会话 ID 处理。 */
-const SAVED_RESUME_RE = /--resume\s+([0-9a-fA-F-]{8,64})/;
 
 /** Estimate terminal rows/cols from the .terminal-content container size. */
 function estimateTerminalSize(): { rows: number; cols: number } {
@@ -83,8 +82,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   const rawParams = tab.extraParams || '';
   // 旧数据可能把 --resume 直接存进 extraParams（例如从历史会话恢复出来的页签）。
   // 先取出 ID 再剥除：既避免重复拼接，也避免 claudeSessionId 缺失时丢失恢复意图。
-  const savedResumeId = rawParams.match(SAVED_RESUME_RE)?.[1];
-  const paramsWithoutResume = rawParams.replace(/--resume\s+[0-9a-fA-F-]+/g, '');
+  const { params: paramsWithoutResume, resumeId: savedResumeId } = stripResumeArgs(rawParams);
   const baseParams = tab.extraParamMode === 'independent'
     ? paramsWithoutResume.trim()
     : paramsWithoutResume.replace(/\s+/g, ' ').trim();
