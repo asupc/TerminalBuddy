@@ -29,7 +29,7 @@ cd src-tauri && cargo check  # Rust 编译检查
 cd src-tauri && cargo test --lib   # Rust 单元测试（25 个文件、约 164 个用例）
 ```
 
-仓库根目录的快捷脚本：`dev.bat` 会先构建 Web 前端再启动 `tauri dev`。
+仓库根目录的快捷脚本：`dev.bat` 会先构建 Web 前端再启动 `tauri dev`；`build-windows-exe.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/windows-build/Dockerfile`，cargo-xwin 交叉编译）一键产出 Windows 单文件 exe：源码只读挂载，构建与缓存在容器/命名卷内完成，宿主机不安装工具链，仅输出到仓库根目录 `dist/`（含 `.sha256`），不生成安装包 —— 需要 NSIS 安装包请在 Windows 上使用 `terminal-buddy/build.bat`。
 
 仓库没有 lint 和格式化工具。TypeScript strict 模式开启了 `noUnusedLocals` 和 `noUnusedParameters`，未使用的绑定会让 `tsc` 失败。测试方面只有 Rust 单元测试（`cargo test --lib`）和独立的 `node scripts/test-*.mjs` 脚本，前端没有测试套件。
 
