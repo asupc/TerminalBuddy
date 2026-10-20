@@ -368,7 +368,10 @@ struct InstallDirectory(PathBuf);
 impl InstallDirectory {
     fn create(name: &str) -> Result<Self, String> {
         let path = std::env::temp_dir().join(format!("terminal-buddy-{name}-{}", uuid::Uuid::new_v4()));
+        #[cfg(unix)]
         let mut builder = fs::DirBuilder::new();
+        #[cfg(not(unix))]
+        let builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;

@@ -19,7 +19,7 @@ struct UpdateStatusFile {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateStatusResponse {
+pub struct UpdateStatusResponse {
     update_id: String,
     status: String,
     log: String,
