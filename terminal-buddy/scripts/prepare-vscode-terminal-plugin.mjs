@@ -7,12 +7,16 @@ const source = path.join(root, 'plugins', 'vscode-terminal');
 const destination = path.join(root, 'src-tauri', 'resources', 'vscode-terminal');
 const nodePtySource = path.join(root, 'node_modules', 'node-pty');
 const nodePtyDestination = path.join(destination, 'node_modules', 'node-pty');
-const platformPrebuild = `win32-${process.arch}`;
+// 交叉编译（例如在 Linux 容器里构建 Windows exe）时可显式指定目标平台。
+const targetPlatform = process.env.TERMINAL_BUDDY_TARGET_PLATFORM ?? process.platform;
+const platformPrebuild = `${targetPlatform}-${process.arch}`;
 const prebuildSource = path.join(nodePtySource, 'prebuilds', platformPrebuild);
 const prebuildDestination = path.join(nodePtyDestination, 'prebuilds', platformPrebuild);
 
-if (process.platform !== 'win32') {
-  throw new Error('The VS Code terminal plugin currently supports Windows only.');
+if (targetPlatform !== 'win32') {
+  throw new Error(
+    `The VS Code terminal plugin currently supports Windows only (target: ${targetPlatform}).`,
+  );
 }
 
 await rm(destination, { recursive: true, force: true });
