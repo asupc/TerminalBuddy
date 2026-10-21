@@ -306,11 +306,14 @@ fn bootstrap_bot_connections(app: &tauri::AppHandle) -> std::io::Result<()> {
     Ok(())
 }
 
-/// 修复并启动 Claude hook 本地 HTTP 服务（失败仅记录日志，不阻塞启动）。
+/// 清理用户级 settings.json 的旧版 Claude hooks 并启动本地 HTTP 服务
+/// （失败仅记录日志，不阻塞启动）。Hook 现已随模型终端的一次性 `--settings`
+/// 临时文件注入；用户级残留会与临时注入合并执行、同一事件触发两次，
+/// 启动时清理（幂等，无残留时不写文件）。
 fn bootstrap_claude_hook(app: &tauri::AppHandle) {
-    match crate::services::repair_claude_http_hooks_if_managed(None) {
-        Ok(status) => boot_log(format!("Claude hooks status: {}", status.status)),
-        Err(error) => boot_log(format!("Claude hooks inspection failed: {}", error)),
+    match crate::services::uninstall_claude_http_hooks_at(None) {
+        Ok(_) => boot_log("legacy user-level claude hooks cleanup done"),
+        Err(error) => boot_log(format!("legacy claude hooks cleanup failed: {}", error)),
     }
     match crate::web::claude_hook_server::bind() {
         Ok(listener) => {
@@ -486,8 +489,6 @@ pub fn run() {
             send_claude_hook_decision_notification,
             get_claude_hook_settings_status,
             save_claude_hook_config_dir,
-            install_claude_hooks,
-            repair_claude_hooks,
             uninstall_claude_hooks,
             get_terminal_loading_mode,
             update_terminal_display_name,

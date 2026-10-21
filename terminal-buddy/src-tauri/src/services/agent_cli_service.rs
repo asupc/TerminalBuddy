@@ -460,12 +460,81 @@ impl Drop for InstallDirectory {
     fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
 }
 
-fn log_tail(path: &Path) -> String {
+/// 安装日志可能来自 curl（UTF-8）、PowerShell 重定向（中文 Windows 上通常是 GBK）
+/// 或 UTF-16LE；先按 BOM / NUL 分布识别编码再解码，避免中文错误信息变成乱码。
+fn decode_log(bytes: &[u8]) -> String {
+    let text = if bytes.starts_with(&[0xFF, 0xFE]) {
+        encoding_rs::UTF_16LE.decode(&bytes[2..]).0.into_owned()
+    } else if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        String::from_utf8_lossy(&bytes[3..]).into_owned()
+    } else if bytes.len() >= 8 && bytes.iter().take(256).filter(|byte| **byte == 0).count() > 64 {
+        // 没有 BOM 的 UTF-16LE：ASCII 字符之间夹着大量 NUL。
+        encoding_rs::UTF_16LE.decode(bytes).0.into_owned()
+    } else {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => text.to_string(),
+            Err(_) => encoding_rs::GBK.decode(bytes).0.into_owned(),
+        }
+    };
+    text.replace('\0', "").replace("\r\n", "\n").trim().to_string()
+}
+
+/// 读取日志的首尾片段：安装器的关键错误通常在开头（脚本的 Write-Error）
+/// 或结尾（子进程退出前的输出），大文件不必整份读入。
+fn read_log(path: &Path) -> String {
+    const CHUNK: u64 = 32 * 1024;
     let Ok(mut file) = File::open(path) else { return String::new(); };
-    let _ = file.seek(SeekFrom::End(-2048)).or_else(|_| file.seek(SeekFrom::Start(0)));
+    let len = file.metadata().map(|meta| meta.len()).unwrap_or(0);
     let mut bytes = Vec::new();
-    let _ = file.take(2048).read_to_end(&mut bytes);
-    String::from_utf8_lossy(&bytes).trim().to_string()
+    if len <= CHUNK * 2 {
+        let _ = file.read_to_end(&mut bytes);
+    } else {
+        let _ = (&mut file).take(CHUNK).read_to_end(&mut bytes);
+        bytes.extend_from_slice(b"\n...\n");
+        if file.seek(SeekFrom::End(-(CHUNK as i64))).is_ok() {
+            let mut tail = Vec::new();
+            let _ = (&mut file).take(CHUNK).read_to_end(&mut tail);
+            bytes.extend_from_slice(&tail);
+        }
+    }
+    decode_log(&bytes)
+}
+
+fn log_excerpt(path: &Path) -> String {
+    const HEAD: usize = 1000;
+    const TAIL: usize = 500;
+    let text = read_log(path);
+    if text.chars().count() <= HEAD + TAIL {
+        return text;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let head: String = chars[..HEAD].iter().collect();
+    let tail: String = chars[chars.len() - TAIL..].iter().collect();
+    format!("{head}\n…\n{tail}")
+}
+
+/// 临时目录会随 `InstallDirectory` 一起删除，失败日志先转存到数据目录，
+/// 便于用户在重试前自行查看完整内容。
+fn persist_install_log(name: &str, log: &Path) -> Option<PathBuf> {
+    let dir = crate::services::PathService::require_data_dir().ok()?.join("logs");
+    fs::create_dir_all(&dir).ok()?;
+    let file_name = format!("agent-{}-install.log", name.to_ascii_lowercase().replace([' ', '/', '\\'], "-"));
+    let destination = dir.join(file_name);
+    fs::copy(log, &destination).ok()?;
+    Some(destination)
+}
+
+fn install_failure(name: &str, reason: &str, log: &Path) -> String {
+    let excerpt = log_excerpt(log);
+    let saved = persist_install_log(name, log);
+    let mut message = format!("{name} 安装失败（{reason}）");
+    if !excerpt.is_empty() {
+        message.push_str(&format!("：\n{excerpt}"));
+    }
+    if let Some(path) = saved {
+        message.push_str(&format!("\n完整日志：{}", path.display()));
+    }
+    message
 }
 
 fn run_logged(name: &str, command: &mut Command, log: &Path, timeout: Duration) -> Result<(), String> {
@@ -473,10 +542,14 @@ fn run_logged(name: &str, command: &mut Command, log: &Path, timeout: Duration) 
     prepare_command(command);
     command.stdout(file.try_clone().map_err(|error| error.to_string())?).stderr(file);
     let mut child = command.spawn().map_err(|error| format!("无法启动安装程序：{error}"))?;
-    wait_for_child(&mut child, timeout)?;
+    let waited = wait_for_child(&mut child, timeout);
     let status = child.wait().map_err(|error| error.to_string())?;
+    if let Err(error) = waited {
+        return Err(install_failure(name, &error, log));
+    }
     if !status.success() {
-        return Err(format!("{name} 安装失败：{}", log_tail(log)));
+        let code = status.code().map(|value| value.to_string()).unwrap_or_else(|| "未知".into());
+        return Err(install_failure(name, &format!("退出码 {code}"), log));
     }
     Ok(())
 }
@@ -568,7 +641,7 @@ fn run_claude_install_windows(target: Option<&str>, home: &Path, npm_dir: &Path)
         run_logged("Claude", &mut fallback, &log, Duration::from_secs(120))?;
     }
     let mut installer = Command::new("powershell.exe");
-    installer.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]).arg(&script);
+    installer.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]).arg(write_installer_wrapper(&dir.0, &script)?);
     if let Some(target) = target { installer.arg(target); }
     run_logged("Claude", &mut installer, &log, Duration::from_secs(600))?;
     // 原生安装器写入 %USERPROFILE%\.local\bin；个别环境会经 npm shim 安装，两者都核验。
@@ -576,6 +649,23 @@ fn run_claude_install_windows(target: Option<&str>, home: &Path, npm_dir: &Path)
     candidates.extend(executable_names(CliTool::Claude.binary(), true).into_iter().map(|name| npm_dir.join(name)));
     let version = detect_candidates(CliTool::Claude, candidates);
     validate_installed_version(CliTool::Claude, version, target)
+}
+
+/// Windows PowerShell 5.1 默认可能用 TLS 1.0 访问下载服务，并按系统代码页输出日志
+/// （中文系统为 GBK，读回来就是乱码）。这里包一层脚本：强制 TLS 1.2、日志用 UTF-8，
+/// 并把官方 install.ps1 的退出码原样带回。包装脚本保持纯 ASCII，避免无 BOM 时被
+/// 按 ANSI 代码页解析。
+#[cfg(windows)]
+fn write_installer_wrapper(dir: &Path, script: &Path) -> Result<PathBuf, String> {
+    let wrapper = dir.join("run-installer.ps1");
+    let quoted = script.display().to_string().replace('\'', "''");
+    let content = format!(
+        "try {{ [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 }} catch {{ }}\n\
+         try {{ [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false }} catch {{ }}\n\
+         try {{\n    & '{quoted}' @args\n    if ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }}\n    exit 0\n}} catch {{\n    Write-Error $_\n    exit 1\n}}\n"
+    );
+    fs::write(&wrapper, content).map_err(|error| format!("无法写入安装脚本：{error}"))?;
+    Ok(wrapper)
 }
 
 #[cfg(windows)]
@@ -687,9 +777,26 @@ mod tests {
     fn installer_failure_includes_the_tool_and_log() {
         let dir = InstallDirectory(std::env::temp_dir().join(format!("cli-log-test-{}", uuid::Uuid::new_v4())));
         fs::create_dir(&dir.0).unwrap();
+        crate::services::PathService::set_test_data_dir(Some(dir.0.join("data")));
         let error = run_logged(CliTool::Codex.name(), Command::new("sh").args(["-c", "printf 'download failed'; exit 1"]), &dir.0.join("install.log"), Duration::from_secs(5)).unwrap_err();
         assert!(error.contains("Codex CLI 安装失败"));
         assert!(error.contains("download failed"));
+        // 失败日志必须转存到数据目录，临时目录删除后仍可排查。
+        assert!(error.contains("完整日志"));
+        assert!(dir.0.join("data/logs/agent-codex-cli-install.log").is_file());
+    }
+
+    #[test]
+    fn install_logs_survive_powershell_encodings() {
+        let utf16: Vec<u8> = [0xFF, 0xFE].into_iter()
+            .chain("安装失败：网络不可用".encode_utf16().flat_map(|unit| unit.to_le_bytes()))
+            .collect();
+        assert_eq!(decode_log(&utf16), "安装失败：网络不可用");
+        // 中文 Windows 上 PowerShell 重定向输出通常是 GBK。
+        assert_eq!(decode_log(&[0xB0, 0xB2, 0xD7, 0xB0, 0xCA, 0xA7, 0xB0, 0xDC]), "安装失败");
+        assert_eq!(decode_log(b"plain ascii\r\n"), "plain ascii");
+        let utf16_no_bom: Vec<u8> = "install.ps1".encode_utf16().flat_map(|unit| unit.to_le_bytes()).collect();
+        assert_eq!(decode_log(&utf16_no_bom), "install.ps1");
     }
 
     #[test]

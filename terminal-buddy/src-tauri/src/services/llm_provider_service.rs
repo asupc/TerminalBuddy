@@ -459,7 +459,8 @@ fn api_root(base_url: &str) -> String {
     trimmed.strip_suffix("/v1").unwrap_or(trimmed).to_string()
 }
 
-/// 生成临时 settings JSON。**永不含 `hooks` 键**（用户级 hook 照常生效）。
+/// 生成临时 settings JSON。附带 TerminalBuddy hooks（`managed_hooks_object`）：
+/// hook 随一次性文件下发，不再写入用户级 settings.json（旧版残留由桌面端启动时清理）。
 /// 所有档位都写 `env.CLAUDE_CODE_EFFORT_LEVEL`：该 env 键优先级最高，用户级
 /// settings.json 里残留的同名值会穿透临时文件未写的键，把所选档位压回去。
 /// 同理，四档 `ANTHROPIC_DEFAULT_*_MODEL` 与 `CLAUDE_CODE_SUBAGENT_MODEL` 也全部
@@ -523,6 +524,12 @@ fn build_temp_settings(
     }
     root.insert("model".to_string(), json!(model_id));
     root.insert("env".to_string(), Value::Object(env));
+    // TerminalBuddy hooks 随临时文件下发；各 settings 来源的 hooks 会合并执行，
+    // 用户级残留已在启动时清理，避免同一事件触发两次。
+    root.insert(
+        "hooks".to_string(),
+        super::claude_hook_settings::managed_hooks_object(),
+    );
     Value::Object(root)
 }
 
@@ -807,10 +814,16 @@ mod tests {
     }
 
     #[test]
-    fn temp_settings_never_contain_hooks() {        let provider = test_provider();
+    fn temp_settings_inject_managed_hooks() {        let provider = test_provider();
         for level in ["low", "high", "xhigh", "max"] {
             let settings = build_temp_settings(&provider, "secret", "claude-opus-9", 200000, 0, level);
-            assert!(settings.get("hooks").is_none(), "level={} 不得含 hooks", level);
+            // hooks 随临时文件下发（与 managed_hooks_object 完全一致），不再依赖用户级安装
+            assert_eq!(
+                settings["hooks"],
+                crate::services::claude_hook_settings::managed_hooks_object(),
+                "level={} hooks 注入不符",
+                level
+            );
             // env 写的是 API 根地址：claude 会自行拼 `${base}/v1/messages`
             assert_eq!(settings["env"]["ANTHROPIC_BASE_URL"], "https://ai.example.com");
             assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], "secret");
@@ -1060,7 +1073,8 @@ mod tests {
                 .map(PathBuf::from)
                 .unwrap();
             let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-            assert!(content.get("hooks").is_none());
+            // hooks 随临时文件真实落盘
+            assert!(content.pointer("/hooks/Stop/0/hooks/0/url").is_some());
             assert_eq!(content["env"]["ANTHROPIC_AUTH_TOKEN"], "secret");
             // 清理删除文件与映射
             cleanup_temp_settings_for_terminal("term-1");

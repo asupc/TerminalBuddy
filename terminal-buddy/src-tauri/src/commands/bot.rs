@@ -5,9 +5,8 @@ use crate::models::{
 };
 use crate::services::bot_channel::{bot_client, dispatch_channel};
 use crate::services::{
-    begin_scan, get_bot_long_connection_statuses, install_claude_http_hooks, poll_scan,
-    sync_bot_long_connections, BotBindingService, BotSettingsService, ScanBeginResult,
-    ScanPollResult,
+    begin_scan, get_bot_long_connection_statuses, poll_scan, sync_bot_long_connections,
+    BotBindingService, BotSettingsService, ScanBeginResult, ScanPollResult,
 };
 use chrono::{Duration, Utc};
 use serde_json::json;
@@ -68,11 +67,7 @@ pub async fn save_bot_settings(
     app: AppHandle,
     settings: BotSettings,
 ) -> Result<BotSettings, String> {
-    if settings.enabled {
-        install_claude_http_hooks().map_err(|error| {
-            format!("启用机器人通知失败，Claude Code Hooks 注册失败: {}", error)
-        })?;
-    }
+    // Hook 已随模型终端的临时 --settings 文件注入，启用机器人不再改写用户级配置。
     let saved = BotSettingsService::save(settings)?;
     sync_bot_long_connections(app.clone())?;
     crate::commands::web::sync_http_server_for_bot(app)?;

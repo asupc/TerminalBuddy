@@ -4959,6 +4959,7 @@ dependencies = [
  "chrono",
  "clipboard-win",
  "dirs 5.0.1",
+ "encoding_rs",
  "futures-util",
  "hex",
  "hyper",

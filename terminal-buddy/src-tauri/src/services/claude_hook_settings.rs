@@ -1,4 +1,7 @@
-//! Claude Code settings.json 的 hooks 安装 / 修复 / 卸载。
+//! Claude Code hooks 定义、用户级 settings.json 残留检测与清理。
+//! Hook 不再写入用户级 `settings.json`：模型终端启动时由
+//! `llm_provider_service::build_temp_settings` 把 [`managed_hooks_object`]
+//! 注入一次性 `--settings` 临时文件；本模块只负责旧版残留的检测与卸载。
 //! 与决策注册表 / 通知状态机（super::claude_hook_service）零耦合，
 //! 仅共享服务器状态与 URL 常量。
 
@@ -185,6 +188,22 @@ fn hook_handler(definition: HookDefinition) -> serde_json::Value {
     })
 }
 
+/// 构建注入模型终端临时 `--settings` 文件的 `hooks` 对象（全部事件）。
+/// Claude Code 会合并执行各 settings 来源的 hooks，因此用户级 settings.json
+/// 里的旧版残留必须先清掉（见 [`uninstall_claude_http_hooks_at`]），
+/// 否则同一事件会触发两次。
+pub fn managed_hooks_object() -> serde_json::Value {
+    let mut hooks = serde_json::Map::new();
+    for definition in HOOK_DEFINITIONS {
+        let mut group = serde_json::json!({ "hooks": [hook_handler(*definition)] });
+        if let Some(matcher) = definition.matcher {
+            group["matcher"] = serde_json::Value::String(matcher.to_string());
+        }
+        hooks.insert(definition.event.to_string(), serde_json::Value::Array(vec![group]));
+    }
+    serde_json::Value::Object(hooks)
+}
+
 fn matcher_matches(group: &serde_json::Value, matcher: Option<&str>) -> bool {
     match matcher {
         Some(expected) => {
@@ -234,6 +253,9 @@ fn has_any_managed_hook(root: &serde_json::Value) -> bool {
         })
 }
 
+/// 检测用户级 settings.json 里的 TerminalBuddy 残留 hooks（旧版安装产物）。
+/// `installedEvents` / `missingEvents` 描述残留情况，`notInstalled` 表示无残留；
+/// 新版 Hook 随模型终端临时文件注入，此状态仅用于提示清理。
 pub fn get_claude_hook_settings_status(
     selected_dir: Option<&str>,
 ) -> Result<ClaudeHookSettingsStatus, String> {
@@ -296,42 +318,8 @@ pub fn get_claude_hook_settings_status(
     Ok(base(status, installed_events, missing_events, None))
 }
 
-pub fn install_claude_http_hooks_at(
-    selected_dir: Option<&str>,
-) -> Result<ClaudeHookSettingsStatus, String> {
-    let _guard = claude_settings_write_lock()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let config_dir = resolve_claude_config_dir(selected_dir)?;
-    fs::create_dir_all(&config_dir)
-        .map_err(|error| format!("创建 Claude 配置目录失败: {}", error))?;
-    let path = config_dir.join("settings.json");
-    let mut root = read_settings(&path)?;
-    let mut changed = false;
-    for definition in HOOK_DEFINITIONS {
-        changed |= ensure_hook(&mut root, *definition)?;
-    }
-    if changed {
-        backup_and_write_settings(&path, &root)?;
-    }
-    get_claude_hook_settings_status(Some(&config_dir.to_string_lossy()))
-}
-
-pub fn install_claude_http_hooks() -> Result<(), String> {
-    install_claude_http_hooks_at(None).map(|_| ())
-}
-
-pub fn repair_claude_http_hooks_if_managed(
-    selected_dir: Option<&str>,
-) -> Result<ClaudeHookSettingsStatus, String> {
-    let status = get_claude_hook_settings_status(selected_dir)?;
-    if status.status == "partialInstalled" {
-        install_claude_http_hooks_at(Some(&status.config_dir))
-    } else {
-        Ok(status)
-    }
-}
-
+/// 清理用户级 settings.json 里的 TerminalBuddy 残留 hooks（幂等）。
+/// 桌面端启动时调用一次，用于卸载旧版安装的 hooks，避免与临时注入重复触发。
 pub fn uninstall_claude_http_hooks_at(
     selected_dir: Option<&str>,
 ) -> Result<ClaudeHookSettingsStatus, String> {
@@ -348,54 +336,6 @@ pub fn uninstall_claude_http_hooks_at(
         backup_and_write_settings(&path, &root)?;
     }
     get_claude_hook_settings_status(Some(&config_dir.to_string_lossy()))
-}
-
-fn ensure_hook(root: &mut serde_json::Value, definition: HookDefinition) -> Result<bool, String> {
-    let root_object = root
-        .as_object_mut()
-        .ok_or_else(|| "Claude 设置根节点不是对象".to_string())?;
-    let hooks = root_object
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| "Claude hooks 设置不是对象".to_string())?;
-    let groups = hooks
-        .entry(definition.event)
-        .or_insert_with(|| serde_json::json!([]))
-        .as_array_mut()
-        .ok_or_else(|| format!("Claude {} hooks 设置不是数组", definition.event))?;
-    let handler = hook_handler(definition);
-    let mut changed = false;
-    let mut found = false;
-    for group in groups.iter_mut() {
-        let group_matches = matcher_matches(group, definition.matcher);
-        if let Some(items) = group
-            .get_mut("hooks")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            let previous = std::mem::take(items);
-            for item in previous {
-                if !is_managed_handler(&item) {
-                    items.push(item);
-                } else if group_matches && !found {
-                    changed |= item != handler;
-                    items.push(handler.clone());
-                    found = true;
-                } else {
-                    changed = true;
-                }
-            }
-        }
-    }
-    if found {
-        return Ok(changed);
-    }
-    let mut group = serde_json::json!({ "hooks": [handler] });
-    if let Some(matcher) = definition.matcher {
-        group["matcher"] = serde_json::Value::String(matcher.to_string());
-    }
-    groups.push(group);
-    Ok(true)
 }
 
 fn remove_managed_hooks(root: &mut serde_json::Value) -> Result<bool, String> {
@@ -453,18 +393,11 @@ fn remove_managed_hooks(root: &mut serde_json::Value) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_hook, hook_handler, normalize_claude_config_dir, remove_managed_hooks,
-        HookDefinition, CLAUDE_HOOK_CLIENT_ARG, CLAUDE_HOOK_URL, HOOK_DEFINITIONS,
+        hook_handler, managed_hooks_object, matcher_matches, normalize_claude_config_dir,
+        remove_managed_hooks, CLAUDE_HOOK_URL, HOOK_DEFINITIONS,
     };
     use serde_json::json;
     use std::path::PathBuf;
-
-    fn definition(key: &str) -> HookDefinition {
-        *HOOK_DEFINITIONS
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap()
-    }
 
     #[test]
     fn all_hook_definitions_generate_authenticated_http_handlers() {
@@ -502,114 +435,32 @@ mod tests {
     }
 
     #[test]
-    fn hook_installation_preserves_existing_hooks_and_is_idempotent() {
-        let mut root = json!({
-            "hooks": {
-                "PreToolUse": [{
-                    "matcher": "Write|Edit",
-                    "hooks": [{ "type": "command", "command": "existing" }]
-                }]
-            }
-        });
-        assert!(ensure_hook(&mut root, definition("decision")).unwrap());
-        assert!(!ensure_hook(&mut root, definition("decision")).unwrap());
-        assert!(ensure_hook(&mut root, definition("completion")).unwrap());
-        assert!(!ensure_hook(&mut root, definition("completion")).unwrap());
-        let pre_tool_use = root
-            .pointer("/hooks/PreToolUse")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(pre_tool_use.len(), 2);
+    fn managed_hooks_object_covers_all_events_with_expected_shape() {
+        let hooks = managed_hooks_object();
         assert_eq!(
-            pre_tool_use[0]
-                .pointer("/hooks/0/command")
+            hooks.as_object().map(serde_json::Map::len),
+            Some(HOOK_DEFINITIONS.len())
+        );
+        for definition in HOOK_DEFINITIONS {
+            let groups = hooks
+                .pointer(&format!("/{}", definition.event))
+                .and_then(|value| value.as_array())
+                .unwrap_or_else(|| panic!("{} 事件缺失", definition.event));
+            assert_eq!(groups.len(), 1, "{} 应只有一个分组", definition.event);
+            assert!(matcher_matches(&groups[0], definition.matcher));
+            assert_eq!(
+                groups[0].pointer("/hooks/0").unwrap(),
+                &hook_handler(*definition)
+            );
+        }
+        // permission_prompt 匹配器只挂在 Notification 事件上
+        assert_eq!(
+            hooks
+                .pointer("/Notification/0/matcher")
                 .and_then(|value| value.as_str()),
-            Some("existing")
+            Some("permission_prompt")
         );
-        assert_eq!(
-            pre_tool_use[1]
-                .pointer("/hooks/0/url")
-                .and_then(|value| value.as_str()),
-            Some(CLAUDE_HOOK_URL)
-        );
-        assert_eq!(
-            root.pointer("/hooks/Stop/0/hooks/0/timeout")
-                .and_then(|value| value.as_u64()),
-            Some(90_000)
-        );
-    }
-
-    #[test]
-    fn hook_installation_repairs_a_terminal_buddy_hook_with_the_wrong_matcher() {
-        let mut root = json!({
-            "hooks": {
-                "PreToolUse": [{
-                    "matcher": "Write|Edit",
-                    "hooks": [{ "type": "http", "url": CLAUDE_HOOK_URL }]
-                }]
-            }
-        });
-
-        assert!(ensure_hook(&mut root, definition("decision")).unwrap());
-        let groups = root
-            .pointer("/hooks/PreToolUse")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert!(groups[0].pointer("/hooks/0").is_none());
-        // matcher=None 时 group 不带 matcher 字段（全工具匹配）
-        assert!(groups[1].get("matcher").is_none());
-        assert_eq!(
-            groups[1]
-                .pointer("/hooks/0/url")
-                .and_then(|value| value.as_str()),
-            Some(CLAUDE_HOOK_URL)
-        );
-    }
-
-    #[test]
-    fn hook_installation_migrates_legacy_command_hooks_to_http() {
-        let legacy_command = format!("terminal-buddy.exe {}", CLAUDE_HOOK_CLIENT_ARG);
-        let mut root = json!({
-            "hooks": {
-                "Stop": [{
-                    "hooks": [
-                        { "type": "command", "command": legacy_command },
-                        {
-                            "type": "http",
-                            "url": CLAUDE_HOOK_URL,
-                            "headers": {}
-                        }
-                    ]
-                }]
-            }
-        });
-
-        assert!(ensure_hook(&mut root, definition("completion")).unwrap());
-        assert!(!ensure_hook(&mut root, definition("completion")).unwrap());
-
-        let handlers = root
-            .pointer("/hooks/Stop/0/hooks")
-            .and_then(|value| value.as_array())
-            .unwrap();
-        assert_eq!(handlers.len(), 1);
-        assert_eq!(
-            handlers[0].get("type").and_then(|value| value.as_str()),
-            Some("http")
-        );
-        assert_eq!(
-            handlers[0]
-                .pointer("/headers/Authorization")
-                .and_then(|value| value.as_str()),
-            Some("Bearer ${TERMINAL_BUDDY_HOOK_TOKEN}")
-        );
-        assert_eq!(
-            handlers[0]
-                .pointer("/allowedEnvVars/1")
-                .and_then(|value| value.as_str()),
-            Some("TERMINAL_BUDDY_TERMINAL_ID")
-        );
+        assert!(hooks.pointer("/PreToolUse/0/matcher").is_none());
     }
 
     #[test]
