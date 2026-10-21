@@ -96,14 +96,7 @@ export async function saveClaudeHookConfigDir(selectedDir?: string): Promise<voi
   return invoke('save_claude_hook_config_dir', { selectedDir: selectedDir || null });
 }
 
-export async function installClaudeHooks(selectedDir?: string): Promise<ClaudeHookSettingsStatus> {
-  return invoke('install_claude_hooks', { selectedDir: selectedDir || null });
-}
-
-export async function repairClaudeHooks(selectedDir?: string): Promise<ClaudeHookSettingsStatus> {
-  return invoke('repair_claude_hooks', { selectedDir: selectedDir || null });
-}
-
+/** 清理旧版写进用户级 settings.json 的 TerminalBuddy Hook 残留（新版随模型终端临时注入）。 */
 export async function uninstallClaudeHooks(selectedDir?: string): Promise<ClaudeHookSettingsStatus> {
   return invoke('uninstall_claude_hooks', { selectedDir: selectedDir || null });
 }

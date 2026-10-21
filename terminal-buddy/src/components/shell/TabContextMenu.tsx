@@ -38,8 +38,14 @@ export const TabContextMenu: FC<TabContextMenuProps> = ({
   const profile = session && session.sessionType !== 'editor'
     ? profiles.find(p => p.id === session.profileId)
     : undefined;
+  // 项目空白终端会话：无 profileId 但挂靠项目分组。桌面端默认 PowerShell，
+  // Docker/远程网页端默认 Bash，因此不能只认 powershell，否则 Docker 版本的
+  // 项目会话右键菜单会缺少「以此配置新建终端」。
   const isProjectSession = !!session && session.sessionType !== 'editor'
-    && !session.profileId && !!session.groupName && session.terminalType === 'powershell';
+    && !session.profileId && !!session.groupName
+    && (session.terminalType === 'powershell' || session.terminalType === 'pwsh'
+      || session.terminalType === 'cmd' || session.terminalType === 'bash'
+      || session.terminalType === 'sh' || session.terminalType === 'zsh');
 
   return (
     <div className="context-menu" style={{ left: x, top: y }}>

@@ -262,9 +262,28 @@
   position: absolute;
   inset: 0;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   padding: 22px 32px 28px;
   scrollbar-width: thin;
+}
+
+/* 面板为 flex 列后：标头与流式页面内容保持自然高度，超高时仍由面板自身滚动（与原块级布局一致）；
+   「工具栏+列表」型面板则撑满剩余高度、列表内部滚动，可视区域跟随弹窗高度变化 */
+.settings-panel > * {
+  flex-shrink: 0;
+}
+
+.settings-panel > .commands-panel,
+.settings-panel > .extra-params-list {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 启动参数页复用 ExtraParamsManager（独立弹窗中列表限高 360px），设置页内解除上限 */
+.settings-panel > .extra-params-list {
+  max-height: none;
 }
 
 .settings-panel[hidden] {
@@ -868,7 +887,14 @@ input.data-path-input {
   gap: 10px;
   width: 100%;
   max-width: 1080px;
-  min-height: 300px;
+}
+
+/* 工具栏、选项卡、添加表单等固定内容不被压缩，高度变化全部由下方列表吸收
+   （不能用 .commands-panel > :not(.commands-list) —— 特异性会压过 .commands-list 的 flex 简写） */
+.commands-panel > .commands-toolbar,
+.commands-panel > .cmd-add-form,
+.commands-panel > .cmd-tabs {
+  flex-shrink: 0;
 }
 
 .profile-type-badge {
@@ -991,9 +1017,9 @@ input.data-path-input {
 }
 
 .commands-list {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  max-height: 400px;
 }
 
 .cmd-cat {

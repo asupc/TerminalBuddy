@@ -122,7 +122,7 @@ export const ProfilesSettings: FC<ProfilesSettingsProps> = ({ askConfirm, dismis
         </div>
       )}
 
-      <div className="commands-list" style={{ maxHeight: 400 }}>
+      <div className="commands-list">
         {filteredProfiles.map(profile => (
           <div
             key={profile.id}

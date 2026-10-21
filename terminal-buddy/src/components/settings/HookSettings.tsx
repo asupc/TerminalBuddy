@@ -4,17 +4,14 @@ import { supportsSystemExplorerOpen } from '../../services/platform';
 import {
   AlertTriangle,
   Check,
-  CircleOff,
   FolderOpen,
   LoaderCircle,
   RefreshCw,
   SquareTerminal,
   Trash2,
-  Wrench,
 } from 'lucide-react';
 import {
   getClaudeHookSettingsStatus,
-  installClaudeHooks,
   openInExplorer,
   saveClaudeHookConfigDir,
   uninstallClaudeHooks,
@@ -40,10 +37,11 @@ const HOOK_CAPABILITIES = [
   { key: 'sessionEnd', label: '会话结束' },
 ] as const;
 
+/** 用户级 settings.json 中旧版 Hook 的残留状态；`notInstalled` 表示无残留（干净）。 */
 const STATUS_LABELS: Record<ClaudeHookSettingsStatus['status'], string> = {
-  installed: '已安装',
-  partialInstalled: '需要修复',
-  notInstalled: '未安装',
+  installed: '发现旧版残留',
+  partialInstalled: '发现旧版残留',
+  notInstalled: '已内置',
   invalid: '配置异常',
 };
 
@@ -60,9 +58,9 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
   const [status, setStatus] = useState<ClaudeHookSettingsStatus | null>(null);
   const [configDir, setConfigDir] = useState(settings.claudeHookConfigDir);
   const [loading, setLoading] = useState(true);
-  const [working, setWorking] = useState<'install' | 'uninstall' | null>(null);
+  const [working, setWorking] = useState<'cleanup' | null>(null);
   const [error, setError] = useState('');
-  const [confirmUninstall, setConfirmUninstall] = useState(false);
+  const [confirmCleanup, setConfirmCleanup] = useState(false);
   const statusRequestRef = useRef(0);
   const configDirRef = useRef(configDir);
   const committedConfigDirRef = useRef(normalizeConfigDir(configDir));
@@ -253,43 +251,12 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
     }
   };
 
-  const install = async () => {
+  /** 清理旧版写进用户级 settings.json 的 Hook 残留（新版随模型终端临时注入，无需安装）。 */
+  const cleanup = async () => {
     const requestId = ++statusRequestRef.current;
     setLoading(false);
-    setWorking('install');
-    setError('');
-    try {
-      const directory = normalizeConfigDir(configDirRef.current);
-      if (!await commitConfigDir(directory, false, true)) return;
-      const next = await installClaudeHooks(directory || undefined);
-      if (!mountedRef.current || requestId !== statusRequestRef.current) return;
-      const installedDirectory = normalizeConfigDir(next.configDir);
-      setStatus(next);
-      configDirRef.current = installedDirectory;
-      committedConfigDirRef.current = installedDirectory;
-      lastSettingsConfigDirRef.current = installedDirectory;
-      draftDirtyRef.current = false;
-      setConfigDir(installedDirectory);
-      updateSetting('claudeHookConfigDir', installedDirectory);
-      showToast(next.status === 'installed' ? 'Claude Code Hook 已就绪' : 'Claude Code Hook 安装未完成', next.status === 'installed' ? 'success' : 'error');
-    } catch (reason) {
-      if (!mountedRef.current || requestId !== statusRequestRef.current) return;
-      const message = String(reason);
-      setError(message);
-      showToast(`安装 Claude Code Hook 失败：${message}`, 'error');
-    } finally {
-      if (mountedRef.current && requestId === statusRequestRef.current) {
-        setWorking(null);
-        setLoading(false);
-      }
-    }
-  };
-
-  const uninstall = async () => {
-    const requestId = ++statusRequestRef.current;
-    setLoading(false);
-    setConfirmUninstall(false);
-    setWorking('uninstall');
+    setConfirmCleanup(false);
+    setWorking('cleanup');
     setError('');
     try {
       const directory = normalizeConfigDir(configDirRef.current);
@@ -297,12 +264,12 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
       const next = await uninstallClaudeHooks(directory || undefined);
       if (!mountedRef.current || requestId !== statusRequestRef.current) return;
       setStatus(next);
-      showToast('已卸载 Claude Code Hook', 'success');
+      showToast('已清理旧版 Hook 残留', 'success');
     } catch (reason) {
       if (!mountedRef.current || requestId !== statusRequestRef.current) return;
       const message = String(reason);
       setError(message);
-      showToast(`卸载 Claude Code Hook 失败：${message}`, 'error');
+      showToast(`清理 Claude Code Hook 残留失败：${message}`, 'error');
     } finally {
       if (mountedRef.current && requestId === statusRequestRef.current) {
         setWorking(null);
@@ -326,8 +293,7 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
     }
   };
 
-  const installedEvents = new Set(status?.installedEvents ?? []);
-  const installLabel = status?.status === 'partialInstalled' ? '修复 Hook' : status?.status === 'installed' ? '重新安装' : '安装 Hook';
+  const hasLeftovers = (status?.installedEvents.length ?? 0) > 0;
   const displayedError = error || (status?.status === 'invalid' ? '' : status?.error ?? '');
 
   return (
@@ -359,8 +325,8 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
             {loading ? (
               <span className="hook-status-badge neutral"><LoaderCircle className="spin" size={13} aria-hidden="true" />检测中</span>
             ) : status ? (
-              <span className={`hook-status-badge ${status.status}`}>
-                {status.status === 'installed' ? <Check size={13} aria-hidden="true" /> : status.status === 'invalid' ? <AlertTriangle size={13} aria-hidden="true" /> : <CircleOff size={13} aria-hidden="true" />}
+              <span className={`hook-status-badge ${status.status === 'invalid' ? 'invalid' : hasLeftovers ? 'partialInstalled' : 'installed'}`}>
+                {hasLeftovers || status.status === 'invalid' ? <AlertTriangle size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
                 {STATUS_LABELS[status.status]}
               </span>
             ) : null}
@@ -378,24 +344,17 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
             </button>
             <button
               type="button"
-              className="hook-action-button primary"
-              disabled={loading || working !== null || status?.status === 'invalid'}
-              onClick={() => void install()}
-            >
-              {working === 'install' ? <LoaderCircle className="spin" size={15} aria-hidden="true" /> : <Wrench size={15} aria-hidden="true" />}
-              {installLabel}
-            </button>
-            <button
-              type="button"
               className="hook-action-button danger"
-              disabled={loading || working !== null || status?.status === 'notInstalled' || status?.status === 'invalid'}
-              onClick={() => setConfirmUninstall(true)}
+              disabled={loading || working !== null || !hasLeftovers || status?.status === 'invalid'}
+              onClick={() => setConfirmCleanup(true)}
             >
-              {working === 'uninstall' ? <LoaderCircle className="spin" size={15} aria-hidden="true" /> : <Trash2 size={15} aria-hidden="true" />}
-              卸载
+              {working === 'cleanup' ? <LoaderCircle className="spin" size={15} aria-hidden="true" /> : <Trash2 size={15} aria-hidden="true" />}
+              清理残留
             </button>
           </div>
         </div>
+
+        <p className="settings-desc">Hook 随模型终端的临时启动配置自动注入，不再修改 Claude Code 用户级 settings.json。</p>
 
         <div className="hook-path-field">
           <label htmlFor="claude-hook-config-dir">配置目录</label>
@@ -424,16 +383,13 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
         </div>
 
         <div className="hook-capability-list" role="list" aria-label="Hook 模块状态">
-          {HOOK_CAPABILITIES.map(capability => {
-            const installed = installedEvents.has(capability.key);
-            return (
-              <span key={capability.key} className={installed ? 'installed' : ''} role="listitem">
-                {installed ? <Check size={12} aria-hidden="true" /> : <CircleOff size={12} aria-hidden="true" />}
-                <span>{capability.label}</span>
-                <span className="hook-sr-only">，{installed ? '已安装' : '未安装'}</span>
-              </span>
-            );
-          })}
+          {HOOK_CAPABILITIES.map(capability => (
+            <span key={capability.key} className="installed" role="listitem">
+              <Check size={12} aria-hidden="true" />
+              <span>{capability.label}</span>
+              <span className="hook-sr-only">，已启用</span>
+            </span>
+          ))}
         </div>
 
         <div className={`hook-server-state ${status?.serverRunning ? 'online' : 'offline'}`}>
@@ -510,12 +466,12 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
         <p className="settings-desc">完成和失败使用 Hook 精确判断；正在查看的终端不会发送通知。</p>
       </div>
 
-      {confirmUninstall && (
+      {confirmCleanup && (
         <ConfirmDialog
-          title="卸载 Claude Code Hook"
-          message="只会移除 TerminalBuddy 写入的 Hook，其他 Claude Code 配置和第三方 Hook 会保留。"
-          onClose={() => setConfirmUninstall(false)}
-          onConfirm={() => void uninstall()}
+          title="清理旧版 Hook 残留"
+          message="将移除旧版写进 Claude Code 用户级 settings.json 的 TerminalBuddy Hook；其他 Claude Code 配置和第三方 Hook 会保留。当前版本的 Hook 随模型终端自动注入，无需重新安装。"
+          onClose={() => setConfirmCleanup(false)}
+          onConfirm={() => void cleanup()}
         />
       )}
       </div>

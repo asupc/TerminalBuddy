@@ -258,7 +258,7 @@
   padding-top: 12px;
   border-top: 1px dashed var(--border-subtle);
 }
-.agent-command-label { color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.agent-command-label { flex-shrink: 0; white-space: nowrap; color: var(--text-primary); font-size: 13px; font-weight: 600; }
 .agent-command-editor { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .agent-command-editor input {
   flex: 1;
@@ -284,5 +284,6 @@
 
 @container (max-width: 560px) {
   .agent-command-editor { flex-wrap: wrap; }
+  .agent-command-label { flex-basis: 100%; }
   .agent-command-editor input { flex-basis: 100%; }
 }

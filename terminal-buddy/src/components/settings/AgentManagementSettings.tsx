@@ -234,8 +234,8 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
               </div>
             </div>
             <div className="agent-command-field">
-              <label className="agent-command-label" htmlFor={`agent-command-${tool.id}`}>基础启动命令</label>
               <div className="agent-command-editor">
+                <label className="agent-command-label" htmlFor={`agent-command-${tool.id}`}>基础启动命令</label>
                 <input
                   id={`agent-command-${tool.id}`}
                   value={commands[tool.id]}
