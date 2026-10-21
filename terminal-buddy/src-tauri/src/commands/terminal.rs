@@ -180,6 +180,10 @@ pub struct TerminalInstance {
     pub owner: TerminalOwner,
     /// 创建端设备（PC 桌面与电脑浏览器都记 Desktop），用于来源标识与接管提示。
     pub creator: TerminalCreator,
+    /// 实例真实终端类型（空白终端为 effective_type，配置终端为 profile 类型）。
+    /// TerminalInfo 的 terminalType 必须从这里广播：只看 profile 会让空白终端
+    /// 变成空串，Web 端「以此配置新建终端」的本地 Shell 判定随之失效。
+    pub terminal_type: String,
     takeover: crate::models::TerminalTakeover,
     pub extra_param_tag: Option<String>,
     pub extra_param_tag_color: Option<String>,
@@ -1081,6 +1085,7 @@ impl TerminalService {
             loading_mode: String,
             owner: TerminalOwner,
             creator: TerminalCreator,
+            terminal_type: String,
             group_override: Option<String>,
             extra_param_tag: Option<String>,
             extra_param_tag_color: Option<String>,
@@ -1098,6 +1103,7 @@ impl TerminalService {
                     loading_mode: inst.backend.loading_mode().to_string(),
                     owner: inst.owner.clone(),
                     creator: inst.creator,
+                    terminal_type: inst.terminal_type.clone(),
                     group_override: inst.group_override.clone(),
                     extra_param_tag: inst.extra_param_tag.clone(),
                     extra_param_tag_color: inst.extra_param_tag_color.clone(),
@@ -1116,6 +1122,7 @@ impl TerminalService {
                      loading_mode,
                      owner,
                      creator,
+                     terminal_type,
                      group_override,
                      extra_param_tag,
                      extra_param_tag_color,
@@ -1132,10 +1139,16 @@ impl TerminalService {
                                 .unwrap_or_default()
                         }),
                         profile_name: display_name,
-                        terminal_type: profile
-                            .as_ref()
-                            .map(|p| p.terminal_type.clone())
-                            .unwrap_or_default(),
+                        // 空白终端没有 profile，类型只能取实例；实例缺值时回退
+                        // profile 类型，避免旧行为把空白终端广播成空串。
+                        terminal_type: if terminal_type.is_empty() {
+                            profile
+                                .as_ref()
+                                .map(|p| p.terminal_type.clone())
+                                .unwrap_or_default()
+                        } else {
+                            terminal_type
+                        },
                         loading_mode,
                         profile_id,
                         owner,
@@ -1238,6 +1251,7 @@ impl TerminalService {
             group_override,
             owner,
             creator,
+            terminal_type,
             extra_param_tag,
             extra_param_tag_color,
             extra_startup_params,
@@ -1761,6 +1775,8 @@ impl TerminalService {
             group_override: None,
             owner: TerminalOwner::Pc,
             creator: TerminalCreator::Desktop,
+            // handoff 的基座是 cmd.exe，与下方 terminal-created 事件的 "cmd" 一致
+            terminal_type: "cmd".to_string(),
             extra_param_tag: None,
             extra_param_tag_color: None,
             extra_startup_params: None,

@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -53,6 +54,11 @@ fn custom_dir_unavailable(path: &Path, reason: &str) -> String {
 
 /// 目录是否真实可写：不仅存在，还要能创建/打开文件。
 /// 只查 `exists()` 会把「网络盘断开后残留的挂载点」误判为可用。
+///
+/// 探测文件名必须每次唯一（进程号 + 自增序号）：`resolve_data_dir()` 会在并发的
+/// 写入方里同时执行（设置页同时加载 Claude / Codex 供应商、Web API 并发请求），
+/// 固定名字会让两个探测互相删掉对方刚建好的文件，把好端端的目录误报成
+/// 「目录不可写：系统找不到指定的文件。(os error 2)」。
 fn ensure_writable_dir(path: &Path) -> Result<(), String> {
     if path.symlink_metadata().is_err() {
         fs::create_dir_all(path).map_err(|e| format!("目录不存在且无法创建：{}", e))?;
@@ -60,25 +66,29 @@ fn ensure_writable_dir(path: &Path) -> Result<(), String> {
     if !path.is_dir() {
         return Err("路径不是一个目录".to_string());
     }
-    let probe = path.join(".terminalbuddy_access_probe");
-    let result = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe);
-    match result {
+    // 顺手清掉旧版固定名探测文件的崩溃残留（新名字不会再用它）
+    let _ = fs::remove_file(path.join(".terminalbuddy_access_probe"));
+    static PROBE_SEQ: AtomicU64 = AtomicU64::new(0);
+    let probe = path.join(format!(
+        ".terminalbuddy_access_probe.{}.{}",
+        std::process::id(),
+        PROBE_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    match fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
         Ok(_) => {
             // 探测失败不改变结论：文件已建成说明目录可写
             let _ = fs::remove_file(&probe);
             Ok(())
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            // 上次运行残留的探测文件：尝试删掉后重试一次
-            match fs::remove_file(&probe).and_then(|()| {
-                fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&probe)
-            }) {
+            // 名字唯一后，这里只剩崩溃残留碰上进程号复用才会命中。
+            // 残留文件已不在（NotFound）同样直接重试；删不掉才说明目录不可写。
+            if let Err(remove_err) = fs::remove_file(&probe) {
+                if remove_err.kind() != std::io::ErrorKind::NotFound {
+                    return Err(format!("目录不可写：残留探测文件无法删除：{}", remove_err));
+                }
+            }
+            match fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
                 Ok(_) => {
                     let _ = fs::remove_file(&probe);
                     Ok(())
@@ -449,6 +459,28 @@ mod tests {
             "探测文件应被清理，残留: {:?}",
             residue.iter().map(|e| e.path()).collect::<Vec<_>>()
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn concurrent_probes_do_not_flag_writable_dir() {
+        // 回归：固定探测文件名时，并发探测会互删对方刚建好的文件，
+        // 把可写目录误报成「目录不可写：os error 2」
+        let dir = tmp_dir("probe-race");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let dir = dir.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    (0..200).map(|_| ensure_writable_dir(&dir)).collect::<Result<(), _>>()
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
         let _ = fs::remove_dir_all(dir);
     }
 }
