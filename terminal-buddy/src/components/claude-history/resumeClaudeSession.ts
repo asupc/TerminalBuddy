@@ -1,6 +1,6 @@
 import { buildClaudeRefCommand, startBlankTerminal, startTerminal, updateProfileLastUsed } from '../../services/tauri';
 import { launchTerminalSession } from '../../services/sessionRestore';
-import { clientTerminalOwner } from '../../services/platform';
+import { clientTerminalOwner, defaultShellType } from '../../services/platform';
 import { effectiveProfilePath, normalizeProjectPath, projectForDirectory } from '../../utils/projectPath';
 import { inheritableClaudeArgs, isClaudeLaunchProfile } from '../../utils/claudeLaunch';
 import { currentClaudeCommand } from '../../utils/agentCommands';
@@ -171,13 +171,16 @@ export async function resumeClaudeSession(
     return;
   }
 
+  // 无 profile 的恢复落在项目空白终端上：Docker/远程网页端没有 powershell，
+  // 基座 Shell 必须按平台取默认值（与 resumeCodexSession 同构）。
+  const blankShellType = defaultShellType();
   await launchTerminalSession({
     ...base,
     makeSession: (startingId) => ({
       id: startingId,
       profileId: '',
       profileName: name,
-      terminalType: 'powershell',
+      terminalType: blankShellType,
       colorTheme: { background: '#1E1E1E', foreground: '#CCCCCC' },
       tabColor: null,
       groupId: 'default',
@@ -190,7 +193,7 @@ export async function resumeClaudeSession(
       starting: true,
     }),
     start: (rows, cols) => startBlankTerminal(
-      'powershell',
+      blankShellType,
       rows,
       cols,
       session.projectDir || undefined,

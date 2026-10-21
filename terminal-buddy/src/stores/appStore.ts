@@ -125,8 +125,11 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 	const profileId = typeof tab.profileId === "string" ? tab.profileId : "";
 	const profileName = typeof tab.profileName === "string" ? tab.profileName : "";
 	const terminalType = typeof tab.terminalType === "string" ? tab.terminalType : "";
-	// 三者皆空说明条目已损坏到无法恢复（至少要有类型或文件路径之一）
-	if (!terminalType && !profileId) return null;
+	const terminalId = typeof tab.terminalId === "string" && tab.terminalId ? tab.terminalId : undefined;
+	// 快照至少要有一个可恢复的锚点（类型 / 配置 / 会话 ID / 名称）才算损坏。
+	// 旧版后端曾把空白终端的 terminalType 广播成空串，这类条目带着 terminalId
+	// 与名称，恢复路径会按本地默认 Shell 归一化，不能当损坏丢弃导致页签消失。
+	if (!terminalType && !profileId && !terminalId && !profileName) return null;
 	const colorTheme =
 		typeof tab.colorTheme === "object" && tab.colorTheme !== null
 			? (tab.colorTheme as { background?: unknown; foreground?: unknown })
@@ -151,7 +154,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 		extraParamTag: typeof tab.extraParamTag === "string" ? tab.extraParamTag : undefined,
 		extraParamTagColor: typeof tab.extraParamTagColor === "string" ? tab.extraParamTagColor : null,
 		directory: typeof tab.directory === "string" ? tab.directory : undefined,
-		terminalId: typeof tab.terminalId === "string" && tab.terminalId ? tab.terminalId : undefined,
+		terminalId,
 		claudeSessionId: typeof tab.claudeSessionId === "string" ? tab.claudeSessionId : undefined,
 		manualTitle: tab.manualTitle === true ? true : undefined,
 	};

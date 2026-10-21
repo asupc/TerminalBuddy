@@ -52,7 +52,7 @@ function restoreTabsOnce(): Promise<void> {
 }
 
 
-import type { ExtraParamMode, Profile } from './types';
+import type { ExtraParamMode, Profile, TerminalSession } from './types';
 import { PRESET_THEMES } from './types';
 
 function App() {
@@ -390,6 +390,11 @@ function App() {
           extraParamMode: extraStartupMode ?? existingSession.extraParamMode,
           extraParamTag: extraParamTag ?? existingSession.extraParamTag,
           extraParamTagColor: extraParamTagColor ?? existingSession.extraParamTagColor,
+          // 旧版后端对空白终端广播过空 terminalType（已存进页签快照），
+          // 会话已存在时事件不会重建，这里有值就回填，让空值不再流传。
+          ...(existingSession.terminalType
+            ? {}
+            : terminalType ? { terminalType: terminalType as TerminalSession['terminalType'] } : {}),
         });
         return;
       }

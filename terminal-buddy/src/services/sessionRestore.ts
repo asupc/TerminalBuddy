@@ -16,7 +16,7 @@ import { containsClaudeRef, isClaudeCommand } from '../utils/claudeLaunch';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { TerminalSession } from '../types';
-import { isBrowserClient, clientTerminalOwner } from './platform';
+import { isBrowserClient, clientTerminalOwner, defaultShellType } from './platform';
 import { stripResumeArgs } from '../utils/commandParams';
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
@@ -95,9 +95,6 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
       launchParams = launchParams ? `${launchParams} ${resumeParam}` : resumeParam;
     }
   }
-  const startupPath = tab.directory && isLocalShellTerminal(tab.terminalType)
-    ? tab.directory
-    : undefined;
   // 空白终端（项目右键启动等）的 extraParams 保存的是完整启动命令，恢复时重跑：
   // - 命令跑 claude（含模型引用标记）→ 连同 --resume 一起恢复会话
   // - 命令不含 claude 但记录了会话（当时手动敲的 claude）→ 只重跑原命令，
@@ -108,10 +105,18 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
       ? ((isClaudeCommand(baseParams) || containsClaudeRef(baseParams)) ? launchParams : baseParams)
       : (launchParams ? `claude ${launchParams}` : undefined))
     : undefined;
+  // 旧版后端对空白终端广播空 terminalType，旧快照因此存了空串；恢复时回退
+  // 本地默认 Shell，否则重建的会话仍无法命中右键菜单的本地 Shell 判定。
+  // 本地 Shell 判定同样要用归一化后的类型：空串会让记录目录被误判为非本地
+  // 终端而丢弃（startupPath 变 undefined，恢复后只能靠 writeToTerminal 补 cd）。
+  const blankTerminalType = (tab.terminalType || defaultShellType()) as 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s';
+  const startupPath = tab.directory && isLocalShellTerminal(blankTerminalType)
+    ? tab.directory
+    : undefined;
   const terminalId = tab.profileId
     ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath, undefined, undefined, tab.extraParamMode)
     : await startBlankTerminal(
-      tab.terminalType as 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh' | 'ssh' | 'docker' | 'k8s',
+      blankTerminalType,
       estRows,
       estCols,
       startupPath,
@@ -126,7 +131,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     id: terminalId,
     profileId: tab.profileId,
     profileName: tab.profileName,
-    terminalType: tab.terminalType as any,
+    terminalType: blankTerminalType as any,
     colorTheme: tab.colorTheme,
     tabColor: tab.tabColor,
     groupId: tab.groupId || 'default',
@@ -438,6 +443,10 @@ export async function reconcileBackendSessions() {
         extraParamMode: terminal.extraStartupMode ?? existingSession.extraParamMode,
         extraParamTag: terminal.extraParamTag ?? existingSession.extraParamTag,
         extraParamTagColor: terminal.extraParamTagColor ?? existingSession.extraParamTagColor,
+        // 旧快照可能存了空 terminalType（旧版后端广播空串），对账时按后端真值回填。
+        ...(existingSession.terminalType
+          ? {}
+          : terminal.terminalType ? { terminalType: terminal.terminalType as TerminalSession['terminalType'] } : {}),
       });
       continue;
     }
