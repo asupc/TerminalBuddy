@@ -236,7 +236,8 @@ export const createSessionsSlice = (
 			});
 		}
 		set((state) => {
-			const newSessions = state.sessions.map((s) => (s.id === id ? { ...s, profileName: name } : s));
+			// 重命名即手动命名：置 manualTitle，避免标签继续被任务摘要覆盖
+			const newSessions = state.sessions.map((s) => (s.id === id ? { ...s, profileName: name, manualTitle: true } : s));
 			debouncedSaveTabs();
 			return { sessions: newSessions };
 		});

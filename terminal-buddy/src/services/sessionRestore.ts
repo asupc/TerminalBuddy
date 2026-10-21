@@ -137,6 +137,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     extraParamMode: tab.extraParamMode,
     extraParamTag: tab.extraParamTag,
     extraParamTagColor: tab.extraParamTagColor ?? null,
+    manualTitle: tab.manualTitle,
   }, true);
   // 保存 claudeSessionId 到 store
   if (resumeId) {

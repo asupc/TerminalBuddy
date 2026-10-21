@@ -196,7 +196,7 @@ export const TerminalPanel: FC = () => {
               className={`pane-working-dot ${isTerminalWorking(terminalActivities[session.id]) ? 'on' : ''}`}
               style={{ background: getWorkingDotColor(isTerminalWorking(terminalActivities[session.id]), session.tabColor) }}
             />
-            <span className="pane-name" title={terminalDisplayTitle(session.profileName, taskSummaries[session.id])}>{terminalDisplayTitle(session.profileName, taskSummaries[session.id])}</span>
+            <span className="pane-name" title={terminalDisplayTitle(session.profileName, taskSummaries[session.id], session.manualTitle)}>{terminalDisplayTitle(session.profileName, taskSummaries[session.id], session.manualTitle)}</span>
             <button
               className="pane-close"
               title="关闭分屏"

@@ -30,6 +30,8 @@ interface SavedTab {
 	/** 后端终端 ID（editor 页签没有）。浏览器重启后用它回查持久化的 Claude 会话 ID。 */
 	terminalId?: string;
 	claudeSessionId?: string;
+	/** 用户手动重命名过：恢复后标签固定显示手动名称，不被任务摘要覆盖。 */
+	manualTitle?: boolean;
 }
 
 export interface GitHistoryTab {
@@ -98,6 +100,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 			extraParamTagColor: s.extraParamTagColor ?? null,
 			directory: dirs[s.id],
 			claudeSessionId: claudeIds[s.id],
+			manualTitle: s.manualTitle,
 		}));
 		const resolvedActiveIndex = activeSessionId ? persistedSessions.findIndex((s) => s.id === activeSessionId) : -1;
 		const activeIndex = resolvedActiveIndex >= 0 ? resolvedActiveIndex : 0;
@@ -150,6 +153,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 		directory: typeof tab.directory === "string" ? tab.directory : undefined,
 		terminalId: typeof tab.terminalId === "string" && tab.terminalId ? tab.terminalId : undefined,
 		claudeSessionId: typeof tab.claudeSessionId === "string" ? tab.claudeSessionId : undefined,
+		manualTitle: tab.manualTitle === true ? true : undefined,
 	};
 }
 

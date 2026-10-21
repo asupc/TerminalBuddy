@@ -270,9 +270,18 @@
 }
 
 /* 面板为 flex 列后：标头与流式页面内容保持自然高度，超高时仍由面板自身滚动（与原块级布局一致）；
-   「工具栏+列表」型面板则撑满剩余高度、列表内部滚动，可视区域跟随弹窗高度变化 */
+   「工具栏+列表」型面板则撑满剩余高度、列表内部滚动，可视区域跟随弹窗高度变化。
+   这里必须用 flex 简写：某些子组件自带 flex: 1（basis 0），只写 flex-shrink 会被
+   简写里的 flex-grow/flex-basis 继续按剩余空间分配高度，把内部内容压扁。 */
 .settings-panel > * {
-  flex-shrink: 0;
+  flex: 0 0 auto;
+}
+
+/* Claude 分段组件带 .claude-segment { flex: 1 }（在右侧 Claude 面板内需要撑满），
+   放进设置页时改回自然高度，由 .settings-panel 统一滚动。
+   二类选择器，避免被后加载的 .claude-segment 按顺序覆盖。 */
+.settings-panel > .claude-segment {
+  flex: 0 0 auto;
 }
 
 .settings-panel > .commands-panel,

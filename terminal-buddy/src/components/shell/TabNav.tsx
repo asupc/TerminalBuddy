@@ -64,6 +64,8 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const [draftCloseDialog, setDraftCloseDialog] = useState<{ sessionId: string; filePath: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  // 打开重命名时的初始值：未改动就不落库，避免把摘要原样固化成名称
+  const [renameBaseline, setRenameBaseline] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [submenuExpandedGroups, setSubmenuExpandedGroups] = useState<Set<string>>(new Set());
   // 终端运行时长后缀每 60s 刷新一次
@@ -85,7 +87,12 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
       if (!activeSessionId) return;
       const session = sessions.find(s => s.id === activeSessionId);
       if (session && session.sessionType !== 'editor') {
-        setRenameValue(session.profileName);
+        // 编辑所见即所得：初始值取任务行当前显示的第一行标题（含摘要）
+        const displayed = session.manualTitle
+          ? session.profileName
+          : (useTaskSummaryStore.getState().summaries[session.id]?.summary?.trim() || session.profileName);
+        setRenameValue(displayed);
+        setRenameBaseline(displayed);
         setRenamingSessionId(activeSessionId);
         setTimeout(() => renameInputRef.current?.select(), 0);
       }
@@ -537,9 +544,9 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
 
   if (sessions.length === 0 && !gitHistoryTab && claudeReplayTabs.length === 0) return null;
 
-  const handleRenameSubmit = (sessionId: string, currentLabel: string) => {
+  const handleRenameSubmit = (sessionId: string) => {
     const trimmed = renameValue.trim();
-    if (trimmed && trimmed !== currentLabel) renameSession(sessionId, trimmed);
+    if (trimmed && trimmed !== renameBaseline) renameSession(sessionId, trimmed);
     setRenamingSessionId(null);
   };
 
@@ -661,7 +668,12 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
             onClose={() => setTabContextMenu(null)}
             onRename={(session) => {
               if (session) {
-                setRenameValue(session.profileName);
+                // 编辑所见即所得：初始值取任务行当前显示的第一行标题（含摘要）
+                const displayed = session.manualTitle
+                  ? session.profileName
+                  : (taskSummaries[session.id]?.summary?.trim() || session.profileName);
+                setRenameValue(displayed);
+                setRenameBaseline(displayed);
                 setRenamingSessionId(session.id);
                 setTimeout(() => renameInputRef.current?.select(), 0);
               }

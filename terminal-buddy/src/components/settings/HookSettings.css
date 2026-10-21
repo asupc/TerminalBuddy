@@ -66,7 +66,6 @@
 .hook-status-heading,
 .hook-status-title,
 .hook-status-actions,
-.hook-path-row,
 .hook-delay-row,
 .hook-server-state {
   display: flex;
@@ -171,22 +170,9 @@
   opacity: 0.48;
 }
 
-.hook-path-field {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-}
-
-.hook-path-field > label,
 .hook-delay-row > label {
   color: var(--settings-text-secondary);
   font-size: 12px;
-}
-
-.hook-path-row {
-  min-width: 0;
-  gap: 7px;
 }
 
 .hook-capability-list {
@@ -354,10 +340,6 @@
   .hook-status-actions {
     width: 100%;
     justify-content: flex-start;
-  }
-
-  .hook-path-field {
-    grid-template-columns: 1fr;
   }
 }
 

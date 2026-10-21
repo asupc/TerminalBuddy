@@ -20,7 +20,7 @@ interface SessionTreeItemProps {
   renamingSessionId: string | null;
   renameValue: string;
   onRenameValueChange: (value: string) => void;
-  onRenameSubmit: (sessionId: string, currentLabel: string) => void;
+  onRenameSubmit: (sessionId: string) => void;
   onRenameCancel: () => void;
   renameInputRef: React.RefObject<HTMLInputElement | null>;
   onCloseSession: (sessionId: string) => void;
@@ -154,7 +154,10 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
           || sessionDirectories[child.id] || '';
         const project = projectForDirectory(projects, startupPath)
           ?? projects.find(project => project.name === (childSession?.groupName || profile?.group));
-        const fallbackName = project?.name || childSession?.profileName || child.label;
+        // 手动重命名过的会话固定显示手动名称；未取得摘要时才回落到项目名
+        const fallbackName = childSession?.manualTitle
+          ? childSession.profileName
+          : (project?.name || childSession?.profileName || child.label);
         return (
           <div key={child.id}>
             {renamingSessionId === child.id ? (
@@ -165,10 +168,10 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                   className="tree-rename-input"
                   value={renameValue}
                   onChange={(e) => onRenameValueChange(e.target.value)}
-                  onBlur={() => onRenameSubmit(child.id, (child.data as TerminalSession | undefined)?.profileName ?? child.label)}
+                  onBlur={() => onRenameSubmit(child.id)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
-                      onRenameSubmit(child.id, (child.data as TerminalSession | undefined)?.profileName ?? child.label);
+                      onRenameSubmit(child.id);
                     } else if (e.key === 'Escape') {
                       onRenameCancel();
                     }
@@ -200,7 +203,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               >
                 {child.icon || renderLedDot(child.id, (child.data as TerminalSession | undefined)?.tabColor)}
                 {provider ? (
-                  <SessionTaskLabel task={task} fallbackName={fallbackName} fallbackProvider={provider} fallbackModel={launchInfo?.model} color={childSession?.tabColor} />
+                  <SessionTaskLabel task={task} fallbackName={fallbackName} fallbackProvider={provider} fallbackModel={launchInfo?.model} color={childSession?.tabColor} manualTitle={childSession?.manualTitle} />
                 ) : (
                 <span className="tree-name" title={child.label} style={(child.data as any)?.tabColor ? { color: (child.data as any).tabColor } : undefined}>
                   {child.label}

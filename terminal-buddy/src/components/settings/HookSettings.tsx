@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
 import { supportsSystemExplorerOpen } from '../../services/platform';
 import {
   AlertTriangle,
@@ -240,17 +239,6 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
     return true;
   };
 
-  const chooseConfigDir = async () => {
-    try {
-      const selected = await open({ directory: true, multiple: false, title: '选择 Claude Code 配置目录' });
-      if (typeof selected === 'string') await commitConfigDir(selected, true, true);
-    } catch (reason) {
-      const message = String(reason);
-      setError(`选择配置目录失败：${message}`);
-      showToast(`选择 Claude Code 配置目录失败：${message}`, 'error');
-    }
-  };
-
   /** 清理旧版写进用户级 settings.json 的 Hook 残留（新版随模型终端临时注入，无需安装）。 */
   const cleanup = async () => {
     const requestId = ++statusRequestRef.current;
@@ -355,32 +343,6 @@ export function HookSettings({ settings, updateSetting }: HookSettingsProps) {
         </div>
 
         <p className="settings-desc">Hook 随模型终端的临时启动配置自动注入，不再修改 Claude Code 用户级 settings.json。</p>
-
-        <div className="hook-path-field">
-          <label htmlFor="claude-hook-config-dir">配置目录</label>
-          <div className="hook-path-row">
-            <input
-              id="claude-hook-config-dir"
-              className="data-path-input"
-              value={configDir}
-              disabled={working !== null}
-              spellCheck={false}
-              onChange={event => {
-                const nextDirectory = event.target.value;
-                configDirRef.current = nextDirectory;
-                draftDirtyRef.current = normalizeConfigDir(nextDirectory) !== committedConfigDirRef.current;
-                setConfigDir(nextDirectory);
-              }}
-              onBlur={() => void commitConfigDir(configDir)}
-              onKeyDown={event => {
-                if (event.key === 'Enter') event.currentTarget.blur();
-              }}
-            />
-            <button type="button" className="hook-icon-button" title="选择配置目录" aria-label="选择配置目录" disabled={working !== null} onClick={() => void chooseConfigDir()}>
-              <FolderOpen size={16} aria-hidden="true" />
-            </button>
-          </div>
-        </div>
 
         <div className="hook-capability-list" role="list" aria-label="Hook 模块状态">
           {HOOK_CAPABILITIES.map(capability => (

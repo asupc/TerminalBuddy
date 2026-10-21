@@ -142,6 +142,8 @@ export interface TerminalSession {
   claudeSessionId?: string;
   createdAt?: number;   // 启动时间戳；addSession 时默认 Date.now()
   starting?: boolean;   // 后端 PTY 尚在创建；此时仅展示占位页签，不挂载 xterm
+  // 用户手动重命名过：标签固定显示手动名称，不再被任务摘要覆盖
+  manualTitle?: boolean;
 }
 
 export interface Workspace {

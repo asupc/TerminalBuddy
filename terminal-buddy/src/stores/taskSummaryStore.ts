@@ -50,12 +50,12 @@ export async function setTaskSummaryEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-/** 横向会话标签只显示摘要，未取得摘要时显示原名称。 */
-export function terminalTabTitle(name: string, task?: TerminalTaskSummary): string {
-  return task?.summary || name;
+/** 横向会话标签只显示摘要，未取得摘要时显示原名称；手动重命名过的会话固定显示手动名称。 */
+export function terminalTabTitle(name: string, task?: TerminalTaskSummary, manualTitle?: boolean): string {
+  return !manualTitle && task?.summary ? task.summary : name;
 }
 
-/** 活动窗口和分屏标题保留原名称作为上下文。 */
-export function terminalDisplayTitle(name: string, task?: TerminalTaskSummary): string {
-  return task?.summary ? `${task.summary} · ${name}` : name;
+/** 活动窗口和分屏标题保留原名称作为上下文；手动重命名过的会话不再附带摘要。 */
+export function terminalDisplayTitle(name: string, task?: TerminalTaskSummary, manualTitle?: boolean): string {
+  return !manualTitle && task?.summary ? `${task.summary} · ${name}` : name;
 }

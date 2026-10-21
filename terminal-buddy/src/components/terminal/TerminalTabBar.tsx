@@ -32,6 +32,8 @@ export const TerminalTabBar: FC = () => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  // 打开重命名时的初始值：未改动就不落库，避免把摘要原样固化成名称
+  const [renameBaseline, setRenameBaseline] = useState('');
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const tabBarRef = useRef<HTMLDivElement>(null);
@@ -174,7 +176,10 @@ export const TerminalTabBar: FC = () => {
       if (!activeSessionId) return;
       const session = sessions.find(s => s.id === activeSessionId);
       if (session) {
-        setRenameValue(session.profileName);
+        // 编辑所见即所得：输入框初始值取标签当前显示的标题（含摘要）
+        const displayed = terminalTabTitle(session.profileName, useTaskSummaryStore.getState().summaries[session.id], session.manualTitle);
+        setRenameValue(displayed);
+        setRenameBaseline(displayed);
         setRenamingSessionId(activeSessionId);
         setTimeout(() => renameInputRef.current?.select(), 0);
       }
@@ -259,7 +264,7 @@ export const TerminalTabBar: FC = () => {
               onChange={(e) => setRenameValue(e.target.value)}
               onBlur={() => {
                 const trimmed = renameValue.trim();
-                if (trimmed && trimmed !== session.profileName) {
+                if (trimmed && trimmed !== renameBaseline) {
                   renameSession(session.id, trimmed);
                 }
                 setRenamingSessionId(null);
@@ -267,7 +272,7 @@ export const TerminalTabBar: FC = () => {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   const trimmed = renameValue.trim();
-                  if (trimmed && trimmed !== session.profileName) {
+                  if (trimmed && trimmed !== renameBaseline) {
                     renameSession(session.id, trimmed);
                   }
                   setRenamingSessionId(null);
@@ -294,7 +299,7 @@ export const TerminalTabBar: FC = () => {
                   <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
                 ) : null;
               })()}
-              <span className="terminal-tab-name" title={terminalTabTitle(session.profileName, taskSummaries[session.id])} style={session.tabColor ? { color: session.tabColor } : undefined}>{terminalTabTitle(session.profileName, taskSummaries[session.id])}</span>
+              <span className="terminal-tab-name" title={terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle)} style={session.tabColor ? { color: session.tabColor } : undefined}>{terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle)}</span>
               {/* Docker 端所有会话都来自网页端，Web 标签没有区分度，故隐藏 */}
               {session.owner === 'web' && !isDockerClient() && <span className="terminal-owner-badge">Web</span>}
               {session.owner !== 'web' && terminalWebTakeovers[session.id] && (
@@ -349,7 +354,10 @@ export const TerminalTabBar: FC = () => {
             <div className="context-menu-item" onClick={() => {
               const session = sessions.find(s => s.id === contextMenu.sessionId);
               if (session) {
-                setRenameValue(session.profileName);
+                // 编辑所见即所得：输入框初始值取标签当前显示的标题（含摘要）
+                const displayed = terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle);
+                setRenameValue(displayed);
+                setRenameBaseline(displayed);
                 setRenamingSessionId(session.id);
                 setTimeout(() => renameInputRef.current?.select(), 0);
               }

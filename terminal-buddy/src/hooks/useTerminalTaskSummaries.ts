@@ -42,7 +42,7 @@ export function useTerminalTaskSummaries() {
   }, [ids]);
 
   const title = enabled && task && activeSession && !specialTab
-    ? terminalDisplayTitle(activeSession.profileName, task)
+    ? terminalDisplayTitle(activeSession.profileName, task, activeSession.manualTitle)
     : null;
   useEffect(() => {
     // 浏览器标签页由主页标题设置管理，任务摘要只更新桌面窗口标题。
