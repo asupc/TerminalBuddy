@@ -1,7 +1,8 @@
 import type { TerminalTaskSummary } from '../types';
 
-export function terminalTaskTitle(name: string, task?: TerminalTaskSummary): string {
-  return task?.summary ? `${task.summary} · ${name}` : name;
+/** 拼接式标题：摘要 · 名称；手动重命名过的会话只显示手动名称。 */
+export function terminalTaskTitle(name: string, task?: TerminalTaskSummary, manualTitle?: boolean): string {
+  return !manualTitle && task?.summary ? `${task.summary} · ${name}` : name;
 }
 
 export interface TaskLaunchInfo {

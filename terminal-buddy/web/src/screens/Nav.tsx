@@ -112,8 +112,8 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const sessionNameOverrides = useStore(state => state.sessionNameOverrides);
-  // 会话重命名（纯前端覆盖）与「关闭其它」确认弹窗
-  const [renamingSession, setRenamingSession] = useState<{ id: string; name: string } | null>(null);
+  // 会话重命名（纯前端覆盖）与「关闭其它」确认弹窗；original 记录打开时的初始值，未改动就不落库
+  const [renamingSession, setRenamingSession] = useState<{ id: string; name: string; original: string } | null>(null);
   const [confirmCloseOthers, setConfirmCloseOthers] = useState<TerminalInfo | null>(null);
   const [filesPath, setFilesPath] = useState<string>();
   const [takeover, setTakeover] = useState<TerminalInfo | null>(null);
@@ -177,7 +177,8 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
   }, [sessions]);
 
   const openSession = (session: TerminalInfo) => {
-    const name = terminalTaskTitle(session.profileName || getTypeInfo(session.terminalType).label, taskSummaries[session.id]);
+    const override = sessionNameOverrides[session.id];
+    const name = terminalTaskTitle(override ?? (session.profileName || getTypeInfo(session.terminalType).label), taskSummaries[session.id], Boolean(override));
     if (isDesktopSession(session)) {
       setTakeover(session);
       return;
@@ -276,7 +277,8 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
       if (action === 'open') {
         if (isDesktopSession(session)) setTakeover(session);
         else {
-          const name = terminalTaskTitle(session.profileName || getTypeInfo(session.terminalType).label, taskSummaries[session.id]);
+          const override = sessionNameOverrides[session.id];
+          const name = terminalTaskTitle(override ?? (session.profileName || getTypeInfo(session.terminalType).label), taskSummaries[session.id], Boolean(override));
           setView({ screen: 'terminal', terminalId: session.id, profileName: name, loadingMode: session.loadingMode, owner: 'web' });
         }
         return;
@@ -515,7 +517,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                               const startupCommands = profile?.startupCommands ?? [];
                               const launchInfo = getTaskLaunchInfo(session.extraStartupParams, startupCommands, session.extraStartupMode);
                               const provider = task?.provider ?? launchInfo?.provider;
-                              const fallbackName = project?.name || name;
+                              const fallbackName = sessionNameOverrides[session.id] || project?.name || name;
                               const isActive = activeTerminalId === session.id;
                               return (
                                 <div className="tree-node" key={session.id}>
@@ -566,7 +568,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
                                       </span>
                                     )}
                                     {provider ? (
-                                      <SessionTaskLabel task={task} fallbackName={fallbackName} fallbackProvider={provider} fallbackModel={launchInfo?.model} color={profile?.tabColor} />
+                                      <SessionTaskLabel task={task} fallbackName={fallbackName} fallbackProvider={provider} fallbackModel={launchInfo?.model} color={profile?.tabColor} manualTitle={Boolean(sessionNameOverrides[session.id])} />
                                     ) : <span className="tab-nav-name" title={name}>{name}</span>}
                                     {session.owner === 'web' && (
                                       <span className="tab-nav-owner-badge">
@@ -623,6 +625,10 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
           ? effectiveProfilePath(menuProfile, projects)
           : (menuProject?.path || '');
         const displayName = sessionNameOverrides[session.id] ?? session.profileName;
+        // 重命名所见即所编辑：初始值取任务行当前显示的第一行标题（含摘要）
+        const renameInitial = sessionNameOverrides[session.id]
+          ?? taskSummaries[session.id]?.summary?.trim()
+          ?? displayName;
         return (
           <div
             className="session-context-menu"
@@ -651,7 +657,7 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
               className="context-menu-item"
               onClick={() => {
                 setSessionContextMenu(null);
-                setRenamingSession({ id: session.id, name: displayName || '' });
+                setRenamingSession({ id: session.id, name: renameInitial || '', original: renameInitial || '' });
               }}
             >
               重命名
@@ -714,7 +720,13 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
               <button
                 className="btn primary"
                 onClick={() => {
-                  useStore.getState().setSessionNameOverride(renamingSession.id, renamingSession.name || null);
+                  const trimmed = renamingSession.name.trim();
+                  if (trimmed && trimmed !== renamingSession.original) {
+                    useStore.getState().setSessionNameOverride(renamingSession.id, trimmed);
+                  } else if (!trimmed) {
+                    // 清空保存 = 清除覆盖，恢复跟随任务摘要
+                    useStore.getState().setSessionNameOverride(renamingSession.id, null);
+                  }
                   setRenamingSession(null);
                 }}
               >
@@ -732,7 +744,13 @@ export default function Nav({ variant = 'fullscreen' }: { variant?: 'fullscreen'
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  useStore.getState().setSessionNameOverride(renamingSession.id, renamingSession.name || null);
+                  const trimmed = renamingSession.name.trim();
+                  if (trimmed && trimmed !== renamingSession.original) {
+                    useStore.getState().setSessionNameOverride(renamingSession.id, trimmed);
+                  } else if (!trimmed) {
+                    // 清空保存 = 清除覆盖，恢复跟随任务摘要
+                    useStore.getState().setSessionNameOverride(renamingSession.id, null);
+                  }
                   setRenamingSession(null);
                 }
               }}

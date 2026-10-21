@@ -39,7 +39,8 @@ export default function Terminal({ terminalId, profileName, loadingMode, owner }
 
   // Web 池会话均可关闭，与创建端设备无关。
   const canClose = owner === 'web';
-  const displayTitle = terminalTaskTitle(session?.profileName || profileName, task);
+  const nameOverride = useStore((s) => s.sessionNameOverrides[terminalId]);
+  const displayTitle = terminalTaskTitle(nameOverride ?? (session?.profileName || profileName), task, Boolean(nameOverride));
 
   const closeTerminal = () => {
     setMenuOpen(false);
