@@ -541,6 +541,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
           onRenamingProfileSubmit={handleFinishRenameProfile}
           onRenamingProfileCancel={() => setRenamingProfileId(null)}
           itemDraggable
+          showEmptyGroupArrow
           onItemDragStart={(e, item) => {
             const profile = item.data as Profile | undefined;
             if (!profile) return;

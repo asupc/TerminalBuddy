@@ -27,7 +27,6 @@ import {
   type TerminalResizeDetail,
 } from '../../utils/terminalResizeEvent';
 import './TerminalPanel.css';
-import { TerminalUpdateMonitor } from './TerminalUpdateMonitor';
 
 // 懒加载重型组件：避免 xterm.js / monaco-editor 等被全量打进首屏 bundle。
 // 此前主 bundle 达 4.69MB，启动时需全部解析执行，是白屏卡顿主因。
@@ -295,7 +294,6 @@ export const TerminalPanel: FC = () => {
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
         {renderTerminalContent()}
-        <TerminalUpdateMonitor />
         {gitHistoryTab && activeSpecialTab === 'git-history' && (
           <div className="git-history-tab-content">
             <Suspense fallback={<div className="lazy-panel-loading">加载 Git 历史记录…</div>}>

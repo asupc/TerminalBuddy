@@ -10,7 +10,6 @@ pub mod llm_provider_handler;
 pub mod preset_handler;
 pub mod profile_handler;
 pub mod terminal_handler;
-pub mod update_handler;
 pub mod desktop_handler;
 pub mod container_environment;
 pub mod claude_provider_handler;

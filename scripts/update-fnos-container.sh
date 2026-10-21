@@ -7,21 +7,12 @@ umask 077
 STATE=/tmp/terminal-buddy-update
 UPDATE_PUBLIC_DIR=/data/.terminal-buddy-update
 UPDATE_LOG="${UPDATE_PUBLIC_DIR}/update.log"
-UPDATE_STATUS="${UPDATE_PUBLIC_DIR}/status.json"
-UPDATE_ID="${UPDATE_ID:-}"
 KEEP_ROLLBACK="${KEEP_ROLLBACK:-0}"
 CLEANUP_DELAY="${CLEANUP_DELAY:-10}"
 CLEANUP_NAME="${CLEANUP_NAME:-${UPDATER}-cleanup}"
 mkdir -p "${STATE}"
 
-write_update_status() {
-  local status="$1"
-  printf '{"updateId":"%s","status":"%s"}\n' "${UPDATE_ID}" "${status}" > "${UPDATE_STATUS}.tmp"
-  mv "${UPDATE_STATUS}.tmp" "${UPDATE_STATUS}"
-  chmod 0644 "${UPDATE_STATUS}"
-}
-
-# 完整更新日志放在持久数据目录；新版服务启动后通过受认证保护的 API 读取。
+# 完整更新日志放在持久数据目录，网页终端断开后仍可手动查看。
 mkdir -p "${UPDATE_PUBLIC_DIR}"
 # 仅首次启动时初始化；自动重试回退不能覆盖上次的构建与切换日志。
 if [ ! -f "${STATE}/log-initialized" ]; then
@@ -34,16 +25,14 @@ if [ ! -f "${STATE}/log-initialized" ]; then
 fi
 chmod 0755 "${UPDATE_PUBLIC_DIR}"
 chmod 0644 "${UPDATE_LOG}"
-write_update_status running
 exec 3>&1
 exec > >(tee -a "${UPDATE_LOG}") 2>&1
 LOG_WRITER_PID=$!
 
-# 先等日志全部写入，再发布终态，保证网页拿到终态时也能读到最后一行。
-complete_update_status() {
+# 退出前等待日志写入完成，保留最后的更新或回退结果。
+flush_update_log() {
   exec 1>&3 2>&3 3>&-
   wait "${LOG_WRITER_PID}" || true
-  write_update_status "$1"
 }
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
@@ -75,7 +64,7 @@ restore_directory() {
   # 仅清空预先确认的两个绑定目录；保留挂载点本身、目录属主及权限。
   case "${path}" in /data|/home/terminalbuddy) ;; *) return 1 ;; esac
   if [ "${path}" = /data ]; then
-    # 更新记录不属于业务快照；保留目录及打开的日志文件，供旧服务恢复后继续读取。
+    # 更新日志不属于业务快照；保留目录及打开的日志文件，便于排查回退结果。
     find "${path}" -mindepth 1 -maxdepth 1 ! -name .terminal-buddy-update -exec rm -rf -- {} + || return 1
   else
     find "${path}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
@@ -183,7 +172,7 @@ finish() {
     else
       schedule_cleanup || log "警告：自动清理任务启动失败，请稍后手动清理 ${BACKUP_NAME} 与 ${UPDATER}"
     fi
-    complete_update_status updated || true
+    flush_update_log
     exit 0
   fi
   [ "${code}" -ne 0 ] || code=1
@@ -192,14 +181,14 @@ finish() {
     chmod 0644 "${UPDATE_LOG}" 2>/dev/null || true
     docker update --restart=no "${UPDATER}" >/dev/null 2>&1
     log "更新失败，原服务已保留或恢复；更新任务与快照保留供排查"
-    complete_update_status rolled-back || true
+    flush_update_log
     exit "${code}"
   fi
   printf 'rollback-failed\n' > "${STATE}/result"
   chmod 0644 "${UPDATE_LOG}" 2>/dev/null || true
   log "回退未完成，Docker 将自动重启更新任务继续恢复。请勿删除原容器或本更新容器。" >&2
   log "查看日志：docker logs ${UPDATER}；恢复材料：${UPDATER}:${STATE}/" >&2
-  complete_update_status rollback-failed || true
+  flush_update_log
   exit 2
 }
 trap finish EXIT
@@ -270,6 +259,13 @@ fi
 docker inspect --format '{{.Id}}' "${CANDIDATE_NAME}" > "${STATE}/candidate-id.tmp"
 mv "${STATE}/candidate-id.tmp" "${STATE}/candidate-id"
 CANDIDATE_ID="$(cat "${STATE}/candidate-id")"
+
+# 镜像和候选容器准备就绪后再倒计时，避免提示后仍等待部署前检查。
+log "部署准备就绪；连接断开后独立更新任务仍会继续执行"
+for ((remaining = 10; remaining > 0; remaining--)); do
+  log "${remaining} 秒后开始部署，网页终端将会断开连接"
+  sleep 1
+done
 
 # 从此处起任意错误/中断都必须恢复旧容器的重启策略和运行状态。
 touch "${STATE}/switch-started"

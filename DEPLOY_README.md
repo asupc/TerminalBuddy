@@ -151,8 +151,8 @@ sudo 密码来源（按优先级）：环境变量 `TB_FNOS_PASSWORD` → 凭据
 
 ```bash
 cd /vol1/1000/docker/terminal-buddy/workspace/terminal-buddy
-bash update.sh                       # 构建当前源码并更新，成功后保留交互式命令行
-bash update.sh --exit-on-success     # 成功后结束脚本，适合自动化调用
+bash update.sh                       # 构建当前源码并更新，切换时网页终端会断开
+bash update.sh --exit-on-success     # 兼容旧参数，成功后默认结束脚本
 bash update.sh --detach              # 启动独立切换任务后返回
 bash update.sh --keep-rollback       # 成功后保留旧容器与快照，暂缓自动清理
 bash update.sh --container terminal-buddy --health-timeout 300
@@ -164,21 +164,14 @@ bash update.sh --container terminal-buddy --health-timeout 300
 `TB_UPDATE_KEEP_ROLLBACK` 和 `TB_UPDATE_CLEANUP_DELAY` 环境变量，
 完整选项见 `bash update.sh --help`。
 
-在 TerminalBuddy 完整网页终端里发起更新时，窗口不会因旧容器停止而关闭；页面会进入
-自更新监视模式，持续等待服务恢复。构建和切换日志会保存在持久目录
-`/data/.terminal-buddy-update/update.log`，服务恢复后自动补齐停机期间的日志。
-完成后原地恢复终端页签与连接，不刷新整页；日志面板继续保留，可收起或下载。
-此恢复流程不依赖「启动时恢复页签」开关。
+镜像构建完成、候选容器准备就绪后，终端会逐秒提示「10、9、8…1 秒后开始部署，
+网页终端将会断开连接」。旧容器停止时原网页终端进程会终止；独立更新容器会继续
+完成部署或失败回退，不再显示自更新监视面板、轮询日志或强制重建终端连接。
+服务恢复后请手动刷新网页继续使用。
 
-在宿主机交互终端中更新成功后进入 Bash 命令行，窗口保留，可继续输入命令；
-输入 `exit` 才返回上级命令行或关闭窗口。无交互终端时直接返回，
-也可用 `--exit-on-success` 显式关闭这一行为。
-如果是在被更新容器自身的网页终端里运行，旧容器停止时原终端进程会终止；
-完整网页保留当前页面和日志面板，并在更新成功或回退完成后自动重建终端连接。
-需要保留同一个操作系统进程时，仍应从飞牛 SSH 终端执行。
-容器停机期间网页保留已收到的日志；新增日志在服务恢复后补齐。
-上述更新监视适用于完整网页界面（`/`），手机精简界面（`/m/`）暂不支持。
-当前已打开的网页需要先具备此更新监视功能，才能在后续自更新时接管重连。
+在宿主机或飞牛 SSH 终端中运行时，可持续查看切换日志；更新完成后脚本直接结束，
+返回原命令行。`--exit-on-success` 仅保留为兼容旧调用的参数。
+构建和切换日志仍保存在持久目录 `/data/.terminal-buddy-update/update.log`，供手动排查。
 
 更新沿用现有容器的端口、环境变量、网络、工作目录、Docker socket 附加组和绑定挂载，
 不会重新生成 Compose 或覆盖 `.env`。适用于 `deploy-fnos.sh` 创建的绑定挂载部署；
