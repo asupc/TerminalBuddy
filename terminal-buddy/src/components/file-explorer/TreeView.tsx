@@ -38,6 +38,8 @@ interface TreeViewProps {
   itemDraggable?: boolean;
   onItemDragStart?: (e: React.DragEvent, item: TreeItem) => void;
   onItemDragEnd?: (e: React.DragEvent, item: TreeItem) => void;
+  /** 空分组（未挂任何子项）是否也显示展开/收起三角形 */
+  showEmptyGroupArrow?: boolean;
 }
 
 const TreeNode: FC<{
@@ -66,7 +68,8 @@ const TreeNode: FC<{
   itemDraggable?: boolean;
   onItemDragStart?: (e: React.DragEvent, item: TreeItem) => void;
   onItemDragEnd?: (e: React.DragEvent, item: TreeItem) => void;
-}> = ({ item, depth, expandedIds, onToggle, selectedId, onSelect, onDoubleClick, onContextMenu, renderEnd, indent, itemClassName, renamingId, renameValue, onRenameValueChange, onRenameSubmit, onRenameCancel, onGroupRename, renamingProfileId, renamingProfileValue, onRenamingProfileChange, onRenamingProfileSubmit, onRenamingProfileCancel, itemDraggable, onItemDragStart, onItemDragEnd }) => {
+  showEmptyGroupArrow?: boolean;
+}> = ({ item, depth, expandedIds, onToggle, selectedId, onSelect, onDoubleClick, onContextMenu, renderEnd, indent, itemClassName, renamingId, renameValue, onRenameValueChange, onRenameSubmit, onRenameCancel, onGroupRename, renamingProfileId, renamingProfileValue, onRenamingProfileChange, onRenamingProfileSubmit, onRenamingProfileCancel, itemDraggable, onItemDragStart, onItemDragEnd, showEmptyGroupArrow }) => {
   const isExpanded = expandedIds.has(item.id);
   const isSelected = selectedId === item.id;
   const hasChildren = item.children && item.children.length > 0;
@@ -91,17 +94,17 @@ const TreeNode: FC<{
         onDragStart={itemDraggable && onItemDragStart ? (e) => onItemDragStart(e, item) : undefined}
         onDragEnd={itemDraggable && onItemDragEnd ? (e) => onItemDragEnd(e, item) : undefined}
       >
-        {isGroup && (hasChildren ? (
+        {isGroup && (hasChildren || showEmptyGroupArrow) ? (
           <span
             className={`tree-arrow${isExpanded ? ' expanded' : ''}`}
             onClick={(e) => { e.stopPropagation(); onToggle(item.id); }}
           >
             ▶
           </span>
-        ) : (
-          // 没有子项的分组（如未挂任何命令的项目）不显示折叠箭头，用占位符保持名称对齐
+        ) : isGroup ? (
+          // 没有子项的分组（如未挂任何命令的项目）默认不显示折叠箭头，用占位符保持名称对齐
           <span className="tree-arrow-placeholder" />
-        ))}
+        ) : null}
         {item.icon && <span className="tree-icon">{item.icon}</span>}
         {renamingId === item.id ? (
           <input
@@ -168,6 +171,7 @@ const TreeNode: FC<{
               itemDraggable={itemDraggable}
               onItemDragStart={onItemDragStart}
               onItemDragEnd={onItemDragEnd}
+              showEmptyGroupArrow={showEmptyGroupArrow}
             />
           ))}
         </div>
@@ -202,6 +206,7 @@ export const TreeView: FC<TreeViewProps> = ({
   itemDraggable,
   onItemDragStart,
   onItemDragEnd,
+  showEmptyGroupArrow,
 }) => {
   return (
     <div className={className} tabIndex={0} onKeyDown={(e) => {
@@ -241,6 +246,7 @@ export const TreeView: FC<TreeViewProps> = ({
           itemDraggable={itemDraggable}
           onItemDragStart={onItemDragStart}
           onItemDragEnd={onItemDragEnd}
+          showEmptyGroupArrow={showEmptyGroupArrow}
         />
       ))}
     </div>
