@@ -12,6 +12,7 @@ pub struct EventBus(pub broadcast::Sender<RuntimeEvent>);
 
 #[cfg(not(feature = "desktop"))]
 pub fn shutdown(app: &AppHandle) {
+    crate::services::ai_chat_service::shutdown_all();
     crate::commands::git::stop_git_commands();
     app.state::<crate::commands::TerminalService>().shutdown_all_terminals(app);
     crate::services::ClaudeHookService::release_all_on_shutdown();

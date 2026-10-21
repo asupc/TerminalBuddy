@@ -59,3 +59,5 @@ fn canonical_scope_key(path: &str) -> Result<String, ApiError> {
     for name in missing.into_iter().rev() { real.push(name); }
     Ok(normalize_scope_key(&real.to_string_lossy()))
 }
+
+pub mod ai_chat_handler;

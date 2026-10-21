@@ -79,3 +79,5 @@ pub use update_service::*;
 pub use vscode_terminal_service::*;
 pub use web_service::*;
 pub use workspace_service::*;
+
+pub mod ai_chat_service;

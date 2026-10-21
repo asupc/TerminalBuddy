@@ -60,6 +60,7 @@ pub fn window_exit_app(app: AppHandle) -> Result<(), String> {
     // 逐终端 unregister 之后兜底释放剩余 pending decision 的 receiver/sender，
     // 退出时不遗留挂起的 hook 等待状态。
     crate::services::ClaudeHookService::release_all_on_shutdown();
+    crate::services::ai_chat_service::shutdown_all();
     app.exit(0);
     Ok(())
 }

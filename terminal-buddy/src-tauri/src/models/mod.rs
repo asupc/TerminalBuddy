@@ -24,3 +24,5 @@ pub use terminal_takeover::*;
 pub use update::*;
 pub use web_api::*;
 pub use workspace::*;
+
+pub mod ai_chat;

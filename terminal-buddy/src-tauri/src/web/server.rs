@@ -84,6 +84,13 @@ pub fn build_router(state: AppState) -> Router {
             "/api/bot/inbound/{channel_id}",
             post(handlers::bot_handler::bridge_inbound),
         )
+        // 原生 AI 客户端：结构化会话、消息、中断与工具确认。
+        .route("/api/ai/sessions", get(handlers::ai_chat_handler::list).post(handlers::ai_chat_handler::create))
+        .route("/api/ai/sessions/{id}", get(handlers::ai_chat_handler::get).delete(handlers::ai_chat_handler::delete))
+        .route("/api/ai/sessions/{id}/messages", post(handlers::ai_chat_handler::send))
+        .route("/api/ai/sessions/{id}/stop", post(handlers::ai_chat_handler::stop))
+        .route("/api/ai/sessions/{id}/approvals", post(handlers::ai_chat_handler::answer))
+        .route("/ws/ai/{id}", get(handlers::ai_chat_handler::socket))
         // 连接（profile）只读列表 —— 手机端不管理 profile，照搬电脑端已配置的导航
         .route("/api/profiles", get(handlers::profile_handler::list))
         // 项目只读列表 —— Web 端「启动项目」用（目录 + 自定义启动命令）
