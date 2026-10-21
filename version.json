@@ -1,7 +1,7 @@
 {
-  "version": "1.7.0",
-  "releaseDate": "2026-10-08",
+  "version": "1.8.0",
+  "releaseDate": "2026-10-21",
   "mandatory": false,
-  "changelogMd": "## 1.7.0\n\n### 📂 项目体系\n\n- 新增「项目」配置：名称 + 路径 + 自定义启动命令，配置面板统一管理\n- 文件资源管理器接入项目目录，自动展开当前标签页对应项目根节点\n- 新建终端菜单支持按项目启动；会话启动目录持久化，重启恢复不丢\n- Claude 会话历史按项目分组过滤（含子目录）\n\n### 🤖 Claude 会话历史\n\n- 历史面板支持多选批量操作；批量删除走事务、失败自动回滚\n- 支持多个回放标签页并行显示并分组\n\n### 🌿 Git 集成\n\n- 文件树右键菜单集成 Git 操作：切换分支 / 提交变更 / 拉取 / 推送，操作中可查看进度\n- Git 操作互斥令牌：按仓库持久化控制器，同一仓库同时仅一个操作在执行\n\n### 🛡️ 终端会话防误触\n\n- WebView2 层关闭浏览器加速键（Ctrl+R / F5 刷新）、缩放与滑动导航，误触不再丢终端会话与未保存状态\n- 前端快捷键守卫：终端 / 编辑区拦截刷新等重建型按键\n\n### 🖥️ 界面与交互\n\n- 侧边栏面板支持重命名，设置文案同步更新\n- 配置分组支持置顶；F2 快速重命名\n- 新建终端按钮新增预设悬停子菜单\n- 面板显隐与侧栏模式变更触发终端强制重排，布局不再残留\n\n### 🐛 修复\n\n- 修复长按右键触发两次粘贴的问题\n\n### 📌 升级提示\n\n- 从 v1.6.0 可直接覆盖安装；新增 projects.json 项目配置文件自动创建，其余数据结构无变化",
-  "downloadUrl": "https://gitee.com/updateme/terminal-buddy/releases/tag/v1.7.0"
+  "changelogMd": "## 1.8.0\n\n### 🧠 大模型供应商与模型配置\n\n- 新增 Claude / Codex 供应商管理：API Key 加密存储、模型列表、上下文窗口与推理等级；启动时自动展开注入\n- 右键菜单可指定模型启动，标签以「模型 chip」展示；effort 五档与子代理模型全锚定，压制用户级残留配置\n- Codex 每模型单独配置推理等级（默认 MAX），项目启动菜单支持 Claude / Codex 供应商双向切换\n\n### 🤖 Agent 管理\n\n- 原「容器环境」重构为 Agent 管理页：检测 Claude Code / Codex CLI 安装与版本，应用内一键安装 / 更新\n\n### 📚 Codex 会话历史与任务摘要\n\n- Codex 历史会话可搜索 / 重命名 / 导出，一键 `codex resume` 续接\n- 桌面与手机显示 Claude / Codex 任务摘要；会话树双行布局，Codex 专属配色\n\n### 🔄 Web 端体验\n\n- 容器重启后自动恢复页签并续接 Claude 会话；登录有效期延长至 30 天且重启不掉线\n- 手机版独立界面自动分流，补齐项目 / 命令管理与供应商设置；多项触摸滚动与中文 IME 修复\n\n### 🐮 部署链路\n\n- 新增飞牛 fnOS 一键部署与 `update.sh` 本地自更新（失败自动回退）\n- Linux / Docker 版本适配，CentOS 部署两段式重构，Windows 单文件 exe 交叉编译脚本\n\n### 📌 升级提示\n\n- Windows 桌面版可直接覆盖安装；新增 llm_providers.json 自动创建\n- Docker 升级后首次需重新登录一次，此后重启不再掉线",
+  "downloadUrl": "https://gitee.com/updateme/terminal-buddy/releases/tag/v1.8.0"
 }

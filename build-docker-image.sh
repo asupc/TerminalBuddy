@@ -44,7 +44,7 @@ usage() {
 示例：
   ./build-docker-image.sh
   ./build-docker-image.sh --gzip
-  ./build-docker-image.sh --tag terminal-buddy:1.7.0 --output-dir /data/backup
+  ./build-docker-image.sh --tag terminal-buddy:1.8.0 --output-dir /data/backup
 HELP
 }
 
