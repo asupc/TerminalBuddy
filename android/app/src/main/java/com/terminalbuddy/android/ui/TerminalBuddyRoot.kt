@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -45,18 +46,27 @@ fun TerminalBuddyRoot(aiVm: AiViewModel = viewModel()) {
     val pageAiUi = if (aiUi.selected != null) aiUi else aiSnapshot.value
     // 根节点统一铺底色：Compose 的 Column/Box 不会自动绘制 Material 背景，否则会露出窗口默认底色。
     Surface(Modifier.fillMaxSize(), color = TbColors.Canvas) {
-        AnimatedContent(targetState = page, transitionSpec = { pageSlideTransition() }, label = "页面转场") { destination ->
-            if (destination == RootPage.Home) {
-                Box(
-                    Modifier.fillMaxSize()
-                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                ) {
-                    holder.SaveableStateProvider("ai-home") { AiScreen(aiUi, aiVm) }
+        Box(Modifier.fillMaxSize()) {
+            AnimatedContent(targetState = page, transitionSpec = { pageSlideTransition() }, label = "页面转场") { destination ->
+                if (destination == RootPage.Home) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                    ) {
+                        holder.SaveableStateProvider("ai-home") { AiScreen(aiUi, aiVm) }
+                    }
+                } else {
+                    Box(Modifier.fillMaxSize()) {
+                        holder.SaveableStateProvider("ai-session:${pageAiUi.selected?.id}") { AiConversationScreen(pageAiUi, aiVm) }
+                    }
                 }
-            } else {
-                Box(Modifier.fillMaxSize()) {
-                    holder.SaveableStateProvider("ai-session:${pageAiUi.selected?.id}") { AiConversationScreen(pageAiUi, aiVm) }
-                }
+            }
+            if (aiUi.authenticated && aiUi.reconnecting) {
+                AiConnectingOverlay(
+                    Modifier.align(Alignment.TopCenter)
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                        .padding(top = 72.dp),
+                )
             }
         }
     }

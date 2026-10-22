@@ -25,6 +25,8 @@ data class AiUiState(
     val providers: List<AiProvider> = emptyList(), val projectPath: String = "", val providerId: String = "", val modelId: String = "",
     val selected: AiSession? = null, val draft: String = "", val sending: Boolean = false,
     val connected: Boolean = false, val working: Boolean = false, val error: String? = null,
+    val reconnecting: Boolean = false,
+    val deletingAll: Boolean = false,
     val connectionRevision: Long = 0,
     val homeLoaded: Boolean = false,
 ) {
@@ -76,9 +78,12 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     fun setVisible(active: Boolean) {
         visible = active
         if (active && store.loggedIn) {
-            refresh()
-            startRealtime()
-        } else stopRealtime()
+            if (mutable.value.selected == null) refresh() else startRealtime()
+        } else {
+            stopRealtime()
+            refreshJob?.cancel(); refreshJob = null
+            mutable.update { it.copy(loading = false) }
+        }
     }
 
     fun login(server: String, username: String, password: String) {
@@ -119,42 +124,55 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         if (error is ApiException && error.code == 401) {
             logout()
             mutable.update { it.copy(error = "AI 服务登录已过期，请重新登录") }
-        } else mutable.update { it.copy(error = error.userMessage()) }
+        } else if (error.isConnectionFailure()) {
+            // 网络抖动只更新悬浮连接状态，不再插入错误条挤动页面。
+            mutable.update { it.copy(reconnecting = true, error = null) }
+            if (visible && store.loggedIn) {
+                if (mutable.value.selected == null) refresh() else startRealtime()
+            }
+        } else mutable.update { it.copy(reconnecting = false, error = error.userMessage()) }
     }
 
     fun clearError() {
         mutable.update { it.copy(error = null) }
     }
 
-    /** 刷新按钮显示进度，首次加载额外显示提示；已有内容和有效选择保持可用。 */
+    /** 首页连接失败时持续退避重试，已有内容和有效选择保持可用。 */
     fun refresh() {
-        if (!store.loggedIn || refreshJob?.isActive == true) return
+        if (!store.loggedIn || refreshJob?.isActive == true || mutable.value.deletingAll) return
         val epoch = generation
         refreshJob = viewModelScope.launch {
             mutable.update { it.copy(loading = true) }
+            var retries = 0
             try {
-                val (sessions, projects, catalog) = coroutineScope {
-                    val sessions = async { repository.sessions() }
-                    val projects = async { repository.projects() }
-                    val catalog = async { repository.catalog() }
-                    Triple(sessions.await(), projects.await(), catalog.await())
-                }
-                if (epoch != generation) return@launch
-                mutable.update {
-                    reconcile(
-                        it.copy(
-                            sessions = sessions, projects = projects, providers = catalog.providers,
-                            loading = false, homeLoaded = true, error = null,
-                        )
-                    )
-                }
-                saveSelection()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                if (epoch == generation) {
-                    mutable.update { it.copy(loading = false) }
-                    failure(e)
+                while (isActive && epoch == generation) {
+                    try {
+                        val (sessions, projects, catalog) = coroutineScope {
+                            val sessions = async { repository.sessions() }
+                            val projects = async { repository.projects() }
+                            val catalog = async { repository.catalog() }
+                            Triple(sessions.await(), projects.await(), catalog.await())
+                        }
+                        if (epoch != generation) return@launch
+                        mutable.update {
+                            reconcile(
+                                it.copy(
+                                    sessions = sessions, projects = projects, providers = catalog.providers,
+                                    loading = false, homeLoaded = true, reconnecting = false, error = null,
+                                )
+                            )
+                        }
+                        saveSelection()
+                        return@launch
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        if (epoch != generation) return@launch
+                        failure(e)
+                        if (!e.isConnectionFailure() || !visible || !store.loggedIn) return@launch
+                        delay(reconnectDelay(retries))
+                        retries = (retries + 1).coerceAtMost(4)
+                    }
                 }
             } finally {
                 // 取消旧请求时，不能清除后续刷新任务的进度。
@@ -335,6 +353,51 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** 批量清理未运行对话，逐条同步成功结果，失败项保留供重试。 */
+    fun deleteAll() {
+        if (actionJob?.isActive == true || mutable.value.working) return
+        val sessions = mutable.value.sessions.filterNot { it.running }
+        if (sessions.isEmpty()) return
+        refreshJob?.cancel(); refreshJob = null
+        val epoch = generation
+        actionJob = viewModelScope.launch {
+            mutable.update { it.copy(working = true, deletingAll = true, loading = false, error = null) }
+            var deleted = 0
+            var firstError: Throwable? = null
+            try {
+                for (session in sessions) {
+                    if (epoch != generation) return@launch
+                    try {
+                        repository.delete(session.id)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        if (epoch != generation) return@launch
+                        if (firstError == null) firstError = e
+                        if (e.isConnectionFailure() || (e is ApiException && e.code == 401)) {
+                            firstError = e
+                            break
+                        }
+                        continue
+                    }
+                    if (epoch != generation) return@launch
+                    mutable.update { it.copy(sessions = it.sessions.filterNot { item -> item.id == session.id }) }
+                    drafts.remove(session.id); requests.remove(session.id)
+                    deleted++
+                }
+            } finally {
+                if (epoch == generation) mutable.update { it.copy(working = false, deletingAll = false) }
+            }
+            if (epoch != generation) return@launch
+            firstError?.let { error ->
+                failure(error)
+                if (epoch == generation) mutable.update {
+                    it.copy(error = "已删除 $deleted 段对话，仍有 ${sessions.size - deleted} 段未删除：${error.userMessage()}")
+                }
+            }
+        }
+    }
+
     /** 中断/确认这类动作完成后主动拉一次完整会话，走与 WebSocket 相同的合并逻辑。 */
     private fun action(block: suspend (AiSession) -> Unit) {
         val session = mutable.value.selected ?: return
@@ -372,6 +435,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val id = mutable.value.selected?.id ?: return
         if (!visible || !store.loggedIn || streamJob?.isActive == true) return
         val epoch = generation
+        mutable.update { it.copy(reconnecting = true) }
         streamJob = viewModelScope.launch {
             var retries = 0
             while (isActive && epoch == generation) {
@@ -379,23 +443,26 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     repository.observe(id).collect { snapshot ->
                         if (epoch == generation) {
                             retries = 0
-                            mutable.update { it.copy(connected = true) }
+                            mutable.update { it.copy(connected = true, reconnecting = false, loadingSession = false) }
                             receive(snapshot)
                         }
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
+                    if (epoch != generation) return@launch
                     if (e is ApiException && e.code == 401) {
                         failure(e)
                         return@launch
                     }
                 }
                 if (epoch != generation) break
-                mutable.update { it.copy(connected = false) }
-                // 1s → 16s 退避，避免服务重启或切网时疯狂重连。
-                delay((1_000L shl retries.coerceAtMost(4)))
-                retries++
+                mutable.update {
+                    // REST 补偿成功后保持在线提示，避免代理拦截 WS 时每次重试都闪现。
+                    it.copy(connected = false, reconnecting = it.reconnecting || it.connected)
+                }
+                delay(reconnectDelay(retries))
+                retries = (retries + 1).coerceAtMost(4)
             }
         }
         // WS 被代理拦截时仍能同步：连上时 15 秒补一次，断开时 3 秒一次。
@@ -406,7 +473,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     val snapshot = repository.session(id)
                     if (epoch == generation) {
                         receive(snapshot)
-                        mutable.update { it.copy(error = null) }
+                        mutable.update { it.copy(reconnecting = false, loadingSession = false, error = null) }
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -420,6 +487,9 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private fun stopRealtime() {
         streamJob?.cancel(); streamJob = null
         pollingJob?.cancel(); pollingJob = null
-        mutable.update { it.copy(connected = false) }
+        mutable.update { it.copy(connected = false, reconnecting = false) }
     }
+
+    /** 1、2、4、8、16 秒退避，长时间断网时保持上限，避免重试计数溢出。 */
+    private fun reconnectDelay(attempt: Int): Long = 1_000L shl attempt.coerceIn(0, 4)
 }

@@ -198,7 +198,7 @@ private fun AiConversation(ui: AiUiState, vm: AiViewModel, modifier: Modifier) {
                         Modifier.align(Alignment.Center).padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        AiSmallIcon(Icons.Outlined.AutoAwesome)
+                        AiAgentBadge(session.provider)
                         Text(
                             if (ui.loadingSession || !motion.initialized) "正在加载消息…" else "发送第一条消息，开始对话。",
                             style = MaterialTheme.typography.bodyMedium, color = TbColors.TextMuted,
@@ -433,7 +433,7 @@ private fun AiAvatar(provider: String, modifier: Modifier = Modifier) {
         modifier.size(28.dp).background(TbColors.Accent.copy(alpha = .1f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Outlined.SmartToy, "$provider 头像", Modifier.size(17.dp), tint = TbColors.Accent)
+        AiAgentLogo(provider, Modifier.size(20.dp), contentDescription = "$provider 头像")
     }
 }
 

@@ -24,8 +24,11 @@ fun jsonBody(block: JsonObjectBuilder.() -> Unit): JsonObject = buildJsonObject(
 /** 网络层异常：HTTP 状态码 + 已转成中文的服务端提示。 */
 class ApiException(val code: Int, override val message: String) : java.io.IOException(message)
 
-/** 服务器连不上时的统一文案，界面据此把提示收敛为「重连中」。 */
+/** 登录等需要用户手动处理的连接失败文案。 */
 const val ServerUnreachableMessage = "无法连接服务器，请检查服务地址和网络"
+
+/** 仅传输异常自动重连；HTTP 业务错误（包括登录过期）保留原有处理。 */
+fun Throwable.isConnectionFailure(): Boolean = this is java.io.IOException && this !is ApiException
 
 fun Throwable.userMessage(): String = when (this) {
     is ApiException -> message

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="768"
+    android:viewportHeight="768">
+    <!-- 主题图标保留双窗口与提示符，避免彩色前景被统一着色后丢失内部图形。 -->
+    <group android:translateX="128" android:translateY="128">
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillAlpha="0.55"
+            android:pathData="M146,126 H316 A40,40 0,0 1,356,166 V186 H196 A40,40 0,0 0,156,226 V316 H146 A40,40 0,0 1,106,276 V166 A40,40 0,0 1,146,126 Z" />
+        <path
+            android:fillColor="@android:color/transparent"
+            android:pathData="M196,186 H366 A40,40 0,0 1,406,226 V336 A40,40 0,0 1,366,376 H196 A40,40 0,0 1,156,336 V226 A40,40 0,0 1,196,186 Z"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="12" />
+        <path
+            android:fillColor="@android:color/transparent"
+            android:pathData="M222,253 L258,285 L222,317"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="18"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M287,302 H341 A9,9 0,0 1,350,311 A9,9 0,0 1,341,320 H287 A9,9 0,0 1,278,311 A9,9 0,0 1,287,302 Z" />
+    </group>
+</vector>

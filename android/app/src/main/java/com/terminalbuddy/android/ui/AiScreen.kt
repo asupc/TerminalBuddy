@@ -42,6 +42,8 @@ import com.terminalbuddy.android.data.AiSession
 fun AiScreen(ui: AiUiState, vm: AiViewModel) {
     var connection by rememberSaveable { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<AiSession?>(null) }
+    var confirmDeleteAll by remember { mutableStateOf(false) }
+    val deletableCount = ui.sessions.count { !it.running }
     BackHandler(connection) { connection = false }
     LaunchedEffect(ui.authenticated, ui.connectionRevision) { if (ui.authenticated) connection = false }
     if (!ui.authenticated || connection) {
@@ -50,7 +52,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
     }
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
         PageHeader("TerminalBuddy") {
-            IconButton(vm::refresh, enabled = !ui.loading) {
+            IconButton(vm::refresh, enabled = !ui.loading && !ui.deletingAll) {
                 if (ui.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Outlined.Refresh, "刷新项目和模型", Modifier.size(20.dp), tint = TbColors.TextMuted)
             }
@@ -113,7 +115,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             AiChoiceField(
                                 "Agent", Icons.Outlined.AutoAwesome, ui.launchProvider?.agent.orEmpty(), "选择 Agent",
-                                ui.availableAgents.map { AiChoice(it, if (it == "codex") "Codex" else "Claude Code") },
+                                ui.availableAgents.map { AiChoice(it, if (it == "codex") "Codex" else "Claude Code", agent = it) },
                                 !ui.initialLoading && !ui.working, vm::selectAgent, Modifier.weight(1f),
                             )
                             AiChoiceField(
@@ -145,6 +147,17 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                 Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("最近对话", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                     Text("${ui.sessions.size} 段对话", style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
+                    TextButton(
+                        onClick = { confirmDeleteAll = true },
+                        enabled = deletableCount > 0 && !ui.loading && !ui.working,
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        colors = ButtonDefaults.textButtonColors(contentColor = TbColors.Danger),
+                    ) {
+                        if (ui.deletingAll) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (ui.deletingAll) "删除中…" else "一键删除", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
             if (ui.sessions.isEmpty()) item(key = "empty") {
@@ -165,7 +178,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                 val projectName = ui.projects.find { it.path == session.projectPath }?.name
                     ?: session.projectPath.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
                 Surface(
-                    onClick = { vm.open(session.id) }, color = TbColors.Surface,
+                    onClick = { vm.open(session.id) }, enabled = !ui.deletingAll, color = TbColors.Surface,
                     shape = RoundedCornerShape(
                         topStart = if (index == 0) 14.dp else 0.dp, topEnd = if (index == 0) 14.dp else 0.dp,
                         bottomStart = if (index == ui.sessions.lastIndex) 14.dp else 0.dp,
@@ -178,7 +191,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                             Modifier.fillMaxWidth().padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            AiSmallIcon(if (session.provider == "codex") Icons.Outlined.Terminal else Icons.Outlined.AutoAwesome)
+                            AiAgentBadge(session.provider)
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(
@@ -208,9 +221,22 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
         }
     }
     deleting?.let { session -> AiDeleteDialog(session, { deleting = null }) { deleting = null; vm.delete(session) } }
+    if (confirmDeleteAll) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteAll = false }, title = { Text("一键删除对话") },
+            text = { Text("将删除 ${deletableCount} 段未运行对话及其消息。正在回复或等待确认的对话会保留，项目文件不会被删除。") },
+            confirmButton = {
+                TextButton(
+                    onClick = { confirmDeleteAll = false; vm.deleteAll() },
+                    enabled = deletableCount > 0 && !ui.loading && !ui.working,
+                ) { Text("删除", color = TbColors.Danger) }
+            },
+            dismissButton = { TextButton({ confirmDeleteAll = false }) { Text("取消") } },
+        )
+    }
 }
 
-private data class AiChoice(val id: String, val title: String, val subtitle: String = "")
+private data class AiChoice(val id: String, val title: String, val subtitle: String = "", val agent: String? = null)
 
 /** 首页只显示当前值，完整名称、路径与选中状态放在二级选择面板。 */
 @Composable
@@ -230,7 +256,9 @@ private fun AiChoiceField(
             Modifier.heightIn(min = 52.dp).padding(horizontal = 8.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Icon(icon, null, Modifier.size(16.dp), tint = TbColors.TextMuted)
+            val selectedAgent = selected?.agent
+            if (selectedAgent != null) AiAgentLogo(selectedAgent, Modifier.size(20.dp))
+            else Icon(icon, null, Modifier.size(16.dp), tint = TbColors.TextMuted)
             Column(Modifier.weight(1f)) {
                 Text(label, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
                 Text(
@@ -257,6 +285,7 @@ private fun AiChoiceField(
                             Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(12.dp), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
+                            choice.agent?.let { AiAgentLogo(it, Modifier.size(24.dp)) }
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(choice.title, style = MaterialTheme.typography.bodyMedium)
                                 if (choice.subtitle.isNotBlank()) Text(

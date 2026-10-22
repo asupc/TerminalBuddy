@@ -2,19 +2,25 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- 终端窗口轮廓 + 绿色提示符，配色取自桌面端强调色。 -->
-    <path
-        android:fillColor="#65D5A5"
-        android:pathData="M34,42 L46,54 L34,66"
-        android:strokeColor="#65D5A5"
-        android:strokeWidth="5"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round" />
-    <path
-        android:strokeColor="#65D5A5"
-        android:strokeWidth="5"
-        android:strokeLineCap="round"
-        android:pathData="M52,68 L74,68" />
+    android:viewportWidth="768"
+    android:viewportHeight="768">
+    <!-- 复用 design/logo/svg/b-companion-panes.svg 的图形，居中留出自适应图标裁切空间。 -->
+    <group android:translateX="128" android:translateY="128">
+        <path
+            android:fillColor="#38BDF8"
+            android:pathData="M146,126 H316 A40,40 0,0 1,356,166 V276 A40,40 0,0 1,316,316 H146 A40,40 0,0 1,106,276 V166 A40,40 0,0 1,146,126 Z" />
+        <path
+            android:fillColor="#273244"
+            android:pathData="M196,186 H366 A40,40 0,0 1,406,226 V336 A40,40 0,0 1,366,376 H196 A40,40 0,0 1,156,336 V226 A40,40 0,0 1,196,186 Z" />
+        <path
+            android:fillColor="@android:color/transparent"
+            android:pathData="M222,253 L258,285 L222,317"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="18"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M287,302 H341 A9,9 0,0 1,350,311 A9,9 0,0 1,341,320 H287 A9,9 0,0 1,278,311 A9,9 0,0 1,287,302 Z" />
+    </group>
 </vector>
