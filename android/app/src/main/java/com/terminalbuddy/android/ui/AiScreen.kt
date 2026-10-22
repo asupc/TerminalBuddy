@@ -51,11 +51,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
         return
     }
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
-        PageHeader("TerminalBuddy") {
-            IconButton(vm::refresh, enabled = !ui.loading && !ui.deletingAll) {
-                if (ui.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else Icon(Icons.Outlined.Refresh, "刷新项目和模型", Modifier.size(20.dp), tint = TbColors.TextMuted)
-            }
+        PageHeader("TerminalBuddy", reconnecting = ui.reconnecting) {
             var menu by remember { mutableStateOf(false) }
             Box {
                 IconButton({ menu = true }) {

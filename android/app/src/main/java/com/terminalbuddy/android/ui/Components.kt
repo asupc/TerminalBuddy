@@ -1,5 +1,6 @@
 package com.terminalbuddy.android.ui
 
+import android.os.SystemClock
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -18,7 +19,12 @@ import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -34,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 /** 小尺寸方角图标（30dp），用于首页会话行和对话里的助手标记。 */
 @Composable
@@ -72,18 +79,21 @@ internal fun ThemeToggleButton() {
 
 /** 页面标题栏：左对齐大标题，右侧操作区。 */
 @Composable
-fun PageHeader(title: String, action: @Composable RowScope.() -> Unit = {}) {
+fun PageHeader(title: String, reconnecting: Boolean = false, action: @Composable RowScope.() -> Unit = {}) {
     Row(
         Modifier.fillMaxWidth().statusBarsPadding()
             .heightIn(min = 64.dp).padding(start = 20.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                title, color = TbColors.Text,
-                fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title, Modifier.weight(1f, fill = false), color = TbColors.Text,
+                    fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                AiReconnectingIndicator(reconnecting, Modifier.padding(start = 8.dp))
+            }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Outlined.Terminal, null, Modifier.size(11.dp), tint = TbColors.TextMuted)
                 Text(
@@ -117,23 +127,30 @@ internal fun AiError(message: String, dismiss: () -> Unit) {
     }
 }
 
-/** 根界面中的固定悬浮提示，不参与页面内容的测量和排版。 */
+/** 标题后的重连菊花：默认隐藏，一次展示至少持续一秒。 */
 @Composable
-internal fun AiConnectingOverlay(modifier: Modifier = Modifier) {
-    Surface(
-        modifier.semantics { liveRegion = LiveRegionMode.Polite },
-        shape = RoundedCornerShape(24.dp), color = TbColors.Surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, TbColors.Border),
-        shadowElevation = 6.dp,
-    ) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            AiConnectionSpinner(TbColors.Accent, Modifier.size(16.dp))
-            Text("连接中", color = TbColors.Text, fontSize = 13.sp, lineHeight = 18.sp, maxLines = 1)
+internal fun AiReconnectingIndicator(reconnecting: Boolean, modifier: Modifier = Modifier) {
+    var showing by remember { mutableStateOf(reconnecting) }
+    var shownAt by remember { mutableLongStateOf(if (reconnecting) SystemClock.elapsedRealtime() else 0L) }
+    LaunchedEffect(reconnecting) {
+        if (reconnecting) {
+            if (!showing) {
+                shownAt = SystemClock.elapsedRealtime()
+                showing = true
+            }
+        } else if (showing) {
+            delay((1_000L - (SystemClock.elapsedRealtime() - shownAt)).coerceAtLeast(0L))
+            showing = false
         }
+    }
+    if (showing || reconnecting) {
+        AiConnectionSpinner(
+            TbColors.Accent,
+            modifier.size(16.dp).semantics {
+                liveRegion = LiveRegionMode.Polite
+                stateDescription = "正在重新连接"
+            },
+        )
     }
 }
 

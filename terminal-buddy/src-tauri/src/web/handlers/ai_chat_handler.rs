@@ -75,7 +75,7 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
                         if !matches!(tokio::time::timeout(Duration::from_secs(10), sender.send(Message::Ping(Vec::new().into()))).await, Ok(Ok(()))) { break; }
                         heartbeat = tokio::time::Instant::now();
                     }
-                    let current = { let id = id.clone(); let owner = owner.clone(); tokio::task::spawn_blocking(move || service::get(&id, &owner)).await };
+                    let current = { let id = id.clone(); let owner = owner.clone(); tokio::task::spawn_blocking(move || service::get_with_summary(&id, &owner)).await };
                     let Ok(Ok(session)) = current else { break; };
                     if session.revision == revision { continue; }
                     revision = session.revision;

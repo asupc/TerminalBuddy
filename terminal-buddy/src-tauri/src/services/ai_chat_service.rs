@@ -2,7 +2,7 @@
 //! CLI 进程在服务端执行，手机断开不会终止任务。所有文件/进程操作由 handler 的
 //! spawn_blocking 或专用工作线程承载；用户文本只进入 stdin，不拼进 shell 命令。
 use crate::models::ai_chat::*;
-use super::{atomic_file::atomic_write_private, PathService};
+use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
 use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
     process::{Child, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicUsize, Ordering}},
@@ -20,6 +20,7 @@ enum Control { Stop, Approval(AnswerAiApproval) }
 struct Cell {
     data: Mutex<AiSession>,
     control: Mutex<Option<mpsc::Sender<Control>>>,
+    summary: Mutex<SessionSummaryTracker>,
     path: PathBuf,
 }
 fn registry() -> &'static Mutex<HashMap<PathBuf, Arc<Cell>>> {
@@ -37,8 +38,11 @@ fn touch(data: &mut AiSession) {
 }
 fn persist(cell: &Cell) -> Result<()> {
     let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    persist_data(cell, &data)
+}
+fn persist_data(cell: &Cell, data: &AiSession) -> Result<()> {
     // API 序列化隐藏的字段在磁盘中单独保留。
-    let mut value = serde_json::to_value(&*data).map_err(|e| e.to_string())?;
+    let mut value = serde_json::to_value(data).map_err(|e| e.to_string())?;
     value["owner"] = json!(data.owner);
     value["threadId"] = json!(data.thread_id);
     value["requestIds"] = json!(data.request_ids);
@@ -56,7 +60,7 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
             data.status = "interrupted".into(); data.approvals.clear();
             data.error = Some("服务已重启，上次执行已中断，可以继续发送消息".into()); touch(&mut data);
         }
-        registry.insert(path.clone(), Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), path: path.clone() }));
+        registry.insert(path.clone(), Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), path: path.clone() }));
     }
     let cell = registry.get(&path).ok_or("AI 会话不存在")?.clone();
     if cell.data.lock().map_err(|_| "AI 会话状态不可用")?.owner != owner { return Err("AI 会话不存在".into()); }
@@ -67,10 +71,10 @@ pub fn get(id: &str, owner: &str) -> Result<AiSession> {
     let snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     Ok(snapshot)
 }
-/// 打开详情或通过 REST 补偿时更新摘要；高频 WebSocket 轮询仍只读内存快照。
+/// 列表、详情与 WebSocket 共用摘要刷新；会话内缓存限制磁盘检查频率。
 pub fn get_with_summary(id: &str, owner: &str) -> Result<AiSession> {
     let cell = load(id, owner)?;
-    refresh_title(&cell);
+    refresh_title(&cell, false);
     let snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     Ok(snapshot)
 }
@@ -79,7 +83,7 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
     for entry in fs::read_dir(directory()?).map_err(|e| e.to_string())?.flatten() {
         if entry.path().extension().is_some_and(|ext| ext == "json") {
             if let Some(id) = entry.path().file_stem().and_then(|id| id.to_str()) {
-                if let Ok(mut data) = get(id, owner) { data.messages.clear(); sessions.push(data); }
+                if let Ok(mut data) = get_with_summary(id, owner) { data.messages.clear(); sessions.push(data); }
             }
         }
     }
@@ -97,7 +101,7 @@ pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         project_path: input.project_path, model: input.model.filter(|m| !m.trim().is_empty()),
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, owner: owner.into(), thread_id: None, request_ids: Vec::new() };
-    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), path: directory()?.join(format!("{id}.json")) });
+    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), path: directory()?.join(format!("{id}.json")) });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
     Ok(data)
@@ -161,24 +165,40 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     }
     Ok(snapshot)
 }
-fn refresh_title(cell: &Cell) {
-    let (provider, session_id, project_path, revision) = {
+fn refresh_title(cell: &Cell, force: bool) {
+    // 正文轮询不等待其他客户端的扫描；回合结束时等待后强制刷新。
+    let summary = if force { cell.summary.lock().ok() } else { cell.summary.try_lock().ok() };
+    let Some(mut summary) = summary else { return; };
+    let (provider, session_id, project_path) = {
         let Ok(data) = cell.data.lock() else { return; };
         let Some(session_id) = &data.thread_id else { return; };
-        (data.provider.clone(), session_id.clone(), data.project_path.clone(), data.revision)
+        (data.provider.clone(), session_id.clone(), data.project_path.clone())
     };
-    let Some(title) = super::terminal_task_service::session_summary(&provider, &session_id, &project_path) else { return; };
-    if let Ok(mut data) = cell.data.lock() {
-        if data.revision == revision && data.provider == provider
-            && data.thread_id.as_deref() == Some(session_id.as_str()) && data.title != title {
-            data.title = title;
-            // 摘要同步不改变会话活动时间，避免重新打开历史时打乱列表顺序。
-            data.revision = data.revision.saturating_add(1);
-        }
+    let Some(title) = summary.refresh(&provider, &session_id, &project_path, force) else { return; };
+    // 保存失败保留旧标题，下次轮询重试，不打断正文流。
+    let _ = save_summary_title(cell, &provider, &session_id, title);
+}
+fn save_summary_title(cell: &Cell, provider: &str, session_id: &str, title: String) -> Result<()> {
+    // 与发送、删除及回合收尾串行，避免删除后被摘要刷新重新创建。
+    let _control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+    let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    if data.provider != provider || data.thread_id.as_deref() != Some(session_id) || data.title == title {
+        return Ok(());
     }
+    if !cell.path.is_file() { return Err("AI 会话不存在".into()); }
+    let previous_title = std::mem::replace(&mut data.title, title);
+    let previous_revision = data.revision;
+    // 只更新标题与版本；正文继续变化不会导致摘要丢失，也不改变列表活动顺序。
+    data.revision = data.revision.saturating_add(1);
+    if let Err(error) = persist_data(cell, &data) {
+        data.title = previous_title;
+        data.revision = previous_revision;
+        return Err(error);
+    }
+    Ok(())
 }
 fn finish(cell: &Cell, result: Result<()>) {
-    refresh_title(cell);
+    refresh_title(cell, true);
     if let Ok(mut control) = cell.control.lock() {
         if let Ok(mut data) = cell.data.lock() {
             data.approvals.clear();
@@ -586,8 +606,90 @@ mod tests {
             "model": null, "status": "running", "messages": [], "approvals": [], "error": null,
             "updatedAt": 0, "revision": 0,
         })).unwrap();
-        Cell { data: Mutex::new(data), control: Mutex::new(None), path: PathBuf::new() }
+        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), path: PathBuf::new() }
     }
+    struct SavedCell(Cell);
+    impl SavedCell {
+        fn new() -> Self {
+            let mut cell = cell();
+            cell.path = std::env::temp_dir().join(format!("terminal-buddy-title-test-{}", Uuid::new_v4())).join("session.json");
+            {
+                let mut data = cell.data.lock().unwrap();
+                data.thread_id = Some("00000000-0000-4000-8000-000000000001".into());
+                data.owner = "title-test".into();
+                data.updated_at = 123;
+                data.revision = 7;
+            }
+            persist(&cell).unwrap();
+            Self(cell)
+        }
+        fn read(&self) -> AiSession { serde_json::from_slice(&fs::read(&self.0.path).unwrap()).unwrap() }
+        fn title(&self, provider: &str, id: &str, title: &str) -> Result<()> {
+            save_summary_title(&self.0, provider, id, title.into())
+        }
+    }
+    impl Drop for SavedCell {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0.path);
+            if let Some(parent) = self.0.path.parent() { let _ = fs::remove_dir(parent); }
+        }
+    }
+
+    #[test]
+    fn summary_title_is_persisted_without_changing_session_order() {
+        let saved = SavedCell::new();
+        let id = saved.read().thread_id.unwrap();
+        saved.title("claude", &id, "修复实时摘要").unwrap();
+        let data = saved.read();
+        assert_eq!(data.title, "修复实时摘要");
+        assert_eq!(data.updated_at, 123);
+        assert_eq!(data.revision, 8);
+        assert_eq!(data.owner, "title-test");
+        assert_eq!(data.thread_id.as_deref(), Some(id.as_str()));
+        saved.title("claude", &id, "修复实时摘要").unwrap();
+        assert_eq!(saved.read().revision, 8);
+        assert_eq!(saved.0.data.lock().unwrap().title, "修复实时摘要");
+    }
+
+    #[test]
+    fn summary_title_preserves_new_streaming_messages() {
+        let saved = SavedCell::new();
+        let id = saved.read().thread_id.unwrap();
+        message(&saved.0, "reply", "assistant", "正在继续回复", true);
+        let (revision, updated_at) = {
+            let data = saved.0.data.lock().unwrap();
+            (data.revision, data.updated_at)
+        };
+        saved.title("claude", &id, "新的任务标题").unwrap();
+        let data = saved.read();
+        assert_eq!(data.title, "新的任务标题");
+        assert_eq!(data.messages[0].text, "正在继续回复");
+        assert_eq!(data.revision, revision + 1);
+        assert_eq!(data.updated_at, updated_at);
+    }
+
+    #[test]
+    fn summary_title_ignores_another_provider_or_thread() {
+        let saved = SavedCell::new();
+        let id = saved.read().thread_id.unwrap();
+        saved.title("codex", &id, "其他供应商").unwrap();
+        saved.title("claude", "00000000-0000-4000-8000-000000000002", "其他会话").unwrap();
+        assert_eq!(saved.read().title, "测试会话");
+        assert_eq!(saved.read().revision, 7);
+    }
+
+    #[test]
+    fn summary_title_does_not_restore_a_deleted_session() {
+        let saved = SavedCell::new();
+        let id = saved.read().thread_id.unwrap();
+        fs::remove_file(&saved.0.path).unwrap();
+        assert!(saved.title("claude", &id, "迟到的摘要").is_err());
+        assert!(!saved.0.path.exists());
+        let data = saved.0.data.lock().unwrap();
+        assert_eq!(data.title, "测试会话");
+        assert_eq!(data.revision, 7);
+    }
+
     fn stream(event: Value) -> Value { json!({"type": "stream_event", "event": event}) }
     fn start(id: &str) -> Value { stream(json!({"type": "message_start", "message": {"id": id}})) }
     fn block(index: u64, kind: &str) -> Value {

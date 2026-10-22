@@ -1,6 +1,11 @@
 package com.terminalbuddy.android
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.terminalbuddy.android.data.*
@@ -74,11 +79,64 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 会话 ID → 待发送文本 + requestId；结果未知时重试复用同一个 requestId。 */
     private val requests = mutableMapOf<String, Pair<String, String>>()
 
+    private val connectivity = requireNotNull(application.getSystemService(ConnectivityManager::class.java))
+    private var defaultNetwork = connectivity.activeNetwork
+    private var defaultNetworkValidated = connectivity.getNetworkCapabilities(defaultNetwork)
+        ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+    private var receivedNetworkCapabilities = false
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            val validated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            val recovered = network != defaultNetwork ||
+                (receivedNetworkCapabilities && validated && !defaultNetworkValidated)
+            receivedNetworkCapabilities = true
+            defaultNetwork = network
+            defaultNetworkValidated = validated
+            // 局域网服务不要求互联网验证通过，默认网络切换后就立即尝试。
+            if (recovered) reconnectNow()
+        }
+
+        override fun onLost(network: Network) {
+            if (network != defaultNetwork) return
+            defaultNetwork = null
+            defaultNetworkValidated = false
+            if (!visible || !store.loggedIn) return
+            cancelConnectionJobs()
+            mutable.update { it.copy(reconnecting = true, error = null) }
+        }
+    }
+    private val networkCallbackRegistered = runCatching {
+        // 与页面状态统一在主线程处理，避免网络切换和选择会话并发更新。
+        connectivity.registerDefaultNetworkCallback(networkCallback, Handler(Looper.getMainLooper()))
+    }.isSuccess
+
+    private fun cancelConnectionJobs() {
+        stopRealtime()
+        refreshJob?.cancel(); refreshJob = null
+        selectJob?.cancel(); selectJob = null
+        mutable.update { it.copy(loading = false, loadingSession = false) }
+    }
+
+    /** 网络恢复后取消旧连接和退避等待，立即建立实时连接并补拉完整会话。 */
+    private fun reconnectNow() {
+        if (!visible || !store.loggedIn) return
+        cancelConnectionJobs()
+        mutable.update { it.copy(reconnecting = true, error = null) }
+        if (mutable.value.selected == null) {
+            if (mutable.value.deletingAll) startHomePolling() else refresh()
+        } else startRealtime(reconnecting = true)
+    }
+
+    override fun onCleared() {
+        if (networkCallbackRegistered) runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
+        super.onCleared()
+    }
+
     /** 只有 AI 标签页可见时才保持连接，后台不占配额。 */
     fun setVisible(active: Boolean) {
         visible = active
         if (active && store.loggedIn) {
-            if (mutable.value.selected == null) refresh() else startRealtime()
+            if (mutable.value.selected == null) refresh() else startRealtime(reconnecting = true)
         } else {
             stopRealtime()
             refreshJob?.cancel(); refreshJob = null
@@ -125,7 +183,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             logout()
             mutable.update { it.copy(error = "AI 服务登录已过期，请重新登录") }
         } else if (error.isConnectionFailure()) {
-            // 网络抖动只更新悬浮连接状态，不再插入错误条挤动页面。
+            // 网络抖动只更新标题重连状态，不再插入错误条挤动页面。
             mutable.update { it.copy(reconnecting = true, error = null) }
             if (visible && store.loggedIn) {
                 if (mutable.value.selected == null) refresh() else startRealtime()
@@ -163,6 +221,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                         saveSelection()
+                        startHomePolling()
                         return@launch
                     } catch (e: CancellationException) {
                         throw e
@@ -178,6 +237,41 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 // 取消旧请求时，不能清除后续刷新任务的进度。
                 if (refreshJob === coroutineContext.job) {
                     mutable.update { it.copy(loading = false) }
+                }
+            }
+        }
+    }
+
+    /** 首页静默同步摘要标题与运行状态；进入对话或退到后台时由 stopRealtime 停止。 */
+    private fun startHomePolling() {
+        if (!visible || !store.loggedIn || mutable.value.selected != null || pollingJob?.isActive == true) return
+        val epoch = generation
+        pollingJob = viewModelScope.launch {
+            var retries = 0
+            while (isActive && epoch == generation) {
+                delay(if (retries == 0) 3_000 else reconnectDelay(retries))
+                if (!visible || !store.loggedIn || mutable.value.selected != null) return@launch
+                if (refreshJob?.isActive == true || mutable.value.working) continue
+                val previous = mutable.value.sessions
+                try {
+                    val sessions = repository.sessions()
+                    if (epoch != generation) return@launch
+                    mutable.update { current ->
+                        // 手动刷新或删除已更新过列表时，丢弃在途的旧结果，防止恢复已删除会话。
+                        if (current.selected != null || current.working || current.sessions !== previous) current
+                        else current.copy(sessions = sessions, reconnecting = false)
+                    }
+                    retries = 0
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    if (epoch != generation) return@launch
+                    if (e is ApiException && e.code == 401) {
+                        failure(e)
+                        return@launch
+                    }
+                    if (e.isConnectionFailure()) mutable.update { it.copy(reconnecting = true) }
+                    retries = (retries + 1).coerceAtMost(4)
                 }
             }
         }
@@ -431,11 +525,11 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun startRealtime() {
+    private fun startRealtime(reconnecting: Boolean = false) {
         val id = mutable.value.selected?.id ?: return
         if (!visible || !store.loggedIn || streamJob?.isActive == true) return
         val epoch = generation
-        mutable.update { it.copy(reconnecting = true) }
+        if (reconnecting) mutable.update { it.copy(reconnecting = true) }
         streamJob = viewModelScope.launch {
             var retries = 0
             while (isActive && epoch == generation) {
@@ -467,8 +561,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
         // WS 被代理拦截时仍能同步：连上时 15 秒补一次，断开时 3 秒一次。
         pollingJob = viewModelScope.launch {
+            var refreshImmediately = reconnecting
             while (isActive && epoch == generation) {
-                delay(if (mutable.value.connected) 15_000 else 3_000)
+                if (!refreshImmediately) delay(if (mutable.value.connected) 15_000 else 3_000)
+                refreshImmediately = false
                 try {
                     val snapshot = repository.session(id)
                     if (epoch == generation) {
@@ -490,6 +586,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(connected = false, reconnecting = false) }
     }
 
-    /** 1、2、4、8、16 秒退避，长时间断网时保持上限，避免重试计数溢出。 */
-    private fun reconnectDelay(attempt: Int): Long = 1_000L shl attempt.coerceIn(0, 4)
+    /** 首次半秒后重试，逐步退避至八秒；网络恢复事件会直接跳过等待。 */
+    private fun reconnectDelay(attempt: Int): Long = 500L shl attempt.coerceIn(0, 4)
 }

@@ -4,7 +4,7 @@ use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use rusqlite::OptionalExtension;
 use serde::Serialize;
@@ -255,17 +255,33 @@ fn resolve_title(
     Some(TerminalTaskSummary { provider, session_id: id, summary, model: tracked.model.clone() })
 }
 
-/// 原生 AI 会话复用桌面端的摘要来源，只按确切的会话 ID 解析。
-pub fn session_summary(provider: &str, session_id: &str, cwd: &str) -> Option<String> {
-    if !matches!(provider, "claude" | "codex") || uuid::Uuid::parse_str(session_id).is_err() { return None; }
-    let home = dirs::home_dir().unwrap_or_default();
-    let mut tracked = TrackedTerminal {
-        claude_root: env_root(&[], "CLAUDE_CONFIG_DIR", home.join(".claude"), Some(cwd)),
-        codex_root: env_root(&[], "CODEX_HOME", home.join(".codex"), Some(cwd)),
-        ..Default::default()
-    };
-    bind(&mut tracked, provider, session_id);
-    resolve_title(&mut tracked, &mut HashMap::new()).map(|task| task.summary)
+/// 原生 AI 会话复用桌面端的摘要来源，缓存确切会话的文件位置与修改时间。
+#[derive(Default)]
+pub struct SessionSummaryTracker {
+    tracked: TrackedTerminal,
+    last_refresh: Option<Instant>,
+}
+
+impl SessionSummaryTracker {
+    pub fn refresh(&mut self, provider: &str, session_id: &str, cwd: &str, force: bool) -> Option<String> {
+        if !matches!(provider, "claude" | "codex") || uuid::Uuid::parse_str(session_id).is_err() { return None; }
+        let home = dirs::home_dir().unwrap_or_default();
+        let claude_root = env_root(&[], "CLAUDE_CONFIG_DIR", home.join(".claude"), Some(cwd));
+        let codex_root = env_root(&[], "CODEX_HOME", home.join(".codex"), Some(cwd));
+        if self.tracked.claude_root != claude_root || self.tracked.codex_root != codex_root {
+            self.tracked = TrackedTerminal { claude_root, codex_root, ..Default::default() };
+            self.last_refresh = None;
+        }
+        if self.tracked.binding.as_ref().map_or(true, |(p, id)| p != provider || id != session_id) {
+            bind(&mut self.tracked, provider, session_id);
+            self.last_refresh = None;
+        }
+        // 多个客户端共用检查间隔；流式消息仍可每 300ms 推送一次。
+        if !force && self.last_refresh.is_some_and(|last| last.elapsed() < Duration::from_secs(2)) { return None; }
+        let summary = resolve_title(&mut self.tracked, &mut HashMap::new()).map(|task| task.summary);
+        self.last_refresh = Some(Instant::now());
+        summary
+    }
 }
 
 pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalTaskSummary> {
