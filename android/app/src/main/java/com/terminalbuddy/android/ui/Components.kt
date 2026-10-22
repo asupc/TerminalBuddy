@@ -7,6 +7,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -14,7 +16,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -29,6 +34,30 @@ internal fun AiSmallIcon(icon: ImageVector, modifier: Modifier = Modifier) {
     }
 }
 
+/** 右上角主题开关：48dp 点击区域，读屏同时播报当前模式和切换动作。 */
+@Composable
+internal fun ThemeToggleButton() {
+    val controls = LocalThemeControls.current
+    IconToggleButton(
+        checked = controls.darkTheme,
+        onCheckedChange = controls.onDarkThemeChange,
+        modifier = Modifier.size(48.dp).semantics {
+            stateDescription = if (controls.darkTheme) "深色模式" else "浅色模式"
+        },
+        colors = IconButtonDefaults.iconToggleButtonColors(
+            contentColor = TbColors.TextSoft,
+            checkedContainerColor = TbColors.Accent.copy(alpha = .12f),
+            checkedContentColor = TbColors.Accent,
+        ),
+    ) {
+        Icon(
+            if (controls.darkTheme) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+            contentDescription = if (controls.darkTheme) "切换为浅色模式" else "切换为深色模式",
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
 /** 页面标题栏：左对齐大标题，右侧操作区。 */
 @Composable
 fun PageHeader(title: String, action: @Composable RowScope.() -> Unit = {}) {
@@ -40,14 +69,20 @@ fun PageHeader(title: String, action: @Composable RowScope.() -> Unit = {}) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 title, color = TbColors.Text,
-                fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Outlined.Terminal, null, Modifier.size(11.dp), tint = TbColors.TextMuted)
-                Text("AI 对话功能由终端 AI 提供", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+                Text(
+                    "AI 对话功能由终端 AI 提供", Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         action()
+        ThemeToggleButton()
     }
 }
 

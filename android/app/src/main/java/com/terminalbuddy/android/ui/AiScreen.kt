@@ -94,7 +94,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                                 modifier = Modifier.heightIn(min = 48.dp),
                             ) {
-                                if (ui.working) CircularProgressIndicator(Modifier.size(16.dp), color = TbColors.TextMuted, strokeWidth = 2.dp)
+                                if (ui.working) CircularProgressIndicator(Modifier.size(16.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
                                 else Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text(if (ui.working) "创建中" else "开始对话")
@@ -307,11 +307,16 @@ private fun AiConnection(ui: AiUiState, login: (String, String, String) -> Unit,
             .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        if (back != null) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (back != null) {
                 IconButton(back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回 AI 首页", Modifier.size(20.dp)) }
-                Text("服务连接", style = MaterialTheme.typography.titleMedium)
             }
+            Text(
+                if (back != null) "服务连接" else "TerminalBuddy", Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium, color = TbColors.Text,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            ThemeToggleButton()
         }
         Row(
             Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically,
@@ -356,7 +361,7 @@ private fun AiConnection(ui: AiUiState, login: (String, String, String) -> Unit,
                     enabled = !ui.authenticating, shape = RoundedCornerShape(10.dp),
                 ) {
                     if (ui.authenticating) {
-                        CircularProgressIndicator(Modifier.size(16.dp), color = TbColors.TextMuted, strokeWidth = 2.dp)
+                        CircularProgressIndicator(Modifier.size(16.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
                     }
                     Text(if (ui.authenticating) "正在连接…" else "连接并登录")
