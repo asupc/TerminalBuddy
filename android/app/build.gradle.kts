@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -5,6 +6,14 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+}
+
+// 仓库内的专属 Release 签名，凭据与密钥一起提交，便于任何机器构建可覆盖升级的安装包。
+val releaseKeystoreFile = rootProject.file("keystore.properties")
+val releaseKeystoreProperties = Properties().apply {
+    if (releaseKeystoreFile.isFile) {
+        releaseKeystoreFile.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -17,8 +26,21 @@ android {
         versionCode = 1
         versionName = "1.0.0"
     }
+    signingConfigs {
+        if (releaseKeystoreFile.isFile) {
+            create("release") {
+                storeFile = rootProject.file(requireNotNull(releaseKeystoreProperties.getProperty("storeFile")))
+                storePassword = requireNotNull(releaseKeystoreProperties.getProperty("storePassword"))
+                keyAlias = requireNotNull(releaseKeystoreProperties.getProperty("keyAlias"))
+                keyPassword = requireNotNull(releaseKeystoreProperties.getProperty("keyPassword"))
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseKeystoreFile.isFile) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

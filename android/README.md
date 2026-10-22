@@ -75,4 +75,21 @@ cd android
 
 在 Android Studio 中直接打开 `android/` 目录即可。
 
+仓库根目录的一键脚本（参考葫芦娃 `build-android-release.bat`）：
+
+```bat
+build-android.bat            :: 自动找 JDK/SDK → 编译 Debug APK → 安装 → 启动
+build-android.bat <序列号>   :: 多台设备时指定目标
+```
+
+脚本走 `scripts/build-android.ps1`：优先 `JAVA_HOME` 与 `android/local.properties` 的 `sdk.dir`，其次 Android Studio 自带 JDK 和 `ANDROID_HOME`；单台设备自动选择，多台提示输入序号。设置 `TERMINAL_BUDDY_NO_PAUSE=1` 可跳过结束时的等待按键。
+
+## Release 签名
+
+仓库内提交了专属签名 `android/release.keystore` 与凭据 `android/keystore.properties`（被 `.gitignore` 显式放行），任何机器 `:app:assembleRelease` 都会自动用它签名，产出的 APK 可覆盖升级。
+
+- 别名 `terminal-buddy-release`，RSA 4096，SHA256withRSA，有效期至 **9999-12-31**（keytool 上限 2,912,148 天）
+- 证书 SHA-256：`41F3E68E3D8FBF0DAF91F9D6A6B9DDC77B7C385E6640AC71F9394242CAADCF6A`
+- 删除或更换该密钥后，已安装的旧版本只能卸载重装；请勿在其它应用上复用此签名
+
 工程配置：包名 `com.terminalbuddy.android`，Kotlin 2.2.21，AGP 8.13.2，Gradle 8.13，Compose BOM 2025.10.01，OkHttp 4.12，kotlinx.serialization 1.9；minSdk 26 / targetSdk 36。

@@ -22,3 +22,7 @@ captures/
 *.log
 .DS_Store
 Thumbs.db
+
+# 按需求纳入版本库的专属 Release 签名（密钥与凭据一并提交）
+!release.keystore
+!keystore.properties
