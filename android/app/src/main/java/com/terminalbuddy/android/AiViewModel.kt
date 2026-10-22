@@ -9,8 +9,13 @@ import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
 import java.util.UUID
 
+/** 同名模型保留供应商身份，避免选择模型后切换到另一套启动配置。 */
+data class AiLaunchModel(val provider: AiProvider, val model: AiModel) {
+    val key get() = "${provider.id.length}:${provider.id}${model.id}"
+}
+
 /**
- * AI 页面状态。登录、项目/供应商/模型选择和当前会话各自独立，
+ * AI 页面状态。登录、项目/Agent/模型选择和当前会话各自独立，
  * 首页刷新不会覆盖正在进行的对话；关闭 App 后重新打开回到选择首页。
  */
 data class AiUiState(
@@ -27,8 +32,14 @@ data class AiUiState(
     val availableProviders get() = providers.filter { provider ->
         launchProject?.let { if (provider.agent == "codex") it.enabledAgents.codex else it.enabledAgents.claude } == true
     }
+    val availableAgents get() = listOf("claude", "codex").filter { agent -> availableProviders.any { it.agent == agent } }
     val launchProvider get() = availableProviders.find { it.id == providerId }
+    /** 汇总当前 Agent 的全部模型，启动时仍使用模型所属的供应商。 */
+    val availableModels get() = availableProviders.filter { it.agent == launchProvider?.agent }.flatMap { provider ->
+        provider.models.map { AiLaunchModel(provider, it) }
+    }
     val launchModel get() = launchProvider?.models?.find { it.id == modelId }
+    val launchModelKey get() = availableModels.find { it.provider.id == providerId && it.model.id == modelId }?.key.orEmpty()
     val canCreate get() = launchProject != null && launchProvider != null && launchModel != null && !loading && !working
 }
 
@@ -164,13 +175,24 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         saveSelection()
     }
 
-    fun selectProvider(id: String) {
-        mutable.update { reconcile(it.copy(providerId = id, modelId = "")) }
+    fun selectAgent(agent: String) {
+        mutable.update { ui ->
+            if (ui.launchProvider?.agent == agent) return@update ui
+            val choices = ui.availableProviders.filter { it.agent == agent }
+            val provider = choices.firstOrNull { it.isDefault && it.models.isNotEmpty() }
+                ?: choices.firstOrNull { it.models.isNotEmpty() }
+                ?: choices.firstOrNull()
+                ?: return@update ui
+            reconcile(ui.copy(providerId = provider.id, modelId = ""))
+        }
         saveSelection()
     }
 
-    fun selectModel(id: String) {
-        mutable.update { reconcile(it.copy(modelId = id)) }
+    fun selectModel(key: String) {
+        mutable.update { ui ->
+            val target = ui.availableModels.find { it.key == key } ?: return@update ui
+            reconcile(ui.copy(providerId = target.provider.id, modelId = target.model.id))
+        }
         saveSelection()
     }
 

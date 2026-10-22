@@ -43,8 +43,8 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
         AiConnection(ui, vm::login, if (ui.authenticated) ({ connection = false }) else null)
         return
     }
-    Column(Modifier.fillMaxSize()) {
-        PageHeader("AI 对话") {
+    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+        PageHeader("TerminalBuddy") {
             IconButton(vm::refresh, enabled = !ui.loading) {
                 if (ui.loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Outlined.Refresh, "刷新项目和模型", Modifier.size(20.dp), tint = TbColors.TextMuted)
@@ -105,27 +105,28 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                             ui.projects.map { AiChoice(it.path, it.name, it.path) },
                             !ui.loading && !ui.working, vm::selectProject,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AiChoiceField(
-                                "供应商", Icons.Outlined.AutoAwesome, ui.providerId, "选择供应商",
-                                ui.availableProviders.map {
-                                    AiChoice(it.id, it.label, if (it.isDefault) "服务端默认供应商" else "${it.models.size} 个可用模型")
-                                },
-                                !ui.loading && !ui.working, vm::selectProvider, Modifier.weight(1f),
-                            )
-                            AiChoiceField(
-                                "模型", Icons.Outlined.Tune, ui.modelId, "选择模型",
-                                ui.launchProvider?.models.orEmpty().map {
-                                    AiChoice(it.id, it.title, if (it.effort.isBlank()) "" else "推理等级：${it.effortLabel}")
-                                },
-                                !ui.loading && !ui.working, vm::selectModel, Modifier.weight(1f),
-                            )
-                        }
+                        AiChoiceField(
+                            "Agent", Icons.Outlined.AutoAwesome, ui.launchProvider?.agent.orEmpty(), "选择 Agent",
+                            ui.availableAgents.map { AiChoice(it, if (it == "codex") "Codex" else "Claude Code") },
+                            !ui.loading && !ui.working, vm::selectAgent,
+                        )
+                        AiChoiceField(
+                            "模型", Icons.Outlined.Tune, ui.launchModelKey, "选择模型",
+                            ui.availableModels.map { target ->
+                                val details = buildList {
+                                    add(target.provider.name)
+                                    if (target.provider.isDefault) add("服务端默认供应商")
+                                    if (target.model.effort.isNotBlank()) add("推理等级：${target.model.effortLabel}")
+                                }
+                                AiChoice(target.key, target.model.title, details.joinToString(" · "))
+                            },
+                            !ui.loading && !ui.working, vm::selectModel,
+                        )
                         val hint = when {
                             ui.loading -> "正在同步项目和模型…"
                             ui.projects.isEmpty() -> "服务端还没有登记项目，请添加后刷新。"
-                            ui.availableProviders.isEmpty() -> "该项目尚未启用 Claude 或 Codex，请在服务端配置。"
-                            ui.launchProvider?.models?.isEmpty() == true -> "该供应商暂无可用模型，请配置后刷新。"
+                            ui.availableAgents.isEmpty() -> "该项目尚未启用 Claude Code 或 Codex，请在服务端配置。"
+                            ui.availableModels.isEmpty() -> "该 Agent 暂无可用模型，请在服务端配置后刷新。"
                             else -> null
                         }
                         hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted) }
@@ -301,7 +302,9 @@ private fun AiConnection(ui: AiUiState, login: (String, String, String) -> Unit,
     var password by remember { mutableStateOf("") }
     var visible by remember { mutableStateOf(false) }
     Column(
-        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
+        Modifier.fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))
+            .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         if (back != null) {

@@ -61,7 +61,9 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     }
     Scaffold(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
-        containerColor = TbColors.Surface, contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = TbColors.Surface,
+        // 底部统一避让系统导航栏和软键盘，输入框与消息区共享同一可用高度。
+        contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom),
         topBar = {
             Surface(color = TbColors.Surface) {
                 Column {
@@ -101,7 +103,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
             }
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             ui.error?.let { AiError(it, vm::clearError) }
             AiConversation(ui, vm, Modifier.weight(1f))
         }
@@ -163,7 +165,7 @@ private fun AiConversation(ui: AiUiState, vm: AiViewModel, modifier: Modifier) {
     val motion = rememberAiConversationMotion(session, ui.loadingSession)
     val scroll = rememberAiConversationScroll(session.id, motion.initialized, motion.messages.size)
     val revealing by remember(motion) { derivedStateOf { motion.messages.any { it.isRevealing } } }
-    BoxWithConstraints(modifier.fillMaxWidth().imePadding()) {
+    BoxWithConstraints(modifier.fillMaxWidth()) {
         // 确认区随键盘后的可用高度收缩，避免把消息区域全部挤出屏幕。
         val approvalMaxHeight = (maxHeight * .45f).coerceIn(120.dp, 260.dp).coerceAtMost(maxHeight)
         Column(Modifier.fillMaxSize()) {
@@ -240,7 +242,7 @@ private fun AiComposer(ui: AiUiState, session: AiSession, send: () -> Unit, stop
         Column {
             AiDivider()
             Box(
-                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 6.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Surface(
