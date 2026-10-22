@@ -2,9 +2,9 @@
 
 <div align="center">
 
-**基于 Tauri 2 + React 19 + Rust 的现代化 Windows 桌面终端模拟器**
+**基于 Tauri 2 + React 19 + Rust 的现代化多端终端工作台（桌面 · Web · 手机 · 安卓）**
 
-[![Version](https://img.shields.io/badge/version-1.4.0-blue)](terminal-buddy/package.json)
+[![Version](https://img.shields.io/badge/version-1.8.0-blue)](terminal-buddy/package.json)
 [![Rust](https://img.shields.io/badge/Rust-edition%202021-orange)](terminal-buddy/src-tauri/Cargo.toml)
 [![React](https://img.shields.io/badge/React-19-blue)](terminal-buddy/package.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -13,7 +13,7 @@
 
 <img src="docs/images/01-overview-main.png" alt="TerminalBuddy 主界面全景" width="100%" />
 
-*高颜值深色质感 · VS Code 风格活动栏 · 多级层级分组 · 毫秒级 PTY 响应 · 现代 Windows 终端体验*
+*高颜值深色质感 · VS Code 风格活动栏 · 多级层级分组 · 毫秒级 PTY 响应 · 桌面 / Web / 手机 / 安卓多端协同*
 
 </div>
 
@@ -38,6 +38,9 @@
   - [7. AI 多模型 Token 用量与额度监控](#7-ai-多模型-token-用量与额度监控)
   - [8. Web 远程管理与手机扫码免密连接](#8-web-远程管理与手机扫码免密连接)
   - [9. 全局设置中心与 16 色 ANSI 调色板定制](#9-全局设置中心与-16-色-ansi-调色板定制)
+- [10. Agent CLI 管理与大模型供应商配置](#10-agent-cli-管理与大模型供应商配置)
+- [11. 原生 AI 会话与安卓客户端](#11-原生-ai-会话与安卓客户端)
+- [12. Codex 会话历史、任务摘要与断线恢复](#12-codex-会话历史任务摘要与断线恢复)
 - [五、常用快捷键速查表](#五常用快捷键速查表)
 - [六、技术架构与分层](#六技术架构与分层)
 - [七、系统要求与安装使用](#七系统要求与安装使用)
@@ -388,6 +391,30 @@ TerminalBuddy 内置了轻量级开发工作台，查看配置文件与修改源
 
 ---
 
+### 10. Agent CLI 管理与大模型供应商配置
+v1.8.0 将原「容器环境」升级为完整的 Agent 管理与模型配置中心：
+
+- **Agent CLI 统一管理**：自动检测 Claude Code / Codex CLI 的安装状态与可执行路径（覆盖 npm shim 与 winget / Volta / pnpm / scoop 等安装目录），支持应用内一键安装 / 更新、版本显示与逐项检查更新，后台执行互斥防并发；
+- **大模型供应商管理**：集中维护多家 API 供应商（增删改查、API Key 加密落盘），每个模型可配置上下文窗口与推理档位（effort：low / medium / high / xhigh / max）；Claude / Codex 双分页编辑，切页不丢编辑状态，Provider 支持拖拽排序与可自由输入的模型组合框；
+- **指定模型启动**：连接与项目右键菜单新增 Claude 模型子菜单，指定模型启动并继承原命令参数，恢复历史会话同样支持指定模型；标签与侧栏以描边「模型 chip」展示所用模型；
+- **Claude 默认配置面板**：`~/.claude/settings.json` 图形化读写、深合并写回并自动保留最近 10 份快照备份；
+- **Web / 手机端同步**：提供同款 Agent / Provider 管理面板，活动状态实时推送。
+
+---
+### 11. 原生 AI 会话与安卓客户端
+除在终端中使用 Claude Code / Codex 外，服务端还内置原生 AI 会话能力，并配套全新的安卓原生客户端：
+
+- **原生 AI 会话**：会话保存在服务端 `AiSessions/*.json`，可选择供应商与模型（仅列出项目已启用的 Agent，继承服务端权限配置）；支持流式回复、中断、Codex 操作确认卡片与断线重连补偿，接口详见 [docs/原生AI会话API.md](docs/原生AI会话API.md)；
+- **安卓原生客户端**（`android/`，Kotlin + Jetpack Compose）：账号密码登录后即可选择项目、供应商与模型开始对话；流式逐字显示、工具执行日志折叠展示、跟随滚动与「回到最新」、浅色 / 深色主题切换；登录令牌经 Android Keystore 加密存储，会话保存在服务端，App 退到后台任务继续执行；
+- **Web 手机版**：手机浏览器访问自动分流至独立手机 SPA，补齐项目与命令管理、Claude / Codex 供应商设置；容器重启后网页端可自动恢复页签并以 `claude --resume` 续接会话。
+
+---
+### 12. Codex 会话历史、任务摘要与断线恢复
+- **Codex 会话历史**：扫描索引 `CODEX_HOME` 下的 rollout 会话文件（自动去重备份副本），与 Claude 历史共享同一面板，支持列表 / 全文搜索 / 重命名 / 置顶 / 删除 / 导出与回放；历史会话可按项目目录匹配 Profile，在新终端以 `codex resume` 续接；
+- **任务摘要标签**：终端启动时自动记录终端与 Claude / Codex 会话的绑定关系，从会话转录生成任务标题；桌面标题栏、会话树与 Web 页签均显示摘要（外观设置可开关）；
+- **会话可靠恢复**：后台定时落盘运行中 Claude 会话的 session ID，容器重启后按已保存页签自动重建终端并续接会话，配合一次性租约机制防止多个浏览器客户端并发重复恢复。
+
+---
 ## 五、常用快捷键速查表
 
 | 按键 / 快捷键 | 作用区域 | 功能说明 |
@@ -426,6 +453,8 @@ TerminalBuddy 采用了现代桌面软件的高性能分层架构，兼顾了底
 - **IPC 桥接层**：强类型安全的 Tauri Invoke 桥接通道，数据采用标准的 camelCase 序列化；
 - **底层后端**：Rust (edition 2021)，通过 `portable-pty` 直接与 Windows 内部的 ConPTY 虚拟终端通信；基于 Win32 原生 API 保证密码凭证安全；
 - **网络与服务**：内置基于 axum 的高性能异步 Web API，支持移动端/跨终端无缝连接。
+- **Web 前端**：独立 React SPA（`web/`），构建产物通过 `include_dir!` 嵌入 Rust 二进制，与桌面端共享同一套 Web API 与手机版界面；
+- **Android 客户端**：Kotlin + Jetpack Compose 原生应用（`android/`），通过 Web API（REST + WebSocket）提供原生 AI 对话能力。
 
 ---
 
@@ -469,11 +498,22 @@ npm run tauri build
 
 ---
 
+### Docker 服务器部署与多端构建
+除 Windows 安装包外，还提供服务器 / NAS 部署与跨平台构建方式：
+
+- **Docker 服务器部署**：在浏览器中使用与桌面同款的功能，手机访问自动分流至独立手机版界面，详见 [DEPLOY_README.md](DEPLOY_README.md) 与 [docs/Docker与完整网页界面.md](docs/Docker与完整网页界面.md)；
+- **飞牛 fnOS 一键部署**：执行 `./deploy-fnos.sh` 将 TerminalBuddy 部署到飞牛 NAS，默认在飞牛上编译镜像（部署机无需安装 Docker / Node / Rust），内置写入探测、健康检查与失败自动回退；
+- **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./build-windows-exe.sh`，借助一次性 Docker 容器完成交叉编译，产出 `dist/` 下的单文件 exe 与 `.sha256` 校验，宿主机无需安装任何工具链；
+- **Android 客户端构建**：`cd android && ./gradlew :app:assembleDebug`（需 JDK 17+ 与 Android SDK），详见 [android/README.md](android/README.md)。
+
+---
 ## 八、安全与隐私设计
 
 - **PC / Web 会话物理隔离**：Web 远程访问默认与桌面会话严格隔离（`webApiShareSessions: false`），防止外部未经授权查看桌面终端输出。
 - **系统级凭据安全保护**：远端主机密码通过 Windows 原生 `CredWriteW` API 加密存储于系统的凭据管理器（Credential Manager），杜绝在进程命令行或明文文件中泄漏。
 - **高安全 HTTP 认证**：内置 Web API 采用 JWT 令牌认证与自适应 Bcrypt 密码哈希，具备防暴力破解限流机制。
+- **登录状态长期保持**：JWT 有效期 30 天，服务重启后保持登录，减少频繁重复登录；
+- **安卓端令牌安全**：登录令牌经 Android Keystore AES/GCM 加密存储，密码不落盘，鉴权失效自动清除登录态。
 
 ---
 
