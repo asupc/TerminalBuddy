@@ -285,54 +285,97 @@ fn next_output(output: &mpsc::Receiver<Result<Value>>, started: Instant, errors:
         }
     }
 }
+#[derive(Default)]
+struct ClaudeMessageBlocks {
+    // 保留最近的原始块序号，兼容完成消息在 stop 事件之后到达。
+    current_index: Option<u64>,
+    next_index: u64,
+}
+#[derive(Default)]
+struct ClaudeOutputState {
+    message_number: u64,
+    current_message: String,
+    messages: HashMap<String, ClaudeMessageBlocks>,
+}
+impl ClaudeOutputState {
+    fn stream(&mut self, cell: &Cell, turn: &str, event: &Value) {
+        match event["type"].as_str().unwrap_or("") {
+            "message_start" => {
+                self.message_number += 1;
+                self.current_message = event["message"]["id"].as_str().map(str::to_string)
+                    .unwrap_or_else(|| format!("message-{}", self.message_number));
+                self.messages.entry(self.current_message.clone()).or_default().current_index = None;
+            }
+            "content_block_start" | "content_block_delta" => {
+                let Some(index) = event["index"].as_u64() else { return; };
+                let blocks = self.messages.entry(self.current_message.clone()).or_default();
+                blocks.current_index = Some(index);
+                blocks.next_index = blocks.next_index.max(index + 1);
+                if event["type"] == "content_block_delta" && event["delta"]["type"] == "text_delta" {
+                    message(cell, &format!("{turn}-text-{}-{index}", self.current_message), "assistant",
+                        event["delta"]["text"].as_str().unwrap_or(""), true);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn assistant(&mut self, cell: &Cell, turn: &str, assistant: &Value) {
+        let Some(content) = assistant["content"].as_array() else { return; };
+        let id = assistant["id"].as_str().unwrap_or(&self.current_message);
+        let blocks = self.messages.entry(id.to_string()).or_default();
+        // Claude 按内容块回传完成消息，其数组下标会重置为 0；必须沿用流式块的原始序号。
+        // 没有流式事件时按已接收的内容块递增；完整多块快照则保留数组中的原始序号。
+        let first_index = if content.len() == 1 { blocks.current_index.unwrap_or(blocks.next_index) } else { 0 };
+        for (offset, item) in content.iter().enumerate() {
+            let index = first_index + offset as u64;
+            if item["type"] == "text" {
+                message(cell, &format!("{turn}-text-{id}-{index}"), "assistant", item["text"].as_str().unwrap_or(""), false);
+            }
+            if item["type"] == "tool_use" {
+                message(cell, &format!("{turn}-tool-{}", item["id"]), "tool",
+                    &format!("{}\n{}", item["name"].as_str().unwrap_or("工具调用"), item["input"]), false);
+            }
+        }
+        blocks.next_index = blocks.next_index.max(first_index + content.len() as u64);
+    }
+}
+fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, value: &Value) -> Result<bool> {
+    if let Some(id) = value["session_id"].as_str() { update(cell, |data| data.thread_id = Some(id.into())); }
+    match value["type"].as_str().unwrap_or("") {
+        "stream_event" => state.stream(cell, turn, &value["event"]),
+        "assistant" => state.assistant(cell, turn, &value["message"]),
+        "user" => {
+            if let Some(blocks) = value["message"]["content"].as_array() {
+                for item in blocks { if item["type"] == "tool_result" {
+                    let body = item["content"].as_str().map(str::to_string).unwrap_or_else(|| item["content"].to_string());
+                    message(cell, &format!("{turn}-result-{}", item["tool_use_id"]), "tool", &body, false);
+                } }
+            }
+        }
+        "result" => {
+            if value["is_error"] == true { return Err(value["result"].as_str().map(str::to_string).unwrap_or_else(|| value["errors"].to_string())); }
+            if let Some(text) = value["result"].as_str() {
+                let has_answer = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.messages.iter().any(|m| m.id.starts_with(turn) && m.role == "assistant");
+                if !has_answer { message(cell, &format!("{turn}-result"), "assistant", text, false); }
+            }
+            if let Some(denials) = value["permission_denials"].as_array().filter(|items| !items.is_empty()) {
+                message(cell, &format!("{turn}-permissions"), "tool", "部分工具操作未获服务端权限。请在服务端配置 Claude 的工具权限后重试。", false);
+                let _ = denials;
+            }
+            return Ok(true);
+        }
+        _ => {}
+    }
+    Ok(false)
+}
 fn run_claude(cell: &Cell, _process: &mut Process, controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<()> {
-    let started = Instant::now(); let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string(); let mut block = 0u64;
+    let started = Instant::now(); let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
+    let mut state = ClaudeOutputState::default();
     loop {
         if matches!(controls.try_recv(), Ok(Control::Stop)) { return Err("已中断".into()); }
         if checkpoint.elapsed() > Duration::from_secs(5) { persist(cell)?; checkpoint = Instant::now(); }
         let Some(value) = next_output(&output, started, &errors)? else { continue; };
-        if let Some(id) = value["session_id"].as_str() { update(cell, |data| data.thread_id = Some(id.into())); }
-        match value["type"].as_str().unwrap_or("") {
-            "stream_event" => {
-                let event = &value["event"];
-                match event["type"].as_str().unwrap_or("") {
-                    "message_start" => { block += 1; }
-                    "content_block_delta" if event["delta"]["type"] == "text_delta" => {
-                        message(cell, &format!("{turn}-text-{block}-{}", event["index"]), "assistant", event["delta"]["text"].as_str().unwrap_or(""), true);
-                    }
-                    _ => {}
-                }
-            }
-            "assistant" => {
-                if let Some(blocks) = value["message"]["content"].as_array() {
-                    for (index, item) in blocks.iter().enumerate() {
-                        if item["type"] == "text" { message(cell, &format!("{turn}-text-{block}-{index}"), "assistant", item["text"].as_str().unwrap_or(""), false); }
-                        if item["type"] == "tool_use" { message(cell, &format!("{turn}-tool-{}", item["id"]), "tool", &format!("{}\n{}", item["name"].as_str().unwrap_or("工具调用"), item["input"]), false); }
-                    }
-                }
-            }
-            "user" => {
-                if let Some(blocks) = value["message"]["content"].as_array() {
-                    for item in blocks { if item["type"] == "tool_result" {
-                        let body = item["content"].as_str().map(str::to_string).unwrap_or_else(|| item["content"].to_string());
-                        message(cell, &format!("{turn}-result-{}", item["tool_use_id"]), "tool", &body, false);
-                    } }
-                }
-            }
-            "result" => {
-                if value["is_error"] == true { return Err(value["result"].as_str().map(str::to_string).unwrap_or_else(|| value["errors"].to_string())); }
-                if let Some(text) = value["result"].as_str() {
-                    let has_answer = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.messages.iter().any(|m| m.id.starts_with(&turn) && m.role == "assistant");
-                    if !has_answer { message(cell, &format!("{turn}-result"), "assistant", text, false); }
-                }
-                if let Some(denials) = value["permission_denials"].as_array().filter(|items| !items.is_empty()) {
-                    message(cell, &format!("{turn}-permissions"), "tool", "部分工具操作未获服务端权限。请在服务端配置 Claude 的工具权限后重试。", false);
-                    let _ = denials;
-                }
-                return Ok(());
-            }
-            _ => {}
-        }
+        if apply_claude_event(cell, &turn, &mut state, &value)? { return Ok(()); }
     }
 }
 fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, stdin: &mut impl Write,
@@ -414,5 +457,128 @@ pub fn shutdown_all() {
     let deadline = Instant::now() + Duration::from_secs(2);
     while RUNNING.load(Ordering::Relaxed) > 0 && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cell() -> Cell {
+        let data = serde_json::from_value(json!({
+            "id": "test-session", "title": "测试会话", "provider": "claude", "projectPath": ".",
+            "model": null, "status": "running", "messages": [], "approvals": [], "error": null,
+            "updatedAt": 0, "revision": 0,
+        })).unwrap();
+        Cell { data: Mutex::new(data), control: Mutex::new(None), path: PathBuf::new() }
+    }
+    fn stream(event: Value) -> Value { json!({"type": "stream_event", "event": event}) }
+    fn start(id: &str) -> Value { stream(json!({"type": "message_start", "message": {"id": id}})) }
+    fn block(index: u64, kind: &str) -> Value {
+        stream(json!({"type": "content_block_start", "index": index, "content_block": {"type": kind}}))
+    }
+    fn delta(index: u64, text: &str) -> Value {
+        stream(json!({"type": "content_block_delta", "index": index, "delta": {"type": "text_delta", "text": text}}))
+    }
+    fn stop(index: u64) -> Value { stream(json!({"type": "content_block_stop", "index": index})) }
+    fn assistant(id: &str, content: Value) -> Value { json!({"type": "assistant", "message": {"id": id, "content": content}}) }
+    fn replay(events: &[Value]) -> Vec<AiMessage> {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        for event in events { apply_claude_event(&cell, "turn", &mut state, event).unwrap(); }
+        cell.data.into_inner().unwrap().messages
+    }
+
+    #[test]
+    fn claude_text_after_thinking_replaces_streamed_message() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        for event in [
+            start("msg-1"), block(0, "thinking"),
+            assistant("msg-1", json!([{"type": "thinking", "thinking": "分析中"}])), stop(0),
+            block(1, "text"), delta(1, "我先获取今天的市场数据"),
+        ] { apply_claude_event(&cell, "turn", &mut state, &event).unwrap(); }
+        let streamed_id = cell.data.lock().unwrap().messages[0].id.clone();
+        let text = "我先获取今天的市场数据再分析。";
+        apply_claude_event(&cell, "turn", &mut state,
+            &assistant("msg-1", json!([{"type": "text", "text": text}]))).unwrap();
+        apply_claude_event(&cell, "turn", &mut state, &json!({"type": "result", "result": text})).unwrap();
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.messages.len(), 1);
+        assert_eq!(data.messages[0].id, streamed_id);
+        assert_eq!(data.messages[0].text, text);
+    }
+
+    #[test]
+    fn claude_completed_text_after_stop_reuses_original_index() {
+        let messages = replay(&[
+            start("msg-1"), block(0, "thinking"), stop(0), block(1, "text"), delta(1, "我先获取"), stop(1),
+            stream(json!({"type": "message_stop"})),
+            assistant("msg-1", json!([{"type": "text", "text": "我先获取今天的市场数据再分析。"}])),
+        ]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "我先获取今天的市场数据再分析。");
+    }
+
+    #[test]
+    fn claude_separate_text_blocks_keep_their_order_around_tools() {
+        let messages = replay(&[
+            start("msg-1"), block(0, "text"), delta(0, "先搜索。"),
+            assistant("msg-1", json!([{"type": "text", "text": "先搜索。"}])), stop(0),
+            block(1, "tool_use"),
+            assistant("msg-1", json!([{"type": "tool_use", "id": "tool-1", "name": "WebSearch", "input": {}}])), stop(1),
+            block(2, "text"), delta(2, "再分析。"),
+            assistant("msg-1", json!([{"type": "text", "text": "再分析。"}])), stop(2),
+            json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": "搜索结果"}]}}),
+        ]);
+        assert_eq!(messages.iter().map(|m| (m.role.as_str(), m.text.as_str())).collect::<Vec<_>>(),
+            vec![("assistant", "先搜索。"), ("tool", "WebSearch\n{}"), ("assistant", "再分析。"), ("tool", "搜索结果")]);
+        assert_ne!(messages[0].id, messages[2].id);
+    }
+
+    #[test]
+    fn claude_complete_only_blocks_do_not_overwrite_each_other() {
+        let messages = replay(&[
+            assistant("msg-1", json!([{"type": "thinking", "thinking": "分析中"}])),
+            assistant("msg-1", json!([{"type": "text", "text": "第一段"}])),
+            assistant("msg-1", json!([{"type": "tool_use", "id": "tool-1", "name": "WebSearch", "input": {}}])),
+            assistant("msg-1", json!([{"type": "text", "text": "第二段"}])),
+            assistant("msg-2", json!([{"type": "text", "text": "第三段"}])),
+        ]);
+        let texts: Vec<_> = messages.iter().filter(|m| m.role == "assistant").map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["第一段", "第二段", "第三段"]);
+    }
+
+    #[test]
+    fn claude_text_without_deltas_and_full_snapshots_are_preserved() {
+        let messages = replay(&[
+            start("msg-1"), block(0, "thinking"), stop(0), block(1, "text"),
+            assistant("msg-1", json!([{"type": "text", "text": "完整回复"}])), stop(1),
+            start("msg-2"), block(0, "thinking"), stop(0), block(1, "text"), delta(1, "快照"),
+            assistant("msg-2", json!([{"type": "thinking", "thinking": "分析中"}, {"type": "text", "text": "快照回复"}])),
+        ]);
+        assert_eq!(messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), vec!["完整回复", "快照回复"]);
+    }
+
+    #[test]
+    fn claude_equal_text_in_different_messages_is_not_deduplicated() {
+        let messages = replay(&[
+            start("msg-1"), block(0, "text"), delta(0, "继续分析。"),
+            assistant("msg-1", json!([{"type": "text", "text": "继续分析。"}])), stop(0),
+            stream(json!({"type": "message_stop"})),
+            start("msg-2"), block(0, "text"), delta(0, "继续分析。"),
+            assistant("msg-2", json!([{"type": "text", "text": "继续分析。"}])), stop(0),
+        ]);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].text, messages[1].text);
+        assert_ne!(messages[0].id, messages[1].id);
+    }
+
+    #[test]
+    fn claude_result_only_still_provides_a_reply() {
+        let messages = replay(&[json!({"type": "result", "result": "最终回复"})]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[0].text, "最终回复");
     }
 }
