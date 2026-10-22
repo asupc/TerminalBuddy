@@ -26,6 +26,7 @@ data class AiUiState(
     val selected: AiSession? = null, val draft: String = "", val sending: Boolean = false,
     val connected: Boolean = false, val working: Boolean = false, val error: String? = null,
     val connectionRevision: Long = 0,
+    val homeLoaded: Boolean = false,
 ) {
     val launchProject get() = projects.find { it.path == projectPath }
     /** 只列出当前项目启用的 Agent 对应供应商。 */
@@ -123,12 +124,12 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(error = null) }
     }
 
-    /** 同时拉取会话、项目与供应商目录；重名或已失效的选择在 reconcile 中收敛。 */
+    /** 首次加载显示进度，已有首页数据时静默刷新，保留当前内容和有效选择。 */
     fun refresh() {
         if (!store.loggedIn || refreshJob?.isActive == true) return
         val epoch = generation
         refreshJob = viewModelScope.launch {
-            mutable.update { it.copy(loading = true) }
+            mutable.update { it.copy(loading = !it.homeLoaded) }
             try {
                 val (sessions, projects, catalog) = coroutineScope {
                     val sessions = async { repository.sessions() }
@@ -138,7 +139,12 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (epoch != generation) return@launch
                 mutable.update {
-                    reconcile(it.copy(sessions = sessions, projects = projects, providers = catalog.providers, loading = false, error = null))
+                    reconcile(
+                        it.copy(
+                            sessions = sessions, projects = projects, providers = catalog.providers,
+                            loading = false, homeLoaded = true, error = null,
+                        )
+                    )
                 }
                 saveSelection()
             } catch (e: CancellationException) {

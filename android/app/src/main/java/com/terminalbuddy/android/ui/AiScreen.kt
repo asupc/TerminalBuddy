@@ -2,6 +2,7 @@ package com.terminalbuddy.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,13 +24,17 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
+import com.terminalbuddy.android.R
 import com.terminalbuddy.android.data.AiSession
 
 /** AI 首页：服务连接、新对话配置、最近对话。 */
@@ -105,23 +110,25 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                             ui.projects.map { AiChoice(it.path, it.name, it.path) },
                             !ui.loading && !ui.working, vm::selectProject,
                         )
-                        AiChoiceField(
-                            "Agent", Icons.Outlined.AutoAwesome, ui.launchProvider?.agent.orEmpty(), "选择 Agent",
-                            ui.availableAgents.map { AiChoice(it, if (it == "codex") "Codex" else "Claude Code") },
-                            !ui.loading && !ui.working, vm::selectAgent,
-                        )
-                        AiChoiceField(
-                            "模型", Icons.Outlined.Tune, ui.launchModelKey, "选择模型",
-                            ui.availableModels.map { target ->
-                                val details = buildList {
-                                    add(target.provider.name)
-                                    if (target.provider.isDefault) add("服务端默认供应商")
-                                    if (target.model.effort.isNotBlank()) add("推理等级：${target.model.effortLabel}")
-                                }
-                                AiChoice(target.key, target.model.title, details.joinToString(" · "))
-                            },
-                            !ui.loading && !ui.working, vm::selectModel,
-                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AiChoiceField(
+                                "Agent", Icons.Outlined.AutoAwesome, ui.launchProvider?.agent.orEmpty(), "选择 Agent",
+                                ui.availableAgents.map { AiChoice(it, if (it == "codex") "Codex" else "Claude Code") },
+                                !ui.loading && !ui.working, vm::selectAgent, Modifier.weight(1f),
+                            )
+                            AiChoiceField(
+                                "模型", Icons.Outlined.Tune, ui.launchModelKey, "选择模型",
+                                ui.availableModels.map { target ->
+                                    val details = buildList {
+                                        add(target.provider.name)
+                                        if (target.provider.isDefault) add("服务端默认供应商")
+                                        if (target.model.effort.isNotBlank()) add("推理等级：${target.model.effortLabel}")
+                                    }
+                                    AiChoice(target.key, target.model.title, details.joinToString(" · "))
+                                },
+                                !ui.loading && !ui.working, vm::selectModel, Modifier.weight(1f),
+                            )
+                        }
                         val hint = when {
                             ui.loading -> "正在同步项目和模型…"
                             ui.projects.isEmpty() -> "服务端还没有登记项目，请添加后刷新。"
@@ -294,7 +301,7 @@ internal fun AiDeleteDialog(session: AiSession, dismiss: () -> Unit, confirm: ()
     )
 }
 
-/** 服务连接表单：地址 + 账号 + 密码，密码不落盘。 */
+/** 服务连接表单：品牌与登录内容整体居中，小屏和键盘弹出时仍可滚动。 */
 @Composable
 private fun AiConnection(ui: AiUiState, login: (String, String, String) -> Unit, back: (() -> Unit)?) {
     var server by rememberSaveable(ui.server) { mutableStateOf(ui.server) }
@@ -303,78 +310,96 @@ private fun AiConnection(ui: AiUiState, login: (String, String, String) -> Unit,
     var visible by remember { mutableStateOf(false) }
     Column(
         Modifier.fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))
-            .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical)),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             if (back != null) {
                 IconButton(back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回 AI 首页", Modifier.size(20.dp)) }
+                Text("服务连接", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = TbColors.Text)
+            } else {
+                Spacer(Modifier.weight(1f))
             }
-            Text(
-                if (back != null) "服务连接" else "TerminalBuddy", Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium, color = TbColors.Text,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
             ThemeToggleButton()
         }
-        Row(
-            Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            AiSmallIcon(Icons.Outlined.Link, Modifier.size(36.dp))
-            Column(Modifier.weight(1f)) {
-                Text("连接你的 AI", style = MaterialTheme.typography.titleMedium)
-                Text("继续服务器上的 Claude 与 Codex 对话", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-            }
-        }
-        AiCard {
-            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    server, { server = it }, Modifier.fillMaxWidth(), label = { Text("服务地址") },
-                    placeholder = { Text("http://192.168.1.10:9600") }, singleLine = true, enabled = !ui.authenticating,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), shape = RoundedCornerShape(10.dp),
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                )
-                OutlinedTextField(
-                    username, { username = it }, Modifier.fillMaxWidth(), label = { Text("服务账号") },
-                    singleLine = true, enabled = !ui.authenticating, shape = RoundedCornerShape(10.dp),
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                )
-                OutlinedTextField(
-                    password, { password = it }, Modifier.fillMaxWidth(), label = { Text("服务密码") },
-                    singleLine = true, enabled = !ui.authenticating, textStyle = MaterialTheme.typography.bodyMedium,
-                    visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(10.dp),
-                    trailingIcon = {
-                        IconButton({ visible = !visible }) {
-                            Icon(
-                                if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                if (visible) "隐藏密码" else "显示密码", Modifier.size(20.dp),
-                            )
-                        }
-                    },
-                )
-                ui.error?.let { Text(it, color = TbColors.Danger, style = MaterialTheme.typography.bodySmall) }
-                Button(
-                    { login(server, username, password) }, Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    enabled = !ui.authenticating, shape = RoundedCornerShape(10.dp),
+            Column(
+                Modifier.widthIn(max = 420.dp).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Column(
+                    Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (ui.authenticating) {
-                        CircularProgressIndicator(Modifier.size(16.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
+                    Image(
+                        painter = painterResource(R.drawable.terminal_buddy_logo),
+                        contentDescription = "Terminal Buddy 标志", modifier = Modifier.size(88.dp),
+                    )
+                    Text(
+                        "Terminal Buddy", Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineMedium,
+                        fontSize = 32.sp, lineHeight = 40.sp, color = TbColors.Text, textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        "继续服务器上的 Claude 与 Codex 对话", Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted, textAlign = TextAlign.Center,
+                    )
+                }
+                AiCard {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            server, { server = it }, Modifier.fillMaxWidth(), label = { Text("服务地址") },
+                            placeholder = { Text("http://192.168.1.10:9600") }, singleLine = true, enabled = !ui.authenticating,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), shape = RoundedCornerShape(10.dp),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                        )
+                        OutlinedTextField(
+                            username, { username = it }, Modifier.fillMaxWidth(), label = { Text("服务账号") },
+                            singleLine = true, enabled = !ui.authenticating, shape = RoundedCornerShape(10.dp),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                        )
+                        OutlinedTextField(
+                            password, { password = it }, Modifier.fillMaxWidth(), label = { Text("服务密码") },
+                            singleLine = true, enabled = !ui.authenticating, textStyle = MaterialTheme.typography.bodyMedium,
+                            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(10.dp),
+                            trailingIcon = {
+                                IconButton({ visible = !visible }) {
+                                    Icon(
+                                        if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                        if (visible) "隐藏密码" else "显示密码", Modifier.size(20.dp),
+                                    )
+                                }
+                            },
+                        )
+                        ui.error?.let { Text(it, color = TbColors.Danger, style = MaterialTheme.typography.bodySmall) }
+                        Button(
+                            { login(server, username, password) }, Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            enabled = !ui.authenticating, shape = RoundedCornerShape(10.dp),
+                        ) {
+                            if (ui.authenticating) {
+                                CircularProgressIndicator(Modifier.size(16.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(if (ui.authenticating) "正在连接…" else "连接并登录")
+                        }
                     }
-                    Text(if (ui.authenticating) "正在连接…" else "连接并登录")
+                }
+                Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Outlined.Lock, null, Modifier.padding(top = 2.dp).size(14.dp), tint = TbColors.TextMuted)
+                    Text(
+                        "使用 TerminalBuddy 服务账号。密码不会保存，登录令牌由设备加密保存。",
+                        color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         }
-        Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(Icons.Outlined.Lock, null, Modifier.padding(top = 2.dp).size(14.dp), tint = TbColors.TextMuted)
-            Text(
-                "使用 TerminalBuddy 服务账号。密码不会保存，登录令牌由设备加密保存。",
-                color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        Spacer(Modifier.height(8.dp))
     }
 }
