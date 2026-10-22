@@ -434,8 +434,8 @@ impl ProviderStore {
     }
 
     /// 注册独立供应商；CLI 参数选择本次会话的供应商，不切换全局默认及登录凭据。
-    fn prepare_launch(&self, provider_id: &str, model_id: &str) -> Result<String, String> {
-        let model = crate::models::profile_validation::quote_cmd_argument("Codex 模型", model_id)?;
+    fn prepare_launch_args(&self, provider_id: &str, model_id: &str) -> Result<Vec<String>, String> {
+        crate::models::profile_validation::quote_cmd_argument("Codex 模型", model_id)?;
         let file = self.read()?;
         let provider = file.providers.iter().find(|p| p.id == provider_id)
             .ok_or_else(|| "Codex 供应商已被删除，请重新选择模型启动".to_string())?;
@@ -476,14 +476,26 @@ impl ProviderStore {
         }
         // -c 在新旧版 Codex 中均支持；不混用新版独立 profile 文件与旧版 profiles 表。
         // 参数只含非敏感配置，API 密钥始终留在受限权限的配置文件中。
-        let mut command = format!("codex -c model_provider={} --model {}", launch_id, model);
+        let mut args = vec!["-c".into(), format!("model_provider={launch_id}"), "--model".into(), model_id.into()];
         if !reasoning_effort.is_empty() {
-            command.push_str(&format!(" -c model_reasoning_effort={}", reasoning_effort));
+            args.extend(["-c".into(), format!("model_reasoning_effort={reasoning_effort}")]);
         }
-        command.push_str(&format!(" -c disable_response_storage={}", provider.disable_response_storage));
+        args.extend(["-c".into(), format!("disable_response_storage={}", provider.disable_response_storage)]);
         for (name, tokens) in [("model_context_window", provider.context_window),
             ("model_auto_compact_token_limit", provider.auto_compact_token_limit)] {
-            if tokens > 0 { command.push_str(&format!(" -c {}={}", name, tokens)); }
+            if tokens > 0 { args.extend(["-c".into(), format!("{name}={tokens}")]); }
+        }
+        Ok(args)
+    }
+
+    fn prepare_launch(&self, provider_id: &str, model_id: &str) -> Result<String, String> {
+        let args = self.prepare_launch_args(provider_id, model_id)?;
+        let mut command = String::from("codex");
+        for (index, arg) in args.iter().enumerate() {
+            command.push(' ');
+            if index > 0 && args[index - 1] == "--model" {
+                command.push_str(&crate::models::profile_validation::quote_cmd_argument("Codex 模型", arg)?);
+            } else { command.push_str(arg); }
         }
         Ok(command)
     }
@@ -629,6 +641,18 @@ pub fn expand_leading_codex_ref(command: &str) -> Result<String, String> {
     let suffix = rest[end..].trim_start();
     if !suffix.is_empty() { expanded.push(' '); expanded.push_str(suffix); }
     Ok(expanded)
+}
+
+/// 原生 app-server 直接使用参数数组，密钥留在受限权限的供应商配置中。
+pub(crate) fn native_session_args(provider_id: &str, model_id: &str) -> Result<Vec<String>, String> {
+    let _guard = config_lock().lock().map_err(|_| lock_error())?;
+    let mut args = store()?.prepare_launch_args(provider_id, model_id)?.into_iter();
+    let mut result = Vec::new();
+    while let Some(arg) = args.next() {
+        // 模型通过 thread/start 或 thread/resume 传递，app-server 只接收配置覆盖项。
+        if arg == "--model" { args.next(); } else { result.push(arg); }
+    }
+    Ok(result)
 }
 
 pub fn get_provider_state() -> Result<CodexProviderState, String> {

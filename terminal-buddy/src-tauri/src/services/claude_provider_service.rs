@@ -299,6 +299,50 @@ pub fn execute(action: ProviderAction) -> Result<ProviderList> {
     store.list()
 }
 
+fn native_error(error: ProviderError) -> String {
+    match error {
+        ProviderError::Invalid(message) | ProviderError::Conflict(message) | ProviderError::Storage(message) => message,
+        ProviderError::NotFound => "Claude 供应商已被删除，请刷新后重新选择".into(),
+    }
+}
+fn configured_models(config: &ProviderInput) -> Vec<String> {
+    let mut models = Vec::new();
+    for model in [&config.model, &config.opus_model, &config.sonnet_model, &config.haiku_model] {
+        if !model.is_empty() && !models.contains(model) { models.push(model.clone()); }
+    }
+    models
+}
+pub(crate) fn native_launch_targets() -> std::result::Result<Vec<crate::models::ai_chat::AiProviderOption>, String> {
+    use crate::models::ai_chat::{AiProviderOption, AiModelOption};
+    let list = execute(ProviderAction::List).map_err(native_error)?;
+    Ok(list.providers.into_iter().map(|provider| {
+        let models = configured_models(&provider.config);
+        AiProviderOption {
+            id: format!("claude:{}", provider.id), agent: "claude".into(), name: provider.config.name,
+            is_default: list.active_provider_id.as_deref() == Some(provider.id.as_str()),
+            models: if models.is_empty() { vec![AiModelOption { id: String::new(), label: "供应商默认模型".into(), effort: String::new() }] }
+                else { models.into_iter().map(|id| AiModelOption { label: id.clone(), id, effort: String::new() }).collect() },
+        }
+    }).collect())
+}
+pub(crate) fn native_session_settings(id: &str, model: &str) -> std::result::Result<Value, String> {
+    let _guard = claude_settings_write_lock().lock().map_err(|_| "Claude 配置锁不可用")?;
+    let connection = DatabaseService::open()?;
+    let row = load(&connection, id).map_err(native_error)?;
+    if row.config.api_key.as_deref().unwrap_or_default().is_empty() { return Err("所选 Claude 供应商没有配置密钥".into()); }
+    let models = configured_models(&row.config);
+    if !model.is_empty() && !models.iter().any(|id| id == model) { return Err("模型已从供应商配置中移除，请刷新后重新选择".into()); }
+    let mut env = row.config.env();
+    if !model.is_empty() {
+        for key in ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"] {
+            env.insert(key.into(), json!(model));
+        }
+    }
+    let mut settings = json!({"env":env});
+    if !model.is_empty() { settings["model"] = json!(model); }
+    Ok(settings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

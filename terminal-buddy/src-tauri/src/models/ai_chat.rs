@@ -24,6 +24,10 @@ pub struct AiSession {
     pub id: String,
     pub title: String,
     pub provider: String,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub provider_name: Option<String>,
     pub project_path: String,
     pub model: Option<String>,
     pub status: String,
@@ -45,6 +49,8 @@ pub struct AiSession {
 #[serde(rename_all = "camelCase")]
 pub struct CreateAiSession {
     pub provider: String,
+    #[serde(default)]
+    pub provider_id: Option<String>,
     pub project_path: String,
     pub model: Option<String>,
 }
@@ -63,4 +69,27 @@ pub struct AnswerAiApproval {
     pub decision: String,
     #[serde(default)]
     pub answers: serde_json::Value,
+}
+
+/// 手机首页可用的供应商/模型目录，绝不包含密钥与 API 凭据。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCatalog { pub providers: Vec<AiProviderOption> }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderOption {
+    pub id: String,
+    pub agent: String,
+    pub name: String,
+    pub is_default: bool,
+    pub models: Vec<AiModelOption>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelOption {
+    pub id: String,
+    pub label: String,
+    pub effort: String,
 }

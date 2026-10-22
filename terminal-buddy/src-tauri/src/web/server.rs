@@ -85,6 +85,7 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::bot_handler::bridge_inbound),
         )
         // 原生 AI 客户端：结构化会话、消息、中断与工具确认。
+        .route("/api/ai/catalog", get(handlers::ai_chat_handler::catalog))
         .route("/api/ai/sessions", get(handlers::ai_chat_handler::list).post(handlers::ai_chat_handler::create))
         .route("/api/ai/sessions/{id}", get(handlers::ai_chat_handler::get).delete(handlers::ai_chat_handler::delete))
         .route("/api/ai/sessions/{id}/messages", post(handlers::ai_chat_handler::send))

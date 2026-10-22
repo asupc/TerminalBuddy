@@ -6,7 +6,9 @@
 
 - Claude：每回合启动 `claude -p --output-format stream-json --verbose --include-partial-messages`，文本通过 stdin 输入，后续回合使用 `--resume` 保留上下文。
 - Codex：启动 `codex app-server`，通过 stdio JSON-RPC 完成初始化、thread 创建/恢复和 turn 提交，解析消息增量、工具执行、确认请求及完成事件。
-- 使用服务器账户已有的 CLI 登录、模型供应商配置和工具权限；可在创建会话时指定模型。
+- `GET /api/ai/catalog` 汇总服务器 Claude 通用供应商、容器 Claude 配置及 Codex 供应商的可用模型，供手机首页选择；目录不包含密钥。
+- 创建会话可指定 `providerId` 与模型；服务端保存所选供应商名称及标识。Claude 通过受限权限的临时 settings 应用对应地址、认证和模型配置，回合退出后删除；Codex 复用供应商注册与参数生成，按会话选择供应商与模型，不改变全局默认供应商。
+- 不指定供应商时保持旧版 CLI 默认配置行为；显式选择的供应商或模型失效时提示重新选择，不静默回退。
 - CLI 不在服务进程 PATH 中时，可通过 `TERMINAL_BUDDY_CLAUDE_BIN` / `TERMINAL_BUDDY_CODEX_BIN` 指定可执行文件绝对路径；同时会尝试用户的 `.local/bin`。
 - 会话在数据目录 `AiSessions/*.json` 私有文件中保存，每回合开始/结束及运行中的定期检查点采用原子写入。服务重启后未完成任务显示为中断。
 - 原生 AI 会话独立于现有 PC/Web PTY 终端；不会自动控制正在桌面终端里运行的 AI。
@@ -19,8 +21,9 @@ REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离
 
 | 路径 | 请求 |
 | --- | --- |
+| `GET /api/ai/catalog` | 供应商列表：`id`、`agent`、`name`、`isDefault`、可用 `models` |
 | `GET /api/ai/sessions` | 列表，不附带完整消息 |
-| `POST /api/ai/sessions` | `{ "provider": "claude", "projectPath": "/workspace/project", "model": "可选" }` |
+| `POST /api/ai/sessions` | `{ "provider": "claude", "providerId": "llm:供应商UUID", "projectPath": "/workspace/project", "model": "已配置模型" }` |
 | `GET /api/ai/sessions/{id}` | 读取完整会话 |
 | `POST /api/ai/sessions/{id}/messages` | `{ "text": "用户消息", "requestId": "UUID" }` |
 | `POST /api/ai/sessions/{id}/stop` | 中断执行 |
@@ -30,13 +33,14 @@ REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离
 
 提交消息立即返回，CLI 在专用工作线程执行。`requestId` 持久化去重，避免网络超时后重试产生重复回合。同一会话互斥，服务器最多同时执行 4 个任务。单条用户输入上限 64 KiB，会话消息文本总量有界。
 
-消息字段为 `id`、`role`（`user` / `assistant` / `tool`）、`text`、`createdAt`；会话还包含状态、模型、项目、确认请求、错误及单调递增 revision。内部 thread ID、归属账户和请求去重信息不会返回客户端。
+消息字段为 `id`、`role`（`user` / `assistant` / `tool`）、`text`、`createdAt`；会话还包含状态、模型、项目、确认请求、错误及单调递增 revision。会话还返回非敏感的 `providerId`、`providerName`，供首页历史项和二级页面展示来源；旧会话这两个字段默认为空。内部 thread ID、归属账户和请求去重信息不会返回客户端。
 
 WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type": "update", "session": "不含历史消息的会话对象", "messages": ["新增或变更的完整消息对象"] }`。客户端按消息 ID 更新有序列表；重连重新获取首帧，REST 可用于补偿。连接沿用全局配额，含 Ping/Pong、认证复核及超时回收。
 
 ## 源码
 
 - `src-tauri/src/models/ai_chat.rs`：结构化数据模型。
+- `src-tauri/src/services/ai_catalog_service.rs`：供应商目录与按会话准备的启动配置。
 - `src-tauri/src/services/ai_chat_service.rs`：会话持久化、进程生命周期、Claude/Codex 协议适配。
 - `src-tauri/src/web/handlers/ai_chat_handler.rs`：REST 和 WebSocket；磁盘及任务启动操作均通过 `spawn_blocking`。
 - `src-tauri/src/web/server.rs`：HTTP/WS 路由注册。

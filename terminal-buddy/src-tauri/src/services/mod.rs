@@ -81,3 +81,5 @@ pub use web_service::*;
 pub use workspace_service::*;
 
 pub mod ai_chat_service;
+
+pub mod ai_catalog_service;

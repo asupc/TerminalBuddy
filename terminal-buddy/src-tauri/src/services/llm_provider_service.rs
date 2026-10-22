@@ -642,6 +642,18 @@ fn legacy_temp_settings_missing(command: &str) -> bool {
 
 /// 展开单条命令开头的引用标记并登记 `terminalId → 临时文件` 映射。
 /// 不含引用的命令原样返回；引用失效（供应商被删）或旧路径残留则拒绝启动。
+/// 原生会话复用供应商的模型、推理等级和上下文配置；不修改全局 Claude 设置。
+pub(crate) fn native_session_settings(provider_id: &str, model_id: &str) -> Result<Value, String> {
+    let (provider, key) = find_provider_for_ref(provider_id)?;
+    let model = provider.enabled_models.iter().find(|model| model.enabled && model.id == model_id)
+        .ok_or("模型已从供应商配置中移除，请刷新后重新选择")?;
+    let effort = resolve_model_effort(model, &provider.default_effort_level);
+    let mut settings = build_temp_settings(&provider, &key, model_id, model.context_window, model.max_output_tokens, &effort);
+    // 原生会话直接接收结构化消息，不注入依赖桌面 PTY 注册的 hooks。
+    if let Some(object) = settings.as_object_mut() { object.remove("hooks"); }
+    Ok(settings)
+}
+
 pub fn expand_leading_claude_ref(command: &str, terminal_id: &str) -> Result<String, String> {
     if command.trim_start().starts_with(super::codex_provider_service::CODEX_REF_PREFIX) {
         return super::codex_provider_service::expand_leading_codex_ref(command);

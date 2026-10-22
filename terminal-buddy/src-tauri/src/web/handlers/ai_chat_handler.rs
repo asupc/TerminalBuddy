@@ -13,6 +13,9 @@ fn service_error(error: String) -> ApiError {
 async fn blocking<T: Send + 'static>(job: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<Json<T>, ApiError> {
     tokio::task::spawn_blocking(job).await.map_err(|e| ApiError::Internal(e.to_string()))?.map(Json).map_err(service_error)
 }
+pub async fn catalog(_claims: ClaimsFromRequest) -> Result<Json<AiCatalog>, ApiError> {
+    blocking(crate::services::ai_catalog_service::catalog).await
+}
 pub async fn list(claims: ClaimsFromRequest) -> Result<Json<Vec<AiSession>>, ApiError> {
     blocking(move || service::list(&claims.0.sub)).await
 }

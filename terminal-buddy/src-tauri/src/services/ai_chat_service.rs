@@ -81,10 +81,12 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
 }
 pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
     if !matches!(input.provider.as_str(), "claude" | "codex") { return Err("请选择 Claude 或 Codex".into()); }
-    if input.model.as_ref().is_some_and(|v| v.len() > 200 || !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/".contains(c))) { return Err("模型名称无效".into()); }
+    if input.model.as_ref().is_some_and(|v| v.len() > 200 || !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/[]@+".contains(c))) { return Err("模型名称无效".into()); }
     if list(owner)?.len() >= 200 { return Err("AI 会话数量已达 200，请先删除旧会话".into()); }
+    let selection = super::ai_catalog_service::selection(&input.provider, input.provider_id.as_deref(), input.model.as_deref())?;
     let id = Uuid::new_v4().to_string();
     let data = AiSession { id: id.clone(), title: "新对话".into(), provider: input.provider,
+        provider_id: selection.as_ref().map(|(id, _)| id.clone()), provider_name: selection.map(|(_, name)| name),
         project_path: input.project_path, model: input.model.filter(|m| !m.trim().is_empty()),
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, owner: owner.into(), thread_id: None, request_ids: Vec::new() };
@@ -228,7 +230,9 @@ fn write_json(stdin: &mut impl Write, value: Value) -> Result<()> {
 }
 fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Result<()> {
     let session = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
+    let launch = super::ai_catalog_service::prepare(&session.provider, session.provider_id.as_deref(), session.model.as_deref())?;
     let mut command = cli_command(&session.provider);
+    command.args(&launch.args);
     command.current_dir(&session.project_path);
     if session.provider == "claude" {
         command.args(["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
