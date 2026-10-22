@@ -12,7 +12,7 @@
 | --- | --- |
 | `deploy-centos.sh` | **发起端（→ CentOS）**：拉代码 → 免密认证 → 打包上传 → 目标机执行 → 自检。可在任意装了 ssh/scp/tar/curl 的机器上跑 |
 | `deploy-fnos.sh` | **发起端（→ 飞牛 fnOS）**：打包源码 → 上传 → 飞牛上构建镜像并重建容器 → 自检 |
-| `update.sh` | **飞牛本地更新**：使用当前目录源码构建镜像，由独立容器切换服务，失败自动恢复原容器与数据 |
+| `update.sh` | **飞牛本地更新**：先 `git pull` 再用当前目录源码构建镜像，由独立容器切换服务，失败自动恢复原容器与数据 |
 | `scripts/update-fnos-container.sh` | `update.sh` 的独立更新执行体：克隆原部署配置、备份数据、切换与故障恢复 |
 | `scripts/deploy-centos-remote.sh` | CentOS 目标端执行体（上传后以 root 运行）：解压、生成 compose、基础镜像兜底、构建/载入镜像、重建容器、健康检查 |
 | `scripts/deploy-fnos-remote.sh` | 飞牛目标端执行体（上传后以 sudo 运行）：目录属主、生成 compose、构建/载入镜像、重建容器 |
@@ -151,17 +151,22 @@ sudo 密码来源（按优先级）：环境变量 `TB_FNOS_PASSWORD` → 凭据
 
 ```bash
 cd /vol1/1000/docker/terminal-buddy/workspace/terminal-buddy
-bash update.sh                       # 构建当前源码并更新，切换时网页终端会断开
+bash update.sh                       # 先 git pull 并用最新源码构建更新，切换时网页终端会断开
+bash update.sh --no-pull             # 跳过 git pull，直接用当前源码构建
 bash update.sh --exit-on-success     # 兼容旧参数，成功后默认结束脚本
 bash update.sh --detach              # 启动独立切换任务后返回
 bash update.sh --keep-rollback       # 成功后保留旧容器与快照，暂缓自动清理
 bash update.sh --container terminal-buddy --health-timeout 300
 ```
 
+脚本开头会在源码目录执行 `git pull --ff-only`，随后打印最新一条提交记录（提交号、
+作者、时间、标题），再继续原有的校验与构建流程；pull 失败则直接退出，不切换服务。
+若本次 pull 修改了 `update.sh` 自身，脚本会带着原参数自动用新版本重新执行。
+
 源码也可位于原部署的 `/vol1/1000/docker/terminal-buddy/src`，或通过
 `--source-dir /实际源码目录` 指定。宿主机账号没有 Docker 权限时使用 `sudo bash update.sh`。
 支持 `TB_FNOS_CONTAINER`、`TB_FNOS_IMAGE`、`TB_UPDATE_HEALTH_TIMEOUT`、
-`TB_UPDATE_KEEP_ROLLBACK` 和 `TB_UPDATE_CLEANUP_DELAY` 环境变量，
+`TB_UPDATE_KEEP_ROLLBACK`、`TB_UPDATE_CLEANUP_DELAY` 和 `TB_UPDATE_PULL=0`（等同 `--no-pull`）环境变量，
 完整选项见 `bash update.sh --help`。
 
 镜像构建完成、候选容器准备就绪后，终端会逐秒提示「10、9、8…1 秒后开始部署，

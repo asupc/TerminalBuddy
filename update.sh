@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # TerminalBuddy 在飞牛 fnOS 上原地更新（也可在自己的网页终端中执行）。
-# 使用当前目录的源码构建镜像，不拉代码，不修改原部署的端口、环境变量与挂载。
+# 先对源码目录执行 git pull 并显示最新一条提交记录，再用当前源码构建镜像，不修改原部署的端口、环境变量与挂载。
 # 独立更新容器负责切换；失败时恢复 data/home 快照并重新启动原容器。
 # 默认更新成功后自动清理旧容器、更新容器和临时镜像标签；--keep-rollback 可保留回退材料。
 # 允许用户顺手输入 sh update.sh：尽早切回 Bash，避免 Bash 专用语法在 dash 中报错。
@@ -12,6 +12,7 @@ IMAGE="${TB_FNOS_IMAGE:-terminal-buddy:server}"
 SOURCE_DIR="${PWD}"
 HEALTH_TIMEOUT="${TB_UPDATE_HEALTH_TIMEOUT:-180}"
 DETACH=0
+DO_PULL="${TB_UPDATE_PULL:-1}"
 KEEP_ROLLBACK="${TB_UPDATE_KEEP_ROLLBACK:-0}"
 CLEANUP_DELAY="${TB_UPDATE_CLEANUP_DELAY:-10}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -35,9 +36,10 @@ usage() {
   --detach              启动独立更新容器后立即返回，不跟随日志
   --exit-on-success     兼容旧参数，更新成功后默认直接结束脚本
   --keep-rollback       成功后保留旧容器、更新容器、快照与临时镜像标签
+  --no-pull             跳过开头的 git pull，直接用当前源码构建
   -h, --help            显示帮助
 
-不执行 git pull。构建时旧服务继续运行，切换和快照备份期间会短暂中断。
+更新前会先在源码目录执行 git pull，并显示最新一条提交记录；--no-pull 可跳过。
 可从宿主机或自己的网页终端执行；镜像构建完成、切换准备就绪后倒计时 10 秒开始部署。
 更新或失败回退仍由独立容器继续执行，浏览器刷新或断开不影响结果。
 需能访问 /var/run/docker.sock；宿主机账号无权限时使用 sudo bash update.sh。
@@ -50,6 +52,8 @@ TB_UPDATE_CLEANUP_DELAY 可调整清理前保留秒数（默认 10 秒）。
 HELP
 }
 
+# 保存原始参数：解析循环会清空 $@，而脚本自我更新后需要带同样的参数重新执行。
+ORIGINAL_ARGS=("$@")
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --source-dir) SOURCE_DIR="${2:?--source-dir 需要目录}"; shift ;;
@@ -57,6 +61,7 @@ while [ "$#" -gt 0 ]; do
     --image) IMAGE="${2:?--image 需要镜像标签}"; shift ;;
     --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout 需要秒数}"; shift ;;
     --detach) DETACH=1 ;;
+    --no-pull) DO_PULL=0 ;;
     --exit-on-success) ;; # 兼容旧参数，成功后默认退出。
     --keep-rollback) KEEP_ROLLBACK=1 ;;
     -h|--help) usage; exit 0 ;;
@@ -68,11 +73,39 @@ done
 [[ "${CONTAINER}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail "容器名无效"
 [[ "${HEALTH_TIMEOUT}" =~ ^[1-9][0-9]{0,4}$ ]] || fail "健康检查超时需为 1～99999 的整数"
 [[ "${KEEP_ROLLBACK}" =~ ^[01]$ ]] || fail "TB_UPDATE_KEEP_ROLLBACK 需为 0 或 1"
+[[ "${DO_PULL}" =~ ^[01]$ ]] || fail "TB_UPDATE_PULL 需为 0 或 1"
 [[ "${CLEANUP_DELAY}" =~ ^[1-9][0-9]{0,3}$ ]] || fail "TB_UPDATE_CLEANUP_DELAY 需为 1～999 的整数"
 [[ "${IMAGE}" != *@* && "${IMAGE}" != sha256:* ]] || fail "--image 需要可写的镜像标签，不能是摘要"
 # 在没有显式标签时补 latest，避免把更新后缀误拼到镜像仓库名上。
 if [[ "${IMAGE##*/}" != *:* ]]; then IMAGE="${IMAGE}:latest"; fi
 SOURCE_DIR="$(cd -- "${SOURCE_DIR}" && pwd -P)"
+
+# 更新前先在源码目录拉取最新代码，并展示最新一条提交，便于确认本次更新的版本。
+if [ "${DO_PULL}" = 1 ]; then
+  command -v git >/dev/null 2>&1 || fail "未检测到 git，无法执行 git pull（可用 --no-pull 跳过）"
+  git -C "${SOURCE_DIR}" rev-parse --git-dir >/dev/null 2>&1 \
+    || fail "源码目录不是 git 仓库：${SOURCE_DIR}（可用 --no-pull 跳过）"
+  # git pull 可能改写本脚本自身，bash 是边读边执行的，必须记下执行前的指纹。
+  SELF_PATH="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+  SELF_BEFORE="$(sha256sum -- "${SELF_PATH}" 2>/dev/null | cut -d' ' -f1 || true)"
+  log "拉取最新代码：git pull（目录 ${SOURCE_DIR}）"
+  git -C "${SOURCE_DIR}" pull --ff-only \
+    || fail "git pull 失败，源码未更新，未执行后续更新流程"
+  SELF_AFTER="$(sha256sum -- "${SELF_PATH}" 2>/dev/null | cut -d' ' -f1 || true)"
+  # 脚本被更新过就带着原参数重新执行，避免继续跑旧逻辑或读到撕裂的文件内容。
+  if [ -n "${SELF_BEFORE}" ] && [ "${SELF_BEFORE}" != "${SELF_AFTER}" ] && [ -z "${TB_UPDATE_SELF_REEXEC:-}" ]; then
+    log "update.sh 已被本次 pull 更新，使用新版本重新执行"
+    export TB_UPDATE_SELF_REEXEC=1
+    # 老版本 bash（如 4.2）在 set -u 下展开空数组会报错，这里显式兼容无参数的情况。
+    exec bash "${SELF_PATH}" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
+  fi
+  log "当前最新提交："
+  git -C "${SOURCE_DIR}" --no-pager log -1 \
+    --format='  commit %H%n  Author: %an <%ae>%n  Date:   %ad%n%n    %s' --date=iso
+else
+  log "已跳过 git pull（--no-pull），直接使用当前源码"
+fi
+
 WORKER_SCRIPT="${SCRIPT_DIR}/scripts/update-fnos-container.sh"
 for file in Dockerfile .dockerignore terminal-buddy/package-lock.json \
   terminal-buddy/web/package-lock.json terminal-buddy/src-tauri/Cargo.lock; do
@@ -204,7 +237,7 @@ docker cp "${WORKER_SCRIPT}" "${UPDATER}:/tmp/tb-update-worker.sh"
 # 保留完整构建日志，网页终端断开后仍可从持久目录手动查看。
 BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/terminal-buddy-build.XXXXXX")"
 if ! {
-  log "使用当前源码构建：${SOURCE_DIR}（原服务保持运行，不执行 git pull）"
+  log "使用当前源码构建：${SOURCE_DIR}（原服务保持运行）"
   docker build --progress=plain --file "${SOURCE_DIR}/Dockerfile" --tag "${CANDIDATE_IMAGE}" "${SOURCE_DIR}"
 } 2>&1 | tee "${BUILD_LOG}"; then
   fail "镜像构建失败，原容器、原镜像标签及数据均未切换"
