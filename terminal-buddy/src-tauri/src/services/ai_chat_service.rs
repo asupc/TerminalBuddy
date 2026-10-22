@@ -231,14 +231,16 @@ fn write_json(stdin: &mut impl Write, value: Value) -> Result<()> {
 fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Result<()> {
     let session = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     let launch = super::ai_catalog_service::prepare(&session.provider, session.provider_id.as_deref(), session.model.as_deref())?;
+    let permissions = super::ai_permission_service::for_agent(&session.provider)?;
     let mut command = cli_command(&session.provider);
     command.args(&launch.args);
     command.current_dir(&session.project_path);
     if session.provider == "claude" {
+        command.args(&permissions.claude_args);
         command.args(["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
-    } else { command.arg("app-server"); }
+    } else { command.args(&permissions.codex_args).arg("app-server"); }
     let mut process = Process(command.spawn().map_err(|e| format!("无法启动 {}，请确认服务端已安装并配置该 CLI：{e}", session.provider))?);
     let mut stdin = process.0.stdin.take().ok_or("AI 输入通道不可用")?;
     let stdout = process.0.stdout.take().ok_or("AI 输出通道不可用")?;
@@ -271,7 +273,7 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
         run_claude(cell, &mut process, controls, output, errors)
     } else {
         write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"}}}))?;
-        run_codex(cell, &session, prompt, &mut stdin, controls, output, errors)
+        run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors)
     }
 }
 fn next_output(output: &mpsc::Receiver<Result<Value>>, started: Instant, errors: &Mutex<String>) -> Result<Option<Value>> {
@@ -484,7 +486,7 @@ fn apply_codex_event(cell: &Cell, turn: &str, state: &mut CodexOutputState, valu
     }
     Ok(false)
 }
-fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, stdin: &mut impl Write,
+fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
     controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<()> {
     let started = Instant::now(); let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
     let mut pending: HashMap<String, (Value, String)> = HashMap::new();
@@ -510,6 +512,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, stdin: &mut impl Wr
         if value["id"] == 1 && value.get("result").is_some() {
             write_json(stdin, json!({"method":"initialized","params":{}}))?;
             let mut params = json!({"cwd": session.project_path});
+            permissions.apply_thread(&mut params);
             if let Some(model) = &session.model { params["model"] = json!(model); }
             let method = if let Some(id) = &session.thread_id { params["threadId"] = json!(id); "thread/resume" } else { "thread/start" };
             write_json(stdin, json!({"id":2,"method":method,"params":params}))?;
@@ -517,7 +520,9 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, stdin: &mut impl Wr
             let id = value["result"]["thread"]["id"].as_str().ok_or("Codex 未返回会话标识")?;
             state.thread_id = Some(id.into());
             update(cell, |data| data.thread_id = Some(id.into())); persist(cell)?;
-            write_json(stdin, json!({"id":3,"method":"turn/start","params":{"threadId":id,"input":[{"type":"text","text":prompt}]}}))?;
+            let mut params = json!({"threadId":id,"input":[{"type":"text","text":prompt}]});
+            permissions.apply_turn(&mut params);
+            write_json(stdin, json!({"id":3,"method":"turn/start","params":params}))?;
         }
         if value["id"] == 3 && value.get("result").is_some() {
             if let Some(id) = value["result"]["turn"]["id"].as_str() { state.turn_id = Some(id.into()); }

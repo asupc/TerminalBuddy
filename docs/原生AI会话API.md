@@ -15,6 +15,20 @@
 
 Claude print 模式由服务器原有权限配置决定可使用哪些工具，拒绝的操作会显示为消息。Codex 命令执行、文件修改确认与用户问题通过原生消息 API 回答；未支持的交互请求会返回明确协议错误，不自动批准。
 
+## Agent 权限参数
+
+原生 AI 会话读取服务端 `settings.json` 的 `agentCommands.claude` / `agentCommands.codex`，继承基础命令中的权限选项。每回合重新读取设置，新建与恢复已有会话均生效；供应商、模型和结构化输入输出仍由原生会话服务管理。
+
+- 配置留空时与桌面端默认值一致：Claude 使用 `--dangerously-skip-permissions`；Codex 使用 `--dangerously-bypass-approvals-and-sandbox` 对应的免审批、完整访问策略。
+- 显式填写命令时以该命令为准，不额外加默认免确认参数。Claude 支持继承 `--permission-mode`、`--dangerously-skip-permissions`、`--allow-dangerously-skip-permissions`、`--allowedTools` / `--allowed-tools`、`--disallowedTools` / `--disallowed-tools` 和 `--tools`。
+- Codex 将 `--yolo` / `--dangerously-bypass-approvals-and-sandbox`、`--ask-for-approval` / `-a`、`--sandbox` / `-s`、旧版 `--full-auto` 及 `-c` / `--config` 中的审批/沙箱设置转换成 App Server 配置。
+- Codex 的 `thread/start` 与 `thread/resume` 显式传入所配置的 `approvalPolicy` / `sandbox`，`turn/start` 同样传入审批策略；workspace-write 的目录和网络设置沿用线程有效配置。
+- 配置中明确要求确认时，保留原生确认卡片；AI 主动询问用户的问题仍由用户回答。基础命令中的 shell 串联命令不会由原生服务执行。
+
+例如，保留项目沙箱且不逐次询问可配置 `codex --ask-for-approval never --sandbox workspace-write`；希望按需确认可配置 `codex --ask-for-approval on-request --sandbox workspace-write`。
+
+该修复仅涉及 TerminalBuddy 服务端。更新并重启服务后，已有会话下一次发送消息时会应用新的启动策略，无需重新创建对话或重装安卓 App。
+
 ## REST 与 WebSocket
 
 REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离。创建会话与每次发送消息都复核项目是否在登记范围内；执行进程直接以该项目为 cwd。
@@ -40,6 +54,7 @@ WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type
 ## 源码
 
 - `src-tauri/src/models/ai_chat.rs`：结构化数据模型。
+- `src-tauri/src/services/ai_permission_service.rs`：继承 Agent 基础命令中的权限参数，并映射到原生 CLI / App Server。
 - `src-tauri/src/services/ai_catalog_service.rs`：供应商目录与按会话准备的启动配置。
 - `src-tauri/src/services/ai_chat_service.rs`：会话持久化、进程生命周期、Claude/Codex 协议适配。
 - `src-tauri/src/web/handlers/ai_chat_handler.rs`：REST 和 WebSocket；磁盘及任务启动操作均通过 `spawn_blocking`。

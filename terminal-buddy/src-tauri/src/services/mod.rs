@@ -83,3 +83,5 @@ pub use workspace_service::*;
 pub mod ai_chat_service;
 
 pub mod ai_catalog_service;
+
+pub(crate) mod ai_permission_service;
