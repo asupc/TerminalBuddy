@@ -80,9 +80,11 @@ cd android
 仓库根目录的一键脚本（参考葫芦娃 `build-android-release.bat`）：
 
 ```bat
-build-android.bat            :: 自动找 JDK/SDK → 编译 Debug APK → 安装 → 启动
+build-android.bat            :: 自动找 JDK/SDK → 编译已签名的 Release APK → 安装 → 启动
 build-android.bat <序列号>   :: 多台设备时指定目标
 ```
+
+产物位于 `android/app/build/outputs/apk/release/app-release.apk`，使用项目现有 Release 签名。
 
 脚本走 `scripts/build-android.ps1`：优先 `JAVA_HOME` 与 `android/local.properties` 的 `sdk.dir`，其次 Android Studio 自带 JDK 和 `ANDROID_HOME`；单台设备自动选择，多台提示输入序号。设置 `TERMINAL_BUDDY_NO_PAUSE=1` 可跳过结束时的等待按键。
 

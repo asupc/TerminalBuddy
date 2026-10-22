@@ -126,13 +126,18 @@ function Select-AndroidDevice {
     return $ready[$index - 1].Serial
 }
 
-function Invoke-AndroidDebugRun {
+function Invoke-AndroidReleaseRun {
     param([string]$ProjectRoot, [string]$RequestedSerial)
 
     $androidRoot = Join-Path $ProjectRoot 'android'
     $gradlew = Join-Path $androidRoot 'gradlew.bat'
     if (!(Test-Path -LiteralPath $gradlew -PathType Leaf)) {
         throw "没有找到安卓工程的 Gradle Wrapper：$gradlew"
+    }
+
+    $signingProperties = Join-Path $androidRoot 'keystore.properties'
+    if (!(Test-Path -LiteralPath $signingProperties -PathType Leaf)) {
+        throw "缺少 Release 签名配置：$signingProperties。请恢复签名配置后重试，以生成可安装的 APK。"
     }
 
     Write-Host '[1/4] 检查 JDK 和 Android SDK……'
@@ -149,15 +154,15 @@ function Invoke-AndroidDebugRun {
     $targetSerial = Select-AndroidDevice -AdbPath $adb -RequestedSerial $RequestedSerial
     Write-Host "安装目标：$targetSerial"
 
-    Write-Host '[3/4] 编译 Debug APK（增量构建，首次运行需要下载依赖）……'
+    Write-Host '[3/4] 编译 Release APK（增量构建，首次运行需要下载依赖）……'
     Push-Location -LiteralPath $androidRoot
     try {
-        Invoke-CheckedCommand -FilePath $gradlew -ArgumentList @(':app:assembleDebug', '--console=plain') -FailureMessage 'Debug 编译打包失败'
+        Invoke-CheckedCommand -FilePath $gradlew -ArgumentList @(':app:assembleRelease', '--console=plain') -FailureMessage 'Release 编译打包失败'
     }
     finally { Pop-Location }
-    $apk = Join-Path $androidRoot 'app\build\outputs\apk\debug\app-debug.apk'
+    $apk = Join-Path $androidRoot 'app\build\outputs\apk\release\app-release.apk'
     if (!(Test-Path -LiteralPath $apk -PathType Leaf)) {
-        throw "未找到 Debug APK：$apk。请检查上方构建输出。"
+        throw "未找到 Release APK：$apk。请检查上方构建输出。"
     }
     Write-Host "APK：$apk"
 
@@ -172,11 +177,11 @@ function Invoke-AndroidDebugRun {
     }
     Invoke-CheckedCommand -FilePath $adb -ArgumentList @('-s', $targetSerial, 'shell', 'am', 'start', '-n', $LaunchActivity) -FailureMessage 'APK 已安装，但启动应用失败'
     Write-Host ''
-    Write-Host "[完成] Debug APK 已安装并启动：$apk" -ForegroundColor Green
+    Write-Host "[完成] Release APK 已安装并启动：$apk" -ForegroundColor Green
 }
 
 try {
-    Invoke-AndroidDebugRun -ProjectRoot (Split-Path -Parent $PSScriptRoot) -RequestedSerial $Serial
+    Invoke-AndroidReleaseRun -ProjectRoot (Split-Path -Parent $PSScriptRoot) -RequestedSerial $Serial
     exit 0
 }
 catch {
