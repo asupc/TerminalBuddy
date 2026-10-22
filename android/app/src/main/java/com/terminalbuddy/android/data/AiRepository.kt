@@ -40,9 +40,10 @@ class AiRepository(context: Context) {
             .putString("provider", provider).putString("model", model).apply()
     }
 
-    /** 已查看会话版本按服务地址隔离；首次升级时由首页建立基线。 */
-    fun viewedRevisions(): Map<String, Long> {
-        if (preferences.getString("viewed_revisions_server", "") != store.server) return emptyMap()
+    /** 按服务地址隔离；null 表示尚未初始化，空表则表示已经建立过基线。 */
+    fun viewedRevisions(): Map<String, Long>? {
+        if (preferences.getString("viewed_revisions_server", "") != store.server ||
+            !preferences.contains("viewed_revisions")) return null
         return preferences.getStringSet("viewed_revisions", emptySet()).orEmpty().mapNotNull { item ->
             val revision = item.substringAfter(':', "").toLongOrNull() ?: return@mapNotNull null
             item.substringBefore(':').takeIf(String::isNotBlank)?.let { it to revision }

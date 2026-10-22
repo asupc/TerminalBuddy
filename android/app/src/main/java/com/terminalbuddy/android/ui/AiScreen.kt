@@ -197,7 +197,8 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     )
                                     if (session.id in ui.unviewedIds) Text(
-                                        "未查看", style = MaterialTheme.typography.labelSmall,
+                                        if (session.status == "idle") "已完成未查看" else "未查看",
+                                        style = MaterialTheme.typography.labelSmall,
                                         color = TbColors.Accent, modifier = Modifier.semantics { stateDescription = "有尚未查看的结果" },
                                     )
                                     if (session.running || session.status == "error" || session.status == "interrupted") {
