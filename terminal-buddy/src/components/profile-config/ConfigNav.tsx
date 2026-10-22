@@ -583,7 +583,9 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             const target = profiles.find((p) => p.id === contextMenu.profileId);
             closeContextMenu();
             if (target) {
-              try { await openTerminalInDir(effectiveProfilePath(target, projects) || undefined); }
+              // 空白终端没有 profile 可回退分组，必须显式带上所属项目，
+              // 否则会话标签会落到“默认”分组。
+              try { await openTerminalInDir(effectiveProfilePath(target, projects) || undefined, { groupName: target.group || undefined }); }
               catch (err) { console.error(err); }
             }
           }}>命令行</div>
@@ -663,7 +665,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             return <>
               <div className="context-menu-item" onClick={async () => {
                 closeContextMenu();
-                try { await openTerminalInDir(project.path); }
+                try { await openTerminalInDir(project.path, { groupName: project.name }); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
               {modelMenuSections(projectModelSources(project), (source, providerId, modelId) => {
