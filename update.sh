@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TerminalBuddy 在飞牛 fnOS 上原地更新（也可在自己的网页终端中执行）。
 # 先对源码目录执行 git pull 并显示最新一条提交记录，再用当前源码构建镜像，不修改原部署的端口、环境变量与挂载。
-# 独立更新容器负责切换；失败时恢复 data/home 快照并重新启动原容器。
+# 构建结果与运行镜像相同时直接结束；有变化时由独立更新容器切换，失败时恢复 data/home 快照并重新启动原容器。
 # 默认更新成功后自动清理旧容器、更新容器和临时镜像标签；--keep-rollback 可保留回退材料。
 # 允许用户顺手输入 sh update.sh：尽早切回 Bash，避免 Bash 专用语法在 dash 中报错。
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
@@ -40,7 +40,8 @@ usage() {
   -h, --help            显示帮助
 
 更新前会先在源码目录执行 git pull，并显示最新一条提交记录；--no-pull 可跳过。
-可从宿主机或自己的网页终端执行；镜像构建完成、切换准备就绪后倒计时 10 秒开始部署。
+使用 BuildKit 复用依赖与编译缓存；构建结果与当前运行镜像相同时直接结束，不备份或重启。
+可从宿主机或自己的网页终端执行；镜像有变化且切换准备就绪后倒计时 10 秒开始部署。
 更新或失败回退仍由独立容器继续执行，浏览器刷新或断开不影响结果。
 需能访问 /var/run/docker.sock；宿主机账号无权限时使用 sudo bash update.sh。
 默认更新成功后自动清理旧容器、更新容器和临时镜像标签；失败时更新日志、
@@ -238,7 +239,7 @@ docker cp "${WORKER_SCRIPT}" "${UPDATER}:/tmp/tb-update-worker.sh"
 BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/terminal-buddy-build.XXXXXX")"
 if ! {
   log "使用当前源码构建：${SOURCE_DIR}（原服务保持运行）"
-  docker build --progress=plain --file "${SOURCE_DIR}/Dockerfile" --tag "${CANDIDATE_IMAGE}" "${SOURCE_DIR}"
+  DOCKER_BUILDKIT=1 docker build --progress=plain --file "${SOURCE_DIR}/Dockerfile" --tag "${CANDIDATE_IMAGE}" "${SOURCE_DIR}"
 } 2>&1 | tee "${BUILD_LOG}"; then
   fail "镜像构建失败，原容器、原镜像标签及数据均未切换"
 fi
@@ -246,6 +247,29 @@ fi
 [ "$(docker inspect --format '{{.Id}}' "${CONTAINER}")" = "${OLD_ID}" ] \
   && [ "$(docker inspect --format '{{.State.Running}}' "${OLD_ID}")" = true ] \
   || fail "构建期间原容器已被其他操作改变，停止本次更新"
+
+# 比较实际构建结果与运行镜像，不依赖可能过期的源码指纹或可被移动的正式标签。
+# 无变化时不启动 worker，避免倒计时、全量快照和容器重建；EXIT trap 回收未启动的更新容器。
+NEW_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "${CANDIDATE_IMAGE}")"
+if [ "${NEW_IMAGE_ID}" = "${OLD_IMAGE_ID}" ]; then
+  docker exec "${OLD_ID}" curl --fail --silent --show-error --max-time 5 \
+    "http://127.0.0.1:${APP_PORT}/api/health" >/dev/null \
+    || fail "镜像未变化，但当前服务健康检查失败，请先恢复原服务"
+  docker tag "${NEW_IMAGE_ID}" "${IMAGE}"
+  docker image rm "${CANDIDATE_IMAGE}" >/dev/null \
+    || log "警告：临时镜像标签未能删除，请稍后手动清理 ${CANDIDATE_IMAGE}"
+  log "更新完成：${CONTAINER}，镜像未变化，已跳过备份和重启" | tee -a "${BUILD_LOG}"
+  # 无需启动独立更新任务，也保留本次构建日志，方便区分跳过与实际切换。
+  if ! docker exec --interactive --user 0 "${OLD_ID}" /bin/bash -euc '
+    mkdir -p /data/.terminal-buddy-update
+    cat > /data/.terminal-buddy-update/update.log
+    chmod 0755 /data/.terminal-buddy-update
+    chmod 0644 /data/.terminal-buddy-update/update.log
+  ' < "${BUILD_LOG}"; then
+    log "警告：本次构建日志未能写入 /data/.terminal-buddy-update/update.log"
+  fi
+  exit 0
+fi
 
 {
   log "启动独立更新任务；切换前会倒计时 10 秒，随后网页终端将断开连接"
