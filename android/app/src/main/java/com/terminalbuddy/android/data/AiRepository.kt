@@ -40,6 +40,23 @@ class AiRepository(context: Context) {
             .putString("provider", provider).putString("model", model).apply()
     }
 
+    /** 已查看会话版本按服务地址隔离；重新安装或首次升级时没有基线，由首页建立。 */
+    fun viewedRevisions(): Map<String, Long> {
+        val key = "viewed_revisions_server"
+        if (preferences.getString(key, "") != store.server) return emptyMap()
+        return preferences.getStringSet("viewed_revisions", emptySet()).orEmpty().mapNotNull { item ->
+            val revision = item.substringAfter(':', "").toLongOrNull() ?: return@mapNotNull null
+            item.substringBefore(':').takeIf(String::isNotBlank)?.let { it to revision }
+        }.toMap()
+    }
+
+    fun saveViewedRevisions(revisions: Map<String, Long>) {
+        preferences.edit()
+            .putString("viewed_revisions_server", store.server)
+            .putStringSet("viewed_revisions", revisions.map { (id, revision) -> "$id:$revision" }.toSet())
+            .apply()
+    }
+
     /** 普通请求：40 秒足够创建会话和发送消息；WebSocket 单独使用无超时的客户端。 */
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)

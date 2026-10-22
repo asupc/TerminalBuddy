@@ -34,6 +34,7 @@ data class AiUiState(
     val deletingAll: Boolean = false,
     val connectionRevision: Long = 0,
     val homeLoaded: Boolean = false,
+    val unviewedIds: Set<String> = emptySet(),
 ) {
     /** 刷新动画独立于首次加载限制，已有数据时页面保持可操作。 */
     val initialLoading get() = loading && !homeLoaded
@@ -75,6 +76,13 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private var selectJob: Job? = null
     private var sendJob: Job? = null
     private var actionJob: Job? = null
+    /** 尚未落盘的本地新对话；为空表示当前会话已经存在于服务端。 */
+    private var pending: AiSession? = null
+    /** 服务端版本基线；首次建立后，同版本不再重复标未查看，供已查看版本复用。 */
+    private var knownRevisions = mutableMapOf<String, Long>()
+    private var viewedRevisions = mutableMapOf<String, Long>()
+    private var unviewedIds = mutableSetOf<String>()
+    private var viewedBaselineReady = false
     private val drafts = mutableMapOf<String, String>()
     /** 会话 ID → 待发送文本 + requestId；结果未知时重试复用同一个 requestId。 */
     private val requests = mutableMapOf<String, Pair<String, String>>()
@@ -124,7 +132,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(reconnecting = true, error = null) }
         if (mutable.value.selected == null) {
             if (mutable.value.deletingAll) startHomePolling() else refresh()
-        } else startRealtime(reconnecting = true)
+        } else if (pending == null) startRealtime(reconnecting = true)
     }
 
     override fun onCleared() {
@@ -136,7 +144,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     fun setVisible(active: Boolean) {
         visible = active
         if (active && store.loggedIn) {
-            if (mutable.value.selected == null) refresh() else startRealtime(reconnecting = true)
+            if (mutable.value.selected == null) refresh()
+            else if (pending == null) startRealtime(reconnecting = true)
         } else {
             stopRealtime()
             refreshJob?.cancel(); refreshJob = null
@@ -154,7 +163,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) { repository.login(server, username.trim(), password) }
                 generation++
                 stopRealtime(); refreshJob?.cancel(); refreshJob = null; selectJob?.cancel(); sendJob?.cancel(); actionJob?.cancel()
-                drafts.clear(); requests.clear()
+                drafts.clear(); requests.clear(); pending = null
+                knownRevisions.clear(); viewedRevisions.clear(); unviewedIds.clear(); viewedBaselineReady = false
                 mutable.value = AiUiState(
                     store.server, store.username, true,
                     projectPath = repository.selectedProject,
@@ -174,7 +184,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         generation++
         stopRealtime(); authJob?.cancel(); refreshJob?.cancel(); selectJob?.cancel(); sendJob?.cancel(); actionJob?.cancel()
-        store.clear(); repository.lastSession = ""; drafts.clear(); requests.clear()
+        store.clear(); repository.lastSession = ""; drafts.clear(); requests.clear(); pending = null
+        knownRevisions.clear(); viewedRevisions.clear(); unviewedIds.clear(); viewedBaselineReady = false
         mutable.value = AiUiState(store.server, store.username)
     }
 
@@ -186,7 +197,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             // 网络抖动只更新标题重连状态，不再插入错误条挤动页面。
             mutable.update { it.copy(reconnecting = true, error = null) }
             if (visible && store.loggedIn) {
-                if (mutable.value.selected == null) refresh() else startRealtime()
+                if (mutable.value.selected == null) refresh()
+                else if (pending == null) startRealtime()
             }
         } else mutable.update { it.copy(reconnecting = false, error = error.userMessage()) }
     }
@@ -212,11 +224,13 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                             Triple(sessions.await(), projects.await(), catalog.await())
                         }
                         if (epoch != generation) return@launch
+                        val unread = recordSessions(sessions)
                         mutable.update {
                             reconcile(
                                 it.copy(
                                     sessions = sessions, projects = projects, providers = catalog.providers,
                                     loading = false, homeLoaded = true, reconnecting = false, error = null,
+                                    unviewedIds = unread,
                                 )
                             )
                         }
@@ -256,10 +270,11 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     val sessions = repository.sessions()
                     if (epoch != generation) return@launch
+                    val unread = recordSessions(sessions)
                     mutable.update { current ->
                         // 手动刷新或删除已更新过列表时，丢弃在途的旧结果，防止恢复已删除会话。
                         if (current.selected != null || current.working || current.sessions !== previous) current
-                        else current.copy(sessions = sessions, reconnecting = false)
+                        else current.copy(sessions = sessions, reconnecting = false, unviewedIds = unread)
                     }
                     retries = 0
                 } catch (e: CancellationException) {
@@ -324,6 +339,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 打开二级会话页：先用列表里的摘要占位，再拉完整消息并开始实时同步。 */
     fun open(id: String) {
         refreshJob?.cancel(); selectJob?.cancel(); sendJob?.cancel(); sendJob = null; stopRealtime()
+        pending = null
         val epoch = ++generation
         val summary = mutable.value.sessions.find { it.id == id }
         repository.lastSession = id
@@ -331,12 +347,15 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 selected = summary, loading = false, loadingSession = true,
                 draft = drafts[id].orEmpty(), sending = false, working = false, error = null,
+                unviewedIds = it.unviewedIds - id,
             )
         }
+        markViewed(id, summary?.revision ?: 0)
         selectJob = viewModelScope.launch {
             try {
                 val session = repository.session(id)
                 if (epoch != generation) return@launch
+                markViewed(session.id, session.revision)
                 mutable.update { it.copy(selected = session, loadingSession = false) }
                 startRealtime()
             } catch (e: CancellationException) {
@@ -353,34 +372,39 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     fun closeSession() {
         generation++
         selectJob?.cancel(); sendJob?.cancel(); sendJob = null; stopRealtime(); repository.lastSession = ""
+        pending = null
         mutable.update {
             it.copy(selected = null, draft = "", loadingSession = false, sending = false, working = false, error = null)
         }
         refresh()
     }
 
+    /** 先打开本地会话壳，首次发送成功后才在服务端落盘。 */
     fun create() {
         val ui = mutable.value
         val project = ui.launchProject ?: return
         val provider = ui.launchProvider ?: return
         val model = ui.launchModel ?: return
-        if (!ui.canCreate || actionJob?.isActive == true) return
-        val epoch = generation
-        actionJob = viewModelScope.launch {
-            mutable.update { it.copy(working = true, error = null) }
-            try {
-                val session = repository.create(project, provider, model.id)
-                if (epoch != generation) return@launch
-                mutable.update { it.copy(sessions = listOf(session) + it.sessions, working = false) }
-                open(session.id)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                if (epoch == generation) {
-                    mutable.update { it.copy(working = false) }
-                    failure(e)
-                }
-            }
+        if (!ui.canCreate) return
+        refreshJob?.cancel(); selectJob?.cancel(); sendJob?.cancel(); sendJob = null; stopRealtime()
+        val session = AiSession(
+            id = "local-${UUID.randomUUID()}",
+            title = "新对话",
+            provider = provider.agent,
+            projectPath = project.path,
+            providerId = provider.id,
+            providerName = provider.name,
+            model = model.id.takeIf(String::isNotBlank),
+        )
+        pending = session
+        ++generation
+        repository.lastSession = ""
+        mutable.update {
+            it.copy(
+                selected = session, loading = false, loadingSession = false,
+                draft = "", sending = false, working = false, connected = false,
+                reconnecting = false, error = null,
+            )
         }
     }
 
@@ -393,18 +417,36 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val session = mutable.value.selected ?: return
         val text = mutable.value.draft.trim()
         if (text.isEmpty() || session.running || sendJob?.isActive == true) return
+        val launch = if (pending?.id == session.id) {
+            val project = mutable.value.launchProject ?: return
+            val provider = mutable.value.launchProvider ?: return
+            val model = mutable.value.launchModel ?: return
+            Triple(project, provider, model)
+        } else null
         val request = requests[session.id]?.takeIf { it.first == text }
             ?: (text to UUID.randomUUID().toString()).also { requests[session.id] = it }
         val epoch = generation
         sendJob = viewModelScope.launch {
             mutable.update { it.copy(sending = true, error = null) }
             try {
-                val result = repository.send(session.id, text, request.second)
-                requests.remove(session.id)
-                if (epoch != generation || mutable.value.selected?.id != session.id) return@launch
+                val target = if (launch == null) session else repository.create(
+                    launch.first, launch.second, launch.third.id,
+                ).also { created ->
+                    if (pending?.id == session.id) pending = null
+                    if (epoch == generation && mutable.value.selected?.id == session.id) {
+                        mutable.update { current -> current.copy(selected = session.copy(id = created.id)) }
+                        drafts.remove(session.id)
+                        drafts[created.id] = text
+                        requests.remove(session.id)
+                        requests[created.id] = request
+                    }
+                }
+                if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
+                val result = repository.send(target.id, text, request.second)
+                requests.remove(target.id)
                 // 发送成功才清空；失败保留文本和 requestId，可安全重试。
                 if (mutable.value.draft.trim() == text) {
-                    drafts[session.id] = ""
+                    drafts[target.id] = ""
                     mutable.update { it.copy(draft = "") }
                 }
                 receive(result)
@@ -425,6 +467,11 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun delete(session: AiSession) {
+        if (pending?.id == session.id) {
+            drafts.remove(session.id); requests.remove(session.id)
+            closeSession()
+            return
+        }
         if (actionJob?.isActive == true) return
         val epoch = generation
         actionJob = viewModelScope.launch {
@@ -435,6 +482,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     if (mutable.value.selected?.id == session.id) closeSession()
                     mutable.update { it.copy(sessions = it.sessions.filterNot { item -> item.id == session.id }, working = false) }
                     drafts.remove(session.id); requests.remove(session.id)
+                    forgetSession(session.id)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -477,6 +525,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     if (epoch != generation) return@launch
                     mutable.update { it.copy(sessions = it.sessions.filterNot { item -> item.id == session.id }) }
                     drafts.remove(session.id); requests.remove(session.id)
+                    forgetSession(session.id)
                     deleted++
                 }
             } finally {
@@ -514,6 +563,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Revision 单调递增：旧快照不会覆盖新状态；列表项按更新时间重排且不携带完整历史。 */
     private fun receive(session: AiSession) {
+        markViewed(session.id, session.revision)
         mutable.update { current ->
             val selected = current.selected
             if (selected == null || selected.id != session.id || session.revision < selected.revision) current
@@ -521,8 +571,58 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 selected = session,
                 sessions = (listOf(session.copy(messages = emptyList())) + current.sessions.filterNot { it.id == session.id })
                     .sortedByDescending { it.updatedAt },
+                unviewedIds = current.unviewedIds - session.id,
             )
         }
+    }
+
+    /**
+     * 列表快照只提供 revision，不提供消息正文。首次加载以当前版本建立基线；
+     * 之后版本推进且会话未打开时标记“未查看”，打开并成功加载后清除。
+     */
+    private fun recordSessions(sessions: List<AiSession>): Set<String> {
+        if (!viewedBaselineReady) {
+            viewedRevisions = repository.viewedRevisions().toMutableMap()
+            if (viewedRevisions.isEmpty()) sessions.forEach { knownRevisions[it.id] = it.revision }
+            viewedBaselineReady = true
+        }
+        val visibleIds = sessions.mapTo(mutableSetOf()) { it.id }
+        knownRevisions.keys.retainAll(visibleIds)
+        unviewedIds.retainAll(visibleIds)
+        sessions.forEach { session ->
+            val previous = knownRevisions[session.id]
+            val viewed = viewedRevisions[session.id]
+            if (previous == null) {
+                knownRevisions[session.id] = session.revision
+                if (viewed == null) viewedRevisions[session.id] = session.revision
+            } else {
+                if (session.revision > previous) {
+                    if (session.id != mutable.value.selected?.id) {
+                        unviewedIds += session.id
+                        viewedRevisions.remove(session.id)
+                    }
+                } else if (viewed == null) {
+                    unviewedIds += session.id
+                }
+                knownRevisions[session.id] = maxOf(previous, session.revision)
+            }
+        }
+        repository.saveViewedRevisions(viewedRevisions)
+        return unviewedIds.toSet()
+    }
+
+    private fun markViewed(id: String, revision: Long) {
+        knownRevisions[id] = maxOf(knownRevisions[id] ?: 0, revision)
+        viewedRevisions[id] = maxOf(viewedRevisions[id] ?: 0, revision)
+        unviewedIds -= id
+        repository.saveViewedRevisions(viewedRevisions)
+        mutable.update { it.copy(unviewedIds = it.unviewedIds - id) }
+    }
+
+    private fun forgetSession(id: String) {
+        knownRevisions.remove(id); viewedRevisions.remove(id); unviewedIds -= id
+        repository.saveViewedRevisions(viewedRevisions)
+        mutable.update { it.copy(unviewedIds = it.unviewedIds - id) }
     }
 
     private fun startRealtime(reconnecting: Boolean = false) {
