@@ -27,7 +27,7 @@ pub async fn create(claims: ClaimsFromRequest, Json(mut input): Json<CreateAiSes
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
 pub async fn get(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
-    blocking(move || service::get(&id, &claims.0.sub)).await
+    blocking(move || service::get_with_summary(&id, &claims.0.sub)).await
 }
 pub async fn send(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<SendAiMessage>) -> Result<Json<AiSession>, ApiError> {
     tokio::task::spawn_blocking(move || {
@@ -49,7 +49,7 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
     let token = params.get("token").cloned().ok_or_else(|| ApiError::Unauthorized("请先登录".into()))?;
     let claims = verify_token(&token, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期，请重新登录".into()))?;
     let owner = claims.sub;
-    let initial = { let id = id.clone(); let owner = owner.clone(); blocking(move || service::get(&id, &owner)).await?.0 };
+    let initial = { let id = id.clone(); let owner = owner.clone(); blocking(move || service::get_with_summary(&id, &owner)).await?.0 };
     let slot = crate::web::ws::WsConnectionSlot::acquire().ok_or_else(|| ApiError::TooManyRequests { message: "实时连接过多，请稍后重试".into(), retry_after_secs: 5 })?;
     Ok(ws.on_upgrade(move |socket| async move {
         let _slot = slot;

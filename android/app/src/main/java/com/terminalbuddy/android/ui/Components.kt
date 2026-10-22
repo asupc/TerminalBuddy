@@ -58,7 +58,7 @@ internal fun ThemeToggleButton() {
         },
         colors = IconButtonDefaults.iconToggleButtonColors(
             contentColor = TbColors.TextSoft,
-            checkedContainerColor = TbColors.Accent.copy(alpha = .12f),
+            checkedContainerColor = Color.Transparent,
             checkedContentColor = TbColors.Accent,
         ),
     ) {
@@ -139,7 +139,7 @@ internal fun AiConnectingOverlay(modifier: Modifier = Modifier) {
 
 /** 复用葫芦娃 Android 的十二瓣画法，逐瓣轮转亮度形成菊花旋转效果。 */
 @Composable
-private fun AiConnectionSpinner(color: Color, modifier: Modifier) {
+internal fun AiConnectionSpinner(color: Color, modifier: Modifier) {
     val transition = rememberInfiniteTransition(label = "服务器连接")
     val phase by transition.animateFloat(
         initialValue = 0f, targetValue = 12f,

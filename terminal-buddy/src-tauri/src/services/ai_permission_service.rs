@@ -26,27 +26,28 @@ impl NativePermissions {
         // 沙箱在 thread/start / thread/resume 设置；沿用线程有效配置，
         // 不手工重建 workspaceWrite，避免丢掉服务端已有的目录/网络访问设置。
     }
+    // app-server 的字段名使用 camelCase，但权限枚举与 CLI 配置均使用连字符格式。
     fn approval(&mut self, value: &str) -> Result<()> {
-        let (wire, config) = match value {
-            "never" => ("never", "never"),
-            "on-request" | "onRequest" => ("onRequest", "on-request"),
-            "untrusted" | "unlessTrusted" => ("unlessTrusted", "untrusted"),
-            "on-failure" | "onFailure" => ("onFailure", "on-failure"),
+        let policy = match value {
+            "never" => "never",
+            "on-request" | "onRequest" => "on-request",
+            "untrusted" | "unlessTrusted" => "untrusted",
+            "on-failure" | "onFailure" => "on-failure",
             _ => return Err("Codex 审批参数无效，请检查 Agent 基础启动命令".into()),
         };
-        self.approval_policy = Some(wire);
-        self.codex_args.extend(["-c".into(), format!("approval_policy=\"{config}\"")]);
+        self.approval_policy = Some(policy);
+        self.codex_args.extend(["-c".into(), format!("approval_policy=\"{policy}\"")]);
         Ok(())
     }
     fn sandbox(&mut self, value: &str) -> Result<()> {
-        let (wire, config) = match value {
-            "read-only" | "readOnly" => ("readOnly", "read-only"),
-            "workspace-write" | "workspaceWrite" => ("workspaceWrite", "workspace-write"),
-            "danger-full-access" | "dangerFullAccess" => ("dangerFullAccess", "danger-full-access"),
+        let mode = match value {
+            "read-only" | "readOnly" => "read-only",
+            "workspace-write" | "workspaceWrite" => "workspace-write",
+            "danger-full-access" | "dangerFullAccess" => "danger-full-access",
             _ => return Err("Codex 沙箱参数无效，请检查 Agent 基础启动命令".into()),
         };
-        self.sandbox = Some(wire);
-        self.codex_args.extend(["-c".into(), format!("sandbox_mode=\"{config}\"")]);
+        self.sandbox = Some(mode);
+        self.codex_args.extend(["-c".into(), format!("sandbox_mode=\"{mode}\"")]);
         Ok(())
     }
     fn config(&mut self, value: &str) -> Result<()> {
@@ -121,4 +122,72 @@ fn option_value(tokens: &[String], index: &mut usize, inline: Option<&str>, flag
     let value = tokens.get(*index).ok_or_else(|| format!("Agent 基础启动命令中的 {flag} 缺少参数"))?;
     if value.starts_with('-') { return Err(format!("Agent 基础启动命令中的 {flag} 缺少参数")); }
     Ok(value.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_modes_use_protocol_values() {
+        for (input, expected) in [
+            ("read-only", "read-only"),
+            ("readOnly", "read-only"),
+            ("workspace-write", "workspace-write"),
+            ("workspaceWrite", "workspace-write"),
+            ("danger-full-access", "danger-full-access"),
+            ("dangerFullAccess", "danger-full-access"),
+        ] {
+            let mut permissions = NativePermissions::default();
+            permissions.sandbox(input).unwrap();
+            for mut params in [json!({"cwd": "."}), json!({"threadId": "existing-thread"})] {
+                let mut expected_params = params.clone();
+                expected_params["sandbox"] = json!(expected);
+                permissions.apply_thread(&mut params);
+                assert_eq!(params, expected_params, "沙箱输入：{input}");
+            }
+            assert_eq!(permissions.codex_args, vec!["-c".to_string(), format!("sandbox_mode=\"{expected}\"")]);
+        }
+    }
+
+    #[test]
+    fn approval_policies_use_protocol_values() {
+        for (input, expected) in [
+            ("never", "never"),
+            ("on-request", "on-request"),
+            ("onRequest", "on-request"),
+            ("untrusted", "untrusted"),
+            ("unlessTrusted", "untrusted"),
+            ("on-failure", "on-failure"),
+            ("onFailure", "on-failure"),
+        ] {
+            let mut permissions = NativePermissions::default();
+            permissions.approval(input).unwrap();
+            let mut thread = json!({});
+            permissions.apply_thread(&mut thread);
+            assert_eq!(thread, json!({"approvalPolicy": expected}), "线程审批输入：{input}");
+            let mut turn = json!({"threadId": "existing-thread"});
+            permissions.apply_turn(&mut turn);
+            assert_eq!(turn, json!({"threadId": "existing-thread", "approvalPolicy": expected}), "消息审批输入：{input}");
+            assert_eq!(permissions.codex_args, vec!["-c".to_string(), format!("approval_policy=\"{expected}\"")]);
+        }
+    }
+
+    #[test]
+    fn config_overrides_normalize_permissions_and_preserve_turn_sandbox() {
+        let mut permissions = NativePermissions::default();
+        permissions.config(r#"approval_policy="onRequest""#).unwrap();
+        permissions.config("sandbox_mode='dangerFullAccess'").unwrap();
+        let mut thread = json!({"cwd": "."});
+        permissions.apply_thread(&mut thread);
+        assert_eq!(thread, json!({"cwd": ".", "approvalPolicy": "on-request", "sandbox": "danger-full-access"}));
+
+        let mut turn = json!({"threadId": "existing-thread"});
+        permissions.apply_turn(&mut turn);
+        assert_eq!(turn, json!({"threadId": "existing-thread", "approvalPolicy": "on-request"}));
+        assert_eq!(permissions.codex_args, vec![
+            "-c", r#"approval_policy="on-request""#,
+            "-c", r#"sandbox_mode="danger-full-access""#,
+        ]);
+    }
 }

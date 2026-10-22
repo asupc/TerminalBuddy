@@ -255,6 +255,19 @@ fn resolve_title(
     Some(TerminalTaskSummary { provider, session_id: id, summary, model: tracked.model.clone() })
 }
 
+/// 原生 AI 会话复用桌面端的摘要来源，只按确切的会话 ID 解析。
+pub fn session_summary(provider: &str, session_id: &str, cwd: &str) -> Option<String> {
+    if !matches!(provider, "claude" | "codex") || uuid::Uuid::parse_str(session_id).is_err() { return None; }
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut tracked = TrackedTerminal {
+        claude_root: env_root(&[], "CLAUDE_CONFIG_DIR", home.join(".claude"), Some(cwd)),
+        codex_root: env_root(&[], "CODEX_HOME", home.join(".codex"), Some(cwd)),
+        ..Default::default()
+    };
+    bind(&mut tracked, provider, session_id);
+    resolve_title(&mut tracked, &mut HashMap::new()).map(|task| task.summary)
+}
+
 pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalTaskSummary> {
     // 扫描可同时由手机和桌面发起；串行扫描，但不持有 Hook 使用的关联表锁。
     static SCAN_LOCK: Mutex<()> = Mutex::new(());

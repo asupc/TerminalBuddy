@@ -32,12 +32,14 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -47,7 +49,7 @@ import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.*
 import kotlinx.serialization.json.*
 
-/** 对话二级页：两行导航、自然段回复与紧凑输入区。 */
+/** 对话二级页：会话摘要、自然段回复与紧凑输入区。 */
 @Composable
 fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     val session = ui.selected ?: return
@@ -70,7 +72,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
                             Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回 AI 首页", Modifier.size(20.dp), tint = TbColors.TextMuted)
                         }
                         Column(Modifier.weight(1f).padding(start = 4.dp)) {
-                            Text(session.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(session.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                                 AiStatusDot(
                                     when {
@@ -296,6 +298,8 @@ private fun AiComposer(ui: AiUiState, session: AiSession, send: () -> Unit, stop
     }
 }
 
+private val AiAvatarSize = 28.dp
+
 /** 用户消息为右侧小气泡，助手正文与思考状态共用左侧头像。 */
 @Composable
 private fun AiMessageBubble(message: AiAnimatedMessage, provider: String, modifier: Modifier = Modifier) {
@@ -325,10 +329,21 @@ private fun AiMessageBubble(message: AiAnimatedMessage, provider: String, modifi
             }
         }
     } else {
+        val textStyle = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = 14.sp, lineHeight = 20.sp,
+            lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
+        )
+        val firstLineHeight = with(LocalDensity.current) { textStyle.lineHeight.toDp() }
+        // 头像与首行的中心对齐；字体放大时调整头像，换行时仍锚定首行。
+        val avatarTopPadding = ((firstLineHeight - AiAvatarSize) / 2).coerceAtLeast(0.dp)
+        val textTopPadding = ((AiAvatarSize - firstLineHeight) / 2).coerceAtLeast(0.dp)
         Row(animated, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-            AiAvatar(provider, Modifier.padding(top = 1.dp))
-            SelectionContainer(Modifier.weight(1f).animateContentSize(tween(160, easing = LinearOutSlowInEasing))) {
-                Text(message.text, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp))
+            AiAvatar(provider, Modifier.padding(top = avatarTopPadding))
+            SelectionContainer(
+                Modifier.weight(1f).padding(top = textTopPadding)
+                    .animateContentSize(tween(160, easing = LinearOutSlowInEasing)),
+            ) {
+                Text(message.text, style = textStyle)
             }
         }
     }
@@ -430,7 +445,7 @@ private fun AiToolMessage(message: AiAnimatedMessage, latest: Boolean, onInspect
 @Composable
 private fun AiAvatar(provider: String, modifier: Modifier = Modifier) {
     Box(
-        modifier.size(28.dp).background(TbColors.Accent.copy(alpha = .1f), CircleShape),
+        modifier.size(AiAvatarSize).background(TbColors.Accent.copy(alpha = .1f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         AiAgentLogo(provider, Modifier.size(20.dp), contentDescription = "$provider 头像")
@@ -446,7 +461,7 @@ private fun AiReplyIndicator(provider: String, label: String, elapsedSeconds: Lo
         AiAvatar(provider)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(label, color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall)
-            CircularProgressIndicator(Modifier.size(14.dp), color = TbColors.Accent, strokeWidth = 1.5.dp)
+            AiConnectionSpinner(TbColors.Accent, Modifier.size(14.dp))
             Text(
                 (elapsedSeconds / 60).toString().padStart(2, '0') + ":" + (elapsedSeconds % 60).toString().padStart(2, '0'),
                 color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,

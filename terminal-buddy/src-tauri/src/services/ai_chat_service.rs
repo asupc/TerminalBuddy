@@ -67,6 +67,13 @@ pub fn get(id: &str, owner: &str) -> Result<AiSession> {
     let snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     Ok(snapshot)
 }
+/// 打开详情或通过 REST 补偿时更新摘要；高频 WebSocket 轮询仍只读内存快照。
+pub fn get_with_summary(id: &str, owner: &str) -> Result<AiSession> {
+    let cell = load(id, owner)?;
+    refresh_title(&cell);
+    let snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
+    Ok(snapshot)
+}
 pub fn list(owner: &str) -> Result<Vec<AiSession>> {
     let mut sessions = Vec::new();
     for entry in fs::read_dir(directory()?).map_err(|e| e.to_string())?.flatten() {
@@ -154,7 +161,24 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     }
     Ok(snapshot)
 }
+fn refresh_title(cell: &Cell) {
+    let (provider, session_id, project_path, revision) = {
+        let Ok(data) = cell.data.lock() else { return; };
+        let Some(session_id) = &data.thread_id else { return; };
+        (data.provider.clone(), session_id.clone(), data.project_path.clone(), data.revision)
+    };
+    let Some(title) = super::terminal_task_service::session_summary(&provider, &session_id, &project_path) else { return; };
+    if let Ok(mut data) = cell.data.lock() {
+        if data.revision == revision && data.provider == provider
+            && data.thread_id.as_deref() == Some(session_id.as_str()) && data.title != title {
+            data.title = title;
+            // 摘要同步不改变会话活动时间，避免重新打开历史时打乱列表顺序。
+            data.revision = data.revision.saturating_add(1);
+        }
+    }
+}
 fn finish(cell: &Cell, result: Result<()>) {
+    refresh_title(cell);
     if let Ok(mut control) = cell.control.lock() {
         if let Ok(mut data) = cell.data.lock() {
             data.approvals.clear();
