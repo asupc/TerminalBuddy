@@ -1,5 +1,6 @@
 package com.terminalbuddy.android.ui
 
+import android.os.SystemClock
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
@@ -49,6 +50,23 @@ internal class AiAnimatedMessage(message: AiMessage, animate: Boolean) {
 @Stable
 internal class AiConversationMotion {
     val messages = mutableStateListOf<AiAnimatedMessage>()
+    // 只合并相邻的工具记录，用户消息和助手正文仍保持原有顺序。
+    val entries by derivedStateOf {
+        buildList<AiConversationEntry> {
+            var index = 0
+            while (index < messages.size) {
+                val message = messages[index]
+                if (message.role == "tool") {
+                    val start = index
+                    while (index < messages.size && messages[index].role == "tool") index++
+                    add(AiConversationEntry.Tools(messages.subList(start, index).toList()))
+                } else {
+                    add(AiConversationEntry.Message(message))
+                    index++
+                }
+            }
+        }
+    }
     var initialized by mutableStateOf(false)
         private set
 
@@ -63,6 +81,37 @@ internal class AiConversationMotion {
         }
         initialized = true
     }
+}
+
+internal sealed interface AiConversationEntry {
+    val id: String
+
+    data class Message(val message: AiAnimatedMessage) : AiConversationEntry {
+        override val id get() = "message:${message.id}"
+    }
+
+    data class Tools(val messages: List<AiAnimatedMessage>) : AiConversationEntry {
+        override val id get() = "tools:${messages.first().id}"
+    }
+}
+
+/** 按本轮用户消息计算耗时，逐字更新和滚动离屏都不会重置计时。 */
+@Composable
+internal fun rememberAiReplyElapsedSeconds(session: AiSession, active: Boolean): Long {
+    val request = session.messages.lastOrNull { it.role == "user" }
+    val startedAt = remember(session.id, request?.id) {
+        request?.createdAt?.takeIf { it > 0 } ?: System.currentTimeMillis()
+    }
+    val elapsed by produceState(0L, session.id, request?.id, active) {
+        if (!active) return@produceState
+        val initialElapsed = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+        val monotonicStart = SystemClock.elapsedRealtime()
+        while (true) {
+            value = (initialElapsed + SystemClock.elapsedRealtime() - monotonicStart) / 1000
+            delay(1000)
+        }
+    }
+    return elapsed
 }
 
 @Composable
@@ -100,13 +149,13 @@ internal class AiConversationScroll(val list: LazyListState) {
 }
 
 @Composable
-internal fun rememberAiConversationScroll(sessionId: String, ready: Boolean, messageCount: Int): AiConversationScroll {
+internal fun rememberAiConversationScroll(sessionId: String, ready: Boolean, entryCount: Int): AiConversationScroll {
     val scroll = remember(sessionId) { AiConversationScroll(LazyListState()) }
     val list = scroll.list
-    LaunchedEffect(scroll, ready) {
+    LaunchedEffect(scroll, ready, entryCount) {
         if (ready && !scroll.positioned) {
-            // 末尾还有一个「状态/锚点」item，所以等消息数 + 1 的条数就绪再定位。
-            val count = snapshotFlow { list.layoutInfo.totalItemsCount }.first { it >= messageCount + 1 }
+            // 工具记录已合并，按实际展示项数加底部锚点等待布局完成。
+            val count = snapshotFlow { list.layoutInfo.totalItemsCount }.first { it >= entryCount + 1 }
             // 打开历史只定位一次，直接的 scrollToItem 不会出现滚动动画。
             list.scrollToItem(count - 1)
             scroll.positioned = true

@@ -35,6 +35,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,12 +54,6 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     var menu by rememberSaveable(session.id) { mutableStateOf(false) }
     var information by rememberSaveable(session.id) { mutableStateOf(false) }
     var deleting by rememberSaveable(session.id) { mutableStateOf(false) }
-    val status = when {
-        ui.loadingSession -> "正在加载"
-        session.running || session.status == "error" || session.status == "interrupted" -> session.statusLabel
-        ui.connected -> "实时同步"
-        else -> "自动同步"
-    }
     Scaffold(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
         containerColor = TbColors.Surface,
@@ -85,7 +80,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
                                     }
                                 )
                                 Text(
-                                    "${session.providerLabel} · ${session.modelLabel} · $status",
+                                    "${session.providerLabel} · ${session.modelLabel}",
                                     style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 )
@@ -164,8 +159,11 @@ private fun AiInfoField(label: String, value: String, monospace: Boolean = false
 private fun AiConversation(ui: AiUiState, vm: AiViewModel, modifier: Modifier) {
     val session = ui.selected ?: return
     val motion = rememberAiConversationMotion(session, ui.loadingSession)
-    val scroll = rememberAiConversationScroll(session.id, motion.initialized, motion.messages.size)
+    val entries = motion.entries
+    val scroll = rememberAiConversationScroll(session.id, motion.initialized, entries.size)
     val revealing by remember(motion) { derivedStateOf { motion.messages.any { it.isRevealing } } }
+    val replying = !ui.loadingSession && (session.running || revealing)
+    val elapsedSeconds = rememberAiReplyElapsedSeconds(session, replying)
     BoxWithConstraints(modifier.fillMaxWidth()) {
         // 确认区随键盘后的可用高度收缩，避免把消息区域全部挤出屏幕。
         val approvalMaxHeight = (maxHeight * .45f).coerceIn(120.dp, 260.dp).coerceAtMost(maxHeight)
@@ -176,18 +174,19 @@ private fun AiConversation(ui: AiUiState, vm: AiViewModel, modifier: Modifier) {
                     state = scroll.list, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(motion.messages, key = { it.id }) { message ->
-                        AiMessageBubble(
-                            message, session.providerLabel,
-                            Modifier.animateItem(
-                                fadeInSpec = null, placementSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                                fadeOutSpec = tween(140),
-                            ),
+                    items(entries, key = { it.id }) { entry ->
+                        val itemModifier = Modifier.animateItem(
+                            fadeInSpec = null, placementSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                            fadeOutSpec = tween(140),
                         )
+                        when (entry) {
+                            is AiConversationEntry.Message -> AiMessageBubble(entry.message, session.providerLabel, itemModifier)
+                            is AiConversationEntry.Tools -> AiToolGroup(entry.messages, itemModifier) { scroll.following = false }
+                        }
                     }
-                    if (session.running || revealing) item(key = "ai-status") {
+                    if (replying) item(key = "ai-status") {
                         AiReplyIndicator(
-                            if (session.running) session.statusLabel else "正在回复",
+                            session.providerLabel, if (session.status == "approval") "等待确认" else "思考中", elapsedSeconds,
                             Modifier.animateItem(placementSpec = spring(stiffness = Spring.StiffnessMediumLow)),
                         )
                     }
@@ -261,7 +260,7 @@ private fun AiComposer(ui: AiUiState, session: AiSession, send: () -> Unit, stop
                             cursorBrush = SolidColor(TbColors.Accent),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                             decorationBox = { innerTextField ->
-                                Box {
+                                Box(contentAlignment = Alignment.CenterStart) {
                                     if (ui.draft.isEmpty()) Text(
                                         "给 ${session.providerLabel} 发消息…", color = TbColors.TextMuted,
                                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
@@ -297,7 +296,7 @@ private fun AiComposer(ui: AiUiState, session: AiSession, send: () -> Unit, stop
     }
 }
 
-/** 用户消息为右侧小气泡，助手为左侧自然段 + 小标记，工具调用为可折叠卡片。 */
+/** 用户消息为右侧小气泡，助手正文与思考状态共用左侧头像。 */
 @Composable
 private fun AiMessageBubble(message: AiAnimatedMessage, provider: String, modifier: Modifier = Modifier) {
     val mine = message.role == "user"
@@ -310,9 +309,7 @@ private fun AiMessageBubble(message: AiAnimatedMessage, provider: String, modifi
         alpha = entrance
         translationY = (1f - entrance) * 10.dp.toPx()
     }
-    if (message.role == "tool") {
-        AiToolMessage(message, animated.padding(start = 28.dp))
-    } else if (mine) {
+    if (mine) {
         Box(animated, contentAlignment = Alignment.CenterEnd) {
             Surface(
                 Modifier.padding(start = 28.dp).widthIn(max = 600.dp).animateContentSize(tween(160, easing = LinearOutSlowInEasing)),
@@ -328,13 +325,8 @@ private fun AiMessageBubble(message: AiAnimatedMessage, provider: String, modifi
             }
         }
     } else {
-        Row(animated, horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Top) {
-            Box(
-                Modifier.padding(top = 1.dp).size(21.dp).background(TbColors.SurfaceHover, RoundedCornerShape(7.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Outlined.AutoAwesome, "$provider 回复", Modifier.size(13.dp), tint = TbColors.Accent)
-            }
+        Row(animated, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            AiAvatar(provider, Modifier.padding(top = 1.dp))
             SelectionContainer(Modifier.weight(1f).animateContentSize(tween(160, easing = LinearOutSlowInEasing))) {
                 Text(message.text, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp))
             }
@@ -342,33 +334,91 @@ private fun AiMessageBubble(message: AiAnimatedMessage, provider: String, modifi
     }
 }
 
+/** 相邻工具调用合并成一组，默认只露出最新记录，展开后按原始顺序查看历史。 */
 @Composable
-private fun AiToolMessage(message: AiAnimatedMessage, modifier: Modifier) {
-    var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
-    val summary = message.text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty().ifBlank { "执行过程" }
-    Surface(
-        modifier.animateContentSize(tween(160, easing = LinearOutSlowInEasing)), color = TbColors.CanvasSoft,
-        shape = RoundedCornerShape(9.dp), border = BorderStroke(1.dp, TbColors.BorderSoft),
+private fun AiToolGroup(messages: List<AiAnimatedMessage>, modifier: Modifier, onInspect: () -> Unit) {
+    var expanded by rememberSaveable(messages.first().id) { mutableStateOf(false) }
+    val latest = messages.last()
+    val hasHistory = messages.size > 1
+    Column(
+        modifier.fillMaxWidth().padding(start = 38.dp)
+            .animateContentSize(tween(160, easing = LinearOutSlowInEasing)),
     ) {
-        Column {
-            Row(
-                Modifier.fillMaxWidth().clickable(role = Role.Button) { expanded = !expanded }
-                    .heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(Icons.Outlined.Terminal, null, Modifier.size(15.dp), tint = TbColors.TextMuted)
+        Row(
+            Modifier.fillMaxWidth().clickable(enabled = hasHistory, role = Role.Button) {
+                expanded = !expanded
+                if (expanded) onInspect()
+            }.semantics { stateDescription = if (expanded) "已展开历史记录" else "已折叠历史记录" }
+                .heightIn(min = 44.dp).padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(Icons.Outlined.Terminal, null, Modifier.size(15.dp), tint = TbColors.TextMuted)
+            Text("执行记录", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+            Text(
+                messages.size.toString(), Modifier.background(TbColors.CanvasSoft, RoundedCornerShape(5.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
+            )
+            Spacer(Modifier.weight(1f))
+            if (hasHistory) {
                 Text(
-                    summary, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    if (expanded) "收起记录" else "展开 " + (messages.size - 1) + " 条",
+                    style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
                 )
-                Text(if (expanded) "收起" else "展开", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
-                Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, Modifier.size(15.dp), tint = TbColors.TextMuted)
+                Icon(
+                    if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null,
+                    Modifier.size(15.dp), tint = TbColors.TextMuted,
+                )
             }
-            if (expanded) {
-                AiDivider()
-                SelectionContainer {
+        }
+        val visibleMessages = if (expanded) messages else listOf(latest)
+        visibleMessages.forEach { message ->
+            key(message.id) {
+                val isLatest = message.id == latest.id
+                if (isLatest) AiDivider()
+                AiToolMessage(message, isLatest, onInspect)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiToolMessage(message: AiAnimatedMessage, latest: Boolean, onInspect: () -> Unit) {
+    var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
+    val summary = remember(message.text) {
+        val firstLine = message.text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        // 结构化工具输出只在详情中展示，避免把 JSON 挤进摘要行。
+        if (firstLine.startsWith("{") || firstLine.startsWith("[")) "工具返回结果" else firstLine.ifBlank { "执行过程" }
+    }
+    Column(Modifier.fillMaxWidth().animateContentSize(tween(160, easing = LinearOutSlowInEasing))) {
+        Row(
+            Modifier.fillMaxWidth().clickable(role = Role.Button) {
+                expanded = !expanded
+                if (expanded) onInspect()
+            }.semantics { stateDescription = if (expanded) "已展开记录详情" else "已折叠记录详情" }
+                .heightIn(min = 44.dp).padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                Icons.Outlined.Terminal, null, Modifier.size(15.dp),
+                tint = if (latest) TbColors.Accent else TbColors.TextMuted,
+            )
+            Text(
+                summary, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                color = if (latest) TbColors.Text else TbColors.TextSoft,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            if (latest) Text("最新", style = MaterialTheme.typography.labelMedium, color = TbColors.Accent)
+            Icon(
+                if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null,
+                Modifier.size(14.dp), tint = TbColors.TextMuted,
+            )
+        }
+        if (expanded) {
+            Surface(color = TbColors.CanvasSoft, shape = RoundedCornerShape(8.dp)) {
+                SelectionContainer(Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
                     Text(
-                        message.text, Modifier.fillMaxWidth().padding(10.dp), fontFamily = FontFamily.Monospace,
+                        message.text, Modifier.padding(10.dp), fontFamily = FontFamily.Monospace,
                         style = MaterialTheme.typography.bodySmall, color = TbColors.TextSoft,
                     )
                 }
@@ -378,31 +428,30 @@ private fun AiToolMessage(message: AiAnimatedMessage, modifier: Modifier) {
 }
 
 @Composable
-private fun AiReplyIndicator(label: String, modifier: Modifier = Modifier) {
-    val pulse = rememberInfiniteTransition(label = "ai-typing")
-    Row(
-        modifier.padding(start = 28.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+private fun AiAvatar(provider: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier.size(28.dp).background(TbColors.Accent.copy(alpha = .1f), CircleShape),
+        contentAlignment = Alignment.Center,
     ) {
-        Row(Modifier.height(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            repeat(3) { index ->
-                val opacity by pulse.animateFloat(
-                    initialValue = .3f, targetValue = 1f,
-                    animationSpec = infiniteRepeatable(
-                        tween(450, easing = FastOutSlowInEasing), RepeatMode.Reverse,
-                        initialStartOffset = StartOffset(index * 150),
-                    ),
-                    label = "ai-typing-dot-$index",
-                )
-                Box(
-                    Modifier.size(3.dp).graphicsLayer {
-                        alpha = opacity
-                        translationY = -2.dp.toPx() * opacity
-                    }.background(TbColors.Accent, CircleShape)
-                )
-            }
+        Icon(Icons.Outlined.SmartToy, "$provider 头像", Modifier.size(17.dp), tint = TbColors.Accent)
+    }
+}
+
+@Composable
+private fun AiReplyIndicator(provider: String, label: String, elapsedSeconds: Long, modifier: Modifier = Modifier) {
+    Row(
+        modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        AiAvatar(provider)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(label, color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+            CircularProgressIndicator(Modifier.size(14.dp), color = TbColors.Accent, strokeWidth = 1.5.dp)
+            Text(
+                (elapsedSeconds / 60).toString().padStart(2, '0') + ":" + (elapsedSeconds % 60).toString().padStart(2, '0'),
+                color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+            )
         }
-        Text(label, color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
