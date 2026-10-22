@@ -174,7 +174,8 @@ export function getInputAtCursor(terminal: Terminal): string | null {
   // Windows 使用 >，Bash / sh / zsh 常用 $、#、%。只取首个提示符，
   // 避免把命令里的重定向符号或变量当成新的提示符。
   const prompt = text.match(/^.*?(?:>|[$#%](?=\s|$))\s*/);
-  return (prompt ? text.substring(prompt[0].length) : text).trimStart();
+  // 没有提示符的行可能是日志或加载动画，不能将其作为命令输入。
+  return prompt ? text.substring(prompt[0].length).trimStart() : null;
 }
 
 /** 输入先于 PTY / WebSocket 回显到达；回显解析后再次刷新补全。 */
@@ -196,6 +197,17 @@ export function installAutocompleteRefresh(terminal: Terminal, refresh: () => vo
   const input = terminal.onData(data => {
     if (!data) return;
     if (data === '\x1b' || /[\r\n\x03\x04]/.test(data)) {
+      cancel();
+      dismiss();
+      return;
+    }
+    // onData 也会发送终端状态/光标位置等自动回复；只接收文本、编辑键和括号粘贴。
+    if (data.startsWith('\x1b')) {
+      const isBracketedPaste = data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~');
+      const isEditingKey = /^\x1b(?:\[[\d;]*[ABCDHF~]|O[ABCDHF])$/.test(data);
+      if (!isBracketedPaste && !isEditingKey) return;
+    }
+    if (getInputAtCursor(terminal) === null) {
       cancel();
       dismiss();
       return;

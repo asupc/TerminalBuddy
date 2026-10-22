@@ -138,3 +138,56 @@ for (const [input, expected] of [
 }
 
 console.log('PASS: Delayed/fragmented PTY echo, paste/IME input, backspace, submit/cancel and disposal.');
+
+// 状态查询会通过 onData 自动回复，不能将回复当作用户输入。
+{
+  const terminal = new Terminal({ cols: 100, rows: 8, allowProposedApi: true });
+  const updates = [];
+  const refresh = installAutocompleteRefresh(terminal, () => updates.push(getInputAtCursor(terminal)), () => {});
+  try {
+    await write(terminal, 'PS C:\\workspace> ');
+    for (const query of ['\x1b[5n', '\x1b[6n', '\x1b[?6n', '\x1b[c', '\x1b[>c']) {
+      await write(terminal, query);
+      await settle();
+      assert.equal(updates.length, 0, '终端状态回复不应触发补全刷新');
+    }
+
+    terminal.input('g', true);
+    await write(terminal, 'g');
+    await settle();
+    assert.equal(updates.at(-1), 'g', '忽略状态回复后仍能正常补全');
+    terminal.input('\r', true);
+    const submittedCount = updates.length;
+    for (const frame of ['-', '/', '|', '\\', '⠋', '⠙']) {
+      await write(terminal, '\r\x1b[2K' + frame + '\x1b[6n');
+      await settle();
+      assert.equal(getInputAtCursor(terminal), null, '加载动画不是命令输入');
+      assert.equal(updates.length, submittedCount, '加载动画及其状态查询不应重新唤起补全');
+    }
+
+    terminal.input('g', true);
+    await settle();
+    assert.equal(updates.length, submittedCount, '没有命令提示符时输入也不应唤起补全');
+
+    await write(terminal, '\r\x1b[2KPS C:\\workspace> ');
+    terminal.input('gi', true);
+    await write(terminal, 'gi');
+    await settle();
+    assert.equal(updates.at(-1), 'gi', '加载结束后输入可重新触发补全');
+
+    terminal.input('\x1b[D', true);
+    await write(terminal, '\x1b[D');
+    await settle();
+    assert.equal(updates.at(-1), 'g', '方向键编辑后仍会刷新补全');
+
+    terminal.input('\x1b[200~it \x1b[201~', true);
+    await write(terminal, 'it ');
+    await settle();
+    assert.equal(updates.at(-1), 'git ', '括号粘贴后仍会刷新补全');
+  } finally {
+    refresh.dispose();
+    terminal.dispose();
+  }
+}
+
+console.log('通过：终端状态回复、加载动画、执行期间输入、恢复输入、方向键与括号粘贴。');
