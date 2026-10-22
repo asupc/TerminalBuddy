@@ -51,7 +51,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
         PageHeader("TerminalBuddy") {
             IconButton(vm::refresh, enabled = !ui.loading) {
-                if (ui.loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                if (ui.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Outlined.Refresh, "刷新项目和模型", Modifier.size(20.dp), tint = TbColors.TextMuted)
             }
             var menu by remember { mutableStateOf(false) }
@@ -108,13 +108,13 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                         AiChoiceField(
                             "项目", Icons.Outlined.FolderOpen, ui.projectPath, "选择项目",
                             ui.projects.map { AiChoice(it.path, it.name, it.path) },
-                            !ui.loading && !ui.working, vm::selectProject,
+                            !ui.initialLoading && !ui.working, vm::selectProject,
                         )
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             AiChoiceField(
                                 "Agent", Icons.Outlined.AutoAwesome, ui.launchProvider?.agent.orEmpty(), "选择 Agent",
                                 ui.availableAgents.map { AiChoice(it, if (it == "codex") "Codex" else "Claude Code") },
-                                !ui.loading && !ui.working, vm::selectAgent, Modifier.weight(1f),
+                                !ui.initialLoading && !ui.working, vm::selectAgent, Modifier.weight(1f),
                             )
                             AiChoiceField(
                                 "模型", Icons.Outlined.Tune, ui.launchModelKey, "选择模型",
@@ -126,11 +126,11 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                                     }
                                     AiChoice(target.key, target.model.title, details.joinToString(" · "))
                                 },
-                                !ui.loading && !ui.working, vm::selectModel, Modifier.weight(1f),
+                                !ui.initialLoading && !ui.working, vm::selectModel, Modifier.weight(1f),
                             )
                         }
                         val hint = when {
-                            ui.loading -> "正在同步项目和模型…"
+                            ui.initialLoading -> "正在同步项目和模型…"
                             ui.projects.isEmpty() -> "服务端还没有登记项目，请添加后刷新。"
                             ui.availableAgents.isEmpty() -> "该项目尚未启用 Claude Code 或 Codex，请在服务端配置。"
                             ui.availableModels.isEmpty() -> "该 Agent 暂无可用模型，请在服务端配置后刷新。"

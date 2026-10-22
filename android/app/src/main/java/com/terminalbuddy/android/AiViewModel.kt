@@ -28,6 +28,8 @@ data class AiUiState(
     val connectionRevision: Long = 0,
     val homeLoaded: Boolean = false,
 ) {
+    /** 刷新动画独立于首次加载限制，已有数据时页面保持可操作。 */
+    val initialLoading get() = loading && !homeLoaded
     val launchProject get() = projects.find { it.path == projectPath }
     /** 只列出当前项目启用的 Agent 对应供应商。 */
     val availableProviders get() = providers.filter { provider ->
@@ -41,7 +43,7 @@ data class AiUiState(
     }
     val launchModel get() = launchProvider?.models?.find { it.id == modelId }
     val launchModelKey get() = availableModels.find { it.provider.id == providerId && it.model.id == modelId }?.key.orEmpty()
-    val canCreate get() = launchProject != null && launchProvider != null && launchModel != null && !loading && !working
+    val canCreate get() = launchProject != null && launchProvider != null && launchModel != null && !initialLoading && !working
 }
 
 class AiViewModel(application: Application) : AndroidViewModel(application) {
@@ -124,12 +126,12 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(error = null) }
     }
 
-    /** 首次加载显示进度，已有首页数据时静默刷新，保留当前内容和有效选择。 */
+    /** 刷新按钮显示进度，首次加载额外显示提示；已有内容和有效选择保持可用。 */
     fun refresh() {
         if (!store.loggedIn || refreshJob?.isActive == true) return
         val epoch = generation
         refreshJob = viewModelScope.launch {
-            mutable.update { it.copy(loading = !it.homeLoaded) }
+            mutable.update { it.copy(loading = true) }
             try {
                 val (sessions, projects, catalog) = coroutineScope {
                     val sessions = async { repository.sessions() }
@@ -153,6 +155,11 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 if (epoch == generation) {
                     mutable.update { it.copy(loading = false) }
                     failure(e)
+                }
+            } finally {
+                // 取消旧请求时，不能清除后续刷新任务的进度。
+                if (refreshJob === coroutineContext.job) {
+                    mutable.update { it.copy(loading = false) }
                 }
             }
         }
