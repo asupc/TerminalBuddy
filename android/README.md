@@ -11,6 +11,7 @@ Kotlin + Jetpack Compose 原生安卓工程，连接 TerminalBuddy 内嵌 Web AP
 | 认证 | 服务地址（支持反向代理子目录）、账号、密码登录；登录成功后先校验目标服务确实提供原生 AI 接口，再保存连接。令牌用 Android Keystore AES/GCM 加密后写入 SharedPreferences，密码不落盘；401 自动清除登录态 |
 | 首页 | 服务连接状态、项目选择、供应商与模型选择（只列出项目已启用的 Agent）、开始对话、最近对话列表与删除 |
 | 对话 | 原生消息列表（用户 / AI / 工具执行日志，日志默认折叠、可展开）、流式回复、逐字显示、跟随滚动与「回到最新」、多行输入、发送失败保留原文并复用 requestId 重试、中断、Codex 操作确认卡片、断线重连与 REST 轮询补偿 |
+| 布局 | 与葫芦娃最新版一致的紧凑布局：首页为连接状态 + 新对话配置卡 + 两行最近对话列表（连续卡片、行内分割线），对话页独立为二级页并带两行导航、对话信息面板与底部操作面板 |
 | 服务端能力 | 会话保存在服务端 `AiSessions/*.json`，App 退到后台任务继续执行；重新打开回到选择首页，可从「最近对话」继续 |
 
 不包含终端页面、项目文件、Git 等桌面端其它能力。
@@ -30,10 +31,11 @@ app/src/main/java/com/terminalbuddy/android/
 │   └── Json.kt                     宽松 JSON 工具与错误文案
 └── ui/
     ├── TerminalBuddyRoot.kt        根导航与微信式二级页转场
-    ├── AiScreen.kt                 连接页、首页、二级会话页
+    ├── AiScreen.kt                 连接页、AI 首页、选择面板、删除确认
+    ├── AiConversationScreen.kt     二级对话页、输入区、消息与确认卡片
     ├── AiConversationMotion.kt     逐字显示与跟随滚动
-    ├── Theme.kt                    TerminalBuddy 配色
-    └── Components.kt               标题栏、图标、错误条等共享组件
+    ├── Theme.kt                    TerminalBuddy 深色配色
+    └── Components.kt               标题栏、小图标、错误条、卡片等共享组件
 ```
 
 ## 接口（均为 TerminalBuddy 现有 Web API）

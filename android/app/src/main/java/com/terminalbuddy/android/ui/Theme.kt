@@ -1,6 +1,5 @@
 package com.terminalbuddy.android.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -48,24 +47,14 @@ private val DarkPalette = darkColorScheme(
     error = TbColors.Danger,
 )
 
-// 设备切换浅色时仍沿用同一套深色终端视觉，只把背景略微提亮，避免纯白页面刺眼。
-private val LightPalette = darkColorScheme(
-    primary = TbColors.AccentStrong, onPrimary = Color.White,
-    primaryContainer = Color(0xFFD8F5E8), onPrimaryContainer = Color(0xFF062519),
-    secondary = Color(0xFF3C6FA8),
-    background = Color(0xFFF2F5F3), onBackground = Color(0xFF12201A),
-    surface = Color.White, onSurface = Color(0xFF12201A),
-    surfaceVariant = Color(0xFFE4EAE6), onSurfaceVariant = Color(0xFF4C5B54),
-    surfaceContainer = Color(0xFFEDF1EE), surfaceContainerHigh = Color(0xFFE4EAE6),
-    surfaceContainerHighest = Color(0xFFDCE3DE),
-    outline = Color(0xFF75837C), outlineVariant = Color(0xFFD3DBD6),
-    error = Color(0xFFB44452),
-)
-
+/**
+ * 固定使用深色终端视觉：和桌面端终端页一致，也不让 AI 页在浅色设备上出现
+ * 白底深字与终端风组件混排。界面里直接引用的 [TbColors] 因此始终成立。
+ */
 @Composable
 fun TerminalBuddyTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkPalette else LightPalette,
+        colorScheme = DarkPalette,
         shapes = Shapes(
             extraSmall = RoundedCornerShape(4.dp), small = RoundedCornerShape(6.dp),
             medium = RoundedCornerShape(8.dp), large = RoundedCornerShape(12.dp), extraLarge = RoundedCornerShape(20.dp),

@@ -43,8 +43,8 @@ fun TerminalBuddyRoot(aiVm: AiViewModel = viewModel()) {
     val aiSnapshot = remember { mutableStateOf(aiUi) }
     SideEffect { if (aiUi.selected != null) aiSnapshot.value = aiUi }
     val pageAiUi = if (aiUi.selected != null) aiUi else aiSnapshot.value
-    // 根节点统一铺底色：Compose 的 Column/Box 不会自动绘制 Material 背景，深色模式下会露出窗口默认底色。
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    // 根节点统一铺底色：Compose 的 Column/Box 不会自动绘制 Material 背景，否则会露出窗口默认底色。
+    Surface(Modifier.fillMaxSize(), color = TbColors.Canvas) {
         AnimatedContent(targetState = page, transitionSpec = { pageSlideTransition() }, label = "页面转场") { destination ->
             if (destination == RootPage.Home) {
                 Box(
