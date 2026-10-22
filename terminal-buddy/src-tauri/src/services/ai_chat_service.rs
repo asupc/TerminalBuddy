@@ -4,7 +4,7 @@
 use crate::models::ai_chat::*;
 use super::{atomic_file::atomic_write_private, PathService};
 use serde_json::{json, Value};
-use std::{collections::HashMap, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
+use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
     process::{Child, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicUsize, Ordering}},
     thread, time::{Duration, Instant}};
 use uuid::Uuid;
@@ -286,9 +286,14 @@ fn next_output(output: &mpsc::Receiver<Result<Value>>, started: Instant, errors:
     }
 }
 #[derive(Default)]
+struct ClaudeContentBlock {
+    kind: String,
+    started: bool,
+    completed: bool,
+}
+#[derive(Default)]
 struct ClaudeMessageBlocks {
-    // 保留最近的原始块序号，兼容完成消息在 stop 事件之后到达。
-    current_index: Option<u64>,
+    blocks: BTreeMap<u64, ClaudeContentBlock>,
     next_index: u64,
 }
 #[derive(Default)]
@@ -296,6 +301,7 @@ struct ClaudeOutputState {
     message_number: u64,
     current_message: String,
     messages: HashMap<String, ClaudeMessageBlocks>,
+    seen_uuids: HashSet<String>,
 }
 impl ClaudeOutputState {
     fn stream(&mut self, cell: &Cell, turn: &str, event: &Value) {
@@ -304,16 +310,25 @@ impl ClaudeOutputState {
                 self.message_number += 1;
                 self.current_message = event["message"]["id"].as_str().map(str::to_string)
                     .unwrap_or_else(|| format!("message-{}", self.message_number));
-                self.messages.entry(self.current_message.clone()).or_default().current_index = None;
+                self.messages.entry(self.current_message.clone()).or_default();
             }
             "content_block_start" | "content_block_delta" => {
                 let Some(index) = event["index"].as_u64() else { return; };
                 let blocks = self.messages.entry(self.current_message.clone()).or_default();
-                blocks.current_index = Some(index);
-                blocks.next_index = blocks.next_index.max(index + 1);
-                if event["type"] == "content_block_delta" && event["delta"]["type"] == "text_delta" {
-                    message(cell, &format!("{turn}-text-{}-{index}", self.current_message), "assistant",
-                        event["delta"]["text"].as_str().unwrap_or(""), true);
+                blocks.next_index = blocks.next_index.max(index.saturating_add(1));
+                let block = blocks.blocks.entry(index).or_default();
+                if block.completed { return; }
+                let key = format!("{turn}-text-{}-{index}", self.current_message);
+                if event["type"] == "content_block_start" {
+                    if block.started { return; }
+                    block.started = true;
+                    block.kind = event["content_block"]["type"].as_str().unwrap_or("").into();
+                    if block.kind == "text" {
+                        message(cell, &key, "assistant", event["content_block"]["text"].as_str().unwrap_or(""), true);
+                    }
+                } else if event["delta"]["type"] == "text_delta" {
+                    block.kind = "text".into();
+                    message(cell, &key, "assistant", event["delta"]["text"].as_str().unwrap_or(""), true);
                 }
             }
             _ => {}
@@ -323,23 +338,32 @@ impl ClaudeOutputState {
         let Some(content) = assistant["content"].as_array() else { return; };
         let id = assistant["id"].as_str().unwrap_or(&self.current_message);
         let blocks = self.messages.entry(id.to_string()).or_default();
-        // Claude 按内容块回传完成消息，其数组下标会重置为 0；必须沿用流式块的原始序号。
-        // 没有流式事件时按已接收的内容块递增；完整多块快照则保留数组中的原始序号。
-        let first_index = if content.len() == 1 { blocks.current_index.unwrap_or(blocks.next_index) } else { 0 };
         for (offset, item) in content.iter().enumerate() {
-            let index = first_index + offset as u64;
-            if item["type"] == "text" {
+            let kind = item["type"].as_str().unwrap_or("");
+            // 单块完成消息的数组下标会重置，按原始块顺序和类型领取尚未完成的块。
+            // 保留每个块的状态，避免依赖最近事件的位置，兼容停止事件及后续块先到达。
+            let index = if content.len() == 1 {
+                blocks.blocks.iter().find(|(_, block)| !block.completed && block.kind == kind)
+                    .map(|(&index, _)| index).unwrap_or(blocks.next_index)
+            } else { offset as u64 };
+            blocks.next_index = blocks.next_index.max(index.saturating_add(1));
+            let block = blocks.blocks.entry(index).or_default();
+            block.kind = kind.into(); block.completed = true;
+            if kind == "text" {
                 message(cell, &format!("{turn}-text-{id}-{index}"), "assistant", item["text"].as_str().unwrap_or(""), false);
             }
-            if item["type"] == "tool_use" {
+            if kind == "tool_use" {
                 message(cell, &format!("{turn}-tool-{}", item["id"]), "tool",
                     &format!("{}\n{}", item["name"].as_str().unwrap_or("工具调用"), item["input"]), false);
             }
         }
-        blocks.next_index = blocks.next_index.max(first_index + content.len() as u64);
     }
 }
 fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, value: &Value) -> Result<bool> {
+    if let Some(uuid) = value["uuid"].as_str().filter(|id| !id.is_empty()) {
+        let event_key = format!("{}:{uuid}", value["type"].as_str().unwrap_or(""));
+        if !state.seen_uuids.insert(event_key) { return Ok(false); }
+    }
     if let Some(id) = value["session_id"].as_str() { update(cell, |data| data.thread_id = Some(id.into())); }
     match value["type"].as_str().unwrap_or("") {
         "stream_event" => state.stream(cell, turn, &value["event"]),
@@ -378,10 +402,93 @@ fn run_claude(cell: &Cell, _process: &mut Process, controls: mpsc::Receiver<Cont
         if apply_claude_event(cell, &turn, &mut state, &value)? { return Ok(()); }
     }
 }
+#[derive(Default)]
+struct CodexCommandOutput {
+    command: String,
+    output: String,
+}
+#[derive(Default)]
+struct CodexOutputState {
+    thread_id: Option<String>,
+    turn_id: Option<String>,
+    completed_items: HashSet<String>,
+    commands: HashMap<String, CodexCommandOutput>,
+}
+impl CodexOutputState {
+    fn accepts(&self, params: &Value) -> bool {
+        if let (Some(expected), Some(actual)) = (self.thread_id.as_deref(), params["threadId"].as_str()) {
+            if expected != actual { return false; }
+        }
+        let actual_turn = params["turnId"].as_str().or_else(|| params["turn"]["id"].as_str());
+        if let (Some(expected), Some(actual)) = (self.turn_id.as_deref(), actual_turn) {
+            if expected != actual { return false; }
+        }
+        true
+    }
+    fn item(&mut self, cell: &Cell, turn: &str, item: &Value, completed: bool) {
+        let Some(id) = item["id"].as_str().filter(|id| !id.is_empty()) else { return; };
+        if !completed && self.completed_items.contains(id) { return; }
+        if completed { self.completed_items.insert(id.into()); }
+        let key = format!("{turn}-item-{id}");
+        match item["type"].as_str().unwrap_or("") {
+            "agentMessage" if completed => message(cell, &key, "assistant", item["text"].as_str().unwrap_or(""), false),
+            "commandExecution" => {
+                let command = self.commands.entry(id.into()).or_default();
+                if let Some(text) = item["command"].as_str() { command.command = text.into(); }
+                if let Some(output) = item["aggregatedOutput"].as_str() {
+                    if completed || command.output.is_empty() { command.output = output.into(); }
+                }
+                truncate(&mut command.output, MAX_TEXT);
+                let name = if command.command.is_empty() { "执行命令" } else { &command.command };
+                message(cell, &key, "tool", &format!("{name}\n{}", command.output), false);
+            }
+            "fileChange" => message(cell, &key, "tool", &format!("文件变更\n{}", item["changes"]), false),
+            _ => {}
+        }
+    }
+}
+fn apply_codex_event(cell: &Cell, turn: &str, state: &mut CodexOutputState, value: &Value) -> Result<bool> {
+    let method = value["method"].as_str().unwrap_or(""); let params = &value["params"];
+    if !state.accepts(params) { return Ok(false); }
+    match method {
+        "turn/started" => {
+            if state.turn_id.is_none() { state.turn_id = params["turn"]["id"].as_str().map(str::to_string); }
+        }
+        "item/agentMessage/delta" | "item/commandExecution/outputDelta" => {
+            let Some(id) = params["itemId"].as_str().filter(|id| !id.is_empty()) else { return Ok(false); };
+            // 完成快照是最终内容，迟到或重放的增量不能再追加到已完成的条目。
+            if state.completed_items.contains(id) { return Ok(false); }
+            let text = params["delta"].as_str().unwrap_or("");
+            let key = format!("{turn}-item-{id}");
+            if method == "item/agentMessage/delta" {
+                message(cell, &key, "assistant", text, true);
+            } else {
+                let command = state.commands.entry(id.into()).or_default();
+                if command.output.len() < MAX_TEXT { command.output.push_str(text); truncate(&mut command.output, MAX_TEXT); }
+                let name = if command.command.is_empty() { "执行命令" } else { &command.command };
+                message(cell, &key, "tool", &format!("{name}\n{}", command.output), false);
+            }
+        }
+        "item/started" | "item/completed" => state.item(cell, turn, &params["item"], method == "item/completed"),
+        "turn/completed" => {
+            if let Some(items) = params["turn"]["items"].as_array() {
+                for item in items { state.item(cell, turn, item, true); }
+            }
+            return match params["turn"]["status"].as_str().unwrap_or("") {
+                "completed" => Ok(true), "interrupted" => Err("已中断".into()),
+                _ => Err(params["turn"]["error"]["message"].as_str().unwrap_or("Codex 执行失败").into()),
+            };
+        }
+        "error" if params["willRetry"] != true => return Err(params["error"]["message"].as_str().unwrap_or("Codex 执行失败").into()),
+        _ => {}
+    }
+    Ok(false)
+}
 fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, stdin: &mut impl Write,
     controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<()> {
     let started = Instant::now(); let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
     let mut pending: HashMap<String, (Value, String)> = HashMap::new();
+    let mut state = CodexOutputState { thread_id: session.thread_id.clone(), ..Default::default() };
     loop {
         while let Ok(control) = controls.try_recv() {
             match control {
@@ -408,8 +515,12 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, stdin: &mut impl Wr
             write_json(stdin, json!({"id":2,"method":method,"params":params}))?;
         } else if value["id"] == 2 && value.get("result").is_some() {
             let id = value["result"]["thread"]["id"].as_str().ok_or("Codex 未返回会话标识")?;
+            state.thread_id = Some(id.into());
             update(cell, |data| data.thread_id = Some(id.into())); persist(cell)?;
             write_json(stdin, json!({"id":3,"method":"turn/start","params":{"threadId":id,"input":[{"type":"text","text":prompt}]}}))?;
+        }
+        if value["id"] == 3 && value.get("result").is_some() {
+            if let Some(id) = value["result"]["turn"]["id"].as_str() { state.turn_id = Some(id.into()); }
         }
         let method = value["method"].as_str().unwrap_or(""); let params = &value["params"];
         if value.get("id").is_some() && !method.is_empty() {
@@ -418,31 +529,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, stdin: &mut impl Wr
                 update(cell, |data| { data.status = "approval".into(); data.approvals.push(AiApproval { id, method: method.into(), details: params.clone() }); });
             } else { write_json(stdin, json!({"id":value["id"],"error":{"code":-32601,"message":"客户端暂不支持此交互请求"}}))?; }
         }
-        match method {
-            "item/agentMessage/delta" => message(cell, &format!("{turn}-{}", params["itemId"]), "assistant", params["delta"].as_str().unwrap_or(""), true),
-            "item/commandExecution/outputDelta" => message(cell, &format!("{turn}-output-{}", params["itemId"]), "tool", params["delta"].as_str().unwrap_or(""), true),
-            "item/started" | "item/completed" => {
-                let item = &params["item"]; let key = format!("{turn}-{}", item["id"]);
-                match item["type"].as_str().unwrap_or("") {
-                    "agentMessage" if method == "item/completed" => message(cell, &key, "assistant", item["text"].as_str().unwrap_or(""), false),
-                    "commandExecution" => {
-                        let command = item["command"].as_str().unwrap_or("执行命令");
-                        let text = format!("{command}\n{}", item["aggregatedOutput"].as_str().unwrap_or(""));
-                        message(cell, &key, "tool", &text, false);
-                    }
-                    "fileChange" => message(cell, &key, "tool", &format!("文件变更\n{}", item["changes"]), false),
-                    _ => {}
-                }
-            }
-            "turn/completed" => {
-                return match params["turn"]["status"].as_str().unwrap_or("") {
-                    "completed" => Ok(()), "interrupted" => Err("已中断".into()),
-                    _ => Err(params["turn"]["error"]["message"].as_str().unwrap_or("Codex 执行失败").into()),
-                };
-            }
-            "error" if params["willRetry"] != true => return Err(params["error"]["message"].as_str().unwrap_or("Codex 执行失败").into()),
-            _ => {}
-        }
+        if apply_codex_event(cell, &turn, &mut state, &value)? { return Ok(()); }
     }
 }
 
@@ -581,4 +668,139 @@ mod tests {
         assert_eq!(messages[0].role, "assistant");
         assert_eq!(messages[0].text, "最终回复");
     }
+    #[test]
+    fn claude_delayed_completion_uses_pending_block_instead_of_latest_block() {
+        let messages = replay(&[
+            start("msg-1"), block(0, "text"), delta(0, "第一段"), stop(0),
+            block(1, "text"), delta(1, "第二段"),
+            assistant("msg-1", json!([{"type": "text", "text": "第一段完整内容"}])),
+            assistant("msg-1", json!([{"type": "text", "text": "第二段完整内容"}])),
+        ]);
+        assert_eq!(messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), vec!["第一段完整内容", "第二段完整内容"]);
+    }
+
+    #[test]
+    fn claude_replayed_completion_uuid_is_idempotent_without_stream_events() {
+        let mut event = assistant("msg-1", json!([{"type": "text", "text": "只显示一次"}]));
+        event["uuid"] = json!("assistant-event-1");
+        let messages = replay(&[event.clone(), event]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "只显示一次");
+    }
+
+    #[test]
+    fn claude_replayed_stream_uuid_and_late_delta_do_not_duplicate_text() {
+        let mut chunk = delta(0, "正文");
+        chunk["uuid"] = json!("stream-event-1");
+        let messages = replay(&[
+            start("msg-1"), block(0, "text"), chunk.clone(), chunk,
+            assistant("msg-1", json!([{"type": "text", "text": "完整正文"}])), delta(0, "迟到片段"),
+        ]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "完整正文");
+    }
+
+    #[test]
+    fn claude_text_in_content_block_start_is_preserved_once() {
+        let initial = stream(json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": "开头"}}));
+        let messages = replay(&[start("msg-1"), initial.clone(), initial, delta(0, "正文")]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "开头正文");
+    }
+
+    fn codex(method: &str, mut params: Value) -> Value {
+        if params.get("threadId").is_none() { params["threadId"] = json!("thread-1"); }
+        if params.get("turnId").is_none() { params["turnId"] = json!("turn-1"); }
+        json!({"method": method, "params": params})
+    }
+    fn codex_state() -> CodexOutputState {
+        CodexOutputState { thread_id: Some("thread-1".into()), turn_id: Some("turn-1".into()), ..Default::default() }
+    }
+    fn replay_codex(events: &[Value]) -> Vec<AiMessage> {
+        let cell = cell(); let mut state = codex_state();
+        for event in events { apply_codex_event(&cell, "turn", &mut state, event).unwrap(); }
+        cell.data.into_inner().unwrap().messages
+    }
+
+    #[test]
+    fn codex_completion_replaces_deltas_and_ignores_late_chunks() {
+        let completed = codex("item/completed", json!({"item": {"id": "answer-1", "type": "agentMessage", "text": "完整回复"}}));
+        let messages = replay_codex(&[
+            codex("item/agentMessage/delta", json!({"itemId": "answer-1", "delta": "完整"})),
+            codex("item/agentMessage/delta", json!({"itemId": "answer-1", "delta": "回复"})),
+            completed.clone(), completed,
+            codex("item/agentMessage/delta", json!({"itemId": "answer-1", "delta": "完整回复"})),
+        ]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[0].text, "完整回复");
+    }
+
+    #[test]
+    fn codex_command_start_output_and_completion_share_one_message() {
+        let started = codex("item/started", json!({"item": {"id": "cmd-1", "type": "commandExecution", "command": "echo hello", "aggregatedOutput": ""}}));
+        let completed = codex("item/completed", json!({"item": {"id": "cmd-1", "type": "commandExecution", "command": "echo hello", "aggregatedOutput": "hello"}}));
+        let messages = replay_codex(&[
+            started.clone(), codex("item/commandExecution/outputDelta", json!({"itemId": "cmd-1", "delta": "hel"})),
+            codex("item/commandExecution/outputDelta", json!({"itemId": "cmd-1", "delta": "lo"})),
+            completed.clone(), completed, started,
+            codex("item/commandExecution/outputDelta", json!({"itemId": "cmd-1", "delta": "hello"})),
+        ]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "tool");
+        assert_eq!(messages[0].text, "echo hello\nhello");
+    }
+
+    #[test]
+    fn codex_output_before_started_is_kept_in_same_command_message() {
+        let messages = replay_codex(&[
+            codex("item/commandExecution/outputDelta", json!({"itemId": "cmd-1", "delta": "hello"})),
+            codex("item/started", json!({"item": {"id": "cmd-1", "type": "commandExecution", "command": "echo hello", "aggregatedOutput": ""}})),
+        ]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "echo hello\nhello");
+    }
+
+    #[test]
+    fn codex_turn_snapshot_updates_existing_reply_without_adding_another() {
+        let messages = replay_codex(&[
+            codex("item/agentMessage/delta", json!({"itemId": "answer-1", "delta": "回复"})),
+            codex("turn/completed", json!({"turn": {"id": "turn-1", "status": "completed", "items": [
+                {"id": "answer-1", "type": "agentMessage", "text": "回复完整内容"},
+            ]}})),
+        ]);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "回复完整内容");
+    }
+
+    #[test]
+    fn codex_foreign_thread_and_turn_do_not_add_or_finish_current_reply() {
+        let cell = cell(); let mut state = codex_state();
+        for event in [
+            codex("item/agentMessage/delta", json!({"threadId": "subagent-thread", "itemId": "answer-2", "delta": "其它线程"})),
+            codex("item/completed", json!({"turnId": "previous-turn", "item": {"id": "answer-3", "type": "agentMessage", "text": "旧回合"}})),
+            codex("turn/completed", json!({"threadId": "subagent-thread", "turn": {"id": "turn-1", "status": "completed"}})),
+        ] { assert!(!apply_codex_event(&cell, "turn", &mut state, &event).unwrap()); }
+        assert!(cell.data.lock().unwrap().messages.is_empty());
+    }
+
+    #[test]
+    fn codex_equal_text_from_distinct_items_is_preserved() {
+        let messages = replay_codex(&[
+            codex("item/completed", json!({"item": {"id": "answer-1", "type": "agentMessage", "text": "继续分析"}})),
+            codex("item/completed", json!({"item": {"id": "answer-2", "type": "agentMessage", "text": "继续分析"}})),
+        ]);
+        assert_eq!(messages.len(), 2);
+        assert_ne!(messages[0].id, messages[1].id);
+    }
+
+    #[test]
+    fn codex_missing_item_ids_are_ignored_instead_of_sharing_a_null_key() {
+        let messages = replay_codex(&[
+            codex("item/agentMessage/delta", json!({"delta": "无标识片段"})),
+            codex("item/completed", json!({"item": {"type": "agentMessage", "text": "无标识快照"}})),
+        ]);
+        assert!(messages.is_empty());
+    }
+
 }
