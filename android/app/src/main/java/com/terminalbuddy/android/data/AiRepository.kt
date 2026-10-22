@@ -40,10 +40,9 @@ class AiRepository(context: Context) {
             .putString("provider", provider).putString("model", model).apply()
     }
 
-    /** 已查看会话版本按服务地址隔离；重新安装或首次升级时没有基线，由首页建立。 */
+    /** 已查看会话版本按服务地址隔离；首次升级时由首页建立基线。 */
     fun viewedRevisions(): Map<String, Long> {
-        val key = "viewed_revisions_server"
-        if (preferences.getString(key, "") != store.server) return emptyMap()
+        if (preferences.getString("viewed_revisions_server", "") != store.server) return emptyMap()
         return preferences.getStringSet("viewed_revisions", emptySet()).orEmpty().mapNotNull { item ->
             val revision = item.substringAfter(':', "").toLongOrNull() ?: return@mapNotNull null
             item.substringBefore(':').takeIf(String::isNotBlank)?.let { it to revision }

@@ -78,7 +78,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private var actionJob: Job? = null
     /** 尚未落盘的本地新对话；为空表示当前会话已经存在于服务端。 */
     private var pending: AiSession? = null
-    /** 服务端版本基线；首次建立后，同版本不再重复标未查看，供已查看版本复用。 */
+    /** 服务端版本基线：区分新结果与已经看过的旧版本。 */
     private var knownRevisions = mutableMapOf<String, Long>()
     private var viewedRevisions = mutableMapOf<String, Long>()
     private var unviewedIds = mutableSetOf<String>()
@@ -224,13 +224,13 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                             Triple(sessions.await(), projects.await(), catalog.await())
                         }
                         if (epoch != generation) return@launch
-                        val unread = recordSessions(sessions)
+                        val detected = recordSessions(sessions)
                         mutable.update {
                             reconcile(
                                 it.copy(
                                     sessions = sessions, projects = projects, providers = catalog.providers,
                                     loading = false, homeLoaded = true, reconnecting = false, error = null,
-                                    unviewedIds = unread,
+                                    unviewedIds = it.unviewedIds + detected,
                                 )
                             )
                         }
@@ -270,11 +270,14 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     val sessions = repository.sessions()
                     if (epoch != generation) return@launch
-                    val unread = recordSessions(sessions)
+                    val detected = recordSessions(sessions)
                     mutable.update { current ->
                         // 手动刷新或删除已更新过列表时，丢弃在途的旧结果，防止恢复已删除会话。
                         if (current.selected != null || current.working || current.sessions !== previous) current
-                        else current.copy(sessions = sessions, reconnecting = false, unviewedIds = unread)
+                        else current.copy(
+                            sessions = sessions, reconnecting = false,
+                            unviewedIds = current.unviewedIds + detected,
+                        )
                     }
                     retries = 0
                 } catch (e: CancellationException) {
@@ -563,6 +566,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Revision 单调递增：旧快照不会覆盖新状态；列表项按更新时间重排且不携带完整历史。 */
     private fun receive(session: AiSession) {
+        if (pending?.id == session.id) pending = null
         markViewed(session.id, session.revision)
         mutable.update { current ->
             val selected = current.selected
@@ -581,13 +585,14 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
      * 之后版本推进且会话未打开时标记“未查看”，打开并成功加载后清除。
      */
     private fun recordSessions(sessions: List<AiSession>): Set<String> {
+        val detected = mutableSetOf<String>()
+        val visibleIds = sessions.mapTo(mutableSetOf()) { it.id }
+        knownRevisions.keys.retainAll(visibleIds)
         if (!viewedBaselineReady) {
             viewedRevisions = repository.viewedRevisions().toMutableMap()
             if (viewedRevisions.isEmpty()) sessions.forEach { knownRevisions[it.id] = it.revision }
             viewedBaselineReady = true
         }
-        val visibleIds = sessions.mapTo(mutableSetOf()) { it.id }
-        knownRevisions.keys.retainAll(visibleIds)
         unviewedIds.retainAll(visibleIds)
         sessions.forEach { session ->
             val previous = knownRevisions[session.id]
@@ -596,19 +601,18 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 knownRevisions[session.id] = session.revision
                 if (viewed == null) viewedRevisions[session.id] = session.revision
             } else {
-                if (session.revision > previous) {
-                    if (session.id != mutable.value.selected?.id) {
-                        unviewedIds += session.id
-                        viewedRevisions.remove(session.id)
-                    }
-                } else if (viewed == null) {
+                val selected = session.id == mutable.value.selected?.id
+                val resultReady = session.status != "running" || session.messages.isNotEmpty()
+                if (!selected && resultReady && (session.revision > previous || viewed == null)) {
                     unviewedIds += session.id
+                    detected += session.id
+                    viewedRevisions.remove(session.id)
                 }
                 knownRevisions[session.id] = maxOf(previous, session.revision)
             }
         }
         repository.saveViewedRevisions(viewedRevisions)
-        return unviewedIds.toSet()
+        return detected
     }
 
     private fun markViewed(id: String, revision: Long) {
