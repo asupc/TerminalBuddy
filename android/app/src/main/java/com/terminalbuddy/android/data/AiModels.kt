@@ -20,6 +20,7 @@ data class AiSession(
     val model: String? = null, val status: String = "idle", val messages: List<AiMessage> = emptyList(),
     val approvals: List<AiApproval> = emptyList(), val error: String? = null,
     val updatedAt: Long = 0, val revision: Long = 0,
+    val usage: AiUsage? = null,
 ) {
     /** 服务端仍在该会话执行任务（含等待用户确认）。 */
     val running get() = status == "running" || status == "approval"
@@ -67,3 +68,33 @@ data class AiModel(val id: String, val label: String = "", val effort: String = 
         else -> effort
     }
 }
+
+/** 缺失值为 null，和已确认的零消耗区分；输入量已经包含缓存。 */
+@Serializable
+data class AiTokenUsage(
+    val inputTokens: Long? = null, val outputTokens: Long? = null,
+    val cacheReadInputTokens: Long? = null, val cacheCreationInputTokens: Long? = null,
+    val reasoningOutputTokens: Long? = null,
+    val state: String = "", val coverage: String = "",
+)
+
+@Serializable
+data class AiContextUsage(
+    val usedTokens: Long? = null, val windowTokens: Long? = null,
+    val basis: String = "", val usedSource: String? = null, val windowSource: String? = null,
+    val updating: Boolean = false,
+) {
+    val percentage: Double?
+        get() {
+            val used = usedTokens?.takeIf { it >= 0 } ?: return null
+            val window = windowTokens?.takeIf { it > 0 } ?: return null
+            return if (updating) null else (used.toDouble() / window * 100).takeIf(Double::isFinite)
+        }
+    val estimated get() = usedSource == "calculated" || windowSource == "configuration"
+}
+
+@Serializable
+data class AiUsage(
+    val context: AiContextUsage? = null, val lastTurn: AiTokenUsage? = null,
+    val sessionTotal: AiTokenUsage? = null,
+)

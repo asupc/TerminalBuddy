@@ -2,6 +2,7 @@
 //! CLI 进程在服务端执行，手机断开不会终止任务。所有文件/进程操作由 handler 的
 //! spawn_blocking 或专用工作线程承载；用户文本只进入 stdin，不拼进 shell 命令。
 use crate::models::ai_chat::*;
+use super::ai_chat_usage as usage;
 use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
 use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
@@ -46,6 +47,7 @@ fn persist_data(cell: &Cell, data: &AiSession) -> Result<()> {
     value["owner"] = json!(data.owner);
     value["threadId"] = json!(data.thread_id);
     value["requestIds"] = json!(data.request_ids);
+    value["usageCheckpoint"] = json!(data.usage_checkpoint);
     atomic_write_private(&cell.path, &serde_json::to_vec(&value).map_err(|e| e.to_string())?)
         .map_err(|e| format!("保存 AI 会话失败：{e}"))
 }
@@ -58,6 +60,7 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
         let mut data: AiSession = serde_json::from_slice(&bytes).map_err(|_| "AI 会话文件损坏")?;
         if matches!(data.status.as_str(), "running" | "approval") {
             data.status = "interrupted".into(); data.approvals.clear();
+            usage::finish_turn(&mut data);
             data.error = Some("服务已重启，上次执行已中断，可以继续发送消息".into()); touch(&mut data);
         }
         registry.insert(path.clone(), Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), path: path.clone() }));
@@ -100,6 +103,7 @@ pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         provider_id: selection.as_ref().map(|(id, _)| id.clone()), provider_name: selection.map(|(_, name)| name),
         project_path: input.project_path, model: input.model.filter(|m| !m.trim().is_empty()),
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
+        usage: Some(usage::initial()), usage_checkpoint: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, owner: owner.into(), thread_id: None, request_ids: Vec::new() };
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), path: directory()?.join(format!("{id}.json")) });
     persist(&cell)?;
@@ -147,6 +151,7 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     let before = data.clone();
     data.messages.push(AiMessage { id: input.request_id.clone(), role: "user".into(), text: input.text.clone(), created_at: chrono::Utc::now().timestamp_millis() });
     if data.title == "新对话" { data.title = input.text.trim().chars().take(36).collect(); }
+    usage::begin_turn(&mut data);
     data.request_ids.push(input.request_id); data.status = "running".into(); data.error = None; data.approvals.clear(); touch(&mut data);
     let snapshot = data.clone(); drop(data);
     if let Err(error) = persist(&cell) { *cell.data.lock().map_err(|_| "AI 会话状态不可用")? = before; return Err(error); }
@@ -202,6 +207,7 @@ fn finish(cell: &Cell, result: Result<()>) {
     if let Ok(mut control) = cell.control.lock() {
         if let Ok(mut data) = cell.data.lock() {
             data.approvals.clear();
+            usage::finish_turn(&mut data);
             match result {
                 Ok(()) => { data.status = "idle".into(); data.error = None; }
                 Err(error) => { data.status = if error == "已中断" { "interrupted" } else { "error" }.into(); data.error = Some(error); }
@@ -216,6 +222,9 @@ fn finish(cell: &Cell, result: Result<()>) {
 }
 fn update(cell: &Cell, action: impl FnOnce(&mut AiSession)) {
     if let Ok(mut data) = cell.data.lock() { action(&mut data); touch(&mut data); }
+}
+fn update_usage(cell: &Cell, action: impl FnOnce(&mut AiSession) -> bool) {
+    if let Ok(mut data) = cell.data.lock() { if action(&mut data) { touch(&mut data); } }
 }
 fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
     if text.is_empty() { return; }
@@ -276,6 +285,7 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
     let session = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     let launch = super::ai_catalog_service::prepare(&session.provider, session.provider_id.as_deref(), session.model.as_deref())?;
     let permissions = super::ai_permission_service::for_agent(&session.provider)?;
+    update(cell, |data| usage::configured_window(data, launch.context_window));
     let mut command = cli_command(&session.provider);
     command.args(&launch.args);
     command.current_dir(&session.project_path);
@@ -348,6 +358,7 @@ struct ClaudeOutputState {
     current_message: String,
     messages: HashMap<String, ClaudeMessageBlocks>,
     seen_uuids: HashSet<String>,
+    usage: usage::ClaudeUsageTracker,
 }
 impl ClaudeOutputState {
     fn stream(&mut self, cell: &Cell, turn: &str, event: &Value) {
@@ -410,6 +421,7 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
         let event_key = format!("{}:{uuid}", value["type"].as_str().unwrap_or(""));
         if !state.seen_uuids.insert(event_key) { return Ok(false); }
     }
+    update_usage(cell, |data| state.usage.observe(data, value));
     if let Some(id) = value["session_id"].as_str() { update(cell, |data| data.thread_id = Some(id.into())); }
     match value["type"].as_str().unwrap_or("") {
         "stream_event" => state.stream(cell, turn, &value["event"]),
@@ -459,6 +471,7 @@ struct CodexOutputState {
     turn_id: Option<String>,
     completed_items: HashSet<String>,
     commands: HashMap<String, CodexCommandOutput>,
+    usage: usage::CodexUsageTracker,
 }
 impl CodexOutputState {
     fn accepts(&self, params: &Value) -> bool {
@@ -496,6 +509,7 @@ impl CodexOutputState {
 fn apply_codex_event(cell: &Cell, turn: &str, state: &mut CodexOutputState, value: &Value) -> Result<bool> {
     let method = value["method"].as_str().unwrap_or(""); let params = &value["params"];
     if !state.accepts(params) { return Ok(false); }
+    update_usage(cell, |data| state.usage.observe(data, value));
     match method {
         "turn/started" => {
             if state.turn_id.is_none() { state.turn_id = params["turn"]["id"].as_str().map(str::to_string); }
@@ -535,6 +549,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
     let started = Instant::now(); let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
     let mut pending: HashMap<String, (Value, String)> = HashMap::new();
     let mut state = CodexOutputState { thread_id: session.thread_id.clone(), ..Default::default() };
+    if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
     loop {
         while let Ok(control) = controls.try_recv() {
             match control {
@@ -566,6 +581,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
             update(cell, |data| data.thread_id = Some(id.into())); persist(cell)?;
             let mut params = json!({"threadId":id,"input":[{"type":"text","text":prompt}]});
             permissions.apply_turn(&mut params);
+            state.usage.submitted();
             write_json(stdin, json!({"id":3,"method":"turn/start","params":params}))?;
         }
         if value["id"] == 3 && value.get("result").is_some() {
@@ -578,7 +594,24 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
                 update(cell, |data| { data.status = "approval".into(); data.approvals.push(AiApproval { id, method: method.into(), details: params.clone() }); });
             } else { write_json(stdin, json!({"id":value["id"],"error":{"code":-32601,"message":"客户端暂不支持此交互请求"}}))?; }
         }
-        if apply_codex_event(cell, &turn, &mut state, &value)? { return Ok(()); }
+        let outcome = apply_codex_event(cell, &turn, &mut state, &value);
+        if matches!(&outcome, Ok(false)) { continue; }
+        // 部分 app-server 版本在完成事件后紧接着发送最终用量；短暂收齐再回收进程。
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match output.recv_timeout(remaining) {
+                Ok(Ok(value)) => {
+                    if state.accepts(&value["params"]) {
+                        update_usage(cell, |data| state.usage.observe(data, &value));
+                    }
+                }
+                _ => break,
+            }
+        }
+        if outcome.is_ok() {
+            update(cell, |data| state.usage.completed(data));
+        }
+        return outcome.map(|_| ());
     }
 }
 

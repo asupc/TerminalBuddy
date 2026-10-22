@@ -46,6 +46,7 @@ pub fn selection(agent: &str, id: Option<&str>, model: Option<&str>) -> Result<O
 
 pub struct NativeLaunch {
     pub args: Vec<String>,
+    pub context_window: Option<u64>,
     settings: Option<PathBuf>,
 }
 impl Drop for NativeLaunch {
@@ -53,11 +54,13 @@ impl Drop for NativeLaunch {
 }
 
 pub fn prepare(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> Result<NativeLaunch> {
-    let Some(id) = provider_id else { return Ok(NativeLaunch { args: Vec::new(), settings: None }); };
-    if id == format!("default:{agent}") { return Ok(NativeLaunch { args: Vec::new(), settings: None }); }
+    let Some(id) = provider_id else { return Ok(NativeLaunch { args: Vec::new(), context_window: inherited_context_window(agent), settings: None }); };
+    if id == format!("default:{agent}") { return Ok(NativeLaunch { args: Vec::new(), context_window: inherited_context_window(agent), settings: None }); }
     let (source, id) = id.split_once(':').ok_or("供应商配置无效，请重新选择")?;
     if source == "codex" && agent == "codex" {
-        return Ok(NativeLaunch { args: codex_provider_service::native_session_args(id, model.unwrap_or_default())?, settings: None });
+        let args = codex_provider_service::native_session_args(id, model.unwrap_or_default())?;
+        let context_window = args.iter().find_map(|arg| arg.strip_prefix("model_context_window=")?.parse::<u64>().ok()).filter(|n| *n > 0);
+        return Ok(NativeLaunch { args, context_window, settings: None });
     }
     let mut settings = match (source, agent) {
         ("llm", "claude") => llm_provider_service::native_session_settings(id, model.unwrap_or_default())?,
@@ -72,8 +75,16 @@ pub fn prepare(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> R
         env.insert(auth.into(), json!(""));
         for key in ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"] { env.insert(key.into(), json!("0")); }
     }
+    let context_window = settings.pointer("/env/CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+        .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok())).filter(|n| *n > 0)
+        .or_else(|| inherited_context_window(agent));
     let path = std::env::temp_dir().join(format!("terminal-buddy-native-settings-{}.json", uuid::Uuid::new_v4()));
     atomic_write_private(&path, &serde_json::to_vec(&settings).map_err(|_| "无法编码会话配置")?)
         .map_err(|e| format!("创建会话模型配置失败：{e}"))?;
-    Ok(NativeLaunch { args: vec!["--settings".into(), path.to_string_lossy().into_owned()], settings: Some(path) })
+    Ok(NativeLaunch { args: vec!["--settings".into(), path.to_string_lossy().into_owned()], context_window, settings: Some(path) })
+}
+
+fn inherited_context_window(agent: &str) -> Option<u64> {
+    if agent != "claude" { return None; }
+    std::env::var("CLAUDE_CODE_MAX_CONTEXT_TOKENS").ok()?.parse::<u64>().ok().filter(|n| *n > 0 && *n <= i64::MAX as u64)
 }

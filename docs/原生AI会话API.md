@@ -52,12 +52,56 @@ REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离
 
 WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type": "update", "session": "不含历史消息的会话对象", "messages": ["新增或变更的完整消息对象"] }`。客户端按消息 ID 更新有序列表；重连重新获取首帧，REST 可用于补偿。连接沿用全局配额，含 Ping/Pong、认证复核及超时回收。
 
+## 会话用量 `usage`
+
+`AiSession` 新增可选 `usage`，通过现有 REST 会话对象及 WebSocket 元数据返回。旧会话未采集时为 `null`，新增会话累计输入 / 输出初始为 0。所有未知计数为 `null`，不使用 0 冒充未提供的数据。
+
+```json
+{
+  "usage": {
+    "context": {
+      "usedTokens": 48000,
+      "windowTokens": 200000,
+      "basis": "input",
+      "usedSource": "cliUsage",
+      "windowSource": "cli",
+      "updating": false
+    },
+    "lastTurn": {
+      "inputTokens": 52000,
+      "outputTokens": 1200,
+      "cacheReadInputTokens": 40000,
+      "cacheCreationInputTokens": 0,
+      "reasoningOutputTokens": null,
+      "state": "final"
+    },
+    "sessionTotal": {
+      "inputTokens": 186000,
+      "outputTokens": 9200,
+      "cacheReadInputTokens": 140000,
+      "cacheCreationInputTokens": 0,
+      "reasoningOutputTokens": null,
+      "coverage": "complete"
+    }
+  }
+}
+```
+
+- `context` 仅描述主对话最近一次模型调用。Claude 的 `basis=input`，计入原始输入、缓存读与缓存写，不加输出；子 Agent 的独立窗口不覆盖主窗口。Codex 从 `thread/tokenUsage/updated` 的 `last` 推导输入与输出之和，`basis=inputAndOutput`、`usedSource=calculated`，在客户端标记估算。`windowSource=cli` 表示运行时报告，`configuration` 表示启动时生效的配置。没有可信窗口时保留 `null`，不按模型名称写死容量。
+- 压缩通知会清空 `usedTokens` 并设 `updating=true`，后续用量再填充；会话累计不清零。`usedTokens / windowTokens` 可以用于显示百分比，只有两个值均有效时才计算。
+- `lastTurn` 描述最近一次用户发送触发的整轮执行，包含多次模型调用。`state=provisional` 表示执行中，`final` 表示已收到完整统计，`partial` 表示缺少完整结算。尚未发送时为 `null`。
+- `sessionTotal` 表示累计消耗；`coverage=complete` 为完整统计，`sinceUpgrade` 为旧会话从升级后开始统计，`partial` 为包含不完整或无法确定起点的统计。停止、异常或服务重启会将未完成统计标记为部分统计。
+- 对外 `inputTokens` 已包含缓存，`cacheReadInputTokens` / `cacheCreationInputTokens` 为其中的明细；Codex 的 `reasoningOutputTokens` 也是输出的组成部分，不能再叠加。
+- Claude 按 API 消息 ID 合并流式 / 完整消息用量，最终 `result.usage` 或 `modelUsage` 替换本轮快照。Codex 按线程累计快照减去回合基线，恢复线程不会重复加上历史累计。最终完成事件后最多等待 300ms 接收紧随其后的用量通知。
+- 统计和 Codex 恢复基线一起保存在 `AiSessions/*.json`，基线字段不返回客户端。仅用量变化也增加 `revision`，现有 WebSocket 和 REST 补偿可以直接同步，无需额外接口。
+
 ## 源码
 
 - `src-tauri/src/models/ai_chat.rs`：结构化数据模型。
 - `src-tauri/src/services/ai_permission_service.rs`：继承 Agent 基础命令中的权限参数，并映射到原生 CLI / App Server。
 - `src-tauri/src/services/ai_catalog_service.rs`：供应商目录与按会话准备的启动配置。
 - `src-tauri/src/services/ai_chat_service.rs`：会话持久化、进程生命周期、Claude/Codex 协议适配。
+- `src-tauri/src/services/ai_chat_usage.rs`：用量归一化、消息快照合并、累计基线及上下文压缩状态。
 - `src-tauri/src/web/handlers/ai_chat_handler.rs`：REST 和 WebSocket；磁盘及任务启动操作均通过 `spawn_blocking`。
 - `src-tauri/src/web/server.rs`：HTTP/WS 路由注册。
 

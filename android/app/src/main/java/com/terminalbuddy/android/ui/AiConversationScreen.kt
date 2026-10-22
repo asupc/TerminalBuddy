@@ -55,6 +55,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     val session = ui.selected ?: return
     var menu by rememberSaveable(session.id) { mutableStateOf(false) }
     var information by rememberSaveable(session.id) { mutableStateOf(false) }
+    var usageInformation by rememberSaveable(session.id) { mutableStateOf(false) }
     var deleting by rememberSaveable(session.id) { mutableStateOf(false) }
     Scaffold(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
@@ -106,13 +107,14 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             ui.error?.let { AiError(it, vm::clearError) }
-            AiConversation(ui, vm, Modifier.weight(1f))
+            AiConversation(ui, vm, Modifier.weight(1f)) { usageInformation = true }
         }
     }
     if (menu) {
         AiSheet("对话操作", { menu = false }) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
                 AiConversationAction(Icons.Outlined.Info, "对话信息", { menu = false; information = true })
+                AiConversationAction(Icons.Outlined.DataUsage, "上下文与 Token", { menu = false; usageInformation = true })
                 AiConversationAction(Icons.Outlined.FolderOpen, "返回首页选择模型", { menu = false; vm.closeSession() })
                 AiConversationAction(
                     Icons.Outlined.DeleteOutline, "删除对话", { menu = false; deleting = true },
@@ -134,6 +136,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
             }
         }
     }
+    if (usageInformation) AiUsageSheet(session) { usageInformation = false }
     if (deleting) AiDeleteDialog(session, { deleting = false }) { deleting = false; vm.delete(session) }
 }
 
@@ -161,7 +164,7 @@ private fun AiInfoField(label: String, value: String, monospace: Boolean = false
 }
 
 @Composable
-private fun AiConversation(ui: AiUiState, vm: AiViewModel, modifier: Modifier) {
+private fun AiConversation(ui: AiUiState, vm: AiViewModel, modifier: Modifier, usageDetails: () -> Unit) {
     val session = ui.selected ?: return
     val motion = rememberAiConversationMotion(session, ui.loadingSession)
     val entries = motion.entries
@@ -234,14 +237,17 @@ private fun AiConversation(ui: AiUiState, vm: AiViewModel, modifier: Modifier) {
                 )
             }
             session.approvals.firstOrNull()?.let { AiApprovalCard(it, ui.working, approvalMaxHeight, vm::answer) }
-            AiComposer(ui, session, { scroll.following = true; vm.send() }, vm::stop, vm::draft)
+            AiComposer(ui, session, { scroll.following = true; vm.send() }, vm::stop, vm::draft, usageDetails)
         }
     }
 }
 
-/** 48dp 单行输入区：随输入增高，最多四行；按钮保留完整触控区域。 */
+/** 输入行随内容增高，底部用量状态栏固定在同一圆角容器内。 */
 @Composable
-private fun AiComposer(ui: AiUiState, session: AiSession, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit) {
+private fun AiComposer(
+    ui: AiUiState, session: AiSession, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit,
+    usageDetails: () -> Unit,
+) {
     val actionEnabled = if (session.running) !ui.working else ui.draft.isNotBlank() && !ui.sending && !ui.loadingSession
     Surface(color = TbColors.Surface) {
         Column {
@@ -254,46 +260,49 @@ private fun AiComposer(ui: AiUiState, session: AiSession, send: () -> Unit, stop
                     Modifier.widthIn(max = 760.dp).fillMaxWidth(), color = TbColors.CanvasSoft,
                     border = BorderStroke(1.dp, TbColors.Border), shape = RoundedCornerShape(14.dp),
                 ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                        BasicTextField(
-                            value = ui.draft, onValueChange = draft,
-                            modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-                                .padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp)
-                                .semantics { contentDescription = "消息输入框" },
-                            enabled = !ui.loadingSession, minLines = 1, maxLines = 4,
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = TbColors.Text, fontSize = 14.sp, lineHeight = 20.sp),
-                            cursorBrush = SolidColor(TbColors.Accent),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                            decorationBox = { innerTextField ->
-                                Box(contentAlignment = Alignment.CenterStart) {
-                                    if (ui.draft.isEmpty()) Text(
-                                        "给 ${session.providerLabel} 发消息…", color = TbColors.TextMuted,
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    )
-                                    innerTextField()
-                                }
-                            },
-                        )
-                        IconButton(
-                            if (session.running) stop else send, enabled = actionEnabled, modifier = Modifier.size(48.dp)
-                                .semantics { contentDescription = if (session.running) "中断回复" else if (ui.sending) "正在发送" else "发送消息" },
-                        ) {
-                            Box(
-                                Modifier.size(32.dp).background(
-                                    TbColors.Accent.copy(alpha = if (actionEnabled) 1f else .35f), RoundedCornerShape(10.dp),
-                                ),
-                                contentAlignment = Alignment.Center,
+                    Column {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                            BasicTextField(
+                                value = ui.draft, onValueChange = draft,
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                                    .padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp)
+                                    .semantics { contentDescription = "消息输入框" },
+                                enabled = !ui.loadingSession, minLines = 1, maxLines = 4,
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(color = TbColors.Text, fontSize = 14.sp, lineHeight = 20.sp),
+                                cursorBrush = SolidColor(TbColors.Accent),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                                decorationBox = { innerTextField ->
+                                    Box(contentAlignment = Alignment.CenterStart) {
+                                        if (ui.draft.isEmpty()) Text(
+                                            "给 ${session.providerLabel} 发消息…", color = TbColors.TextMuted,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        )
+                                        innerTextField()
+                                    }
+                                },
+                            )
+                            IconButton(
+                                if (session.running) stop else send, enabled = actionEnabled, modifier = Modifier.size(48.dp)
+                                    .semantics { contentDescription = if (session.running) "中断回复" else if (ui.sending) "正在发送" else "发送消息" },
                             ) {
-                                if (ui.sending && !session.running) CircularProgressIndicator(
-                                    Modifier.size(16.dp), color = TbColors.AccentInk, strokeWidth = 2.dp,
-                                )
-                                else Icon(
-                                    if (session.running) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null,
-                                    Modifier.size(18.dp), tint = TbColors.AccentInk,
-                                )
+                                Box(
+                                    Modifier.size(32.dp).background(
+                                        TbColors.Accent.copy(alpha = if (actionEnabled) 1f else .35f), RoundedCornerShape(10.dp),
+                                    ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (ui.sending && !session.running) CircularProgressIndicator(
+                                        Modifier.size(16.dp), color = TbColors.AccentInk, strokeWidth = 2.dp,
+                                    )
+                                    else Icon(
+                                        if (session.running) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null,
+                                        Modifier.size(18.dp), tint = TbColors.AccentInk,
+                                    )
+                                }
                             }
                         }
+                        AiUsageBar(session, usageDetails)
                     }
                 }
             }

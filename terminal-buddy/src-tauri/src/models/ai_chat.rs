@@ -36,6 +36,11 @@ pub struct AiSession {
     pub error: Option<String>,
     pub updated_at: i64,
     pub revision: u64,
+    #[serde(default)]
+    pub usage: Option<AiUsage>,
+    /// Codex 累计快照的恢复基线，只在私有会话文件中保存。
+    #[serde(default, skip_serializing)]
+    pub usage_checkpoint: Option<AiTokenUsage>,
     // 不向客户端暴露内部线程、账户归属和请求去重信息。
     #[serde(default, skip_serializing)]
     pub owner: String,
@@ -92,4 +97,50 @@ pub struct AiModelOption {
     pub id: String,
     pub label: String,
     pub effort: String,
+}
+
+/// 对外输入量统一包含缓存；缓存与推理是组成部分，不能再叠加到总数上。
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AiTokenUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cache_read_input_tokens: Option<u64>,
+    pub cache_creation_input_tokens: Option<u64>,
+    pub reasoning_output_tokens: Option<u64>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AiContextUsage {
+    pub used_tokens: Option<u64>,
+    pub window_tokens: Option<u64>,
+    pub basis: String,
+    pub used_source: Option<String>,
+    pub window_source: Option<String>,
+    pub updating: bool,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AiTurnUsage {
+    #[serde(flatten)]
+    pub tokens: AiTokenUsage,
+    pub state: String,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AiSessionUsage {
+    #[serde(flatten)]
+    pub tokens: AiTokenUsage,
+    pub coverage: String,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AiUsage {
+    pub context: AiContextUsage,
+    pub last_turn: Option<AiTurnUsage>,
+    pub session_total: AiSessionUsage,
 }
