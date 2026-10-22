@@ -1,0 +1,24 @@
+# 本机构建缓存和编译产物
+.gradle/
+.kotlin/
+**/build/
+.externalNativeBuild/
+.cxx/
+*.class
+*.apk
+*.aab
+*.apks
+*.ap_
+*.dex
+*.hprof
+/app/release/
+/release/
+
+# SDK 路径、IDE 与本机调试文件
+local.properties
+.idea/
+*.iml
+captures/
+*.log
+.DS_Store
+Thumbs.db

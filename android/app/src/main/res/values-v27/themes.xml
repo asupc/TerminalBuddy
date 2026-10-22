@@ -1,0 +1,12 @@
+<resources>
+    <!-- API 27 起才支持浅色导航栏与刘海屏短边布局；26 上保持默认。 -->
+    <style name="Theme.TerminalBuddy" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
