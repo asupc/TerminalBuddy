@@ -157,6 +157,10 @@ private fun AiConversation(
     val scroll = rememberAiConversationScroll(session.id, motion.initialized, entries.size)
     val revealing by remember(motion) { derivedStateOf { motion.messages.any { it.isRevealing } } }
     val replying = !ui.loadingSession && (session.running || revealing)
+    // 正文开始后持续隐藏思考提示，流式片段间隙和逐字动画结束时也不闪回。
+    val assistantOutput = session.messages.lastOrNull()?.let { it.role == "assistant" && it.text.isNotBlank() } == true
+    val showReplyIndicator = !ui.loadingSession && session.running &&
+        (session.status == "approval" || (!assistantOutput && !revealing))
     val elapsedSeconds = rememberAiReplyElapsedSeconds(session, replying)
     BoxWithConstraints(modifier.fillMaxWidth()) {
         // 确认区随键盘后的可用高度收缩，避免把消息区域全部挤出屏幕。
@@ -178,7 +182,7 @@ private fun AiConversation(
                             is AiConversationEntry.Tools -> AiToolGroup(entry.messages, itemModifier) { scroll.following = false }
                         }
                     }
-                    if (replying) item(key = "ai-status") {
+                    if (showReplyIndicator) item(key = "ai-status") {
                         AiReplyIndicator(
                             session.providerLabel, if (session.status == "approval") "等待确认" else "思考中", elapsedSeconds,
                             Modifier.animateItem(placementSpec = spring(stiffness = Spring.StiffnessMediumLow)),
