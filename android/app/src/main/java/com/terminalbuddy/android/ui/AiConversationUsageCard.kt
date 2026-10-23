@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,12 +52,11 @@ import com.terminalbuddy.android.data.AiSession
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** 共用同一套布局和动画进度，收起后保留右侧箭头入口。 */
+/** 展开时占据布局高度，收起时整张卡片及上下间距一起归零。 */
 @Composable internal fun AiConversationUsageCard(
     session: AiSession, modelLabel: String, effortLabel: String, details: () -> Unit,
-    modifier: Modifier = Modifier,
+    expanded: Boolean, onExpandedChange: (Boolean) -> Unit, modifier: Modifier = Modifier,
 ) {
-    var expanded by rememberSaveable(session.id) { mutableStateOf(true) }
     val expansion = animateFloatAsState(
         targetValue = if (expanded) 1f else 0f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 400f, visibilityThreshold = .001f),
@@ -63,15 +64,19 @@ import kotlin.math.roundToInt
     )
     val usage = session.usage
     val contextUsage = usage?.context
-    val used = contextUsage?.usedTokens?.takeIf { it >= 0 }
-    val capacity = contextUsage?.windowTokens?.takeIf { it > 0 }
-    val ratio = contextUsage?.percentage?.div(100)
+    val used = rememberKnownUsageValue(session.id,
+        contextUsage?.takeUnless { it.updating }?.usedTokens?.takeIf { it >= 0 })
+    val capacity = rememberKnownUsageValue(session.id, contextUsage?.windowTokens?.takeIf { it > 0 })
+    val ratio = if (used != null && capacity != null) used.toDouble() / capacity else null
     val percent = ratio?.let { (it * 100).roundToInt().toString() } ?: "—"
-    val context = if (contextUsage?.updating == true) "更新中(${formatAiTokensK(used)}/${formatAiTokensK(capacity)})"
+    val context = if (contextUsage?.updating == true && used == null) "更新中(${formatAiTokensK(used)}/${formatAiTokensK(capacity)})"
         else "$percent%(${formatAiTokensK(used)}/${formatAiTokensK(capacity)})"
     val tokens = usage?.lastTurn ?: usage?.sessionTotal
+    val inputTokens = rememberKnownUsageValue(session.id, tokens?.inputTokens?.takeIf { it >= 0 })
+    val outputTokens = rememberKnownUsageValue(session.id, tokens?.outputTokens?.takeIf { it >= 0 })
     val fontScale = LocalDensity.current.fontScale
-    Box(modifier.clip(RoundedCornerShape(15.dp))) {
+    Box(modifier.aiUsageReveal(expansion).padding(top = 8.dp, bottom = 2.dp).clip(RoundedCornerShape(15.dp))
+        .then(if (expanded) Modifier else Modifier.clearAndSetSemantics {})) {
         Surface(
             Modifier.matchParentSize().graphicsLayer { alpha = expansion.value.coerceIn(0f, 1f) },
             color = TbColors.CanvasSoft, shape = RoundedCornerShape(15.dp), border = BorderStroke(1.dp, TbColors.Border),
@@ -94,12 +99,8 @@ import kotlin.math.roundToInt
                 }
                 Box(Modifier.width(1.dp).height(18.dp).graphicsLayer { alpha = expansion.value.coerceIn(0f, 1f) }.background(TbColors.Border))
                 Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    Surface(
-                        Modifier.matchParentSize().graphicsLayer { alpha = 1f - expansion.value.coerceIn(0f, 1f) },
-                        color = TbColors.SurfaceHover, shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, TbColors.Border),
-                    ) {}
                     IconButton(
-                        onClick = { expanded = !expanded },
+                        onClick = { onExpandedChange(!expanded) },
                         modifier = Modifier.fillMaxSize().semantics {
                             stateDescription = if (expanded) "已展开模型与用量" else "已收起模型与用量"
                         },
@@ -110,7 +111,7 @@ import kotlin.math.roundToInt
                     }
                 }
             }
-            Column(Modifier.fillMaxWidth().aiUsageReveal(expansion)
+            Column(Modifier.fillMaxWidth()
                 .then(if (expanded) Modifier else Modifier.clearAndSetSemantics {})) {
                 AiDivider()
                 BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
@@ -132,18 +133,31 @@ import kotlin.math.roundToInt
                         }
                         if (stackedAmounts) {
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                AiTokenAmount("输入", tokens?.inputTokens, Icons.Outlined.SouthWest)
-                                AiTokenAmount("输出", tokens?.outputTokens, Icons.Outlined.NorthEast)
+                                AiTokenAmount("输入", inputTokens, Icons.Outlined.SouthWest)
+                                AiTokenAmount("输出", outputTokens, Icons.Outlined.NorthEast)
                             }
                         } else {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                AiTokenAmount("输入", tokens?.inputTokens, Icons.Outlined.SouthWest)
-                                AiTokenAmount("输出", tokens?.outputTokens, Icons.Outlined.NorthEast)
+                                AiTokenAmount("输入", inputTokens, Icons.Outlined.SouthWest)
+                                AiTokenAmount("输出", outputTokens, Icons.Outlined.NorthEast)
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/** 收起时悬浮在消息区右下角，不参与输入区域的高度分配。 */
+@Composable internal fun AiUsageExpandButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier.size(48.dp), color = Color(0xFFF8FAF9), shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, Color(0xFFE3EAE0)), shadowElevation = 2.dp,
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.fillMaxSize().semantics { stateDescription = "已收起模型与用量" }) {
+            Icon(Icons.Outlined.KeyboardArrowDown, "展开模型与用量",
+                Modifier.size(20.dp).graphicsLayer { rotationZ = 180f }, tint = Color(0xFF206C54))
         }
     }
 }
@@ -198,6 +212,13 @@ private fun Modifier.aiUsageReveal(expansion: State<Float>): Modifier = clipToBo
             style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, fontWeight = FontWeight.Normal))
         Text(formatAiTokensK(tokens), style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp, fontFeatureSettings = "tnum"))
     }
+}
+
+/** 按会话记住已知用量；刷新缺失时保持显示，新值到达后直接替换。 */
+@Composable private fun rememberKnownUsageValue(sessionId: String, value: Long?): Long? {
+    var previous by rememberSaveable(sessionId) { mutableStateOf(value) }
+    SideEffect { if (value != null) previous = value }
+    return value ?: previous
 }
 
 /** 统一使用十进制 K；小于 1K 时保留到单个 Token，避免非零用量被显示为零。 */

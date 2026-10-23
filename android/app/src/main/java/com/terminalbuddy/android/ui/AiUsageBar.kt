@@ -44,9 +44,9 @@ private fun contextLabel(context: AiContextUsage?): String {
 @Composable
 internal fun AiUsageCard(
     session: AiSession, modelLabel: String, effortLabel: String, details: () -> Unit,
-    modifier: Modifier = Modifier,
+    expanded: Boolean, onExpandedChange: (Boolean) -> Unit, modifier: Modifier = Modifier,
 ) {
-    AiConversationUsageCard(session, modelLabel, effortLabel, details, modifier)
+    AiConversationUsageCard(session, modelLabel, effortLabel, details, expanded, onExpandedChange, modifier)
 }
 
 @Composable

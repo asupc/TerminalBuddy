@@ -151,6 +151,7 @@ private fun AiConversation(
     usageDetails: () -> Unit,
 ) {
     val session = ui.selected ?: return
+    var usageExpanded by rememberSaveable(session.id) { mutableStateOf(true) }
     val motion = rememberAiConversationMotion(session, ui.loadingSession)
     val entries = motion.entries
     val scroll = rememberAiConversationScroll(session.id, motion.initialized, entries.size)
@@ -200,7 +201,8 @@ private fun AiConversation(
                 }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = !scroll.following && motion.messages.isNotEmpty(),
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(
+                        start = 8.dp, end = if (usageExpanded) 8.dp else 64.dp, bottom = 8.dp),
                     enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 2 },
                     exit = fadeOut(tween(120)) + slideOutVertically(tween(160)) { it / 2 },
                 ) {
@@ -213,6 +215,12 @@ private fun AiConversation(
                         Text("回到最新")
                     }
                 }
+                if (!usageExpanded) {
+                    Box(Modifier.align(Alignment.BottomCenter).widthIn(max = 760.dp).fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp), contentAlignment = Alignment.BottomEnd) {
+                        AiUsageExpandButton(onClick = { usageExpanded = true })
+                    }
+                }
             }
             session.error?.let {
                 Text(
@@ -222,11 +230,10 @@ private fun AiConversation(
                 )
             }
             session.approvals.firstOrNull()?.let { AiApprovalCard(it, ui.working, approvalMaxHeight, vm::answer) }
-            Box(
-                Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 2.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                AiUsageCard(session, modelLabel, effortLabel, usageDetails, Modifier.widthIn(max = 760.dp).fillMaxWidth())
+            Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+                AiUsageCard(session, modelLabel, effortLabel, usageDetails,
+                    expanded = usageExpanded, onExpandedChange = { usageExpanded = it },
+                    modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
             }
             AiComposer(ui, session, { scroll.following = true; vm.send() }, vm::stop, vm::draft)
         }

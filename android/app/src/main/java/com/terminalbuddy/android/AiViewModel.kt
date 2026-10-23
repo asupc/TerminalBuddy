@@ -452,6 +452,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
+                // 真实会话 ID 就绪后启动实时订阅和轮询，首次发送也能持续接收回复。
+                startRealtime()
                 val result = repository.send(target.id, text, request.second)
                 requests.remove(target.id)
                 // 发送成功才清空；失败保留文本和 requestId，可安全重试。
