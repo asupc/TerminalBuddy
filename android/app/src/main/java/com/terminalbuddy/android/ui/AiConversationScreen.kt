@@ -157,12 +157,18 @@ private fun AiConversation(
     val scroll = rememberAiConversationScroll(session.id, motion.initialized, entries.size)
     val revealing by remember(motion) { derivedStateOf { motion.messages.any { it.isRevealing } } }
     val replying = !ui.loadingSession && (session.running || revealing)
-    // 状态行与实际展示的消息尾部同步，避免先于对应消息出现；正文输出时持续隐藏。
+    // 按正文与工具执行阶段切换提示，工具记录 ID 更新时保持状态行，不重新淡入。
+    val renderedAssistantOutput by remember(motion) {
+        derivedStateOf {
+            motion.messages.lastOrNull()?.let {
+                it.role == "assistant" && (it.text.isNotBlank() || it.isRevealing)
+            } == true
+        }
+    }
     val latestMessage = session.messages.lastOrNull()
-    val tailSynced = motion.messages.lastOrNull()?.id == latestMessage?.id
     val assistantOutput = latestMessage?.let { it.role == "assistant" && it.text.isNotBlank() } == true
-    val showReplyIndicator = !ui.loadingSession && session.running && tailSynced &&
-        (session.status == "approval" || (!assistantOutput && !revealing))
+    val showReplyIndicator = !ui.loadingSession && session.running &&
+        (session.status == "approval" || (!assistantOutput && !renderedAssistantOutput && !revealing))
     val elapsedSeconds = rememberAiReplyElapsedSeconds(session, replying)
     BoxWithConstraints(modifier.fillMaxWidth()) {
         // 确认区随键盘后的可用高度收缩，避免把消息区域全部挤出屏幕。
