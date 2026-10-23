@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.first
 internal class AiAnimatedMessage(message: AiMessage, animate: Boolean) {
     val id = message.id
     val role = message.role
+    val markdown = AiMarkdownState()
     var text by mutableStateOf(if (animate && role == "assistant") "" else message.text)
         private set
     private var targetText by mutableStateOf(message.text)

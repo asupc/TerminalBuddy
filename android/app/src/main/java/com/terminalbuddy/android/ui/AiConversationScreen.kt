@@ -351,9 +351,12 @@ private fun AiMessageBubble(message: AiAnimatedMessage, provider: String, modifi
         val textTopPadding = ((AiAvatarSize - firstLineHeight) / 2).coerceAtLeast(0.dp)
         Row(animated, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             AiAvatar(provider, Modifier.padding(top = avatarTopPadding))
-            // 正文高度直接跟随换行，避免高度动画滞后而挤入下一行状态。
-            SelectionContainer(Modifier.weight(1f).padding(top = textTopPadding)) {
-                Text(message.text, style = textStyle)
+            if (message.role == "assistant") {
+                AiMarkdownContent(message, textStyle, Modifier.weight(1f).padding(top = textTopPadding))
+            } else {
+                SelectionContainer(Modifier.weight(1f).padding(top = textTopPadding)) {
+                    Text(message.text, style = textStyle)
+                }
             }
         }
     }
