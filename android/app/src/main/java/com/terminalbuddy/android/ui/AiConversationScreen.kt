@@ -157,9 +157,11 @@ private fun AiConversation(
     val scroll = rememberAiConversationScroll(session.id, motion.initialized, entries.size)
     val revealing by remember(motion) { derivedStateOf { motion.messages.any { it.isRevealing } } }
     val replying = !ui.loadingSession && (session.running || revealing)
-    // 正文开始后持续隐藏思考提示，流式片段间隙和逐字动画结束时也不闪回。
-    val assistantOutput = session.messages.lastOrNull()?.let { it.role == "assistant" && it.text.isNotBlank() } == true
-    val showReplyIndicator = !ui.loadingSession && session.running &&
+    // 状态行与实际展示的消息尾部同步，避免先于对应消息出现；正文输出时持续隐藏。
+    val latestMessage = session.messages.lastOrNull()
+    val tailSynced = motion.messages.lastOrNull()?.id == latestMessage?.id
+    val assistantOutput = latestMessage?.let { it.role == "assistant" && it.text.isNotBlank() } == true
+    val showReplyIndicator = !ui.loadingSession && session.running && tailSynced &&
         (session.status == "approval" || (!assistantOutput && !revealing))
     val elapsedSeconds = rememberAiReplyElapsedSeconds(session, replying)
     BoxWithConstraints(modifier.fillMaxWidth()) {
@@ -172,20 +174,17 @@ private fun AiConversation(
                     state = scroll.list, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    // 流式内容使用实际布局位置，逐字显示与底部跟随负责平滑过渡。
                     items(entries, key = { it.id }) { entry ->
-                        val itemModifier = Modifier.animateItem(
-                            fadeInSpec = null, placementSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                            fadeOutSpec = tween(140),
-                        )
                         when (entry) {
-                            is AiConversationEntry.Message -> AiMessageBubble(entry.message, session.providerLabel, itemModifier)
-                            is AiConversationEntry.Tools -> AiToolGroup(entry.messages, itemModifier) { scroll.following = false }
+                            is AiConversationEntry.Message -> AiMessageBubble(entry.message, session.providerLabel)
+                            is AiConversationEntry.Tools -> AiToolGroup(entry.messages, Modifier) { scroll.following = false }
                         }
                     }
                     if (showReplyIndicator) item(key = "ai-status") {
                         AiReplyIndicator(
                             session.providerLabel, if (session.status == "approval") "等待确认" else "思考中", elapsedSeconds,
-                            Modifier.animateItem(placementSpec = spring(stiffness = Spring.StiffnessMediumLow)),
+                            Modifier.animateItem(fadeInSpec = tween(120), placementSpec = null, fadeOutSpec = null),
                         )
                     }
                     // 保留真实底部锚点，长于一屏的流式回复也能继续跟随。
@@ -313,12 +312,12 @@ private fun AiMessageBubble(message: AiAnimatedMessage, provider: String, modifi
     val mine = message.role == "user"
     val entrance by animateFloatAsState(
         if (message.entered) 1f else 0f,
-        animationSpec = tween(280, easing = FastOutSlowInEasing), label = "ai-message-entrance",
+        animationSpec = tween(if (mine) 280 else 160, easing = FastOutSlowInEasing), label = "ai-message-entrance",
     )
     LaunchedEffect(message) { message.entered = true }
     val animated = modifier.fillMaxWidth().graphicsLayer {
         alpha = entrance
-        translationY = (1f - entrance) * 10.dp.toPx()
+        translationY = if (mine) (1f - entrance) * 10.dp.toPx() else 0f
     }
     if (mine) {
         Box(animated, contentAlignment = Alignment.CenterEnd) {
@@ -346,10 +345,8 @@ private fun AiMessageBubble(message: AiAnimatedMessage, provider: String, modifi
         val textTopPadding = ((AiAvatarSize - firstLineHeight) / 2).coerceAtLeast(0.dp)
         Row(animated, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             AiAvatar(provider, Modifier.padding(top = avatarTopPadding))
-            SelectionContainer(
-                Modifier.weight(1f).padding(top = textTopPadding)
-                    .animateContentSize(tween(160, easing = LinearOutSlowInEasing)),
-            ) {
+            // 正文高度直接跟随换行，避免高度动画滞后而挤入下一行状态。
+            SelectionContainer(Modifier.weight(1f).padding(top = textTopPadding)) {
                 Text(message.text, style = textStyle)
             }
         }
