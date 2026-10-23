@@ -68,4 +68,12 @@ class AiModelsTest {
         assertTrue(project.enabledAgents.claude)
         assertTrue(project.enabledAgents.codex)
     }
+
+    @Test
+    fun `model effort labels normalize case and new levels`() {
+        assertEquals("极高", AiModel(id = "m", effort = " Ultra ").effortLabel)
+        assertEquals("关闭", AiModel(id = "m", effort = "none").effortLabel)
+        assertEquals("自动", AiModel(id = "m", effort = "Auto").effortLabel)
+        assertEquals("跟随服务端", AiModel(id = "m", effort = "default").effortLabel)
+    }
 }

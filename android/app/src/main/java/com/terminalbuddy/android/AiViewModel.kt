@@ -51,6 +51,15 @@ data class AiUiState(
     }
     val launchModel get() = launchProvider?.models?.find { it.id == modelId }
     val launchModelKey get() = availableModels.find { it.provider.id == providerId && it.model.id == modelId }?.key.orEmpty()
+    /** 二级会话页按会话自身的供应商与模型读取配置。 */
+    val selectedModelOption: AiModel?
+        get() {
+            val session = selected ?: return null
+            return providers.find { it.agent == session.provider && it.id == session.providerId }
+                ?.models?.find { it.id == session.model.orEmpty() }
+        }
+    val selectedModelLabel get() = selectedModelOption?.title ?: selected?.modelLabel.orEmpty()
+    val selectedEffortLabel get() = selectedModelOption?.effortLabel?.takeIf(String::isNotBlank) ?: "跟随服务端"
     val canCreate get() = launchProject != null && launchProvider != null && launchModel != null && !initialLoading && !working
 }
 
@@ -391,6 +400,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             providerId = provider.id,
             providerName = provider.name,
             model = model.id.takeIf(String::isNotBlank),
+            usage = AiUsage(
+                context = AiContextUsage(usedTokens = 0),
+                sessionTotal = AiTokenUsage(inputTokens = 0, outputTokens = 0, coverage = "complete"),
+            ),
         )
         pending = session
         ++generation

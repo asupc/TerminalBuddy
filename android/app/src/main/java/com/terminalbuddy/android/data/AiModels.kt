@@ -58,13 +58,17 @@ data class AiProvider(
 @Serializable
 data class AiModel(val id: String, val label: String = "", val effort: String = "") {
     val title get() = label.ifBlank { id.ifBlank { "服务端默认模型" } }
-    val effortLabel get() = when (effort) {
+    val effortLabel get() = when (effort.trim().lowercase()) {
+        "none" -> "关闭"
+        "auto" -> "自动"
+        "default" -> "跟随服务端"
         "minimal" -> "极低"
         "low" -> "低"
         "medium" -> "中"
         "high" -> "高"
         "xhigh" -> "很高"
         "max" -> "最高"
+        "ultra" -> "极高"
         else -> effort
     }
 }

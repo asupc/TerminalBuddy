@@ -95,6 +95,14 @@ WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type
 - Claude 按 API 消息 ID 合并流式 / 完整消息用量，最终 `result.usage` 或 `modelUsage` 替换本轮快照。Codex 按线程累计快照减去回合基线，恢复线程不会重复加上历史累计。最终完成事件后最多等待 300ms 接收紧随其后的用量通知。
 - 统计和 Codex 恢复基线一起保存在 `AiSessions/*.json`，基线字段不返回客户端。仅用量变化也增加 `revision`，现有 WebSocket 和 REST 补偿可以直接同步，无需额外接口。
 
+### 安卓悬浮卡片展示
+
+安卓客户端在二级对话页输入框上方以一体化轻卡片展示用量：上层 11~12sp 显示 Agent 图标、模型与思考强度；下层为「上下文 / 进度条 / `26%(250K/950K)`」及输入、输出 token。统计统一使用十进制 K（1K = 1000 token），未上报显示 `—K`；`updating=true` 期间显示 `更新中(...)`，不显示旧占用率。输入 / 输出优先取 `lastTurn`，回合尚未开始时回退 `sessionTotal`。顶部标题栏保持单行对话标题。
+
+### 模型与思考强度匹配
+
+模型名与思考强度按会话 `provider` + `providerId` + `model` 匹配 `GET /api/ai/catalog` 的 `providers[].models[]`：模型名取目录 `label`，未命中回退会话 `modelLabel`；思考强度读 `models[].effort`，中文映射支持 关闭（none）/ 自动（auto）/ 跟随服务端（default）/ 极低 / 低 / 中 / 高 / 很高 / 最高 / 极高（ultra），未提供或未命中时显示「跟随服务端」。仅作展示，供应商与模型的选择仍由首页配置负责。新建会话的本地壳会预置零值 `usage`，首次发送前即可显示 0K。
+
 ## 源码
 
 - `src-tauri/src/models/ai_chat.rs`：结构化数据模型。

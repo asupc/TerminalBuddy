@@ -1,24 +1,14 @@
 package com.terminalbuddy.android.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.DataUsage
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.terminalbuddy.android.data.AiContextUsage
 import com.terminalbuddy.android.data.AiSession
@@ -50,60 +40,31 @@ private fun contextLabel(context: AiContextUsage?): String {
     return context?.usedTokens?.let { "上下文 ${compactTokens(it)}" } ?: "上下文 —"
 }
 
-/** 随键盘与输入框显示，点击整行打开统计；窄屏及大字体自动分行。 */
+/** 保留统一入口，界面使用一体化轻卡片，详情沿用完整的用量数据。 */
 @Composable
-internal fun AiUsageBar(session: AiSession, details: () -> Unit) {
-    val context = session.usage?.context
-    val total = session.usage?.sessionTotal
-    val percentage = context?.percentage
-    val tint = when {
-        percentage == null -> TbColors.TextMuted
-        percentage >= 90 -> TbColors.Danger
-        percentage >= 70 -> TbColors.Warning
-        else -> TbColors.Accent
-    }
-    val label = contextLabel(context)
-    val totalLabel = if (total?.coverage == "complete") "累计" else "已统计"
-    val totals = if (session.usage == null) "用量待返回" else "$totalLabel ↑${compactTokens(total?.inputTokens)} ↓${compactTokens(total?.outputTokens)}"
-    val description = "$label，${if (total?.coverage == "complete") "累计" else "已统计"}输入 ${preciseTokens(total?.inputTokens)} token，" +
-        "输出 ${preciseTokens(total?.outputTokens)} token，点击查看用量详情"
-    AiDivider(Modifier.padding(horizontal = 12.dp))
-    BoxWithConstraints(
-        Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "查看用量详情", onClick = details)
-            .semantics(mergeDescendants = true) { contentDescription = description }
-            .heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        val narrow = maxWidth < 300.dp || LocalDensity.current.fontScale > 1.2f
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            if (percentage != null) {
-                CircularProgressIndicator(
-                    progress = { (percentage / 100).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.size(14.dp),
-                    color = tint, trackColor = TbColors.Border, strokeWidth = 2.dp,
-                )
-            } else Icon(Icons.Outlined.DataUsage, null, Modifier.size(14.dp), tint = tint)
-            if (narrow) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(label, style = MaterialTheme.typography.labelMedium, color = tint)
-                    Text(totals, style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
-                }
-            } else {
-                Text(label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1)
-                Spacer(Modifier.weight(1f))
-                Text(totals, style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Icon(Icons.Outlined.KeyboardArrowDown, null, Modifier.size(16.dp), tint = TbColors.TextMuted)
-        }
-    }
+internal fun AiUsageCard(
+    session: AiSession, modelLabel: String, effortLabel: String, details: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AiConversationUsageCard(session, modelLabel, effortLabel, details, modifier)
 }
 
 @Composable
-internal fun AiUsageSheet(session: AiSession, dismiss: () -> Unit) {
+internal fun AiUsageSheet(session: AiSession, modelLabel: String, effortLabel: String, dismiss: () -> Unit) {
     val usage = session.usage
     AiSheet("上下文与 Token", dismiss) {
         SelectionContainer(
             Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(16.dp),
         ) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                UsageSection("模型与思考强度") {
+                    UsageRow("模型", modelLabel)
+                    UsageRow("思考强度", effortLabel)
+                    Text(
+                        "思考强度按当前供应商模型配置显示，未提供时跟随服务端。",
+                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+                    )
+                }
                 if (usage == null) {
                     Text("当前会话暂无用量统计。收到模型用量后会自动显示。", color = TbColors.TextMuted)
                 } else {
@@ -147,6 +108,7 @@ internal fun AiUsageSheet(session: AiSession, dismiss: () -> Unit) {
                                 "包含未完整结算的回合，当前数值可能小于实际消耗。",
                                 style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
                             )
+                            else -> Unit
                         }
                     }
                     Text(
