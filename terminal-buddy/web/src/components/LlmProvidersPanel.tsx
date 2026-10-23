@@ -30,6 +30,7 @@ export function LlmProvidersPanel({
   const [available, setAvailable] = useState<string[]>([]);
   const formId = useId();
   const busyRef = useRef(false);
+  const modelInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [confirmDelete, setConfirmDelete] = useState<LlmProvider | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -155,6 +156,13 @@ export function LlmProvidersPanel({
           }
         : current,
     );
+  };
+  const addModel = () => {
+    if (!draft) return;
+    const nextIndex = draft.enabledModels.length;
+    setDraft({ ...draft, enabledModels: [...draft.enabledModels, newModel('')] });
+    // 新行追加在末尾：聚焦输入框让弹窗自动滚动到新行，避免被底边遮住。
+    requestAnimationFrame(() => modelInputRefs.current[nextIndex]?.focus());
   };
   const fetchModels = () => {
     if (!draft) return;
@@ -387,7 +395,7 @@ export function LlmProvidersPanel({
                   className="btn"
                   type="button"
                   disabled={busy || draft.enabledModels.length >= 200}
-                  onClick={() => setDraft({ ...draft, enabledModels: [...draft.enabledModels, newModel('')] })}
+                  onClick={addModel}
                 >
                   <Plus size={14} /> 添加模型
                 </button>
@@ -410,6 +418,7 @@ export function LlmProvidersPanel({
                       options={available}
                       onChange={(value) => updateModel(index, { id: value })}
                       ariaLabel={`模型 ID ${index + 1}`}
+                      inputRef={(element) => { modelInputRefs.current[index] = element; }}
                     />
                     <select
                       className="codex-model-effort"

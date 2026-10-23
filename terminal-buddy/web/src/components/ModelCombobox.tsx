@@ -1,5 +1,12 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ChevronDown } from 'lucide-react';
+
+/** 候选列表的最大高度（px）：只显示部分模型，其余靠搜索或列表内滚动。 */
+const LIST_MAX_HEIGHT = 220;
+/** 向下/向上弹出的最小可用高度，低于此值优先翻转到空间更大的一侧。 */
+const LIST_MIN_HEIGHT = 96;
+/** 列表与输入框的间距（与 styles.css 中 calc(100% + 4px) 一致），测量可用空间时预留。 */
+const LIST_GAP = 4;
 
 interface ModelComboboxProps {
   value: string;
@@ -23,7 +30,11 @@ export function ModelCombobox({
 }: ModelComboboxProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  // 下拉弹出方向与限高：默认向下，最近裁切容器（弹窗 body 等）空间不足时翻转到上方。
+  const [placement, setPlacement] = useState<'below' | 'above'>('below');
+  const [listMaxHeight, setListMaxHeight] = useState(LIST_MAX_HEIGHT);
   const rootRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const query = value.trim().toLowerCase();
   const results = query
@@ -40,6 +51,43 @@ export function ModelCombobox({
     document.addEventListener('mousedown', closeOutside);
     return () => document.removeEventListener('mousedown', closeOutside);
   }, [open]);
+
+  // 打开时按最近裁切容器的可视空间决定弹出方向，并把高度限制在可视空间内：
+  // 列表只显示部分候选且在内部滚动，不会被弹窗底边遮住，也不会把弹窗撑出滚动条。
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const root = rootRef.current;
+      if (!root) return;
+      let clip: HTMLElement | null = root.parentElement;
+      while (clip && clip !== document.body && getComputedStyle(clip).overflowY === 'visible') {
+        clip = clip.parentElement;
+      }
+      const bounds = clip && clip !== document.body
+        ? clip.getBoundingClientRect()
+        : { top: 0, bottom: window.innerHeight };
+      const rect = root.getBoundingClientRect();
+      const spaceBelow = bounds.bottom - rect.bottom - LIST_GAP;
+      const spaceAbove = rect.top - bounds.top - LIST_GAP;
+      const next = spaceBelow >= LIST_MIN_HEIGHT || spaceBelow >= spaceAbove ? 'below' : 'above';
+      const space = next === 'below' ? spaceBelow : spaceAbove;
+      setPlacement(next);
+      setListMaxHeight(Math.min(LIST_MAX_HEIGHT, Math.max(LIST_MIN_HEIGHT, space)));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    document.addEventListener('scroll', measure, true);
+    return () => {
+      window.removeEventListener('resize', measure);
+      document.removeEventListener('scroll', measure, true);
+    };
+  }, [open]);
+
+  // 空间极端不足（限高触底）时把列表滚入可视区，尽量完整露出。
+  useLayoutEffect(() => {
+    if (!open) return;
+    listRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [open, placement, listMaxHeight]);
 
   const choose = (id: string) => {
     onChange(id);
@@ -101,7 +149,14 @@ export function ModelCombobox({
         <ChevronDown size={14} aria-hidden="true" />
       </button>
       {showList && (
-        <div id={listId} className="model-combobox-list" role="listbox" aria-label="候选模型">
+        <div
+          id={listId}
+          ref={listRef}
+          className={`model-combobox-list${placement === 'above' ? ' above' : ''}`}
+          style={{ maxHeight: listMaxHeight }}
+          role="listbox"
+          aria-label="候选模型"
+        >
           {results.length ? results.slice(0, 60).map((id, index) => (
             <button
               key={id}

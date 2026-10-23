@@ -3199,6 +3199,10 @@ textarea:focus-visible {
   border-radius: var(--radius-sm);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+.model-combobox-list.above {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
 .model-combobox-list button {
   display: block;
   width: 100%;
