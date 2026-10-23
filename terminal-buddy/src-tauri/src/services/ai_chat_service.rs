@@ -143,7 +143,6 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
     if data.request_ids.contains(&input.request_id) { return Ok(data.clone()); }
     if control.is_some() { return Err("AI 正在回复，请等待完成或先中断".into()); }
-    if data.messages.len() >= 400 { return Err("当前会话消息过多，请新建对话".into()); }
     RUNNING.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < 4).then_some(n + 1))
         .map_err(|_| "服务器同时执行的 AI 任务已达上限，请稍后再试")?;
     let slot = RunningSlot;
@@ -229,14 +228,12 @@ fn update_usage(cell: &Cell, action: impl FnOnce(&mut AiSession) -> bool) {
 fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
     if text.is_empty() { return; }
     update(cell, |data| {
-        let used: usize = data.messages.iter().filter(|m| m.id != key).map(|m| m.text.len()).sum();
-        let budget = MAX_TEXT.min((4 * 1024 * 1024usize).saturating_sub(used));
-        if budget == 0 { return; }
+        // 历史消息不限制后续回合，只对单条输出保留大小保护。
         if let Some(item) = data.messages.iter_mut().find(|m| m.id == key) {
             if append { if item.text.len() < MAX_TEXT { item.text.push_str(text); } } else { item.text = text.into(); }
-            truncate(&mut item.text, budget);
-        } else if data.messages.len() < 400 {
-            let mut text = text.to_string(); truncate(&mut text, budget);
+            truncate(&mut item.text, MAX_TEXT);
+        } else {
+            let mut text = text.to_string(); truncate(&mut text, MAX_TEXT);
             data.messages.push(AiMessage { id: key.into(), role: role.into(), text, created_at: chrono::Utc::now().timestamp_millis() });
         }
     });
