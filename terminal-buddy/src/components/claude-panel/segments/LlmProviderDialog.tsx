@@ -45,6 +45,7 @@ export function LlmProviderDialog({ draft, onClose, onSave }: LlmProviderDialogP
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const fetchRequestId = useRef(0);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const { containerRef, startDrag, dragClass } = useDragReorder((from, to) => {
     setEditor(current => {
       const next = [...current.models];
@@ -97,6 +98,8 @@ export function LlmProviderDialog({ draft, onClose, onSave }: LlmProviderDialogP
       ...current,
       models: [...current.models, { id: '', enabled: true, contextWindow: 0, effortLevel: '', maxOutputTokens: 0 }],
     }));
+    // 新行追加在末尾：聚焦输入框让弹窗自动滚动到新行，避免被底边遮住。
+    requestAnimationFrame(() => inputRefs.current[editor.models.length]?.focus());
   };
 
   const submit = async () => {
@@ -187,6 +190,7 @@ export function LlmProviderDialog({ draft, onClose, onSave }: LlmProviderDialogP
                   options={available}
                   onChange={value => updateModel(index, { id: value })}
                   ariaLabel={`模型 ID ${index + 1}`}
+                  inputRef={element => { inputRefs.current[index] = element; }}
                 />
                 <select className="llm-model-effort-input" aria-label={`模型推理等级 ${index + 1}`} title="留空跟随供应商默认"
                   value={model.effortLevel} onChange={e => updateModel(index, { effortLevel: e.target.value })}>

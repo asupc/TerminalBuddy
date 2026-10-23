@@ -59,6 +59,10 @@
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-dialog);
 }
+.model-combobox-list.above {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
 .model-combobox-list button {
   display: block;
   width: 100%;
