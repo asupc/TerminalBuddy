@@ -55,7 +55,7 @@ fun TerminalBuddyRoot(aiVm: AiViewModel = viewModel()) {
                     }
                 } else {
                     Box(Modifier.fillMaxSize()) {
-                        holder.SaveableStateProvider("ai-session:${pageAiUi.selected?.id}") { AiConversationScreen(pageAiUi, aiVm) }
+                        holder.SaveableStateProvider("ai-session:${pageAiUi.activeAccountId}:${pageAiUi.selected?.id}") { AiConversationScreen(pageAiUi, aiVm) }
                     }
                 }
             }

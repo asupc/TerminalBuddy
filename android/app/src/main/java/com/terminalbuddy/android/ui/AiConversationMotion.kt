@@ -117,7 +117,9 @@ internal fun rememberAiReplyElapsedSeconds(session: AiSession, active: Boolean):
 
 @Composable
 internal fun rememberAiConversationMotion(session: AiSession, loading: Boolean): AiConversationMotion {
-    val motion = remember(session.id) { AiConversationMotion() }
+    val motion = remember(session.id) {
+        AiConversationMotion().also { if (!loading) it.update(session.messages) }
+    }
     LaunchedEffect(motion, session.messages, loading) {
         if (!loading) motion.update(session.messages)
     }

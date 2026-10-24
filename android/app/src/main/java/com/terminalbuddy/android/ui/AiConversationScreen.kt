@@ -72,10 +72,12 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
                         IconButton(vm::closeSession) {
                             Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回 AI 首页", Modifier.size(20.dp), tint = TbColors.TextMuted)
                         }
-                        Text(
-                            session.title, Modifier.weight(1f).padding(start = 4.dp),
-                            style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        )
+                        Row(Modifier.weight(1f).padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(session.title, Modifier.weight(1f, fill = false),
+                                style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            AiReconnectingIndicator(ui.reconnecting)
+                        }
                         IconButton({ menu = true }) {
                             Icon(Icons.Outlined.MoreHoriz, "对话操作", Modifier.size(20.dp), tint = TbColors.TextMuted)
                         }
@@ -250,7 +252,7 @@ private fun AiConversation(
     }
 }
 
-/** 输入框上方统一展示模型与用量轻卡片，输入框保留原有编辑和发送行为。 */
+/** 发送后仍可编辑下一条消息，输入框左侧独立显示请求发送进度。 */
 @Composable
 private fun AiComposer(
     ui: AiUiState, session: AiSession, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit,
@@ -266,6 +268,12 @@ private fun AiComposer(
                 border = BorderStroke(1.dp, TbColors.Border), shape = RoundedCornerShape(14.dp),
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                    if (ui.sending) {
+                        Box(Modifier.width(36.dp).height(48.dp).semantics { contentDescription = "消息发送中" },
+                            contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(18.dp), color = TbColors.Accent, strokeWidth = 2.dp)
+                        }
+                    }
                     BasicTextField(
                         value = ui.draft, onValueChange = draft,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp)
@@ -296,10 +304,7 @@ private fun AiComposer(
                             ),
                             contentAlignment = Alignment.Center,
                         ) {
-                            if (ui.sending && !session.running) CircularProgressIndicator(
-                                Modifier.size(16.dp), color = TbColors.AccentInk, strokeWidth = 2.dp,
-                            )
-                            else Icon(
+                            Icon(
                                 if (session.running) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null,
                                 Modifier.size(18.dp), tint = TbColors.AccentInk,
                             )
