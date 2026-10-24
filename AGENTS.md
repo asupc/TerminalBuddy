@@ -4,7 +4,7 @@
 
 - **仓库根目录只是个壳。** 所有源码都在 `terminal-buddy/` 下。桌面端前端：`terminal-buddy/src/`，Rust 后端：`terminal-buddy/src-tauri/`，Web 前端：`terminal-buddy/web/`。
 - 桌面端前端：React 19、TypeScript 6、Zustand 5、xterm.js 6、Monaco Editor、React Flow。
-- Web 前端：独立 React SPA（`web/`），构建时通过 `include_dir!` 嵌入 Rust 二进制。
+- Web 前端：独立 React SPA（`web/`），构建时通过 `include_dir!` 嵌入 Rust 二进制。**该目录已封存（2026-10）**：代码冻结，后续功能变更（含桌面端修复）不再同步修改，除非明确要求，不要改动 `web/`。
 - Rust 后端：Tauri 2、axum（Web API）、portable-pty（ConPTY）、ssh2、bcrypt、JWT、rusqlite。
 - 后端分三层：**commands**（薄 Tauri 包装层）→ **services**（业务逻辑 + 持久化）→ **models**（数据结构），外加一个 `web` 模块提供 HTTP/WS API。
 
@@ -14,7 +14,7 @@
 
 ```bash
 npm install                  # 安装桌面端前端依赖
-cd web && npm install        # 安装 Web 前端依赖（独立的 node_modules）
+cd web && npm install        # 安装 Web 前端依赖（独立的 node_modules；web 已封存，一般无需执行）
 
 npm run dev                  # 只启动 Vite dev server（1420 端口，不含 Rust）
 npm run tauri dev            # 完整 Tauri 开发模式（Vite + Rust 一起跑）
@@ -23,23 +23,24 @@ npm run tauri build          # 生产构建（NSIS 安装包）；beforeBuildCom
                              # prepare:vscode-terminal + 桌面端构建 + Web 端构建
 
 npx tsc --noEmit             # 桌面端 TypeScript 类型检查
-cd web && npx tsc --noEmit   # Web 端 TypeScript 类型检查
+cd web && npx tsc --noEmit   # Web 端 TypeScript 类型检查（web 已封存，一般无需执行）
 
 cd src-tauri && cargo check  # Rust 编译检查
 cd src-tauri && cargo test --lib   # Rust 单元测试（25 个文件、约 164 个用例）
 ```
 
-仓库根目录的快捷脚本：`dev.bat` 会先构建 Web 前端再启动 `tauri dev`；`build-windows-exe.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/windows-build/Dockerfile`，cargo-xwin 交叉编译）一键产出 Windows 单文件 exe：源码只读挂载，构建与缓存在容器/命名卷内完成，宿主机不安装工具链，仅输出到仓库根目录 `dist/`（含 `.sha256`），不生成安装包 —— 需要 NSIS 安装包请在 Windows 上使用 `terminal-buddy/build.bat`。
+仓库根目录的快捷脚本：`dev.bat` 会先构建 Web 前端再启动 `tauri dev`；`build-windows-exe.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/windows-build/Dockerfile`，cargo-xwin 交叉编译）一键产出 Windows 单文件 exe：源码只读挂载，构建与缓存在容器/命名卷内完成，宿主机不安装工具链，仅输出到仓库根目录 `dist/`（含 `.sha256`），不生成安装包 —— 需要 NSIS 安装包请在 Windows 上使用 `terminal-buddy/build.bat`。`build-android.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/android-build/Dockerfile`，JDK 17 + Android SDK 36）构建 Android Release APK 并用 apksigner 校验签名：源码只读挂载，Gradle 缓存在命名卷 `terminal-buddy-android-cache` 内，产物输出到仓库根目录 `dist/`（含 `.sha256`）；Windows 上直装设备用 `build-android.bat`。
 
 仓库没有 lint 和格式化工具。TypeScript strict 模式开启了 `noUnusedLocals` 和 `noUnusedParameters`，未使用的绑定会让 `tsc` 失败。测试方面只有 Rust 单元测试（`cargo test --lib`）和独立的 `node scripts/test-*.mjs` 脚本，前端没有测试套件。
 
 ## 验证顺序
 
 1. 在 `terminal-buddy/` 下执行 `npx tsc --noEmit`
-2. 在 `terminal-buddy/web/` 下执行 `npx tsc --noEmit`
-3. 在 `terminal-buddy/src-tauri/` 下执行 `cargo check`
-4. 改动 Rust 后，再执行 `cargo test --lib`
-5. 新增或删除 Tauri 命令时，在 `terminal-buddy/` 下执行 `python scripts/check-invoke-coverage.py`
+2. 在 `terminal-buddy/src-tauri/` 下执行 `cargo check`
+3. 改动 Rust 后，再执行 `cargo test --lib`
+4. 新增或删除 Tauri 命令时，在 `terminal-buddy/` 下执行 `python scripts/check-invoke-coverage.py`
+
+`web/` 已封存、不再改动，常规验证跳过 Web 端类型检查；仅当确实改动了 `web/` 时才补跑 `cd web && npx tsc --noEmit`。
 
 ## Rust 相关约定
 

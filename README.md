@@ -504,7 +504,7 @@ npm run tauri build
 - **Docker 服务器部署**：在浏览器中使用与桌面同款的功能，手机访问自动分流至独立手机版界面，详见 [DEPLOY_README.md](DEPLOY_README.md) 与 [docs/Docker与完整网页界面.md](docs/Docker与完整网页界面.md)；
 - **飞牛 fnOS 一键部署**：执行 `./deploy-fnos.sh` 将 TerminalBuddy 部署到飞牛 NAS，默认在飞牛上编译镜像（部署机无需安装 Docker / Node / Rust），内置写入探测、健康检查与失败自动回退；
 - **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./build-windows-exe.sh`，借助一次性 Docker 容器完成交叉编译，产出 `dist/` 下的单文件 exe 与 `.sha256` 校验，宿主机无需安装任何工具链；
-- **Android 客户端构建**：`cd android && ./gradlew :app:assembleDebug`（需 JDK 17+ 与 Android SDK），详见 [android/README.md](android/README.md)。
+- **Android 客户端构建**：Linux 上在仓库根目录执行 `./build-android.sh`，借助一次性 Docker 容器完成 Release 打包与 apksigner 签名校验，产出 `dist/` 下的 APK 与 `.sha256`，宿主机无需安装任何工具链；本机已具备 JDK 17+ 与 Android SDK 时也可 `cd android && ./gradlew :app:assembleDebug`（详见 [android/README.md](android/README.md)），Windows 直装设备用 `build-android.bat`。
 
 ---
 ## 八、安全与隐私设计
