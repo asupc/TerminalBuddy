@@ -15,46 +15,85 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/**
- * TerminalBuddy 直连：服务端账号密码登录 → JWT → REST + WebSocket。
- * 认证与桌面/网页端完全一致，语音/会话数据都由服务端保存，手机只保留令牌和首页选择。
- */
+/** TerminalBuddy 直连；账号令牌独立加密，首页配置与已读记录按服务地址和用户名隔离。 */
 class AiRepository(context: Context) {
     val store = SessionStore(context)
+    val accounts = AiAccountStore(context, store)
+    val sessionCache = AiSessionCache(context, store)
     private val preferences = context.getSharedPreferences("terminal_buddy_ui", Context.MODE_PRIVATE)
 
-    /** 上一次打开的会话；首页选择项按服务地址分别记住，换服务器不会串用。 */
-    var lastSession: String
-        get() = preferences.getString("session", "").orEmpty()
-        set(value) { preferences.edit().putString("session", value).apply() }
+    private fun accountKey(server: String = store.server, username: String = store.username) =
+        "${server.length}:$server${username.length}:$username:"
+    private fun preferenceKey(key: String) = accountKey() + key
 
-    private fun selected(key: String): String =
-        if (preferences.getString("selection_server", "") == store.server) preferences.getString(key, "").orEmpty() else ""
-
-    val selectedProject get() = selected("project")
-    val selectedProvider get() = selected("provider")
-    val selectedModel get() = selected("model")
-
-    fun saveSelection(project: String, provider: String, model: String) {
-        preferences.edit().putString("selection_server", store.server).putString("project", project)
-            .putString("provider", provider).putString("model", model).apply()
+    init {
+        // 原有的单账号偏好只迁给升级时已登录的账号，避免同服务器的其他账号继承。
+        if (store.loggedIn) {
+            val edit = preferences.edit()
+            if (preferences.getString("selection_server", "") == store.server) {
+                listOf("project", "provider", "model").forEach { key ->
+                    edit.putString(preferenceKey(key), preferences.getString(key, ""))
+                }
+            }
+            if (preferences.getString("viewed_revisions_server", "") == store.server && preferences.contains("viewed_revisions")) {
+                edit.putStringSet(preferenceKey("viewed_revisions"), preferences.getStringSet("viewed_revisions", emptySet()))
+            }
+            edit.remove("selection_server").remove("project").remove("provider").remove("model")
+                .remove("viewed_revisions_server").remove("viewed_revisions").remove("session").apply()
+        }
     }
 
-    /** 按服务地址隔离；null 表示尚未初始化，空表则表示已经建立过基线。 */
+    var lastSession: String
+        get() = preferences.getString(preferenceKey("session"), "").orEmpty()
+        set(value) { preferences.edit().putString(preferenceKey("session"), value).apply() }
+
+    val selectedProject get() = preferences.getString(preferenceKey("project"), "").orEmpty()
+    val selectedProvider get() = preferences.getString(preferenceKey("provider"), "").orEmpty()
+    val selectedModel get() = preferences.getString(preferenceKey("model"), "").orEmpty()
+
+    fun saveSelection(project: String, provider: String, model: String) {
+        preferences.edit().putString(preferenceKey("project"), project)
+            .putString(preferenceKey("provider"), provider).putString(preferenceKey("model"), model).apply()
+    }
+
+    /** null 表示尚未初始化，空表表示这个账号已经建立过已读基线。 */
     fun viewedRevisions(): Map<String, Long>? {
-        if (preferences.getString("viewed_revisions_server", "") != store.server ||
-            !preferences.contains("viewed_revisions")) return null
-        return preferences.getStringSet("viewed_revisions", emptySet()).orEmpty().mapNotNull { item ->
+        val key = preferenceKey("viewed_revisions")
+        if (!preferences.contains(key)) return null
+        return preferences.getStringSet(key, emptySet()).orEmpty().mapNotNull { item ->
             val revision = item.substringAfter(':', "").toLongOrNull() ?: return@mapNotNull null
             item.substringBefore(':').takeIf(String::isNotBlank)?.let { it to revision }
         }.toMap()
     }
 
     fun saveViewedRevisions(revisions: Map<String, Long>) {
-        preferences.edit()
-            .putString("viewed_revisions_server", store.server)
-            .putStringSet("viewed_revisions", revisions.map { (id, revision) -> "$id:$revision" }.toSet())
-            .apply()
+        preferences.edit().putStringSet(preferenceKey("viewed_revisions"),
+            revisions.map { (id, revision) -> "$id:$revision" }.toSet()).apply()
+    }
+
+    internal fun activate(connection: AiConnection) {
+        accounts.save(connection)
+        store.save(connection.server, connection.username, connection.token)
+        lastSession = ""
+    }
+
+    fun logout() {
+        accounts.activeId?.let(accounts::invalidate)
+        sessionCache.removeAccount(store.server, store.username)
+        lastSession = ""
+        store.clear()
+    }
+
+    fun removeAccount(id: String) {
+        val account = accounts.accounts.find { it.id == id } ?: return
+        val current = accounts.activeId == id
+        accounts.remove(id)
+        if (current) store.clear()
+        sessionCache.removeAccount(account.server, account.username)
+        val prefix = accountKey(account.server, account.username)
+        val edit = preferences.edit()
+        preferences.all.keys.filter { it.startsWith(prefix) }.forEach { edit.remove(it) }
+        edit.apply()
     }
 
     /** 登录及其他普通接口沿用连接和请求超时。 */
@@ -69,11 +108,8 @@ class AiRepository(context: Context) {
         .callTimeout(0, TimeUnit.MILLISECONDS).readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
-    /**
-     * 登录后先确认目标服务确实提供原生 AI 接口，再替换已保存的连接，
-     * 避免把普通 huluwa 服务或旧版 TerminalBuddy 误存成 AI 服务。
-     */
-    suspend fun login(server: String, username: String, password: String) {
+    /** 先认证及确认原生 AI 接口，成功后由主线程统一激活，失败保留当前账号。 */
+    internal suspend fun login(server: String, username: String, password: String): AiConnection {
         val address = ServerAddress.normalize(server)
         val result = request(
             "POST", listOf("auth", "login"),
@@ -82,10 +118,20 @@ class AiRepository(context: Context) {
         ).asObject()
         val token = result.text("token")
         require(token.isNotBlank()) { "服务未返回登录令牌，请确认这是 TerminalBuddy 服务地址" }
-        request("GET", listOf("ai", "sessions"), server = address, token = token)
-        request("GET", listOf("ai", "catalog"), server = address, token = token)
-        store.save(address, result.text("username", fallback = username), token)
-        lastSession = ""
+        val connection = AiConnection(address, result.text("username", fallback = username), token)
+        validate(connection)
+        return connection
+    }
+
+    internal suspend fun savedConnection(id: String): AiConnection {
+        val connection = accounts.connection(id) ?: throw ApiException(401, "该账号需要重新登录")
+        validate(connection)
+        return connection
+    }
+
+    private suspend fun validate(connection: AiConnection) {
+        request("GET", listOf("ai", "sessions"), server = connection.server, token = connection.token)
+        request("GET", listOf("ai", "catalog"), server = connection.server, token = connection.token)
     }
 
     suspend fun sessions(): List<AiSession> = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions")))

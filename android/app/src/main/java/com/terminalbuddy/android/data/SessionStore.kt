@@ -15,8 +15,12 @@ import javax.crypto.spec.GCMParameterSpec
  * 令牌用 Android Keystore 的 AES/GCM 密钥加密后写入 SharedPreferences；
  * 密钥不可导出，换机或清除应用数据后需要重新登录。
  */
-class SessionStore(context: Context) {
-    private val preferences = context.getSharedPreferences("terminal_buddy_connection", Context.MODE_PRIVATE)
+class SessionStore(
+    context: Context,
+    namespace: String = "terminal_buddy_connection",
+    private val keyAlias: String = "terminal_buddy_session_v1",
+) {
+    private val preferences = context.getSharedPreferences(namespace, Context.MODE_PRIVATE)
     @Volatile var server: String = preferences.getString("server", "").orEmpty(); private set
     @Volatile var username: String = preferences.getString("username", "admin").orEmpty(); private set
     @Volatile var token: String = readToken(); private set
@@ -56,10 +60,10 @@ class SessionStore(context: Context) {
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        (store.getKey(keyAlias, null) as? SecretKey)?.let { return it }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
             init(
-                KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                     .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                     .build()
@@ -67,5 +71,4 @@ class SessionStore(context: Context) {
         }.generateKey()
     }
 
-    private companion object { const val KEY_ALIAS = "terminal_buddy_session_v1" }
 }

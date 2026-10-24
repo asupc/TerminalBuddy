@@ -33,6 +33,7 @@ import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.ReferenceLinkHandler
 import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownAnnotator
@@ -80,8 +81,9 @@ internal fun AiMarkdownContent(message: AiAnimatedMessage, style: TextStyle, mod
         code = style.copy(fontSize = 13.sp, lineHeight = 20.sp, fontFamily = FontFamily.Monospace),
         inlineCode = style.copy(fontFamily = FontFamily.Monospace), textLink = linkStyles, table = style,
     )
+    val firstLineStyle = snapshot?.parsed?.node?.firstAiTextStyle(typography) ?: style
     CompositionLocalProvider(LocalUriHandler provides uriHandler) {
-        SelectionContainer(modifier) {
+        SelectionContainer(modifier.aiMessageFirstLine(firstLineStyle)) {
             val parsed = snapshot?.parsed
             if (snapshot == null) {
                 // 首次解析只保留首行高度；已有快照更新时不会回到这一分支。
@@ -128,6 +130,19 @@ internal fun AiMarkdownContent(message: AiAnimatedMessage, style: TextStyle, mod
             }
         }
     }
+}
+
+/** 首行可能是标题、代码或嵌套列表，使用与渲染相同的字体度量。 */
+private fun ASTNode.firstAiTextStyle(typography: MarkdownTypography): TextStyle? = when (type) {
+    MarkdownElementTypes.ATX_1, MarkdownElementTypes.SETEXT_1 -> typography.h1
+    MarkdownElementTypes.ATX_2, MarkdownElementTypes.SETEXT_2 -> typography.h2
+    MarkdownElementTypes.ATX_3 -> typography.h3
+    MarkdownElementTypes.ATX_4 -> typography.h4
+    MarkdownElementTypes.ATX_5 -> typography.h5
+    MarkdownElementTypes.ATX_6 -> typography.h6
+    MarkdownElementTypes.PARAGRAPH -> typography.paragraph
+    MarkdownElementTypes.CODE_FENCE, MarkdownElementTypes.CODE_BLOCK -> typography.code
+    else -> children.firstNotNullOfOrNull { it.firstAiTextStyle(typography) }
 }
 
 /** 图片首版展示为链接，避免自动下载及图片加载改变流式正文高度。 */

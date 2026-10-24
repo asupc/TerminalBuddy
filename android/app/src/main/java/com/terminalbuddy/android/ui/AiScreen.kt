@@ -39,29 +39,63 @@ import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.R
 import com.terminalbuddy.android.data.AiSession
 
-/** AI 首页：服务连接、新对话配置、最近对话。 */
-@Composable
-fun AiScreen(ui: AiUiState, vm: AiViewModel) {
-    var connection by rememberSaveable { mutableStateOf(false) }
+private enum class AiPage { Home, Accounts, Connection }
+
+/** AI 首页：服务连接、新对话配置、最近对话和账号管理。 */
+@Composable fun AiScreen(ui: AiUiState, vm: AiViewModel) {
+    var page by rememberSaveable { mutableStateOf(AiPage.Home) }
+    var loginAccountId by rememberSaveable { mutableStateOf<String?>(null) }
+    var addingAccount by rememberSaveable { mutableStateOf(false) }
+    var connectionFromAccounts by rememberSaveable { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<AiSession?>(null) }
     var confirmDeleteAll by remember { mutableStateOf(false) }
     val deletableCount = ui.sessions.count { !it.running }
-    BackHandler(connection) { connection = false }
-    LaunchedEffect(ui.authenticated, ui.connectionRevision) { if (ui.authenticated) connection = false }
-    if (!ui.authenticated || connection) {
-        AiConnection(ui, vm::login, if (ui.authenticated) ({ connection = false }) else null)
+    val openConnection: (String?, Boolean, Boolean) -> Unit = { id, adding, fromAccounts ->
+        loginAccountId = id
+        addingAccount = adding
+        connectionFromAccounts = fromAccounts
+        page = AiPage.Connection
+        vm.clearError()
+    }
+    val back: () -> Unit = {
+        vm.cancelAuthentication()
+        page = if (page == AiPage.Connection && connectionFromAccounts) AiPage.Accounts else AiPage.Home
+    }
+    BackHandler(page != AiPage.Home || ui.authenticating) { back() }
+    LaunchedEffect(ui.connectionRevision) { if (ui.authenticated) page = AiPage.Home }
+    if (page == AiPage.Connection || (!ui.authenticated && ui.accounts.isEmpty() && page != AiPage.Accounts)) {
+        val account = ui.accounts.find { it.id == loginAccountId }
+        AiConnection(ui, vm::login, if (page == AiPage.Connection) back else null,
+            initialServer = account?.server ?: ui.server,
+            initialUsername = account?.username ?: if (addingAccount) "" else ui.username,
+            title = if (addingAccount) "添加账号" else if (account?.loggedIn == false) "重新登录" else "服务连接",
+            adding = addingAccount)
+        return
+    }
+    if (page == AiPage.Accounts || !ui.authenticated) {
+        AiAccountsScreen(ui, if (ui.authenticated) back else null,
+            add = { openConnection(null, true, true) },
+            select = { account ->
+                if (account.loggedIn) vm.switchAccount(account.id) else openConnection(account.id, false, true)
+            }, remove = vm::removeAccount, clearError = vm::clearError)
         return
     }
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
         PageHeader("TerminalBuddy", reconnecting = ui.reconnecting) {
             var menu by remember { mutableStateOf(false) }
+            val enabled = !ui.working && !ui.authenticating
             Box {
-                IconButton({ menu = true }) {
-                    Icon(Icons.Outlined.MoreHoriz, "服务连接操作", Modifier.size(20.dp), tint = TbColors.TextMuted)
+                IconButton({ menu = true }, enabled = enabled) {
+                    Icon(Icons.Outlined.MoreHoriz, "更多", Modifier.size(20.dp), tint = TbColors.TextMuted)
                 }
                 DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem(text = { Text("服务连接") }, onClick = { menu = false; connection = true; vm.clearError() })
-                    DropdownMenuItem(text = { Text("退出 AI 服务") }, onClick = { menu = false; vm.logout() })
+                    DropdownMenuItem(text = { Text("账号切换") }, enabled = enabled,
+                        leadingIcon = { Icon(Icons.Outlined.ManageAccounts, null) },
+                        onClick = { menu = false; page = AiPage.Accounts; vm.clearError() })
+                    DropdownMenuItem(text = { Text("服务连接") }, enabled = enabled,
+                        onClick = { menu = false; openConnection(ui.activeAccountId, false, false) })
+                    DropdownMenuItem(text = { Text("退出 AI 服务") }, enabled = enabled,
+                        onClick = { menu = false; vm.logout() })
                 }
             }
         }
@@ -131,9 +165,9 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                         }
                         val hint = when {
                             ui.initialLoading -> "正在同步项目和模型…"
-                            ui.projects.isEmpty() -> "服务端还没有登记项目，请添加后刷新。"
+                            ui.projects.isEmpty() -> "服务端还没有登记项目，请添加后重新进入工作台。"
                             ui.availableAgents.isEmpty() -> "该项目尚未启用 Claude Code 或 Codex，请在服务端配置。"
-                            ui.availableModels.isEmpty() -> "该 Agent 暂无可用模型，请在服务端配置后刷新。"
+                            ui.availableModels.isEmpty() -> "该 Agent 暂无可用模型，请配置后重新进入工作台。"
                             else -> null
                         }
                         hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted) }
@@ -335,9 +369,12 @@ internal fun AiDeleteDialog(session: AiSession, dismiss: () -> Unit, confirm: ()
 
 /** 服务连接表单：品牌与登录内容整体居中，小屏和键盘弹出时仍可滚动。 */
 @Composable
-private fun AiConnection(ui: AiUiState, login: (String, String, String) -> Unit, back: (() -> Unit)?) {
-    var server by rememberSaveable(ui.server) { mutableStateOf(ui.server) }
-    var username by rememberSaveable(ui.username) { mutableStateOf(ui.username) }
+private fun AiConnection(
+    ui: AiUiState, login: (String, String, String) -> Unit, back: (() -> Unit)?,
+    initialServer: String, initialUsername: String, title: String, adding: Boolean,
+) {
+    var server by rememberSaveable(initialServer, title) { mutableStateOf(initialServer) }
+    var username by rememberSaveable(initialUsername, title) { mutableStateOf(initialUsername) }
     var password by remember { mutableStateOf("") }
     var visible by remember { mutableStateOf(false) }
     Column(
@@ -349,15 +386,15 @@ private fun AiConnection(ui: AiUiState, login: (String, String, String) -> Unit,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (back != null) {
-                IconButton(back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回 AI 首页", Modifier.size(20.dp)) }
-                Text("服务连接", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = TbColors.Text)
+                IconButton(back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回", Modifier.size(20.dp)) }
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = TbColors.Text)
             } else {
                 Spacer(Modifier.weight(1f))
             }
             ThemeToggleButton()
         }
         Column(
-            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
+            Modifier.weight(1f).fillMaxWidth().imePadding().verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -420,7 +457,7 @@ private fun AiConnection(ui: AiUiState, login: (String, String, String) -> Unit,
                                 CircularProgressIndicator(Modifier.size(16.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
                                 Spacer(Modifier.width(8.dp))
                             }
-                            Text(if (ui.authenticating) "正在连接…" else "连接并登录")
+                            Text(if (ui.authenticating) "正在连接…" else if (adding) "登录并添加" else "连接并登录")
                         }
                     }
                 }

@@ -127,7 +127,7 @@ internal fun AiError(message: String, dismiss: () -> Unit) {
     }
 }
 
-/** 标题后的重连菊花：默认隐藏，一次展示至少持续一秒。 */
+/** 标题后的重连菊花与文字：默认隐藏，一次展示至少持续一秒。 */
 @Composable
 internal fun AiReconnectingIndicator(reconnecting: Boolean, modifier: Modifier = Modifier) {
     var showing by remember { mutableStateOf(reconnecting) }
@@ -144,13 +144,13 @@ internal fun AiReconnectingIndicator(reconnecting: Boolean, modifier: Modifier =
         }
     }
     if (showing || reconnecting) {
-        AiConnectionSpinner(
-            TbColors.Accent,
-            modifier.size(16.dp).semantics {
-                liveRegion = LiveRegionMode.Polite
-                stateDescription = "正在重新连接"
-            },
-        )
+        Row(modifier.semantics {
+            liveRegion = LiveRegionMode.Polite
+            stateDescription = "正在重新连接"
+        }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            AiConnectionSpinner(TbColors.Accent, Modifier.size(16.dp))
+            Text("重连中", style = MaterialTheme.typography.labelMedium, color = TbColors.Accent, maxLines = 1)
+        }
     }
 }
 
