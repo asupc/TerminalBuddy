@@ -16,7 +16,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Redirect};
 
 use crate::web::auth::HasJwtSecret;
 use crate::web::handlers;
@@ -34,6 +34,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// 注意：只有给 hyper 配置了 Timer 该超时才生效，axum::serve 没配，
 /// 这正是这里手写 accept 循环的原因。
 const IDLE_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
+/// 端口被占用时的绑定重试窗口：同端口的「先停旧服务再起新服务」之间，旧监听
+/// socket 的释放与新 bind 存在调度间隙，偶发 AddrInUse；短暂重试即可避开，
+/// 真被其他程序占用时到点仍按原样报错。
+const BIND_RETRY_WINDOW: Duration = Duration::from_secs(2);
+/// 关停时等待在飞连接排空的上限。正常请求毫秒级排空；卡死的客户端（如上传
+/// 中途断连）可能遥遥无期，到点放弃等待，剩余连接随各自 task 在后台自然结束。
+const GRACEFUL_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -53,6 +60,13 @@ impl HasJwtSecret for AppState {
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
 static WEB_DIST: include_dir::Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
+
+/// 桌面版内嵌的完整网页界面：src/ 前端以 `--mode browser` 构建（独立服务端在 `/`
+/// 服务的就是这份产物）。桌面版浏览器访问与独立服务端同款布局——`/` 完整界面、
+/// `/m/` 手机 SPA（`WEB_DIST`），手机 UA 访问 `/` 自动分流到手机版。
+#[cfg(all(not(debug_assertions), feature = "desktop"))]
+static WEB_DESKTOP_DIST: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../dist-web");
 
 pub fn build_router(state: AppState) -> Router {
     // AI 会话的长文本和历史记录不设正文大小、请求处理时长或实时连接配额。
@@ -301,29 +315,50 @@ pub fn build_router(state: AppState) -> Router {
 
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
 async fn serve_embedded_file(req: axum::extract::Request) -> axum::response::Response {
-    let path = req.uri().path().trim_start_matches('/');
-    let path = if path.is_empty() { "index.html" } else { path };
+    let path = req.uri().path();
+    // 手机 UA 访问根路径自动分流到手机版（与独立服务端一致），查询串原样带过去
+    // （?token= 免密登录在两个界面里都支持）。
+    if path == "/"
+        && crate::web::client_kind::client_kind_from_headers(req.headers())
+            == crate::models::TerminalClientKind::Mobile
+    {
+        let target = match req.uri().query() {
+            Some(query) => format!("/m/?{}", query),
+            None => "/m/".to_string(),
+        };
+        return Redirect::to(&target).into_response();
+    }
+    // 手机 SPA 以相对路径 base 构建，/m 缺斜杠时资源会解析到根前缀，补上再进。
+    if path == "/m" {
+        return Redirect::to("/m/").into_response();
+    }
+    // /m/ 前缀 → 手机 SPA（web/dist）；其余路径 → 完整桌面界面（dist-web）
+    if let Some(mobile_path) = path.strip_prefix("/m/") {
+        return serve_from_embedded(&WEB_DIST, mobile_path);
+    }
+    serve_from_embedded(&WEB_DESKTOP_DIST, path.trim_start_matches('/'))
+}
 
-    match WEB_DIST.get_file(path) {
+/// 从 include_dir 目录服务静态文件：空路径与未知路径回退 index.html（SPA 路由），
+/// 连 index.html 都缺（前端产物未随二进制嵌入）时 404。只接受 `'static` 目录
+/// （两个嵌入产物都是 static），contents() 因此零拷贝进响应体。
+#[cfg(all(not(debug_assertions), feature = "desktop"))]
+fn serve_from_embedded(dir: &'static include_dir::Dir<'static>, path: &str) -> axum::response::Response {
+    let file = if path.is_empty() { None } else { dir.get_file(path) };
+    match file.or_else(|| dir.get_file("index.html")) {
         Some(file) => {
-            let content_type = guess_content_type(path);
+            let content_type = file
+                .path()
+                .to_str()
+                .map(guess_content_type)
+                .unwrap_or("application/octet-stream");
             (
                 [(axum::http::header::CONTENT_TYPE, content_type)],
                 file.contents(),
             )
                 .into_response()
         }
-        None => {
-            // SPA fallback: serve index.html for unknown paths
-            match WEB_DIST.get_file("index.html") {
-                Some(index) => (
-                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-                    index.contents(),
-                )
-                    .into_response(),
-                None => axum::http::StatusCode::NOT_FOUND.into_response(),
-            }
-        }
+        None => axum::http::StatusCode::NOT_FOUND.into_response(),
     }
 }
 
@@ -403,11 +438,22 @@ pub async fn run_server(
             .parse().map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?,
         port,
     );
-    let listener = match TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("[WebAPI] 端口 {} 绑定失败: {}。", port, e);
-            return Err(e);
+    let listener = {
+        let deadline = tokio::time::Instant::now() + BIND_RETRY_WINDOW;
+        loop {
+            match TcpListener::bind(addr).await {
+                Ok(listener) => break listener,
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse
+                    && tokio::time::Instant::now() < deadline =>
+                {
+                    // 旧服务实例还在释放端口，稍候重试
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(e) => {
+                    eprintln!("[WebAPI] 端口 {} 绑定失败: {}。", port, e);
+                    return Err(e);
+                }
+            }
         }
     };
 
@@ -416,8 +462,12 @@ pub async fn run_server(
     // 不用 axum::serve：它不给 hyper 配置 Timer，空闲连接的 header_read_timeout
     // 永远不会触发。自写 accept 循环，逐连接配 TokioTimer + 空闲超时，
     // 客户端建连后不发请求头的半开连接会在 30 秒后被断开。
-    // Arc：watcher 的 future 要 'static 进 spawn，关停时又需要拿回所有权调 shutdown()
-    let graceful = std::sync::Arc::new(GracefulShutdown::new());
+    // GracefulShutdown 故意不实现 Clone 且 shutdown(self) 按值消费；但 watcher(&self)
+    // 产出的是独立 'static 的 Watcher，连接 task 只需携带 Watcher——关停方独占本体，
+    // 不与任何连接共享引用。旧实现用 Arc 共享本体再 Arc::into_inner 回收所有权，
+    // 关停瞬间只要有存活连接（浏览器 keep-alive、在途请求）就回收失败 panic，
+    // 而 release 的 panic=abort 会直接崩掉整个进程。
+    let graceful = GracefulShutdown::new();
 
     loop {
         tokio::select! {
@@ -430,30 +480,33 @@ pub async fn run_server(
                         continue;
                     }
                 };
+                // 关停信号已到却恰好又 accept 到连接：直接丢弃，别再起新 task——
+                // 信号发出之后才订阅的 Watcher 收不到这次关停，会拖住排空。
+                if *shutdown_rx.borrow() {
+                    break;
+                }
 
                 let service = TowerToHyperService::new(ConnectInfoService {
                     inner: router.clone(),
                     remote_addr,
                 });
-                tokio::spawn({
-                    let graceful = std::sync::Arc::clone(&graceful);
-                    async move {
-                        // Builder 按引用借用连接，必须在每个连接的 task 内构造（与 axum::serve 一致）
-                        let mut builder = HttpBuilder::new(TokioExecutor::new());
-                        // http2 的 CONNECT 协议是 WebSocket 升级所需（与 axum::serve 默认行为一致）
-                        builder.http2().enable_connect_protocol();
-                        // header_read_timeout 需要 timer 才生效
-                        builder
-                            .http1()
-                            .timer(TokioTimer::new())
-                            .header_read_timeout(IDLE_HEADER_TIMEOUT);
-                        let conn = builder.serve_connection_with_upgrades(
-                            hyper_util::rt::TokioIo::new(io),
-                            service,
-                        );
-                        // 连接错误（客户端断开、空闲超时）不必上报，hyper 已记录
-                        let _ = graceful.watcher().watch(conn).await;
-                    }
+                let watcher = graceful.watcher();
+                tokio::spawn(async move {
+                    // Builder 按引用借用连接，必须在每个连接的 task 内构造（与 axum::serve 一致）
+                    let mut builder = HttpBuilder::new(TokioExecutor::new());
+                    // http2 的 CONNECT 协议是 WebSocket 升级所需（与 axum::serve 默认行为一致）
+                    builder.http2().enable_connect_protocol();
+                    // header_read_timeout 需要 timer 才生效
+                    builder
+                        .http1()
+                        .timer(TokioTimer::new())
+                        .header_read_timeout(IDLE_HEADER_TIMEOUT);
+                    let conn = builder.serve_connection_with_upgrades(
+                        hyper_util::rt::TokioIo::new(io),
+                        service,
+                    );
+                    // 连接错误（客户端断开、空闲超时）不必上报，hyper 已记录
+                    let _ = watcher.watch(conn).await;
                 });
             }
 
@@ -466,11 +519,18 @@ pub async fn run_server(
     }
 
     drop(listener);
-    // 等待在途请求排空后返回；已升级的 WebSocket 长连接由终端关闭流程各自收尾
-    std::sync::Arc::into_inner(graceful)
-        .expect("accept 循环结束后不应再有连接 task 持有引用")
-        .shutdown()
-        .await;
+    // 通知在飞连接排空并等待其结束。此刻可能仍有连接存活——这正是优雅关停要处理
+    // 的常态，等待有上限；已升级的 WebSocket 长连接在升级完成时就已归还 Watcher，
+    // 由终端关闭流程各自收尾。
+    if tokio::time::timeout(GRACEFUL_DRAIN_TIMEOUT, graceful.shutdown())
+        .await
+        .is_err()
+    {
+        eprintln!(
+            "[WebAPI] 等待在飞连接排空超过 {} 秒，剩余连接将在后台自行结束。",
+            GRACEFUL_DRAIN_TIMEOUT.as_secs()
+        );
+    }
     println!("[WebAPI] 服务器已停止。");
     Ok(())
 }
