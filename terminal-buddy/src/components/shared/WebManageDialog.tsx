@@ -282,7 +282,7 @@ export const WebManageSettings: FC = () => {
     <div className="web-manage-settings">
           <div className="web-dialog-intro">
             <p className="web-dialog-desc">{browserClient
-              ? '手机打开当前服务地址即可进入手机界面，使用相同密码登录'
+              ? '在浏览器打开服务地址即可进入与桌面端一致的完整界面（手机自动进入手机版），使用相同密码登录'
               : '启用后可通过浏览器远程访问终端'}</p>
           </div>
 

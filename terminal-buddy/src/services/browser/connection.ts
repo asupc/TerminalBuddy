@@ -27,6 +27,19 @@ export function setToken(value: string): void {
   previous?.close();
 }
 
+// 免密快速访问：URL 带 ?token=<jwt> 时（PC 端生成的二维码 / 快捷链接携带）直接
+// 登录，随后抹掉 URL 里的 token 防泄露，与手机 SPA（web/src/App.tsx）行为一致。
+// 模块加载时执行一次，赶在 WebEntry 首帧读 token 之前，避免登录页闪烁；
+// 桌面 Tauri 模式同样会加载本模块（platform.ts 引用），其页面无查询串，天然无操作。
+function applyUrlTokenOnce(): void {
+  const urlToken = new URLSearchParams(window.location.search).get('token');
+  if (!urlToken) return;
+  setToken(urlToken);
+  window.history.replaceState({}, '', window.location.pathname);
+}
+
+applyUrlTokenOnce();
+
 export function emitLocal(event: string, payload: unknown): void {
   callbacks.get(event)?.forEach(callback => callback({ event, id: 0, payload }));
 }
