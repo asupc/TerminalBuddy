@@ -327,8 +327,7 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
         run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors)
     }
 }
-fn next_output(output: &mpsc::Receiver<Result<Value>>, started: Instant, errors: &Mutex<String>) -> Result<Option<Value>> {
-    if started.elapsed() > Duration::from_secs(60 * 60) { return Err("本次 AI 执行超过一小时，已停止".into()); }
+fn next_output(output: &mpsc::Receiver<Result<Value>>, errors: &Mutex<String>) -> Result<Option<Value>> {
     match output.recv_timeout(Duration::from_millis(100)) {
         Ok(value) => value.map(Some),
         Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
@@ -448,12 +447,12 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
     Ok(false)
 }
 fn run_claude(cell: &Cell, _process: &mut Process, controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<()> {
-    let started = Instant::now(); let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
+    let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
     let mut state = ClaudeOutputState::default();
     loop {
         if matches!(controls.try_recv(), Ok(Control::Stop)) { return Err("已中断".into()); }
         if checkpoint.elapsed() > Duration::from_secs(5) { persist(cell)?; checkpoint = Instant::now(); }
-        let Some(value) = next_output(&output, started, &errors)? else { continue; };
+        let Some(value) = next_output(&output, &errors)? else { continue; };
         if apply_claude_event(cell, &turn, &mut state, &value)? { return Ok(()); }
     }
 }
@@ -543,7 +542,7 @@ fn apply_codex_event(cell: &Cell, turn: &str, state: &mut CodexOutputState, valu
 }
 fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
     controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<()> {
-    let started = Instant::now(); let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
+    let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
     let mut pending: HashMap<String, (Value, String)> = HashMap::new();
     let mut state = CodexOutputState { thread_id: session.thread_id.clone(), ..Default::default() };
     if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
@@ -563,7 +562,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
             }
         }
         if checkpoint.elapsed() > Duration::from_secs(5) { persist(cell)?; checkpoint = Instant::now(); }
-        let Some(value) = next_output(&output, started, &errors)? else { continue; };
+        let Some(value) = next_output(&output, &errors)? else { continue; };
         if value.get("error").is_some() { return Err(value["error"]["message"].as_str().unwrap_or("Codex 请求失败").into()); }
         if value["id"] == 1 && value.get("result").is_some() {
             write_json(stdin, json!({"method":"initialized","params":{}}))?;
