@@ -55,6 +55,16 @@ static WEB_DIST: include_dir::Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
 
 pub fn build_router(state: AppState) -> Router {
+    // AI 会话的长文本和历史记录不设正文大小、请求处理时长或实时连接配额。
+    let ai_router = Router::new()
+        .route("/api/ai/catalog", get(handlers::ai_chat_handler::catalog))
+        .route("/api/ai/sessions", get(handlers::ai_chat_handler::list).post(handlers::ai_chat_handler::create))
+        .route("/api/ai/sessions/{id}", get(handlers::ai_chat_handler::get).delete(handlers::ai_chat_handler::delete))
+        .route("/api/ai/sessions/{id}/messages", post(handlers::ai_chat_handler::send))
+        .route("/api/ai/sessions/{id}/stop", post(handlers::ai_chat_handler::stop))
+        .route("/api/ai/sessions/{id}/approvals", post(handlers::ai_chat_handler::answer))
+        .route("/ws/ai/{id}", get(handlers::ai_chat_handler::socket))
+        .layer(DefaultBodyLimit::disable());
     let router = Router::new()
         // 认证
         .route("/api/auth/login", post(handlers::auth_handler::login))
@@ -84,14 +94,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/bot/inbound/{channel_id}",
             post(handlers::bot_handler::bridge_inbound),
         )
-        // 原生 AI 客户端：结构化会话、消息、中断与工具确认。
-        .route("/api/ai/catalog", get(handlers::ai_chat_handler::catalog))
-        .route("/api/ai/sessions", get(handlers::ai_chat_handler::list).post(handlers::ai_chat_handler::create))
-        .route("/api/ai/sessions/{id}", get(handlers::ai_chat_handler::get).delete(handlers::ai_chat_handler::delete))
-        .route("/api/ai/sessions/{id}/messages", post(handlers::ai_chat_handler::send))
-        .route("/api/ai/sessions/{id}/stop", post(handlers::ai_chat_handler::stop))
-        .route("/api/ai/sessions/{id}/approvals", post(handlers::ai_chat_handler::answer))
-        .route("/ws/ai/{id}", get(handlers::ai_chat_handler::socket))
         // 连接（profile）只读列表 —— 手机端不管理 profile，照搬电脑端已配置的导航
         .route("/api/profiles", get(handlers::profile_handler::list))
         // 项目只读列表 —— Web 端「启动项目」用（目录 + 自定义启动命令）
@@ -285,14 +287,15 @@ pub fn build_router(state: AppState) -> Router {
     };
 
     router
-        .with_state(state)
-        // 顺序（外 → 内）：CORS → 超时 → body 上限 → 路由。
-        // CORS 放最外层让 408 等错误响应也带跨域头，便于开发期排查。
+        // 普通 API 继续使用请求保护，AI 路由在应用这些中间件后合并。
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             REQUEST_TIMEOUT,
         ))
+        .merge(ai_router)
+        .with_state(state)
+        // CORS 放最外层让 408 等错误响应也带跨域头，便于开发期排查。
         .layer(cors)
 }
 

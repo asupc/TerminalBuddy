@@ -7,7 +7,7 @@ use crate::{models::ai_chat::*, services::{ai_chat_service as service, SettingsS
 
 fn service_error(error: String) -> ApiError {
     if error == "AI 会话不存在" { ApiError::NotFound(error) }
-    else if error.contains("正在") || error.contains("上限") { ApiError::Conflict(error) }
+    else if error.contains("正在") { ApiError::Conflict(error) }
     else { ApiError::BadRequest(error) }
 }
 async fn blocking<T: Send + 'static>(job: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<Json<T>, ApiError> {
@@ -50,44 +50,53 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
     let claims = verify_token(&token, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期，请重新登录".into()))?;
     let owner = claims.sub;
     let initial = { let id = id.clone(); let owner = owner.clone(); blocking(move || service::get_with_summary(&id, &owner)).await?.0 };
-    let slot = crate::web::ws::WsConnectionSlot::acquire().ok_or_else(|| ApiError::TooManyRequests { message: "实时连接过多，请稍后重试".into(), retry_after_secs: 5 })?;
-    Ok(ws.on_upgrade(move |socket| async move {
-        let _slot = slot;
+    Ok(ws.max_message_size(usize::MAX).max_frame_size(usize::MAX).on_upgrade(move |socket| async move {
         let (mut sender, mut receiver) = socket.split();
-        let mut revision = initial.revision;
-        let mut previous: HashMap<String, String> = initial.messages.iter().map(|m| (m.id.clone(), m.text.clone())).collect();
-        let first = json!({"type":"session","session":initial}).to_string();
-        if !matches!(tokio::time::timeout(Duration::from_secs(10), sender.send(Message::Text(first.into()))).await, Ok(Ok(()))) { return; }
-        let mut interval = tokio::time::interval(Duration::from_millis(300));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut last_seen = tokio::time::Instant::now();
-        let mut heartbeat = tokio::time::Instant::now();
-        loop {
-            tokio::select! {
-                message = receiver.next() => match message {
-                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                    Some(Ok(_)) => last_seen = tokio::time::Instant::now(),
-                },
-                _ = interval.tick() => {
-                    if last_seen.elapsed() > Duration::from_secs(35) { break; }
-                    if heartbeat.elapsed() > Duration::from_secs(10) {
+        let send_updates = async {
+            let mut revision = initial.revision;
+            let mut previous: HashMap<String, String> = initial.messages.iter().map(|m| (m.id.clone(), m.text.clone())).collect();
+            let first = json!({"type":"session","session":initial}).to_string();
+            if sender.send(Message::Text(first.into())).await.is_err() { return; }
+            let mut interval = tokio::time::interval(Duration::from_millis(300));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut heartbeat = tokio::time::Instant::now();
+            loop {
+                interval.tick().await;
+                if heartbeat.elapsed() > Duration::from_secs(10) {
+                    if sender.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
+                    heartbeat = tokio::time::Instant::now();
+                }
+                let current = { let id = id.clone(); let owner = owner.clone(); tokio::task::spawn_blocking(move || service::get_with_summary(&id, &owner)).await };
+                let Ok(Ok(session)) = current else { break; };
+                if session.revision == revision { continue; }
+                revision = session.revision;
+                // 首帧完整恢复，后续仅推送发生变化的消息，避免每段回复都重传全部历史。
+                let changed: Vec<_> = session.messages.iter().filter(|m| previous.get(&m.id) != Some(&m.text)).cloned().collect();
+                previous = session.messages.iter().map(|m| (m.id.clone(), m.text.clone())).collect();
+                let mut metadata = session; metadata.messages.clear();
+                let body = json!({"type":"update","session":metadata,"messages":changed}).to_string();
+                if sender.send(Message::Text(body.into())).await.is_err() { break; }
+            }
+        };
+        // 独立读取与复核鉴权，大消息发送等待不会阻塞令牌和服务开关检查。
+        let watch_connection = async {
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    message = receiver.next() => match message {
+                        Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                        Some(Ok(_)) => {},
+                    },
+                    _ = interval.tick() => {
                         if verify_token(&token, &state.jwt_secret).is_err() || !SettingsService::get_settings().web_api_enabled { break; }
-                        if !matches!(tokio::time::timeout(Duration::from_secs(10), sender.send(Message::Ping(Vec::new().into()))).await, Ok(Ok(()))) { break; }
-                        heartbeat = tokio::time::Instant::now();
                     }
-                    let current = { let id = id.clone(); let owner = owner.clone(); tokio::task::spawn_blocking(move || service::get_with_summary(&id, &owner)).await };
-                    let Ok(Ok(session)) = current else { break; };
-                    if session.revision == revision { continue; }
-                    revision = session.revision;
-                    // 首帧完整恢复，后续仅推送发生变化的消息，避免每段回复都重传全部历史。
-                    let changed: Vec<_> = session.messages.iter().filter(|m| previous.get(&m.id) != Some(&m.text)).cloned().collect();
-                    previous = session.messages.iter().map(|m| (m.id.clone(), m.text.clone())).collect();
-                    let mut metadata = session; metadata.messages.clear();
-                    let body = json!({"type":"update","session":metadata,"messages":changed}).to_string();
-                    if !matches!(tokio::time::timeout(Duration::from_secs(10), sender.send(Message::Text(body.into()))).await, Ok(Ok(()))) { break; }
                 }
             }
+        };
+        tokio::select! {
+            _ = send_updates => {},
+            _ = watch_connection => {},
         }
-        let _ = sender.close().await;
     }))
 }

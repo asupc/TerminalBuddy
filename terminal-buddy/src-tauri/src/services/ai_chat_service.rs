@@ -11,11 +11,10 @@ use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader
 use uuid::Uuid;
 
 type Result<T> = std::result::Result<T, String>;
-const MAX_TEXT: usize = 512 * 1024;
-const MAX_LINE: u64 = 8 * 1024 * 1024;
+// 仅记录运行任务以便退出时收尾，不限制任务并发数。
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
-struct RunningSlot;
-impl Drop for RunningSlot { fn drop(&mut self) { RUNNING.fetch_sub(1, Ordering::Relaxed); } }
+struct RunningTask;
+impl Drop for RunningTask { fn drop(&mut self) { RUNNING.fetch_sub(1, Ordering::Relaxed); } }
 
 enum Control { Stop, Approval(AnswerAiApproval) }
 struct Cell {
@@ -95,8 +94,7 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
 }
 pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
     if !matches!(input.provider.as_str(), "claude" | "codex") { return Err("请选择 Claude 或 Codex".into()); }
-    if input.model.as_ref().is_some_and(|v| v.len() > 200 || !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/[]@+".contains(c))) { return Err("模型名称无效".into()); }
-    if list(owner)?.len() >= 200 { return Err("AI 会话数量已达 200，请先删除旧会话".into()); }
+    if input.model.as_ref().is_some_and(|v| !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/[]@+".contains(c))) { return Err("模型名称无效".into()); }
     let selection = super::ai_catalog_service::selection(&input.provider, input.provider_id.as_deref(), input.model.as_deref())?;
     let id = Uuid::new_v4().to_string();
     let data = AiSession { id: id.clone(), title: "新对话".into(), provider: input.provider,
@@ -137,15 +135,14 @@ pub fn answer(id: &str, owner: &str, input: AnswerAiApproval) -> Result<()> {
 }
 pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     let cell = load(id, owner)?;
-    if input.text.trim().is_empty() || input.text.len() > 64 * 1024 { return Err("消息不能为空，且不能超过 64 KiB".into()); }
+    if input.text.trim().is_empty() { return Err("消息不能为空".into()); }
     Uuid::parse_str(&input.request_id).map_err(|_| "消息请求标识无效")?;
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
     if data.request_ids.contains(&input.request_id) { return Ok(data.clone()); }
     if control.is_some() { return Err("AI 正在回复，请等待完成或先中断".into()); }
-    RUNNING.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < 4).then_some(n + 1))
-        .map_err(|_| "服务器同时执行的 AI 任务已达上限，请稍后再试")?;
-    let slot = RunningSlot;
+    RUNNING.fetch_add(1, Ordering::Relaxed);
+    let task = RunningTask;
     let (tx, rx) = mpsc::channel();
     let before = data.clone();
     data.messages.push(AiMessage { id: input.request_id.clone(), role: "user".into(), text: input.text.clone(), created_at: chrono::Utc::now().timestamp_millis() });
@@ -157,7 +154,7 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     *control = Some(tx); drop(control);
     let worker_cell = cell.clone();
     if let Err(error) = thread::Builder::new().name(format!("ai-{id}")).spawn(move || {
-        let _slot = slot;
+        let _task = task;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_turn(&worker_cell, &input.text, rx)))
             .unwrap_or_else(|_| Err("AI 执行意外结束，可以重新发送消息".into()));
         finish(&worker_cell, result);
@@ -228,18 +225,12 @@ fn update_usage(cell: &Cell, action: impl FnOnce(&mut AiSession) -> bool) {
 fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
     if text.is_empty() { return; }
     update(cell, |data| {
-        // 历史消息不限制后续回合，只对单条输出保留大小保护。
         if let Some(item) = data.messages.iter_mut().find(|m| m.id == key) {
-            if append { if item.text.len() < MAX_TEXT { item.text.push_str(text); } } else { item.text = text.into(); }
-            truncate(&mut item.text, MAX_TEXT);
+            if append { item.text.push_str(text); } else { item.text = text.into(); }
         } else {
-            let mut text = text.to_string(); truncate(&mut text, MAX_TEXT);
-            data.messages.push(AiMessage { id: key.into(), role: role.into(), text, created_at: chrono::Utc::now().timestamp_millis() });
+            data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(), created_at: chrono::Utc::now().timestamp_millis() });
         }
     });
-}
-fn truncate(text: &mut String, max: usize) {
-    if text.len() > max { let mut end = max; while !text.is_char_boundary(end) { end -= 1; } text.truncate(end); }
 }
 struct Process(Child);
 impl Drop for Process {
@@ -301,7 +292,7 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
     thread::spawn(move || {
         let mut reader = BufReader::new(stderr); let mut buffer = [0; 2048];
         while let Ok(size) = reader.read(&mut buffer) { if size == 0 { break; }
-            if let Ok(mut text) = error_buffer.lock() { if text.len() < 8192 { text.push_str(&String::from_utf8_lossy(&buffer[..size])); } }
+            if let Ok(mut text) = error_buffer.lock() { text.push_str(&String::from_utf8_lossy(&buffer[..size])); }
         }
     });
     let (tx, output) = mpsc::sync_channel(64);
@@ -309,13 +300,13 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
         let mut reader = BufReader::new(stdout);
         loop {
             let mut bytes = Vec::new();
-            let result = (&mut reader).take(MAX_LINE + 1).read_until(b'\n', &mut bytes);
+            let result = reader.read_until(b'\n', &mut bytes);
             match result {
                 Ok(0) => break,
-                Ok(_) if bytes.len() as u64 <= MAX_LINE => {
+                Ok(_) => {
                     if let Ok(value) = serde_json::from_slice::<Value>(&bytes) { if tx.send(Ok(value)).is_err() { break; } }
                 }
-                _ => { let _ = tx.send(Err("AI 输出超出单条消息限制或读取失败".to_string())); break; }
+                Err(error) => { let _ = tx.send(Err(format!("读取 AI 输出失败：{error}"))); break; }
             }
         }
     });
@@ -493,7 +484,6 @@ impl CodexOutputState {
                 if let Some(output) = item["aggregatedOutput"].as_str() {
                     if completed || command.output.is_empty() { command.output = output.into(); }
                 }
-                truncate(&mut command.output, MAX_TEXT);
                 let name = if command.command.is_empty() { "执行命令" } else { &command.command };
                 message(cell, &key, "tool", &format!("{name}\n{}", command.output), false);
             }
@@ -520,7 +510,7 @@ fn apply_codex_event(cell: &Cell, turn: &str, state: &mut CodexOutputState, valu
                 message(cell, &key, "assistant", text, true);
             } else {
                 let command = state.commands.entry(id.into()).or_default();
-                if command.output.len() < MAX_TEXT { command.output.push_str(text); truncate(&mut command.output, MAX_TEXT); }
+                command.output.push_str(text);
                 let name = if command.command.is_empty() { "执行命令" } else { &command.command };
                 message(cell, &key, "tool", &format!("{name}\n{}", command.output), false);
             }

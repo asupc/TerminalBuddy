@@ -57,15 +57,17 @@ class AiRepository(context: Context) {
             .apply()
     }
 
-    /** 普通请求：40 秒足够创建会话和发送消息；WebSocket 单独使用无超时的客户端。 */
+    /** 登录及其他普通接口沿用连接和请求超时。 */
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .callTimeout(40, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).build()
 
-    private val realtime = http.newBuilder()
+    /** AI 请求和实时流不设固定超时，支持长文本上传及完整历史同步。 */
+    private val ai = http.newBuilder()
+        .connectTimeout(0, TimeUnit.MILLISECONDS).writeTimeout(0, TimeUnit.MILLISECONDS)
         .callTimeout(0, TimeUnit.MILLISECONDS).readTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(10, TimeUnit.SECONDS).build()
+        .build()
 
     /**
      * 登录后先确认目标服务确实提供原生 AI 接口，再替换已保存的连接，
@@ -136,7 +138,7 @@ class AiRepository(context: Context) {
     fun observe(id: String) = callbackFlow<AiSession> {
         val url = ServerAddress.aiSocket(store.server, id, store.token)
         var latest: AiSession? = null
-        val socket = realtime.newWebSocket(
+        val socket = ai.newWebSocket(
             Request.Builder().url(url).header("User-Agent", USER_AGENT).build(),
             object : WebSocketListener() {
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -185,7 +187,7 @@ class AiRepository(context: Context) {
             .apply { if (token.isNotBlank()) header("Authorization", "Bearer $token") }
             .method(method, payloadFor(method, body))
             .build()
-        val call = http.newCall(request)
+        val call = (if (path.firstOrNull() == "ai") ai else http).newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
