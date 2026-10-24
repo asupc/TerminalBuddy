@@ -492,6 +492,7 @@ pub fn run() {
             uninstall_claude_hooks,
             get_terminal_loading_mode,
             update_terminal_display_name,
+            report_session_directory,
             write_to_terminal,
             resize_terminal,
             acknowledge_terminal_output,

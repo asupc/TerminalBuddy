@@ -109,6 +109,10 @@ pub struct TerminalInfo {
     /// 额外参数模式：append / independent
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_startup_mode: Option<String>,
+    /// 会话当前目录（启动目录，或前端检测到 cd 后上报的最新值）。
+    /// 其他端据此跟随文件导航与会话历史，避免各客户端目录状态互相不可见。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
 }
 
 /// meta WebSocket 推送的消息（会话列表实时同步）。

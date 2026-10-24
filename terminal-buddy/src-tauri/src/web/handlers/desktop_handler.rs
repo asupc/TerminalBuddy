@@ -197,6 +197,9 @@ async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, ap
         "update_terminal_display_name" => {
             result(app.state::<TerminalService>().update_terminal_display_name(&argument::<String>(&args,"id")?, &argument::<String>(&args,"displayName")?, TerminalActor::Web))?
         }
+        "report_session_directory" => {
+            result(app.state::<TerminalService>().set_session_directory(&app, &argument::<String>(&args,"id")?, &argument::<String>(&args,"directory")?, TerminalActor::Web))?
+        }
         "close_terminal" => {
             app.state::<TerminalService>().close_terminal(&app, &argument::<String>(&args,"id")?, TerminalActor::Web, TerminalCloseReason::WebClose)
                 .map_err(|e| ApiError::Forbidden(e.to_string()))?;

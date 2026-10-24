@@ -191,6 +191,9 @@ pub struct TerminalInstance {
     pub extra_startup_params: Option<String>,
     /// 额外参数模式：append / independent
     pub extra_startup_mode: Option<String>,
+    /// 会话当前目录的权威值：创建时取启动目录，之后由前端检测 cd 后上报。
+    /// 广播给所有端，让每个客户端的文件导航/会话历史跟随同一份目录。
+    current_directory: Option<String>,
     backend: TerminalBackend,
     output_buffer: Arc<Mutex<TerminalOutputBuffer>>,
     current_rows: u16,
@@ -1074,6 +1077,40 @@ impl TerminalService {
             .map(|instance| instance.owner.clone())
     }
 
+    /// 更新会话当前目录（前端检测到 cd 后上报）并广播给所有端。
+    /// 目录未变化时不广播，避免各端相互上报形成事件风暴。
+    pub fn set_session_directory(
+        &self,
+        app: &AppHandle,
+        id: &str,
+        directory: &str,
+        actor: TerminalActor,
+    ) -> Result<(), String> {
+        self.authorize(id, actor, TerminalAction::View)
+            .map_err(|e| e.to_string())?;
+        let directory = directory.trim();
+        if directory.is_empty() {
+            return Ok(());
+        }
+        {
+            let mut instances = self.lock_instances();
+            let Some(instance) = instances.get_mut(id) else {
+                return Err("终端已不存在".to_string());
+            };
+            if instance.current_directory.as_deref() == Some(directory) {
+                return Ok(());
+            }
+            instance.current_directory = Some(directory.to_string());
+        }
+        // 桌面 Tauri 事件与 /ws/events 广播一次发出；events 通道按 terminalId
+        // 复查 View 权限，非共享模式下 Web 端自然收不到 PC 终端的目录变化。
+        let _ = app.emit(
+            "session-directory-changed",
+            serde_json::json!({ "terminalId": id, "directory": directory }),
+        );
+        Ok(())
+    }
+
     /// 构建当前存活终端的列表（供 REST `GET /api/terminals`、Tauri 命令、meta WS 共用）。
     /// 用 ProfileService 补全 profile 元数据。不做权限过滤，调用方按需使用
     /// `list_terminals_info_for`。
@@ -1091,6 +1128,7 @@ impl TerminalService {
             extra_param_tag_color: Option<String>,
             extra_startup_params: Option<String>,
             extra_startup_mode: Option<String>,
+            current_directory: Option<String>,
         }
         let entries: Vec<InstanceSnapshot> = {
             let instances = self.lock_instances();
@@ -1109,6 +1147,7 @@ impl TerminalService {
                     extra_param_tag_color: inst.extra_param_tag_color.clone(),
                     extra_startup_params: inst.extra_startup_params.clone(),
                     extra_startup_mode: inst.extra_startup_mode.clone(),
+                    current_directory: inst.current_directory.clone(),
                 })
                 .collect()
         };
@@ -1128,6 +1167,7 @@ impl TerminalService {
                      extra_param_tag_color,
                      extra_startup_params,
                      extra_startup_mode,
+                     current_directory,
                  }| {
                     let profile = ProfileService::get_profile(&profile_id).ok();
                     TerminalInfo {
@@ -1157,6 +1197,7 @@ impl TerminalService {
                         extra_param_tag_color,
                         extra_startup_params,
                         extra_startup_mode,
+                        directory: current_directory,
                     }
                 },
             )
@@ -1256,6 +1297,7 @@ impl TerminalService {
             extra_param_tag_color,
             extra_startup_params,
             extra_startup_mode,
+            current_directory: startup_path.clone(),
             backend,
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
@@ -1781,6 +1823,8 @@ impl TerminalService {
             extra_param_tag_color: None,
             extra_startup_params: None,
             extra_startup_mode: None,
+            // handoff 会话接管的是外部已运行的终端，无从得知其目录，等前端 cd 检测后上报。
+            current_directory: None,
             backend: TerminalBackend::Handoff(handoff),
             output_buffer: output_buffer.clone(),
             current_rows: init_rows,
@@ -1917,6 +1961,16 @@ pub fn close_terminal(
         Ok(()) | Err(TerminalAccessError::NotFound) => Ok(()),
         Err(error) => Err(error.to_string()),
     }
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn report_session_directory(
+    id: String,
+    directory: String,
+    app: AppHandle,
+    terminal_service: State<TerminalService>,
+) -> Result<(), String> {
+    terminal_service.set_session_directory(&app, &id, &directory, TerminalActor::Pc)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
