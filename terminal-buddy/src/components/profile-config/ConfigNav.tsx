@@ -2,7 +2,7 @@ import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayout
 import { useAppStore } from '../../stores/appStore';
 import { buildClaudeRefCommand, deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
-import { matchingStartupPresets } from '../../utils/startupPresets';
+import { matchingProjectPresets, matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
@@ -668,6 +668,27 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                 try { await openTerminalInDir(project.path, { groupName: project.name }); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
+              {matchingProjectPresets(extraParamPresets, profiles, project).map(preset => (
+                <div key={preset.id} className="context-menu-item" onClick={async () => {
+                  closeContextMenu();
+                  try {
+                    await openTerminalInDir(project.path, {
+                      command: preset.params,
+                      groupName: project.name,
+                      presetTag: preset.name,
+                      presetTagColor: preset.tagColor,
+                    });
+                  }
+                  catch (err) { console.error(err); }
+                }}>
+                  命令行<span
+                    className="config-nav-preset-chip"
+                    style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
+                  >
+                    {preset.name}
+                  </span>
+                </div>
+              ))}
               {modelMenuSections(projectModelSources(project), (source, providerId, modelId) => {
                 if (source === 'claude') void startProjectWithModel(project, providerId, modelId);
                 else void startProjectWithCodexModel(project, providerId, modelId);
