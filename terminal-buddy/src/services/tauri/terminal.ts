@@ -60,11 +60,18 @@ export interface BackendTerminalInfo {
   extraParamTagColor?: string;
   extraStartupParams?: string;
   extraStartupMode?: ExtraParamMode;
+  /** 会话当前目录（启动目录或最近 cd 上报），跨端跟随文件导航/会话历史用。 */
+  directory?: string | null;
 }
 
 /** 列出后端当前存活的终端会话，供桌面端启动后与页签对账。 */
 export async function listTerminals(): Promise<BackendTerminalInfo[]> {
   return invoke('list_terminals');
+}
+
+/** 把检测到的会话目录上报给后端：后端存为权威值并广播给所有端。 */
+export async function reportSessionDirectory(id: string, directory: string): Promise<void> {
+  return invoke('report_session_directory', { id, directory });
 }
 
 export async function writeToTerminal(id: string, data: string): Promise<void> {

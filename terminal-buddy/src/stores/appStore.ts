@@ -320,7 +320,7 @@ export interface AppState {
 	removeDraftFile: (draftPath: string) => Promise<void>;
 	restoreDraftTabs: () => Promise<void>;
 	sessionDirectories: Record<string, string>;
-	setSessionDirectory: (sessionId: string, path: string) => void;
+	setSessionDirectory: (sessionId: string, path: string, options?: { skipRemoteSync?: boolean }) => void;
 
 	// Claude Code session IDs
 	claudeSessionIds: Record<string, string>;

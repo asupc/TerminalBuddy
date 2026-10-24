@@ -420,6 +420,11 @@ function App() {
     const unlistenClosed = listen<string>('terminal-closed', (event) => {
       useAppStore.getState().removeSession(event.payload);
     });
+    // 会话目录变化（任一端 cd 后由后端广播）：写入本地 store，让文件导航与会话历史
+    // 在浏览器端也能跟随其他端的目录，skipRemoteSync 防止再次上报形成回环。
+    const unlistenDirectory = listen<{ terminalId: string; directory: string }>('session-directory-changed', (event) => {
+      useAppStore.getState().setSessionDirectory(event.payload.terminalId, event.payload.directory, { skipRemoteSync: true });
+    });
     const unlistenResync = isBrowserClient()
       ? listen('web-resync', () => { scheduleBrowserResync(); })
       : Promise.resolve(() => {});
@@ -446,6 +451,7 @@ function App() {
     return () => {
       unlistenCreated.then((f) => f());
       unlistenClosed.then((f) => f());
+      unlistenDirectory.then((f) => f());
       unlistenResync.then((f) => f());
       unlistenConnected.then((f) => f());
       unlistenTrayExit.then((f) => f());

@@ -4,7 +4,7 @@ import type { StoreApi } from "zustand";
 import type { AppState, TerminalActivityPhase } from "../appStore";
 import { saveTabsToStorage, useAppStore } from "../appStore";
 import type { TabGroup, TerminalSession } from "../../types";
-import { deletePath, ensureDir, getDataPath, readClientData, updateTerminalDisplayName, writeClientData, writeFileContent } from "../../services/tauri";
+import { deletePath, ensureDir, getDataPath, readClientData, reportSessionDirectory, updateTerminalDisplayName, writeClientData, writeFileContent } from "../../services/tauri";
 import { TERMINAL_SPLIT_TRANSITION_GUARD_MS } from "../../utils/terminalResizeEvent";
 
 let _saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
@@ -337,7 +337,8 @@ export const createSessionsSlice = (
 		}
 	},
 	sessionDirectories: {},
-	setSessionDirectory: (sessionId, path) =>
+	setSessionDirectory: (sessionId, path, options) => {
+		const changed = get().sessionDirectories[sessionId] !== path;
 		set((state) => {
 			// 目录是重启后按原 cwd 恢复 Claude 会话的必要信息，变化时立即落盘。
 			if (state.sessionDirectories[sessionId] === path) return state;
@@ -346,7 +347,14 @@ export const createSessionsSlice = (
 				sessionDirectories: { ...state.sessionDirectories, [sessionId]: path },
 				...(state.activeSessionId === sessionId ? { currentDirectory: path } : {}),
 			};
-		}),
+		});
+		if (!changed || options?.skipRemoteSync) return;
+		// SSH 会话记录的是远程路径，广播给其他端只会被误当本地目录参与跟随，不上报。
+		if (get().sessions.find(session => session.id === sessionId)?.terminalType === 'ssh') return;
+		// 上报后端存为权威值并广播：PC 与浏览器各自检测到的 cd 从此互通，
+		// 文件导航/会话历史在任一端都跟随同一份目录。失败不影响本地跟随。
+		reportSessionDirectory(sessionId, path).catch(() => {});
+	},
 	claudeSessionIds: {},
 	setClaudeSessionId: (sessionId, claudeSessionId) =>
 		set((state) => {

@@ -448,6 +448,11 @@ export async function reconcileBackendSessions() {
           ? {}
           : terminal.terminalType ? { terminalType: terminal.terminalType as TerminalSession['terminalType'] } : {}),
       });
+      // 后端目录是权威值（任一端 cd 都会上报）：对账时回填，浏览器端刷新/断线
+      // 重连后文件导航与会话历史才能立刻跟随其他端已 cd 过的目录。
+      if (terminal.directory && store.sessionDirectories[terminal.id] !== terminal.directory) {
+        store.setSessionDirectory(terminal.id, terminal.directory, { skipRemoteSync: true });
+      }
       continue;
     }
     const profile = store.profiles.find(item => item.id === terminal.profileId);
@@ -470,6 +475,9 @@ export async function reconcileBackendSessions() {
       extraParamTag: terminal.extraParamTag,
       extraParamTagColor: terminal.extraParamTagColor,
     }, keepActive);
+    if (terminal.directory) {
+      useAppStore.getState().setSessionDirectory(terminal.id, terminal.directory, { skipRemoteSync: true });
+    }
   }
 }
 
