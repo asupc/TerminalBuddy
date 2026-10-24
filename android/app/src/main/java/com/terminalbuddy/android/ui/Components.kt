@@ -104,7 +104,6 @@ fun PageHeader(title: String, reconnecting: Boolean = false, action: @Composable
             }
         }
         action()
-        ThemeToggleButton()
     }
 }
 

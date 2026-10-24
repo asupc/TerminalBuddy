@@ -84,11 +84,25 @@ private enum class AiPage { Home, Accounts, Connection }
         PageHeader("TerminalBuddy", reconnecting = ui.reconnecting) {
             var menu by remember { mutableStateOf(false) }
             val enabled = !ui.working && !ui.authenticating
+            val themeControls = LocalThemeControls.current
             Box {
-                IconButton({ menu = true }, enabled = enabled) {
+                IconButton({ menu = true }) {
                     Icon(Icons.Outlined.MoreHoriz, "更多", Modifier.size(20.dp), tint = TbColors.TextMuted)
                 }
                 DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (themeControls.darkTheme) "切换为浅色模式" else "切换为深色模式") },
+                        leadingIcon = {
+                            Icon(if (themeControls.darkTheme) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, null)
+                        },
+                        modifier = Modifier.semantics {
+                            stateDescription = if (themeControls.darkTheme) "深色模式" else "浅色模式"
+                        },
+                        onClick = {
+                            menu = false
+                            themeControls.onDarkThemeChange(!themeControls.darkTheme)
+                        },
+                    )
                     DropdownMenuItem(text = { Text("账号切换") }, enabled = enabled,
                         leadingIcon = { Icon(Icons.Outlined.ManageAccounts, null) },
                         onClick = { menu = false; page = AiPage.Accounts; vm.clearError() })
