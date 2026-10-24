@@ -32,7 +32,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -354,16 +353,13 @@ private fun AiMessageBubble(
             fontSize = 14.sp, lineHeight = 20.sp,
             lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
         )
-        val firstLineHeight = with(LocalDensity.current) { textStyle.lineHeight.toDp() }
-        // 头像与首行的中心对齐；字体放大时调整头像，换行时仍锚定首行。
-        val avatarTopPadding = ((firstLineHeight - AiAvatarSize) / 2).coerceAtLeast(0.dp)
-        val textTopPadding = ((AiAvatarSize - firstLineHeight) / 2).coerceAtLeast(0.dp)
+        // 头像和实际首行共用对齐线，Markdown 留白、标题字号和字体缩放均参与排版。
         Row(animated, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-            AiAvatar(provider, Modifier.padding(top = avatarTopPadding))
+            AiAvatar(provider, Modifier.alignBy { it.measuredHeight / 2 })
             if (message.role == "assistant") {
-                AiMarkdownContent(message, textStyle, Modifier.weight(1f).padding(top = textTopPadding))
+                AiMarkdownContent(message, textStyle, Modifier.weight(1f).alignBy(AiMessageFirstLineCenter))
             } else {
-                SelectionContainer(Modifier.weight(1f).padding(top = textTopPadding)) {
+                SelectionContainer(Modifier.weight(1f).alignBy(AiMessageFirstLineCenter).aiMessageFirstLine(textStyle)) {
                     Text(message.text, style = textStyle)
                 }
             }
