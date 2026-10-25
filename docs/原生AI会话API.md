@@ -5,7 +5,7 @@
 ## 运行方式
 
 - Claude：每回合启动 `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio`，用户消息以 JSON 行写入 stdin，后续回合使用 `--resume` 保留上下文。首个 `result` 仅表示一段回复结束；有后台任务时保持输入连接，继续接收任务状态、唤醒后的回复及后续结果。任务清空后关闭输入，读完输出并确认进程正常退出才结束本轮；中断和异常仍会清理进程树。
-- Codex：启动 `codex app-server`，通过 stdio JSON-RPC 完成初始化、thread 创建/恢复和 turn 提交，解析消息增量、工具执行、确认请求及完成事件。
+- Codex：每个会话复用一个驻留的 `codex app-server`，通过 stdio JSON-RPC 完成初始化、thread 创建/恢复和 turn 提交。`turn/completed` 仅结束主回合，保留进程继续接收后台命令、子代理和自动唤醒回合的事件；后续用户消息送入同一进程，避免恢复历史时丢失仍在运行的任务。中断、删除会话和服务退出时回收进程树，删除后的迟到事件不能重建会话文件。
 - `GET /api/ai/catalog` 汇总服务器 Claude 通用供应商、容器 Claude 配置及 Codex 供应商的可用模型，供手机首页选择；目录不包含密钥。
 - 创建会话可指定 `providerId` 与模型；服务端保存所选供应商名称及标识。Claude 通过受限权限的临时 settings 应用对应地址、认证和模型配置，回合退出后删除；Codex 复用供应商注册与参数生成，按会话选择供应商与模型，不改变全局默认供应商。
 - 不指定供应商时保持旧版 CLI 默认配置行为；显式选择的供应商或模型失效时提示重新选择，不静默回退。
@@ -46,7 +46,7 @@ REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离
 | `DELETE /api/ai/sessions/{id}` | 删除空闲会话 |
 | `/ws/ai/{id}?token=...` | 实时状态与消息 |
 
-提交消息立即返回，CLI 在专用工作线程执行。`requestId` 持久化去重，避免网络中断后重试产生重复回合。同一会话互斥；不同会话的任务不设并发配额。应用不限制会话数量、每会话消息数量、用户输入长度、回复及工具输出长度、CLI 单行输出长度或任务运行时长，正文和错误输出均完整记录。标题预览不影响消息正文。
+提交消息立即返回，CLI 在专用工作线程执行。`requestId` 持久化去重，避免网络中断后重试产生重复回合。同一会话由单个工作线程串行处理输入；Codex 主回合结束但仍有后台工作时返回 `background` 状态，允许发送“继续”等补充消息，并保留中断能力。后台命令按条目状态更新，子代理结合协作事件、线程通知与只读状态查询更新，不把子线程结束误判为主回合完成；新的主回合切换事件过滤标识，上一回合的已知后台命令仍可回传输出。不同会话的任务不设并发配额。应用不限制会话数量、每会话消息数量、用户输入长度、回复及工具输出长度、CLI 单行输出长度或任务运行时长，正文和错误输出均完整记录。标题预览不影响消息正文。
 
 AI REST 接口不使用普通 API 的请求正文大小和处理超时限制；安卓 AI 请求及实时流也不设固定连接、读写或调用超时。模型及供应商自身的上下文窗口、输出能力、额度和限流仍以其实际支持为准。
 
@@ -112,7 +112,7 @@ Codex 沿用 CLI 提供的题目 ID 与答案数组。Claude 的 `AskUserQuestio
 - `lastTurn` 描述最近一次用户发送触发的整轮执行，包含多次模型调用。`state=provisional` 表示执行中，`final` 表示已收到完整统计，`partial` 表示缺少完整结算。尚未发送时为 `null`。
 - `sessionTotal` 表示累计消耗；`coverage=complete` 为完整统计，`sinceUpgrade` 为旧会话从升级后开始统计，`partial` 为包含不完整或无法确定起点的统计。停止、异常或服务重启会将未完成统计标记为部分统计。
 - 对外 `inputTokens` 已包含缓存，`cacheReadInputTokens` / `cacheCreationInputTokens` 为其中的明细；Codex 的 `reasoningOutputTokens` 也是输出的组成部分，不能再叠加。
-- Claude 按 API 消息 ID 合并流式 / 完整消息用量，最终 `result.usage` 或 `modelUsage` 替换本轮快照。Codex 按线程累计快照减去回合基线，恢复线程不会重复加上历史累计。最终完成事件后最多等待 300ms 接收紧随其后的用量通知。
+- Claude 按 API 消息 ID 合并流式 / 完整消息用量，最终 `result.usage` 或 `modelUsage` 替换本轮快照。Codex 按线程累计快照减去回合基线，恢复线程不会重复加上历史累计。主回合完成后保留 300ms 接收紧随其后的用量通知；该等待只用于统计结算，不回收 Codex 进程。自动唤醒继续沿用最近一次用户输入的累计基线。
 - 统计和 Codex 恢复基线一起保存在 `AiSessions/*.json`，基线字段不返回客户端。仅用量变化也增加 `revision`，现有 WebSocket 和 REST 补偿可以直接同步，无需额外接口。
 
 ### 安卓正文 Markdown

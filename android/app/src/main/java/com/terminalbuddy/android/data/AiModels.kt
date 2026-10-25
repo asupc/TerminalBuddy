@@ -23,10 +23,14 @@ data class AiSession(
     val usage: AiUsage? = null,
 ) {
     /** 服务端仍在该会话执行任务（含等待用户确认）。 */
-    val running get() = status == "running" || status == "approval"
+    val running get() = status == "running" || status == "approval" || status == "background" || status == "stopping"
+    /** 主回合空闲时，补充消息继续交给保留的服务端会话。 */
+    val canSend get() = status != "running" && status != "approval" && status != "stopping"
     val statusLabel get() = when (status) {
         "running" -> "正在回复"
         "approval" -> "等待确认"
+        "background" -> "后台任务执行中"
+        "stopping" -> "正在中断"
         "error" -> "执行失败"
         "interrupted" -> "已中断"
         else -> "可以发送消息"

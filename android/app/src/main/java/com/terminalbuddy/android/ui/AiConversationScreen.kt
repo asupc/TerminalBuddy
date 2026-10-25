@@ -167,7 +167,7 @@ private fun AiConversation(
     val latestMessage = session.messages.lastOrNull()
     val assistantOutput = latestMessage?.let { it.role == "assistant" && it.text.isNotBlank() } == true
     val showReplyIndicator = !ui.loadingSession && session.running &&
-        (session.status == "approval" || (!assistantOutput && !renderedAssistantOutput && !revealing))
+        (session.status == "approval" || session.status == "background" || session.status == "stopping" || (!assistantOutput && !renderedAssistantOutput && !revealing))
     val elapsedSeconds = rememberAiReplyElapsedSeconds(session, replying)
     BoxWithConstraints(modifier.fillMaxWidth()) {
         // 确认区随键盘后的可用高度收缩，避免把消息区域全部挤出屏幕。
@@ -189,7 +189,7 @@ private fun AiConversation(
                     }
                     if (showReplyIndicator) item(key = "ai-status") {
                         AiReplyIndicator(
-                            session.providerLabel, if (session.status == "approval") "等待确认" else "思考中", elapsedSeconds,
+                            session.providerLabel, when (session.status) { "approval" -> "等待确认"; "background" -> "后台任务执行中"; "stopping" -> "正在中断"; else -> "思考中" }, elapsedSeconds,
                             Modifier.animateItem(fadeInSpec = tween(120), placementSpec = null, fadeOutSpec = null),
                         )
                     }
@@ -257,7 +257,8 @@ private fun AiConversation(
 private fun AiComposer(
     ui: AiUiState, session: AiSession, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit,
 ) {
-    val actionEnabled = if (session.running) !ui.working else ui.draft.isNotBlank() && !ui.sending && !ui.loadingSession
+    val showStop = session.running && (session.status != "background" || ui.draft.isBlank())
+    val actionEnabled = if (showStop) !ui.working && session.status != "stopping" else session.canSend && ui.draft.isNotBlank() && !ui.sending && !ui.loadingSession
     Surface(color = TbColors.Surface) {
         Box(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
@@ -289,8 +290,8 @@ private fun AiComposer(
                         },
                     )
                     IconButton(
-                        if (session.running) stop else send, enabled = actionEnabled, modifier = Modifier.size(48.dp)
-                            .semantics { contentDescription = if (session.running) "中断回复" else if (ui.sending) "正在发送" else "发送消息" },
+                        if (showStop) stop else send, enabled = actionEnabled, modifier = Modifier.size(48.dp)
+                            .semantics { contentDescription = if (showStop) "中断回复" else if (ui.sending) "正在发送" else "发送消息" },
                     ) {
                         Box(
                             Modifier.size(32.dp).background(
@@ -299,7 +300,7 @@ private fun AiComposer(
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                if (session.running) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null,
+                                if (showStop) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null,
                                 Modifier.size(18.dp), tint = TbColors.AccentInk,
                             )
                         }

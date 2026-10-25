@@ -6,7 +6,7 @@ use super::{ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage 
 use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
 use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
-    process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicUsize, Ordering}},
+    process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicBool, AtomicUsize, Ordering}},
     thread, time::{Duration, Instant}};
 use uuid::Uuid;
 
@@ -16,11 +16,13 @@ static RUNNING: AtomicUsize = AtomicUsize::new(0);
 struct RunningTask;
 impl Drop for RunningTask { fn drop(&mut self) { RUNNING.fetch_sub(1, Ordering::Relaxed); } }
 
-enum Control { Stop, Approval(AnswerAiApproval) }
+enum Control { Stop, Retire, Message { text: String, request_id: String }, Approval(AnswerAiApproval) }
+enum WorkerExit { Completed, Retired }
 struct Cell {
     data: Mutex<AiSession>,
     control: Mutex<Option<mpsc::Sender<Control>>>,
     summary: Mutex<SessionSummaryTracker>,
+    deleted: AtomicBool,
     path: PathBuf,
 }
 fn registry() -> &'static Mutex<HashMap<PathBuf, Arc<Cell>>> {
@@ -41,6 +43,7 @@ fn persist(cell: &Cell) -> Result<()> {
     persist_data(cell, &data)
 }
 fn persist_data(cell: &Cell, data: &AiSession) -> Result<()> {
+    if cell.deleted.load(Ordering::Acquire) { return Err("AI 会话不存在".into()); }
     // API 序列化隐藏的字段在磁盘中单独保留。
     let mut value = serde_json::to_value(data).map_err(|e| e.to_string())?;
     value["owner"] = json!(data.owner);
@@ -57,12 +60,12 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
     if !registry.contains_key(&path) {
         let bytes = fs::read(&path).map_err(|_| "AI 会话不存在")?;
         let mut data: AiSession = serde_json::from_slice(&bytes).map_err(|_| "AI 会话文件损坏")?;
-        if matches!(data.status.as_str(), "running" | "approval") {
+        if matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping") {
             data.status = "interrupted".into(); data.approvals.clear();
             usage::finish_turn(&mut data);
             data.error = Some("服务已重启，上次执行已中断，可以继续发送消息".into()); touch(&mut data);
         }
-        registry.insert(path.clone(), Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), path: path.clone() }));
+        registry.insert(path.clone(), Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: path.clone() }));
     }
     let cell = registry.get(&path).ok_or("AI 会话不存在")?.clone();
     if cell.data.lock().map_err(|_| "AI 会话状态不可用")?.owner != owner { return Err("AI 会话不存在".into()); }
@@ -103,16 +106,23 @@ pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, owner: owner.into(), thread_id: None, request_ids: Vec::new() };
-    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), path: directory()?.join(format!("{id}.json")) });
+    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{id}.json")) });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
     Ok(data)
 }
 pub fn delete(id: &str, owner: &str) -> Result<()> {
     let cell = load(id, owner)?;
-    let control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
-    if control.is_some() { return Err("会话正在执行，请先中断再删除".into()); }
+    let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+    let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    if control.is_some() && (data.provider != "codex" || data.status != "idle") {
+        return Err("会话正在执行，请先中断再删除".into());
+    }
     fs::remove_file(&cell.path).map_err(|e| format!("删除 AI 会话失败：{e}"))?;
+    cell.deleted.store(true, Ordering::Release);
+    // 空闲 Codex 仍保留 app-server；删除时退出，但不能再执行普通收尾把文件写回来。
+    if let Some(tx) = control.take() { let _ = tx.send(Control::Retire); }
+    drop(data);
     registry().lock().map_err(|_| "AI 会话状态不可用")?.remove(&cell.path);
     Ok(())
 }
@@ -120,6 +130,7 @@ pub fn stop(id: &str, owner: &str) -> Result<()> {
     let cell = load(id, owner)?;
     if let Some(tx) = cell.control.lock().map_err(|_| "AI 会话状态不可用")?.as_ref() {
         tx.send(Control::Stop).map_err(|_| "执行已经结束")?;
+        update(&cell, |data| data.status = "stopping".into());
     }
     Ok(())
 }
@@ -140,25 +151,39 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     Uuid::parse_str(&input.request_id).map_err(|_| "消息请求标识无效")?;
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    if !cell.path.is_file() { return Err("AI 会话不存在".into()); }
     if data.request_ids.contains(&input.request_id) { return Ok(data.clone()); }
-    if control.is_some() { return Err("AI 正在回复，请等待完成或先中断".into()); }
-    RUNNING.fetch_add(1, Ordering::Relaxed);
-    let task = RunningTask;
-    let (tx, rx) = mpsc::channel();
+    let reuse = data.provider == "codex" && control.is_some() && matches!(data.status.as_str(), "idle" | "background");
+    if control.is_some() && !reuse { return Err("AI 正在回复，请等待完成或先中断".into()); }
     let before = data.clone();
     data.messages.push(AiMessage { id: input.request_id.clone(), role: "user".into(), text: input.text.clone(), created_at: chrono::Utc::now().timestamp_millis() });
     if data.title == "新对话" { data.title = input.text.trim().chars().take(36).collect(); }
     usage::begin_turn(&mut data);
-    data.request_ids.push(input.request_id); data.status = "running".into(); data.error = None; data.approvals.clear(); touch(&mut data);
-    let snapshot = data.clone(); drop(data);
-    if let Err(error) = persist(&cell) { *cell.data.lock().map_err(|_| "AI 会话状态不可用")? = before; return Err(error); }
+    data.request_ids.push(input.request_id.clone()); data.status = "running".into(); data.error = None; data.approvals.clear(); touch(&mut data);
+    let snapshot = data.clone();
+    if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+    if reuse {
+        if control.as_ref().ok_or("AI 输入通道不可用")?.send(Control::Message { text: input.text, request_id: input.request_id }).is_err() {
+            *data = before;
+            persist_data(&cell, &data)?;
+            return Err("Codex 进程已退出，请再次发送消息".into());
+        }
+        return Ok(snapshot);
+    }
+    drop(data);
+    RUNNING.fetch_add(1, Ordering::Relaxed);
+    let task = RunningTask;
+    let (tx, rx) = mpsc::channel();
     *control = Some(tx); drop(control);
     let worker_cell = cell.clone();
     if let Err(error) = thread::Builder::new().name(format!("ai-{id}")).spawn(move || {
         let _task = task;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_turn(&worker_cell, &input.text, rx)))
             .unwrap_or_else(|_| Err("AI 执行意外结束，可以重新发送消息".into()));
-        finish(&worker_cell, result);
+        match result {
+            Ok(WorkerExit::Retired) => {},
+            result => finish(&worker_cell, result.map(|_| ())),
+        }
     }) {
         *cell.control.lock().map_err(|_| "AI 会话状态不可用")? = None;
         *cell.data.lock().map_err(|_| "AI 会话状态不可用")? = before;
@@ -270,7 +295,7 @@ fn write_json(stdin: &mut impl Write, value: Value) -> Result<()> {
     serde_json::to_writer(&mut *stdin, &value).map_err(|e| e.to_string())?;
     stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|e| format!("AI 输入通道已关闭：{e}"))
 }
-fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Result<()> {
+fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Result<WorkerExit> {
     let session = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     let launch = super::ai_catalog_service::prepare(&session.provider, session.provider_id.as_deref(), session.model.as_deref())?;
     let permissions = super::ai_permission_service::for_agent(&session.provider)?;
@@ -315,7 +340,7 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
     if session.provider == "claude" {
         write_json(&mut stdin, json!({"type":"user","message":{"role":"user","content":prompt},
             "parent_tool_use_id":null,"session_id":session.thread_id.as_deref().unwrap_or("")}))?;
-        run_claude(cell, &mut process, stdin, controls, output, errors)
+        run_claude(cell, &mut process, stdin, controls, output, errors).map(|_| WorkerExit::Completed)
     } else {
         write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"}}}))?;
         run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors)
@@ -571,6 +596,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
 struct CodexCommandOutput {
     command: String,
     output: String,
+    running: bool,
 }
 #[derive(Default)]
 struct CodexOutputState {
@@ -578,6 +604,7 @@ struct CodexOutputState {
     turn_id: Option<String>,
     completed_items: HashSet<String>,
     commands: HashMap<String, CodexCommandOutput>,
+    finished: bool,
     usage: usage::CodexUsageTracker,
 }
 impl CodexOutputState {
@@ -593,13 +620,16 @@ impl CodexOutputState {
     }
     fn item(&mut self, cell: &Cell, turn: &str, item: &Value, completed: bool) {
         let Some(id) = item["id"].as_str().filter(|id| !id.is_empty()) else { return; };
-        if !completed && self.completed_items.contains(id) { return; }
-        if completed { self.completed_items.insert(id.into()); }
+        // unified exec 的工具调用可以先返回，但 PTY 仍在后台执行；此时条目还不是最终快照。
+        let final_item = completed && !(item["type"] == "commandExecution" && item["status"] == "inProgress");
+        if !final_item && self.completed_items.contains(id) { return; }
+        if final_item { self.completed_items.insert(id.into()); }
         let key = format!("{turn}-item-{id}");
         match item["type"].as_str().unwrap_or("") {
             "agentMessage" if completed => message(cell, &key, "assistant", item["text"].as_str().unwrap_or(""), false),
             "commandExecution" => {
                 let command = self.commands.entry(id.into()).or_default();
+                command.running = !final_item;
                 if let Some(text) = item["command"].as_str() { command.command = text.into(); }
                 if let Some(output) = item["aggregatedOutput"].as_str() {
                     if completed || command.output.is_empty() { command.output = output.into(); }
@@ -608,16 +638,29 @@ impl CodexOutputState {
                 message(cell, &key, "tool", &format!("{name}\n{}", command.output), false);
             }
             "fileChange" => message(cell, &key, "tool", &format!("文件变更\n{}", item["changes"]), false),
+            "collabAgentToolCall" | "collabToolCall" => {
+                message(cell, &key, "tool", &format!("协作任务：{}\n{}", item["tool"].as_str().unwrap_or("子任务"),
+                    item.get("agentsStates").or_else(|| item.get("agentStatus")).unwrap_or(&Value::Null)), false);
+            }
             _ => {}
         }
     }
 }
 fn apply_codex_event(cell: &Cell, turn: &str, state: &mut CodexOutputState, value: &Value) -> Result<bool> {
     let method = value["method"].as_str().unwrap_or(""); let params = &value["params"];
-    if !state.accepts(params) { return Ok(false); }
+    if !state.accepts(params) {
+        // 上一回合启动的后台命令可以在新回合期间继续输出，只接收已知命令的事件。
+        if state.thread_id.as_deref() != params["threadId"].as_str() { return Ok(false); }
+        let id = params["itemId"].as_str().or_else(|| params["item"]["id"].as_str());
+        if !id.is_some_and(|id| state.commands.contains_key(id))
+            || !(method == "item/commandExecution/outputDelta" || matches!(method, "item/started" | "item/completed") && params["item"]["type"] == "commandExecution") {
+            return Ok(false);
+        }
+    }
     update_usage(cell, |data| state.usage.observe(data, value));
     match method {
         "turn/started" => {
+            state.finished = false;
             if state.turn_id.is_none() { state.turn_id = params["turn"]["id"].as_str().map(str::to_string); }
         }
         "item/agentMessage/delta" | "item/commandExecution/outputDelta" => {
@@ -637,6 +680,7 @@ fn apply_codex_event(cell: &Cell, turn: &str, state: &mut CodexOutputState, valu
         }
         "item/started" | "item/completed" => state.item(cell, turn, &params["item"], method == "item/completed"),
         "turn/completed" => {
+            state.finished = true;
             if let Some(items) = params["turn"]["items"].as_array() {
                 for item in items { state.item(cell, turn, item, true); }
             }
@@ -650,29 +694,185 @@ fn apply_codex_event(cell: &Cell, turn: &str, state: &mut CodexOutputState, valu
     }
     Ok(false)
 }
+#[derive(Default)]
+struct CodexBackgroundState {
+    known_agents: HashSet<String>,
+    running_agents: HashSet<String>,
+    completed_items: HashSet<String>,
+}
+impl CodexBackgroundState {
+    fn agent_status(&mut self, cell: &Cell, turn: &str, id: &str, status: &str, detail: &str) {
+        self.known_agents.insert(id.into());
+        if matches!(status, "running" | "pendingInit" | "active") { self.running_agents.insert(id.into()); }
+        else if matches!(status, "idle" | "completed" | "interrupted" | "errored" | "shutdown" | "notFound" | "notLoaded" | "systemError") {
+            let was_running = self.running_agents.remove(id);
+            if was_running || !detail.is_empty() {
+                let label = if matches!(status, "idle" | "completed") { "子任务已完成" } else { "子任务已结束" };
+                message(cell, &format!("{turn}-agent-{id}"), "tool", &format!("{label}\n{detail}"), false);
+            }
+        }
+    }
+    fn observe(&mut self, cell: &Cell, turn: &str, main: &str, value: &Value) {
+        let params = &value["params"];
+        let method = value["method"].as_str().unwrap_or("");
+        let source = params["thread"]["source"]["subAgent"]["thread_spawn"]["parent_thread_id"].as_str();
+        if method == "thread/started" && source.is_some_and(|id| id == main || self.known_agents.contains(id)) {
+            if let Some(id) = params["thread"]["id"].as_str() { self.known_agents.insert(id.into()); }
+        }
+        let Some(thread_id) = params["threadId"].as_str() else { return; };
+        if self.known_agents.contains(thread_id) {
+            if method == "thread/status/changed" {
+                self.agent_status(cell, turn, thread_id, params["status"]["type"].as_str().unwrap_or(""), "");
+            }
+            if method == "turn/completed" {
+                let detail = params["turn"]["items"].as_array().map(|items| items.iter().filter(|item| item["type"] == "agentMessage")
+                    .filter_map(|item| item["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+                self.agent_status(cell, turn, thread_id, params["turn"]["status"].as_str().unwrap_or(""), &detail);
+            }
+        }
+        if thread_id != main { return; }
+        if matches!(method, "item/started" | "item/completed") {
+            self.item(cell, turn, &params["item"], method == "item/completed");
+        }
+        if method == "turn/completed" {
+            if let Some(items) = params["turn"]["items"].as_array() { for item in items { self.item(cell, turn, item, true); } }
+        }
+    }
+    fn item(&mut self, cell: &Cell, turn: &str, item: &Value, completed: bool) {
+        if let Some(id) = item["id"].as_str() {
+            if self.completed_items.contains(id) { return; }
+            if completed { self.completed_items.insert(id.into()); }
+        }
+        match item["type"].as_str().unwrap_or("") {
+            "collabAgentToolCall" | "collabToolCall" => {
+                if matches!(item["tool"].as_str(), Some("spawnAgent" | "resumeAgent" | "sendInput" | "followupTask"))
+                    && item["status"] != "failed" && item["status"] != "interrupted" {
+                    if let Some(ids) = item["receiverThreadIds"].as_array() {
+                        for id in ids.iter().filter_map(Value::as_str) { self.agent_status(cell, turn, id, "running", ""); }
+                    }
+                    if let Some(id) = item["newThreadId"].as_str().or_else(|| item["receiverThreadId"].as_str()) {
+                        self.agent_status(cell, turn, id, "running", "");
+                    }
+                }
+                if let Some(states) = item["agentsStates"].as_object() {
+                    for (id, state) in states { self.agent_status(cell, turn, id, state["status"].as_str().unwrap_or(""), state["message"].as_str().unwrap_or("")); }
+                }
+                if let (Some(id), Some(status)) = (item["receiverThreadId"].as_str().or_else(|| item["newThreadId"].as_str()), item["agentStatus"].as_str().or_else(|| item["agentStatus"]["status"].as_str())) {
+                    self.agent_status(cell, turn, id, status, "");
+                }
+            }
+            "subAgentActivity" => {
+                if let Some(id) = item["agentThreadId"].as_str() {
+                    let status = match item["kind"].as_str().unwrap_or("") { "started" | "interacted" => "running", "completed" => "completed", "interrupted" => "interrupted", _ => "" };
+                    self.agent_status(cell, turn, id, status, "");
+                }
+            }
+            _ => {},
+        }
+    }
+    fn running(&self, state: &CodexOutputState) -> bool {
+        !self.running_agents.is_empty() || state.commands.values().any(|command| command.running)
+    }
+}
+fn codex_request(stdin: &mut impl Write, next_id: &mut u64, method: &str, params: Value) -> Result<u64> {
+    let id = *next_id;
+    *next_id += 1;
+    write_json(stdin, json!({"id":id,"method":method,"params":params}))?;
+    Ok(id)
+}
+fn codex_status(cell: &Cell, state: &CodexOutputState, background: &CodexBackgroundState, request_id: Option<&str>, submitting: bool) {
+    if let Ok(mut data) = cell.data.lock() {
+        // 发送接口可能刚接纳了下一条消息，旧回合的迟到事件不能把它改回空闲。
+        if data.request_ids.last().map(String::as_str) != request_id || data.status == "stopping" { return; }
+        let status = if !data.approvals.is_empty() { "approval" } else if submitting || !state.finished { "running" }
+            else if background.running(state) { "background" } else { "idle" };
+        if data.status != status { data.status = status.into(); touch(&mut data); }
+    }
+}
 fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
-    controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<()> {
+    controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<WorkerExit> {
     let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
+    let mut last_persisted = session.revision;
     let mut pending: HashMap<String, (Value, String)> = HashMap::new();
     let mut state = CodexOutputState { thread_id: session.thread_id.clone(), ..Default::default() };
+    let mut background = CodexBackgroundState::default();
+    let mut next_id = 2;
+    let mut resume_request = None;
+    let mut turn_request = None;
+    let mut queued_prompt = Some(prompt.to_string());
+    let mut request_id = session.request_ids.last().cloned();
+    let mut agent_queries: HashMap<u64, String> = HashMap::new();
+    let mut agent_checkpoint = Instant::now();
+    let mut settle_at: Option<Instant> = None;
     if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
     loop {
         while let Ok(control) = controls.try_recv() {
             match control {
                 Control::Stop => return Err("已中断".into()),
+                Control::Retire => return Ok(WorkerExit::Retired),
+                Control::Message { text, request_id: accepted_id } => {
+                    request_id = Some(accepted_id);
+                    state.usage = usage::CodexUsageTracker::default();
+                    if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
+                    let id = state.thread_id.as_deref().ok_or("Codex 会话尚未初始化")?;
+                    if !state.finished && state.turn_id.is_some() {
+                        // turn/start 由 app-server 原子处理活动回合的补充输入，也兼容它刚好结束的竞争情况。
+                        let mut params = json!({"threadId":id,"input":[{"type":"text","text":text}]});
+                        super::ai_permission_service::for_agent("codex")?.apply_turn(&mut params);
+                        state.usage.submitted();
+                        turn_request = Some(codex_request(stdin, &mut next_id, "turn/start", params)?);
+                    } else {
+                        let permissions = super::ai_permission_service::for_agent("codex")?;
+                        let mut params = json!({"threadId":id,"cwd":session.project_path});
+                        permissions.apply_thread(&mut params);
+                        if let Some(model) = &session.model { params["model"] = json!(model); }
+                        resume_request = Some(codex_request(stdin, &mut next_id, "thread/resume", params)?);
+                        queued_prompt = Some(text);
+                        state.turn_id = None;
+                    }
+                }
                 Control::Approval(answer) => {
                     if let Some((id, method)) = pending.remove(&answer.approval_id) {
                         let result = if method == "item/tool/requestUserInput" {
                             json!({"answers": if answer.decision == "accept" { answer.answers } else { json!({}) }})
                         } else { json!({"decision":answer.decision}) };
                         write_json(stdin, json!({"id":id,"result":result}))?;
-                        update(cell, |data| { data.approvals.retain(|a| a.id != answer.approval_id); if data.approvals.is_empty() { data.status = "running".into(); } });
+                        update(cell, |data| { data.approvals.retain(|a| a.id != answer.approval_id); });
                     }
                 }
             }
         }
-        if checkpoint.elapsed() > Duration::from_secs(5) { persist(cell)?; checkpoint = Instant::now(); }
+        if settle_at.is_some_and(|deadline| Instant::now() >= deadline) {
+            settle_at = None;
+            update(cell, |data| { state.usage.completed(data); usage::finish_turn(data); });
+            codex_status(cell, &state, &background, request_id.as_deref(), resume_request.is_some() || turn_request.is_some());
+            persist(cell)?;
+        }
+        if checkpoint.elapsed() > Duration::from_secs(5) {
+            let revision = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.revision;
+            if revision != last_persisted { persist(cell)?; last_persisted = revision; }
+            checkpoint = Instant::now();
+        }
+        // 子线程不一定向此连接广播状态，用只读查询补齐完成状态，避免后台标记停留。
+        if agent_checkpoint.elapsed() > Duration::from_secs(3) {
+            for id in &background.running_agents {
+                if !agent_queries.values().any(|pending| pending == id) {
+                    let rpc_id = codex_request(stdin, &mut next_id, "thread/read", json!({"threadId":id,"includeTurns":false}))?;
+                    agent_queries.insert(rpc_id, id.clone());
+                }
+            }
+            agent_checkpoint = Instant::now();
+        }
+        codex_status(cell, &state, &background, request_id.as_deref(), resume_request.is_some() || turn_request.is_some() || settle_at.is_some());
         let Some(value) = next_output(&output, &errors)? else { continue; };
+        if let Some(id) = value["id"].as_u64().filter(|_| value.get("method").is_none()) {
+            if let Some(agent_id) = agent_queries.remove(&id) {
+                if value.get("error").is_none() {
+                    background.agent_status(cell, &turn, &agent_id, value["result"]["thread"]["status"]["type"].as_str().unwrap_or(""), "");
+                }
+                continue;
+            }
+        }
         if value.get("error").is_some() { return Err(value["error"]["message"].as_str().unwrap_or("Codex 请求失败").into()); }
         if value["id"] == 1 && value.get("result").is_some() {
             write_json(stdin, json!({"method":"initialized","params":{}}))?;
@@ -680,18 +880,22 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
             permissions.apply_thread(&mut params);
             if let Some(model) = &session.model { params["model"] = json!(model); }
             let method = if let Some(id) = &session.thread_id { params["threadId"] = json!(id); "thread/resume" } else { "thread/start" };
-            write_json(stdin, json!({"id":2,"method":method,"params":params}))?;
-        } else if value["id"] == 2 && value.get("result").is_some() {
+            resume_request = Some(codex_request(stdin, &mut next_id, method, params)?);
+        } else if value["id"].as_u64().is_some_and(|id| Some(id) == resume_request) && value.get("result").is_some() {
+            resume_request = None;
             let id = value["result"]["thread"]["id"].as_str().ok_or("Codex 未返回会话标识")?;
             state.thread_id = Some(id.into());
             update(cell, |data| data.thread_id = Some(id.into())); persist(cell)?;
-            let mut params = json!({"threadId":id,"input":[{"type":"text","text":prompt}]});
-            permissions.apply_turn(&mut params);
+            let text = queued_prompt.take().ok_or("Codex 待发送消息不可用")?;
+            let mut params = json!({"threadId":id,"input":[{"type":"text","text":text}]});
+            super::ai_permission_service::for_agent("codex")?.apply_turn(&mut params);
             state.usage.submitted();
-            write_json(stdin, json!({"id":3,"method":"turn/start","params":params}))?;
+            state.finished = false;
+            turn_request = Some(codex_request(stdin, &mut next_id, "turn/start", params)?);
         }
-        if value["id"] == 3 && value.get("result").is_some() {
-            if let Some(id) = value["result"]["turn"]["id"].as_str() { state.turn_id = Some(id.into()); }
+        if value["id"].as_u64().is_some_and(|id| Some(id) == turn_request) && value.get("result").is_some() {
+            turn_request = None;
+            if let Some(id) = value["result"]["turn"]["id"].as_str().or_else(|| value["result"]["turnId"].as_str()) { state.turn_id = Some(id.into()); }
         }
         let method = value["method"].as_str().unwrap_or(""); let params = &value["params"];
         if value.get("id").is_some() && !method.is_empty() {
@@ -700,24 +904,30 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
                 update(cell, |data| { data.status = "approval".into(); data.approvals.push(AiApproval { id, method: method.into(), details: params.clone() }); });
             } else { write_json(stdin, json!({"id":value["id"],"error":{"code":-32601,"message":"客户端暂不支持此交互请求"}}))?; }
         }
-        let outcome = apply_codex_event(cell, &turn, &mut state, &value);
-        if matches!(&outcome, Ok(false)) { continue; }
-        // 部分 app-server 版本在完成事件后紧接着发送最终用量；短暂收齐再回收进程。
-        let deadline = Instant::now() + Duration::from_millis(300);
-        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-            match output.recv_timeout(remaining) {
-                Ok(Ok(value)) => {
-                    if state.accepts(&value["params"]) {
-                        update_usage(cell, |data| state.usage.observe(data, &value));
-                    }
-                }
-                _ => break,
+        let Some(main) = state.thread_id.clone() else { continue; };
+        background.observe(cell, &turn, &main, &value);
+        if method == "turn/started" && params["threadId"] == main && resume_request.is_none()
+            && (state.finished || state.turn_id.is_none()) {
+            if state.finished {
+                settle_at = None;
+                // 自动唤醒仍属于最近一次用户输入，沿用累计基线，避免漏算后台处理的消耗。
+                update(cell, |data| {
+                    if let Some(last) = data.usage.as_mut().and_then(|usage| usage.last_turn.as_mut()) { last.state = "provisional".into(); }
+                });
             }
+            state.turn_id = params["turn"]["id"].as_str().map(str::to_string);
+            state.finished = false;
         }
-        if outcome.is_ok() {
+        // 恢复请求尚未完成时，旧主回合的回复不能冒充新消息的执行结果。
+        if resume_request.is_some() && params["threadId"] == main { continue; }
+        let completed = apply_codex_event(cell, &turn, &mut state, &value)?;
+        if state.finished && (completed || method == "thread/tokenUsage/updated" && state.accepts(params)) {
             update(cell, |data| state.usage.completed(data));
         }
-        return outcome.map(|_| ());
+        if completed { settle_at = Some(Instant::now() + Duration::from_millis(300)); }
+        codex_status(cell, &state, &background, request_id.as_deref(), resume_request.is_some() || turn_request.is_some() || settle_at.is_some());
+        if completed { refresh_title(cell, true); persist(cell)?; }
+        // turn/completed 仅结束主回合；app-server 持续存活，以接收后台输出、自动唤醒及手机后续消息。
     }
 }
 
@@ -726,7 +936,10 @@ pub fn shutdown_all() {
     let cells = registry().lock().map(|items| items.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
     for cell in cells {
         if let Ok(control) = cell.control.lock() {
-            if let Some(tx) = control.as_ref() { let _ = tx.send(Control::Stop); }
+            if let Some(tx) = control.as_ref() {
+                let idle = cell.data.lock().map(|data| data.status == "idle").unwrap_or(false);
+                let _ = tx.send(if idle { Control::Retire } else { Control::Stop });
+            }
         }
     }
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -745,7 +958,7 @@ mod tests {
             "model": null, "status": "running", "messages": [], "approvals": [], "error": null,
             "updatedAt": 0, "revision": 0,
         })).unwrap();
-        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), path: PathBuf::new() }
+        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: PathBuf::new() }
     }
     struct SavedCell(Cell);
     impl SavedCell {

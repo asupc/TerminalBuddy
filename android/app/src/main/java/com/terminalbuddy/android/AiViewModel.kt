@@ -521,7 +521,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val ui = mutable.value
         val session = ui.selected ?: return
         val text = ui.draft.trim()
-        if (text.isEmpty() || session.running || ui.sending || ui.loadingSession || sendJob?.isActive == true) return
+        if (text.isEmpty() || !session.canSend || ui.sending || ui.loadingSession || sendJob?.isActive == true) return
         val launch = if (pending?.id == session.id) {
             val project = ui.launchProject ?: return
             val provider = ui.launchProvider ?: return
@@ -728,7 +728,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val unviewed = sessions.filter { session ->
             // 服务端新建的空会话版本为 1，没有执行结果，不应提示已完成。
             val viewed = viewedRevisions[session.id] ?: 1L
-            session.status != "running" && session.revision > viewed
+            session.status != "running" && session.status != "background" && session.status != "stopping" && session.revision > viewed
         }.mapTo(mutableSetOf()) { it.id }
         repository.saveViewedRevisions(viewedRevisions)
         return unviewed
