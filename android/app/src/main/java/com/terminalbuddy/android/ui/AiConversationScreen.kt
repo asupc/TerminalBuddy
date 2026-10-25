@@ -32,6 +32,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -151,6 +153,13 @@ private fun AiConversation(
 ) {
     val session = ui.selected ?: return
     var usageExpanded by rememberSaveable(session.id) { mutableStateOf(true) }
+    val approvals = session.approvals.filterNot { it.id in ui.answeringApprovalIds }
+    val activeApproval = approvals.firstOrNull()
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(activeApproval?.id) {
+        if (activeApproval != null) { focus.clearFocus(); keyboard?.hide() }
+    }
     val motion = rememberAiConversationMotion(session, ui.loadingSession)
     val entries = motion.entries
     val scroll = rememberAiConversationScroll(session.id, motion.initialized, entries.size)
@@ -169,11 +178,9 @@ private fun AiConversation(
     val showReplyIndicator = !ui.loadingSession && session.running &&
         (session.status == "approval" || session.status == "background" || session.status == "stopping" || (!assistantOutput && !renderedAssistantOutput && !revealing))
     val elapsedSeconds = rememberAiReplyElapsedSeconds(session, replying)
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-        // 确认区随键盘后的可用高度收缩，避免把消息区域全部挤出屏幕。
-        val approvalMaxHeight = (maxHeight * .45f).coerceIn(120.dp, 260.dp).coerceAtMost(maxHeight)
+    Box(modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(
                     Modifier.widthIn(max = 760.dp).fillMaxSize().align(Alignment.TopCenter).nestedScroll(scroll.gestures),
                     state = scroll.list, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
@@ -210,7 +217,7 @@ private fun AiConversation(
                 }
                 // 展开执行记录会暂停自动跟随，仅在下方仍有内容可滚动时显示返回按钮。
                 androidx.compose.animation.AnimatedVisibility(
-                    visible = !scroll.following && scroll.list.canScrollForward && motion.messages.isNotEmpty(),
+                    visible = activeApproval == null && !scroll.following && scroll.list.canScrollForward && motion.messages.isNotEmpty(),
                     modifier = Modifier.align(Alignment.BottomCenter).padding(
                         start = 8.dp, end = if (usageExpanded) 8.dp else 64.dp, bottom = 8.dp),
                     enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 2 },
@@ -225,9 +232,17 @@ private fun AiConversation(
                         Text("回到最新")
                     }
                 }
-                if (!usageExpanded) {
-                    Box(Modifier.align(Alignment.BottomCenter).widthIn(max = 760.dp).fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 8.dp), contentAlignment = Alignment.BottomEnd) {
+                // 决策覆盖在消息区底部，紧贴上下文卡片上方，不随消息滚动也不挤占正文布局。
+                val approvalMaxHeight = (maxHeight * .8f).coerceAtMost(400.dp)
+                Column(
+                    Modifier.align(Alignment.BottomCenter).widthIn(max = 760.dp).fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    activeApproval?.let {
+                        AiApprovalCard(it, ui.working, approvalMaxHeight, approvals.size, vm::answer)
+                    }
+                    if (!usageExpanded) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.BottomEnd) {
                         AiUsageExpandButton(onClick = { usageExpanded = true })
                     }
                 }
@@ -238,9 +253,6 @@ private fun AiConversation(
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                     color = TbColors.Danger, style = MaterialTheme.typography.bodySmall,
                 )
-            }
-            session.approvals.firstOrNull()?.let {
-                AiApprovalCard(it, ui.working, approvalMaxHeight, session.approvals.size, vm::answer)
             }
             Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
                 AiUsageCard(session, modelLabel, effortLabel, usageDetails,

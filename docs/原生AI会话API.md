@@ -56,7 +56,9 @@ WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type
 
 ## 安卓聊天决策
 
-待处理请求通过现有 `AiSession.approvals` 和 `status=approval` 实时同步，安卓端在聊天区输入框上方固定显示选择卡片。问题内容可滚动，提交按钮始终可见；支持逐题单选、多选、自定义回答、选项说明及多个待处理请求依次处理。拒绝或暂不回答也会回传给 CLI，不自动代选。重新连接恢复最新待决策快照，Claude 撤销的请求会移除对应卡片。
+待处理请求通过现有 `AiSession.approvals` 和 `status=approval` 实时同步。安卓端将决策卡片悬浮覆盖在消息区底部、AI 上下文卡片上方，不占正文布局高度、不随消息滚动；收到决策先收起软键盘。单选点选后自动提交，多题逐题选择，全部答完后提交；多选和自定义回答点击确认后提交。卡片显示选项说明与待处理数量，内容超长时内部滚动。
+
+点击提交、拒绝或暂不回答后立即收起当前卡片，服务端处理中的旧快照不会令其重新出现；提交失败会恢复卡片并提示错误。重新连接恢复最新待决策快照，Claude 的撤销请求和 Codex 的 `serverRequest/resolved` 都会移除对应卡片。
 
 客户端统一提交按题目 ID 索引的答案，必须回答全部问题后才能接受：
 
@@ -70,7 +72,9 @@ WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type
 }
 ```
 
-Codex 沿用 CLI 提供的题目 ID 与答案数组。Claude 的 `AskUserQuestion` 由服务端按题目顺序补充 `question-0` 等 ID；回传时保留原始工具输入，把答案转换成按原始问题文本索引的 `updatedInput.answers`，多选标签以逗号连接。普通工具授权回传 `allow` / `deny`；未回答或空白的答案由服务端拒绝，避免提交后丢失待决策请求。
+Codex 在初始化时启用 `experimentalApi`，新线程通过 `dynamicTools` 注册 `request_user_input_async` 客户端工具，`item/tool/call` 转换成同一套卡片数据，回答按 `contentItems` / `success` 返回，等待用户真实选择后才完成工具调用。原生 `item/tool/requestUserInput` 保持兼容，沿用 CLI 的题目 ID 与答案数组；同时启用 `features.default_mode_request_user_input`，让没有动态工具的旧线程也能在普通对话模式请求用户选择。普通文本不会被当成决策，模型应调用可用的提问工具。
+
+Claude 的 `AskUserQuestion` 由服务端按题目顺序补充 `question-0` 等 ID；回传时保留原始工具输入，把答案转换成按原始问题文本索引的 `updatedInput.answers`，多选标签以逗号连接。普通工具授权回传 `allow` / `deny`；未回答或空白的答案由服务端拒绝，避免提交后丢失待决策请求。
 
 ## 会话用量 `usage`
 

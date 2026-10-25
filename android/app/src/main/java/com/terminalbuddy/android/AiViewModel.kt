@@ -30,6 +30,7 @@ data class AiUiState(
     val providers: List<AiProvider> = emptyList(), val projectPath: String = "", val providerId: String = "", val modelId: String = "",
     val selected: AiSession? = null, val draft: String = "", val sending: Boolean = false,
     val connected: Boolean = false, val working: Boolean = false, val error: String? = null,
+    val answeringApprovalIds: Set<String> = emptySet(),
     val reconnecting: Boolean = false,
     val deletingAll: Boolean = false,
     val connectionRevision: Long = 0,
@@ -580,8 +581,33 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stop() = action { repository.stop(it.id) }
 
-    fun answer(approval: AiApproval, decision: String, answers: JsonObject = JsonObject(emptyMap())) = action {
-        repository.answer(it.id, approval, decision, answers)
+    /** 点击后立即收起卡片；旧快照不能让已提交的请求重新出现，提交失败时恢复。 */
+    fun answer(approval: AiApproval, decision: String, answers: JsonObject = JsonObject(emptyMap())) {
+        val session = mutable.value.selected ?: return
+        if (actionJob?.isActive == true || approval.id in mutable.value.answeringApprovalIds) return
+        if (session.approvals.none { it.id == approval.id }) return
+        val epoch = generation
+        mutable.update { it.copy(working = true, error = null, answeringApprovalIds = it.answeringApprovalIds + approval.id) }
+        actionJob = viewModelScope.launch {
+            var submitted = false
+            try {
+                repository.answer(session.id, approval, decision, answers)
+                submitted = true
+                if (epoch == generation) receive(repository.session(session.id))
+            } catch (e: CancellationException) {
+                if (epoch == generation && !submitted) mutable.update {
+                    it.copy(answeringApprovalIds = it.answeringApprovalIds - approval.id)
+                }
+                throw e
+            } catch (e: Throwable) {
+                if (epoch == generation) {
+                    if (!submitted) mutable.update { it.copy(answeringApprovalIds = it.answeringApprovalIds - approval.id) }
+                    failure(e)
+                }
+            } finally {
+                if (epoch == generation) mutable.update { it.copy(working = false) }
+            }
+        }
     }
 
     fun delete(session: AiSession) {
@@ -703,6 +729,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             if (currentSelected == null || currentSelected.id != session.id || session.revision < currentSelected.revision) current
             else current.copy(
                 selected = displayed, loadingSession = false,
+                answeringApprovalIds = current.answeringApprovalIds.intersect(session.approvals.map { it.id }.toSet()),
                 sessions = (listOf(session.copy(messages = emptyList())) + current.sessions.filterNot { it.id == session.id })
                     .sortedByDescending { it.updatedAt },
             )

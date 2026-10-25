@@ -309,7 +309,10 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
             "--permission-prompt-tool", "stdio"]);
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
-    } else { command.args(&permissions.codex_args).arg("app-server"); }
+    } else {
+        // 已有线程无法追加 dynamicTools，启用普通模式的原生提问工具兼容旧对话。
+        command.args(&permissions.codex_args).args(["-c", "features.default_mode_request_user_input=true"]).arg("app-server");
+    }
     let mut process = Process(command.spawn().map_err(|e| format!("无法启动 {}，请确认服务端已安装并配置该 CLI：{e}", session.provider))?);
     let mut stdin = process.0.stdin.take().ok_or("AI 输入通道不可用")?;
     let stdout = process.0.stdout.take().ok_or("AI 输出通道不可用")?;
@@ -342,7 +345,7 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
             "parent_tool_use_id":null,"session_id":session.thread_id.as_deref().unwrap_or("")}))?;
         run_claude(cell, &mut process, stdin, controls, output, errors).map(|_| WorkerExit::Completed)
     } else {
-        write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"}}}))?;
+        write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"},"capabilities":{"experimentalApi":true}}}))?;
         run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors)
     }
 }
@@ -833,9 +836,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
                 }
                 Control::Approval(answer) => {
                     if let Some((id, method)) = pending.remove(&answer.approval_id) {
-                        let result = if method == "item/tool/requestUserInput" {
-                            json!({"answers": if answer.decision == "accept" { answer.answers } else { json!({}) }})
-                        } else { json!({"decision":answer.decision}) };
+                        let result = approval::codex_response(&method, &answer);
                         write_json(stdin, json!({"id":id,"result":result}))?;
                         update(cell, |data| { data.approvals.retain(|a| a.id != answer.approval_id); });
                     }
@@ -879,7 +880,8 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
             let mut params = json!({"cwd": session.project_path});
             permissions.apply_thread(&mut params);
             if let Some(model) = &session.model { params["model"] = json!(model); }
-            let method = if let Some(id) = &session.thread_id { params["threadId"] = json!(id); "thread/resume" } else { "thread/start" };
+            let method = if let Some(id) = &session.thread_id { params["threadId"] = json!(id); "thread/resume" }
+                else { params["dynamicTools"] = approval::codex_tools(); "thread/start" };
             resume_request = Some(codex_request(stdin, &mut next_id, method, params)?);
         } else if value["id"].as_u64().is_some_and(|id| Some(id) == resume_request) && value.get("result").is_some() {
             resume_request = None;
@@ -899,10 +901,28 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
         }
         let method = value["method"].as_str().unwrap_or(""); let params = &value["params"];
         if value.get("id").is_some() && !method.is_empty() {
-            if matches!(method, "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" | "item/tool/requestUserInput") {
-                let id = Uuid::new_v4().to_string(); pending.insert(id.clone(), (value["id"].clone(), method.into()));
-                update(cell, |data| { data.status = "approval".into(); data.approvals.push(AiApproval { id, method: method.into(), details: params.clone() }); });
+            let details = if method == "item/tool/call" && approval::is_codex_decision_tool(params) {
+                match approval::codex_decision_details(params) {
+                    Ok(details) => Some(details),
+                    Err(error) => {
+                        write_json(stdin, json!({"id":value["id"],"result":approval::codex_tool_result(json!({"error":error}), false)}))?;
+                        continue;
+                    }
+                }
+            } else if matches!(method, "item/commandExecution/requestApproval" | "item/fileChange/requestApproval"
+                | "item/tool/requestUserInput" | "tool/requestUserInput") { Some(params.clone()) } else { None };
+            if let Some(details) = details {
+                if !pending.values().any(|(id, _)| id == &value["id"]) {
+                    let id = Uuid::new_v4().to_string(); pending.insert(id.clone(), (value["id"].clone(), method.into()));
+                    update(cell, |data| { data.status = "approval".into(); data.approvals.push(AiApproval { id, method: method.into(), details }); });
+                }
             } else { write_json(stdin, json!({"id":value["id"],"error":{"code":-32601,"message":"客户端暂不支持此交互请求"}}))?; }
+        }
+        if method == "serverRequest/resolved" {
+            let resolved: HashSet<_> = pending.iter().filter(|(_, (id, _))| id == &params["requestId"])
+                .map(|(id, _)| id.clone()).collect();
+            pending.retain(|id, _| !resolved.contains(id));
+            if !resolved.is_empty() { update(cell, |data| data.approvals.retain(|item| !resolved.contains(&item.id))); }
         }
         let Some(main) = state.thread_id.clone() else { continue; };
         background.observe(cell, &turn, &main, &value);

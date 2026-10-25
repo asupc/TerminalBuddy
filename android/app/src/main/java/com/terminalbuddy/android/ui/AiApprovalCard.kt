@@ -8,6 +8,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,14 +29,16 @@ private data class ApprovalQuestion(
     val multiple: Boolean, val secret: Boolean,
 )
 
-/** 决策固定显示在聊天区底部，正文可滚动，提交操作始终可见。 */
+/** 悬浮在上下文卡片上方：单选直接提交，多题逐题选择，多选与自由回答显式提交。 */
 @Composable
 internal fun AiApprovalCard(
     approval: AiApproval, working: Boolean, maxHeight: Dp, pendingCount: Int,
-    answer: (AiApproval, String, JsonObject) -> Unit,
+    answer: (AiApproval, String, JsonObject) -> Unit, modifier: Modifier = Modifier,
 ) {
     var selections by remember(approval.id) { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     var custom by remember(approval.id) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var activeIndex by remember(approval.id) { mutableIntStateOf(0) }
+    var customQuestion by remember(approval.id) { mutableStateOf<String?>(null) }
     val questions = remember(approval.id, approval.details) {
         approval.details.rows("questions").mapIndexed { index, element ->
             val question = element.asObject()
@@ -47,31 +51,46 @@ internal fun AiApprovalCard(
             )
         }
     }
-    fun responses(question: ApprovalQuestion): List<String> =
-        selections[question.id].orEmpty() + listOfNotNull(custom[question.id]?.trim()?.takeIf(String::isNotBlank))
-
+    val question = questions.getOrNull(activeIndex)
+    fun responses(item: ApprovalQuestion, choices: Map<String, List<String>> = selections, texts: Map<String, String> = custom): List<String> =
+        choices[item.id].orEmpty() + listOfNotNull(texts[item.id]?.trim()?.takeIf(String::isNotBlank))
+    fun submitOrNext(choices: Map<String, List<String>> = selections, texts: Map<String, String> = custom) {
+        val missing = questions.indexOfFirst { responses(it, choices, texts).isEmpty() }
+        if (missing >= 0) {
+            activeIndex = missing
+            return
+        }
+        val values = buildJsonObject {
+            questions.forEach { item ->
+                put(item.id, buildJsonObject {
+                    put("answers", buildJsonArray { responses(item, choices, texts).forEach { add(it) } })
+                })
+            }
+        }
+        answer(approval, "accept", values)
+    }
     Surface(
-        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp).heightIn(max = maxHeight),
-        color = TbColors.SurfaceHover, shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, TbColors.Accent.copy(alpha = .5f)),
+        modifier.fillMaxWidth().heightIn(max = maxHeight),
+        color = TbColors.SurfaceHover, shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, TbColors.Accent.copy(alpha = .5f)), shadowElevation = 10.dp,
     ) {
-        Column(Modifier.padding(horizontal = 10.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp)) {
             Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically,
+                Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(16.dp), tint = TbColors.Accent)
-                Text(if (questions.isEmpty()) "需要你确认" else "请选择后继续对话", Modifier.weight(1f),
+                Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(17.dp), tint = TbColors.Accent)
+                Text(if (questions.isEmpty()) "需要你确认" else "等待你的选择", Modifier.weight(1f),
                     style = MaterialTheme.typography.titleSmall)
                 if (pendingCount > 1) Text("待处理 $pendingCount", color = TbColors.TextMuted,
                     style = MaterialTheme.typography.labelSmall)
             }
-            key(approval.id) {
+            key(approval.id, question?.id) {
                 Column(
                     Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (questions.isEmpty()) SelectionContainer {
+                    if (question == null) SelectionContainer {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(approval.details.text("title").ifBlank {
                                 approval.details.text("toolName", fallback = "是否允许本次文件修改或命令执行？")
@@ -84,34 +103,46 @@ internal fun AiApprovalCard(
                             if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall,
                                 fontFamily = FontFamily.Monospace, color = TbColors.TextSoft)
                         }
-                    }
-                    questions.forEachIndexed { index, question ->
-                        if (questions.size > 1) Text(
-                            "${index + 1}/${questions.size}" + question.header.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty(),
-                            style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
-                        )
+                    } else {
+                        if (questions.size > 1) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton({ activeIndex-- }, enabled = activeIndex > 0 && !working, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Outlined.ChevronLeft, "上一题", Modifier.size(18.dp))
+                            }
+                            Text("${activeIndex + 1}/${questions.size}" + question.header.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty(),
+                                Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
+                            IconButton({ activeIndex++ }, enabled = activeIndex < questions.lastIndex && !working, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Outlined.ChevronRight, "下一题", Modifier.size(18.dp))
+                            }
+                        }
                         Text(question.text, style = MaterialTheme.typography.bodyMedium)
-                        if (question.multiple) Text("可选择多项", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+                        Text(when {
+                            question.options.isEmpty() -> "填写回复后点击确认"
+                            question.multiple -> "可多选，选好后点击确认"
+                            else -> "点击选项即可继续"
+                        }, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
                         question.options.forEach { option ->
                             val label = option.text("label")
                             val selected = label in selections[question.id].orEmpty()
                             Surface(
                                 color = if (selected) TbColors.Accent.copy(alpha = .1f) else TbColors.CanvasSoft,
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 border = BorderStroke(1.dp, if (selected) TbColors.Accent else TbColors.Border),
                             ) {
                                 Row(
-                                    Modifier.fillMaxWidth().toggleable(
+                                    Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(
                                         value = selected, enabled = !working,
                                         role = if (question.multiple) Role.Checkbox else Role.RadioButton,
                                         onValueChange = { checked ->
-                                            selections = selections + (question.id to if (question.multiple) {
+                                            val choices = selections + (question.id to if (question.multiple) {
                                                 val previous = selections[question.id].orEmpty()
                                                 if (checked) previous + label else previous - label
                                             } else listOf(label))
-                                            if (!question.multiple) custom = custom - question.id
+                                            val texts = if (question.multiple) custom else custom - question.id
+                                            selections = choices
+                                            custom = texts
+                                            if (!question.multiple) submitOrNext(choices, texts)
                                         },
-                                    ).padding(horizontal = 8.dp, vertical = 8.dp),
+                                    ).padding(horizontal = 10.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     if (question.multiple) Checkbox(selected, onCheckedChange = null, enabled = !working)
@@ -125,18 +156,19 @@ internal fun AiApprovalCard(
                                 }
                             }
                         }
-                        OutlinedTextField(
-                            value = custom[question.id].orEmpty(),
-                            onValueChange = {
-                                custom = custom + (question.id to it)
-                                if (it.isNotBlank() && !question.multiple) selections = selections - question.id
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text(if (question.options.isEmpty()) "你的回复" else "其他回答") },
-                            maxLines = 3, enabled = !working, shape = RoundedCornerShape(10.dp),
-                            textStyle = MaterialTheme.typography.bodyMedium,
-                            visualTransformation = if (question.secret) PasswordVisualTransformation() else VisualTransformation.None,
-                        )
+                        if (question.options.isEmpty() || customQuestion == question.id || custom[question.id]?.isNotBlank() == true) {
+                            OutlinedTextField(
+                                value = custom[question.id].orEmpty(),
+                                onValueChange = {
+                                    custom = custom + (question.id to it)
+                                    if (it.isNotBlank() && !question.multiple) selections = selections - question.id
+                                },
+                                modifier = Modifier.fillMaxWidth(), label = { Text("你的回复") },
+                                maxLines = 3, enabled = !working, shape = RoundedCornerShape(10.dp),
+                                textStyle = MaterialTheme.typography.bodyMedium,
+                                visualTransformation = if (question.secret) PasswordVisualTransformation() else VisualTransformation.None,
+                            )
+                        } else TextButton({ customQuestion = question.id }, enabled = !working) { Text("其他回答") }
                     }
                 }
             }
@@ -144,19 +176,11 @@ internal fun AiApprovalCard(
                 TextButton({ answer(approval, "decline", JsonObject(emptyMap())) }, enabled = !working) {
                     Text(if (questions.isEmpty()) "拒绝" else "暂不回答")
                 }
-                TextButton(
-                    onClick = {
-                        val values = buildJsonObject {
-                            questions.forEach { question ->
-                                put(question.id, buildJsonObject {
-                                    put("answers", buildJsonArray { responses(question).forEach { add(it) } })
-                                })
-                            }
-                        }
-                        answer(approval, "accept", values)
-                    },
-                    enabled = !working && questions.all { responses(it).isNotEmpty() },
-                ) { Text(if (questions.isEmpty()) "允许本次" else "提交选择") }
+                if (question == null || question.multiple || question.options.isEmpty() || customQuestion == question.id || custom[question.id]?.isNotBlank() == true) {
+                    TextButton(
+                        onClick = { submitOrNext() }, enabled = !working && (question == null || responses(question).isNotEmpty()),
+                    ) { Text(if (question == null) "允许本次" else if (questions.any { responses(it).isEmpty() && it.id != question.id }) "下一题" else "确认选择") }
+                }
             }
         }
     }
