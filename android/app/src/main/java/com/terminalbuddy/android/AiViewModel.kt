@@ -9,6 +9,7 @@ import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.terminalbuddy.android.data.*
+import com.terminalbuddy.android.notifications.AiNotificationTarget
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
@@ -38,6 +39,7 @@ data class AiUiState(
     val unviewedIds: Set<String> = emptySet(),
     val accounts: List<AiAccount> = emptyList(), val activeAccountId: String? = null,
     val switchingAccountId: String? = null,
+    val notificationLoginAccountId: String? = null,
 ) {
     /** 仅首次取数限制操作，后续刷新保留已有内容并保持页面可操作。 */
     val initialLoading get() = loading && !homeLoaded
@@ -69,6 +71,7 @@ data class AiUiState(
 class AiViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as TerminalBuddyApplication).aiRepository
     private val store = repository.store
+    private val taskNotifications = (application as TerminalBuddyApplication).taskNotifications
     private val mutable = MutableStateFlow(
         AiUiState(
             store.server, store.username, store.loggedIn,
@@ -80,6 +83,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     )
     val state = mutable.asStateFlow()
 
+    private var notificationTarget: AiNotificationTarget? = null
+    private var notificationSwitchAttempted: String? = null
     private var visible = false
     private var generation = 0
     private var authJob: Job? = null
@@ -134,6 +139,42 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         connectivity.registerDefaultNetworkCallback(networkCallback, Handler(Looper.getMainLooper()))
     }.isSuccess
 
+    init {
+        viewModelScope.launch {
+            state.map { Triple(it.authenticating, it.working, it.activeAccountId) }.distinctUntilChanged().collect {
+                resumeNotificationNavigation()
+            }
+        }
+    }
+
+    fun openNotification(target: AiNotificationTarget) {
+        notificationTarget = target
+        notificationSwitchAttempted = null
+        resumeNotificationNavigation()
+    }
+
+    /** 通知导航等待已有操作完成，并在需要时恢复原账号；不会使用当前账号请求别人的任务。 */
+    private fun resumeNotificationNavigation() {
+        val target = notificationTarget ?: return
+        val ui = mutable.value
+        if (ui.authenticating || ui.working) return
+        val account = repository.accounts.accounts.find { it.id == target.accountId }
+        if (account == null) {
+            notificationTarget = null
+            mutable.update { it.copy(error = "该任务所属账号已移除，请重新添加账号") }
+        } else if (!account.loggedIn) {
+            if (ui.selected != null) closeSession()
+            mutable.update { it.copy(notificationLoginAccountId = account.id, error = "请重新登录该任务所属账号后继续") }
+        } else if (repository.accounts.activeId == account.id) {
+            notificationTarget = null
+            open(target.sessionId)
+            if (!mutable.value.homeLoaded) refresh()
+        } else if (notificationSwitchAttempted != account.id) {
+            notificationSwitchAttempted = account.id
+            switchAccount(account.id)
+        }
+    }
+
     private fun cancelConnectionJobs() {
         stopRealtime()
         refreshJob?.cancel(); refreshJob = null
@@ -156,9 +197,13 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
     }
 
-    /** 只有应用在前台时才保持连接，后台不占配额。 */
+    /** 页面实时流只在前台维持，后台任务监听由独立前台服务负责。 */
     fun setVisible(active: Boolean) {
         visible = active
+        if (active && mutable.value.authenticated && !store.loggedIn) {
+            resetConnection()
+            mutable.value = connectionState().copy(error = "AI 服务登录已过期，请重新登录")
+        }
         if (active && store.loggedIn && !mutable.value.authenticating) {
             if (mutable.value.selected == null) refresh()
             else if (pending == null) startRealtime(reconnecting = true)
@@ -190,6 +235,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 val connection = withContext(Dispatchers.IO) { connect() }
                 // 激活与旧请求取消在同一个主线程片段完成，旧响应不能写入新账号状态。
                 repository.activate(connection)
+                taskNotifications.syncAccounts()
                 resetConnection()
                 mutable.value = connectionState()
                 refresh()
@@ -241,6 +287,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         authJob?.cancel(); authJob = null
         repository.logout()
+        taskNotifications.syncAccounts()
         resetConnection()
         mutable.value = connectionState()
     }
@@ -250,6 +297,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val current = repository.accounts.activeId == id
             repository.removeAccount(id)
+            taskNotifications.removeAccount(id)
+            taskNotifications.syncAccounts()
             if (current) {
                 resetConnection()
                 mutable.value = connectionState()
@@ -415,6 +464,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val cacheScope = repository.sessionCache.scope()
         val cached = cacheScope?.let { repository.sessionCache.peek(it, id) }
         val initial = cached ?: mutable.value.sessions.find { it.id == id }
+            ?: AiSession(id, "正在加载对话", "", "")
         repository.lastSession = id
         mutable.update {
             it.copy(
@@ -439,8 +489,13 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 throw e
             } catch (e: Throwable) {
                 if (epoch == generation) {
-                    mutable.update { it.copy(loadingSession = false) }
-                    failure(e)
+                    if (e is ApiException && e.code == 404) {
+                        closeSession()
+                        mutable.update { it.copy(error = "该任务已删除或当前账号无法访问") }
+                    } else {
+                        mutable.update { it.copy(loadingSession = false) }
+                        failure(e)
+                    }
                 }
             }
         }
@@ -541,6 +596,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update {
             it.copy(selected = session.copy(messages = session.messages + message.message), draft = "", sending = true, error = null)
         }
+        val notificationAccountId = repository.accounts.activeId
+        notificationAccountId?.let { taskNotifications.expectTask(it, session) }
         val epoch = generation
         sendJob = viewModelScope.launch {
             try {
@@ -550,6 +607,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     if (pending?.id == session.id) pending = null
                     if (epoch == generation && mutable.value.selected?.id == session.id) {
                         if (visible) markViewed(created.id, created.revision)
+                        notificationAccountId?.let { taskNotifications.replaceExpectedTask(it, session.id, created) }
                         outgoing = outgoing?.copy(sessionId = created.id)
                         mutable.update { current -> current.copy(selected = current.selected?.copy(id = created.id)) }
                         drafts[created.id] = drafts.remove(session.id).orEmpty()
@@ -559,6 +617,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
                 // 真实会话 ID 就绪后启动实时订阅和轮询，首次发送也能持续接收回复。
+                repository.accounts.activeId?.let { taskNotifications.expectTask(it, target) }
                 startRealtime()
                 val result = repository.send(target.id, text, request.second)
                 if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
@@ -709,6 +768,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private fun receive(session: AiSession) {
         val selected = mutable.value.selected ?: return
         if (selected.id != session.id || session.revision < selected.revision) return
+        repository.accounts.activeId?.let { taskNotifications.observe(it, listOf(session)) }
         // 只缓存服务端原始快照，本地尚未确认的消息仍由 outgoing 单独管理。
         repository.sessionCache.scope()?.let { repository.sessionCache.save(it, session) }
         if (pending?.id == session.id) pending = null
@@ -749,6 +809,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
      * 运行中的快照不推进已读基线，结束或等待确认后仍能识别未查看结果。
      */
     private fun recordSessions(sessions: List<AiSession>): Set<String> {
+        repository.accounts.activeId?.let { taskNotifications.observe(it, sessions) }
         ensureViewedBaseline(sessions)
         val visibleIds = sessions.mapTo(mutableSetOf()) { it.id }
         viewedRevisions.keys.retainAll(visibleIds)
@@ -769,6 +830,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun forgetSession(id: String) {
+        repository.accounts.activeId?.let { taskNotifications.forgetSession(it, id) }
         repository.sessionCache.scope()?.let { repository.sessionCache.remove(it, id) }
         ensureViewedBaseline()
         viewedRevisions.remove(id)

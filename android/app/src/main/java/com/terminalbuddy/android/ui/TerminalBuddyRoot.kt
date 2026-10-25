@@ -19,6 +19,7 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.terminalbuddy.android.AiViewModel
+import com.terminalbuddy.android.notifications.AiNotificationTarget
 
 private enum class RootPage { Home, AiConversation }
 
@@ -27,10 +28,19 @@ private enum class RootPage { Home, AiConversation }
  * Ai 会话页的转场与状态恢复方式移植自葫芦娃 Android `ui/HuluwaRoot.kt`。
  */
 @Composable
-fun TerminalBuddyRoot(aiVm: AiViewModel = viewModel()) {
+fun TerminalBuddyRoot(
+    aiVm: AiViewModel = viewModel(), notificationTarget: AiNotificationTarget? = null,
+    onNotificationConsumed: () -> Unit = {},
+) {
     val aiUi by aiVm.state.collectAsStateWithLifecycle()
     val holder = rememberSaveableStateHolder()
-    // 只有 Ai 页面可见时才保持实时连接；退到后台由 LifecycleStartEffect 释放。
+    LaunchedEffect(notificationTarget) {
+        notificationTarget?.let {
+            aiVm.openNotification(it)
+            onNotificationConsumed()
+        }
+    }
+    // 页面实时流跟随前台生命周期；后台通知由独立任务监听服务维护。
     val aiActive = aiUi.authenticated
     LifecycleStartEffect(aiActive) {
         aiVm.setVisible(true)

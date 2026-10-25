@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -38,11 +39,13 @@ import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.R
 import com.terminalbuddy.android.data.AiSession
+import com.terminalbuddy.android.notifications.AiTaskNotifications
 
 private enum class AiPage { Home, Accounts, Connection }
 
 /** AI 首页：服务连接、新对话配置、最近对话和账号管理。 */
 @Composable fun AiScreen(ui: AiUiState, vm: AiViewModel) {
+    val context = LocalContext.current
     var page by rememberSaveable { mutableStateOf(AiPage.Home) }
     var loginAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
@@ -63,6 +66,9 @@ private enum class AiPage { Home, Accounts, Connection }
     }
     BackHandler(page != AiPage.Home || ui.authenticating) { back() }
     LaunchedEffect(ui.connectionRevision) { if (ui.authenticated) page = AiPage.Home }
+    LaunchedEffect(ui.notificationLoginAccountId) {
+        ui.notificationLoginAccountId?.let { openConnection(it, false, true) }
+    }
     if (page == AiPage.Connection || (!ui.authenticated && ui.accounts.isEmpty() && page != AiPage.Accounts)) {
         val account = ui.accounts.find { it.id == loginAccountId }
         AiConnection(ui, vm::login, if (page == AiPage.Connection) back else null,
@@ -103,6 +109,9 @@ private enum class AiPage { Home, Accounts, Connection }
                             themeControls.onDarkThemeChange(!themeControls.darkTheme)
                         },
                     )
+                    DropdownMenuItem(text = { Text("通知设置") },
+                        leadingIcon = { Icon(Icons.Outlined.Notifications, null) },
+                        onClick = { menu = false; AiTaskNotifications.openSettings(context) })
                     DropdownMenuItem(text = { Text("账号切换") }, enabled = enabled,
                         leadingIcon = { Icon(Icons.Outlined.ManageAccounts, null) },
                         onClick = { menu = false; page = AiPage.Accounts; vm.clearError() })
@@ -113,6 +122,7 @@ private enum class AiPage { Home, Accounts, Connection }
                 }
             }
         }
+        AiNotificationPermission()
         ui.error?.let { AiError(it, vm::clearError) }
         LazyColumn(
             Modifier.fillMaxSize(),

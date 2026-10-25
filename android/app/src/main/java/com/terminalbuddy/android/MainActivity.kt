@@ -1,5 +1,6 @@
 package com.terminalbuddy.android
 
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
@@ -12,12 +13,33 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import com.terminalbuddy.android.notifications.AiNotificationTarget
+import com.terminalbuddy.android.notifications.AiTaskNotifications
 import com.terminalbuddy.android.ui.TerminalBuddyRoot
 import com.terminalbuddy.android.ui.TerminalBuddyTheme
 
 class MainActivity : ComponentActivity() {
+    private var notificationTarget by mutableStateOf<AiNotificationTarget?>(null)
+
+    override fun onStart() {
+        super.onStart()
+        (application as TerminalBuddyApplication).taskNotifications.setForeground(true)
+    }
+
+    override fun onStop() {
+        (application as TerminalBuddyApplication).taskNotifications.setForeground(false)
+        super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationTarget = AiTaskNotifications.consumeTarget(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        notificationTarget = AiTaskNotifications.consumeTarget(intent)
         val preferences = getSharedPreferences("terminal_buddy_appearance", MODE_PRIVATE)
         val initialDarkTheme = preferences.getBoolean("dark_theme", false)
         updateSystemBars(initialDarkTheme)
@@ -30,7 +52,12 @@ class MainActivity : ComponentActivity() {
                     darkTheme = enabled
                     preferences.edit().putBoolean("dark_theme", enabled).apply()
                 },
-            ) { TerminalBuddyRoot() }
+            ) {
+                TerminalBuddyRoot(
+                    notificationTarget = notificationTarget,
+                    onNotificationConsumed = { notificationTarget = null },
+                )
+            }
         }
     }
 

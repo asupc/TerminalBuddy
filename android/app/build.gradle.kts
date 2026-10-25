@@ -65,6 +65,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.38.0")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")

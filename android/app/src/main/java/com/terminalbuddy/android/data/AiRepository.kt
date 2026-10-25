@@ -135,6 +135,11 @@ class AiRepository(context: Context) {
     }
 
     suspend fun sessions(): List<AiSession> = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions")))
+    /** 后台监听固定使用对应账号的连接，切换前台账号不会改变在途请求的身份。 */
+    internal suspend fun notificationSessions(connection: AiConnection): List<AiSession> =
+        ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions"),
+            server = connection.server, token = connection.token))
+
     suspend fun catalog(): AiCatalog = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "catalog")))
     suspend fun projects(): List<AiProject> = ApiJson.decodeFromJsonElement(request("GET", listOf("projects")))
     suspend fun session(id: String): AiSession = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions", id)))
