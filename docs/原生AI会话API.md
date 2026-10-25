@@ -72,7 +72,11 @@ WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type
 }
 ```
 
-Codex 在初始化时启用 `experimentalApi`，新线程通过 `dynamicTools` 注册 `request_user_input_async` 客户端工具，`item/tool/call` 转换成同一套卡片数据，回答按 `contentItems` / `success` 返回，等待用户真实选择后才完成工具调用。原生 `item/tool/requestUserInput` 保持兼容，沿用 CLI 的题目 ID 与答案数组；同时启用 `features.default_mode_request_user_input`，让没有动态工具的旧线程也能在普通对话模式请求用户选择。普通文本不会被当成决策，模型应调用可用的提问工具。
+Codex 在初始化时启用 `experimentalApi` 与 `features.default_mode_request_user_input`，新旧会话均优先调用标准 `request_user_input`。原生 `item/tool/requestUserInput` / `tool/requestUserInput` 转换为决策卡片，沿用 CLI 的题目 ID 与答案数组，等待用户提交答案后响应。初始化后先通过 `config/read` 读取按项目目录合并的有效配置，将决策工具指引追加到原有 `developer_instructions`；新建及恢复线程时均传入合并后的 `developerInstructions`，让已有对话同样遵循标准决策流程。
+
+新线程另外通过 `dynamicTools` 注册应用专属的 `terminal_buddy_request_decision`，用于标准工具不可用或需要多选的场景，避免与 Codex 内置 `request_user_input_async` 同名。其 `item/tool/call` 转换成同一套卡片数据，回答按 `contentItems` / `success` 返回，等待用户真实选择后才完成工具调用。已注册旧工具名的线程仍兼容处理 `request_user_input_async` 动态调用，但不再向新线程注册该名称。
+
+普通文本不会被当成决策，内置异步请求返回的 `accepted` 也不代表卡片已展示或用户已确认。决策指引要求模型调用可用的标准工具或应用专属工具，收到真实答案前不把决策视为完成。更新并重启服务端后，已有 Codex 会话在恢复时应用新指引，无需重新创建对话或修改安卓卡片。
 
 Claude 启动时会登记本次运行独有的 Hook 目标与令牌，把桌面端 `managed_hooks_object()` 注入模型临时 settings；默认 CLI 配置同样生成临时文件，不修改用户级配置。用户提问由桌面与安卓共用的 `ClaudeHookService` 保存并等待，按题目顺序补充 `question-0` 等 ID 后投递到当前原生会话。手机回答先按会话归属鉴权，再把答案按原始问题文本索引提交给同一决策服务，HTTP Hook 回填 `updatedInput.questions` / `updatedInput.answers`，多选标签以逗号连接。
 

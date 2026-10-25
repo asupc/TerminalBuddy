@@ -85,14 +85,29 @@ pub(super) fn claude_hook_answers(approval: &AiApproval, answer: &AnswerAiApprov
     Ok(answers)
 }
 
-const CODEX_DECISION_TOOL: &str = "request_user_input_async";
+// 使用应用专属名称，避免与 Codex 内置异步提问工具混淆。
+const CODEX_DECISION_TOOL: &str = "terminal_buddy_request_decision";
+const LEGACY_CODEX_DECISION_TOOL: &str = "request_user_input_async";
+
+/// 追加原生聊天的决策约定，保留项目及用户配置中的开发者指令。
+pub(super) fn codex_decision_instructions(configured: Option<&str>) -> String {
+    let instructions = format!(r#"Terminal Buddy 原生聊天决策：
+需要用户选择、确认方案或测试决策通知/卡片时，优先调用标准 request_user_input，等待用户提交答案。
+标准工具不可用或确实需要多选时，若存在 {CODEX_DECISION_TOOL}，可调用该客户端工具；它会显示决策卡片并等待真实回答。
+不要用 request_user_input_async 代替决策卡片请求，也不要用纯文字选项代替工具调用。
+仅收到 accepted 表示请求已接收，不代表卡片已展示或用户已确认；此时应改用标准 request_user_input。收到真实答案前，不要声称决策已完成。"#);
+    match configured.filter(|text| !text.trim().is_empty()) {
+        Some(configured) => format!("{configured}\n\n{instructions}"),
+        None => instructions,
+    }
+}
 
 /// 在普通对话中提供客户端决策工具，避免模型只能输出文字选项。
 /// 协议：https://developers.openai.com/codex/app-server/#dynamic-tool-calls-experimental
 pub(super) fn codex_tools() -> Value {
     json!([{
         "type": "function", "name": CODEX_DECISION_TOOL,
-        "description": "需要用户选择、确认方案或测试决策通知时调用此工具。它会在安卓聊天区、AI 上下文上方显示可点击的悬浮选择卡片，并等待用户提交答案。不要用纯文字选项或声称已发送通知来代替调用。",
+        "description": "标准 request_user_input 不可用或需要多选时，使用此工具请求用户决策。它会在安卓聊天区、AI 上下文上方显示可点击的悬浮选择卡片，等待用户真实提交答案后才返回。优先使用标准 request_user_input；不要改用内置 request_user_input_async 或用文字声称已发送通知。",
         "inputSchema": {
             "type": "object", "properties": {
                 "questions": {"type":"array", "minItems":1, "items":{
@@ -111,7 +126,8 @@ pub(super) fn codex_tools() -> Value {
 }
 
 pub(super) fn is_codex_decision_tool(params: &Value) -> bool {
-    params["tool"].as_str() == Some(CODEX_DECISION_TOOL)
+    // 旧线程会从历史中恢复已注册的工具名，仍按阻塞式决策处理。
+    matches!(params["tool"].as_str(), Some(CODEX_DECISION_TOOL | LEGACY_CODEX_DECISION_TOOL))
 }
 
 pub(super) fn codex_decision_details(params: &Value) -> Result<Value> {

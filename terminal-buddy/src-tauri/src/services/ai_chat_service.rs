@@ -328,7 +328,7 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
     } else {
-        // 已有线程无法追加 dynamicTools，启用普通模式的原生提问工具兼容旧对话。
+        // 新旧对话均优先使用普通模式的标准提问工具；动态工具仅作补充。
         command.args(&permissions.codex_args).args(["-c", "features.default_mode_request_user_input=true"]).arg("app-server");
     }
     let mut process = Process(command.spawn().map_err(|e| format!("无法启动 {}，请确认服务端已安装并配置该 CLI：{e}", session.provider))?);
@@ -841,6 +841,8 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
     let mut state = CodexOutputState { thread_id: session.thread_id.clone(), ..Default::default() };
     let mut background = CodexBackgroundState::default();
     let mut next_id = 2;
+    let mut config_request = None;
+    let mut decision_instructions = approval::codex_decision_instructions(None);
     let mut resume_request = None;
     let mut turn_request = None;
     let mut queued_prompt = Some(prompt.to_string());
@@ -867,7 +869,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
                         turn_request = Some(codex_request(stdin, &mut next_id, "turn/start", params)?);
                     } else {
                         let permissions = super::ai_permission_service::for_agent("codex")?;
-                        let mut params = json!({"threadId":id,"cwd":session.project_path});
+                        let mut params = json!({"threadId":id,"cwd":session.project_path,"developerInstructions":decision_instructions});
                         permissions.apply_thread(&mut params);
                         if let Some(model) = &session.model { params["model"] = json!(model); }
                         resume_request = Some(codex_request(stdin, &mut next_id, "thread/resume", params)?);
@@ -918,7 +920,12 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
         if value.get("error").is_some() { return Err(value["error"]["message"].as_str().unwrap_or("Codex 请求失败").into()); }
         if value["id"] == 1 && value.get("result").is_some() {
             write_json(stdin, json!({"method":"initialized","params":{}}))?;
-            let mut params = json!({"cwd": session.project_path});
+            // 先读取按项目目录合并的配置，再追加客户端指引，避免覆盖用户原有指令。
+            config_request = Some(codex_request(stdin, &mut next_id, "config/read", json!({"cwd":session.project_path,"includeLayers":false}))?);
+        } else if value["id"].as_u64().is_some_and(|id| Some(id) == config_request) && value.get("result").is_some() {
+            config_request = None;
+            decision_instructions = approval::codex_decision_instructions(value["result"]["config"]["developer_instructions"].as_str());
+            let mut params = json!({"cwd":session.project_path,"developerInstructions":decision_instructions});
             permissions.apply_thread(&mut params);
             if let Some(model) = &session.model { params["model"] = json!(model); }
             let method = if let Some(id) = &session.thread_id { params["threadId"] = json!(id); "thread/resume" }
