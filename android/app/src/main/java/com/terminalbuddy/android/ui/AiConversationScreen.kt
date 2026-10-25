@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
@@ -47,11 +48,13 @@ import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.*
+import com.terminalbuddy.android.notifications.AiTaskNotifications
 
 /** 对话二级页：会话摘要、自然段回复与紧凑输入区。 */
 @Composable
 fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     val session = ui.selected ?: return
+    val context = LocalContext.current
     var menu by rememberSaveable(session.id) { mutableStateOf(false) }
     var information by rememberSaveable(session.id) { mutableStateOf(false) }
     var usageInformation by rememberSaveable(session.id) { mutableStateOf(false) }
@@ -88,6 +91,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+            AiNotificationPermission()
             ui.error?.let { AiError(it, vm::clearError) }
             AiConversation(ui, vm, Modifier.weight(1f), ui.selectedModelLabel, ui.selectedEffortLabel) { usageInformation = true }
         }
@@ -95,6 +99,12 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     if (menu) {
         AiSheet("对话操作", { menu = false }) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                AiConversationAction(Icons.Outlined.NotificationsActive, "决策悬浮通知", {
+                    menu = false; AiTaskNotifications.openDecisionSettings(context)
+                })
+                AiConversationAction(Icons.Outlined.BatteryFull, "后台运行设置", {
+                    menu = false; AiTaskNotifications.openBackgroundSettings(context)
+                })
                 AiConversationAction(Icons.Outlined.Info, "对话信息", { menu = false; information = true })
                 AiConversationAction(Icons.Outlined.DataUsage, "上下文与 Token", { menu = false; usageInformation = true })
                 AiConversationAction(Icons.Outlined.FolderOpen, "返回首页选择模型", { menu = false; vm.closeSession() })

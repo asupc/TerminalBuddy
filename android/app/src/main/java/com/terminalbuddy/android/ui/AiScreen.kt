@@ -112,6 +112,9 @@ private enum class AiPage { Home, Accounts, Connection }
                     DropdownMenuItem(text = { Text("决策悬浮通知") },
                         leadingIcon = { Icon(Icons.Outlined.NotificationsActive, null) },
                         onClick = { menu = false; AiTaskNotifications.openDecisionSettings(context) })
+                    DropdownMenuItem(text = { Text("后台运行设置") },
+                        leadingIcon = { Icon(Icons.Outlined.BatteryFull, null) },
+                        onClick = { menu = false; AiTaskNotifications.openBackgroundSettings(context) })
                     DropdownMenuItem(text = { Text("通知设置") },
                         leadingIcon = { Icon(Icons.Outlined.Notifications, null) },
                         onClick = { menu = false; AiTaskNotifications.openSettings(context) })

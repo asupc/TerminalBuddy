@@ -15,18 +15,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.terminalbuddy.android.TerminalBuddyApplication
 import com.terminalbuddy.android.notifications.AiTaskNotifications
 
-/** 请求通知权限，并在决策提醒降级或静音时提供对应渠道的设置入口。 */
+/** 首页与对话页都可处理通知和后台运行权限，返回系统设置时刷新实际状态。 */
 @Composable
 internal fun AiNotificationPermission() {
     val context = LocalContext.current
     val preferences = remember(context) { context.getSharedPreferences("terminal_buddy_notifications", Context.MODE_PRIVATE) }
     var enabled by remember { mutableStateOf(AiTaskNotifications.notificationsEnabled(context)) }
     var decisionAlerts by remember { mutableStateOf(AiTaskNotifications.decisionAlertsEnabled(context)) }
+    var backgroundRestricted by remember { mutableStateOf(AiTaskNotifications.backgroundRestricted(context)) }
+    val notifications = remember(context) { (context.applicationContext as TerminalBuddyApplication).taskNotifications }
+    val monitor by notifications.monitorState.collectAsStateWithLifecycle()
     fun refreshSettings() {
         enabled = AiTaskNotifications.notificationsEnabled(context)
         decisionAlerts = AiTaskNotifications.decisionAlertsEnabled(context)
+        backgroundRestricted = AiTaskNotifications.backgroundRestricted(context)
     }
     val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refreshSettings() }
     LifecycleResumeEffect(Unit) {
@@ -47,5 +53,12 @@ internal fun AiNotificationPermission() {
         TextButton({
             if (enabled) AiTaskNotifications.openDecisionSettings(context) else AiTaskNotifications.openSettings(context)
         }) { Text(if (enabled) "设置提醒" else "开启通知") }
+    }
+    if (enabled && backgroundRestricted && monitor.active) Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("允许后台运行，避免切换应用后提醒延迟", Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+        TextButton({ AiTaskNotifications.openBackgroundSettings(context) }) { Text("允许后台") }
     }
 }

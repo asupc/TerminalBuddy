@@ -1,6 +1,7 @@
 package com.terminalbuddy.android.notifications
 
 import android.Manifest
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -12,6 +13,8 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.util.Log
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -36,6 +39,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     private data class Snapshot(
         val revision: Long, val status: String, val approvals: Set<String> = emptySet(),
         val submittedAt: Long = 0,
+        val notifiedApprovals: Set<String> = emptySet(), val resultPending: Boolean = false,
     ) {
         val active get() = status in setOf("running", "background", "approval", "stopping")
     }
@@ -50,6 +54,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     private var monitoringSuspended = false
     internal var serviceRunning = false
     private var workScheduled = false
+    private val monitor by lazy { AiTaskMonitor(context.applicationContext, repository, this) }
+    internal val monitorState get() = monitor.state
 
     fun initialize() {
         manager.createNotificationChannels(listOf(
@@ -88,12 +94,15 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     }
 
     fun setForeground(active: Boolean) {
+        // 退出前用仍可见的状态确认保活，之后仅维持已经开始的应用级监听。
+        if (!active) ensureMonitoring()
         foreground = active
         if (active) {
             monitoringSuspended = false
             syncAccounts()
-            ensureMonitoring()
         }
+        ensureMonitoring()
+        monitor.refreshNow()
     }
 
     /** 登出只停止对应账号的监听；切换账号保留原账号正在执行的任务。 */
@@ -118,11 +127,12 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         val previous = account[session.id]
         account[session.id] = Snapshot(
             maxOf(previous?.revision ?: 0, session.revision), "running",
-            previous?.approvals.orEmpty(), System.currentTimeMillis(),
+            previous?.approvals.orEmpty(), System.currentTimeMillis(), previous?.notifiedApprovals.orEmpty(),
         )
         cancelEvent(accountId, session.id, decision = false)
         persist()
         ensureMonitoring()
+        monitor.refreshNow()
     }
 
     fun replaceExpectedTask(accountId: String, temporaryId: String, session: AiSession) {
@@ -141,7 +151,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             if (session.id.startsWith("local-")) continue
             val old = account[session.id]
             // 在途的旧响应不能撤回新事件，也不能把已提醒的任务重新变成运行中。
-            if (old != null && session.revision <= old.revision) {
+            if (old != null && session.revision < old.revision) continue
+            if (old != null && session.revision == old.revision && old.submittedAt != 0L) {
                 // 发送明确未生效时释放预先建立的运行基线，不凭空发出完成提醒。
                 if (old.submittedAt != 0L && !session.running && session.revision == old.revision &&
                     System.currentTimeMillis() - old.submittedAt > 120_000) {
@@ -151,19 +162,21 @@ class AiTaskNotifications(private val context: Context, private val repository: 
                 continue
             }
             val approvalIds = session.approvals.mapTo(mutableSetOf()) { it.id }
-            if (approvalIds.isNotEmpty() && (old == null || (approvalIds - old.approvals).isNotEmpty())) {
-                showEvent(accountId, session, decision = true)
+            var notifiedApprovals = old?.notifiedApprovals.orEmpty().intersect(approvalIds)
+            if ((approvalIds - notifiedApprovals).isNotEmpty() && showEvent(accountId, session, decision = true)) {
+                notifiedApprovals = approvalIds
             }
             if (approvalIds.isEmpty()) cancelEvent(accountId, session.id, decision = true)
-            if (old?.active == true && !session.running) {
-                showEvent(accountId, session, decision = false)
-            }
+            var resultPending = !session.running && (old?.active == true || old?.resultPending == true)
+            if (resultPending && showEvent(accountId, session, decision = false)) resultPending = false
             // 新回合开始后移除上一回合结果，保留各任务相互独立的提醒。
             if (session.running && old?.active != true) cancelEvent(accountId, session.id, decision = false)
-            val next = Snapshot(session.revision, session.status, approvalIds)
+            val next = Snapshot(session.revision, session.status, approvalIds,
+                notifiedApprovals = notifiedApprovals, resultPending = resultPending)
             account[session.id] = next
             // 流式正文更新不必每个 token 写一次磁盘，只保存事件变化。
-            if (old == null || old.status != next.status || old.approvals != next.approvals || old.submittedAt != 0L) changed = true
+            if (old == null || old.status != next.status || old.approvals != next.approvals || old.submittedAt != 0L ||
+                old.notifiedApprovals != next.notifiedApprovals || old.resultPending != next.resultPending) changed = true
         }
         if (completeList) {
             val ids = sessions.mapTo(mutableSetOf()) { it.id }
@@ -185,16 +198,28 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         snapshots[accountId]?.remove(id)
         cancelSession(accountId, id)
         persist()
+        ensureMonitoring()
     }
 
     fun removeAccount(accountId: String) {
         snapshots.remove(accountId)?.keys?.forEach { cancelSession(accountId, it) }
         persist()
+        ensureMonitoring()
     }
 
     internal fun knownSessionIds(accountId: String): Set<String> = snapshots[accountId]?.keys?.toSet().orEmpty()
 
     internal fun monitoredAccounts(): Set<String> = snapshots.filterValues { account -> account.values.any { it.active } }.keys
+
+    internal fun monitoredTasks(): Set<AiNotificationTarget> = snapshots.flatMap { (accountId, sessions) ->
+        sessions.filter { (id, snapshot) -> snapshot.active && !id.startsWith("local-") }
+            .keys.map { AiNotificationTarget(accountId, it) }
+    }.toSet()
+
+    internal fun monitorStarted() {
+        serviceRunning = true
+        ensureMonitoring()
+    }
 
     internal fun suspendMonitoring() { monitoringSuspended = true }
 
@@ -204,6 +229,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     }
 
     private fun ensureMonitoring() {
+        // 实时接收属于 Application，服务启动异常不能把接收一并关闭。
+        if (foreground || serviceRunning || monitor.running) monitor.update()
         // Android 12+ 只允许从可见页面启动前台服务；后台恢复由 WorkManager 补偿。
         if (!foreground || monitoringSuspended || serviceRunning || monitoredAccounts().isEmpty()) return
         serviceRunning = true
@@ -211,6 +238,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             .onFailure {
                 serviceRunning = false
                 monitoringSuspended = true
+                Log.w("AiTaskNotifications", "后台保活服务未能启动，继续应用级任务监听", it)
             }
     }
 
@@ -225,8 +253,9 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             .setOngoing(true).setSilent(true).setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE).build()
 
-    private fun showEvent(accountId: String, session: AiSession, decision: Boolean) {
-        if (!notificationsEnabled(context)) return
+    private fun showEvent(accountId: String, session: AiSession, decision: Boolean): Boolean {
+        val channel = if (decision) DECISION_CHANNEL else RESULT_CHANNEL
+        if (!notificationsEnabled(context) || manager.getNotificationChannel(channel)?.importance == NotificationManager.IMPORTANCE_NONE) return false
         val title = if (decision) "需要你决策 · ${session.title}" else when (session.status) {
             "error" -> "任务执行失败 · ${session.title}"
             "interrupted" -> "任务已中断 · ${session.title}"
@@ -235,7 +264,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         val text = if (decision) "有 ${session.approvals.size} 项待处理，请点击查看并回复"
             else "点击返回任务，查看执行结果"
         val account = repository.accounts.accounts.find { it.id == accountId }
-        val notification = NotificationCompat.Builder(context, if (decision) DECISION_CHANNEL else RESULT_CHANNEL)
+        val notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_task_notification)
             .setContentTitle(title).setContentText(text)
             .setSubText(listOfNotNull(account?.username, session.providerLabel).joinToString(" · "))
@@ -246,7 +275,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(taskIntent(accountId, session.id)).setAutoCancel(true).build()
         // 用户可在调用间隙撤销权限，不能因此中断任务同步。
-        runCatching { manager.notify(eventTag(accountId, session.id, decision), EVENT_ID, notification) }
+        return runCatching { manager.notify(eventTag(accountId, session.id, decision), EVENT_ID, notification) }
+            .onFailure { Log.w("AiTaskNotifications", "任务通知未能发送，将在下次同步重试", it) }.isSuccess
     }
 
     private fun taskIntent(accountId: String, sessionId: String): PendingIntent = PendingIntent.getActivity(
@@ -305,6 +335,22 @@ class AiTaskNotifications(private val context: Context, private val repository: 
                 .getNotificationChannel(DECISION_CHANNEL) ?: return false
             return channel.importance >= NotificationManager.IMPORTANCE_HIGH &&
                 (channel.sound != null || channel.shouldVibrate())
+        }
+
+        fun backgroundRestricted(context: Context): Boolean =
+            (Build.VERSION.SDK_INT >= 28 && context.getSystemService(ActivityManager::class.java).isBackgroundRestricted) ||
+                !context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
+
+        /** 跳转应用电池管理，由用户允许后台运行；系统不提供该入口时回退应用详情。 */
+        fun openBackgroundSettings(context: Context) {
+            val optimized = !context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
+            val battery = if (optimized) Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
+                else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+            battery.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (runCatching { context.startActivity(battery) }.isFailure) {
+                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
         }
 
         fun openDecisionSettings(context: Context) {

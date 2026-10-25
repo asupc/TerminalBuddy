@@ -108,6 +108,9 @@ class AiRepository(context: Context) {
         .callTimeout(0, TimeUnit.MILLISECONDS).readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
+    /** 独立心跳及时发现后台半断开的连接，不影响正文上传的超时配置。 */
+    private val realtime = ai.newBuilder().pingInterval(15, TimeUnit.SECONDS).build()
+
     /** 先认证及确认原生 AI 接口，成功后由主线程统一激活，失败保留当前账号。 */
     internal suspend fun login(server: String, username: String, password: String): AiConnection {
         val address = ServerAddress.normalize(server)
@@ -186,15 +189,28 @@ class AiRepository(context: Context) {
      * 实时会话流：首帧是完整会话，之后只推送变化的消息。
      * 客户端按消息 ID 合并，保证流式回复不会重复堆积；断线由上层负责重连与 REST 补偿。
      */
-    fun observe(id: String) = callbackFlow<AiSession> {
-        val url = ServerAddress.aiSocket(store.server, id, store.token)
+    fun observe(id: String) = observe(id, AiConnection(store.server, store.username, store.token), metadataOnly = false)
+
+    /** 后台订阅捕获账号连接，不随页面、当前账号或 Activity 生命周期切换。 */
+    internal fun observeNotifications(id: String, connection: AiConnection) = observe(id, connection, metadataOnly = true)
+
+    private fun observe(id: String, connection: AiConnection, metadataOnly: Boolean) = callbackFlow<AiSession> {
+        val url = ServerAddress.aiSocket(connection.server, id, connection.token)
         var latest: AiSession? = null
-        val socket = ai.newWebSocket(
+        val socket = realtime.newWebSocket(
             Request.Builder().url(url).header("User-Agent", USER_AGENT).build(),
             object : WebSocketListener() {
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     try {
                         val body = ApiJson.parseToJsonElement(text).asObject()
+                        if (metadataOnly) {
+                            if (body.text("type") in setOf("session", "update")) {
+                                val metadata = body.getValue("session").asObject().toMutableMap()
+                                metadata.remove("messages")
+                                trySend(ApiJson.decodeFromJsonElement<AiSession>(JsonObject(metadata)))
+                            }
+                            return
+                        }
                         when (body.text("type")) {
                             "session" -> latest = ApiJson.decodeFromJsonElement<AiSession>(body.getValue("session"))
                             "update" -> {
