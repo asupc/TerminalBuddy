@@ -4,7 +4,7 @@
 
 ## 运行方式
 
-- Claude：每回合启动 `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`，用户消息以 JSON 行写入 stdin，后续回合使用 `--resume` 保留上下文。首个 `result` 仅表示一段回复结束；有后台任务时保持输入连接，继续接收任务状态、唤醒后的回复及后续结果。任务清空后关闭输入，读完输出并确认进程正常退出才结束本轮；中断和异常仍会清理进程树。
+- Claude：每回合启动 `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio`，用户消息以 JSON 行写入 stdin，后续回合使用 `--resume` 保留上下文。首个 `result` 仅表示一段回复结束；有后台任务时保持输入连接，继续接收任务状态、唤醒后的回复及后续结果。任务清空后关闭输入，读完输出并确认进程正常退出才结束本轮；中断和异常仍会清理进程树。
 - Codex：启动 `codex app-server`，通过 stdio JSON-RPC 完成初始化、thread 创建/恢复和 turn 提交，解析消息增量、工具执行、确认请求及完成事件。
 - `GET /api/ai/catalog` 汇总服务器 Claude 通用供应商、容器 Claude 配置及 Codex 供应商的可用模型，供手机首页选择；目录不包含密钥。
 - 创建会话可指定 `providerId` 与模型；服务端保存所选供应商名称及标识。Claude 通过受限权限的临时 settings 应用对应地址、认证和模型配置，回合退出后删除；Codex 复用供应商注册与参数生成，按会话选择供应商与模型，不改变全局默认供应商。
@@ -14,7 +14,7 @@
 - 原生 AI 会话独立于现有 PC/Web PTY 终端；不会自动控制正在桌面终端里运行的 AI。
 - 摘要标题复用 CLI 已有标题来源。列表、详情与 WebSocket 都会刷新，每个会话最多每 2 秒检查一次，回合结束强制检查；标题变化后原子保存并增加 `revision`，保持 `updatedAt` 不变。Android 首页可见时每 3 秒静默同步列表，对话页通过 WebSocket 接收标题变化，退到后台停止同步。
 
-Claude print 模式由服务器原有权限配置决定可使用哪些工具，拒绝的操作会显示为消息。后台任务状态优先使用 CLI 的 `background_tasks_changed` 完整快照，兼容旧版 `task_started` / `task_notification` 事件，任务进度和完成摘要同步为工具消息；CLI 提前退出且仍有未完成任务时明确报错，不显示正常完成。Codex 命令执行、文件修改确认与用户问题通过原生消息 API 回答；未支持的交互请求会返回明确协议错误，不自动批准。
+Claude print 模式继承服务器原有权限配置，通过 `--permission-prompt-tool stdio` 启用双向交互；`AskUserQuestion` 与仍需授权的工具请求通过会话 `approvals` 同步到手机，用户回答后写回对应的 `control_response`，拒绝的操作会显示为消息。后台任务状态优先使用 CLI 的 `background_tasks_changed` 完整快照，兼容旧版 `task_started` / `task_notification` 事件，任务进度和完成摘要同步为工具消息；CLI 提前退出且仍有未完成任务时明确报错，不显示正常完成。Claude 用户问题、工具授权及 Codex 命令执行、文件修改确认与用户问题均通过原生消息 API 回答；未支持的交互请求会返回明确协议错误，不自动批准。
 
 ## Agent 权限参数
 
@@ -28,7 +28,7 @@ Claude print 模式由服务器原有权限配置决定可使用哪些工具，�
 
 例如，保留项目沙箱且不逐次询问可配置 `codex --ask-for-approval never --sandbox workspace-write`；希望按需确认可配置 `codex --ask-for-approval on-request --sandbox workspace-write`。
 
-该修复仅涉及 TerminalBuddy 服务端。更新并重启服务后，已有会话下一次发送消息时会应用新的启动策略，无需重新创建对话或重装安卓 App。
+权限参数的继承在服务端生效，更新并重启服务后，已有会话下一次发送消息时会应用新的启动策略。安卓决策卡片的多选、自定义回答和选项说明需要同步更新安卓 App。
 
 ## REST 与 WebSocket
 
@@ -53,6 +53,24 @@ AI REST 接口不使用普通 API 的请求正文大小和处理超时限制；�
 消息字段为 `id`、`role`（`user` / `assistant` / `tool`）、`text`、`createdAt`；会话还包含状态、模型、项目、确认请求、错误及单调递增 revision。会话还返回非敏感的 `providerId`、`providerName`，供首页历史项和二级页面展示来源；旧会话这两个字段默认为空。内部 thread ID、归属账户和请求去重信息不会返回客户端。
 
 WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type": "update", "session": "不含历史消息的会话对象", "messages": ["新增或变更的完整消息对象"] }`。客户端按消息 ID 更新有序列表；重连重新获取首帧，REST 可用于补偿。AI 连接不占用普通终端的全局配额，不限制帧或消息大小，不按固定发送或心跳超时断开；保留 Ping/Pong 和认证复核，实际连接关闭、网络错误、令牌失效或关闭 Web API 时结束订阅，服务端任务仍独立执行。
+
+## 安卓聊天决策
+
+待处理请求通过现有 `AiSession.approvals` 和 `status=approval` 实时同步，安卓端在聊天区输入框上方固定显示选择卡片。问题内容可滚动，提交按钮始终可见；支持逐题单选、多选、自定义回答、选项说明及多个待处理请求依次处理。拒绝或暂不回答也会回传给 CLI，不自动代选。重新连接恢复最新待决策快照，Claude 撤销的请求会移除对应卡片。
+
+客户端统一提交按题目 ID 索引的答案，必须回答全部问题后才能接受：
+
+```json
+{
+  "approvalId": "待处理请求标识",
+  "decision": "accept",
+  "answers": {
+    "question-0": { "answers": ["选项一", "选项二"] }
+  }
+}
+```
+
+Codex 沿用 CLI 提供的题目 ID 与答案数组。Claude 的 `AskUserQuestion` 由服务端按题目顺序补充 `question-0` 等 ID；回传时保留原始工具输入，把答案转换成按原始问题文本索引的 `updatedInput.answers`，多选标签以逗号连接。普通工具授权回传 `allow` / `deny`；未回答或空白的答案由服务端拒绝，避免提交后丢失待决策请求。
 
 ## 会话用量 `usage`
 
@@ -115,6 +133,7 @@ AI 正文继续通过原有消息字段传输原始 Markdown，不改变 REST �
 - `src-tauri/src/services/ai_permission_service.rs`：继承 Agent 基础命令中的权限参数，并映射到原生 CLI / App Server。
 - `src-tauri/src/services/ai_catalog_service.rs`：供应商目录与按会话准备的启动配置。
 - `src-tauri/src/services/ai_chat_service.rs`：会话持久化、进程生命周期、Claude/Codex 协议适配。
+- `src-tauri/src/services/ai_chat_approval.rs`：交互答案校验、Claude 问题格式归一化及控制协议响应。
 - `src-tauri/src/services/ai_chat_usage.rs`：用量归一化、消息快照合并、累计基线及上下文压缩状态。
 - `src-tauri/src/web/handlers/ai_chat_handler.rs`：REST 和 WebSocket；磁盘及任务启动操作均通过 `spawn_blocking`。
 - `src-tauri/src/web/server.rs`：HTTP/WS 路由注册。

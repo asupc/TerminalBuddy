@@ -10,7 +10,7 @@ Kotlin + Jetpack Compose 原生安卓工程，连接 TerminalBuddy 内嵌 Web AP
 | --- | --- |
 | 认证 | 服务地址（支持反向代理子目录）、账号、密码登录；登录成功后先校验目标服务确实提供原生 AI 接口，再保存连接。每个账号的令牌用 Android Keystore AES/GCM 加密后写入 SharedPreferences，密码不落盘；支持多个账号添加、切换、重新登录和移除，401 仅使对应账号需要重新登录 |
 | 首页 | 服务连接状态、项目选择、供应商与模型选择（只列出项目已启用的 Agent）、开始对话、最近对话列表与删除；更多菜单提供账号列表，内容静默同步，异常时仅在标题显示重连提示 |
-| 对话 | 输入框上方模型与用量悬浮卡片（Agent 图标、模型、思考强度、上下文进度与输入输出 token，可收展；点击查看本轮、缓存及推理明细）、原生消息列表（用户 / AI / 工具执行日志，日志默认折叠、可展开）、流式回复、逐字显示、跟随滚动与「回到最新」、多行输入、发送即显示用户消息并清空输入、待确认消息气泡左侧发送进度、发送失败恢复草稿并复用 requestId 重试、中断、Codex 操作确认卡片、断线重连与 REST 轮询补偿 |
+| 对话 | 输入框上方模型与用量悬浮卡片（Agent 图标、模型、思考强度、上下文进度与输入输出 token，可收展；点击查看本轮、缓存及推理明细）、原生消息列表（用户 / AI / 工具执行日志，日志默认折叠、可展开）、流式回复、逐字显示、跟随滚动与「回到最新」、多行输入、发送即显示用户消息并清空输入、待确认消息气泡左侧发送进度、发送失败恢复草稿并复用 requestId 重试、中断、Claude / Codex 决策卡片（单选、多选、自定义回答、选项说明与待处理数量）、断线重连与 REST 轮询补偿 |
 | 本地缓存 | 内存 + SQLite 缓存完整会话，再次进入立即显示已有正文并后台同步；项目与模型选择、已读记录、缓存和页面状态按账号隔离，切换保留各自磁盘缓存，退出或移除仅清理对应账号缓存 |
 | 布局 | 与葫芦娃最新版一致的紧凑布局：首页为连接状态 + 新对话配置卡 + 两行最近对话列表（连续卡片、行内分割线），对话页独立为二级页并带单行导航、对话信息面板与底部操作面板 |
 | 服务端能力 | 会话保存在服务端 `AiSessions/*.json`，App 退到后台任务继续执行；重新打开回到选择首页，可从「最近对话」继续 |
@@ -37,6 +37,7 @@ app/src/main/java/com/terminalbuddy/android/
     ├── AiScreen.kt                 连接页、AI 首页、选择面板、删除确认
     ├── AiAccountsScreen.kt         账号列表、添加、切换、重新登录与移除
     ├── AiConversationScreen.kt     二级对话页、输入区、消息与确认卡片
+    ├── AiApprovalCard.kt           聊天区决策选择、工具授权与答案提交
     ├── AiConversationUsageCard.kt  输入框上方模型与用量悬浮卡片（收展动画、上下文进度条、token 行）
     ├── AiUsageBar.kt               模型与用量卡片入口（AiUsageCard）与用量详情（AiUsageSheet）
     ├── AiConversationMotion.kt     逐字显示与跟随滚动
@@ -68,7 +69,7 @@ REST 使用 `Authorization: Bearer <token>`，WebSocket 使用 `?token=` 查询�
 | `GET /api/ai/sessions/{id}` | 完整会话与消息 |
 | `POST /api/ai/sessions/{id}/messages` | 发送消息：`text`、UUID `requestId` |
 | `POST /api/ai/sessions/{id}/stop` | 中断当前回合 |
-| `POST /api/ai/sessions/{id}/approvals` | 回答 Codex 确认 / 用户问题 |
+| `POST /api/ai/sessions/{id}/approvals` | 回答 Claude / Codex 确认与用户问题 |
 | `DELETE /api/ai/sessions/{id}` | 删除空闲会话 |
 | `/ws/ai/{id}?token=...` | 首帧完整会话，后续推送元数据与变化的消息 |
 

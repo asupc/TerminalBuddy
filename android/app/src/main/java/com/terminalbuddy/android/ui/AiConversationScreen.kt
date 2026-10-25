@@ -40,13 +40,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.*
-import kotlinx.serialization.json.*
 
 /** 对话二级页：会话摘要、自然段回复与紧凑输入区。 */
 @Composable
@@ -241,7 +239,9 @@ private fun AiConversation(
                     color = TbColors.Danger, style = MaterialTheme.typography.bodySmall,
                 )
             }
-            session.approvals.firstOrNull()?.let { AiApprovalCard(it, ui.working, approvalMaxHeight, vm::answer) }
+            session.approvals.firstOrNull()?.let {
+                AiApprovalCard(it, ui.working, approvalMaxHeight, session.approvals.size, vm::answer)
+            }
             Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
                 AiUsageCard(session, modelLabel, effortLabel, usageDetails,
                     expanded = usageExpanded, onExpandedChange = { usageExpanded = it },
@@ -488,70 +488,3 @@ private fun AiReplyIndicator(provider: String, label: String, elapsedSeconds: Lo
     }
 }
 
-/** Codex 操作确认 / 用户问题：无 questions 为二元确认，有 questions 时逐题作答。 */
-@Composable
-private fun AiApprovalCard(approval: AiApproval, working: Boolean, maxHeight: Dp, answer: (AiApproval, String, JsonObject) -> Unit) {
-    var responses by remember(approval.id) { mutableStateOf<Map<String, String>>(emptyMap()) }
-    val questions = approval.details.rows("questions").map { it.asObject() }
-    Surface(
-        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp).heightIn(max = maxHeight),
-        color = TbColors.SurfaceHover, shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, TbColors.Border),
-    ) {
-        Column(Modifier.padding(horizontal = 10.dp)) {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(16.dp), tint = TbColors.Accent)
-                Text(if (questions.isEmpty()) "需要你确认" else "AI 需要你的回复", style = MaterialTheme.typography.titleSmall)
-            }
-            Column(
-                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (questions.isEmpty()) SelectionContainer {
-                    Text(
-                        approval.details.text("command", "reason", fallback = "是否允许本次文件修改或命令执行？"),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                questions.forEach { question ->
-                    val id = question.text("id")
-                    Text(question.text("question", "header"), style = MaterialTheme.typography.bodyMedium)
-                    question.rows("options").forEach { option ->
-                        val label = option.asObject().text("label")
-                        TextButton(
-                            { responses = responses + (id to label) }, enabled = !working, modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                        ) {
-                            RadioButton(selected = responses[id] == label, onClick = null, enabled = !working)
-                            Spacer(Modifier.width(8.dp))
-                            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                    OutlinedTextField(
-                        responses[id].orEmpty(), { responses = responses + (id to it) }, Modifier.fillMaxWidth(),
-                        label = { Text("回复") }, maxLines = 3, enabled = !working, shape = RoundedCornerShape(10.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                TextButton({ answer(approval, "decline", JsonObject(emptyMap())) }, enabled = !working) { Text("拒绝") }
-                TextButton(
-                    {
-                        val values = buildJsonObject {
-                            responses.forEach { (id, value) ->
-                                put(id, buildJsonObject { put("answers", buildJsonArray { add(value) }) })
-                            }
-                        }
-                        answer(approval, "accept", values)
-                    },
-                    enabled = !working && questions.all { responses[it.text("id")]?.isNotBlank() == true },
-                ) {
-                    Text(if (questions.isEmpty()) "允许本次" else "发送回复")
-                }
-            }
-        }
-    }
-}

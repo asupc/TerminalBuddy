@@ -2,7 +2,7 @@
 //! CLI 进程在服务端执行，手机断开不会终止任务。所有文件/进程操作由 handler 的
 //! spawn_blocking 或专用工作线程承载；用户文本只进入 stdin，不拼进 shell 命令。
 use crate::models::ai_chat::*;
-use super::ai_chat_usage as usage;
+use super::{ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage as usage};
 use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
 use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
@@ -125,10 +125,11 @@ pub fn stop(id: &str, owner: &str) -> Result<()> {
 }
 pub fn answer(id: &str, owner: &str, input: AnswerAiApproval) -> Result<()> {
     let cell = load(id, owner)?;
-    if !cell.data.lock().map_err(|_| "AI 会话状态不可用")?.approvals.iter().any(|a| a.id == input.approval_id) {
-        return Err("该请求已经结束，请刷新会话".into());
+    {
+        let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+        let pending = data.approvals.iter().find(|a| a.id == input.approval_id).ok_or("该请求已经结束，请刷新会话")?;
+        approval::validate(pending, &input)?;
     }
-    if !matches!(input.decision.as_str(), "accept" | "decline") { return Err("无效的确认操作".into()); }
     let result = cell.control.lock().map_err(|_| "AI 会话状态不可用")?.as_ref().ok_or("执行已经结束")?
         .send(Control::Approval(input)).map_err(|_| "执行已经结束".to_string());
     result
@@ -279,7 +280,8 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
     command.current_dir(&session.project_path);
     if session.provider == "claude" {
         command.args(&permissions.claude_args);
-        command.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
+        command.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+            "--permission-prompt-tool", "stdio"]);
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
     } else { command.args(&permissions.codex_args).arg("app-server"); }
@@ -493,10 +495,23 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
     let mut state = ClaudeOutputState::default();
     let mut tasks = ClaudeBackgroundTasks::default();
     let mut input = Some(stdin);
+    let mut pending: HashMap<String, ClaudeApproval> = HashMap::new();
     let mut received_result = false;
     let mut output_closed = false;
     loop {
-        if matches!(controls.try_recv(), Ok(Control::Stop)) { return Err("已中断".into()); }
+        while let Ok(control) = controls.try_recv() {
+            if matches!(control, Control::Stop) { return Err("已中断".into()); }
+            if let Control::Approval(answer) = control {
+                if let Some(request) = pending.remove(&answer.approval_id) {
+                    let stdin = input.as_mut().ok_or("Claude 输入通道已关闭，请重新发送消息")?;
+                    write_json(stdin, request.response(&answer)?)?;
+                    update(cell, |data| {
+                        data.approvals.retain(|a| a.id != answer.approval_id);
+                        if data.approvals.is_empty() { data.status = "running".into(); }
+                    });
+                }
+            }
+        }
         if checkpoint.elapsed() > Duration::from_secs(5) { persist(cell)?; checkpoint = Instant::now(); }
         if output_closed {
             if let Some(status) = process.0.try_wait().map_err(|e| format!("读取 Claude 进程状态失败：{e}"))? {
@@ -519,12 +534,29 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
         };
         if value["type"] == "control_request" {
             if let Some(stdin) = input.as_mut() {
-                // 旧的文本 stdin 模式会在 EOF 时拒绝交互；流式输入同样需要明确回复，避免永久等待。
-                let response = if value["request"]["subtype"] == "can_use_tool" {
-                    json!({"subtype":"success","request_id":value["request_id"],"response":{
-                        "behavior":"deny","message":"请在服务端配置 Claude 的工具权限后重试"}})
-                } else { json!({"subtype":"error","request_id":value["request_id"],"error":"原生 AI 会话暂不支持此 Claude 交互请求"}) };
-                write_json(stdin, json!({"type":"control_response","response":response}))?;
+                if let Some(request) = ClaudeApproval::from_request(&value) {
+                    if !pending.values().any(|item| item.request_id == request.request_id) {
+                        let approval = request.approval.clone();
+                        pending.insert(approval.id.clone(), request);
+                        update(cell, |data| { data.status = "approval".into(); data.approvals.push(approval); });
+                    }
+                } else {
+                    write_json(stdin, json!({"type":"control_response","response":{
+                        "subtype":"error","request_id":value["request_id"],"error":"原生 AI 会话暂不支持此 Claude 交互请求",
+                    }}))?;
+                }
+            }
+            continue;
+        }
+        if value["type"] == "control_cancel_request" {
+            let cancelled: HashSet<_> = pending.iter().filter(|(_, item)| item.request_id == value["request_id"])
+                .map(|(id, _)| id.clone()).collect();
+            pending.retain(|id, _| !cancelled.contains(id));
+            if !cancelled.is_empty() {
+                update(cell, |data| {
+                    data.approvals.retain(|a| !cancelled.contains(&a.id));
+                    if data.approvals.is_empty() { data.status = "running".into(); }
+                });
             }
             continue;
         }
@@ -532,7 +564,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
         if apply_claude_event(cell, &turn, &mut state, &value)? { received_result = true; }
         // result 只表示一段回复结束。后台工作仍在执行时保留输入连接，CLI 才能继续接收唤醒与结果。
         // 任务全部结束后关闭输入，并读完 stdout、等到正常退出，再由外层统一收尾。
-        if received_result && tasks.tasks.is_empty() { drop(input.take()); }
+        if received_result && tasks.tasks.is_empty() && pending.is_empty() { drop(input.take()); }
     }
 }
 #[derive(Default)]
