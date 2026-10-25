@@ -157,17 +157,24 @@ internal fun AiApprovalCard(
                             }
                         }
                         if (question.options.isEmpty() || customQuestion == question.id || custom[question.id]?.isNotBlank() == true) {
-                            OutlinedTextField(
-                                value = custom[question.id].orEmpty(),
-                                onValueChange = {
-                                    custom = custom + (question.id to it)
-                                    if (it.isNotBlank() && !question.multiple) selections = selections - question.id
-                                },
-                                modifier = Modifier.fillMaxWidth(), label = { Text("你的回复") },
-                                maxLines = 3, enabled = !working, shape = RoundedCornerShape(10.dp),
-                                textStyle = MaterialTheme.typography.bodyMedium,
-                                visualTransformation = if (question.secret) PasswordVisualTransformation() else VisualTransformation.None,
-                            )
+                            Column(
+                                Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                // 标签放在框外，避免浮动标签截断输入框的上边框。
+                                Text("你的回复", style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
+                                OutlinedTextField(
+                                    value = custom[question.id].orEmpty(),
+                                    onValueChange = {
+                                        custom = custom + (question.id to it)
+                                        if (it.isNotBlank() && !question.multiple) selections = selections - question.id
+                                    },
+                                    modifier = Modifier.fillMaxWidth(), placeholder = { Text("请输入你的回复") },
+                                    maxLines = 3, enabled = !working, shape = RoundedCornerShape(10.dp),
+                                    textStyle = MaterialTheme.typography.bodyMedium,
+                                    visualTransformation = if (question.secret) PasswordVisualTransformation() else VisualTransformation.None,
+                                )
+                            }
                         } else TextButton({ customQuestion = question.id }, enabled = !working) { Text("其他回答") }
                     }
                 }
