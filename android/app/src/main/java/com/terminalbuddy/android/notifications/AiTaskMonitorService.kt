@@ -19,6 +19,7 @@ class AiTaskMonitorService : Service() {
     private val notifications get() = (applicationContext as TerminalBuddyApplication).taskNotifications
     private var foregroundStarted = false
     private var watching: Job? = null
+    private var healthCheck: Job? = null
     private var keepAwake: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -52,10 +53,16 @@ class AiTaskMonitorService : Service() {
                     // 仅连接或运行状态变化时更新常驻提示，避免周期更新干扰事件横幅。
                     runCatching {
                         getSystemService(android.app.NotificationManager::class.java).notify(
-                            AiTaskNotifications.MONITOR_ID, notifications.monitoringNotification(state.reconnecting, state.tasksRunning),
+                            AiTaskNotifications.MONITOR_ID, notifications.monitoringNotification(state.reconnecting, state.tasksRunning, state.pollingFallback),
                         )
                     }.onFailure { Log.w("AiTaskMonitorService", "更新任务监听通知失败", it) }
                 }
+            }
+        }
+        if (healthCheck?.isActive != true) healthCheck = scope.launch {
+            while (isActive) {
+                notifications.refreshMonitoring()
+                delay(5_000)
             }
         }
         return START_STICKY

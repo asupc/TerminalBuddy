@@ -100,3 +100,48 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
         }
     }))
 }
+
+/// 账号级通知连接独立于对话页面，持续发现空闲会话、跨端新任务与待处理决策。
+pub async fn notifications_socket(ws: WebSocketUpgrade, State(state): State<AppState>, Query(params): Query<HashMap<String, String>>) -> Result<impl IntoResponse, ApiError> {
+    let token = params.get("token").cloned().ok_or_else(|| ApiError::Unauthorized("请先登录".into()))?;
+    let claims = verify_token(&token, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期，请重新登录".into()))?;
+    let owner = claims.sub;
+    let initial = { let owner = owner.clone(); blocking(move || service::list(&owner)).await?.0 };
+    Ok(ws.max_message_size(usize::MAX).max_frame_size(usize::MAX).on_upgrade(move |socket| async move {
+        let (mut sender, mut receiver) = socket.split();
+        let send_updates = async {
+            let mut previous: Vec<_> = initial.iter().map(|s| (s.id.clone(), s.revision)).collect();
+            if sender.send(Message::Text(json!({"type":"sessions","sessions":initial}).to_string().into())).await.is_err() { return; }
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut heartbeat = tokio::time::Instant::now();
+            loop {
+                interval.tick().await;
+                let current = { let owner = owner.clone(); tokio::task::spawn_blocking(move || service::list(&owner)).await };
+                let Ok(Ok(sessions)) = current else { break; };
+                let versions: Vec<_> = sessions.iter().map(|s| (s.id.clone(), s.revision)).collect();
+                // 空闲时也发应用层心跳，手机能发现 TCP 存活但消息流已经停滞的连接。
+                if versions == previous && heartbeat.elapsed() < Duration::from_secs(10) { continue; }
+                previous = versions;
+                if sender.send(Message::Text(json!({"type":"sessions","sessions":sessions}).to_string().into())).await.is_err() { break; }
+                heartbeat = tokio::time::Instant::now();
+            }
+        };
+        let watch_connection = async {
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    message = receiver.next() => match message {
+                        Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                        Some(Ok(_)) => {},
+                    },
+                    _ = interval.tick() => {
+                        if verify_token(&token, &state.jwt_secret).is_err() || !SettingsService::get_settings().web_api_enabled { break; }
+                    }
+                }
+            }
+        };
+        tokio::select! { _ = send_updates => {}, _ = watch_connection => {} }
+    }))
+}

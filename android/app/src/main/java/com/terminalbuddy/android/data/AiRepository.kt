@@ -111,6 +111,12 @@ class AiRepository(context: Context) {
     /** 独立心跳及时发现后台半断开的连接，不影响正文上传的超时配置。 */
     private val realtime = ai.newBuilder().pingInterval(15, TimeUnit.SECONDS).build()
 
+    /** 后台通知独立调度和超时，不与页面长请求争用队列或跟随页面 Socket 取消。 */
+    private val notificationHttp = http.newBuilder().dispatcher(Dispatcher()).build()
+    private val notificationRealtime = notificationHttp.newBuilder()
+        .readTimeout(0, TimeUnit.MILLISECONDS).callTimeout(0, TimeUnit.MILLISECONDS)
+        .pingInterval(15, TimeUnit.SECONDS).build()
+
     /** 先认证及确认原生 AI 接口，成功后由主线程统一激活，失败保留当前账号。 */
     internal suspend fun login(server: String, username: String, password: String): AiConnection {
         val address = ServerAddress.normalize(server)
@@ -141,7 +147,7 @@ class AiRepository(context: Context) {
     /** 后台监听固定使用对应账号的连接，切换前台账号不会改变在途请求的身份。 */
     internal suspend fun notificationSessions(connection: AiConnection): List<AiSession> =
         ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions"),
-            server = connection.server, token = connection.token))
+            server = connection.server, token = connection.token, client = notificationHttp))
 
     suspend fun catalog(): AiCatalog = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "catalog")))
     suspend fun projects(): List<AiProject> = ApiJson.decodeFromJsonElement(request("GET", listOf("projects")))
@@ -189,12 +195,40 @@ class AiRepository(context: Context) {
      * 实时会话流：首帧是完整会话，之后只推送变化的消息。
      * 客户端按消息 ID 合并，保证流式回复不会重复堆积；断线由上层负责重连与 REST 补偿。
      */
-    fun observe(id: String) = observe(id, AiConnection(store.server, store.username, store.token), metadataOnly = false)
+    fun observe(id: String) = observe(id, AiConnection(store.server, store.username, store.token))
 
-    /** 后台订阅捕获账号连接，不随页面、当前账号或 Activity 生命周期切换。 */
-    internal fun observeNotifications(id: String, connection: AiConnection) = observe(id, connection, metadataOnly = true)
+    /** 首帧、增量快照和空闲心跳均包含全部会话元数据，不传输消息正文。 */
+    internal fun observeNotificationSessions(connection: AiConnection) = callbackFlow<List<AiSession>> {
+        val socket = notificationRealtime.newWebSocket(
+            Request.Builder().url(ServerAddress.aiNotificationsSocket(connection.server, connection.token))
+                .header("User-Agent", USER_AGENT).build(),
+            object : WebSocketListener() {
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    try {
+                        val body = ApiJson.parseToJsonElement(text).asObject()
+                        if (body.text("type") == "sessions") {
+                            trySend(ApiJson.decodeFromJsonElement<List<AiSession>>(body.getValue("sessions")))
+                        }
+                    } catch (_: Exception) {
+                        close(ApiException(502, "AI 通知消息格式不正确，请更新服务端"))
+                    }
+                }
 
-    private fun observe(id: String, connection: AiConnection, metadataOnly: Boolean) = callbackFlow<AiSession> {
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    val code = response?.code
+                    response?.close()
+                    close(if (code == 401) ApiException(401, "AI 服务登录已过期，请重新登录")
+                        else IOException("AI 后台通知连接断开", t))
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { close(IOException("AI 后台通知连接已关闭")) }
+            },
+        )
+        awaitClose { socket.cancel() }
+    }.buffer(Channel.CONFLATED)
+
+    private fun observe(id: String, connection: AiConnection) = callbackFlow<AiSession> {
         val url = ServerAddress.aiSocket(connection.server, id, connection.token)
         var latest: AiSession? = null
         val socket = realtime.newWebSocket(
@@ -203,14 +237,6 @@ class AiRepository(context: Context) {
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     try {
                         val body = ApiJson.parseToJsonElement(text).asObject()
-                        if (metadataOnly) {
-                            if (body.text("type") in setOf("session", "update")) {
-                                val metadata = body.getValue("session").asObject().toMutableMap()
-                                metadata.remove("messages")
-                                trySend(ApiJson.decodeFromJsonElement<AiSession>(JsonObject(metadata)))
-                            }
-                            return
-                        }
                         when (body.text("type")) {
                             "session" -> latest = ApiJson.decodeFromJsonElement<AiSession>(body.getValue("session"))
                             "update" -> {
@@ -245,7 +271,7 @@ class AiRepository(context: Context) {
 
     private suspend fun request(
         method: String, path: List<String>, body: JsonElement? = null,
-        server: String = store.server, token: String = store.token,
+        server: String = store.server, token: String = store.token, client: OkHttpClient? = null,
     ): JsonElement = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder()
             .url(ServerAddress.endpoint(server, path))
@@ -254,7 +280,7 @@ class AiRepository(context: Context) {
             .apply { if (token.isNotBlank()) header("Authorization", "Bearer $token") }
             .method(method, payloadFor(method, body))
             .build()
-        val call = (if (path.firstOrNull() == "ai") ai else http).newCall(request)
+        val call = (client ?: if (path.firstOrNull() == "ai") ai else http).newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {

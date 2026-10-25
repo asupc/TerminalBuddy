@@ -40,6 +40,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         val revision: Long, val status: String, val approvals: Set<String> = emptySet(),
         val submittedAt: Long = 0,
         val notifiedApprovals: Set<String> = emptySet(), val resultPending: Boolean = false,
+        val resultRevision: Long = 0,
     ) {
         val active get() = status in setOf("running", "background", "approval", "stopping")
     }
@@ -133,6 +134,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         account[session.id] = Snapshot(
             maxOf(previous?.revision ?: 0, session.revision), "running",
             previous?.approvals.orEmpty(), System.currentTimeMillis(), previous?.notifiedApprovals.orEmpty(),
+            resultRevision = maxOf(previous?.resultRevision ?: 0, session.resultRevision),
         )
         cancelEvent(accountId, session.id, decision = false)
         persist()
@@ -161,7 +163,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
                 // 发送明确未生效时释放预先建立的运行基线，不凭空发出完成提醒。
                 if (old.submittedAt != 0L && !session.running && session.revision == old.revision &&
                     System.currentTimeMillis() - old.submittedAt > 120_000) {
-                    account[session.id] = Snapshot(session.revision, session.status, session.approvals.map { it.id }.toSet())
+                    account[session.id] = Snapshot(session.revision, session.status, session.approvals.map { it.id }.toSet(),
+                        resultRevision = session.resultRevision)
                     changed = true
                 }
                 continue
@@ -172,16 +175,19 @@ class AiTaskNotifications(private val context: Context, private val repository: 
                 notifiedApprovals = approvalIds
             }
             if (approvalIds.isEmpty()) cancelEvent(accountId, session.id, decision = true)
-            var resultPending = !session.running && (old?.active == true || old?.resultPending == true)
+            // 后台断线期间可能错过 running → idle 的整个回合；完成版本仍可补发提醒。
+            val missedResult = old != null && session.resultRevision > old.resultRevision
+            var resultPending = !session.running && (old?.active == true || old?.resultPending == true || missedResult)
             if (resultPending && showEvent(accountId, session, decision = false)) resultPending = false
             // 新回合开始后移除上一回合结果，保留各任务相互独立的提醒。
             if (session.running && old?.active != true) cancelEvent(accountId, session.id, decision = false)
             val next = Snapshot(session.revision, session.status, approvalIds,
-                notifiedApprovals = notifiedApprovals, resultPending = resultPending)
+                notifiedApprovals = notifiedApprovals, resultPending = resultPending, resultRevision = session.resultRevision)
             account[session.id] = next
             // 流式正文更新不必每个 token 写一次磁盘，只保存事件变化。
             if (old == null || old.status != next.status || old.approvals != next.approvals || old.submittedAt != 0L ||
-                old.notifiedApprovals != next.notifiedApprovals || old.resultPending != next.resultPending) changed = true
+                old.notifiedApprovals != next.notifiedApprovals || old.resultPending != next.resultPending ||
+                old.resultRevision != next.resultRevision) changed = true
         }
         if (completeList) {
             val ids = sessions.mapTo(mutableSetOf()) { it.id }
@@ -219,14 +225,14 @@ class AiTaskNotifications(private val context: Context, private val repository: 
 
     internal fun hasActiveTasks(): Boolean = snapshots.values.any { account -> account.values.any { it.active } }
 
-    internal fun monitoredTasks(): Set<AiNotificationTarget> = snapshots.flatMap { (accountId, sessions) ->
-        sessions.filter { (id, snapshot) -> snapshot.active && !id.startsWith("local-") }
-            .keys.map { AiNotificationTarget(accountId, it) }
-    }.toSet()
-
     internal fun monitorStarted() {
         serviceRunning = true
         ensureMonitoring()
+    }
+
+    internal fun refreshMonitoring() {
+        ensureMonitoring()
+        monitor.refreshNow()
     }
 
     internal fun suspendMonitoring() { monitoringSuspended = true }
@@ -250,11 +256,18 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             }
     }
 
-    internal fun monitoringNotification(reconnecting: Boolean = false, tasksRunning: Boolean = hasActiveTasks()): Notification =
+    internal fun monitoringNotification(
+        reconnecting: Boolean = true, tasksRunning: Boolean = hasActiveTasks(), pollingFallback: Boolean = false,
+    ): Notification =
         NotificationCompat.Builder(context, MONITOR_CHANNEL)
             .setSmallIcon(R.drawable.ic_task_notification)
-            .setContentTitle(if (tasksRunning) "正在监听 AI 任务" else "AI 消息通知已开启")
-            .setContentText(if (reconnecting) "连接中断，正在重连" else "后台接收决策和任务结束消息，点击返回应用")
+            .setContentTitle(if (reconnecting) "AI 消息连接正在重连" else "AI 消息接收已连接")
+            .setContentText(when {
+                pollingFallback -> "实时连接正在恢复，暂通过后台同步接收消息"
+                reconnecting -> "正在恢复后台消息连接，连接恢复后自动补收提醒"
+                tasksRunning -> "任务执行中，后台接收决策和结束消息"
+                else -> "等待新消息，点击返回应用"
+            })
             .setContentIntent(PendingIntent.getActivity(context, 0,
                 Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))

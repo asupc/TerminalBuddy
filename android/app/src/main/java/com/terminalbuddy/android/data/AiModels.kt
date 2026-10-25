@@ -19,7 +19,7 @@ data class AiSession(
     val providerId: String? = null, val providerName: String? = null,
     val model: String? = null, val status: String = "idle", val messages: List<AiMessage> = emptyList(),
     val approvals: List<AiApproval> = emptyList(), val error: String? = null,
-    val updatedAt: Long = 0, val revision: Long = 0,
+    val updatedAt: Long = 0, val revision: Long = 0, val resultRevision: Long = 0,
     val usage: AiUsage? = null,
 ) {
     /** 服务端仍在该会话执行任务（含等待用户确认）。 */

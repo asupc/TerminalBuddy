@@ -26,6 +26,12 @@ object ServerAddress {
         return builder.build()
     }
 
+    /** 账号级后台通知通道，与当前打开的对话无关。 */
+    fun aiNotificationsSocket(server: String, token: String): HttpUrl =
+        normalize(server).toHttpUrlOrNull()!!.newBuilder()
+            .addPathSegment("ws").addPathSegment("ai")
+            .addQueryParameter("token", token).build()
+
     /** 原生 AI 实时通道：`/ws/ai/{id}?token=...`。 */
     fun aiSocket(server: String, sessionId: String, token: String): HttpUrl =
         normalize(server).toHttpUrlOrNull()!!.newBuilder()

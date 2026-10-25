@@ -36,6 +36,9 @@ pub struct AiSession {
     pub error: Option<String>,
     pub updated_at: i64,
     pub revision: u64,
+    /// 最近一次任务结束的版本；客户端断线后仍能识别已经错过的完整回合。
+    #[serde(default)]
+    pub result_revision: u64,
     #[serde(default)]
     pub usage: Option<AiUsage>,
     /// Codex 累计快照的恢复基线，只在私有会话文件中保存。
@@ -48,6 +51,21 @@ pub struct AiSession {
     pub thread_id: Option<String>,
     #[serde(default, skip_serializing)]
     pub request_ids: Vec<String>,
+}
+
+impl AiSession {
+    /// 通知连接只读取元数据，不复制或传输整段对话历史。
+    pub fn metadata(&self) -> Self {
+        Self {
+            id: self.id.clone(), title: self.title.clone(), provider: self.provider.clone(),
+            provider_id: self.provider_id.clone(), provider_name: self.provider_name.clone(),
+            project_path: self.project_path.clone(), model: self.model.clone(), status: self.status.clone(),
+            messages: Vec::new(), approvals: self.approvals.clone(), error: self.error.clone(),
+            updated_at: self.updated_at, revision: self.revision, result_revision: self.result_revision,
+            usage: self.usage.clone(), usage_checkpoint: None, owner: self.owner.clone(),
+            thread_id: None, request_ids: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]

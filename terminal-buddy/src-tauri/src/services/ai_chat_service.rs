@@ -61,12 +61,18 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
     if !registry.contains_key(&path) {
         let bytes = fs::read(&path).map_err(|_| "AI 会话不存在")?;
         let mut data: AiSession = serde_json::from_slice(&bytes).map_err(|_| "AI 会话文件损坏")?;
-        if matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping") {
+        if data.owner != owner { return Err("AI 会话不存在".into()); }
+        let interrupted = matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping");
+        if interrupted {
             data.status = "interrupted".into(); data.approvals.clear();
             usage::finish_turn(&mut data);
             data.error = Some("服务已重启，上次执行已中断，可以继续发送消息".into()); touch(&mut data);
+            data.result_revision = data.revision;
         }
-        registry.insert(path.clone(), Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: path.clone() }));
+        let cell = Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: path.clone() });
+        // 重启中断标记与结束版本一起落盘，避免再次重启时重复生成同一结束事件。
+        if interrupted { persist(&cell)?; }
+        registry.insert(path.clone(), cell);
     }
     let cell = registry.get(&path).ok_or("AI 会话不存在")?.clone();
     if cell.data.lock().map_err(|_| "AI 会话状态不可用")?.owner != owner { return Err("AI 会话不存在".into()); }
@@ -89,7 +95,10 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
     for entry in fs::read_dir(directory()?).map_err(|e| e.to_string())?.flatten() {
         if entry.path().extension().is_some_and(|ext| ext == "json") {
             if let Some(id) = entry.path().file_stem().and_then(|id| id.to_str()) {
-                if let Ok(mut data) = get_with_summary(id, owner) { data.messages.clear(); sessions.push(data); }
+                if let Ok(cell) = load(id, owner) {
+                    refresh_title(&cell, false);
+                    if let Ok(data) = cell.data.lock() { sessions.push(data.metadata()); };
+                }
             }
         }
     }
@@ -106,7 +115,7 @@ pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         project_path: input.project_path, model: input.model.filter(|m| !m.trim().is_empty()),
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
-        updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, owner: owner.into(), thread_id: None, request_ids: Vec::new() };
+        updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new() };
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{id}.json")) });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
@@ -240,6 +249,7 @@ fn finish(cell: &Cell, result: Result<()>) {
     refresh_title(cell, true);
     if let Ok(mut control) = cell.control.lock() {
         if let Ok(mut data) = cell.data.lock() {
+            let was_active = matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping");
             data.approvals.clear();
             usage::finish_turn(&mut data);
             match result {
@@ -247,10 +257,15 @@ fn finish(cell: &Cell, result: Result<()>) {
                 Err(error) => { data.status = if error == "已中断" { "interrupted" } else { "error" }.into(); data.error = Some(error); }
             }
             touch(&mut data);
+            // 空闲 Codex 进程退出时不重复生成已经发过的正常完成事件。
+            if was_active || data.status != "idle" { data.result_revision = data.revision; }
         }
         *control = None;
         if let Err(error) = persist(cell) {
-            if let Ok(mut data) = cell.data.lock() { data.status = "error".into(); data.error = Some(error); touch(&mut data); }
+            if let Ok(mut data) = cell.data.lock() {
+                data.status = "error".into(); data.error = Some(error); touch(&mut data);
+                data.result_revision = data.revision;
+            }
         }
     }
 }
@@ -830,7 +845,10 @@ fn codex_status(cell: &Cell, state: &CodexOutputState, background: &CodexBackgro
         if data.request_ids.last().map(String::as_str) != request_id || data.status == "stopping" { return; }
         let status = if !data.approvals.is_empty() { "approval" } else if submitting || !state.finished { "running" }
             else if background.running(state) { "background" } else { "idle" };
-        if data.status != status { data.status = status.into(); touch(&mut data); }
+        if data.status != status {
+            data.status = status.into(); touch(&mut data);
+            if status == "idle" { data.result_revision = data.revision; }
+        }
     }
 }
 fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
