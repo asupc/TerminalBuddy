@@ -12,6 +12,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,7 +36,7 @@ private data class ApprovalQuestion(
     val multiple: Boolean, val secret: Boolean,
 )
 
-/** 多题用可滑动的标签页展示；单选自动完成，多选与自由回答确认后再继续。 */
+/** 多题可自由切换；每题的选择独立保存，确认本项后自动继续。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AiApprovalCard(
@@ -61,7 +63,8 @@ internal fun AiApprovalCard(
     val scope = rememberCoroutineScope()
     val activeIndex = pager.currentPage.coerceAtMost(questions.lastIndex.coerceAtLeast(0))
     val question = questions.getOrNull(activeIndex)
-    val enabled = !working && !pager.isScrollInProgress
+    // 翻页状态只负责页面位置，不能锁住选项、确认按钮或标签导航。
+    val enabled = !working
     fun responses(item: ApprovalQuestion, choices: Map<String, Set<String>> = selections, texts: Map<String, String> = custom): List<String> =
         choices[item.id].orEmpty().toList() + listOfNotNull(texts[item.id]?.trim()?.takeIf(String::isNotBlank))
     fun completeQuestion(item: ApprovalQuestion, choices: Map<String, Set<String>> = selections, texts: Map<String, String> = custom) {
@@ -149,17 +152,16 @@ internal fun AiApprovalCard(
                     ApprovalQuestionPage(
                         question = item, selected = selections[item.id].orEmpty(), custom = custom[item.id].orEmpty(),
                         showCustom = item.id in customQuestions, enabled = enabled,
-                        onOption = { label ->
-                            // 多选只切换当前选项，不进入单选的自动完成流程。
+                        onOption = { label, checked ->
+                            // 每次只更新当前题的当前选项；点选始终只存草稿，不自动跳题。
                             val previous = selections[item.id].orEmpty()
                             val choices = selections + (item.id to if (item.multiple) {
-                                if (label in previous) previous - label else previous + label
+                                if (checked) previous + label else previous - label
                             } else setOf(label))
                             val texts = if (item.multiple) custom else custom - item.id
                             selections = choices
                             custom = texts
                             completed = completed - item.id
-                            if (!item.multiple) completeQuestion(item, choices, texts)
                         },
                         onCustom = { text ->
                             custom = custom + (item.id to text)
@@ -170,7 +172,22 @@ internal fun AiApprovalCard(
                     )
                 }
             }
-            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (questions.size > 1) {
+                    // 浏览与完成分开，未作答也能前后切换；答案保留在题目 ID 对应的草稿中。
+                    IconButton(
+                        onClick = { scope.launch { pager.animateScrollToPage((pager.currentPage - 1).coerceAtLeast(0)) } },
+                        enabled = enabled && activeIndex > 0, modifier = Modifier.size(36.dp),
+                    ) { Icon(Icons.Outlined.ChevronLeft, "上一项") }
+                    IconButton(
+                        onClick = { scope.launch { pager.animateScrollToPage((pager.currentPage + 1).coerceAtMost(questions.lastIndex)) } },
+                        enabled = enabled && activeIndex < questions.lastIndex, modifier = Modifier.size(36.dp),
+                    ) { Icon(Icons.Outlined.ChevronRight, "下一项，可稍后回答本项") }
+                }
+                Spacer(Modifier.weight(1f))
                 TextButton({ answer(approval, "decline", JsonObject(emptyMap())) }, enabled = enabled) {
                     Text(if (questions.isEmpty()) "拒绝" else "暂不回答")
                 }
@@ -196,7 +213,7 @@ internal fun AiApprovalCard(
 @Composable
 private fun ApprovalQuestionPage(
     question: ApprovalQuestion, selected: Set<String>, custom: String, showCustom: Boolean, enabled: Boolean,
-    onOption: (String) -> Unit, onCustom: (String) -> Unit, onShowCustom: () -> Unit,
+    onOption: (String, Boolean) -> Unit, onCustom: (String) -> Unit, onShowCustom: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = 8.dp, bottom = 4.dp),
@@ -205,8 +222,8 @@ private fun ApprovalQuestionPage(
         SelectionContainer { Text(question.text, style = MaterialTheme.typography.bodyMedium) }
         Text(when {
             question.options.isEmpty() -> "填写回复后点击下方按钮完成"
-            question.multiple -> "可多选，勾选完成后点击下方按钮继续"
-            else -> "单选，点击选项自动继续"
+            question.multiple -> "可多选 · 已选 ${selected.size} 项，选好后点击下方按钮确认"
+            else -> "单选，选好后点击下方按钮确认"
         }, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
         question.options.forEach { option ->
             val label = option.text("label")
@@ -214,10 +231,10 @@ private fun ApprovalQuestionPage(
             // 整行统一处理事件，复选框/单选框只展示状态，避免一次点击处理两次。
             val selectionModifier = if (question.multiple) {
                 Modifier.toggleable(value = checked, enabled = enabled, role = Role.Checkbox,
-                    onValueChange = { onOption(label) })
+                    onValueChange = { checked -> onOption(label, checked) })
             } else {
                 Modifier.selectable(selected = checked, enabled = enabled, role = Role.RadioButton,
-                    onClick = { onOption(label) })
+                    onClick = { onOption(label, true) })
             }
             Surface(
                 color = if (checked) TbColors.Accent.copy(alpha = .1f) else TbColors.CanvasSoft,
