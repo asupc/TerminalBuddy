@@ -4,7 +4,7 @@
 
 ## 运行方式
 
-- Claude：每回合启动 `claude -p --output-format stream-json --verbose --include-partial-messages`，文本通过 stdin 输入，后续回合使用 `--resume` 保留上下文。
+- Claude：每回合启动 `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`，用户消息以 JSON 行写入 stdin，后续回合使用 `--resume` 保留上下文。首个 `result` 仅表示一段回复结束；有后台任务时保持输入连接，继续接收任务状态、唤醒后的回复及后续结果。任务清空后关闭输入，读完输出并确认进程正常退出才结束本轮；中断和异常仍会清理进程树。
 - Codex：启动 `codex app-server`，通过 stdio JSON-RPC 完成初始化、thread 创建/恢复和 turn 提交，解析消息增量、工具执行、确认请求及完成事件。
 - `GET /api/ai/catalog` 汇总服务器 Claude 通用供应商、容器 Claude 配置及 Codex 供应商的可用模型，供手机首页选择；目录不包含密钥。
 - 创建会话可指定 `providerId` 与模型；服务端保存所选供应商名称及标识。Claude 通过受限权限的临时 settings 应用对应地址、认证和模型配置，回合退出后删除；Codex 复用供应商注册与参数生成，按会话选择供应商与模型，不改变全局默认供应商。
@@ -14,7 +14,7 @@
 - 原生 AI 会话独立于现有 PC/Web PTY 终端；不会自动控制正在桌面终端里运行的 AI。
 - 摘要标题复用 CLI 已有标题来源。列表、详情与 WebSocket 都会刷新，每个会话最多每 2 秒检查一次，回合结束强制检查；标题变化后原子保存并增加 `revision`，保持 `updatedAt` 不变。Android 首页可见时每 3 秒静默同步列表，对话页通过 WebSocket 接收标题变化，退到后台停止同步。
 
-Claude print 模式由服务器原有权限配置决定可使用哪些工具，拒绝的操作会显示为消息。Codex 命令执行、文件修改确认与用户问题通过原生消息 API 回答；未支持的交互请求会返回明确协议错误，不自动批准。
+Claude print 模式由服务器原有权限配置决定可使用哪些工具，拒绝的操作会显示为消息。后台任务状态优先使用 CLI 的 `background_tasks_changed` 完整快照，兼容旧版 `task_started` / `task_notification` 事件，任务进度和完成摘要同步为工具消息；CLI 提前退出且仍有未完成任务时明确报错，不显示正常完成。Codex 命令执行、文件修改确认与用户问题通过原生消息 API 回答；未支持的交互请求会返回明确协议错误，不自动批准。
 
 ## Agent 权限参数
 

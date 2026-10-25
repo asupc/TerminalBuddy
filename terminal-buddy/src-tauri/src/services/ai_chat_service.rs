@@ -6,7 +6,7 @@ use super::ai_chat_usage as usage;
 use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
 use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
-    process::{Child, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicUsize, Ordering}},
+    process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, OnceLock, mpsc, atomic::{AtomicUsize, Ordering}},
     thread, time::{Duration, Instant}};
 use uuid::Uuid;
 
@@ -279,7 +279,7 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
     command.current_dir(&session.project_path);
     if session.provider == "claude" {
         command.args(&permissions.claude_args);
-        command.args(["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
+        command.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]);
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
     } else { command.args(&permissions.codex_args).arg("app-server"); }
@@ -311,8 +311,9 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
         }
     });
     if session.provider == "claude" {
-        stdin.write_all(prompt.as_bytes()).map_err(|e| e.to_string())?; drop(stdin);
-        run_claude(cell, &mut process, controls, output, errors)
+        write_json(&mut stdin, json!({"type":"user","message":{"role":"user","content":prompt},
+            "parent_tool_use_id":null,"session_id":session.thread_id.as_deref().unwrap_or("")}))?;
+        run_claude(cell, &mut process, stdin, controls, output, errors)
     } else {
         write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"}}}))?;
         run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors)
@@ -345,6 +346,9 @@ struct ClaudeOutputState {
     current_message: String,
     messages: HashMap<String, ClaudeMessageBlocks>,
     seen_uuids: HashSet<String>,
+    response_start: usize,
+    response_number: u64,
+    response_completed: bool,
     usage: usage::ClaudeUsageTracker,
 }
 impl ClaudeOutputState {
@@ -408,6 +412,12 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
         let event_key = format!("{}:{uuid}", value["type"].as_str().unwrap_or(""));
         if !state.seen_uuids.insert(event_key) { return Ok(false); }
     }
+    // 后台任务唤醒主会话后还会产生新的回复与 result，不能沿用上一段的已结算用量。
+    if state.response_completed && (value["type"] == "assistant"
+        || value["type"] == "stream_event" && value["event"]["type"] == "message_start") {
+        state.usage = usage::ClaudeUsageTracker::default();
+        state.response_completed = false;
+    }
     update_usage(cell, |data| state.usage.observe(data, value));
     if let Some(id) = value["session_id"].as_str() { update(cell, |data| data.thread_id = Some(id.into())); }
     match value["type"].as_str().unwrap_or("") {
@@ -424,27 +434,105 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
         "result" => {
             if value["is_error"] == true { return Err(value["result"].as_str().map(str::to_string).unwrap_or_else(|| value["errors"].to_string())); }
             if let Some(text) = value["result"].as_str() {
-                let has_answer = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.messages.iter().any(|m| m.id.starts_with(turn) && m.role == "assistant");
-                if !has_answer { message(cell, &format!("{turn}-result"), "assistant", text, false); }
+                let has_answer = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.messages.iter()
+                    .skip(state.response_start).any(|m| m.id.starts_with(turn) && m.role == "assistant");
+                if !has_answer { message(cell, &format!("{turn}-result-{}", state.response_number), "assistant", text, false); }
             }
             if let Some(denials) = value["permission_denials"].as_array().filter(|items| !items.is_empty()) {
                 message(cell, &format!("{turn}-permissions"), "tool", "部分工具操作未获服务端权限。请在服务端配置 Claude 的工具权限后重试。", false);
                 let _ = denials;
             }
+            state.response_start = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.messages.len();
+            state.response_number += 1;
+            state.response_completed = true;
             return Ok(true);
         }
         _ => {}
     }
     Ok(false)
 }
-fn run_claude(cell: &Cell, _process: &mut Process, controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<()> {
+#[derive(Default)]
+struct ClaudeBackgroundTasks {
+    tasks: HashSet<String>,
+    has_snapshot: bool,
+}
+impl ClaudeBackgroundTasks {
+    fn observe(&mut self, cell: &Cell, turn: &str, value: &Value) {
+        if value["type"] != "system" { return; }
+        let subtype = value["subtype"].as_str().unwrap_or("");
+        if subtype == "background_tasks_changed" {
+            if let Some(tasks) = value["tasks"].as_array() {
+                // 新版 CLI 的完整快照优先于开始/完成事件，两者的到达顺序没有保证。
+                self.has_snapshot = true;
+                self.tasks = tasks.iter().filter(|task| task["ambient"] != true && task["awaited"] != true)
+                    .filter_map(|task| task["task_id"].as_str().filter(|id| !id.is_empty()).map(str::to_string)).collect();
+            }
+            return;
+        }
+        if !matches!(subtype, "task_started" | "task_progress" | "task_notification") { return; }
+        if value["ambient"] == true || value["awaited"] == true { return; }
+        let Some(id) = value["task_id"].as_str().filter(|id| !id.is_empty()) else { return; };
+        if !self.has_snapshot {
+            if subtype == "task_started" && value["is_backgrounded"] != false { self.tasks.insert(id.into()); }
+            if subtype == "task_notification" { self.tasks.remove(id); }
+        }
+        let status = match subtype {
+            "task_started" => "任务已启动",
+            "task_progress" => "任务正在执行",
+            _ => match value["status"].as_str().unwrap_or("") {
+                "completed" => "任务已完成", "failed" => "任务失败", "stopped" => "任务已停止", _ => "任务状态更新",
+            },
+        };
+        let detail = value["summary"].as_str().or_else(|| value["description"].as_str()).unwrap_or("");
+        message(cell, &format!("{turn}-background-{id}"), "tool", &format!("{status}\n{detail}"), false);
+    }
+}
+fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: mpsc::Receiver<Control>,
+    output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<()> {
     let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
     let mut state = ClaudeOutputState::default();
+    let mut tasks = ClaudeBackgroundTasks::default();
+    let mut input = Some(stdin);
+    let mut received_result = false;
+    let mut output_closed = false;
     loop {
         if matches!(controls.try_recv(), Ok(Control::Stop)) { return Err("已中断".into()); }
         if checkpoint.elapsed() > Duration::from_secs(5) { persist(cell)?; checkpoint = Instant::now(); }
-        let Some(value) = next_output(&output, &errors)? else { continue; };
-        if apply_claude_event(cell, &turn, &mut state, &value)? { return Ok(()); }
+        if output_closed {
+            if let Some(status) = process.0.try_wait().map_err(|e| format!("读取 Claude 进程状态失败：{e}"))? {
+                if !status.success() || !received_result {
+                    let details = errors.lock().map(|e| e.clone()).unwrap_or_default();
+                    return Err(if !details.trim().is_empty() { format!("Claude 进程已退出：{}", details.trim()) }
+                        else if !received_result { "Claude 进程已退出，未收到完成事件，可以继续发送消息".into() }
+                        else { format!("Claude 进程异常结束（{status}），可以继续发送消息") });
+                }
+                if !tasks.tasks.is_empty() { return Err("Claude 进程已退出，但仍有后台任务未完成，可以继续发送消息".into()); }
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(100));
+            continue;
+        }
+        let value = match output.recv_timeout(Duration::from_millis(100)) {
+            Ok(value) => value?,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => { output_closed = true; drop(input.take()); continue; }
+        };
+        if value["type"] == "control_request" {
+            if let Some(stdin) = input.as_mut() {
+                // 旧的文本 stdin 模式会在 EOF 时拒绝交互；流式输入同样需要明确回复，避免永久等待。
+                let response = if value["request"]["subtype"] == "can_use_tool" {
+                    json!({"subtype":"success","request_id":value["request_id"],"response":{
+                        "behavior":"deny","message":"请在服务端配置 Claude 的工具权限后重试"}})
+                } else { json!({"subtype":"error","request_id":value["request_id"],"error":"原生 AI 会话暂不支持此 Claude 交互请求"}) };
+                write_json(stdin, json!({"type":"control_response","response":response}))?;
+            }
+            continue;
+        }
+        tasks.observe(cell, &turn, &value);
+        if apply_claude_event(cell, &turn, &mut state, &value)? { received_result = true; }
+        // result 只表示一段回复结束。后台工作仍在执行时保留输入连接，CLI 才能继续接收唤醒与结果。
+        // 任务全部结束后关闭输入，并读完 stdout、等到正常退出，再由外层统一收尾。
+        if received_result && tasks.tasks.is_empty() { drop(input.take()); }
     }
 }
 #[derive(Default)]
