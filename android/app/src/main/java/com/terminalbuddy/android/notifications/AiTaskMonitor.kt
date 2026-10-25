@@ -14,7 +14,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 
-internal data class AiTaskMonitorState(val active: Boolean = false, val reconnecting: Boolean = false)
+internal data class AiTaskMonitorState(
+    val active: Boolean = false, val reconnecting: Boolean = false, val tasksRunning: Boolean = false,
+)
 
 /** 应用级监听不依赖 Activity；前台服务只负责保活，启动失败也不丢弃存活进程中的接收。 */
 internal class AiTaskMonitor(
@@ -96,7 +98,7 @@ internal class AiTaskMonitor(
         if (polling?.isActive != true) polling = scope.launch {
             var failures = 0
             while (isActive) {
-                lastPollSucceeded = syncTaskNotifications(context.applicationContext as TerminalBuddyApplication, activeOnly = true)
+                lastPollSucceeded = syncTaskNotifications(context.applicationContext as TerminalBuddyApplication)
                 if (!running) break
                 failures = if (lastPollSucceeded) 0 else (failures + 1).coerceAtMost(4)
                 publishState()
@@ -139,6 +141,8 @@ internal class AiTaskMonitor(
 
     private fun publishState() {
         val active = notifications.monitoredAccounts().isNotEmpty()
-        mutableState.value = AiTaskMonitorState(active, active && !lastPollSucceeded && connected.isEmpty())
+        mutableState.value = AiTaskMonitorState(
+            active, active && !lastPollSucceeded && connected.isEmpty(), notifications.hasActiveTasks(),
+        )
     }
 }

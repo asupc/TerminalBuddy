@@ -109,9 +109,12 @@ private enum class AiPage { Home, Accounts, Connection }
                             themeControls.onDarkThemeChange(!themeControls.darkTheme)
                         },
                     )
-                    DropdownMenuItem(text = { Text("决策悬浮通知") },
+                    DropdownMenuItem(text = { Text("决策横幅通知") },
                         leadingIcon = { Icon(Icons.Outlined.NotificationsActive, null) },
                         onClick = { menu = false; AiTaskNotifications.openDecisionSettings(context) })
+                    DropdownMenuItem(text = { Text("结束横幅通知") },
+                        leadingIcon = { Icon(Icons.Outlined.NotificationsActive, null) },
+                        onClick = { menu = false; AiTaskNotifications.openResultSettings(context) })
                     DropdownMenuItem(text = { Text("后台运行设置") },
                         leadingIcon = { Icon(Icons.Outlined.BatteryFull, null) },
                         onClick = { menu = false; AiTaskNotifications.openBackgroundSettings(context) })

@@ -26,12 +26,14 @@ internal fun AiNotificationPermission() {
     val preferences = remember(context) { context.getSharedPreferences("terminal_buddy_notifications", Context.MODE_PRIVATE) }
     var enabled by remember { mutableStateOf(AiTaskNotifications.notificationsEnabled(context)) }
     var decisionAlerts by remember { mutableStateOf(AiTaskNotifications.decisionAlertsEnabled(context)) }
+    var resultAlerts by remember { mutableStateOf(AiTaskNotifications.resultAlertsEnabled(context)) }
     var backgroundRestricted by remember { mutableStateOf(AiTaskNotifications.backgroundRestricted(context)) }
     val notifications = remember(context) { (context.applicationContext as TerminalBuddyApplication).taskNotifications }
     val monitor by notifications.monitorState.collectAsStateWithLifecycle()
     fun refreshSettings() {
         enabled = AiTaskNotifications.notificationsEnabled(context)
         decisionAlerts = AiTaskNotifications.decisionAlertsEnabled(context)
+        resultAlerts = AiTaskNotifications.resultAlertsEnabled(context)
         backgroundRestricted = AiTaskNotifications.backgroundRestricted(context)
     }
     val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refreshSettings() }
@@ -45,14 +47,21 @@ internal fun AiNotificationPermission() {
             request.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
-    if (!enabled || !decisionAlerts) Row(
+    if (!enabled || !decisionAlerts || !resultAlerts) Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(if (enabled) "开启决策悬浮提醒，切换应用也能及时处理" else "开启通知，接收任务决策和完成提醒",
-            Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+        Text(when {
+            !enabled -> "开启通知，接收任务决策和结束横幅"
+            !decisionAlerts -> "开启决策横幅，切换应用也能及时处理"
+            else -> "开启结束横幅，任务完成后及时提醒"
+        }, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
         TextButton({
-            if (enabled) AiTaskNotifications.openDecisionSettings(context) else AiTaskNotifications.openSettings(context)
-        }) { Text(if (enabled) "设置提醒" else "开启通知") }
+            when {
+                !enabled -> AiTaskNotifications.openSettings(context)
+                !decisionAlerts -> AiTaskNotifications.openDecisionSettings(context)
+                else -> AiTaskNotifications.openResultSettings(context)
+            }
+        }) { Text(if (enabled) "设置横幅" else "开启通知") }
     }
     if (enabled && backgroundRestricted && monitor.active) Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,

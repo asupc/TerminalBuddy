@@ -59,27 +59,29 @@ class AiTaskNotifications(private val context: Context, private val repository: 
 
     fun initialize() {
         manager.createNotificationChannels(listOf(
-            decisionChannel(),
-            NotificationChannel(RESULT_CHANNEL, "任务结果", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "AI 任务完成、失败或中断时提醒"
-            },
+            alertChannel(DECISION_CHANNEL, LEGACY_DECISION_CHANNEL, "任务决策横幅通知",
+                "AI 需要选择、回答或授权时，通过声音、振动和横幅提醒"),
+            alertChannel(RESULT_CHANNEL, LEGACY_RESULT_CHANNEL, "任务结束横幅通知",
+                "AI 任务完成、失败或中断时，通过声音、振动和横幅提醒"),
             NotificationChannel(MONITOR_CHANNEL, "任务后台监听", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "任务执行期间保持后台同步，以便及时接收提醒"
+                description = "登录期间持续接收决策和任务结束消息"
                 setShowBadge(false)
             },
         ))
         syncAccounts()
     }
 
-    private fun decisionChannel(): NotificationChannel {
-        manager.getNotificationChannel(DECISION_CHANNEL)?.let { return it }
-        // 已创建渠道的声音、振动和重要性不能由应用升级覆盖，使用新版渠道应用提醒配置。
-        val previous = manager.getNotificationChannel(LEGACY_DECISION_CHANNEL)
+    private fun alertChannel(id: String, legacyId: String, title: String, detail: String): NotificationChannel {
+        manager.getNotificationChannel(id)?.let { existing ->
+            return existing.apply { name = title; description = detail }
+        }
+        // 已创建渠道的重要性不能升级；新建结果渠道，让旧版的普通通知也能弹出横幅。
+        val previous = manager.getNotificationChannel(legacyId)
         val importance = if (previous != null && (previous.importance == NotificationManager.IMPORTANCE_NONE ||
                 (Build.VERSION.SDK_INT >= 29 && previous.hasUserSetImportance()))) previous.importance
             else NotificationManager.IMPORTANCE_HIGH
-        return NotificationChannel(DECISION_CHANNEL, "任务决策悬浮提醒", importance).apply {
-            description = "AI 需要选择、回答或授权时，通过声音、振动和悬浮横幅及时提醒"
+        return NotificationChannel(id, title, importance).apply {
+            description = detail
             lockscreenVisibility = Notification.VISIBILITY_PRIVATE
             setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
@@ -119,6 +121,9 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             )
             workScheduled = true
         }
+        // 登录、退出或切换账号后立即调整监听，不等待页面收到运行中的会话。
+        ensureMonitoring()
+        monitor.refreshNow()
     }
 
     /** 在发送前建立运行基线，极短任务也能识别完成，不依赖曾经读到 running。 */
@@ -209,7 +214,10 @@ class AiTaskNotifications(private val context: Context, private val repository: 
 
     internal fun knownSessionIds(accountId: String): Set<String> = snapshots[accountId]?.keys?.toSet().orEmpty()
 
-    internal fun monitoredAccounts(): Set<String> = snapshots.filterValues { account -> account.values.any { it.active } }.keys
+    /** 登录期间持续同步所有账号，空闲或尚未打开的会话也能在后台发现新事件。 */
+    internal fun monitoredAccounts(): Set<String> = repository.accounts.accounts.filter { it.loggedIn }.mapTo(mutableSetOf()) { it.id }
+
+    internal fun hasActiveTasks(): Boolean = snapshots.values.any { account -> account.values.any { it.active } }
 
     internal fun monitoredTasks(): Set<AiNotificationTarget> = snapshots.flatMap { (accountId, sessions) ->
         sessions.filter { (id, snapshot) -> snapshot.active && !id.startsWith("local-") }
@@ -242,11 +250,11 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             }
     }
 
-    internal fun monitoringNotification(reconnecting: Boolean = false): Notification =
+    internal fun monitoringNotification(reconnecting: Boolean = false, tasksRunning: Boolean = hasActiveTasks()): Notification =
         NotificationCompat.Builder(context, MONITOR_CHANNEL)
             .setSmallIcon(R.drawable.ic_task_notification)
-            .setContentTitle("正在监听 AI 任务")
-            .setContentText(if (reconnecting) "连接中断，正在重连" else "需要决策或任务结束时会通知你")
+            .setContentTitle(if (tasksRunning) "正在监听 AI 任务" else "AI 消息通知已开启")
+            .setContentText(if (reconnecting) "连接中断，正在重连" else "后台接收决策和任务结束消息，点击返回应用")
             .setContentIntent(PendingIntent.getActivity(context, 0,
                 Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
@@ -269,9 +277,10 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             .setContentTitle(title).setContentText(text)
             .setSubText(listOfNotNull(account?.username, session.providerLabel).joinToString(" · "))
             .setStyle(NotificationCompat.BigTextStyle().bigText("$title\n$text"))
-            .setCategory(if (decision) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_STATUS)
-            .setPriority(if (decision) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_DEFAULT)
-            .apply { if (decision) setDefaults(NotificationCompat.DEFAULT_ALL) }
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setOnlyAlertOnce(false)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(taskIntent(accountId, session.id)).setAutoCancel(true).build()
         // 用户可在调用间隙撤销权限，不能因此中断任务同步。
@@ -305,7 +314,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     companion object {
         private const val LEGACY_DECISION_CHANNEL = "ai_task_decisions"
         private const val DECISION_CHANNEL = "ai_task_decisions_v2"
-        private const val RESULT_CHANNEL = "ai_task_results"
+        private const val LEGACY_RESULT_CHANNEL = "ai_task_results"
+        private const val RESULT_CHANNEL = "ai_task_results_v2"
         private const val MONITOR_CHANNEL = "ai_task_monitor"
         private const val WORK_NAME = "ai_task_notification_sync"
         private const val OPEN_TASK = "com.terminalbuddy.android.OPEN_AI_TASK"
@@ -330,9 +340,13 @@ class AiTaskNotifications(private val context: Context, private val repository: 
                 NotificationManagerCompat.from(context).areNotificationsEnabled()
 
         /** 厂商额外的悬浮通知开关无法直接读取，始终提供进入渠道设置的入口。 */
-        fun decisionAlertsEnabled(context: Context): Boolean {
+        fun decisionAlertsEnabled(context: Context): Boolean = alertsEnabled(context, DECISION_CHANNEL)
+
+        fun resultAlertsEnabled(context: Context): Boolean = alertsEnabled(context, RESULT_CHANNEL)
+
+        private fun alertsEnabled(context: Context, channelId: String): Boolean {
             val channel = context.getSystemService(NotificationManager::class.java)
-                .getNotificationChannel(DECISION_CHANNEL) ?: return false
+                .getNotificationChannel(channelId) ?: return false
             return channel.importance >= NotificationManager.IMPORTANCE_HIGH &&
                 (channel.sound != null || channel.shouldVibrate())
         }
@@ -353,10 +367,14 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             }
         }
 
-        fun openDecisionSettings(context: Context) {
+        fun openDecisionSettings(context: Context) = openChannelSettings(context, DECISION_CHANNEL)
+
+        fun openResultSettings(context: Context) = openChannelSettings(context, RESULT_CHANNEL)
+
+        private fun openChannelSettings(context: Context, channelId: String) {
             context.startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
                 .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                .putExtra(Settings.EXTRA_CHANNEL_ID, DECISION_CHANNEL)
+                .putExtra(Settings.EXTRA_CHANNEL_ID, channelId)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
 

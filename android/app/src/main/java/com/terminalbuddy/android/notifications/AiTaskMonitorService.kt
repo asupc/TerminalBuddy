@@ -13,7 +13,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import java.util.concurrent.TimeUnit
 
-/** 只负责运行任务的进程保活，实时接收与摘要补偿由 Application 持有。 */
+/** 登录期间维持消息接收，实时订阅与摘要补偿由 Application 持有。 */
 class AiTaskMonitorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val notifications get() = (applicationContext as TerminalBuddyApplication).taskNotifications
@@ -48,23 +48,31 @@ class AiTaskMonitorService : Service() {
                 if (!state.active) {
                     stopSelf()
                 } else {
-                    // 仅连接状态变化时更新常驻提示，避免周期更新干扰决策横幅。
+                    updateWakeLock(state.tasksRunning)
+                    // 仅连接或运行状态变化时更新常驻提示，避免周期更新干扰事件横幅。
                     runCatching {
                         getSystemService(android.app.NotificationManager::class.java).notify(
-                            AiTaskNotifications.MONITOR_ID, notifications.monitoringNotification(state.reconnecting),
+                            AiTaskNotifications.MONITOR_ID, notifications.monitoringNotification(state.reconnecting, state.tasksRunning),
                         )
                     }.onFailure { Log.w("AiTaskMonitorService", "更新任务监听通知失败", it) }
                 }
             }
         }
-        if (keepAwake?.isActive != true) keepAwake = scope.launch {
+        return START_STICKY
+    }
+
+    private fun updateWakeLock(tasksRunning: Boolean) {
+        if (!tasksRunning) {
+            keepAwake?.cancel()
+            keepAwake = null
+            wakeLock?.let { if (it.isHeld) it.release() }
+        } else if (keepAwake?.isActive != true) keepAwake = scope.launch {
             while (isActive) {
-                // 分段超时保护，锁屏期间也让实时连接与重连协程继续运行。
-                wakeLock?.let { it.acquire(TimeUnit.MINUTES.toMillis(10)) }
+                // 仅任务执行期间持有分段超时锁；空闲监听不持续占用 CPU 唤醒锁。
+                wakeLock?.acquire(TimeUnit.MINUTES.toMillis(10))
                 delay(TimeUnit.MINUTES.toMillis(9))
             }
         }
-        return START_STICKY
     }
 
     /** Android 15+ 限制 dataSync 前台服务时长；应用存活时仍接收，进程回收后由定时任务补偿。 */

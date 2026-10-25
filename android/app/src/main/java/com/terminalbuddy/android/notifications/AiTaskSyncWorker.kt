@@ -11,16 +11,15 @@ import kotlinx.coroutines.*
 class AiTaskSyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result {
         val application = applicationContext as TerminalBuddyApplication
-        return if (syncTaskNotifications(application, activeOnly = false)) Result.success() else Result.retry()
+        return if (syncTaskNotifications(application)) Result.success() else Result.retry()
     }
 }
 
-internal suspend fun syncTaskNotifications(application: TerminalBuddyApplication, activeOnly: Boolean): Boolean =
+internal suspend fun syncTaskNotifications(application: TerminalBuddyApplication): Boolean =
     withContext(Dispatchers.Main.immediate) {
         val repository = application.aiRepository
         val notifications = application.taskNotifications
-        val ids = if (activeOnly) notifications.monitoredAccounts()
-            else repository.accounts.accounts.filter { it.loggedIn }.map { it.id }.toSet()
+        val ids = notifications.monitoredAccounts()
         coroutineScope {
             ids.mapNotNull { id ->
                 repository.accounts.connection(id)?.let { connection ->

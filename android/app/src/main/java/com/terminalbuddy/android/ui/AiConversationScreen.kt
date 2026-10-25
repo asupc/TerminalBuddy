@@ -99,8 +99,11 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     if (menu) {
         AiSheet("对话操作", { menu = false }) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-                AiConversationAction(Icons.Outlined.NotificationsActive, "决策悬浮通知", {
+                AiConversationAction(Icons.Outlined.NotificationsActive, "决策横幅通知", {
                     menu = false; AiTaskNotifications.openDecisionSettings(context)
+                })
+                AiConversationAction(Icons.Outlined.NotificationsActive, "结束横幅通知", {
+                    menu = false; AiTaskNotifications.openResultSettings(context)
                 })
                 AiConversationAction(Icons.Outlined.BatteryFull, "后台运行设置", {
                     menu = false; AiTaskNotifications.openBackgroundSettings(context)
