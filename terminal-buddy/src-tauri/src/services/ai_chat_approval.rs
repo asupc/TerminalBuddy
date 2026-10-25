@@ -1,5 +1,7 @@
 //! 原生聊天的交互适配：客户端统一按题目 ID 回答，Claude 按原始问题文本接收答案。
 use crate::models::ai_chat::{AiApproval, AnswerAiApproval};
+use super::ClaudeHookDecisionEvent;
+use std::collections::HashMap;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -31,23 +33,13 @@ impl ClaudeApproval {
         let request = &value["request"];
         if request["subtype"] != "can_use_tool" || value["request_id"].as_str()?.is_empty() { return None; }
         let tool = request["tool_name"].as_str()?;
+        // 用户提问统一由 PreToolUse HTTP Hook 接管，stdio 只保留普通工具授权。
+        if tool == "AskUserQuestion" { return None; }
         let input = request["input"].as_object()?;
-        let mut details = json!({
+        let details = json!({
             "toolName": tool, "input": input, "title": request["title"],
             "reason": request["decision_reason"], "command": input.get("command"),
         });
-        if tool == "AskUserQuestion" {
-            let questions = input.get("questions")?.as_array()?;
-            if questions.is_empty() { return None; }
-            let mut normalized = Vec::new();
-            for (index, question) in questions.iter().enumerate() {
-                if question["question"].as_str()?.trim().is_empty() { return None; }
-                let mut question = question.clone();
-                question["id"] = json!(format!("question-{index}"));
-                normalized.push(question);
-            }
-            details["questions"] = json!(normalized);
-        }
         Some(Self {
             approval: AiApproval { id: Uuid::new_v4().to_string(), method: "claude/canUseTool".into(), details },
             request_id: value["request_id"].clone(), input: Value::Object(input.clone()),
@@ -59,24 +51,38 @@ impl ClaudeApproval {
         let response = if answer.decision == "decline" {
             json!({"behavior":"deny","message":"用户拒绝了本次请求，请根据用户的决定继续。"})
         } else {
-            let mut input = self.input.clone();
-            if let Some(questions) = self.approval.details["questions"].as_array() {
-                let mut answers = serde_json::Map::new();
-                for question in questions {
-                    let id = question["id"].as_str().ok_or("问题缺少标识")?;
-                    let text = question["question"].as_str().ok_or("问题内容为空")?;
-                    let values = answer.answers[id]["answers"].as_array().ok_or("问题尚未回答")?;
-                    let labels: Vec<_> = values.iter().filter_map(Value::as_str).collect();
-                    answers.insert(text.into(), json!(labels.join(", ")));
-                }
-                input["answers"] = Value::Object(answers);
-            }
-            json!({"behavior":"allow","updatedInput":input})
+            json!({"behavior":"allow","updatedInput":self.input})
         };
         Ok(json!({"type":"control_response","response":{
             "subtype":"success","request_id":self.request_id,"response":response,
         }}))
     }
+}
+
+pub(super) const CLAUDE_HOOK_METHOD: &str = "claude/preToolUse";
+
+pub(super) fn claude_hook_approval(event: &ClaudeHookDecisionEvent) -> AiApproval {
+    let questions: Vec<_> = event.questions.iter().enumerate().map(|(index, question)| json!({
+        "id":format!("question-{index}"), "question":question.question, "header":question.header,
+        "options":question.options, "multiSelect":question.multi_select,
+    })).collect();
+    AiApproval { id: event.decision_id.clone(), method: CLAUDE_HOOK_METHOD.into(), details: json!({
+        "questions":questions, "expiresAt":event.expires_at,
+    }) }
+}
+
+pub(super) fn claude_hook_answers(approval: &AiApproval, answer: &AnswerAiApproval) -> Result<HashMap<String, String>> {
+    validate(approval, answer)?;
+    let questions = approval.details["questions"].as_array().ok_or("决策问题格式不正确")?;
+    let mut answers = HashMap::new();
+    for question in questions {
+        let id = question["id"].as_str().ok_or("问题缺少标识")?;
+        let text = question["question"].as_str().ok_or("问题内容为空")?;
+        let values = answer.answers[id]["answers"].as_array().ok_or("问题尚未回答")?;
+        let labels: Vec<_> = values.iter().filter_map(Value::as_str).collect();
+        answers.insert(text.into(), labels.join(", "));
+    }
+    Ok(answers)
 }
 
 const CODEX_DECISION_TOOL: &str = "request_user_input_async";

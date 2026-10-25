@@ -3,6 +3,7 @@
 //! spawn_blocking 或专用工作线程承载；用户文本只进入 stdin，不拼进 shell 命令。
 use crate::models::ai_chat::*;
 use super::{ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage as usage};
+use super::ai_chat_claude_hooks::{NativeClaudeHooks, NativeHookEvent};
 use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
 use serde_json::{json, Value};
 use std::{collections::{BTreeMap, HashMap, HashSet}, fs, io::{BufRead, BufReader, Read, Write}, path::PathBuf,
@@ -136,10 +137,21 @@ pub fn stop(id: &str, owner: &str) -> Result<()> {
 }
 pub fn answer(id: &str, owner: &str, input: AnswerAiApproval) -> Result<()> {
     let cell = load(id, owner)?;
-    {
+    let pending = {
         let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
         let pending = data.approvals.iter().find(|a| a.id == input.approval_id).ok_or("该请求已经结束，请刷新会话")?;
         approval::validate(pending, &input)?;
+        pending.clone()
+    };
+    if pending.method == approval::CLAUDE_HOOK_METHOD {
+        if input.decision == "accept" {
+            super::ClaudeHookService::answer_all(&input.approval_id, approval::claude_hook_answers(&pending, &input)?)?;
+        } else { super::ClaudeHookService::decline(&input.approval_id)?; }
+        update(&cell, |data| {
+            data.approvals.retain(|item| item.id != input.approval_id);
+            if data.status == "approval" && data.approvals.is_empty() { data.status = "running".into(); }
+        });
+        return Ok(());
     }
     let result = cell.control.lock().map_err(|_| "AI 会话状态不可用")?.as_ref().ok_or("执行已经结束")?
         .send(Control::Approval(input)).map_err(|_| "执行已经结束".to_string());
@@ -297,12 +309,18 @@ fn write_json(stdin: &mut impl Write, value: Value) -> Result<()> {
 }
 fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Result<WorkerExit> {
     let session = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
-    let launch = super::ai_catalog_service::prepare(&session.provider, session.provider_id.as_deref(), session.model.as_deref())?;
+    let mut launch = super::ai_catalog_service::prepare(&session.provider, session.provider_id.as_deref(), session.model.as_deref())?;
+    let hooks = if session.provider == "claude" {
+        let hooks = NativeClaudeHooks::register()?;
+        launch.enable_claude_hooks()?;
+        Some(hooks)
+    } else { None };
     let permissions = super::ai_permission_service::for_agent(&session.provider)?;
     update(cell, |data| usage::configured_window(data, launch.context_window));
     let mut command = cli_command(&session.provider);
     command.args(&launch.args);
     command.current_dir(&session.project_path);
+    if let Some(hooks) = &hooks { hooks.configure(&mut command); }
     if session.provider == "claude" {
         command.args(&permissions.claude_args);
         command.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -343,7 +361,8 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
     if session.provider == "claude" {
         write_json(&mut stdin, json!({"type":"user","message":{"role":"user","content":prompt},
             "parent_tool_use_id":null,"session_id":session.thread_id.as_deref().unwrap_or("")}))?;
-        run_claude(cell, &mut process, stdin, controls, output, errors).map(|_| WorkerExit::Completed)
+        run_claude(cell, &mut process, stdin, controls, output, errors, hooks.as_ref().ok_or("Claude 决策 Hook 未初始化")?)
+            .map(|_| WorkerExit::Completed)
     } else {
         write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"},"capabilities":{"experimentalApi":true}}}))?;
         run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors)
@@ -518,7 +537,7 @@ impl ClaudeBackgroundTasks {
     }
 }
 fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: mpsc::Receiver<Control>,
-    output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<()> {
+    output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, hooks: &NativeClaudeHooks) -> Result<()> {
     let mut checkpoint = Instant::now(); let turn = Uuid::new_v4().to_string();
     let mut state = ClaudeOutputState::default();
     let mut tasks = ClaudeBackgroundTasks::default();
@@ -527,6 +546,20 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
     let mut received_result = false;
     let mut output_closed = false;
     loop {
+        while let Ok(event) = hooks.receiver.try_recv() {
+            update(cell, |data| match event {
+                NativeHookEvent::Decision(event) => {
+                    if data.status != "stopping" && !data.approvals.iter().any(|item| item.id == event.decision_id) {
+                        data.approvals.push(approval::claude_hook_approval(&event));
+                        data.status = "approval".into();
+                    }
+                }
+                NativeHookEvent::Settled(id) => {
+                    data.approvals.retain(|item| item.id != id);
+                    if data.status == "approval" && data.approvals.is_empty() { data.status = "running".into(); }
+                }
+            });
+        }
         while let Ok(control) = controls.try_recv() {
             if matches!(control, Control::Stop) { return Err("已中断".into()); }
             if let Control::Approval(answer) = control {
@@ -568,6 +601,12 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                         pending.insert(approval.id.clone(), request);
                         update(cell, |data| { data.status = "approval".into(); data.approvals.push(approval); });
                     }
+                } else if value["request"]["subtype"] == "can_use_tool" && value["request"]["tool_name"] == "AskUserQuestion" {
+                    write_json(stdin, json!({"type":"control_response","response":{
+                        "subtype":"success","request_id":value["request_id"],"response":{
+                            "behavior":"deny","message":"决策未通过 TerminalBuddy PreToolUse Hook 完成，请检查会话 Hook 配置后重新提问。"
+                        }
+                    }}))?;
                 } else {
                     write_json(stdin, json!({"type":"control_response","response":{
                         "subtype":"error","request_id":value["request_id"],"error":"原生 AI 会话暂不支持此 Claude 交互请求",
@@ -592,7 +631,9 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
         if apply_claude_event(cell, &turn, &mut state, &value)? { received_result = true; }
         // result 只表示一段回复结束。后台工作仍在执行时保留输入连接，CLI 才能继续接收唤醒与结果。
         // 任务全部结束后关闭输入，并读完 stdout、等到正常退出，再由外层统一收尾。
-        if received_result && tasks.tasks.is_empty() && pending.is_empty() { drop(input.take()); }
+        let waiting_for_hook = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.approvals.iter()
+            .any(|item| item.method == approval::CLAUDE_HOOK_METHOD);
+        if received_result && tasks.tasks.is_empty() && pending.is_empty() && !waiting_for_hook { drop(input.take()); }
     }
 }
 #[derive(Default)]

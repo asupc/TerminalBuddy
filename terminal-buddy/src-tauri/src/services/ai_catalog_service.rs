@@ -49,6 +49,25 @@ pub struct NativeLaunch {
     pub context_window: Option<u64>,
     settings: Option<PathBuf>,
 }
+impl NativeLaunch {
+    /// 和桌面模型终端使用同一组临时 HTTP Hook，默认 CLI 配置也需要生成临时文件。
+    pub fn enable_claude_hooks(&mut self) -> Result<()> {
+        let mut settings = if let Some(path) = &self.settings {
+            serde_json::from_slice::<Value>(&fs::read(path).map_err(|e| format!("读取会话模型配置失败：{e}"))?)
+                .map_err(|e| format!("解析会话模型配置失败：{e}"))?
+        } else { json!({}) };
+        settings["hooks"] = super::claude_hook_settings::managed_hooks_object();
+        let path = self.settings.clone().unwrap_or_else(|| std::env::temp_dir()
+            .join(format!("terminal-buddy-native-settings-{}.json", uuid::Uuid::new_v4())));
+        atomic_write_private(&path, &serde_json::to_vec(&settings).map_err(|_| "无法编码会话配置")?)
+            .map_err(|e| format!("写入会话决策 Hook 失败：{e}"))?;
+        if self.settings.is_none() {
+            self.args.extend(["--settings".into(), path.to_string_lossy().into_owned()]);
+            self.settings = Some(path);
+        }
+        Ok(())
+    }
+}
 impl Drop for NativeLaunch {
     fn drop(&mut self) { if let Some(path) = &self.settings { let _ = fs::remove_file(path); } }
 }

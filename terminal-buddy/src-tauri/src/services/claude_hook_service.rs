@@ -94,6 +94,7 @@ pub struct ClaudeHookTerminalEvent {
 pub enum ClaudeHookResolution {
     Answers(HashMap<String, String>),
     ContinueInTerminal,
+    Denied,
 }
 
 /// 统一 Mutex 访问：毒锁时取回内部值，避免 panic 扩散。
@@ -483,6 +484,14 @@ impl ClaudeHookService {
     }
 
     pub fn continue_in_terminal(decision_id: &str) -> Result<(), String> {
+        Self::resolve_without_answers(decision_id, ClaudeHookResolution::ContinueInTerminal)
+    }
+
+    pub(crate) fn decline(decision_id: &str) -> Result<(), String> {
+        Self::resolve_without_answers(decision_id, ClaudeHookResolution::Denied)
+    }
+
+    fn resolve_without_answers(decision_id: &str, resolution: ClaudeHookResolution) -> Result<(), String> {
         let mut current = lock_pending();
         let mut decision = current
             .remove(decision_id)
@@ -492,7 +501,7 @@ impl ClaudeHookService {
             .response
             .take()
             .ok_or_else(|| "该 Claude 决策已处理".to_string())?;
-        let _ = response.send(ClaudeHookResolution::ContinueInTerminal);
+        let _ = response.send(resolution);
         drop(current);
         cancel_decision_cards(decision_id, question_count);
         Ok(())

@@ -14,7 +14,7 @@
 - 原生 AI 会话独立于现有 PC/Web PTY 终端；不会自动控制正在桌面终端里运行的 AI。
 - 摘要标题复用 CLI 已有标题来源。列表、详情与 WebSocket 都会刷新，每个会话最多每 2 秒检查一次，回合结束强制检查；标题变化后原子保存并增加 `revision`，保持 `updatedAt` 不变。Android 首页可见时每 3 秒静默同步列表，对话页通过 WebSocket 接收标题变化，退到后台停止同步。
 
-Claude print 模式继承服务器原有权限配置，通过 `--permission-prompt-tool stdio` 启用双向交互；`AskUserQuestion` 与仍需授权的工具请求通过会话 `approvals` 同步到手机，用户回答后写回对应的 `control_response`，拒绝的操作会显示为消息。后台任务状态优先使用 CLI 的 `background_tasks_changed` 完整快照，兼容旧版 `task_started` / `task_notification` 事件，任务进度和完成摘要同步为工具消息；CLI 提前退出且仍有未完成任务时明确报错，不显示正常完成。Claude 用户问题、工具授权及 Codex 命令执行、文件修改确认与用户问题均通过原生消息 API 回答；未支持的交互请求会返回明确协议错误，不自动批准。
+Claude print 模式继承服务器原有权限配置。用户决策与桌面模型终端复用相同的临时 HTTP Hook：`AskUserQuestion` → `PreToolUse` → 本机 `/api/claude/hooks` → 等待手机选择 → `updatedInput.answers` 回填；`--permission-prompt-tool stdio` 继续承担普通工具授权，授权结果写回 `control_response`。两类请求均通过会话 `approvals` 同步到手机，拒绝的操作会显示为消息。后台任务状态优先使用 CLI 的 `background_tasks_changed` 完整快照，兼容旧版 `task_started` / `task_notification` 事件，任务进度和完成摘要同步为工具消息；CLI 提前退出且仍有未完成任务时明确报错，不显示正常完成。Claude 用户问题、工具授权及 Codex 命令执行、文件修改确认与用户问题均通过原生消息 API 回答；未支持的交互请求会返回明确协议错误，不自动批准。
 
 ## Agent 权限参数
 
@@ -58,7 +58,7 @@ WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type
 
 待处理请求通过现有 `AiSession.approvals` 和 `status=approval` 实时同步。安卓端将决策卡片悬浮覆盖在消息区底部、AI 上下文卡片上方，不占正文布局高度、不随消息滚动；收到决策先收起软键盘。单选点选后自动提交，多题逐题选择，全部答完后提交；多选和自定义回答点击确认后提交。卡片显示选项说明与待处理数量，内容超长时内部滚动。
 
-点击提交、拒绝或暂不回答后立即收起当前卡片，服务端处理中的旧快照不会令其重新出现；提交失败会恢复卡片并提示错误。重新连接恢复最新待决策快照，Claude 的撤销请求和 Codex 的 `serverRequest/resolved` 都会移除对应卡片。
+点击提交、拒绝或暂不回答后立即收起当前卡片，服务端处理中的旧快照不会令其重新出现；提交失败会恢复卡片并提示错误。重新连接恢复最新待决策快照；Claude Hook 过期、会话中断或 Codex 的 `serverRequest/resolved` 会移除对应卡片。
 
 客户端统一提交按题目 ID 索引的答案，必须回答全部问题后才能接受：
 
@@ -74,7 +74,9 @@ WebSocket 首帧为 `{ "type": "session", "session": ... }`，之后为 `{ "type
 
 Codex 在初始化时启用 `experimentalApi`，新线程通过 `dynamicTools` 注册 `request_user_input_async` 客户端工具，`item/tool/call` 转换成同一套卡片数据，回答按 `contentItems` / `success` 返回，等待用户真实选择后才完成工具调用。原生 `item/tool/requestUserInput` 保持兼容，沿用 CLI 的题目 ID 与答案数组；同时启用 `features.default_mode_request_user_input`，让没有动态工具的旧线程也能在普通对话模式请求用户选择。普通文本不会被当成决策，模型应调用可用的提问工具。
 
-Claude 的 `AskUserQuestion` 由服务端按题目顺序补充 `question-0` 等 ID；回传时保留原始工具输入，把答案转换成按原始问题文本索引的 `updatedInput.answers`，多选标签以逗号连接。普通工具授权回传 `allow` / `deny`；未回答或空白的答案由服务端拒绝，避免提交后丢失待决策请求。
+Claude 启动时会登记本次运行独有的 Hook 目标与令牌，把桌面端 `managed_hooks_object()` 注入模型临时 settings；默认 CLI 配置同样生成临时文件，不修改用户级配置。用户提问由桌面与安卓共用的 `ClaudeHookService` 保存并等待，按题目顺序补充 `question-0` 等 ID 后投递到当前原生会话。手机回答先按会话归属鉴权，再把答案按原始问题文本索引提交给同一决策服务，HTTP Hook 回填 `updatedInput.questions` / `updatedInput.answers`，多选标签以逗号连接。
+
+原生 Hook 目标不向桌面广播决策，桌面待处理列表也不返回手机请求。中断或进程退出时注销目标并释放等待者；超时、暂不回答返回 Hook `deny`，不再另走 stdio 提问。普通工具授权仍由 stdio 回传 `allow` / `deny`；未回答或空白的答案由服务端拒绝，避免提交后丢失待决策请求。更新并重启服务端后，已有 Claude 会话下一次发送消息即应用该机制；安卓端继续使用现有悬浮决策卡片。
 
 ## 会话用量 `usage`
 
@@ -137,7 +139,8 @@ AI 正文继续通过原有消息字段传输原始 Markdown，不改变 REST �
 - `src-tauri/src/services/ai_permission_service.rs`：继承 Agent 基础命令中的权限参数，并映射到原生 CLI / App Server。
 - `src-tauri/src/services/ai_catalog_service.rs`：供应商目录与按会话准备的启动配置。
 - `src-tauri/src/services/ai_chat_service.rs`：会话持久化、进程生命周期、Claude/Codex 协议适配。
-- `src-tauri/src/services/ai_chat_approval.rs`：交互答案校验、Claude 问题格式归一化及控制协议响应。
+- `src-tauri/src/services/ai_chat_approval.rs`：交互答案校验、Hook 问题格式归一化及普通授权协议响应。
+- `src-tauri/src/services/ai_chat_claude_hooks.rs`：原生 Claude Hook 目标登记、鉴权环境与会话事件投递。
 - `src-tauri/src/services/ai_chat_usage.rs`：用量归一化、消息快照合并、累计基线及上下文压缩状态。
 - `src-tauri/src/web/handlers/ai_chat_handler.rs`：REST 和 WebSocket；磁盘及任务启动操作均通过 `spawn_blocking`。
 - `src-tauri/src/web/server.rs`：HTTP/WS 路由注册。

@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use crate::runtime::{Emitter, Manager};
 
 use crate::commands::{send_bot_notification, TerminalService};
+use crate::services::ai_chat_claude_hooks::{self as native_hooks, NativeHookEvent};
 use crate::models::{BotDecisionOption, BotNotificationRequest};
 use crate::services::{
     card_decision_id, BotSettingsService, ClaudeHookDecisionEvent, ClaudeHookQuestion,
@@ -165,6 +166,19 @@ fn emit_terminal_event(
     let _ = app.emit("claude-hook-terminal-event", event);
 }
 
+fn settle_decision(
+    app: &crate::runtime::AppHandle, terminal_id: &str, decision_id: &str, resolution: Option<&str>,
+) {
+    if native_hooks::is_native_target(terminal_id) {
+        let _ = native_hooks::publish(terminal_id, NativeHookEvent::Settled(decision_id.into()));
+    } else {
+        let event = if resolution.is_some() { "claude-hook-decision-resolved" } else { "claude-hook-decision-expired" };
+        let mut payload = json!({"decisionId":decision_id,"terminalId":terminal_id,"occurredAt":next_hook_timestamp()});
+        if let Some(resolution) = resolution { payload["resolution"] = json!(resolution); }
+        let _ = app.emit(event, payload);
+    }
+}
+
 pub(crate) async fn claude_hook(
     headers: HeaderMap,
     State(app): State<crate::runtime::AppHandle>,
@@ -177,6 +191,8 @@ pub(crate) async fn claude_hook(
         return StatusCode::UNAUTHORIZED.into_response();
     }
 
+    let native = native_hooks::is_native_target(terminal_id);
+    if native && request.hook_event_name != "PreToolUse" { return StatusCode::NO_CONTENT.into_response(); }
     match request.hook_event_name.as_str() {
         "SessionStart" => {
             ClaudeHookService::clear_session_prompt(terminal_id, &request.session_id);
@@ -220,7 +236,7 @@ pub(crate) async fn claude_hook(
     if request.tool_name.as_deref() != Some("AskUserQuestion") {
         // 工具调用心跳：Claude 正在活跃执行，刷新 running 指示灯，
         // 避免长任务超过 30 分钟无事件时被过期兜底误灭
-        emit_terminal_event(&app, terminal_id, &request, "running");
+        if !native { emit_terminal_event(&app, terminal_id, &request, "running"); }
         return StatusCode::NO_CONTENT.into_response();
     }
     let Some(tool_use_id) = request
@@ -239,13 +255,10 @@ pub(crate) async fn claude_hook(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    emit_terminal_event(&app, terminal_id, &request, "attention");
-    let decision_id = format!(
-        "{}:{}:{}",
-        request.session_id,
-        tool_use_id,
-        uuid::Uuid::new_v4()
-    );
+    if !native { emit_terminal_event(&app, terminal_id, &request, "attention"); }
+    let decision_id = if native { uuid::Uuid::new_v4().to_string() } else { format!(
+        "{}:{}:{}", request.session_id, tool_use_id, uuid::Uuid::new_v4()
+    ) };
     let bot_settings = BotSettingsService::get_runtime().unwrap_or_default();
     let ttl_minutes = bot_settings.decision_ttl_minutes.clamp(1, 1440);
     let occurred_at = next_hook_timestamp();
@@ -276,62 +289,45 @@ pub(crate) async fn claude_hook(
         expires_at,
         occurred_at,
     };
-    let _ = app.emit("claude-hook-decision", &event);
+    if native {
+        if native_hooks::publish(terminal_id, NativeHookEvent::Decision(event)).is_err() {
+            ClaudeHookService::expire_decision(&decision_id);
+            return (StatusCode::GONE, "Claude 会话已结束").into_response();
+        }
+    } else { let _ = app.emit("claude-hook-decision", &event); }
 
     // 业务 TTL（decisionTtlMinutes）决定决策在 pending 表的存活期；
     // 单次 HTTP 连接的挂起时间另设上限，24 小时 TTL 不会把连接挂 24 小时。
-    // 连接先断时决策仍留在 pending 表，TTL 内可在桌面上继续回答。
+    // 原生会话过期后撤销卡片并返回 deny，避免再退回 stdio 产生第二次用户提问。
     let http_wait = std::time::Duration::from_secs((ttl_minutes as u64) * 60)
         .min(ClaudeHookService::http_wait_cap());
-    match tokio::time::timeout(http_wait, receiver).await
-    {
-        Ok(Ok(ClaudeHookResolution::Answers(answers))) => {
-            let _ = app.emit(
-                "claude-hook-decision-resolved",
-                json!({
-                    "decisionId": decision_id,
-                    "terminalId": terminal_id,
-                    "occurredAt": next_hook_timestamp(),
-                    "resolution": "answered",
-                }),
-            );
-            Json(json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "allow",
-                    "permissionDecisionReason": "已通过 TerminalBuddy 收集用户决策",
-                    "updatedInput": {
-                        "questions": questions,
-                        "answers": answers
-                    }
-                }
-            }))
-            .into_response()
-        }
-        Ok(Ok(ClaudeHookResolution::ContinueInTerminal)) => {
-            let _ = app.emit(
-                "claude-hook-decision-resolved",
-                json!({
-                    "decisionId": decision_id,
-                    "terminalId": terminal_id,
-                    "occurredAt": next_hook_timestamp(),
-                    "resolution": "continueInTerminal",
-                }),
-            );
-            StatusCode::NO_CONTENT.into_response()
-        }
-        _ => {
-            ClaudeHookService::expire_decision(&decision_id);
-            let _ = app.emit(
-                "claude-hook-decision-expired",
-                json!({
-                    "decisionId": decision_id,
-                    "terminalId": terminal_id,
-                    "occurredAt": next_hook_timestamp(),
-                }),
-            );
-            StatusCode::NO_CONTENT.into_response()
-        }
+    let outcome = tokio::time::timeout(http_wait, receiver).await;
+    let resolution = match &outcome {
+        Ok(Ok(ClaudeHookResolution::Answers(_))) => Some("answered"),
+        Ok(Ok(ClaudeHookResolution::ContinueInTerminal)) => Some("continueInTerminal"),
+        Ok(Ok(ClaudeHookResolution::Denied)) => Some("declined"),
+        _ => { ClaudeHookService::expire_decision(&decision_id); None }
+    };
+    settle_decision(&app, terminal_id, &decision_id, resolution);
+    match outcome {
+        Ok(Ok(ClaudeHookResolution::Answers(answers))) => Json(json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "permissionDecisionReason": "已通过 TerminalBuddy 收集用户决策",
+                "updatedInput": { "questions": questions, "answers": answers }
+            }
+        })).into_response(),
+        Ok(Ok(ClaudeHookResolution::ContinueInTerminal)) if !native => StatusCode::NO_CONTENT.into_response(),
+        Ok(Ok(ClaudeHookResolution::Denied | ClaudeHookResolution::ContinueInTerminal)) => Json(json!({
+            "hookSpecificOutput": {"hookEventName":"PreToolUse","permissionDecision":"deny",
+                "permissionDecisionReason":"用户暂不回答或会话已结束，请根据现有信息继续。"}
+        })).into_response(),
+        _ if native => Json(json!({
+            "hookSpecificOutput": {"hookEventName":"PreToolUse","permissionDecision":"deny",
+                "permissionDecisionReason":"本次决策已过期，请根据现有信息继续，必要时重新提问。"}
+        })).into_response(),
+        _ => StatusCode::NO_CONTENT.into_response(),
     }
 }
 
@@ -350,7 +346,8 @@ pub fn continue_claude_hook_in_terminal(decision_id: String) -> Result<(), Strin
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_pending_claude_hook_decisions() -> Vec<ClaudeHookDecisionEvent> {
-    ClaudeHookService::list_pending_decisions()
+    ClaudeHookService::list_pending_decisions().into_iter()
+        .filter(|decision| !native_hooks::is_native_target(&decision.terminal_id)).collect()
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]

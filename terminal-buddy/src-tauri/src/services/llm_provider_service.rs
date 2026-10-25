@@ -649,7 +649,7 @@ pub(crate) fn native_session_settings(provider_id: &str, model_id: &str) -> Resu
         .ok_or("模型已从供应商配置中移除，请刷新后重新选择")?;
     let effort = resolve_model_effort(model, &provider.default_effort_level);
     let mut settings = build_temp_settings(&provider, &key, model_id, model.context_window, model.max_output_tokens, &effort);
-    // 原生会话直接接收结构化消息，不注入依赖桌面 PTY 注册的 hooks。
+    // 此处只准备模型配置；原生会话登记独立 Hook 目标后，再注入桌面同款 HTTP Hook。
     if let Some(object) = settings.as_object_mut() { object.remove("hooks"); }
     Ok(settings)
 }
