@@ -14,6 +14,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,7 +25,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -39,19 +39,18 @@ import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.R
 import com.terminalbuddy.android.data.AiSession
-import com.terminalbuddy.android.notifications.AiTaskNotifications
 
 private enum class AiPage { Home, Accounts, Connection }
 
 /** AI 首页：服务连接、新对话配置、最近对话和账号管理。 */
 @Composable fun AiScreen(ui: AiUiState, vm: AiViewModel) {
-    val context = LocalContext.current
     var page by rememberSaveable { mutableStateOf(AiPage.Home) }
     var loginAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
     var connectionFromAccounts by rememberSaveable { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<AiSession?>(null) }
     var confirmDeleteAll by remember { mutableStateOf(false) }
+    var notificationSettings by rememberSaveable { mutableStateOf(false) }
     val deletableCount = ui.sessions.count { !it.running }
     val openConnection: (String?, Boolean, Boolean) -> Unit = { id, adding, fromAccounts ->
         loginAccountId = id
@@ -99,7 +98,7 @@ private enum class AiPage { Home, Accounts, Connection }
                     DropdownMenuItem(
                         text = { Text(if (themeControls.darkTheme) "切换为浅色模式" else "切换为深色模式") },
                         leadingIcon = {
-                            Icon(if (themeControls.darkTheme) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, null)
+                            Icon(if (themeControls.darkTheme) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, null, Modifier.size(20.dp))
                         },
                         modifier = Modifier.semantics {
                             stateDescription = if (themeControls.darkTheme) "深色模式" else "浅色模式"
@@ -109,24 +108,17 @@ private enum class AiPage { Home, Accounts, Connection }
                             themeControls.onDarkThemeChange(!themeControls.darkTheme)
                         },
                     )
-                    DropdownMenuItem(text = { Text("决策横幅通知") },
-                        leadingIcon = { Icon(Icons.Outlined.NotificationsActive, null) },
-                        onClick = { menu = false; AiTaskNotifications.openDecisionSettings(context) })
-                    DropdownMenuItem(text = { Text("结束横幅通知") },
-                        leadingIcon = { Icon(Icons.Outlined.NotificationsActive, null) },
-                        onClick = { menu = false; AiTaskNotifications.openResultSettings(context) })
-                    DropdownMenuItem(text = { Text("后台运行设置") },
-                        leadingIcon = { Icon(Icons.Outlined.BatteryFull, null) },
-                        onClick = { menu = false; AiTaskNotifications.openBackgroundSettings(context) })
                     DropdownMenuItem(text = { Text("通知设置") },
-                        leadingIcon = { Icon(Icons.Outlined.Notifications, null) },
-                        onClick = { menu = false; AiTaskNotifications.openSettings(context) })
+                        leadingIcon = { Icon(Icons.Outlined.Notifications, null, Modifier.size(20.dp)) },
+                        onClick = { menu = false; notificationSettings = true })
                     DropdownMenuItem(text = { Text("账号切换") }, enabled = enabled,
-                        leadingIcon = { Icon(Icons.Outlined.ManageAccounts, null) },
+                        leadingIcon = { Icon(Icons.Outlined.ManageAccounts, null, Modifier.size(20.dp)) },
                         onClick = { menu = false; page = AiPage.Accounts; vm.clearError() })
                     DropdownMenuItem(text = { Text("服务连接") }, enabled = enabled,
+                        leadingIcon = { Icon(Icons.Outlined.Dns, null, Modifier.size(20.dp)) },
                         onClick = { menu = false; openConnection(ui.activeAccountId, false, false) })
                     DropdownMenuItem(text = { Text("退出 AI 服务") }, enabled = enabled,
+                        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Logout, null, Modifier.size(20.dp)) },
                         onClick = { menu = false; vm.logout() })
                 }
             }
@@ -290,6 +282,7 @@ private enum class AiPage { Home, Accounts, Connection }
             }
         }
     }
+    if (notificationSettings) AiNotificationSettings { notificationSettings = false }
     deleting?.let { session -> AiDeleteDialog(session, { deleting = null }) { deleting = null; vm.delete(session) } }
     if (confirmDeleteAll) {
         AlertDialog(
