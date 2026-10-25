@@ -109,6 +109,9 @@ private enum class AiPage { Home, Accounts, Connection }
                             themeControls.onDarkThemeChange(!themeControls.darkTheme)
                         },
                     )
+                    DropdownMenuItem(text = { Text("决策悬浮通知") },
+                        leadingIcon = { Icon(Icons.Outlined.NotificationsActive, null) },
+                        onClick = { menu = false; AiTaskNotifications.openDecisionSettings(context) })
                     DropdownMenuItem(text = { Text("通知设置") },
                         leadingIcon = { Icon(Icons.Outlined.Notifications, null) },
                         onClick = { menu = false; AiTaskNotifications.openSettings(context) })

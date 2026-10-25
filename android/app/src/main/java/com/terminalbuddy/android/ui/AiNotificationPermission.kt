@@ -17,17 +17,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.terminalbuddy.android.notifications.AiTaskNotifications
 
-/** 首次登录后请求 Android 13+ 通知权限；拒绝后保留明确的设置入口。 */
+/** 请求通知权限，并在决策提醒降级或静音时提供对应渠道的设置入口。 */
 @Composable
 internal fun AiNotificationPermission() {
     val context = LocalContext.current
     val preferences = remember(context) { context.getSharedPreferences("terminal_buddy_notifications", Context.MODE_PRIVATE) }
     var enabled by remember { mutableStateOf(AiTaskNotifications.notificationsEnabled(context)) }
-    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+    var decisionAlerts by remember { mutableStateOf(AiTaskNotifications.decisionAlertsEnabled(context)) }
+    fun refreshSettings() {
         enabled = AiTaskNotifications.notificationsEnabled(context)
+        decisionAlerts = AiTaskNotifications.decisionAlertsEnabled(context)
     }
+    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refreshSettings() }
     LifecycleResumeEffect(Unit) {
-        enabled = AiTaskNotifications.notificationsEnabled(context)
+        refreshSettings()
         onPauseOrDispose { }
     }
     LaunchedEffect(Unit) {
@@ -36,11 +39,13 @@ internal fun AiNotificationPermission() {
             request.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
-    if (!enabled) Row(
+    if (!enabled || !decisionAlerts) Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("开启通知，接收任务决策和完成提醒", Modifier.weight(1f),
-            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-        TextButton({ AiTaskNotifications.openSettings(context) }) { Text("开启通知") }
+        Text(if (enabled) "开启决策悬浮提醒，切换应用也能及时处理" else "开启通知，接收任务决策和完成提醒",
+            Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+        TextButton({
+            if (enabled) AiTaskNotifications.openDecisionSettings(context) else AiTaskNotifications.openSettings(context)
+        }) { Text(if (enabled) "设置提醒" else "开启通知") }
     }
 }

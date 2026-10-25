@@ -8,6 +8,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -51,9 +53,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
 
     fun initialize() {
         manager.createNotificationChannels(listOf(
-            NotificationChannel(DECISION_CHANNEL, "任务决策", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "AI 需要你选择、回答问题或授权时提醒"
-            },
+            decisionChannel(),
             NotificationChannel(RESULT_CHANNEL, "任务结果", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = "AI 任务完成、失败或中断时提醒"
             },
@@ -63,6 +63,28 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             },
         ))
         syncAccounts()
+    }
+
+    private fun decisionChannel(): NotificationChannel {
+        manager.getNotificationChannel(DECISION_CHANNEL)?.let { return it }
+        // 已创建渠道的声音、振动和重要性不能由应用升级覆盖，使用新版渠道应用提醒配置。
+        val previous = manager.getNotificationChannel(LEGACY_DECISION_CHANNEL)
+        val importance = if (previous != null && (previous.importance == NotificationManager.IMPORTANCE_NONE ||
+                (Build.VERSION.SDK_INT >= 29 && previous.hasUserSetImportance()))) previous.importance
+            else NotificationManager.IMPORTANCE_HIGH
+        return NotificationChannel(DECISION_CHANNEL, "任务决策悬浮提醒", importance).apply {
+            description = "AI 需要选择、回答或授权时，通过声音、振动和悬浮横幅及时提醒"
+            lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 300, 150, 300)
+            // 保留用户明确设置的静音或自定义铃声，避免升级重置个人偏好。
+            if (Build.VERSION.SDK_INT >= 30 && previous?.hasUserSetSound() == true) {
+                setSound(previous.sound, previous.audioAttributes)
+            }
+        }
     }
 
     fun setForeground(active: Boolean) {
@@ -219,7 +241,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             .setSubText(listOfNotNull(account?.username, session.providerLabel).joinToString(" · "))
             .setStyle(NotificationCompat.BigTextStyle().bigText("$title\n$text"))
             .setCategory(if (decision) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_STATUS)
-            .setPriority(if (decision) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(if (decision) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_DEFAULT)
+            .apply { if (decision) setDefaults(NotificationCompat.DEFAULT_ALL) }
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(taskIntent(accountId, session.id)).setAutoCancel(true).build()
         // 用户可在调用间隙撤销权限，不能因此中断任务同步。
@@ -250,7 +273,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     private fun persist() { preferences.edit().putString("snapshots", ApiJson.encodeToString(snapshots)).apply() }
 
     companion object {
-        private const val DECISION_CHANNEL = "ai_task_decisions"
+        private const val LEGACY_DECISION_CHANNEL = "ai_task_decisions"
+        private const val DECISION_CHANNEL = "ai_task_decisions_v2"
         private const val RESULT_CHANNEL = "ai_task_results"
         private const val MONITOR_CHANNEL = "ai_task_monitor"
         private const val WORK_NAME = "ai_task_notification_sync"
@@ -274,6 +298,21 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         fun notificationsEnabled(context: Context): Boolean =
             (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
                 NotificationManagerCompat.from(context).areNotificationsEnabled()
+
+        /** 厂商额外的悬浮通知开关无法直接读取，始终提供进入渠道设置的入口。 */
+        fun decisionAlertsEnabled(context: Context): Boolean {
+            val channel = context.getSystemService(NotificationManager::class.java)
+                .getNotificationChannel(DECISION_CHANNEL) ?: return false
+            return channel.importance >= NotificationManager.IMPORTANCE_HIGH &&
+                (channel.sound != null || channel.shouldVibrate())
+        }
+
+        fun openDecisionSettings(context: Context) {
+            context.startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(Settings.EXTRA_CHANNEL_ID, DECISION_CHANNEL)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
 
         fun openSettings(context: Context) {
             context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
