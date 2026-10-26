@@ -17,6 +17,8 @@
 
 ### 🐛 修复
 
+- **兼容 pi 等全屏 TUI 的滚轮**：Windows ConPTY 会在 stdin 进入 raw mode 前吞掉 pi 写入的鼠标模式，xterm 因此把滚轮翻译成 ↑/↓、触发输入框历史而不是滚动对话；现在检测到该状态时按应用期望补发 SGR 滚轮报文
+- **修复 pi 的 IME 候选窗飘移**：输入区由上下两条横线包围、没有 `>` 提示符时，锚定到真实光标所在格（并为滚动指示边框保留识别），多行输入或输入区滚动时候选窗不再固定到首行左侧
 - **修复 Windows 桌面端关闭 Web 服务时偶发整体崩溃**：旧实现在 accept 循环退出后用 `Arc::into_inner().expect()` 回收 `GracefulShutdown` 所有权，关停瞬间只要有存活连接（浏览器 keep-alive、在途请求）就回收失败 panic，而 release 的 `panic = "abort"` 会直接崩掉整个进程。改为连接 task 只携带独立的 `Watcher`、关停方独占本体，排空等待设 10 秒上限
 - 同端口快速「停止→重启」服务时，旧监听 socket 释放与新 bind 之间的调度间隙偶发端口占用：绑定增加 2 秒 AddrInUse 重试窗口
 
