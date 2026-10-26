@@ -17,7 +17,7 @@ import { getAllSuggestions, getTerminalSuggestions } from '../../data/commandTem
 import { bootLog } from '../../utils/bootLog';
 import { useAppStore } from '../../stores/appStore';
 import { isLightBackground, normalizeAnsiForLightBackground, type TerminalColors } from '../../utils/terminalTheme';
-import { installTerminalMouseGuard } from '../../utils/terminalMouse';
+import { installPiWheelFallback, installTerminalMouseGuard } from '../../utils/terminalMouse';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
@@ -492,6 +492,13 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const tOpen = performance.now();
       terminal.open(terminalRef.current!);
       cleanupFns.push(installTerminalMouseGuard(terminal));
+      // pi 在 Windows ConPTY 下会在 raw mode 之前写鼠标模式，序列被吞掉后 xterm
+      // 会把滚轮当 ↑/↓ 发给 pi，表现为翻输入框历史而不是滚对话。这里补发滚轮报文。
+      cleanupFns.push(installPiWheelFallback(
+        terminal,
+        (data) => onOutputRef.current(terminalId, data),
+        () => readOnlyRef.current
+      ));
       void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
       // dispose 后 xterm 会永久回退到 CPU canvas 渲染器（字形抗锯齿变化、滚动卡顿，

@@ -116,7 +116,9 @@ export type ImeAnchorCell = {
 };
 
 export function isHorizontalRuleLine(text: string): boolean {
-  const trimmed = text.trim();
+  // pi 等 TUI 在输入区内容滚动后会把指示嵌进边框（如 ── ↑ 12 more ──），
+  // 先剥掉指示再判定，否则上下边框识别不到，IME 锚点会退回上一次的位置。
+  const trimmed = text.trim().replace(/[↑↓]\s*\d+\s*more/gu, '').trim();
   if (trimmed.length < 20) return false;
 
   return /^[─━═-]+$/u.test(trimmed) ||
@@ -266,6 +268,32 @@ function findInverseCursorCell(
   return null;
 }
 
+/** 以真实光标为锚点，并用当前行文本末端夹紧越界的 cursorX。 */
+function anchorAtCursor(
+  terminal: Terminal,
+  cursorY: number,
+  inputTopY: number,
+  inputBottomY: number,
+  minX = 0
+): ImeAnchorCell {
+  const buffer = terminal.buffer.active;
+  const line = buffer.getLine(buffer.viewportY + cursorY);
+  const lineEnd = getLastNonBlankCell(line, terminal.cols);
+  // Ink 类 TUI 有时只用纵向移动把光标挪回输入行，列号仍是上一帧写状态栏
+  // 时留下的右侧位置。直接采用 cursorX 会把 IME 候选窗甩到最右，并让
+  // textarea 撑出屏幕导致终端横向滚动。用光标所在行的真实文本末端夹紧。
+  const maxX = Math.max(lineEnd, minX);
+  return {
+    x: Math.min(Math.max(minX, Math.min(buffer.cursorX, maxX)), terminal.cols - 1),
+    y: cursorY,
+    widthCells: 1,
+    inputTopY,
+    inputBottomY,
+    cols: terminal.cols,
+    rows: terminal.rows,
+  };
+}
+
 export function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null {
   const buffer = terminal.buffer.active;
   const horizontalRules: number[] = [];
@@ -277,6 +305,22 @@ export function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null
     const text = line?.translateToString(true) ?? '';
     if (isHorizontalRuleLine(text)) {
       horizontalRules.push(y);
+    }
+  }
+
+  // pi 等全屏 TUI 的输入框只有上下两条全宽横线（没有 > 提示符），但它会把
+  // 真实光标（即使 ?25l 隐藏了视觉光标）定位到文字插入点。光标落在最底部
+  // 两条横线之间时直接用它作锚点，否则只能退回输入区首行左侧，中文候选窗
+  // 会在多行输入或滚动时明显偏移。
+  if (horizontalRules.length >= 2) {
+    const topRule = horizontalRules[horizontalRules.length - 2];
+    const bottomRule = horizontalRules[horizontalRules.length - 1];
+    if (bottomRule > topRule + 1) {
+      const inputTopY = topRule + 1;
+      const inputBottomY = bottomRule - 1;
+      if (cursorViewportY >= inputTopY && cursorViewportY <= inputBottomY) {
+        return anchorAtCursor(terminal, cursorViewportY, inputTopY, inputBottomY);
+      }
     }
   }
 
@@ -306,22 +350,13 @@ export function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null
 
     // 真实光标落在输入区内（如 Claude Code 输入框内移动光标）→ 锚点跟随光标
     if (cursorViewportY >= y && cursorViewportY <= inputBottomY) {
-      // Ink 类 TUI 有时只用纵向移动把光标挪回输入行，列号仍是上一帧写状态栏
-      // 时留下的右侧位置。直接采用 cursorX 会把 IME 候选窗甩到最右，并让
-      // textarea 撑出屏幕导致终端横向滚动。用光标所在行的真实文本末端夹紧。
-      const cursorLine = buffer.getLine(buffer.viewportY + cursorViewportY);
-      const lineEnd = getLastNonBlankCell(cursorLine, terminal.cols);
-      const minX = cursorViewportY === y ? promptEnd : 0;
-      const maxX = Math.max(lineEnd, minX);
-      return {
-        x: Math.min(Math.max(minX, Math.min(buffer.cursorX, maxX)), terminal.cols - 1),
-        y: cursorViewportY,
-        widthCells: 1,
-        inputTopY: y,
+      return anchorAtCursor(
+        terminal,
+        cursorViewportY,
+        y,
         inputBottomY,
-        cols: terminal.cols,
-        rows: terminal.rows,
-      };
+        cursorViewportY === y ? promptEnd : 0
+      );
     }
 
     // 光标在输入区外（Ink 常停在帧末尾）→ 扫描 TUI 用反显块画的视觉光标
@@ -352,7 +387,10 @@ export function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null
   }
 
   if (horizontalRules.length >= 2) {
-    const [topRule, bottomRule] = horizontalRules;
+    // 输入框在屏幕底部附近，取最下面一对横线；取第一对会把 IME 锚点
+    // 错放到历史区上方的分隔线（如 pi 首次启动的更新日志边框）。
+    const topRule = horizontalRules[horizontalRules.length - 2];
+    const bottomRule = horizontalRules[horizontalRules.length - 1];
     const inputTopY = Math.min(topRule + 1, terminal.rows - 1);
     const inputBottomY = Math.max(inputTopY, bottomRule - 1);
     return {
