@@ -29,6 +29,7 @@ interface CompletionNotificationDetails {
   phase: 'completed' | 'failed';
   taskTitle?: string;
   summary?: string;
+  provider?: 'claude' | 'codex' | 'pi';
 }
 
 const pendingCompletionNotifications = new Map<string, PendingNotification>();
@@ -126,12 +127,13 @@ async function showCompletionNotification(
   if (!name) return;
   const isBeingViewed = terminalIsBeingViewed(terminalId, appInForeground);
   const failed = phase === 'failed';
+  const agentName = details.provider === 'pi' ? 'Pi' : details.provider === 'codex' ? 'Codex' : 'Claude Code';
   const taskTitle = details.taskTitle?.trim();
   const title = taskTitle
     ? `${failed ? '任务失败' : '任务完成'}：${taskTitle}`
-    : failed ? 'Claude Code 任务执行失败' : 'Claude Code 任务已完成';
+    : failed ? `${agentName} 任务执行失败` : `${agentName} 任务已完成`;
   const summary = details.summary?.trim()
-    || (failed ? 'Claude Code 未能完成当前任务。' : 'Claude Code 已完成当前任务。');
+    || (failed ? `${agentName} 未能完成当前任务。` : `${agentName} 已完成当前任务。`);
   const nativePromise = nativeEnabled && !appInForeground
     ? showNativeNotification(terminalId, name, failed ? 'failed' : 'completed', title, summary)
         .catch(error => console.error('发送 Claude Code 任务结束通知失败:', error))
@@ -234,7 +236,7 @@ export function handleClaudeTerminalInputActivity(terminalId: string): void {
   const store = useAppStore.getState();
   store.handleTerminalInputActivity(terminalId);
   const current = useAppStore.getState().terminalActivities[terminalId];
-  if (current?.runtimeKind === 'claude' && current.phase === 'running') {
+  if (current && current.runtimeKind !== 'shell' && current.phase === 'running') {
     scheduleClaudeActivityExpiry(terminalId, current.updatedAt);
   }
 }
@@ -243,7 +245,17 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
   const store = useAppStore.getState();
   if (event.phase === 'ended') {
     if (!store.endClaudeHookSession(event.terminalId, event.occurredAt)) return;
-    if (event.sessionId) store.setClaudeSessionId(event.terminalId, event.sessionId);
+    if (event.sessionId) {
+    if (event.provider === 'pi') {
+      store.setAgentSessionBinding(event.terminalId, {
+        provider: 'pi',
+        sessionId: event.sessionId,
+        cwd: store.sessionDirectories[event.terminalId],
+      });
+    } else {
+      store.setClaudeSessionId(event.terminalId, event.sessionId);
+    }
+  }
     cancelAttentionForTerminal(event.terminalId);
     cancelClaudeActivityExpiry(event.terminalId);
     return;
@@ -253,8 +265,18 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
     taskTitle: event.taskTitle,
     summary: event.summary ?? event.message,
   };
-  if (!store.applyClaudeHookActivity(event.terminalId, event.phase, event.occurredAt, details)) return;
-  if (event.sessionId) store.setClaudeSessionId(event.terminalId, event.sessionId);
+  if (!store.applyClaudeHookActivity(event.terminalId, event.phase, event.occurredAt, details, event.provider)) return;
+  if (event.sessionId) {
+    if (event.provider === 'pi') {
+      store.setAgentSessionBinding(event.terminalId, {
+        provider: 'pi',
+        sessionId: event.sessionId,
+        cwd: store.sessionDirectories[event.terminalId],
+      });
+    } else {
+      store.setClaudeSessionId(event.terminalId, event.sessionId);
+    }
+  }
   if (event.phase === 'running') {
     cancelPendingClaudeCompletion(event.terminalId);
     cancelAttentionForTerminal(event.terminalId);
@@ -274,6 +296,7 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
       phase: event.phase,
       taskTitle: event.taskTitle,
       summary: event.summary,
+      provider: event.provider,
     });
   }
 }
@@ -295,7 +318,7 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
       const store = useAppStore.getState();
       if (!store.applyClaudeHookActivity(decision.terminalId, 'attention', decision.occurredAt, {
         summary: decision.questions[0]?.question,
-      })) return;
+      }, decision.provider)) return;
       cancelPendingClaudeCompletion(decision.terminalId);
       cancelClaudeActivityExpiry(decision.terminalId);
       scheduleStructuredDecision(decision);
@@ -354,6 +377,8 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
         decision.terminalId,
         'attention',
         decision.occurredAt,
+        undefined,
+        decision.provider,
       )) return;
       scheduleStructuredDecision(decision);
       cancelClaudeActivityExpiry(decision.terminalId);

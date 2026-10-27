@@ -5,7 +5,7 @@ import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../store
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
-import { parseModelRef } from '../../utils/codexLaunch';
+import { parseAnyModelRef } from '../../utils/piLaunch';
 import { isDockerClient } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
 import './TerminalTabBar.css';
@@ -246,7 +246,7 @@ export const TerminalTabBar: FC = () => {
               <span
                 className={`terminal-tab-dot${getIndicatorClassName(light)}`}
                 style={{ background: getIndicatorColor(light, session.tabColor) }}
-                title={getIndicatorTitle(light) || undefined}
+                title={getIndicatorTitle(light, terminalActivities[session.id]?.provider) || undefined}
                 onClick={(e) => {
                   if (light !== 'failed' && light !== 'attention') return;
                   e.stopPropagation();
@@ -294,7 +294,7 @@ export const TerminalTabBar: FC = () => {
                 </span>
               )}
               {session.sessionType !== 'editor' && (() => {
-                const modelRef = parseModelRef(session.extraParams ?? '');
+                const modelRef = parseAnyModelRef(session.extraParams ?? '');
                 return modelRef ? (
                   <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
                 ) : null;
@@ -340,7 +340,7 @@ export const TerminalTabBar: FC = () => {
       {claudeReplayTabs.length > 0 && <span className="terminal-replay-group-label">会话详情</span>}
       {claudeReplayTabs.map(tab => (
         <div key={sessionReplayTabKey(tab)} className={`terminal-tab ${activeSpecialTab === 'claude-replay' && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? 'active' : ''}`}
-          onClick={() => openClaudeReplayTab(tab)} title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}>
+          onClick={() => openClaudeReplayTab(tab)} title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'pi' ? 'Pi' : 'Claude Code'} · ${tab.title}`}>
           <History className="terminal-tab-history-icon" aria-hidden="true" />
           <span className="terminal-tab-name">{tab.title}</span>
           <button className="terminal-tab-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}

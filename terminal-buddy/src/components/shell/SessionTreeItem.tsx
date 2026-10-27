@@ -102,7 +102,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
       <span
         className={`tab-nav-dot${getIndicatorClassName(light)}`}
         style={{ background: getIndicatorColor(light, tabColor) }}
-        title={getIndicatorTitle(light) || undefined}
+        title={getIndicatorTitle(light, terminalActivities[id]?.provider) || undefined}
         onClick={(e) => onLedClick(e, id, light)}
       />
     );

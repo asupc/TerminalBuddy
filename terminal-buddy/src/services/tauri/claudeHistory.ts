@@ -33,7 +33,7 @@ export interface ClaudeReplayTool {
 
 export interface ClaudeReplayMessage {
   seq: number;
-  role: 'user' | 'assistant' | 'tool';
+  role: 'user' | 'assistant' | 'tool' | 'system';
   timestamp: number | null;
   text: string;
   tools: ClaudeReplayTool[];

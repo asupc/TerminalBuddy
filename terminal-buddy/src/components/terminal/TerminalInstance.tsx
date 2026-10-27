@@ -19,6 +19,7 @@ import { useAppStore } from '../../stores/appStore';
 import { isLightBackground, normalizeAnsiForLightBackground, type TerminalColors } from '../../utils/terminalTheme';
 import { installPiWheelFallback, installTerminalMouseGuard } from '../../utils/terminalMouse';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../../services/claudeNotification';
+import { parsePiOscStatus } from '../../utils/terminalOsc';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 import { PasteImageDialog } from '../claude-images/PasteImageDialog';
@@ -460,6 +461,21 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         const xtVersionHandler = terminal.parser.registerCsiHandler({ prefix: '>', final: 'q' }, () => true);
         cleanupFns.push(() => xtVersionHandler.dispose());
       }
+      // Pi OSC 7501：无扩展时也能显示 working/blocked/done/error 状态。
+      // 与扩展事件共用同一活动状态机，时间戳保证后到的事件胜出。
+      const piStatusHandler = terminal.parser.registerOscHandler(7501, data => {
+        const status = parsePiOscStatus(data);
+        if (!status) return false;
+        useAppStore.getState().applyClaudeHookActivity(
+          terminalId,
+          status.phase,
+          Date.now(),
+          { summary: status.message },
+          'pi',
+        );
+        return true;
+      });
+      cleanupFns.push(() => piStatusHandler.dispose());
       if (usesVsCodeTerminal) {
         const da1Handler = terminal.parser.registerCsiHandler({ final: 'c' }, params => {
           if (params.length === 0 || (params.length === 1 && params[0] === 0)) {

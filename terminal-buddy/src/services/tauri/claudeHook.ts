@@ -20,6 +20,7 @@ export interface ClaudeHookDecisionEvent {
   questions: ClaudeHookQuestion[];
   expiresAt: number;
   occurredAt: number;
+  provider?: 'claude' | 'pi';
 }
 
 export interface ClaudeHookDecisionLifecycleEvent {
@@ -38,6 +39,7 @@ export interface ClaudeHookTerminalEvent {
   eventName: string;
   phase: ClaudeHookTerminalPhase;
   occurredAt: number;
+  provider?: 'claude' | 'pi';
   notificationType?: 'permission_prompt' | 'idle_prompt' | string;
   title?: string;
   message?: string;

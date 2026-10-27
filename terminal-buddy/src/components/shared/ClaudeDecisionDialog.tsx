@@ -35,8 +35,10 @@ export function ClaudeDecisionDialog() {
   const sessions = useAppStore(state => state.sessions);
   const decision = queue[0];
   const terminalName = decision
-    ? sessions.find(session => session.id === decision.terminalId)?.profileName || 'Claude Code'
+    ? sessions.find(session => session.id === decision.terminalId)?.profileName
+      || (decision.provider === 'pi' ? 'Pi' : 'Claude Code')
     : '';
+  const agentName = decision?.provider === 'pi' ? 'Pi' : 'Claude';
 
   useEffect(() => {
     let cancelled = false;
@@ -297,14 +299,14 @@ export function ClaudeDecisionDialog() {
           <span className="claude-decision-agent"><Bot size={15} aria-hidden="true" /></span>
           <div className="claude-decision-heading">
             <div className="claude-decision-title-row">
-              <span className="claude-decision-title-text">Claude 等待决策</span>
+              <span className="claude-decision-title-text">{agentName} 等待决策</span>
               {queue.length > 1 && <span className="claude-decision-count">{queue.length}</span>}
             </div>
             <span className="claude-decision-terminal">{terminalName}</span>
           </div>
         </>
       )}
-      ariaLabel="Claude 等待决策"
+      ariaLabel={`${agentName} 等待决策`}
       className="claude-decision-dialog"
       headerClassName="claude-decision-header"
       titleClassName="claude-decision-header-content"

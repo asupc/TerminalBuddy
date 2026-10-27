@@ -59,7 +59,11 @@ export async function resumeCodexSession(
       ? startTerminal(profile.id, command, rows, cols, name, session.projectDir, preset?.name, preset?.tagColor ?? null, 'independent')
       : startBlankTerminal(defaultShellType(), rows, cols, session.projectDir, name, command, preset?.name, preset?.tagColor ?? null, project?.name),
     onStarted: terminalId => {
-      useAppStore.getState().setSessionDirectory(terminalId, session.projectDir);
+      const current = useAppStore.getState();
+      current.setSessionDirectory(terminalId, session.projectDir);
+      current.setAgentSessionBinding(terminalId, {
+        provider: 'codex', sessionId: session.sessionId, cwd: session.projectDir,
+      });
       if (profile) void updateProfileLastUsed(profile.id).catch(console.error);
     },
   });

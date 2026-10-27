@@ -6,8 +6,9 @@ import { matchingProjectPresets, matchingStartupPresets } from '../../utils/star
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
+import { buildPiRefCommand, inheritablePiArgs, isPiCommand } from '../../utils/piLaunch';
 import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
-import { currentClaudeCommand, currentCodexCommand } from '../../utils/agentCommands';
+import { currentClaudeCommand, currentCodexCommand, currentPiCommand } from '../../utils/agentCommands';
 import type { EnabledAgents, ExtraParamMode, Profile } from '../../types';
 import { projectEnabledAgents, projectModelSources } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
@@ -62,6 +63,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const showToast = useAppStore(s => s.showToast);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
+  const refreshPiModels = useAppStore(s => s.refreshPiModels);
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
@@ -73,7 +75,14 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   useEffect(() => {
     void refreshClaudeLaunchTargets();
     void refreshCodexLaunchTargets();
-  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
+    void refreshPiModels();
+  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshPiModels]);
+
+  useEffect(() => {
+    const onChange = () => { void refreshPiModels(true); };
+    window.addEventListener('agent-cli-status-changed', onChange);
+    return () => window.removeEventListener('agent-cli-status-changed', onChange);
+  }, [refreshPiModels]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {
@@ -116,7 +125,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const [editingProject, setEditingProject] = useState<Project | null | undefined>();
   const [projectName, setProjectName] = useState('');
   const [projectPath, setProjectPath] = useState('');
-  const [projectAgents, setProjectAgents] = useState<Required<EnabledAgents>>({ claude: true, codex: true });
+  const [projectAgents, setProjectAgents] = useState<Required<EnabledAgents>>({ claude: true, codex: true, pi: true });
   const [projectError, setProjectError] = useState('');
 
   // Build project nodes and their profiles
@@ -364,20 +373,44 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     } catch (error) { showToast('Codex 模型启动失败：' + String(error), 'error'); }
   };
 
-  const gotoProvidersSettings = (source: 'claude' | 'codex' = 'claude') => {
+  const startProfileWithPiModel = (profile: Profile, providerId: string, modelId: string, thinking?: string) => {
+    closeContextMenu();
+    onStartTerminal(profile, buildPiRefCommand(providerId, modelId, thinking, inheritablePiArgs(profile.startupCommands, currentPiCommand())), undefined, undefined, undefined, undefined, 'independent');
+  };
+
+  const startProjectWithPiModel = async (project: Project, providerId: string, modelId: string, thinking?: string) => {
+    closeContextMenu();
+    try {
+      await openTerminalInDir(project.path, {
+        command: buildPiRefCommand(providerId, modelId, thinking, inheritablePiArgs(undefined, currentPiCommand())),
+        name: project.name,
+        groupName: project.name,
+      });
+    } catch (error) { showToast('Pi 模型启动失败：' + String(error), 'error'); }
+  };
+
+  const startProjectWithPi = async (project: Project) => {
+    closeContextMenu();
+    try {
+      await openTerminalInDir(project.path, { command: currentPiCommand(), name: project.name, groupName: project.name });
+    } catch (error) { showToast('启动 Pi 失败：' + String(error), 'error'); }
+  };
+
+  const gotoProvidersSettings = (source: 'claude' | 'codex' | 'pi' = 'claude') => {
     useAppStore.getState().setProviderSettingsTab(source);
     closeContextMenu();
     openSettingsDialog('llm-providers');
   };
 
-  // 连接配置按启动命令内容推导模型区：当前工具的供应商排在前面，另一类供应商用于直接切换工具启动。
-  const commandModelSources = (commands: string[]): Array<'claude' | 'codex'> => commands.some(isClaudeCommand)
-    ? ['claude', 'codex']
-    : commands.some(isCodexCommand) ? ['codex', 'claude'] : [];
+  // 连接配置按启动命令内容推导模型区：当前工具的供应商排在前面，其他工具用于直接切换启动。
+  const commandModelSources = (commands: string[]): Array<'claude' | 'codex' | 'pi'> =>
+    commands.some(isClaudeCommand) ? ['claude', 'codex', 'pi']
+      : commands.some(isCodexCommand) ? ['codex', 'claude', 'pi']
+        : commands.some(isPiCommand) ? ['pi', 'claude', 'codex'] : [];
 
   const modelMenuSections = (
-    sources: Array<'claude' | 'codex'>,
-    onPickModel: (source: 'claude' | 'codex', providerId: string, modelId: string) => void,
+    sources: Array<'claude' | 'codex' | 'pi'>,
+    onPickModel: (source: 'claude' | 'codex' | 'pi', providerId: string, modelId: string, thinking?: string) => void,
   ) => {
     return sources.map(source => (
       <ClaudeModelMenuSection
@@ -385,8 +418,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
         source={source}
         itemClassName="context-menu-item"
         separatorClassName="context-menu-separator"
-        title={source === 'claude' ? 'Claude 模型' : 'Codex 模型'}
-        onPickModel={(providerId, modelId) => onPickModel(source, providerId, modelId)}
+        title={source === 'claude' ? 'Claude 模型' : source === 'codex' ? 'Codex 模型' : 'Pi 模型'}
+        onPickModel={(providerId, modelId, thinking) => onPickModel(source, providerId, modelId, thinking)}
         onGotoProviders={() => gotoProvidersSettings(source)}
       />
     ));
@@ -594,9 +627,10 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             // 仅本地 shell 类型显示模型区：后端 ssh/docker/k8s 分支会丢弃引用；
             // Claude / Codex 引用命令会整体替换 startup_commands。
             if (!target || !isModelRefLocalType(target.terminalType)) return null;
-            return modelMenuSections(commandModelSources(target.startupCommands), (source, providerId, modelId) => {
+            return modelMenuSections(commandModelSources(target.startupCommands), (source, providerId, modelId, thinking) => {
               if (source === 'claude') startProfileWithModel(target, providerId, modelId);
-              else startProfileWithCodexModel(target, providerId, modelId);
+              else if (source === 'codex') startProfileWithCodexModel(target, providerId, modelId);
+              else startProfileWithPiModel(target, providerId, modelId, thinking);
             });
           })()}
           <div className="context-menu-item" onClick={() => {
@@ -668,6 +702,9 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                 try { await openTerminalInDir(project.path, { groupName: project.name }); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
+              {projectEnabledAgents(project).pi && (
+                <div className="context-menu-item" onClick={() => void startProjectWithPi(project)}>启动 Pi</div>
+              )}
               {matchingProjectPresets(extraParamPresets, profiles, project).map(preset => (
                 <div key={preset.id} className="context-menu-item" onClick={async () => {
                   closeContextMenu();
@@ -689,9 +726,10 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                   </span>
                 </div>
               ))}
-              {modelMenuSections(projectModelSources(project), (source, providerId, modelId) => {
+              {modelMenuSections(projectModelSources(project), (source, providerId, modelId, thinking) => {
                 if (source === 'claude') void startProjectWithModel(project, providerId, modelId);
-                else void startProjectWithCodexModel(project, providerId, modelId);
+                else if (source === 'codex') void startProjectWithCodexModel(project, providerId, modelId);
+                else void startProjectWithPiModel(project, providerId, modelId, thinking);
               })}
               <div className="context-menu-separator" />
               {supportsSystemExplorerOpen() && (
@@ -769,6 +807,10 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                 <label className="project-edit-agent-toggle">
                   <input type="checkbox" checked={projectAgents.codex} onChange={event => setProjectAgents(value => ({ ...value, codex: event.target.checked }))} />
                   Codex
+                </label>
+                <label className="project-edit-agent-toggle">
+                  <input type="checkbox" checked={projectAgents.pi} onChange={event => setProjectAgents(value => ({ ...value, pi: event.target.checked }))} />
+                  Pi
                 </label>
               </div>
               <small>右键项目时可按启用的 Agent 展开供应商与模型启动；基础命令在设置 → Agent 管理中配置。</small>

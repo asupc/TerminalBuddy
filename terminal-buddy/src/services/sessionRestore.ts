@@ -1,7 +1,7 @@
 import {
   claimWebSessionRestore,
   closeTerminal,
-  getClaudeSessionsForTerminals,
+  getAgentSessionsForTerminals,
   getFileSize,
   listTerminals,
   releaseWebSessionRestore,
@@ -13,11 +13,14 @@ import { loadSavedTabs, saveTabsToStorage, useAppStore } from '../stores/appStor
 import { flushPendingSaveTabsIfAny } from '../stores/slices/sessionsSlice';
 import { getAppSettings, isAppSettingsInitialized } from '../utils/settings';
 import { containsClaudeRef, isClaudeCommand } from '../utils/claudeLaunch';
+import { buildCodexResumeCommand } from '../utils/codexLaunch';
+import { buildPiResumeCommand } from '../utils/piLaunch';
+import { currentCodexCommand, currentPiCommand } from '../utils/agentCommands';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
-import type { TerminalSession } from '../types';
+import type { AgentSessionBinding, TerminalSession } from '../types';
 import { isBrowserClient, clientTerminalOwner, defaultShellType } from './platform';
-import { stripResumeArgs } from '../utils/commandParams';
+import { stripCodexResumeArgs, stripPiSessionArgs, stripResumeArgs } from '../utils/commandParams';
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
 
@@ -79,20 +82,41 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   const store = useAppStore.getState();
   const { rows: estRows, cols: estCols } = estimateTerminalSize();
   const rawParams = tab.extraParams || '';
-  // 旧数据可能把 --resume 直接存进 extraParams（例如从历史会话恢复出来的页签）。
-  // 先取出 ID 再剥除：既避免重复拼接，也避免 claudeSessionId 缺失时丢失恢复意图。
-  const { params: paramsWithoutResume, resumeId: savedResumeId } = stripResumeArgs(rawParams);
+  // 旧数据可能把 --resume / --session / `resume` 直接存进 extraParams（例如从历史
+  // 会话恢复出来的页签）。先剥除再按 provider 重建，避免重复叠加或拼坏原命令。
+  const claudeStripped = stripResumeArgs(rawParams);
+  const piStripped = stripPiSessionArgs(claudeStripped.params);
+  const codexStripped = stripCodexResumeArgs(piStripped.params);
   const baseParams = tab.extraParamMode === 'independent'
-    ? paramsWithoutResume.trim()
-    : paramsWithoutResume.replace(/\s+/g, ' ').trim();
-  const resumeId = tab.claudeSessionId || savedResumeId;
-  // 构建启动参数：临时追加 --resume（不存入 session，避免下次叠加）
+    ? codexStripped.params.trim()
+    : codexStripped.params.replace(/\s+/g, ' ').trim();
+  const binding: AgentSessionBinding | undefined = tab.agentSession
+    ?? (tab.claudeSessionId || claudeStripped.resumeId
+      ? { provider: 'claude', sessionId: tab.claudeSessionId || claudeStripped.resumeId!, cwd: tab.directory }
+      : codexStripped.sessionId
+        ? { provider: 'codex', sessionId: codexStripped.sessionId, cwd: tab.directory }
+        : piStripped.session
+          ? { provider: 'pi', sessionId: piStripped.session, sessionFile: piStripped.session, cwd: tab.directory }
+          : undefined);
+  const autoResume = binding ? getAppSettings().autoResumeClaudeSession : false;
+  const profile = tab.profileId ? store.profiles.find(item => item.id === tab.profileId) : undefined;
   let launchParams = baseParams;
-  if (resumeId) {
-    const settings = getAppSettings();
-    if (settings.autoResumeClaudeSession) {
-      const resumeParam = `--resume ${resumeId}`;
+  let launchMode = tab.extraParamMode;
+  let blankCommand: string | undefined;
+  if (binding && autoResume) {
+    if (binding.provider === 'claude') {
+      const resumeParam = `--resume ${binding.sessionId}`;
       launchParams = launchParams ? `${launchParams} ${resumeParam}` : resumeParam;
+    } else {
+      const command = binding.provider === 'codex'
+        ? buildCodexResumeCommand(binding.sessionId, profile?.startupCommands ?? (baseParams || currentCodexCommand()))
+        : buildPiResumeCommand(binding.sessionId, profile?.startupCommands ?? (baseParams || currentPiCommand()));
+      if (tab.profileId) {
+        launchParams = command;
+        launchMode = 'independent';
+      } else {
+        blankCommand = command;
+      }
     }
   }
   // 空白终端（项目右键启动等）的 extraParams 保存的是完整启动命令，恢复时重跑：
@@ -100,11 +124,12 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   // - 命令不含 claude 但记录了会话（当时手动敲的 claude）→ 只重跑原命令，
   //   追加 --resume 会把原命令拼坏
   // - 没保存命令（纯手动敲 claude 的空白终端）→ 直接 claude --resume
-  const blankCommand = !tab.profileId
-    ? (baseParams
+  if (!tab.profileId && !blankCommand) {
+    const claudeResume = binding?.provider === 'claude' && autoResume;
+    blankCommand = baseParams
       ? ((isClaudeCommand(baseParams) || containsClaudeRef(baseParams)) ? launchParams : baseParams)
-      : (launchParams ? `claude ${launchParams}` : undefined))
-    : undefined;
+      : (claudeResume ? `claude --resume ${binding!.sessionId}` : undefined);
+  }
   // 旧版后端对空白终端广播空 terminalType，旧快照因此存了空串；恢复时回退
   // 本地默认 Shell，否则重建的会话仍无法命中右键菜单的本地 Shell 判定。
   // 本地 Shell 判定同样要用归一化后的类型：空串会让记录目录被误判为非本地
@@ -114,7 +139,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     ? tab.directory
     : undefined;
   const terminalId = tab.profileId
-    ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath, undefined, undefined, tab.extraParamMode)
+    ? await startTerminal(tab.profileId, launchParams, estRows, estCols, tab.profileName, startupPath, undefined, undefined, launchMode)
     : await startBlankTerminal(
       blankTerminalType,
       estRows,
@@ -144,9 +169,9 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     extraParamTagColor: tab.extraParamTagColor ?? null,
     manualTitle: tab.manualTitle,
   }, true);
-  // 保存 claudeSessionId 到 store
-  if (resumeId) {
-    store.setClaudeSessionId(terminalId, resumeId);
+  // 统一回填 Agent 会话绑定；旧 claudeSessionId 同步派生。
+  if (binding) {
+    store.setAgentSessionBinding(terminalId, binding);
   }
   // 恢复上次记录的目录：本地 shell 直接用启动 cwd，避免恢复时额外写入
   // 可见的 cd 命令与后端启动命令（powershell/claude）发生竞态。
@@ -247,23 +272,30 @@ async function restoreSavedTabs(
 }
 
 /**
- * 从服务端持久化登记表回填旧页签的 Claude 会话 ID。
+ * 从服务端持久化登记表回填旧页签的 Agent 会话绑定。
  * 容器重启后旧 terminalId 已不存在，只能按 ID 回查（登记表由服务端后台任务维护）。
  */
-async function backfillClaudeSessionIds(tabs: SavedTab[]): Promise<void> {
+async function backfillAgentSessionBindings(tabs: SavedTab[]): Promise<void> {
   const ids = [...new Set(tabs
-    .filter(tab => tab.sessionType !== 'editor' && tab.terminalId && !tab.claudeSessionId)
+    .filter(tab => tab.sessionType !== 'editor' && tab.terminalId && !tab.agentSession)
     .map(tab => tab.terminalId!))];
   if (ids.length === 0) return;
   try {
-    const persisted = await getClaudeSessionsForTerminals(ids);
+    const persisted = await getAgentSessionsForTerminals(ids);
     for (const tab of tabs) {
-      if (!tab.claudeSessionId && tab.terminalId && persisted[tab.terminalId]) {
-        tab.claudeSessionId = persisted[tab.terminalId];
-      }
+      if (tab.agentSession || !tab.terminalId) continue;
+      const record = persisted[tab.terminalId];
+      if (!record) continue;
+      tab.agentSession = {
+        provider: record.provider,
+        sessionId: record.sessionId,
+        sessionFile: record.sessionFile,
+        cwd: record.cwd,
+      };
+      if (record.provider === 'claude') tab.claudeSessionId = record.sessionId;
     }
   } catch (error) {
-    console.error('回查 Claude 会话 ID 失败:', error);
+    console.error('回查 Agent 会话绑定失败:', error);
   }
 }
 
@@ -323,7 +355,7 @@ async function runBrowserSessionRestore(): Promise<BrowserSessionRestoreOutcome>
   try {
     // 抢到锁后二次确认：另一个客户端可能刚恢复完成并释放租约。
     if ((await listTerminals()).length > 0) return 'not-needed';
-    await backfillClaudeSessionIds(terminalTabs);
+    await backfillAgentSessionBindings(terminalTabs);
     const savedActiveTab = tabs[activeIndex];
     let activeTerminalIndex = savedActiveTab ? terminalTabs.indexOf(savedActiveTab) : -1;
     if (activeTerminalIndex < 0) activeTerminalIndex = 0;

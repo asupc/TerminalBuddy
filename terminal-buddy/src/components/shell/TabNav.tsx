@@ -217,7 +217,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                           <span
                             className={`tab-nav-dot${getIndicatorClassName(light)}`}
                             style={{ background: getIndicatorColor(light, session.tabColor) }}
-                            title={getIndicatorTitle(light) || undefined}
+                            title={getIndicatorTitle(light, terminalActivities[session.id]?.provider) || undefined}
                             onClick={(e) => {
                               if (light !== 'failed' && light !== 'attention') return;
                               e.stopPropagation();
@@ -614,7 +614,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
             </div>
             {!collapsedGroups.has("replay-group") && claudeReplayTabs.map(tab => (
               <div key={sessionReplayTabKey(tab)} className={`tab-nav-settings-btn tab-nav-replay-item ${activeSpecialTab === "claude-replay" && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? "active" : ""}`}
-                onClick={() => openClaudeReplayTab(tab)} title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}>
+                onClick={() => openClaudeReplayTab(tab)} title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'pi' ? 'Pi' : 'Claude Code'} · ${tab.title}`}>
                 <span className="tab-nav-name">{tab.title}</span>
                 <button type="button" className="tree-item-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}
                   title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>

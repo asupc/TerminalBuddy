@@ -13,7 +13,7 @@ import { getWorkingDotColor } from './tabColor';
 export type IndicatorLight = 'none' | 'presence' | 'running' | 'attention' | 'completed' | 'failed';
 
 export function getIndicatorLight(activity: TerminalActivityState | undefined): IndicatorLight {
-  if (!activity || activity.runtimeKind !== 'claude') return 'none';
+  if (!activity || activity.runtimeKind === 'shell') return 'none';
   switch (activity.phase) {
     case 'running': return 'running';
     case 'attention': return 'attention';
@@ -37,15 +37,20 @@ export function getIndicatorColor(light: IndicatorLight, tabColor?: string | nul
 
 const LIGHT_TITLE: Record<IndicatorLight, string> = {
   none: '',
-  presence: 'Claude 会话在场 · 空闲',
-  running: 'Claude 执行中',
+  presence: '会话在场 · 空闲',
+  running: 'Agent 执行中',
   attention: '等待你的确认（点击处理）',
   completed: '任务完成',
   failed: '错误停止（点击清除）',
 };
 
-export function getIndicatorTitle(light: IndicatorLight): string {
-  return LIGHT_TITLE[light];
+export function getIndicatorTitle(light: IndicatorLight, provider?: 'claude' | 'codex' | 'pi'): string {
+  const name = provider === 'pi' ? 'Pi' : provider === 'codex' ? 'Codex' : 'Claude';
+  const title = LIGHT_TITLE[light];
+  if (!title) return title;
+  return title
+    .replace('会话在场', `${name} 会话在场`)
+    .replace('Agent 执行中', `${name} 执行中`);
 }
 
 /** 灯的附加样式类（动画定义在 global.css） */

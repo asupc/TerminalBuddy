@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export type AgentCli = 'claude' | 'codex';
+export type AgentCli = 'claude' | 'codex' | 'pi';
 
 export interface AgentCliStatus {
   status: 'installed' | 'notInstalled' | 'installing' | 'updating' | 'failed';

@@ -60,6 +60,7 @@ export const ClaudePanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
   const terminalActivities = useAppStore(s => s.terminalActivities);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
+  const agentSessionBindings = useAppStore(s => s.agentSessionBindings);
   const sessionDirectories = useAppStore(s => s.sessionDirectories);
   const clearClaudeFailure = useAppStore(s => s.clearClaudeFailure);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
@@ -70,7 +71,9 @@ export const ClaudePanel: FC = () => {
       if (session.sessionType === 'editor' || session.starting) continue;
       const activity = terminalActivities[session.id];
       const claudeSessionId = claudeSessionIds[session.id];
-      if (activity?.runtimeKind !== 'claude' && !claudeSessionId) continue;
+      const agentSession = agentSessionBindings[session.id];
+      if (activity?.runtimeKind === 'shell' && !claudeSessionId) continue;
+      if (!activity && !claudeSessionId && !agentSession) continue;
       result.push({
         terminalId: session.id,
         name: session.profileName,
@@ -84,7 +87,7 @@ export const ClaudePanel: FC = () => {
       card.light === 'attention' ? 0 : card.light === 'failed' ? 1 : card.light === 'running' ? 2 : 3;
     return result.sort((a, b) =>
       priority(a) - priority(b) || ((b.activity?.updatedAt ?? 0) - (a.activity?.updatedAt ?? 0)));
-  }, [sessions, terminalActivities, claudeSessionIds]);
+  }, [sessions, terminalActivities, claudeSessionIds, agentSessionBindings]);
 
   return (
     <div className="claude-panel">
@@ -119,7 +122,7 @@ export const ClaudePanel: FC = () => {
                 <span
                   className={`claude-panel-led led-${card.light}`}
                   style={{ background: getIndicatorColor(card.light) }}
-                  title={getIndicatorTitle(card.light) || undefined}
+                  title={getIndicatorTitle(card.light, card.activity?.provider) || undefined}
                   onClick={() => {
                     if (card.light === 'failed') clearClaudeFailure(card.terminalId);
                     else if (card.light === 'attention') focusTerminalById(card.terminalId);

@@ -7,6 +7,8 @@ export * from './claudeConfig';
 export * from './claudeEnhance';
 export * from './claudeHistory';
 export * from './codexHistory';
+export * from './piHistory';
+export * from './piProviders';
 export * from './claudeHook';
 export * from './claudeMcp';
 export * from './clientData';

@@ -43,6 +43,7 @@ import {
 } from './resumeClaudeSession';
 import type { ExtraParamPreset, Project, SessionHistoryProvider } from '../../types';
 import { sessionHistory } from '../../services/sessionHistory';
+import { getAgentCliEnvironment } from '../../services/agentCli';
 import { resumedCodexSessionId } from '../../utils/codexLaunch';
 import './HistoryPanel.css';
 
@@ -125,23 +126,63 @@ const MenuItem: FC<MenuItemProps> = ({ icon: Icon, label, hint, danger, preset, 
   </div>
 );
 
-/** Claude Code / Codex 会话面板：列表、检索、回放与恢复共用同一套交互。 */
+/** Claude Code / Codex / Pi 会话面板：列表、检索、回放与恢复共用同一套交互。 */
 export const HistoryPanel: FC<HistoryPanelProps> = props => {
   const [provider, setProvider] = useState<SessionHistoryProvider>('claude');
-  return <HistoryPanelContent key={provider} {...props} provider={provider} onProviderChange={setProvider} />;
+  const [availableAgents, setAvailableAgents] = useState<{ codex: boolean; pi: boolean }>({ codex: false, pi: false });
+  useEffect(() => {
+    let cancelled = false;
+    const apply = (environment: { codex?: { status: string }; pi?: { status: string } }) => {
+      if (cancelled) return;
+      setAvailableAgents({
+        codex: environment.codex?.status === 'installed' || environment.codex?.status === 'updating' || environment.codex?.status === 'installing',
+        pi: environment.pi?.status === 'installed' || environment.pi?.status === 'updating' || environment.pi?.status === 'installing',
+      });
+    };
+    void getAgentCliEnvironment().then(apply).catch(() => {});
+    const onChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ codex?: { status: string }; pi?: { status: string } }>).detail;
+      if (detail) apply(detail);
+    };
+    window.addEventListener('agent-cli-status-changed', onChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('agent-cli-status-changed', onChange);
+    };
+  }, []);
+  const providers = useMemo<SessionHistoryProvider[]>(() => [
+    'claude',
+    ...(availableAgents.codex ? ['codex' as const] : []),
+    ...(availableAgents.pi ? ['pi' as const] : []),
+  ], [availableAgents]);
+  useEffect(() => {
+    if (!providers.includes(provider)) setProvider('claude');
+  }, [providers, provider]);
+  return (
+    <HistoryPanelContent
+      key={provider}
+      {...props}
+      provider={provider}
+      providers={providers}
+      onProviderChange={setProvider}
+    />
+  );
 };
 
 const HistoryPanelContent: FC<HistoryPanelProps & {
   provider: SessionHistoryProvider;
+  providers: SessionHistoryProvider[];
   onProviderChange: (provider: SessionHistoryProvider) => void;
-}> = ({ isSidebarMode = false, isActive = true, provider, onProviderChange }) => {
+}> = ({ isSidebarMode = false, isActive = true, provider, providers, onProviderChange }) => {
   const history = sessionHistory(provider);
   const showToast = useAppStore(s => s.showToast);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
+  const refreshPiModels = useAppStore(s => s.refreshPiModels);
   const sessions = useAppStore(s => s.sessions);
   const claudeSessionIds = useAppStore(s => s.claudeSessionIds);
+  const agentSessionBindings = useAppStore(s => s.agentSessionBindings);
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
   const profiles = useAppStore(s => s.profiles);
   const projects = useAppStore(s => s.projects);
@@ -190,8 +231,9 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
 
   // 模型菜单数据源：挂载时加载，右键打开时用缓存。
   useEffect(() => {
-    void (provider === 'claude' ? refreshClaudeLaunchTargets() : refreshCodexLaunchTargets());
-  }, [provider, refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
+    void (provider === 'claude' ? refreshClaudeLaunchTargets()
+      : provider === 'pi' ? refreshPiModels() : refreshCodexLaunchTargets());
+  }, [provider, refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshPiModels]);
 
   useEffect(() => {
     searchRequestRef.current += 1;
@@ -328,6 +370,10 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     const map = new Map<string, string>();
     if (provider === 'claude') {
       for (const [terminalId, claudeId] of Object.entries(claudeSessionIds)) map.set(claudeId, terminalId);
+    } else if (provider === 'pi') {
+      for (const [terminalId, binding] of Object.entries(agentSessionBindings)) {
+        if (binding.provider === 'pi') map.set(binding.sessionId, terminalId);
+      }
     } else {
       for (const session of sessions) {
         if (session.extraParamMode !== 'independent') continue;
@@ -336,7 +382,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
       }
     }
     return map;
-  }, [provider, sessions, claudeSessionIds]);
+  }, [provider, sessions, claudeSessionIds, agentSessionBindings]);
 
   const filteredItems = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -420,12 +466,12 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     }, launchPreset).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
   }, [history, showToast]);
 
-  const handleResumeWithModel = useCallback((item: ClaudeSessionItem, vendorRef: ClaudeVendorRef) => {
+  const handleResumeWithModel = useCallback((item: ClaudeSessionItem, vendorRef: ClaudeVendorRef, thinking?: string) => {
     void history.resume({
       sessionId: item.sessionId,
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
-    }, undefined, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
+    }, undefined, thinking ? { ...vendorRef, thinking } : vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
   }, [history, showToast]);
 
   const handleReplay = useCallback((sessionId: string, title: string, projectDir: string, focusSeq?: number) => {
@@ -594,7 +640,7 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
         <span className="panel-title-count">{items.length}</span>
       </div>
       <div className="session-history-tabs" role="tablist" aria-label="会话来源">
-        {(['claude', 'codex'] as const).map(source => (
+        {providers.map((source, index) => (
           <button
             key={source}
             id={`session-history-tab-${source}`}
@@ -608,7 +654,8 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             onKeyDown={event => {
               if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
                 event.preventDefault();
-                const next = source === 'claude' ? 'codex' : 'claude';
+                const direction = event.key === 'ArrowLeft' ? -1 : 1;
+                const next = providers[(index + direction + providers.length) % providers.length];
                 onProviderChange(next);
                 requestAnimationFrame(() => document.getElementById(`session-history-tab-${next}`)?.focus());
               }
@@ -823,10 +870,10 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
             itemClassName="claude-hist-context-item"
             separatorClassName="claude-hist-context-sep"
             title="指定模型恢复"
-            onPickModel={(providerId, modelId) => {
+            onPickModel={(providerId, modelId, thinking) => {
               const item = contextMenu.item;
               setContextMenu(null);
-              handleResumeWithModel(item, { providerId, modelId });
+              handleResumeWithModel(item, { providerId, modelId }, thinking);
             }}
             onGotoProviders={() => { setContextMenu(null); useAppStore.getState().setProviderSettingsTab(provider); openSettingsDialog('llm-providers'); }}
           />

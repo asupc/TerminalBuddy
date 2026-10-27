@@ -157,7 +157,7 @@ export const MOCK_PROJECTS: Project[] = [
   {
     name: 'TerminalBuddy',
     path: 'D:\\gitee\\TerminalBuddy',
-    enabledAgents: { claude: true, codex: false },
+    enabledAgents: { claude: true, codex: false, pi: true },
   },
 ];
 

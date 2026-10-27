@@ -20,7 +20,7 @@ import { Toast } from "./components/shared/Toast";
 import { initTheme, applyTheme, getAppSettings, initAppSettings, saveAppSettings, applyListSelectionStyle } from './utils/settings';
 import { useAppStore, saveTabsToStorage, initExtraParamPresets, initFileTreeNav } from './stores/appStore';
 import { flushPendingSaveTabs } from './stores/slices/sessionsSlice';
-import { getAllProfiles, getProjects, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
+import { getAllProfiles, getProjects, startTerminal, startBlankTerminal, updateProfileLastUsed, createProfile, updateProfile, windowExitApp, startMstsc, getBackendAppSettings, getClaudeSessionsForTerminals, getAgentSessionsForTerminals, checkAppUpdate, type UpdateInfo } from './services/tauri';
 import { compareVersions } from './utils/version';
 import { APP_VERSION } from './version';
 import { initPersistedTemplates, initCmdOverrides, initCustomCommands } from './data/commandTemplates';
@@ -241,8 +241,12 @@ function App() {
           claudeHookConfigDir: backend.claudeHookConfigDir ?? settings.claudeHookConfigDir,
         };
         // Agent 基础启动命令（后端为数据源；浏览器模式在 WebEntry 里经 /api/runtime 提前写入）
-        useAppStore.getState().setAgentCommands(
-          backend.agentCommands ?? { claude: '', codex: '' });
+        const commands = backend.agentCommands ?? { claude: '', codex: '', pi: '' };
+        useAppStore.getState().setAgentCommands({
+          claude: commands.claude ?? '',
+          codex: commands.codex ?? '',
+          pi: commands.pi ?? '',
+        });
         saveAppSettings(synced);
         setEnableTabNav(synced.enableTabNavigation);
         useAppStore.setState({
@@ -303,19 +307,38 @@ function App() {
       if (isClaudeTerminal) claudeTerminalIds.push(session.id);
     }
 
-    if (claudeTerminalIds.length === 0) return;
-
     // 一次性批量获取所有 Claude 终端的 session ID（单次进程快照）
     let claudeIds: Record<string, string> = {};
-    try {
-      claudeIds = await getClaudeSessionsForTerminals(claudeTerminalIds);
-    } catch {}
+    if (claudeTerminalIds.length > 0) {
+      try {
+        claudeIds = await getClaudeSessionsForTerminals(claudeTerminalIds);
+      } catch {}
+    }
 
     if (Object.keys(claudeIds).length > 0) {
       useAppStore.setState(state => ({
         claudeSessionIds: { ...state.claudeSessionIds, ...claudeIds },
       }));
-      // 保存标签（包含更新后的 claudeSessionIds）
+    }
+    // 统一 Agent 绑定（含 Codex/Pi）一并落盘，容器重启后按 provider 拼恢复命令。
+    try {
+      const ids = sessions.filter(session => session.sessionType !== 'editor').map(session => session.id);
+      const bindings = await getAgentSessionsForTerminals(ids);
+      useAppStore.setState(state => {
+        const agentSessionBindings = { ...state.agentSessionBindings };
+        for (const [terminalId, record] of Object.entries(bindings)) {
+          agentSessionBindings[terminalId] = {
+            provider: record.provider,
+            sessionId: record.sessionId,
+            sessionFile: record.sessionFile,
+            cwd: record.cwd,
+          };
+        }
+        return { agentSessionBindings };
+      });
+    } catch {}
+    {
+      // 保存标签（包含更新后的 claudeSessionIds / agentSessionBindings）
       const { sessions: updatedSessions, activeSessionId } = useAppStore.getState();
       saveTabsToStorage(updatedSessions, activeSessionId);
     }

@@ -21,6 +21,12 @@ export async function getClaudeSessionsForTerminals(terminalIds: string[]): Prom
   return invoke('get_claude_sessions_for_terminals', { terminalIds });
 }
 
+export async function getAgentSessionsForTerminals(
+  terminalIds: string[],
+): Promise<Record<string, import('../../types').AgentSessionRecord>> {
+  return invoke('get_agent_sessions_for_terminals', { terminalIds });
+}
+
 export async function showClaudeCodeNotification(
   terminalId: string,
   terminalName: string,

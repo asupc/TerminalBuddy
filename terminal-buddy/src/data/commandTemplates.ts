@@ -94,6 +94,8 @@ export interface SuggestionItem {
 
 const BUILTIN_COMMAND_SUGGESTIONS: SuggestionItem[] = [
   { command: 'claude --dangerously-skip-permissions', desc: 'Claude Code 跳过权限确认启动' },
+  { command: 'pi', desc: 'Pi Agent 交互式启动' },
+  { command: 'pi --approve', desc: 'Pi Agent 信任当前项目启动' },
   { command: 'git clean -fd', desc: '删除未跟踪的文件和目录(不可恢复)' },
   { command: 'git reset --hard HEAD', desc: '丢弃已跟踪文件的未提交变更(不可恢复)' },
 ];
@@ -358,6 +360,12 @@ export const COMMAND_TEMPLATES: CommandTemplate[] = [
     category: 'AI 助手',
     commands: [
       { name: 'claude --dangerously-skip-permissions', command: 'claude --dangerously-skip-permissions', desc: 'Claude Code 跳过权限确认启动' },
+      { name: 'pi --approve', command: 'pi --approve', desc: 'Pi Agent 信任已登记项目启动' },
+      { name: 'pi -c', command: 'pi -c', desc: '继续最近的 Pi 会话' },
+      { name: 'pi -r', command: 'pi -r', desc: '选择 Pi 会话恢复' },
+      { name: 'pi --session', command: 'pi --session ', desc: '恢复指定 Pi 会话（路径或 ID）' },
+      { name: 'pi -p', command: 'pi -p "..."', desc: 'Pi 单次任务（输出最终文本）' },
+      { name: 'pi --tui-mode regular', command: 'pi --tui-mode regular', desc: 'Pi 常规滚动模式启动' },
     ],
   },
   {

@@ -164,12 +164,14 @@ export const createSessionsSlice = (
 			const restCache = { ...state.remoteFileCache };
 			const terminalActivities = { ...state.terminalActivities };
 			const claudeSessionIds = { ...state.claudeSessionIds };
+			const agentSessionBindings = { ...state.agentSessionBindings };
 			const sessionDirectories = { ...state.sessionDirectories };
 			const terminalWebTakeovers = { ...state.terminalWebTakeovers };
 			for (const id of idsToRemove) {
 				delete restCache[id];
 				delete terminalActivities[id];
 				delete claudeSessionIds[id];
+				delete agentSessionBindings[id];
 				delete sessionDirectories[id];
 				delete terminalWebTakeovers[id];
 			}
@@ -194,6 +196,7 @@ export const createSessionsSlice = (
 				terminalActivities,
 				terminalWebTakeovers,
 				claudeSessionIds,
+				agentSessionBindings,
 				sessionDirectories,
 				splitSlots,
 				terminalLayoutVersion: splitSlots !== state.splitSlots ? state.terminalLayoutVersion + 1 : state.terminalLayoutVersion,
@@ -360,11 +363,38 @@ export const createSessionsSlice = (
 		set((state) => {
 			// Docker 下没有桌面端「退出前快照」这一时机，必须在会话 ID 变化时持久化，
 			// 否则容器重启后页签无法用 --resume 续接。
-			if (state.claudeSessionIds[sessionId] === claudeSessionId) return state;
+			const existing = state.agentSessionBindings[sessionId];
+			const binding = existing?.provider === 'claude'
+				? { ...existing, sessionId: claudeSessionId }
+				: { provider: 'claude' as const, sessionId: claudeSessionId };
+			if (state.claudeSessionIds[sessionId] === claudeSessionId
+				&& existing?.provider === 'claude' && existing.sessionId === claudeSessionId) return state;
 			if (!state._skipSaveTabs) debouncedSaveTabs();
 			return {
 				claudeSessionIds: { ...state.claudeSessionIds, [sessionId]: claudeSessionId },
+				agentSessionBindings: { ...state.agentSessionBindings, [sessionId]: binding },
 			};
+		}),
+	agentSessionBindings: {},
+	setAgentSessionBinding: (sessionId, binding) =>
+		set((state) => {
+			const existing = state.agentSessionBindings[sessionId];
+			if (existing && existing.provider === binding.provider && existing.sessionId === binding.sessionId
+				&& existing.sessionFile === binding.sessionFile && existing.cwd === binding.cwd) return state;
+			if (!state._skipSaveTabs) debouncedSaveTabs();
+			return {
+				agentSessionBindings: { ...state.agentSessionBindings, [sessionId]: binding },
+				claudeSessionIds: binding.provider === 'claude'
+					? { ...state.claudeSessionIds, [sessionId]: binding.sessionId }
+					: state.claudeSessionIds,
+			};
+		}),
+	clearAgentSessionBinding: (sessionId) =>
+		set((state) => {
+			if (!state.agentSessionBindings[sessionId]) return state;
+			const agentSessionBindings = { ...state.agentSessionBindings };
+			delete agentSessionBindings[sessionId];
+			return { agentSessionBindings };
 		}),
 	terminalActivities: {},
 	terminalWebTakeovers: {},
@@ -387,7 +417,7 @@ export const createSessionsSlice = (
 	setTerminalFallbackWorking: (sessionId, working) =>
 		set((state) => {
 			const current = state.terminalActivities[sessionId];
-			if (current?.runtimeKind === "claude") return state;
+			if (current && current.runtimeKind !== "shell") return state;
 			const phase: TerminalActivityPhase = working ? "running" : "idle";
 			if (current?.source === "legacy" && current.phase === phase) return state;
 			return {
@@ -397,7 +427,7 @@ export const createSessionsSlice = (
 				},
 			};
 		}),
-	applyClaudeHookActivity: (sessionId, phase, updatedAt, details) => {
+	applyClaudeHookActivity: (sessionId, phase, updatedAt, details, provider) => {
 		let applied = false;
 		set((state) => {
 			const current = state.terminalActivities[sessionId];
@@ -407,12 +437,12 @@ export const createSessionsSlice = (
 				terminalActivities: {
 					...state.terminalActivities,
 					[sessionId]: {
-						runtimeKind: "claude",
+						runtimeKind: provider === "pi" ? "pi" : "claude",
+						provider: provider ?? current?.provider ?? "claude",
 						source: "hook",
 						phase,
 						updatedAt,
 						lastHookAt: updatedAt,
-						// 未带摘要的事件沿用上一条（如 UserPromptSubmit 后的 running 保留提示词标题）
 						taskTitle: details?.taskTitle ?? current?.taskTitle,
 						summary: details?.summary ?? current?.summary,
 					},
@@ -440,7 +470,7 @@ export const createSessionsSlice = (
 		set((state) => {
 			const current = state.terminalActivities[sessionId];
 			// 30min 过期只兜底卡死的 running；failed 长红不归这里管
-			if (current?.runtimeKind !== "claude" || current.phase !== "running" || current.updatedAt !== expectedUpdatedAt) {
+			if (!current || current.runtimeKind === "shell" || current.phase !== "running" || current.updatedAt !== expectedUpdatedAt) {
 				return state;
 			}
 			return {
@@ -465,7 +495,7 @@ export const createSessionsSlice = (
 	handleTerminalInputActivity: (sessionId) =>
 		set((state) => {
 			const current = state.terminalActivities[sessionId];
-			if (current?.runtimeKind === "claude") {
+			if (current && current.runtimeKind !== "shell") {
 				if (current.phase !== "attention") return state;
 				return {
 					terminalActivities: {

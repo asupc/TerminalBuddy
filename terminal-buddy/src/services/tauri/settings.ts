@@ -12,6 +12,7 @@ export interface VsCodeTerminalSupport {
 export interface AgentCommands {
   claude: string;
   codex: string;
+  pi: string;
 }
 
 export async function getBackendAppSettings(): Promise<{
@@ -27,12 +28,13 @@ export async function getBackendAppSettings(): Promise<{
   singleInstance: boolean;
   claudeHookConfigDir: string | null;
   agentCommands: AgentCommands;
+  piToolApprovalEnabled?: boolean;
 }> {
   return invoke('get_app_settings');
 }
 
-export async function saveAgentCommands(claude: string, codex: string): Promise<void> {
-  return invoke('save_agent_commands', { claude, codex });
+export async function saveAgentCommands(claude: string, codex: string, pi?: string): Promise<void> {
+  return invoke('save_agent_commands', { claude, codex, pi });
 }
 
 export async function saveCloseBehavior(behavior: 'exit' | 'tray'): Promise<void> {

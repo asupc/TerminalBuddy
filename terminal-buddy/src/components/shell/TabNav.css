@@ -605,6 +605,12 @@
   color: var(--warning, #d9a35f);
 }
 
+.tab-nav-task-provider[data-provider="pi"] {
+  border-color: color-mix(in srgb, #b18cf0 42%, transparent);
+  background: color-mix(in srgb, #b18cf0 16%, transparent);
+  color: #b18cf0;
+}
+
 .tab-nav-task-model {
   flex: 0 1 auto;
   min-width: 0;

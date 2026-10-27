@@ -1,6 +1,6 @@
 import { request } from './connection';
 
-export type ContainerCli = 'claude' | 'codex';
+export type ContainerCli = 'claude' | 'codex' | 'pi';
 
 export interface ContainerCliStatus {
   status: 'installed' | 'notInstalled' | 'installing' | 'updating' | 'failed';

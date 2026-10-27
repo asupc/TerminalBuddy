@@ -1,5 +1,5 @@
 export interface TaskLaunchInfo {
-  provider: 'claude' | 'codex';
+  provider: 'claude' | 'codex' | 'pi';
   model?: string;
 }
 
@@ -17,8 +17,8 @@ export function getTaskLaunchInfo(
 
   for (let index = commands.length - 1; index >= 0; index -= 1) {
     const command = commands[index];
-    const reference = command.trimStart().match(/^__TB_(CLAUDE|CODEX)_REF__:[^:\s]+:([^\s]+)/);
-    const executable = command.match(/(?:^|[\s"'=/\\;&|])(claude|codex)(?:\.(?:cmd|exe|bat|ps1))?(?=$|[\s"';&|])/i);
+    const reference = command.trimStart().match(/^__TB_(CLAUDE|CODEX|PI)_REF__:[^:\s]+:([^\s:]+)/);
+    const executable = command.match(/(?:^|[\s"'=/\\;&|])(claude|codex|pi)(?:\.(?:cmd|exe|bat|ps1))?(?=$|[\s"';&|])/i);
     const tool = reference?.[1] || executable?.[1];
     if (!tool) continue;
 
@@ -26,7 +26,7 @@ export function getTaskLaunchInfo(
     for (const option of command.matchAll(/(?:^|\s)(?:--model|-m)(?:=|\s+)(?:"([^"]+)"|'([^']+)'|([^\s]+))/g)) {
       model = option.slice(1).find(Boolean);
     }
-    return { provider: tool.toLowerCase() === 'codex' ? 'codex' : 'claude', model };
+    return { provider: tool.toLowerCase() === 'codex' ? 'codex' : tool.toLowerCase() === 'pi' ? 'pi' : 'claude', model };
   }
   return undefined;
 }

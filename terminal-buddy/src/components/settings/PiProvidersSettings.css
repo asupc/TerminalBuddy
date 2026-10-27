@@ -1,0 +1,254 @@
+.pi-provider-description,
+.pi-provider-path {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.pi-provider-path {
+  color: var(--text-tertiary);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
+
+.pi-provider-error {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--danger, #e06c75);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pi-provider-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.pi-provider-advanced summary {
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.pi-provider-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+  .pi-providers-settings .claude-segment-toolbar,
+  .pi-providers-settings .claude-segment-actions {
+    flex-wrap: wrap;
+  }
+
+  .pi-providers-settings .claude-form-row-inline {
+    flex-direction: column;
+  }
+
+  .llm-providers-panel .pi-providers-settings .llm-provider-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.pi-providers-settings .claude-segment-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.pi-provider-avatar {
+  display: inline-flex;
+  padding: 7px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--accent);
+}
+
+.pi-provider-model-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 80px;
+  overflow: auto;
+}
+
+.pi-provider-model-tags .llm-badge {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pi-import-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.pi-import-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.pi-import-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pi-import-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+}
+
+.pi-import-item .mono {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.pi-provider-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.pi-provider-dialog .tb-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pi-model-picker { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.pi-model-picker-heading, .pi-model-picker-tools, .pi-model-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pi-model-picker-heading { justify-content: space-between; flex-wrap: wrap; font-size: 12px; }
+.pi-model-picker-tools { flex-wrap: wrap; }
+.pi-model-entry {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.pi-model-input-row > .model-combobox-wrap { flex: 1 1 160px; min-width: 0; }
+.pi-model-input-row > button { flex-shrink: 0; }
+.pi-model-input-row .active { color: var(--accent); opacity: 1; }
+.pi-model-reasoning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.pi-model-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.pi-thinking-map {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pi-thinking-map-head {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.pi-thinking-map-head small {
+  margin-left: 6px;
+  color: var(--text-tertiary);
+}
+.pi-thinking-map-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.pi-thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+.pi-thinking-level {
+  flex: 0 0 52px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  color: var(--text-secondary);
+}
+.pi-thinking-row select {
+  flex: 0 0 96px;
+  min-width: 0;
+}
+.pi-thinking-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .pi-model-input-row { flex-wrap: wrap; }
+  .pi-model-input-row > .model-combobox-wrap { flex-basis: 100%; }
+  .pi-thinking-map-grid { grid-template-columns: 1fr; }
+}
+
+.pi-provider-dialog .claude-form-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0;
+}
+
+.pi-provider-dialog input:not([type='checkbox']),
+.pi-provider-dialog select,
+.pi-provider-dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.pi-provider-dialog textarea {
+  resize: vertical;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
+
+.pi-provider-dialog .claude-segment-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
