@@ -194,6 +194,7 @@ impl PiCompatConfig {
 #[serde(rename_all = "camelCase")]
 pub struct PiModelConfig {
     pub id: String,
+    /// 显示名称，始终等于模型 ID（不接受独立配置）。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     #[serde(default)]
@@ -223,11 +224,8 @@ fn default_image_input() -> bool {
 impl PiModelConfig {
     fn validate(self) -> Result<Self, String> {
         let id = validate_model_id("模型 ID", &self.id)?;
-        let name = self.name.trim().to_string();
-        if name.chars().count() > 80 {
-            return Err("模型显示名称不能超过 80 个字符".to_string());
-        }
-        reject_control_chars("模型显示名称", &name)?;
+        // 显示名称固定跟随模型 ID，不再单独配置（写入 models.json 的 name 也一样）。
+        let name = id.clone();
         let thinking_level_map = self.thinking_level_map.validate()?;
         if !self.reasoning && !thinking_level_map.levels.is_empty() {
             return Err(format!("模型「{id}」未开启推理时不能配置思考级别映射"));
