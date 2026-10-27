@@ -83,7 +83,6 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
                         IconButton({ menu = true }) {
                             Icon(Icons.Outlined.MoreHoriz, "对话操作", Modifier.size(20.dp), tint = TbColors.TextMuted)
                         }
-                        ThemeToggleButton()
                     }
                     AiDivider()
                 }
