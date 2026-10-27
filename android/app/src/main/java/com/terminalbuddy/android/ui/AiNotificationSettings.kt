@@ -1,11 +1,15 @@
 package com.terminalbuddy.android.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.BatteryFull
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.NotificationsActive
@@ -21,12 +25,18 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.terminalbuddy.android.TerminalBuddyApplication
 import com.terminalbuddy.android.notifications.AiTaskNotifications
 
 /** 将通知权限、任务提醒和后台运行入口集中在同一个面板，返回系统设置后刷新状态。 */
 @Composable
 internal fun AiNotificationSettings(dismiss: () -> Unit) {
     val context = LocalContext.current
+    val notifications = remember(context) { (context.applicationContext as TerminalBuddyApplication).taskNotifications }
+    val monitor by notifications.monitorState.collectAsStateWithLifecycle()
+    val service by notifications.serviceState.collectAsStateWithLifecycle()
+    var copied by remember { mutableStateOf(false) }
     var enabled by remember { mutableStateOf(AiTaskNotifications.notificationsEnabled(context)) }
     var decisionAlerts by remember { mutableStateOf(AiTaskNotifications.decisionAlertsEnabled(context)) }
     var resultAlerts by remember { mutableStateOf(AiTaskNotifications.resultAlertsEnabled(context)) }
@@ -64,9 +74,31 @@ internal fun AiNotificationSettings(dismiss: () -> Unit) {
                 },
             ) { AiTaskNotifications.openResultSettings(context) }
             AiNotificationSettingRow(
+                Icons.Outlined.Sync, "后台消息接收",
+                when {
+                    !monitor.active -> "登录后开启后台消息接收"
+                    service.error != null -> "${service.error} · 点击重试"
+                    service.starting -> "正在启动后台接收服务"
+                    !service.running -> "后台接收服务未运行 · 点击重试"
+                    monitor.networkBlocked -> "系统正在限制后台网络，请允许后台联网"
+                    monitor.pollingFallback -> "服务运行中 · 正在通过后台同步接收"
+                    monitor.reconnecting -> "服务运行中 · 正在恢复消息连接"
+                    else -> "服务运行中 · 消息连接正常"
+                },
+            ) { notifications.retryMonitoring() }
+            AiNotificationSettingRow(
                 Icons.Outlined.BatteryFull, "后台运行设置",
-                if (backgroundRestricted) "后台运行受限 · 允许后台运行，减少提醒延迟" else "已允许后台运行 · 管理应用电池设置",
+                if (backgroundRestricted) "后台运行受限 · 请允许后台运行和自启动"
+                else "系统电池限制已解除 · 持续接收消息会增加耗电",
             ) { AiTaskNotifications.openBackgroundSettings(context) }
+            AiNotificationSettingRow(
+                Icons.Outlined.ContentCopy, if (copied) "已复制通知诊断" else "复制通知诊断",
+                "复制服务、网络和最近通知记录，帮助排查后台延迟；不包含凭据和对话内容",
+            ) {
+                context.getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText("Terminal Buddy 通知诊断", notifications.diagnosticReport()))
+                copied = true
+            }
         }
     }
 }

@@ -6,14 +6,13 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.util.Log
 import androidx.core.app.ServiceCompat
 import com.terminalbuddy.android.TerminalBuddyApplication
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import java.util.concurrent.TimeUnit
 
-/** 登录期间维持消息接收，实时订阅与摘要补偿由 Application 持有。 */
+/** 长期直连消息接收不使用有六小时后台配额的 dataSync 服务。 */
 class AiTaskMonitorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val notifications get() = (applicationContext as TerminalBuddyApplication).taskNotifications
@@ -28,18 +27,18 @@ class AiTaskMonitorService : Service() {
         foregroundStarted = runCatching {
             ServiceCompat.startForeground(
                 this, AiTaskNotifications.MONITOR_ID, notifications.monitoringNotification(),
-                if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0,
+                if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
             )
-        }.onFailure { Log.w("AiTaskMonitorService", "系统未允许任务后台保活", it) }.isSuccess
+            wakeLock = getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TerminalBuddy:AiTaskMonitor")
+                .apply { setReferenceCounted(false); acquire(TimeUnit.MINUTES.toMillis(10)) }
+        }.onFailure { notifications.monitorFailed(it) }.isSuccess
         if (!foregroundStarted) {
-            notifications.suspendMonitoring()
             stopSelf()
             return
         }
+        // 只有 startForeground 真正成功后才能标记服务运行。
         notifications.monitorStarted()
-        wakeLock = getSystemService(PowerManager::class.java)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TerminalBuddy:AiTaskMonitor")
-            .apply { setReferenceCounted(false) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -49,13 +48,12 @@ class AiTaskMonitorService : Service() {
                 if (!state.active) {
                     stopSelf()
                 } else {
-                    updateWakeLock(state.tasksRunning)
-                    // 仅连接或运行状态变化时更新常驻提示，避免周期更新干扰事件横幅。
                     runCatching {
                         getSystemService(android.app.NotificationManager::class.java).notify(
-                            AiTaskNotifications.MONITOR_ID, notifications.monitoringNotification(state.reconnecting, state.tasksRunning, state.pollingFallback),
+                            AiTaskNotifications.MONITOR_ID,
+                            notifications.monitoringNotification(state.reconnecting, state.tasksRunning, state.pollingFallback),
                         )
-                    }.onFailure { Log.w("AiTaskMonitorService", "更新任务监听通知失败", it) }
+                    }.onFailure { notifications.recordDiagnostic("更新常驻通知失败：${it.javaClass.simpleName}") }
                 }
             }
         }
@@ -65,26 +63,24 @@ class AiTaskMonitorService : Service() {
                 delay(5_000)
             }
         }
-        return START_STICKY
-    }
-
-    private fun updateWakeLock(tasksRunning: Boolean) {
-        if (!tasksRunning) {
-            keepAwake?.cancel()
-            keepAwake = null
-            wakeLock?.let { if (it.isHeld) it.release() }
-        } else if (keepAwake?.isActive != true) keepAwake = scope.launch {
+        if (keepAwake?.isActive != true) keepAwake = scope.launch {
             while (isActive) {
-                // 仅任务执行期间持有分段超时锁；空闲监听不持续占用 CPU 唤醒锁。
+                // 空闲期间也必须接收新任务，不能等收到了 running 才唤醒接收线程。
+                // 超时锁配合续期，服务退出释放；Doze 网络访问仍需用户允许后台运行。
                 wakeLock?.acquire(TimeUnit.MINUTES.toMillis(10))
                 delay(TimeUnit.MINUTES.toMillis(9))
             }
         }
+        return START_STICKY
     }
 
-    /** Android 15+ 限制 dataSync 前台服务时长；应用存活时仍接收，进程回收后由定时任务补偿。 */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        notifications.recordDiagnostic("应用从最近任务划走，前台接收服务继续运行")
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onTimeout(startId: Int, fgsType: Int) {
-        notifications.suspendMonitoring()
+        notifications.monitorFailed(IllegalStateException(), "系统限制后台服务运行时间")
         stopSelf()
     }
 
@@ -92,8 +88,8 @@ class AiTaskMonitorService : Service() {
         scope.cancel()
         wakeLock?.let { if (it.isHeld) it.release() }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        super.onDestroy()
         notifications.monitorStopped()
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
