@@ -11,6 +11,7 @@ import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../
 import { currentClaudeCommand, currentCodexCommand, currentPiCommand } from '../../utils/agentCommands';
 import type { EnabledAgents, ExtraParamMode, Profile } from '../../types';
 import { projectEnabledAgents, projectModelSources } from '../../types';
+import { useAgentAvailability } from '../../hooks/useAgentAvailability';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
@@ -64,6 +65,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshPiModels = useAppStore(s => s.refreshPiModels);
+  // 环境检测结果：未安装的 Agent 不出现在项目右键菜单里（检测返回前视为可用）。
+  const agentAvailability = useAgentAvailability();
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
@@ -702,7 +705,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                 try { await openTerminalInDir(project.path, { groupName: project.name }); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
-              {projectEnabledAgents(project).pi && (
+              {projectEnabledAgents(project).pi && (agentAvailability?.pi ?? true) && (
                 <div className="context-menu-item" onClick={() => void startProjectWithPi(project)}>启动 Pi</div>
               )}
               {matchingProjectPresets(extraParamPresets, profiles, project).map(preset => (
@@ -726,7 +729,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                   </span>
                 </div>
               ))}
-              {modelMenuSections(projectModelSources(project), (source, providerId, modelId, thinking) => {
+              {modelMenuSections(projectModelSources(project).filter(source => agentAvailability?.[source] ?? true), (source, providerId, modelId, thinking) => {
                 if (source === 'claude') void startProjectWithModel(project, providerId, modelId);
                 else if (source === 'codex') void startProjectWithCodexModel(project, providerId, modelId);
                 else void startProjectWithPiModel(project, providerId, modelId, thinking);
