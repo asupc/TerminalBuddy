@@ -9,6 +9,14 @@
 
 ## [未发布]
 
+### 📱 原生 AI 会话接入 Pi（App 功能集成）
+
+- **Pi 原生会话（M7-01/02）**：`ai_chat_service` 新增 Pi RPC 驱动——以 `pi --mode rpc --session-id <会话ID>` 常驻运行，会话 ID 直接复用 TerminalBuddy 的 AI 会话 ID（Pi 按该 ID 落盘、复用同一会话文件并随项目目录归档，恢复无需额外映射）；`text_delta`/`message_end` 流式与权威正文、`tool_execution_*` 工具卡片、`agent_settled` 回合结束全量映射，空闲进程保留、手机续发消息直接走 `prompt` 复用
+- **供应商与模型目录（M7-02）**：手机首页供应商目录加入 Pi 供应商卡片（`pi:<卡片ID>`，含默认卡片标记、模型与默认思考级别），启动展开为 `--provider/--model/--thinking`；新增「服务端默认配置」占位；模型卡片配置的 contextWindow 用于上下文用量展示
+- **用量与审批（M7-03）**：回合结束后调用 `get_session_stats` 做权威 Token 结算（覆盖工具嵌套的模型消耗），contextUsage 映射上下文占用与窗口；RPC 扩展交互桥把 `extension_ui_request`（select/confirm/input/editor）映射为手机审批卡并代答 `extension_ui_response`，通知类请求静默忽略；压缩时上下文用量即时失效
+- **Pi 扩展双通道审批**：扩展在 RPC 模式（原生会话）下经扩展 UI 确认 `bash/edit/write`，桌面终端链路保持 HTTP Hook 不变；工具审批仍默认关闭
+- **Android 客户端（M7-05）**：项目 Agent 开关识别 `pi`（默认启用）、Agent 选择与供应商过滤加入 Pi、会话/供应商标签显示「Pi」、新增 π 线条矢量标志；审批卡、Token 用量、会话恢复等既有能力对 Pi 会话直接生效
+
 ### π Pi Agent 全面支持（P0/P1）
 
 - **Agent 管理**：新增 Pi 卡片，支持 `pi --version` 检测（含 `--help` 签名校验，避免同名命令误判）、npm 安装/更新；Docker 运行镜像内置 Node 24，Windows 预检 Node ≥ 22.19 与 Git Bash，缺失时给出明确安装指引
