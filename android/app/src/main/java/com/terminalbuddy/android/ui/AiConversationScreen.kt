@@ -207,8 +207,11 @@ private fun AiConversation(
                         }
                     }
                     if (showReplyIndicator) item(key = "ai-status") {
+                        val statusLabel = when (session.status) { "approval" -> "等待确认"; "background" -> "后台任务执行中"; "stopping" -> "正在中断"; else -> "思考中" }
                         AiReplyIndicator(
-                            session.providerLabel, when (session.status) { "approval" -> "等待确认"; "background" -> "后台任务执行中"; "stopping" -> "正在中断"; else -> "思考中" }, elapsedSeconds,
+                            session.providerLabel,
+                            if (session.pendingCount > 0) "$statusLabel · ${session.pendingCount} 条排队中" else statusLabel,
+                            elapsedSeconds,
                             Modifier.animateItem(fadeInSpec = tween(120), placementSpec = null, fadeOutSpec = null),
                         )
                     }
@@ -281,7 +284,8 @@ private fun AiConversation(
 private fun AiComposer(
     ui: AiUiState, session: AiSession, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit,
 ) {
-    val showStop = session.running && (session.status != "background" || ui.draft.isBlank())
+    // 回复中输入了草稿就显示发送（消息排队，回合结束自动发送）；空白才显示中断。
+    val showStop = session.running && ui.draft.isBlank()
     val actionEnabled = if (showStop) !ui.working && session.status != "stopping" else session.canSend && ui.draft.isNotBlank() && !ui.sending && !ui.loadingSession
     Surface(color = TbColors.Surface) {
         Box(
@@ -315,7 +319,7 @@ private fun AiComposer(
                     )
                     IconButton(
                         if (showStop) stop else send, enabled = actionEnabled, modifier = Modifier.size(48.dp)
-                            .semantics { contentDescription = if (showStop) "中断回复" else if (ui.sending) "正在发送" else "发送消息" },
+                            .semantics { contentDescription = if (showStop) "中断回复" else if (ui.sending) "正在发送" else if (session.running) "发送排队消息" else "发送消息" },
                     ) {
                         Box(
                             Modifier.size(32.dp).background(

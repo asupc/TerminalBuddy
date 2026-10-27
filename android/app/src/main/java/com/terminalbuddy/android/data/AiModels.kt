@@ -13,6 +13,10 @@ data class AiMessage(val id: String, val role: String, val text: String, val cre
 @Serializable
 data class AiApproval(val id: String, val method: String, val details: JsonObject = JsonObject(emptyMap()))
 
+/** 回合进行中排队的消息：当前回合结束后按序自动发送。 */
+@Serializable
+data class AiPendingInput(val text: String = "", val requestId: String = "")
+
 @Serializable
 data class AiSession(
     val id: String, val title: String, val provider: String, val projectPath: String,
@@ -21,11 +25,14 @@ data class AiSession(
     val approvals: List<AiApproval> = emptyList(), val error: String? = null,
     val updatedAt: Long = 0, val revision: Long = 0, val resultRevision: Long = 0,
     val usage: AiUsage? = null,
+    val pendingInputs: List<AiPendingInput> = emptyList(),
 ) {
     /** 服务端仍在该会话执行任务（含等待用户确认）。 */
     val running get() = status == "running" || status == "approval" || status == "background" || status == "stopping"
-    /** 主回合空闲时，补充消息继续交给保留的服务端会话。 */
-    val canSend get() = status != "running" && status != "approval" && status != "stopping"
+    /** 回复/等待确认期间发送的消息会排队，回合结束后自动按序发送；中断瞬间禁发防误触。 */
+    val canSend get() = status != "stopping"
+    /** 排队待发条数，供状态提示展示。 */
+    val pendingCount get() = pendingInputs.size
     val statusLabel get() = when (status) {
         "running" -> "正在回复"
         "approval" -> "等待确认"
@@ -35,14 +42,18 @@ data class AiSession(
         "interrupted" -> "已中断"
         else -> "可以发送消息"
     }
-    val providerLabel get() = if (provider == "codex") "Codex" else "Claude"
+    val providerLabel get() = when (provider) {
+        "codex" -> "Codex"
+        "pi" -> "Pi"
+        else -> "Claude"
+    }
     val modelLabel get() = model?.takeIf(String::isNotBlank) ?: "服务端默认模型"
     val targetLabel get() = listOfNotNull(providerLabel, providerName?.takeIf(String::isNotBlank), modelLabel).joinToString(" · ")
 }
 
 /** `/api/projects` 返回的已登记项目，enabledAgents 决定首页可选哪些 Agent。 */
 @Serializable
-data class AiAgents(val claude: Boolean = true, val codex: Boolean = true)
+data class AiAgents(val claude: Boolean = true, val codex: Boolean = true, val pi: Boolean = true)
 
 @Serializable
 data class AiProject(val name: String, val path: String, val enabledAgents: AiAgents = AiAgents())
@@ -55,7 +66,11 @@ data class AiProvider(
     val id: String, val agent: String, val name: String, val isDefault: Boolean = false,
     val models: List<AiModel> = emptyList(),
 ) {
-    val agentLabel get() = if (agent == "codex") "Codex" else "Claude"
+    val agentLabel get() = when (agent) {
+        "codex" -> "Codex"
+        "pi" -> "Pi"
+        else -> "Claude"
+    }
     val label get() = "$agentLabel · $name"
 }
 

@@ -20,6 +20,7 @@ internal fun AiAgentLogo(agent: String, modifier: Modifier = Modifier, contentDe
     val resource = when (agent.lowercase()) {
         "codex" -> R.drawable.ai_logo_codex
         "claude", "claude code" -> R.drawable.ai_logo_claude
+        "pi" -> R.drawable.ai_logo_pi
         else -> null
     }
     if (resource != null) {

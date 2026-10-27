@@ -172,7 +172,11 @@ private enum class AiPage { Home, Accounts, Connection }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             AiChoiceField(
                                 "Agent", Icons.Outlined.AutoAwesome, ui.launchProvider?.agent.orEmpty(), "选择 Agent",
-                                ui.availableAgents.map { AiChoice(it, if (it == "codex") "Codex" else "Claude Code", agent = it) },
+                                ui.availableAgents.map { AiChoice(it, when (it) {
+                                    "codex" -> "Codex"
+                                    "pi" -> "Pi"
+                                    else -> "Claude Code"
+                                }, agent = it) },
                                 !ui.initialLoading && !ui.working, vm::selectAgent, Modifier.weight(1f),
                             )
                             AiChoiceField(

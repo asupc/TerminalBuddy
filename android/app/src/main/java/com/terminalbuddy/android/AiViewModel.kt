@@ -46,9 +46,15 @@ data class AiUiState(
     val launchProject get() = projects.find { it.path == projectPath }
     /** 只列出当前项目启用的 Agent 对应供应商。 */
     val availableProviders get() = providers.filter { provider ->
-        launchProject?.let { if (provider.agent == "codex") it.enabledAgents.codex else it.enabledAgents.claude } == true
+        launchProject?.let {
+            when (provider.agent) {
+                "codex" -> it.enabledAgents.codex
+                "pi" -> it.enabledAgents.pi
+                else -> it.enabledAgents.claude
+            }
+        } == true
     }
-    val availableAgents get() = listOf("claude", "codex").filter { agent -> availableProviders.any { it.agent == agent } }
+    val availableAgents get() = listOf("claude", "codex", "pi").filter { agent -> availableProviders.any { it.agent == agent } }
     val launchProvider get() = availableProviders.find { it.id == providerId }
     /** 汇总当前 Agent 的全部模型，启动时仍使用模型所属的供应商。 */
     val availableModels get() = availableProviders.filter { it.agent == launchProvider?.agent }.flatMap { provider ->
