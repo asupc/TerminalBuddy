@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 setlocal EnableExtensions
-set "PS_SCRIPT=%~dp0scripts\build-android.ps1"
+set "PS_SCRIPT=%~dp0build-android.ps1"
 
 where pwsh.exe >nul 2>nul
 if errorlevel 1 goto :UseWindowsPowerShell

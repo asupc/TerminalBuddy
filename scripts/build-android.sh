@@ -5,17 +5,17 @@
 # Gradle 缓存保存在 Docker 命名卷中,宿主机只接收最终产物。
 #
 # 用法:
-#   ./build-android.sh               首次自动构建工具链镜像,然后产出 Release APK
-#   ./build-android.sh --rebuild     强制重建工具链镜像
-#   ./build-android.sh --clean-cache 清空 Gradle 构建缓存
+#   ./scripts/build-android.sh               首次自动构建工具链镜像,然后产出 Release APK
+#   ./scripts/build-android.sh --rebuild     强制重建工具链镜像
+#   ./scripts/build-android.sh --clean-cache 清空 Gradle 构建缓存
 #
 # 产物:dist/TerminalBuddy_<版本>_android.apk 及同名 .sha256(仓库内
 # release.keystore 自动完成 Release 签名,并在容器内用 apksigner 校验)。
-# Windows 上带 adb 直装的版本见 build-android.bat / scripts/build-android.ps1。
+# Windows 上带 adb 直装的版本见 scripts/build-android.bat 与 scripts/build-android.ps1。
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCKERFILE="$REPO_ROOT/scripts/android-build/Dockerfile"
 IMAGE="${TERMINAL_BUDDY_ANDROID_IMAGE:-terminal-buddy-android-builder:latest}"
 CACHE_VOLUME="${TERMINAL_BUDDY_ANDROID_CACHE_VOLUME:-terminal-buddy-android-cache}"
@@ -25,7 +25,7 @@ CLEAN_CACHE=0
 
 usage() {
     cat <<'EOF'
-用法:./build-android.sh [--rebuild] [--clean-cache]
+用法:./scripts/build-android.sh [--rebuild] [--clean-cache]
 
   --rebuild      强制重建构建工具链镜像(--no-cache)
   --clean-cache  删除 Docker 命名卷中的 Gradle 缓存后重新构建

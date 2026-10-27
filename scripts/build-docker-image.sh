@@ -7,19 +7,19 @@
 #   3. 执行 docker save 导出 .tar 文件（可选 --gzip 导出 .tar.gz）
 #
 # 用法：
-#   ./build-docker-image.sh               # 默认构建 terminal-buddy:server 并导出为 dist/terminal-buddy-server.tar
-#   ./build-docker-image.sh --gzip        # 导出为 dist/terminal-buddy-server.tar.gz（压缩体积，省空间）
-#   ./build-docker-image.sh --tag my:tag  # 指定镜像标签
-#   ./build-docker-image.sh --no-build    # 跳过构建，直接导出已有镜像
-#   ./build-docker-image.sh -o /path/to   # 指定输出目录
+#   ./scripts/build-docker-image.sh               # 默认构建 terminal-buddy:server 并导出为 dist/terminal-buddy-server.tar
+#   ./scripts/build-docker-image.sh --gzip        # 导出为 dist/terminal-buddy-server.tar.gz（压缩体积，省空间）
+#   ./scripts/build-docker-image.sh --tag my:tag  # 指定镜像标签
+#   ./scripts/build-docker-image.sh --no-build    # 跳过构建，直接导出已有镜像
+#   ./scripts/build-docker-image.sh -o /path/to   # 指定输出目录
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="${SCRIPT_DIR}"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 IMAGE="${TB_IMAGE:-terminal-buddy:server}"
-OUTPUT_DIR="${SCRIPT_DIR}/dist"
+OUTPUT_DIR="${REPO_DIR}/dist"
 OUTPUT_FILE=""
 DO_BUILD=1
 USE_GZIP=0
@@ -31,7 +31,7 @@ fail() { printf '\033[31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'HELP'
 用法：
-  ./build-docker-image.sh [选项]
+  ./scripts/build-docker-image.sh [选项]
 
 选项：
   -t, --tag <tag>         指定构建/导出的镜像标签（默认：terminal-buddy:server 或 $TB_IMAGE）
@@ -42,9 +42,9 @@ usage() {
   -h, --help              显示此帮助信息
 
 示例：
-  ./build-docker-image.sh
-  ./build-docker-image.sh --gzip
-  ./build-docker-image.sh --tag terminal-buddy:1.8.0 --output-dir /data/backup
+  ./scripts/build-docker-image.sh
+  ./scripts/build-docker-image.sh --gzip
+  ./scripts/build-docker-image.sh --tag terminal-buddy:1.8.0 --output-dir /data/backup
 HELP
 }
 

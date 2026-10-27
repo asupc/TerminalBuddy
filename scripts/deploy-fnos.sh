@@ -12,11 +12,11 @@
 # 需要在本机构建并上传镜像时用 --build-local（要求本机有 docker）。
 #
 # 用法：
-#   ./deploy-fnos.sh                       # 全流程（拉代码 → 在飞牛上构建镜像）
-#   ./deploy-fnos.sh --no-build            # 跳过构建，用飞牛上现有镜像重建容器
-#   ./deploy-fnos.sh --no-pull             # 不拉取本机代码，直接用当前工作区
-#   ./deploy-fnos.sh --build-local         # 改在本机构建镜像后上传（需本机 docker）
-#   ./deploy-fnos.sh --host 192.168.3.77 --listen-port 9600
+#   ./scripts/deploy-fnos.sh                       # 全流程（拉代码 → 在飞牛上构建镜像）
+#   ./scripts/deploy-fnos.sh --no-build            # 跳过构建，用飞牛上现有镜像重建容器
+#   ./scripts/deploy-fnos.sh --no-pull             # 不拉取本机代码，直接用当前工作区
+#   ./scripts/deploy-fnos.sh --build-local         # 改在本机构建镜像后上传（需本机 docker）
+#   ./scripts/deploy-fnos.sh --host 192.168.3.77 --listen-port 9600
 #
 # sudo 密码来源（按优先级）：
 #   1. 环境变量 TB_FNOS_PASSWORD
@@ -39,7 +39,7 @@ SSH_KEY="${TB_FNOS_SSH_KEY:-$HOME/.ssh/terminal_buddy_fnos_deploy}"
 PULL_LATEST="${TB_FNOS_PULL:-1}"
 # =====================================================
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DATA_DIR="${APP_DIR}/data"
 HOME_DIR="${APP_DIR}/home"
 WORKSPACE_DIR="${APP_DIR}/workspace"
@@ -331,4 +331,4 @@ echo "  数据目录 : ${DATA_DIR}      -> 容器 /data（含 jwt.key / server.k
 echo "  用户目录 : ${HOME_DIR}      -> 容器 /home/terminalbuddy（Claude CLI 装在这里）"
 echo "  工作区   : ${WORKSPACE_DIR} -> 容器内同路径"
 echo "  查看日志 : ssh ${FNOS_USER}@${FNOS_HOST} 'docker logs -f --tail 100 ${CONTAINER}'"
-echo "  重新部署 : ./deploy-fnos.sh --no-build     # 跳过构建，仅重建容器"
+echo "  重新部署 : ./scripts/deploy-fnos.sh --no-build     # 跳过构建，仅重建容器"

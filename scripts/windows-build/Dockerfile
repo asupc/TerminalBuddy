@@ -1,7 +1,7 @@
 # TerminalBuddy Windows exe 交叉编译环境
 #
 # 镜像只提供工具链；源码在运行时以只读方式挂载，构建过程全部发生在容器内部，
-# 缓存放在 Docker 命名卷中。构建入口：仓库根目录的 build-windows-exe.sh。
+# 缓存放在 Docker 命名卷中。构建入口：scripts/build-windows-exe.sh。
 
 FROM rust:1-bookworm
 

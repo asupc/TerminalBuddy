@@ -5,9 +5,9 @@
 # 缓存保存在 Docker 命名卷中，宿主机只接收最终产物。
 #
 # 用法：
-#   ./build-windows-exe.sh              首次自动构建工具链镜像，然后产出 exe
-#   ./build-windows-exe.sh --rebuild    强制重建工具链镜像
-#   ./build-windows-exe.sh --clean-cache 清空构建缓存（cargo / target / xwin / npm）
+#   ./scripts/build-windows-exe.sh              首次自动构建工具链镜像，然后产出 exe
+#   ./scripts/build-windows-exe.sh --rebuild    强制重建工具链镜像
+#   ./scripts/build-windows-exe.sh --clean-cache 清空构建缓存（cargo / target / xwin / npm）
 #
 # 产物：dist/TerminalBuddy_<版本>_x64.exe 及同名 .sha256
 # 说明：只生成单个 exe，不生成 NSIS 安装包；安装包需在 Windows 上执行
@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$REPO_ROOT/terminal-buddy"
 DOCKERFILE="$REPO_ROOT/scripts/windows-build/Dockerfile"
 IMAGE="${TERMINAL_BUDDY_WIN_IMAGE:-terminal-buddy-windows-builder:latest}"
@@ -26,7 +26,7 @@ CLEAN_CACHE=0
 
 usage() {
     cat <<'EOF'
-用法：./build-windows-exe.sh [--rebuild] [--clean-cache]
+用法：./scripts/build-windows-exe.sh [--rebuild] [--clean-cache]
 
   --rebuild      强制重建交叉编译工具链镜像（--no-cache）
   --clean-cache  删除 Docker 命名卷中的构建缓存后重新构建

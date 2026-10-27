@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # TerminalBuddy 在飞牛 fnOS 上原地更新（也可在自己的网页终端中执行）。
+# 脚本位于 scripts/ 下，源码根目录默认为脚本所在仓库的根目录，因此在任意目录执行都可以。
 # 先对源码目录执行 git pull 并显示最新一条提交记录，再用当前源码构建镜像，不修改原部署的端口、环境变量与挂载。
 # 构建结果与运行镜像相同时直接结束；有变化时由独立更新容器切换，失败时恢复 data/home 快照并重新启动原容器。
 # 默认更新成功后自动清理旧容器、更新容器和临时镜像标签；--keep-rollback 可保留回退材料。
-# 允许用户顺手输入 sh update.sh：尽早切回 Bash，避免 Bash 专用语法在 dash 中报错。
+# 允许用户顺手输入 sh scripts/update.sh：尽早切回 Bash，避免 Bash 专用语法在 dash 中报错。
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail
 
 CONTAINER="${TB_FNOS_CONTAINER:-terminal-buddy}"
 IMAGE="${TB_FNOS_IMAGE:-terminal-buddy:server}"
-SOURCE_DIR="${PWD}"
+# 脚本在 scripts/ 下，源码根目录取脚本上一级，不再隐式依赖执行时的当前目录。
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SOURCE_DIR="${REPO_DIR}"
 HEALTH_TIMEOUT="${TB_UPDATE_HEALTH_TIMEOUT:-180}"
 DETACH=0
 DO_PULL="${TB_UPDATE_PULL:-1}"
 KEEP_ROLLBACK="${TB_UPDATE_KEEP_ROLLBACK:-0}"
 CLEANUP_DELAY="${TB_UPDATE_CLEANUP_DELAY:-10}"
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 fail() {
@@ -27,9 +30,9 @@ docker() { command docker --host unix:///var/run/docker.sock "$@"; }
 
 usage() {
   cat <<'HELP'
-用法：在飞牛的源码根目录执行 bash update.sh [选项]
+用法：在飞牛上执行 bash scripts/update.sh [选项]（可在任意目录，源码根目录默认取脚本所在仓库根目录）
 
-  --source-dir DIR       源码根目录，默认当前目录（需含 Dockerfile、terminal-buddy/）
+  --source-dir DIR       源码根目录，默认脚本所在仓库根目录（需含 Dockerfile、terminal-buddy/）
   --container NAME       要更新的现有容器，默认 terminal-buddy
   --image IMAGE:TAG      成功后发布的镜像标签，默认 terminal-buddy:server
   --health-timeout SEC   新旧服务健康检查的最长等待秒数，默认 180
@@ -43,7 +46,7 @@ usage() {
 使用 BuildKit 复用依赖与编译缓存；构建结果与当前运行镜像相同时直接结束，不备份或重启。
 可从宿主机或自己的网页终端执行；镜像有变化且切换准备就绪后倒计时 10 秒开始部署。
 更新或失败回退仍由独立容器继续执行，浏览器刷新或断开不影响结果。
-需能访问 /var/run/docker.sock；宿主机账号无权限时使用 sudo bash update.sh。
+需能访问 /var/run/docker.sock；宿主机账号无权限时使用 sudo bash scripts/update.sh。
 默认更新成功后自动清理旧容器、更新容器和临时镜像标签；失败时更新日志、
 data/home 快照会保存在独立更新容器中供回退和排查，不会自动删除。
 可设置 TB_UPDATE_KEEP_ROLLBACK=1 或使用 --keep-rollback 保留成功更新的回退材料；
@@ -66,7 +69,7 @@ while [ "$#" -gt 0 ]; do
     --exit-on-success) ;; # 兼容旧参数，成功后默认退出。
     --keep-rollback) KEEP_ROLLBACK=1 ;;
     -h|--help) usage; exit 0 ;;
-    *) fail "未知参数：$1（运行 bash update.sh --help 查看用法）" ;;
+    *) fail "未知参数：$1（运行 bash scripts/update.sh --help 查看用法）" ;;
   esac
   shift
 done
@@ -107,14 +110,14 @@ else
   log "已跳过 git pull（--no-pull），直接使用当前源码"
 fi
 
-WORKER_SCRIPT="${SCRIPT_DIR}/scripts/update-fnos-container.sh"
+WORKER_SCRIPT="${SCRIPT_DIR}/update-fnos-container.sh"
 for file in Dockerfile .dockerignore terminal-buddy/package-lock.json \
   terminal-buddy/web/package-lock.json terminal-buddy/src-tauri/Cargo.lock; do
-  [ -f "${SOURCE_DIR}/${file}" ] || fail "源码不完整，缺少 ${SOURCE_DIR}/${file}"
+  [ -f "${SOURCE_DIR}/${file}" ] || fail "源码不完整，缺少 ${SOURCE_DIR}/${file}（可用 --source-dir 指定源码根目录）"
 done
 for dir in terminal-buddy/src terminal-buddy/web/src terminal-buddy/src-tauri/src \
   terminal-buddy/src-tauri/portable-pty-patched; do
-  [ -d "${SOURCE_DIR}/${dir}" ] || fail "源码不完整，缺少 ${SOURCE_DIR}/${dir}"
+  [ -d "${SOURCE_DIR}/${dir}" ] || fail "源码不完整，缺少 ${SOURCE_DIR}/${dir}（可用 --source-dir 指定源码根目录）"
 done
 [ -f "${WORKER_SCRIPT}" ] || fail "缺少独立更新脚本 ${WORKER_SCRIPT}"
 command -v docker >/dev/null 2>&1 || fail "未检测到 docker"

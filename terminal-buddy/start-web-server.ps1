@@ -48,10 +48,10 @@ if ($Rebuild) {
     } finally { Pop-Location }
 }
 if (-not (Test-Path -LiteralPath $executable)) {
-    throw '尚未生成服务端程序。请从仓库根目录执行 startDockerServer.bat -Rebuild。'
+    throw '尚未生成服务端程序。请从仓库根目录执行 scripts\startDockerServer.bat -Rebuild。'
 }
 if (-not (Test-Path -LiteralPath (Join-Path $serverRoot 'dist-web\index.html'))) {
-    throw '尚未生成完整网页资源。请从仓库根目录执行 startDockerServer.bat -Rebuild。'
+    throw '尚未生成完整网页资源。请从仓库根目录执行 scripts\startDockerServer.bat -Rebuild。'
 }
 $env:TERMINAL_BUDDY_DATA_DIR = [IO.Path]::GetFullPath($DataDirectory)
 $env:TERMINAL_BUDDY_WORKSPACE_DIR = (Resolve-Path -LiteralPath $Workspace).Path

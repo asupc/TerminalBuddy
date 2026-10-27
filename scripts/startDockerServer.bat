@@ -3,7 +3,7 @@ chcp 936 >nul
 setlocal EnableExtensions DisableDelayedExpansion
 title TerminalBuddy 服务端
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 rem ============ 解析第一个参数，决定运行模式 ============
 set "MODE="
@@ -82,24 +82,24 @@ echo.
 echo [自检] 正在检查启动环境（不会编译或启动服务）...
 echo.
 set "CHECK_FAIL="
-if not exist "%~dp0compose.yaml" (
+if not exist "%~dp0..\compose.yaml" (
     echo   [警告] 缺少 compose.yaml，Docker 模式不可用。
     set "CHECK_FAIL=1"
 ) else (
     echo   [通过] compose.yaml 存在。
 )
-if not exist "%~dp0terminal-buddy\start-web-server.ps1" (
+if not exist "%~dp0..\terminal-buddy\start-web-server.ps1" (
     echo   [警告] 缺少 terminal-buddy\start-web-server.ps1，本机模式不可用。
     set "CHECK_FAIL=1"
 ) else (
     echo   [通过] start-web-server.ps1 存在。
 )
-if not exist "%~dp0terminal-buddy\src-tauri\target\server\debug\terminal-buddy-server.exe" (
+if not exist "%~dp0..\terminal-buddy\src-tauri\target\server\debug\terminal-buddy-server.exe" (
     echo   [提示] 服务端程序尚未编译，首次启动时会自动编译。
 ) else (
     echo   [通过] 服务端程序已编译。
 )
-if not exist "%~dp0terminal-buddy\dist-web\index.html" (
+if not exist "%~dp0..\terminal-buddy\dist-web\index.html" (
     echo   [提示] 网页资源尚未构建，首次启动时会自动构建。
 ) else (
     echo   [通过] 网页资源已构建。
@@ -139,9 +139,9 @@ goto :docker_mode
 
 rem ============ 本机模式：在 Windows 上直接运行服务端程序，不需要 Docker ============
 :local_mode
-if not exist "%~dp0terminal-buddy\start-web-server.ps1" (
+if not exist "%~dp0..\terminal-buddy\start-web-server.ps1" (
     echo [错误] 未找到 terminal-buddy\start-web-server.ps1。
-    echo        请确认本脚本位于 TerminalBuddy 仓库根目录，且 terminal-buddy 源码目录完整。
+    echo        请确认本脚本位于 TerminalBuddy 仓库的 scripts 目录，且 terminal-buddy 源码目录完整。
     goto :fail
 )
 where powershell.exe >nul 2>&1
@@ -156,11 +156,11 @@ call :parse_local_options %*
 
 set "NEED_REBUILD="
 set "REBUILD_REASON="
-if not exist "%~dp0terminal-buddy\src-tauri\target\server\debug\terminal-buddy-server.exe" (
+if not exist "%~dp0..\terminal-buddy\src-tauri\target\server\debug\terminal-buddy-server.exe" (
     set "NEED_REBUILD=1"
     set "REBUILD_REASON=未检测到已编译的服务端程序。"
 )
-if not exist "%~dp0terminal-buddy\dist-web\index.html" (
+if not exist "%~dp0..\terminal-buddy\dist-web\index.html" (
     set "NEED_REBUILD=1"
     set "REBUILD_REASON=未检测到已编译的网页资源。"
 )
@@ -205,7 +205,7 @@ echo.
 
 start "" /min powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "for ($i = 0; $i -lt %POLL_SECONDS%; $i++) { try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:%LOCAL_PORT%/api/health' -TimeoutSec 3; if ($r.StatusCode -eq 200) { Start-Process 'http://127.0.0.1:%LOCAL_PORT%/'; break } } catch { } Start-Sleep -Seconds 2 }"
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0terminal-buddy\start-web-server.ps1" %FORWARD_ARGS%
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\terminal-buddy\start-web-server.ps1" %FORWARD_ARGS%
 set "SERVER_CODE=%ERRORLEVEL%"
 if "%SERVER_CODE%"=="0" goto :done
 echo.
@@ -215,8 +215,8 @@ goto :fail
 
 rem ============ Docker 模式 ============
 :docker_mode
-if not exist "%~dp0compose.yaml" (
-    echo [错误] 未找到 compose.yaml，请确认本脚本位于 TerminalBuddy 仓库根目录。
+if not exist "%~dp0..\compose.yaml" (
+    echo [错误] 未找到 compose.yaml，请确认仓库根目录下存在 compose.yaml。
     goto :fail
 )
 call :require_docker

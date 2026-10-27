@@ -3,11 +3,11 @@ chcp 936 >nul
 setlocal EnableExtensions DisableDelayedExpansion
 title TerminalBuddy 镜像构建与导出
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 rem ============ 可调参数 ============
 if not defined TB_IMAGE set "TB_IMAGE=terminal-buddy:server"
-set "OUTPUT_DIR=%~dp0dist"
+set "OUTPUT_DIR=%~dp0..\dist"
 set "TARBALL=%OUTPUT_DIR%\terminal-buddy-server.tar"
 
 rem ============ 环境检查 ============
@@ -21,8 +21,8 @@ if errorlevel 1 (
     echo [错误] 无法连接 Docker 引擎，请确认 Docker Desktop 已启动。
     goto :fail
 )
-if not exist "%~dp0Dockerfile" (
-    echo [错误] 未找到 Dockerfile，请确认本脚本位于 TerminalBuddy 仓库根目录。
+if not exist "%~dp0..\Dockerfile" (
+    echo [错误] 未找到 Dockerfile，请确认仓库根目录下存在 Dockerfile。
     goto :fail
 )
 if not exist "%OUTPUT_DIR%" (
@@ -38,7 +38,7 @@ echo.
 echo [1/2] 构建镜像 %TB_IMAGE%
 echo       首次构建需下载基础镜像与依赖，耗时较长；改动源码后再次构建会复用缓存。
 echo.
-docker build -f "%~dp0Dockerfile" -t "%TB_IMAGE%" "%~dp0."
+docker build -f "%~dp0..\Dockerfile" -t "%TB_IMAGE%" "%~dp0.."
 if errorlevel 1 (
     echo.
     echo [错误] 镜像构建失败，请查看上方构建日志。

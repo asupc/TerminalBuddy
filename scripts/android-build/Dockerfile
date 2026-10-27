@@ -2,7 +2,7 @@
 #
 # 镜像只提供工具链(JDK 17 + Android SDK 36);源码在运行时以只读方式挂载,
 # 构建过程全部发生在容器内部,Gradle 缓存放在 Docker 命名卷中。
-# 构建入口:仓库根目录的 build-android.sh。
+# 构建入口:scripts/build-android.sh。
 
 FROM eclipse-temurin:17-jdk
 

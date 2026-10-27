@@ -18,7 +18,7 @@
 #   - /vol2 挂载在容器内呈现 mode 000，源码必须 tar 复制进容器再 chmod（同 build-windows-exe.sh）。
 #
 # 用法（在 terminal-buddy 容器内的 AI 终端，或 NAS 宿主上均可执行）：
-#   bash /vol2/1000/code/terminal-buddy/quick-update.sh            # 构建 + 替换 + 重启 + 健康检查
+#   bash /vol2/1000/code/terminal-buddy/scripts/quick-update.sh            # 构建 + 替换 + 重启 + 健康检查
 #   bash .../quick-update.sh --build-only                          # 只构建到 staging，不动容器
 #   bash .../quick-update.sh --delay 10                            # helper 替换前等待秒数（默认 15）
 #   bash .../quick-update.sh --help

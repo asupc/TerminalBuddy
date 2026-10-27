@@ -1,5 +1,5 @@
 @echo off
-cd /d "%~dp0terminal-buddy"
+cd /d "%~dp0..\terminal-buddy"
 
 :: 编译 web 端远程访问界面
 cd web
