@@ -131,7 +131,8 @@ fn build_config(current: &[u8], provider: &CodexProvider, key: &str) -> Result<V
 }
 
 /// 先收集完整旧值并备份；任一写入失败则恢复已写过的文件（包括原先不存在的文件）。
-fn write_transaction(
+/// `pub(super)` 供 `pi_provider_service` 复用同一套事务语义。
+pub(super) fn write_transaction(
     writes: &[(PathBuf, Vec<u8>)],
     backup_root: Option<&Path>,
     writer: impl Fn(&Path, &[u8]) -> std::io::Result<()>,

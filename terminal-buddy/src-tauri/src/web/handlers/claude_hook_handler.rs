@@ -157,6 +157,7 @@ fn emit_terminal_event(
         event_name: request.hook_event_name.clone(),
         phase: phase.to_string(),
         occurred_at: next_hook_timestamp(),
+        provider: Some("claude".to_string()),
         notification_type: request.notification_type.clone(),
         title: request.title.clone(),
         message: request.message.clone(),
@@ -288,6 +289,7 @@ pub(crate) async fn claude_hook(
         questions: questions.clone(),
         expires_at,
         occurred_at,
+        provider: Some("claude".to_string()),
     };
     if native {
         if native_hooks::publish(terminal_id, NativeHookEvent::Decision(event)).is_err() {
@@ -362,6 +364,7 @@ pub async fn send_claude_hook_decision_notification(
     let questions = lease.questions;
     let generation = lease.generation;
     let name = terminal_name(&app, &terminal_id);
+    let agent_name = if decision_id.starts_with("pi:") { "Pi" } else { "Claude Code" };
     for (question_index, question) in questions.iter().enumerate() {
         if !ClaudeHookService::notification_is_current(&decision_id, generation) {
             ClaudeHookService::cancel_notification_cards(&decision_id, questions.len());
@@ -385,7 +388,7 @@ pub async fn send_claude_hook_decision_notification(
             terminal_id: terminal_id.clone(),
             terminal_name: name.clone(),
             kind: "question".to_string(),
-            title: "Claude Code 等待回答".to_string(),
+            title: format!("{agent_name} 等待回答"),
             summary: question.question.clone(),
             decision_title: Some(question.header.clone()),
             decision_question: Some(question.question.clone()),

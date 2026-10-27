@@ -115,9 +115,12 @@ pub struct AppSettings {
     /// Agent 管理中配置的 Agent 基础启动命令；空串 = 使用内置默认命令。
     #[serde(default)]
     pub agent_commands: AgentCommands,
+    /// Pi 工具确认：默认关闭，保持 Pi 原生全权限行为。
+    #[serde(default)]
+    pub pi_tool_approval_enabled: bool,
 }
 
-/// Agent（Claude Code / Codex）的基础启动命令，供项目模型启动与历史恢复继承参数。
+/// Agent（Claude Code / Codex / Pi）的基础启动命令，供项目模型启动与历史恢复继承参数。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCommands {
@@ -127,11 +130,14 @@ pub struct AgentCommands {
     /// Codex 基础命令，默认 `codex --dangerously-bypass-approvals-and-sandbox`。
     #[serde(default)]
     pub codex: String,
+    /// Pi 基础命令，默认 `pi --approve`。
+    #[serde(default)]
+    pub pi: String,
 }
 
 impl Default for AgentCommands {
     fn default() -> Self {
-        Self { claude: String::new(), codex: String::new() }
+        Self { claude: String::new(), codex: String::new(), pi: String::new() }
     }
 }
 
@@ -161,6 +167,7 @@ impl Default for AppSettings {
             default_terminal_enabled: false,
             default_terminal_backup: None,
             agent_commands: AgentCommands::default(),
+            pi_tool_approval_enabled: false,
         }
     }
 }

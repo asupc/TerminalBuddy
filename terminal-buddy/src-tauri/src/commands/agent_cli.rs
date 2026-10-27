@@ -1,4 +1,4 @@
-//! Agent 管理（桌面端）：检测、安装与更新 Claude Code / Codex CLI。
+//! Agent 管理（桌面端）：检测、安装与更新 Claude Code / Codex / Pi。
 //! 逻辑与 Docker 网页版 REST 接口共用 services/agent_cli_service.rs。
 use super::claude_task;
 use crate::services::agent_cli_service::{self, CliTool, Environment, Operation};
@@ -7,6 +7,7 @@ fn parse_tool(tool: &str) -> Result<CliTool, String> {
     match tool {
         "claude" => Ok(CliTool::Claude),
         "codex" => Ok(CliTool::Codex),
+        "pi" => Ok(CliTool::Pi),
         _ => Err(format!("未知的 Agent：{tool}")),
     }
 }

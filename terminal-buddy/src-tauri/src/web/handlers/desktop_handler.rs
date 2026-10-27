@@ -28,7 +28,7 @@ pub async fn runtime_info() -> Json<Value> {
         "defaultTerminalType": crate::commands::terminal::default_terminal_type(), "fullInterface": true,
         "windowsBuildNumber": crate::services::platform_service::windows_build_number(),
         "isDocker": super::container_environment::is_docker_runtime(),
-        "agentCommands": {"claude": agent_commands.claude, "codex": agent_commands.codex}}))
+        "agentCommands": {"claude": agent_commands.claude, "codex": agent_commands.codex, "pi": agent_commands.pi}}))
 }
 
 fn scoped_file(path: &str) -> Result<(), ApiError> {
@@ -65,7 +65,7 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
         if let Some(path) = args.get(*key).and_then(Value::as_str).filter(|p| !p.trim().is_empty()) { scoped_file(path)?; }
     }
     if let Some(path) = args.get("options").and_then(|v| v.get("path")).and_then(Value::as_str) { scoped_file(path)?; }
-    if matches!(command, "get_claude_sessions_for_terminals" | "get_terminal_task_summaries") {
+    if matches!(command, "get_claude_sessions_for_terminals" | "get_agent_sessions_for_terminals" | "get_terminal_task_summaries") {
         let ids: Vec<String> = argument(args, "terminalIds")?;
         let service = app.state::<TerminalService>();
         for id in ids {
@@ -119,7 +119,7 @@ pub async fn invoke(State(state): State<AppState>, _claims: ClaimsFromRequest, h
     let client_kind = client_kind_from_headers(&headers);
     check_arguments(&command, &args, &state.app_handle)?;
     let git_mutation = matches!(command.as_str(), "git_pull" | "git_push_with_options" | "git_checkout_branch" | "git_commit_paths");
-    let long_operation = git_mutation || matches!(command.as_str(), "probe_claude_mcp" | "claude_history_rescan" | "codex_history_rescan");
+    let long_operation = git_mutation || matches!(command.as_str(), "probe_claude_mcp" | "claude_history_rescan" | "codex_history_rescan" | "pi_history_rescan");
     if long_operation {
         let lease = if git_mutation {
             let path = args.get("path").or_else(|| args.get("options").and_then(|v| v.get("path"))).and_then(Value::as_str)

@@ -32,6 +32,7 @@ impl AgentCliError {
 pub enum CliTool {
     Claude,
     Codex,
+    Pi,
 }
 
 impl CliTool {
@@ -39,6 +40,7 @@ impl CliTool {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Pi => "pi",
         }
     }
 
@@ -46,6 +48,7 @@ impl CliTool {
         match self {
             Self::Claude => "Claude",
             Self::Codex => "Codex CLI",
+            Self::Pi => "Pi",
         }
     }
 
@@ -53,13 +56,14 @@ impl CliTool {
         match self {
             Self::Claude => "@anthropic-ai/claude-code",
             Self::Codex => "@openai/codex",
+            Self::Pi => "@earendil-works/pi-coding-agent",
         }
     }
 
     fn preview_tags(self) -> &'static [&'static str] {
         match self {
             Self::Claude => &["next"],
-            Self::Codex => &[],
+            Self::Codex | Self::Pi => &[],
         }
     }
 }
@@ -82,9 +86,11 @@ struct Installation {
 fn installation(tool: CliTool) -> &'static Mutex<Installation> {
     static CLAUDE: OnceLock<Mutex<Installation>> = OnceLock::new();
     static CODEX: OnceLock<Mutex<Installation>> = OnceLock::new();
+    static PI: OnceLock<Mutex<Installation>> = OnceLock::new();
     let state = match tool {
         CliTool::Claude => &CLAUDE,
         CliTool::Codex => &CODEX,
+        CliTool::Pi => &PI,
     };
     state.get_or_init(|| Mutex::new(Installation::default()))
 }
@@ -94,6 +100,7 @@ fn installation(tool: CliTool) -> &'static Mutex<Installation> {
 pub struct Environment {
     pub claude: CliStatus,
     pub codex: CliStatus,
+    pub pi: CliStatus,
 }
 
 #[derive(serde::Serialize)]
@@ -114,20 +121,44 @@ fn home() -> Result<PathBuf, String> {
     Ok(home)
 }
 
+/// 三段式 semver（可带预发布/构建后缀），返回原始 token。
+fn semver_token(value: &str) -> Option<&str> {
+    let token = value.trim();
+    let core = token.split(['-', '+']).next()?;
+    let parts: Vec<_> = core.split('.').collect();
+    (parts.len() == 3 && parts.iter().all(|part| !part.is_empty() && part.parse::<u32>().is_ok()))
+        .then_some(token)
+}
+
 fn version_from_output(tool: CliTool, output: &Output) -> Option<String> {
     if !output.status.success() { return None; }
     let text = String::from_utf8_lossy(&output.stdout);
+    if tool == CliTool::Pi {
+        // Pi 的 --version 只输出一行裸 semver；多行输出说明不是 Pi 或命令被包装过。
+        let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+        let line = lines.next()?.trim();
+        if lines.next().is_some() { return None; }
+        let candidate = line.strip_prefix("pi ").map(str::trim).unwrap_or(line);
+        if candidate.split_whitespace().count() != 1 { return None; }
+        return semver_token(candidate).map(str::to_string);
+    }
     text.lines().find_map(|line| {
         let version = match tool {
             CliTool::Claude if line.contains("(Claude Code)") => line.split_whitespace().next()?,
             CliTool::Codex => line.trim().strip_prefix("codex-cli ")?.trim(),
             _ => return None,
         };
-        let core = version.split(['-', '+']).next()?;
-        let parts: Vec<_> = core.split('.').collect();
-        (parts.len() == 3 && parts.iter().all(|part| part.parse::<u32>().is_ok()))
-            .then(|| version.to_string())
+        semver_token(version).map(str::to_string)
     })
+}
+
+/// `pi --help` 签名校验：避免把同名的其他 `pi` 命令误判为 Pi Agent。
+fn has_pi_help_signature(text: &str) -> bool {
+    ["--mode", "--session-dir", "--extension", "--list-models"]
+        .iter()
+        .filter(|flag| text.contains(**flag))
+        .count()
+        >= 2
 }
 
 fn prepare_command(command: &mut Command) {
@@ -180,6 +211,43 @@ fn version_command(path: &Path) -> Command {
     {
         let mut command = Command::new(path);
         command.arg("--version");
+        command
+    }
+}
+
+/// Pi 的 `--help` 调用与版本检测走同一套 shim 规则。
+fn help_command(path: &Path) -> Command {
+    #[cfg(windows)]
+    {
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+        match extension.as_deref() {
+            Some("cmd") | Some("bat") => {
+                let mut command = Command::new("cmd.exe");
+                command.arg("/C").arg(path).arg("--help");
+                command
+            }
+            Some("ps1") => {
+                let mut command = Command::new("powershell.exe");
+                command
+                    .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+                    .arg(path)
+                    .arg("--help");
+                command
+            }
+            _ => {
+                let mut command = Command::new(path);
+                command.arg("--help");
+                command
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new(path);
+        command.arg("--help");
         command
     }
 }
@@ -300,16 +368,26 @@ fn dedupe_paths(candidates: Vec<PathBuf>) -> Vec<PathBuf> {
     candidates.into_iter().filter(|path| seen.insert(path.clone())).collect()
 }
 
-fn detect_cli(tool: CliTool) -> Option<String> {
+fn candidate_paths(tool: CliTool) -> Vec<PathBuf> {
     let names = executable_names(tool.binary(), cfg!(windows));
     let mut candidates = Vec::new();
     if let Ok(home) = home() {
         candidates.extend(names.iter().map(|name| home.join(".local/bin").join(name)));
+        if tool == CliTool::Pi {
+            // Pi 的官方安装器与部分包管理器会写入这些目录。
+            candidates.extend(names.iter().map(|name| home.join("bin").join(name)));
+            candidates.extend(names.iter().map(|name| home.join(".pi/agent/bin").join(name)));
+        }
     }
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
             candidates.extend(names.iter().map(|name| dir.join(name)));
         }
+    }
+    // npm 全局安装前缀不一定进入当前进程 PATH。
+    if let Ok(prefix) = std::env::var("NPM_CONFIG_PREFIX") {
+        candidates.extend(names.iter().map(|name| PathBuf::from(&prefix).join("bin").join(name)));
+        candidates.extend(names.iter().map(|name| PathBuf::from(&prefix).join(name)));
     }
     // 安装器写入的目录不一定已经进入当前进程的 PATH（尤其 winget 的 WinGet\Links），
     // 因此显式补查常见安装位置与 winget 包目录。
@@ -323,7 +401,70 @@ fn detect_cli(tool: CliTool) -> Option<String> {
             candidates.extend(package_candidates(&dir, &names));
         }
     }
-    detect_candidates(tool, dedupe_paths(candidates))
+    dedupe_paths(candidates)
+}
+
+/// 按平台规则构造某个已定位入口的命令；Windows 的 .cmd/.ps1 shim 需要代理。
+pub(crate) fn executable_command(path: &Path, args: &[&str]) -> Command {
+    #[cfg(windows)]
+    {
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+        match extension.as_deref() {
+            Some("cmd") | Some("bat") => {
+                let mut command = Command::new("cmd.exe");
+                command.arg("/C").arg(path).args(args);
+                command
+            }
+            Some("ps1") => {
+                let mut command = Command::new("powershell.exe");
+                command
+                    .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+                    .arg(path)
+                    .args(args);
+                command
+            }
+            _ => {
+                let mut command = Command::new(path);
+                command.args(args);
+                command
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new(path);
+        command.args(args);
+        command
+    }
+}
+
+/// 定位工具入口（不执行版本检测），供模型列表等只读命令复用。
+pub(crate) fn resolve_binary(tool: CliTool) -> Option<PathBuf> {
+    candidate_paths(tool).into_iter().find(|path| path.is_file())
+}
+
+fn detect_cli(tool: CliTool) -> Option<String> {
+    detect_candidates(tool, candidate_paths(tool))
+}
+
+/// Pi 还需要通过 `--help` 签名确认不是同名命令。
+fn pi_help_is_valid(path: &Path) -> bool {
+    let mut command = help_command(path);
+    prepare_command(&mut command);
+    let Ok(mut child) = command.stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return false; };
+    if wait_for_child(&mut child, Duration::from_secs(5)).is_err() { return false; }
+    child
+        .wait_with_output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&output.stderr));
+            has_pi_help_signature(&text)
+        })
 }
 
 fn detect_candidates(tool: CliTool, candidates: Vec<PathBuf>) -> Option<String> {
@@ -333,7 +474,11 @@ fn detect_candidates(tool: CliTool, candidates: Vec<PathBuf>) -> Option<String> 
         let Ok(mut child) = command.stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { continue; };
         if wait_for_child(&mut child, Duration::from_secs(5)).is_err() { continue; }
         if let Ok(output) = child.wait_with_output() {
-            if let Some(version) = version_from_output(tool, &output) { return Some(version); }
+            if let Some(version) = version_from_output(tool, &output) {
+                if tool != CliTool::Pi || pi_help_is_valid(&path) {
+                    return Some(version);
+                }
+            }
         }
     }
     None
@@ -370,6 +515,7 @@ pub fn environment() -> Result<Environment, String> {
     Ok(Environment {
         claude: cli_status(CliTool::Claude)?,
         codex: cli_status(CliTool::Codex)?,
+        pi: cli_status(CliTool::Pi)?,
     })
 }
 
@@ -569,10 +715,115 @@ pub fn run_install(tool: CliTool, target: Option<&str>) -> Result<String, String
     if target.is_none() {
         if let Some(version) = detect_cli(tool) { return Ok(version); }
     }
+    // Pi 在所有平台都走 npm：官方安装器没有 --yes，在无 TTY 的后台任务里不可靠。
+    if tool == CliTool::Pi {
+        return run_install_pi(target);
+    }
     #[cfg(unix)]
     return run_install_unix(tool, target);
     #[cfg(windows)]
     return run_install_windows(tool, target);
+}
+
+/// 解析 `node --version`（v22.19.0）与 Pi 的最低要求。
+fn parse_node_version(text: &str) -> Option<(u32, u32, u32)> {
+    let token = text.trim().lines().next()?.trim();
+    let token = token.strip_prefix('v').unwrap_or(token);
+    let mut parts = token.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
+fn node_version() -> Result<(u32, u32, u32), String> {
+    let mut command = Command::new("node");
+    command.arg("--version");
+    prepare_command(&mut command);
+    let output = command.output().map_err(|_| "未检测到 Node.js，请先安装 Node.js 22.19 或更高版本（https://nodejs.org）后重试".to_string())?;
+    if !output.status.success() {
+        return Err("Node.js 无法正常运行，请重新安装 Node.js 22.19 或更高版本（https://nodejs.org）后重试".to_string());
+    }
+    parse_node_version(&String::from_utf8_lossy(&output.stdout))
+        .ok_or_else(|| "无法识别 Node.js 版本，请安装 Node.js 22.19 或更高版本（https://nodejs.org）后重试".to_string())
+}
+
+/// Windows 上 Pi 的工具执行依赖 Git Bash；只检测，不在后台静默安装宿主环境。
+#[cfg(windows)]
+fn git_bash_available() -> bool {
+    if let Some(path) = std::env::var_os("PATH") {
+        if std::env::split_paths(&path).any(|dir| {
+            dir.join("bash.exe").is_file() || dir.join("bash").is_file()
+        }) {
+            return true;
+        }
+    }
+    ["ProgramFiles", "ProgramFiles(x86)"].iter().any(|key| {
+        std::env::var_os(key)
+            .map(PathBuf::from)
+            .is_some_and(|root| root.join("Git/bin/bash.exe").is_file())
+    })
+}
+
+fn npm_install_command(npm: &Path) -> Command {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("cmd.exe");
+        command.arg("/C").arg(npm).args(["install", "--global", "--ignore-scripts"]);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new(npm);
+        command.args(["install", "--global", "--ignore-scripts"]);
+        command
+    }
+}
+
+fn pi_install_prefix() -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return Ok(PathBuf::from(appdata).join("npm"));
+        }
+        Ok(home()?.join("AppData/Roaming/npm"))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(home()?.join(".local"))
+    }
+}
+
+fn run_install_pi(target: Option<&str>) -> Result<String, String> {
+    let (major, minor, _) = node_version()?;
+    if (major, minor) < (22, 19) {
+        return Err(format!(
+            "Pi 需要 Node.js 22.19 或更高版本，当前为 {major}.{minor}。请升级 Node.js 后重试（https://nodejs.org）"
+        ));
+    }
+    #[cfg(windows)]
+    if !git_bash_available() {
+        return Err("未检测到 Git Bash。Pi Agent 在 Windows 上需要 Git Bash 执行工具，请安装 Git for Windows 后重试（https://git-scm.com/download/win）".to_string());
+    }
+    let npm = npm_command()?;
+    let prefix = pi_install_prefix()?;
+    let dir = InstallDirectory::create("pi")?;
+    let log = dir.0.join("install.log");
+    let package = npm_package(CliTool::Pi, target);
+    let mut installer = npm_install_command(&npm);
+    installer.arg(&package).env("NPM_CONFIG_PREFIX", &prefix);
+    run_logged(CliTool::Pi.name(), &mut installer, &log, Duration::from_secs(600))?;
+    let mut candidates: Vec<PathBuf> = executable_names(CliTool::Pi.binary(), cfg!(windows))
+        .into_iter()
+        .map(|name| prefix.join("bin").join(&name))
+        .collect();
+    candidates.extend(
+        executable_names(CliTool::Pi.binary(), cfg!(windows))
+            .into_iter()
+            .map(|name| prefix.join(name)),
+    );
+    let version = detect_candidates(CliTool::Pi, candidates);
+    validate_installed_version(CliTool::Pi, version, target)
 }
 
 // ==================== Unix（Docker / Linux / macOS）：官方 install.sh ====================
@@ -582,6 +833,7 @@ fn run_install_unix(tool: CliTool, target: Option<&str>) -> Result<String, Strin
     let installer_url = match tool {
         CliTool::Claude => "https://claude.ai/install.sh",
         CliTool::Codex => "https://chatgpt.com/codex/install.sh",
+        CliTool::Pi => return Err("Pi 使用 npm 安装".to_string()),
     };
     let home = home()?;
     fs::create_dir_all(home.join(".local/bin")).map_err(|error| format!("安装目录不可写：{error}"))?;
@@ -606,6 +858,7 @@ fn run_install_unix(tool: CliTool, target: Option<&str>) -> Result<String, Strin
             if let Some(version) = target { command.arg("--release").arg(version); }
             command
         }
+        CliTool::Pi => return Err("Pi 使用 npm 安装".to_string()),
     };
     run_logged(tool.name(), &mut installer, &log, Duration::from_secs(600))?;
     // 只核验安装目录中的入口，避免从 PATH 中读到另一份旧安装而误报成功。
@@ -622,6 +875,7 @@ fn run_install_windows(tool: CliTool, target: Option<&str>) -> Result<String, St
     match tool {
         CliTool::Claude => run_claude_install_windows(target, &home, &npm_dir),
         CliTool::Codex => run_codex_install_windows(target, &npm_dir),
+        CliTool::Pi => Err("Pi 使用 npm 安装".to_string()),
     }
 }
 
@@ -681,11 +935,20 @@ fn npm_command() -> Result<PathBuf, String> {
         .ok_or_else(|| "未检测到 npm，请先安装 Node.js（https://nodejs.org）后重试".to_string())
 }
 
-#[cfg(windows)]
-fn npm_package(target: Option<&str>) -> String {
+#[cfg(not(windows))]
+fn npm_command() -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|dir| dir.join("npm")));
+    }
+    candidates.into_iter().find(|path| path.is_file())
+        .ok_or_else(|| "未检测到 npm，请先安装 Node.js（https://nodejs.org）后重试".to_string())
+}
+
+fn npm_package(tool: CliTool, target: Option<&str>) -> String {
     match target {
-        Some(version) => format!("@openai/codex@{version}"),
-        None => "@openai/codex".to_string(),
+        Some(version) => format!("{}@{version}", tool.package()),
+        None => tool.package().to_string(),
     }
 }
 
@@ -694,7 +957,7 @@ fn run_codex_install_windows(target: Option<&str>, npm_dir: &Path) -> Result<Str
     let npm = npm_command()?;
     let dir = InstallDirectory::create("codex")?;
     let log = dir.0.join("install.log");
-    let package = npm_package(target);
+    let package = npm_package(CliTool::Codex, target);
     let mut installer = Command::new("cmd.exe");
     installer.arg("/C").arg(&npm).args(["install", "--global", &package]);
     run_logged("Codex CLI", &mut installer, &log, Duration::from_secs(600))?;
@@ -739,9 +1002,30 @@ mod tests {
     }
 
     #[test]
+    fn only_accepts_a_bare_semver_for_pi_and_requires_help_signature() {
+        assert_eq!(version_from_output(CliTool::Pi, &output("1.4.0\n", true)).as_deref(), Some("1.4.0"));
+        assert_eq!(version_from_output(CliTool::Pi, &output("pi 1.4.0\n", true)).as_deref(), Some("1.4.0"));
+        for text in ["pi 1.4.0 extra", "1.4", "unknown 1.4.0", "1.4.0\nsecond"] {
+            assert!(version_from_output(CliTool::Pi, &output(text, true)).is_none(), "{text}");
+        }
+        assert!(version_from_output(CliTool::Pi, &output("1.4.0", false)).is_none());
+        assert!(has_pi_help_signature("--mode json\n--session-dir <dir>\n--extension <file>"));
+        assert!(!has_pi_help_signature("usage: pi --version"));
+    }
+
+    #[test]
+    fn node_versions_are_compared_for_the_pi_minimum() {
+        assert_eq!(parse_node_version("v22.19.0\n"), Some((22, 19, 0)));
+        assert_eq!(parse_node_version("v24.1.2"), Some((24, 1, 2)));
+        assert_eq!(parse_node_version("22.19"), Some((22, 19, 0)));
+        assert!(parse_node_version("node: not found").is_none());
+    }
+
+    #[test]
     fn cli_installations_have_independent_locks() {
         let _claude = installation(CliTool::Claude).lock().unwrap();
         assert!(installation(CliTool::Codex).try_lock().is_ok());
+        assert!(installation(CliTool::Pi).try_lock().is_ok());
     }
 
     #[test]
@@ -864,10 +1148,11 @@ mod tests {
         assert!(failed.updated_version.is_none());
     }
 
-    #[cfg(windows)]
     #[test]
-    fn codex_update_pins_the_checked_version_into_the_npm_package() {
-        assert_eq!(npm_package(Some("0.163.0")), "@openai/codex@0.163.0");
-        assert_eq!(npm_package(None), "@openai/codex");
+    fn update_pins_the_checked_version_into_the_npm_package() {
+        assert_eq!(npm_package(CliTool::Codex, Some("0.163.0")), "@openai/codex@0.163.0");
+        assert_eq!(npm_package(CliTool::Codex, None), "@openai/codex");
+        assert_eq!(npm_package(CliTool::Pi, Some("1.4.0")), "@earendil-works/pi-coding-agent@1.4.0");
+        assert_eq!(npm_package(CliTool::Pi, None), "@earendil-works/pi-coding-agent");
     }
 }

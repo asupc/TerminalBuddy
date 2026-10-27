@@ -214,6 +214,12 @@ impl DatabaseService {
             Self::complete_migration(&transaction, "codex-history-v1")?;
             transaction.commit().map_err(|error| format!("提交 Codex 历史迁移失败: {error}"))?;
         }
+        if !Self::has_migration(connection, "pi-history-v1")? {
+            let transaction = connection.transaction().map_err(|error| format!("开始 Pi 历史迁移失败: {error}"))?;
+            crate::services::pi_history_service::init_pi_schema(&transaction)?;
+            Self::complete_migration(&transaction, "pi-history-v1")?;
+            transaction.commit().map_err(|error| format!("提交 Pi 历史迁移失败: {error}"))?;
+        }
 
         Ok(())
     }

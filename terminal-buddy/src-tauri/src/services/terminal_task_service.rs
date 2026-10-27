@@ -1,7 +1,7 @@
 //! 将终端关联到确切的 AI 会话；不能用项目目录的「最新会话」代替当前会话。
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 
-use super::{claude_history_service, codex_history_service, codex_transcript, DatabaseService, PathService};
+use super::{claude_history_service, codex_history_service, codex_transcript, pi_history_service, pi_transcript, DatabaseService, PathService};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,8 +26,12 @@ struct TrackedTerminal {
     revision: u64,
     started_at: Option<SystemTime>,
     last_process_scan: Option<SystemTime>,
+    cwd: Option<String>,
+    /// 终端启动过/输入过 pi：目录扫描兜底只对这类终端生效，避免把其他会话误绑。
+    pi_candidate: bool,
     claude_root: PathBuf,
     codex_root: PathBuf,
+    pi_root: PathBuf,
     codex_log_dir: Option<PathBuf>,
     log_offset: u64,
     log_pending: String,
@@ -51,6 +55,136 @@ fn env_root(env: &[(String, String)], key: &str, fallback: PathBuf, cwd: Option<
         None => std::env::var_os(key).filter(|value| !value.is_empty()).map(PathBuf::from).unwrap_or(fallback),
     };
     if root.is_absolute() { root } else { Path::new(cwd.unwrap_or(".")).join(root) }
+}
+
+/// Pi 会话根目录：PI_CODING_AGENT_SESSION_DIR → PI_CODING_AGENT_DIR/sessions → 默认。
+fn pi_root(env: &[(String, String)], cwd: Option<&str>) -> PathBuf {
+    if env.iter().any(|(name, _)| name.eq_ignore_ascii_case("PI_CODING_AGENT_SESSION_DIR")) {
+        let fallback = pi_history_service::resolve_session_root().unwrap_or_default();
+        return env_root(env, "PI_CODING_AGENT_SESSION_DIR", fallback, cwd);
+    }
+    if env.iter().any(|(name, _)| name.eq_ignore_ascii_case("PI_CODING_AGENT_DIR")) {
+        let agent = env_root(env, "PI_CODING_AGENT_DIR", dirs::home_dir().unwrap_or_default().join(".pi/agent"), cwd);
+        return agent.join("sessions");
+    }
+    pi_history_service::resolve_session_root().unwrap_or_else(|_| {
+        dirs::home_dir().unwrap_or_default().join(".pi/agent/sessions")
+    })
+}
+
+/// 只识别命令首个可执行 token 为 `pi` 的简单形式；复杂 shell 片段交给扩展/扫描。
+fn pi_executable_end(command: &str) -> Option<usize> {
+    // 命令拼接、管道、脚本包装一律跳过注入，保持原命令语义。
+    if command.contains("&&") || command.contains("||") || command.contains(';') || command.contains('|') {
+        return None;
+    }
+    let mut start = command.len() - command.trim_start().len();
+    if command[start..].starts_with("& ") { start += 2; }
+    if command[start..].get(..5).is_some_and(|s| s.eq_ignore_ascii_case("call ")) { start += 5; }
+    start += command[start..].len() - command[start..].trim_start().len();
+    let first = *command.as_bytes().get(start)?;
+    let (token, end) = if matches!(first, b'\'' | b'"') {
+        let end = start + 1 + command[start + 1..].find(first as char)?;
+        (&command[start + 1..end], end + 1)
+    } else {
+        let end = command[start..].find(char::is_whitespace).map_or(command.len(), |n| start + n);
+        (&command[start..end], end)
+    };
+    let name = token.rsplit(['/', '\\']).next()?.to_ascii_lowercase();
+    matches!(name.as_str(), "pi" | "pi.exe" | "pi.cmd" | "pi.bat").then_some(end)
+}
+
+fn has_pi_session_args(args: &str) -> bool {
+    args.split_whitespace().any(|token| {
+        matches!(
+            token.trim_matches(['\'', '"']),
+            "--session" | "--session-id" | "-c" | "--continue" | "-r" | "--resume" | "--fork" | "--no-session"
+        ) || token.starts_with("--session=")
+    })
+}
+
+/// `__TB_PI_REF__:<provider>:<model>[:thinking]` → `pi --provider ... --model ...`。
+/// 模型 ID 只允许安全字符，避免把任意文本拼进启动命令。
+fn expand_pi_ref(command: &str) -> String {
+    const PREFIX: &str = "__TB_PI_REF__:";
+    let trimmed = command.trim_start();
+    let Some(rest) = trimmed.strip_prefix(PREFIX) else { return command.to_string(); };
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let reference = parts.next().unwrap_or_default();
+    let tail = parts.next().unwrap_or_default().trim();
+    let mut segments = reference.split(':');
+    let (Some(provider), Some(model)) = (segments.next(), segments.next()) else { return command.to_string(); };
+    let thinking = segments.next().filter(|level| matches!(*level, "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"));
+    let safe = |value: &str| !value.is_empty()
+        && value.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/'));
+    if !safe(provider) || !safe(model) {
+        return command.to_string();
+    }
+    // 剔除与引用冲突的参数（模型/供应商/思考级别/密钥）。
+    let cleaned = tail
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cleaned = strip_pi_conflict_args(&cleaned);
+    let mut result = format!("pi --provider {provider} --model {model}");
+    if let Some(thinking) = thinking {
+        result.push_str(&format!(" --thinking {thinking}"));
+    }
+    if !cleaned.is_empty() {
+        result.push(' ');
+        result.push_str(&cleaned);
+    }
+    result
+}
+
+fn strip_pi_conflict_args(args: &str) -> String {
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = tokens[index];
+        let flag = token.split('=').next().unwrap_or(token);
+        if matches!(flag, "--model" | "--provider" | "--thinking" | "--models" | "--api-key") {
+            if !token.contains('=') { index += 1; }
+            index += 1;
+            continue;
+        }
+        result.push(token);
+        index += 1;
+    }
+    result.join(" ")
+}
+
+/// 存活终端的当前绑定快照，供服务端周期性写入统一登记表。
+pub fn session_bindings() -> HashMap<String, super::claude_session_registry_service::AgentSessionRecord> {
+    let now = std::time::SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    terminals()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .filter_map(|(terminal_id, tracked)| {
+            let (provider, session_id) = tracked.binding.clone()?;
+            Some((terminal_id.clone(), super::claude_session_registry_service::AgentSessionRecord {
+                provider,
+                session_id,
+                session_file: tracked.transcript.as_ref().map(|path| path.to_string_lossy().into_owned()),
+                cwd: tracked.cwd.clone(),
+                updated_at: now,
+            }))
+        })
+        .collect()
+}
+
+/// 运行中的 Pi 会话：绑定表里仍存在该 session ID 即视为活动。
+pub fn is_agent_session_active(session_id: &str) -> bool {
+    terminals()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .values()
+        .any(|tracked| tracked.binding.as_ref().is_some_and(|(_, id)| id == session_id))
 }
 
 // 只识别启动命令的可执行文件，避免误改提示词、echo、管道或脚本中的 codex 字样。
@@ -92,13 +226,44 @@ pub fn prepare_launch(
     let home = dirs::home_dir().unwrap_or_default();
     let mut tracked = TrackedTerminal {
         started_at: Some(SystemTime::now()),
+        cwd: cwd.map(str::to_string),
         claude_root: env_root(env, "CLAUDE_CONFIG_DIR", home.join(".claude"), cwd),
         codex_root: env_root(env, "CODEX_HOME", home.join(".codex"), cwd),
+        pi_root: pi_root(env, cwd),
         ..Default::default()
     };
     let local = matches!(terminal_type, "cmd" | "powershell" | "pwsh" | "bash" | "sh" | "zsh");
+    let extension = crate::services::pi_extension_service::ensure_extension().ok();
     let commands = commands.into_iter().map(|command| {
         if !local { return command; }
+        let command = expand_pi_ref(&command);
+        if let Some(end) = pi_executable_end(&command) {
+            tracked.pi_candidate = true;
+            let command = command;
+            let mut args = command[end..].to_string();
+            // 未显式指定扩展时注入 TerminalBuddy 扩展（精确绑定/状态上报）。
+            let has_extension = args.split_whitespace().any(|token| {
+                token == "--extension" || token == "-e" || token.starts_with("--extension=")
+            });
+            if !has_extension {
+                if let Some(extension) = &extension {
+                    let quoted = extension.to_string_lossy().replace('"', "\\\"");
+                    args.push_str(&format!(" --extension \"{quoted}\""));
+                }
+            }
+            if !has_pi_session_args(&args) {
+                // 新会话预生成 ID：命令改写失败不影响原命令执行。
+                let session_id = uuid::Uuid::new_v4().to_string();
+                bind(&mut tracked, "pi", &session_id);
+                return format!("{} --session-id {}{}", &command[..end], session_id, args);
+            }
+            if let Some(id) = pi_session_arg(&args) {
+                if uuid::Uuid::parse_str(&id).is_ok() {
+                    bind(&mut tracked, "pi", &id);
+                }
+            }
+            return format!("{}{}", &command[..end], args);
+        }
         let Some(end) = codex_executable_end(&command) else { return command; };
         let args: Vec<_> = command[end..].split_whitespace().collect();
         if let Some(id) = args.windows(2).find(|pair| pair[0] == "resume").map(|pair| pair[1]) {
@@ -123,6 +288,56 @@ pub fn prepare_launch(
     }).collect();
     terminals().lock().unwrap_or_else(|e| e.into_inner()).insert(terminal_id.to_string(), tracked);
     commands
+}
+
+fn pi_session_arg(args: &str) -> Option<String> {
+    let tokens: Vec<_> = args.split_whitespace().collect();
+    for (index, token) in tokens.iter().enumerate() {
+        let token = token.trim_matches(['\'', '"']);
+        if let Some(value) = token.strip_prefix("--session=") {
+            return Some(value.trim_matches(['\'', '"']).to_string());
+        }
+        if matches!(token, "--session" | "--session-id") {
+            return tokens.get(index + 1).map(|value| value.trim_matches(['\'', '"']).to_string());
+        }
+    }
+    None
+}
+
+/// 终端 cd 后更新扫描兜底使用的 cwd（手动启动 Pi 时按目录找会话）。
+pub fn update_cwd(terminal_id: &str, directory: &str) {
+    let mut all = terminals().lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(tracked) = all.get_mut(terminal_id) {
+        if tracked.cwd.as_deref() != Some(directory) {
+            tracked.cwd = Some(directory.to_string());
+            tracked.transcript = None;
+            tracked.stamp = None;
+        }
+    }
+}
+
+/// 记录用户在终端里敲过 `pi`（用于手动启动时的目录扫描兜底）。
+pub fn note_terminal_input(terminal_id: &str, data: &str) {
+    let runs_pi = data
+        .split(['\r', '\n'])
+        .any(|line| line.trim_start().starts_with("pi ") || line.trim() == "pi");
+    if !runs_pi { return; }
+    let mut all = terminals().lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(tracked) = all.get_mut(terminal_id) {
+        tracked.pi_candidate = true;
+    }
+}
+
+pub fn record_agent_session(terminal_id: &str, provider: &str, session_id: &str, session_file: Option<&str>) {    let mut all = terminals().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(tracked) = all.get_mut(terminal_id) {
+        bind(tracked, provider, session_id);
+        if let Some(file) = session_file.filter(|file| !file.trim().is_empty()) {
+            let path = PathBuf::from(file);
+            if path.is_file() {
+                tracked.transcript = Some(path);
+            }
+        }
+    }
 }
 
 pub fn record_claude_session(terminal_id: &str, session_id: &str, prompt: Option<&str>) {
@@ -177,6 +392,9 @@ fn read_codex_binding(tracked: &mut TrackedTerminal) {
 }
 
 fn find_transcript(root: &Path, provider: &str, id: &str) -> Option<PathBuf> {
+    if provider == "pi" {
+        return pi_history_service::find_session_file(root, id);
+    }
     let wanted = if provider == "claude" { format!("{}.jsonl", id) } else { format!("-{}.jsonl", id) };
     let mut dirs = vec![root.join(if provider == "claude" { "projects" } else { "sessions" })];
     while let Some(dir) = dirs.pop() {
@@ -219,12 +437,18 @@ fn resolve_title(
     registries: &mut HashMap<PathBuf, HashMap<String, String>>,
 ) -> Option<TerminalTaskSummary> {
     let (provider, id) = tracked.binding.clone()?;
-    let root = if provider == "claude" { &tracked.claude_root } else { &tracked.codex_root };
+    let root = match provider.as_str() {
+        "claude" => &tracked.claude_root,
+        "pi" => &tracked.pi_root,
+        _ => &tracked.codex_root,
+    };
     let conn = DatabaseService::open().ok();
     let custom = conn.as_ref().and_then(|conn| {
-        let sql = if provider == "claude" {
-            "SELECT custom_title FROM claude_session_meta WHERE session_id=?1"
-        } else { "SELECT custom_title FROM codex_session_meta WHERE session_id=?1" };
+        let sql = match provider.as_str() {
+            "claude" => "SELECT custom_title FROM claude_session_meta WHERE session_id=?1",
+            "pi" => "SELECT custom_title FROM pi_session_meta WHERE session_id=?1",
+            _ => "SELECT custom_title FROM codex_session_meta WHERE session_id=?1",
+        };
         conn.query_row(sql, [&id], |row| row.get::<_, Option<String>>(0)).optional().ok().flatten().flatten()
     }).and_then(|value| compact_title(&value));
     if tracked.transcript.as_ref().map_or(true, |path| !path.is_file()) {
@@ -234,13 +458,20 @@ fn resolve_title(
         let stamp = fs::metadata(path).ok().and_then(|meta| Some((meta.modified().ok()?, meta.len())));
         if stamp.is_some() && stamp != tracked.stamp {
             if let Some(content) = transcript_excerpt(path) {
-                let (title, model) = if provider == "claude" {
-                    let analysis = claude_history_service::analyze_transcript(&content);
-                    let title = claude_history_service::display_title(None, analysis.title.as_deref(), analysis.first_prompt.as_deref(), "");
-                    (compact_title(&title), analysis.model)
-                } else {
-                    let transcript = codex_transcript::parse(&content);
-                    (transcript.title.and_then(|value| compact_title(&value)), transcript.model)
+                let (title, model) = match provider.as_str() {
+                    "claude" => {
+                        let analysis = claude_history_service::analyze_transcript(&content);
+                        let title = claude_history_service::display_title(None, analysis.title.as_deref(), analysis.first_prompt.as_deref(), "");
+                        (compact_title(&title), analysis.model)
+                    }
+                    "pi" => {
+                        let transcript = pi_transcript::parse(&content);
+                        (transcript.title.and_then(|value| compact_title(&value)), transcript.model)
+                    }
+                    _ => {
+                        let transcript = codex_transcript::parse(&content);
+                        (transcript.title.and_then(|value| compact_title(&value)), transcript.model)
+                    }
                 };
                 tracked.title = title;
                 tracked.model = model;
@@ -264,12 +495,13 @@ pub struct SessionSummaryTracker {
 
 impl SessionSummaryTracker {
     pub fn refresh(&mut self, provider: &str, session_id: &str, cwd: &str, force: bool) -> Option<String> {
-        if !matches!(provider, "claude" | "codex") || uuid::Uuid::parse_str(session_id).is_err() { return None; }
+        if !matches!(provider, "claude" | "codex" | "pi") || uuid::Uuid::parse_str(session_id).is_err() { return None; }
         let home = dirs::home_dir().unwrap_or_default();
         let claude_root = env_root(&[], "CLAUDE_CONFIG_DIR", home.join(".claude"), Some(cwd));
         let codex_root = env_root(&[], "CODEX_HOME", home.join(".codex"), Some(cwd));
-        if self.tracked.claude_root != claude_root || self.tracked.codex_root != codex_root {
-            self.tracked = TrackedTerminal { claude_root, codex_root, ..Default::default() };
+        let pi_root = pi_root(&[], Some(cwd));
+        if self.tracked.claude_root != claude_root || self.tracked.codex_root != codex_root || self.tracked.pi_root != pi_root {
+            self.tracked = TrackedTerminal { cwd: Some(cwd.to_string()), claude_root, codex_root, pi_root, ..Default::default() };
             self.last_refresh = None;
         }
         if self.tracked.binding.as_ref().map_or(true, |(p, id)| p != provider || id != session_id) {
@@ -282,6 +514,43 @@ impl SessionSummaryTracker {
         self.last_refresh = Some(Instant::now());
         summary
     }
+}
+
+fn normalize_cwd(value: &str) -> String {
+    value.trim().trim_end_matches(['/', '\\']).replace('\\', "/").to_ascii_lowercase()
+}
+
+/// 目录扫描兜底：只绑定启动后修改、cwd 匹配且唯一候选的 Pi 会话；多候选不猜。
+fn discover_pi_session(tracked: &TrackedTerminal) -> Option<(String, PathBuf)> {
+    let cwd = tracked.cwd.as_deref().map(normalize_cwd)?;
+    let started = tracked.started_at.unwrap_or(SystemTime::UNIX_EPOCH);
+    let since = started.checked_sub(Duration::from_secs(5)).unwrap_or(SystemTime::UNIX_EPOCH);
+    let mut dirs = vec![tracked.pi_root.clone()];
+    let mut candidates: HashMap<String, PathBuf> = HashMap::new();
+    let mut visited = 0_usize;
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = fs::read_dir(dir) else { continue; };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > 5000 { return None; }
+            let Ok(kind) = entry.file_type() else { continue; };
+            if kind.is_dir() { dirs.push(entry.path()); continue; }
+            if !kind.is_file() || entry.path().extension().map_or(true, |ext| ext != "jsonl") { continue; }
+            if entry.metadata().and_then(|meta| meta.modified()).is_ok_and(|modified| modified < since) { continue; }
+            let path = entry.path();
+            let Ok(file) = File::open(&path) else { continue; };
+            let mut first = String::new();
+            if BufReader::new(file).read_line(&mut first).is_err() { continue; }
+            let Ok(header) = serde_json::from_str::<serde_json::Value>(&first) else { continue; };
+            if header.get("type").and_then(serde_json::Value::as_str) != Some("session") { continue; }
+            let Some(header_cwd) = header.get("cwd").and_then(serde_json::Value::as_str) else { continue; };
+            if normalize_cwd(header_cwd) != cwd { continue; }
+            let Some(id) = header.get("id").and_then(serde_json::Value::as_str) else { continue; };
+            if uuid::Uuid::parse_str(id).is_err() { continue; }
+            candidates.insert(id.to_string(), path);
+        }
+    }
+    if candidates.len() == 1 { candidates.into_iter().next() } else { None }
 }
 
 pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalTaskSummary> {
@@ -310,6 +579,12 @@ pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalT
         let Some(tracked) = all.get_mut(&terminal_id) else { continue; };
         tracked.last_process_scan = Some(SystemTime::now());
         read_codex_binding(tracked);
+        if tracked.binding.is_none() && tracked.pi_candidate {
+            if let Some((id, path)) = discover_pi_session(tracked) {
+                bind(tracked, "pi", &id);
+                tracked.transcript = Some(path);
+            }
+        }
         if let Some((id, path)) = codex_sessions.get(&terminal_id) {
             bind(tracked, "codex", id);
             tracked.transcript = Some(path.clone());
@@ -327,4 +602,48 @@ pub fn summaries(terminal_pids: Vec<(String, u32)>) -> HashMap<String, TerminalT
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifies_simple_pi_commands_without_touching_shell_fragments() {
+        assert_eq!(pi_executable_end("pi --approve"), Some(2));
+        assert_eq!(pi_executable_end("  pi -p \"hello\""), Some(4));
+        assert_eq!(pi_executable_end("pi.cmd --session-id abc"), Some(6));
+        assert!(pi_executable_end("echo pi").is_none());
+        assert!(pi_executable_end("pi --approve && echo done").is_none());
+        assert!(pi_executable_end("cd /work; pi").is_none());
+        assert!(pi_executable_end("codex resume x").is_none());
+    }
+
+    #[test]
+    fn detects_session_flags_and_refuses_to_inject_twice() {
+        for args in ["--session x", "--session-id abc", "-c", "--continue", "-r", "--resume x", "--fork", "--no-session", "--session=x"] {
+            assert!(has_pi_session_args(args), "{args}");
+        }
+        assert!(!has_pi_session_args("--approve --model x"));
+        assert_eq!(pi_session_arg("--session-id 01900000-0000-7000-8000-000000000001"), Some("01900000-0000-7000-8000-000000000001".to_string()));
+        assert_eq!(pi_session_arg("--session=/tmp/a.jsonl"), Some("/tmp/a.jsonl".to_string()));
+    }
+
+    #[test]
+    fn expands_pi_model_refs_and_strips_conflicting_flags() {
+        let expanded = expand_pi_ref("__TB_PI_REF__:anthropic:claude-sonnet-4-5:high --approve --model old --thinking low");
+        assert!(expanded.starts_with("pi --provider anthropic --model claude-sonnet-4-5 --thinking high"), "{expanded}");
+        assert!(expanded.contains("--approve"));
+        assert!(!expanded.contains("--model old"));
+        assert!(!expanded.contains("--thinking low"));
+        assert_eq!(expand_pi_ref("pi --approve"), "pi --approve");
+        assert_eq!(expand_pi_ref("__TB_PI_REF__:bad provider:model"), "__TB_PI_REF__:bad provider:model");
+    }
+
+    #[test]
+    fn normalizes_cwds_for_pi_scan_fallback() {
+        assert_eq!(normalize_cwd(r"D:\Work\Demo\"), "d:/work/demo");
+        assert_eq!(normalize_cwd("/workspace/demo/"), "/workspace/demo");
+        assert_ne!(normalize_cwd("/workspace/demo"), normalize_cwd("/workspace/demo2"));
+    }
 }

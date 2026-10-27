@@ -512,6 +512,7 @@ pub(super) fn render_markdown_for_assistant(
         let (role_label, time) = match message.role.as_str() {
             "user" => ("你", message.timestamp),
             "assistant" => (assistant, message.timestamp),
+            "system" => ("系统摘要", message.timestamp),
             _ => ("工具结果", message.timestamp),
         };
         out.push_str(&format!("## {}", role_label));
