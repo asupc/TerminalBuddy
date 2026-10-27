@@ -81,8 +81,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
                 "AI 需要选择、回答或授权时，通过声音、振动和横幅提醒"),
             alertChannel(RESULT_CHANNEL, LEGACY_RESULT_CHANNEL, "任务结束横幅通知",
                 "AI 任务完成、失败或中断时，通过声音、振动和横幅提醒"),
-            NotificationChannel(MONITOR_CHANNEL, "任务后台监听", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "登录期间持续接收决策和任务结束消息"
+            NotificationChannel(MONITOR_CHANNEL, "后台任务提醒", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "用于后台接收任务决策和执行结果"
                 setShowBadge(false)
             },
         ))
@@ -329,29 +329,26 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         }
     }
 
-    internal fun monitoringNotification(
-        reconnecting: Boolean = true, tasksRunning: Boolean = hasActiveTasks(), pollingFallback: Boolean = false,
-        networkBlocked: Boolean = monitorState.value.networkBlocked,
-    ): Notification =
-        NotificationCompat.Builder(context, MONITOR_CHANNEL)
+    internal fun monitoringNotification(): Notification {
+        val state = monitorState.value
+        return NotificationCompat.Builder(context, MONITOR_CHANNEL)
             .setSmallIcon(R.drawable.ic_task_notification)
-            .setContentTitle(when {
-                networkBlocked -> "AI 后台联网受限"
-                reconnecting -> "AI 消息连接正在重连"
-                else -> "AI 消息接收已连接"
-            })
+            .setContentTitle("Terminal Buddy 后台提醒")
             .setContentText(when {
-                networkBlocked -> "请在系统应用设置中允许后台联网"
-                pollingFallback -> "实时连接正在恢复，暂通过后台同步接收消息"
-                reconnecting -> "正在恢复后台消息连接，连接恢复后自动补收提醒"
-                tasksRunning -> "任务执行中，后台接收决策和结束消息"
-                else -> "等待新消息，点击返回应用"
+                state.networkBlocked -> "后台联网受限，请在系统设置中允许后台联网"
+                state.pollingFallback -> "正在后台同步任务状态，决策和执行结果会通知你"
+                state.reconnecting -> if (monitor.lastFrameAt == 0L && monitor.lastSyncAt == 0L)
+                    "正在连接服务器，连接后接收任务提醒"
+                else "连接暂时中断，正在自动恢复任务提醒"
+                state.tasksRunning -> "任务执行中，需要决策或执行结束时会通知你"
+                else -> "正在后台接收任务提醒，点击返回应用"
             })
             .setContentIntent(PendingIntent.getActivity(context, 0,
                 Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
             .setOngoing(true).setSilent(true).setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE).build()
+    }
 
     private fun showEvent(accountId: String, session: AiSession, decision: Boolean): Boolean {
         val channel = if (decision) DECISION_CHANNEL else RESULT_CHANNEL

@@ -51,7 +51,7 @@ class AiTaskMonitorService : Service() {
                     runCatching {
                         getSystemService(android.app.NotificationManager::class.java).notify(
                             AiTaskNotifications.MONITOR_ID,
-                            notifications.monitoringNotification(state.reconnecting, state.tasksRunning, state.pollingFallback),
+                            notifications.monitoringNotification(),
                         )
                     }.onFailure { notifications.recordDiagnostic("更新常驻通知失败：${it.javaClass.simpleName}") }
                 }
