@@ -96,7 +96,7 @@ fn store_turn(data: &mut AiSession, base: &AiTokenUsage, tokens: AiTokenUsage, s
     usage.session_total.tokens = base.plus(&tokens);
     usage.last_turn = Some(AiTurnUsage { tokens, state: state.into() });
 }
-fn invalidate_context(data: &mut AiSession) {
+pub(super) fn invalidate_context(data: &mut AiSession) {
     let context = &mut ensure(data).context;
     context.used_tokens = None;
     context.used_source = None;
@@ -321,6 +321,63 @@ impl CodexUsageTracker {
     pub(super) fn completed(&self, data: &mut AiSession) {
         if let Some(turn) = ensure(data).last_turn.as_mut() {
             if self.observed && !self.missing_turn_base && turn.tokens.complete() { turn.state = "final".into(); }
+        }
+    }
+}
+
+/// Pi 的 `usage.input` 不含缓存（与 Claude 相同），`reasoning` 已包含在 `output` 中。
+fn pi_tokens(value: &Value) -> AiTokenUsage {
+    let fresh = number(value, &["input"]);
+    let cached = number(value, &["cacheRead"]);
+    let created = number(value, &["cacheWrite"]);
+    AiTokenUsage {
+        input_tokens: add(add(fresh, cached), created),
+        output_tokens: number(value, &["output"]),
+        cache_read_input_tokens: cached,
+        cache_creation_input_tokens: created,
+        reasoning_output_tokens: number(value, &["reasoning"]),
+    }
+}
+
+#[derive(Default)]
+pub(super) struct PiUsageTracker {
+    base: Option<AiTokenUsage>,
+    // Pi 消息没有稳定 id，按回合内序号累计；`message_update.usage` 是单条响应内的累计。
+    messages: HashMap<u64, AiTokenUsage>,
+}
+impl PiUsageTracker {
+    pub(super) fn start(&mut self, data: &mut AiSession) {
+        self.base = Some(ensure(data).session_total.tokens.clone());
+        self.messages.clear();
+    }
+    pub(super) fn observe(&mut self, data: &mut AiSession, index: u64, value: &Value) -> bool {
+        let tokens = pi_tokens(value);
+        if !tokens.reported() { return false; }
+        let base = self.base.get_or_insert_with(|| ensure(data).session_total.tokens.clone()).clone();
+        self.messages.entry(index).or_default().merge(&tokens);
+        let total = self.messages.values().fold(AiTokenUsage::default(), |sum, usage| sum.plus(usage));
+        store_turn(data, &base, total, "provisional");
+        true
+    }
+    /// 回合结束后用 `get_session_stats` 的全会话累计做权威结算，覆盖工具嵌套的模型消耗。
+    pub(super) fn settled(&mut self, data: &mut AiSession, stats: &Value) {
+        let tokens = pi_tokens(&stats["tokens"]);
+        if tokens.reported() {
+            let base = self.base.get_or_insert_with(|| ensure(data).session_total.tokens.clone()).clone();
+            let state = if tokens.complete() { "final" } else { "partial" };
+            store_turn(data, &base, tokens.minus(&base), state);
+        } else if let Some(turn) = ensure(data).last_turn.as_mut() { turn.state = "partial".into(); }
+        let context = &mut ensure(data).context;
+        let usage = &stats["contextUsage"];
+        if let Some(used) = number(usage, &["tokens"]) {
+            context.used_tokens = Some(used);
+            context.basis = "input".into();
+            context.used_source = Some("cliUsage".into());
+            context.updating = false;
+        }
+        if let Some(window) = number(usage, &["contextWindow"]).filter(|n| *n > 0) {
+            context.window_tokens = Some(window);
+            context.window_source = Some("cli".into());
         }
     }
 }

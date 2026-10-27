@@ -496,6 +496,7 @@ pub fn get_web_api_status() -> serde_json::Value {
         "username": settings.web_api_username,
         "hasPassword": !settings.web_api_password_hash.is_empty(),
         "pageTitle": settings.web_page_title,
+        "shareSessions": settings.web_api_share_sessions,
     })
 }
 

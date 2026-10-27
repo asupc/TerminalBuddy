@@ -18,6 +18,14 @@ pub struct AiApproval {
     pub details: serde_json::Value,
 }
 
+/// 回合进行中收到的排队消息：当前回合结束后按序自动发送（与 PC 终端排队一致）。
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingInput {
+    pub text: String,
+    pub request_id: String,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiSession {
@@ -51,6 +59,9 @@ pub struct AiSession {
     pub thread_id: Option<String>,
     #[serde(default, skip_serializing)]
     pub request_ids: Vec<String>,
+    /// 排队待发消息（非空时对客户端可见，手机端据此显示「N 条排队中」）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_inputs: Vec<PendingInput>,
 }
 
 impl AiSession {
@@ -63,7 +74,7 @@ impl AiSession {
             messages: Vec::new(), approvals: self.approvals.clone(), error: self.error.clone(),
             updated_at: self.updated_at, revision: self.revision, result_revision: self.result_revision,
             usage: self.usage.clone(), usage_checkpoint: None, owner: self.owner.clone(),
-            thread_id: None, request_ids: Vec::new(),
+            thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new(),
         }
     }
 }

@@ -65,6 +65,8 @@ impl NativePermissions {
 }
 
 pub(crate) fn for_agent(agent: &str) -> Result<NativePermissions> {
+    // Pi 无内建权限参数；原生会话保持 Pi 原生行为，工具审查经扩展交互桥呈现。
+    if agent == "pi" { return Ok(NativePermissions::default()); }
     let settings = SettingsService::get_settings();
     let (configured, fallback) = if agent == "claude" {
         (settings.agent_commands.claude, DEFAULT_CLAUDE_COMMAND)

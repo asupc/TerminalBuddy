@@ -571,6 +571,7 @@ pub fn run() {
             fetch_minimax_usage,
             fetch_ark_usage,
             save_web_api_settings,
+            save_web_api_share_sessions,
             get_web_api_status,
             change_web_admin_password,
             save_web_page_title,

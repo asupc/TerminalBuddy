@@ -51,6 +51,7 @@ fn persist_data(cell: &Cell, data: &AiSession) -> Result<()> {
     value["threadId"] = json!(data.thread_id);
     value["requestIds"] = json!(data.request_ids);
     value["usageCheckpoint"] = json!(data.usage_checkpoint);
+    value["pendingInputs"] = json!(data.pending_inputs);
     atomic_write_private(&cell.path, &serde_json::to_vec(&value).map_err(|e| e.to_string())?)
         .map_err(|e| format!("保存 AI 会话失败：{e}"))
 }
@@ -106,7 +107,7 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
     Ok(sessions)
 }
 pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
-    if !matches!(input.provider.as_str(), "claude" | "codex") { return Err("请选择 Claude 或 Codex".into()); }
+    if !matches!(input.provider.as_str(), "claude" | "codex" | "pi") { return Err("请选择 Claude、Codex 或 Pi".into()); }
     if input.model.as_ref().is_some_and(|v| !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/[]@+".contains(c))) { return Err("模型名称无效".into()); }
     let selection = super::ai_catalog_service::selection(&input.provider, input.provider_id.as_deref(), input.model.as_deref())?;
     let id = Uuid::new_v4().to_string();
@@ -115,7 +116,7 @@ pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         project_path: input.project_path, model: input.model.filter(|m| !m.trim().is_empty()),
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
-        updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new() };
+        updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new() };
     let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{id}.json")) });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
@@ -125,12 +126,12 @@ pub fn delete(id: &str, owner: &str) -> Result<()> {
     let cell = load(id, owner)?;
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
-    if control.is_some() && (data.provider != "codex" || data.status != "idle") {
+    if control.is_some() && (!matches!(data.provider.as_str(), "codex" | "pi") || data.status != "idle") {
         return Err("会话正在执行，请先中断再删除".into());
     }
     fs::remove_file(&cell.path).map_err(|e| format!("删除 AI 会话失败：{e}"))?;
     cell.deleted.store(true, Ordering::Release);
-    // 空闲 Codex 仍保留 app-server；删除时退出，但不能再执行普通收尾把文件写回来。
+    // 空闲 Codex/Pi 仍保留常驻进程；删除时退出，但不能再执行普通收尾把文件写回来。
     if let Some(tx) = control.take() { let _ = tx.send(Control::Retire); }
     drop(data);
     registry().lock().map_err(|_| "AI 会话状态不可用")?.remove(&cell.path);
@@ -170,36 +171,69 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     let cell = load(id, owner)?;
     if input.text.trim().is_empty() { return Err("消息不能为空".into()); }
     Uuid::parse_str(&input.request_id).map_err(|_| "消息请求标识无效")?;
-    let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+    let control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
     if !cell.path.is_file() { return Err("AI 会话不存在".into()); }
     if data.request_ids.contains(&input.request_id) { return Ok(data.clone()); }
-    let reuse = data.provider == "codex" && control.is_some() && matches!(data.status.as_str(), "idle" | "background");
-    if control.is_some() && !reuse { return Err("AI 正在回复，请等待完成或先中断".into()); }
+    // Codex app-server 与 Pi RPC 常驻进程在空闲时保留，直接转发新消息；
+    // 有排队消息时不用常驻通道，走新回合按序发出，保证与排队消息的先后一致。
+    let reuse = matches!(data.provider.as_str(), "codex" | "pi") && control.is_some()
+        && matches!(data.status.as_str(), "idle" | "background") && data.pending_inputs.is_empty();
+    if control.is_some() && !reuse {
+        // 回复、等待确认或中断进行中：消息排队（用户消息立即入列），当前回合
+        // 结束后按序自动发送，与 PC 终端在 AI 回复期间排队输入的行为一致。
+        let before = data.clone();
+        data.messages.push(AiMessage { id: input.request_id.clone(), role: "user".into(), text: input.text.clone(), created_at: chrono::Utc::now().timestamp_millis() });
+        if data.title == "新对话" { data.title = input.text.trim().chars().take(36).collect(); }
+        data.request_ids.push(input.request_id.clone());
+        data.pending_inputs.push(PendingInput { text: input.text.clone(), request_id: input.request_id.clone() });
+        touch(&mut data);
+        let snapshot = data.clone();
+        if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+        return Ok(snapshot);
+    }
     let before = data.clone();
     data.messages.push(AiMessage { id: input.request_id.clone(), role: "user".into(), text: input.text.clone(), created_at: chrono::Utc::now().timestamp_millis() });
     if data.title == "新对话" { data.title = input.text.trim().chars().take(36).collect(); }
+    data.request_ids.push(input.request_id.clone());
+    // 新消息进队尾，先启动队首：中断/出错后保留的排队消息仍按用户发送顺序执行。
+    data.pending_inputs.push(PendingInput { text: input.text.clone(), request_id: input.request_id.clone() });
+    let next = data.pending_inputs.remove(0);
     usage::begin_turn(&mut data);
-    data.request_ids.push(input.request_id.clone()); data.status = "running".into(); data.error = None; data.approvals.clear(); touch(&mut data);
+    data.status = "running".into(); data.error = None; data.approvals.clear(); touch(&mut data);
     let snapshot = data.clone();
     if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
     if reuse {
-        if control.as_ref().ok_or("AI 输入通道不可用")?.send(Control::Message { text: input.text, request_id: input.request_id }).is_err() {
+        let message = Control::Message { text: next.text, request_id: next.request_id };
+        if control.as_ref().ok_or("AI 输入通道不可用")?.send(message).is_err() {
             *data = before;
             persist_data(&cell, &data)?;
-            return Err("Codex 进程已退出，请再次发送消息".into());
+            return Err("服务端进程已退出，请再次发送消息".into());
         }
         return Ok(snapshot);
     }
-    drop(data);
+    drop(data); drop(control);
+    let thread_name = format!("ai-{id}");
+    if let Err(error) = start_turn(&cell, next, thread_name) {
+        // 消息已入列并持久化过，失败时整体回滚到发送前并还原持久化文件。
+        *cell.data.lock().map_err(|_| "AI 会话状态不可用")? = before;
+        persist(&cell)?;
+        return Err(error);
+    }
+    Ok(snapshot)
+}
+
+/// 启动一个新回合的 worker 线程。调用方负责消息入列与状态迁移；本函数只安装
+/// 控制通道并 spawn。spawn 失败时清掉控制通道，状态回滚由调用方处理。
+fn start_turn(cell: &Arc<Cell>, next: PendingInput, thread_name: String) -> Result<()> {
     RUNNING.fetch_add(1, Ordering::Relaxed);
     let task = RunningTask;
     let (tx, rx) = mpsc::channel();
-    *control = Some(tx); drop(control);
+    *cell.control.lock().map_err(|_| "AI 会话状态不可用")? = Some(tx);
     let worker_cell = cell.clone();
-    if let Err(error) = thread::Builder::new().name(format!("ai-{id}")).spawn(move || {
+    if let Err(error) = thread::Builder::new().name(thread_name).spawn(move || {
         let _task = task;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_turn(&worker_cell, &input.text, rx)))
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_turn(&worker_cell, &next.text, rx)))
             .unwrap_or_else(|_| Err("AI 执行意外结束，可以重新发送消息".into()));
         match result {
             Ok(WorkerExit::Retired) => {},
@@ -207,11 +241,22 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
         }
     }) {
         *cell.control.lock().map_err(|_| "AI 会话状态不可用")? = None;
-        *cell.data.lock().map_err(|_| "AI 会话状态不可用")? = before;
-        persist(&cell)?;
         return Err(format!("启动 AI 任务失败：{error}"));
     }
-    Ok(snapshot)
+    Ok(())
+}
+
+/// 回合正常结束后取出下一条排队消息并把会话迁回 running。
+/// 仅在空闲（无 worker、状态 idle）时生效；持久化失败则不启动。
+fn take_next_pending(cell: &Arc<Cell>) -> Option<PendingInput> {
+    let control = cell.control.lock().ok()?;
+    let mut data = cell.data.lock().ok()?;
+    if control.is_some() || data.status != "idle" || data.pending_inputs.is_empty() { return None; }
+    let next = data.pending_inputs.remove(0);
+    usage::begin_turn(&mut data);
+    data.status = "running".into(); data.error = None; data.approvals.clear(); touch(&mut data);
+    persist_data(cell, &data).ok()?;
+    Some(next)
 }
 fn refresh_title(cell: &Cell, force: bool) {
     // 正文轮询不等待其他客户端的扫描；回合结束时等待后强制刷新。
@@ -245,7 +290,8 @@ fn save_summary_title(cell: &Cell, provider: &str, session_id: &str, title: Stri
     }
     Ok(())
 }
-fn finish(cell: &Cell, result: Result<()>) {
+fn finish(cell: &Arc<Cell>, result: Result<()>) {
+    let succeeded = result.is_ok();
     refresh_title(cell, true);
     if let Ok(mut control) = cell.control.lock() {
         if let Ok(mut data) = cell.data.lock() {
@@ -265,6 +311,21 @@ fn finish(cell: &Cell, result: Result<()>) {
             if let Ok(mut data) = cell.data.lock() {
                 data.status = "error".into(); data.error = Some(error); touch(&mut data);
                 data.result_revision = data.revision;
+            }
+        }
+    }
+    // 正常完成的回合若还有排队消息，按序自动开始下一回合；中断/出错保留队列，
+    // 由用户下一次发送时按序带出。
+    if succeeded {
+        if let Some(next) = take_next_pending(cell) {
+            let thread_name = cell.path.file_stem().and_then(|id| id.to_str())
+                .map(|id| format!("ai-{id}")).unwrap_or_else(|| "ai-turn".into());
+            if let Err(error) = start_turn(cell, next.clone(), thread_name) {
+                update(cell, |data| {
+                    data.pending_inputs.insert(0, next);
+                    data.status = "error".into(); data.error = Some(error); touch(data);
+                    data.result_revision = data.revision;
+                });
             }
         }
     }
@@ -296,7 +357,9 @@ impl Drop for Process {
     }
 }
 fn cli_command(provider: &str) -> Command {
-    let configured = std::env::var_os(if provider == "claude" { "TERMINAL_BUDDY_CLAUDE_BIN" } else { "TERMINAL_BUDDY_CODEX_BIN" });
+    let configured = std::env::var_os(match provider {
+        "claude" => "TERMINAL_BUDDY_CLAUDE_BIN", "codex" => "TERMINAL_BUDDY_CODEX_BIN", _ => "TERMINAL_BUDDY_PI_BIN",
+    });
     let mut path = configured.map(PathBuf::from).unwrap_or_else(|| PathBuf::from(provider));
     if path.components().count() == 1 {
         if let Some(home) = dirs::home_dir() {
@@ -342,6 +405,14 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
             "--permission-prompt-tool", "stdio"]);
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
+    } else if session.provider == "pi" {
+        // 注入 TerminalBuddy 扩展：无环境变量时完全 no-op，工具审批开关经环境变量开启。
+        if let Ok(path) = super::pi_extension_service::ensure_extension() {
+            command.arg("--extension").arg(path);
+        }
+        // RPC 会话 ID 直接复用 AiSession ID：Pi 按该 ID 落盘并复用同一会话文件，
+        // 会话目录随 current_dir 归档，历史索引与标题摘要据此绑定。
+        command.args(["--mode", "rpc", "--session-id"]).arg(&session.id);
     } else {
         // 新旧对话均优先使用普通模式的标准提问工具；动态工具仅作补充。
         command.args(&permissions.codex_args).args(["-c", "features.default_mode_request_user_input=true"]).arg("app-server");
@@ -378,6 +449,8 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
             "parent_tool_use_id":null,"session_id":session.thread_id.as_deref().unwrap_or("")}))?;
         run_claude(cell, &mut process, stdin, controls, output, errors, hooks.as_ref().ok_or("Claude 决策 Hook 未初始化")?)
             .map(|_| WorkerExit::Completed)
+    } else if session.provider == "pi" {
+        run_pi(cell, &session, prompt, stdin, controls, output, errors)
     } else {
         write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"},"capabilities":{"experimentalApi":true}}}))?;
         run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors)
@@ -1018,6 +1091,202 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
 }
 
 /// 应用退出时同时收尾原生 AI 任务，防止留下无主 CLI 子进程。
+// ── Pi RPC 原生会话 ──────────────────────────────────────────────────────
+
+/// Pi 命令是 `{id, type: <命令>, ...参数}` 的平铺结构。
+fn pi_request(stdin: &mut impl Write, next_id: &mut u64, command: &str, mut params: Value) -> Result<u64> {
+    let id = *next_id;
+    *next_id += 1;
+    let mut value = json!({"id":id, "type":command});
+    if let Some(fields) = params.as_object_mut() { for (key, item) in fields { value[key] = item.take(); } }
+    write_json(stdin, value)?;
+    Ok(id)
+}
+
+#[derive(Default)]
+struct PiOutputState {
+    message_number: u64,
+    current_key: String,
+    /// 最近一次 prompt 正在执行（含重试、压缩恢复），直到 `agent_settled`。
+    running: bool,
+    /// `agent_settled` 已到，等待 `get_session_stats` 做权威结算。
+    settling: bool,
+    usage: usage::PiUsageTracker,
+}
+
+fn apply_pi_event(cell: &Cell, turn: &str, state: &mut PiOutputState, value: &Value) {
+    match value["type"].as_str().unwrap_or("") {
+        "message_start" if value["message"]["role"] == "assistant" => {
+            state.message_number += 1;
+            state.current_key = format!("{turn}-text-{}", state.message_number);
+        }
+        "message_update" => {
+            let event = &value["assistantMessageEvent"];
+            if event["type"] == "text_delta" {
+                let key = state.current_key.clone();
+                message(cell, &key, "assistant", event["delta"].as_str().unwrap_or(""), true);
+            }
+            let index = state.message_number;
+            update_usage(cell, |data| state.usage.observe(data, index, &value["usage"]));
+        }
+        "message_end" => {
+            let assistant = &value["message"];
+            if assistant["role"] == "assistant" && !state.current_key.is_empty() {
+                // 权威正文按内容块顺序拼接 text；工具卡片由 tool_execution 事件呈现。
+                let text = assistant["content"].as_array().map(|blocks| blocks.iter()
+                    .filter(|block| block["type"] == "text")
+                    .map(|block| block["text"].as_str().unwrap_or("")).collect::<String>()).unwrap_or_default();
+                let key = state.current_key.clone();
+                message(cell, &key, "assistant", &text, false);
+                let index = state.message_number;
+                update_usage(cell, |data| state.usage.observe(data, index, &assistant["usage"]));
+                if assistant["stopReason"] == "error" {
+                    let detail = assistant["errorMessage"].as_str().unwrap_or("模型请求失败");
+                    message(cell, &format!("{turn}-error-{index}"), "assistant", &format!("⚠ {detail}"), false);
+                }
+            }
+        }
+        "tool_execution_start" => {
+            let id = value["toolCallId"].as_str().unwrap_or_default();
+            message(cell, &format!("{turn}-tool-{id}"), "tool",
+                &format!("{}\n{}", value["toolName"].as_str().unwrap_or("工具调用"), value["args"]), false);
+        }
+        "tool_execution_end" => {
+            let id = value["toolCallId"].as_str().unwrap_or_default();
+            let body = value["result"]["content"].as_array().map(|blocks| blocks.iter()
+                .filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+            let title = if value["isError"] == true { "工具执行失败" } else { "工具执行完成" };
+            message(cell, &format!("{turn}-tool-{id}"), "tool", &format!("{title}\n{body}"), false);
+        }
+        "compaction_start" => update_usage(cell, |data| { usage::invalidate_context(data); true }),
+        _ => {}
+    }
+}
+
+fn pi_status(cell: &Cell, state: &PiOutputState) {
+    if let Ok(mut data) = cell.data.lock() {
+        let status = if !data.approvals.is_empty() { "approval" } else if state.running || state.settling { "running" } else { "idle" };
+        if data.status != status {
+            data.status = status.into(); touch(&mut data);
+            if status == "idle" { data.result_revision = data.revision; }
+        }
+    }
+}
+
+fn run_pi(cell: &Cell, session: &AiSession, prompt: &str, stdin: ChildStdin, controls: mpsc::Receiver<Control>,
+    output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<WorkerExit> {
+    let mut input = Some(stdin);
+    let mut next_id = 2;
+    let mut turn = Uuid::new_v4().to_string();
+    let mut state = PiOutputState::default();
+    let mut stats_request: Option<u64> = None;
+    let mut pending: HashMap<String, AiApproval> = HashMap::new();
+    let mut checkpoint = Instant::now();
+    let mut last_persisted = session.revision;
+    let mut retired = false;
+    // Pi 会话文件与摘要绑定到 Pi 会话 ID（即 AiSession ID），首回合即登记。
+    if session.thread_id.is_none() { update(cell, |data| data.thread_id = Some(session.id.clone())); persist(cell)?; }
+    pi_request(input.as_mut().ok_or("Pi 输入通道不可用")?, &mut next_id, "prompt", json!({"message":prompt}))?;
+    state.running = true;
+    loop {
+        while let Ok(control) = controls.try_recv() {
+            match control {
+                // 先请求中断再由外层清理进程树；Pi 会话文件已持久，上下文不丢失。
+                Control::Stop => {
+                    if let Some(stdin) = input.as_mut() { let _ = pi_request(stdin, &mut next_id, "abort", json!({})); }
+                    return Err("已中断".into());
+                }
+                Control::Retire => { drop(input.take()); retired = true; }
+                Control::Message { text, .. } => {
+                    let stdin = input.as_mut().ok_or("Pi 进程已退出，请再次发送消息")?;
+                    turn = Uuid::new_v4().to_string();
+                    state = PiOutputState::default();
+                    if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
+                    pi_request(stdin, &mut next_id, "prompt", json!({"message":text}))?;
+                    state.running = true;
+                    stats_request = None;
+                }
+                Control::Approval(answer) => {
+                    if let Some(approval) = pending.remove(&answer.approval_id) {
+                        let stdin = input.as_mut().ok_or("Pi 输入通道已关闭，请重新发送消息")?;
+                        write_json(stdin, approval::pi_extension_response(&approval, &answer)?)?;
+                        update(cell, |data| {
+                            data.approvals.retain(|item| item.id != answer.approval_id);
+                            if data.approvals.is_empty() && data.status == "approval"
+                                && (state.running || state.settling) { data.status = "running".into(); }
+                        });
+                    }
+                }
+            }
+        }
+        if checkpoint.elapsed() > Duration::from_secs(5) {
+            let revision = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.revision;
+            if revision != last_persisted { persist(cell)?; last_persisted = revision; }
+            checkpoint = Instant::now();
+        }
+        pi_status(cell, &state);
+        let value = match next_output(&output, &errors) {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
+            Err(message) => { if retired { return Ok(WorkerExit::Retired); } return Err(message); }
+        };
+        if value["type"] == "response" {
+            let command = value["command"].as_str().unwrap_or("");
+            if command == "prompt" {
+                if value["success"] != true { return Err(value["error"].as_str().unwrap_or("Pi 拒绝了本次消息").into()); }
+                // 扩展命令被即时处理，不会产生 agent_settled，直接进入结算。
+                if value["data"]["disposition"] == "handled" {
+                    let stdin = input.as_mut().ok_or("Pi 输入通道已关闭")?;
+                    stats_request = Some(pi_request(stdin, &mut next_id, "get_session_stats", json!({}))?);
+                    state.running = false; state.settling = true;
+                }
+            } else if value["id"].as_u64().is_some_and(|id| stats_request == Some(id)) {
+                stats_request = None;
+                let stats = value["data"].clone();
+                let mut queued = None;
+                if let Ok(mut data) = cell.data.lock() {
+                    state.usage.settled(&mut data, &stats);
+                    usage::finish_turn(&mut data);
+                    // 排队消息按序自动续发：常驻进程不返回 finish()，在结算处直接送出队首，
+                    // 不经空闲停留，与 PC 终端在 AI 回复期间排队输入的行为一致。
+                    if !data.pending_inputs.is_empty() && data.status != "stopping" {
+                        let next = data.pending_inputs.remove(0);
+                        usage::begin_turn(&mut data);
+                        data.status = "running".into(); data.error = None; data.approvals.clear();
+                        queued = Some(next);
+                    }
+                    touch(&mut data);
+                }
+                refresh_title(cell, true);
+                persist(cell)?;
+                state.settling = false;
+                if let Some(next) = queued {
+                    turn = Uuid::new_v4().to_string();
+                    state = PiOutputState::default();
+                    if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
+                    pi_request(input.as_mut().ok_or("Pi 输入通道已关闭")?, &mut next_id, "prompt", json!({"message":next.text}))?;
+                    state.running = true;
+                }
+            }
+            continue;
+        }
+        if value["type"] == "extension_ui_request" {
+            if let Some(approval) = approval::pi_extension_approval(&value) {
+                pending.insert(approval.id.clone(), approval.clone());
+                update(cell, |data| { data.status = "approval".into(); data.approvals.push(approval); });
+            }
+            continue;
+        }
+        if value["type"] == "agent_settled" {
+            let stdin = input.as_mut().ok_or("Pi 输入通道已关闭")?;
+            stats_request = Some(pi_request(stdin, &mut next_id, "get_session_stats", json!({}))?);
+            state.running = false; state.settling = true;
+            continue;
+        }
+        apply_pi_event(cell, &turn, &mut state, &value);
+    }
+}
+
 pub fn shutdown_all() {
     let cells = registry().lock().map(|items| items.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
     for cell in cells {
@@ -1370,6 +1639,88 @@ mod tests {
             codex("item/completed", json!({"item": {"type": "agentMessage", "text": "无标识快照"}})),
         ]);
         assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn pi_events_stream_and_finalize_assistant_text() {
+        let cell = cell();
+        let mut state = PiOutputState::default();
+        let events = [
+            json!({"type":"message_start","message":{"role":"assistant"}}),
+            json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"你"},"usage":{"input":10,"output":1}}),
+            json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"好"},"usage":{"input":10,"output":2}}),
+            json!({"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"略"},{"type":"text","text":"你好，世界"}],"usage":{"input":10,"output":3,"cacheRead":2}}}),
+        ];
+        for event in &events { apply_pi_event(&cell, "turn", &mut state, event); }
+        let data = cell.data.into_inner().unwrap();
+        assert_eq!(data.messages.len(), 1);
+        assert_eq!(data.messages[0].role, "assistant");
+        assert_eq!(data.messages[0].text, "你好，世界");
+        let usage = data.usage.unwrap();
+        let turn = usage.last_turn.unwrap();
+        assert_eq!(turn.state, "provisional");
+        assert_eq!(turn.tokens.input_tokens, Some(12));
+        assert_eq!(turn.tokens.output_tokens, Some(3));
+        assert_eq!(turn.tokens.cache_read_input_tokens, Some(2));
+    }
+
+    #[test]
+    fn pi_tool_events_replace_the_same_card() {
+        let cell = cell();
+        let mut state = PiOutputState::default();
+        let events = [
+            json!({"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{"command":"ls"}}),
+            json!({"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"file"}]}}),
+            json!({"type":"tool_execution_start","toolCallId":"c2","toolName":"edit","args":{"path":"a.rs"}}),
+            json!({"type":"tool_execution_end","toolCallId":"c2","toolName":"edit","isError":true,"result":{"content":[{"type":"text","text":"拒绝"}]}}),
+        ];
+        for event in &events { apply_pi_event(&cell, "turn", &mut state, event); }
+        let data = cell.data.into_inner().unwrap();
+        assert_eq!(data.messages.len(), 2);
+        assert_eq!(data.messages[0].text, "工具执行完成\nfile");
+        assert_eq!(data.messages[1].text, "工具执行失败\n拒绝");
+    }
+
+    #[test]
+    fn pi_usage_settles_with_authoritative_stats() {
+        let cell = cell();
+        {
+            let mut data = cell.data.lock().unwrap();
+            data.usage = Some(usage::initial());
+            let mut tracker = usage::PiUsageTracker::default();
+            tracker.start(&mut data);
+            tracker.observe(&mut data, 1, &json!({"input":100,"output":5}));
+            tracker.settled(&mut data, &json!({
+                "tokens":{"input":500,"output":50,"cacheRead":40},
+                "contextUsage":{"tokens":600,"contextWindow":200000},
+            }));
+        }
+        let data = cell.data.into_inner().unwrap();
+        let usage = data.usage.unwrap();
+        assert_eq!(usage.session_total.tokens.input_tokens, Some(540));
+        assert_eq!(usage.session_total.tokens.output_tokens, Some(50));
+        let turn = usage.last_turn.unwrap();
+        assert_eq!(turn.state, "final");
+        assert_eq!(turn.tokens.input_tokens, Some(540));
+        assert_eq!(usage.context.used_tokens, Some(600));
+        assert_eq!(usage.context.window_tokens, Some(200000));
+        assert_eq!(usage.context.window_source.as_deref(), Some("cli"));
+    }
+
+    #[test]
+    fn pi_status_waits_for_stats_before_idle() {
+        let cell = cell();
+        let mut state = PiOutputState { running: true, ..Default::default() };
+        pi_status(&cell, &state);
+        assert_eq!(cell.data.lock().unwrap().status, "running");
+        state = PiOutputState { settling: true, ..Default::default() };
+        pi_status(&cell, &state);
+        assert_eq!(cell.data.lock().unwrap().status, "running");
+        state = PiOutputState::default();
+        pi_status(&cell, &state);
+        let data = cell.data.lock().unwrap();
+        assert_eq!(data.status, "idle");
+        assert_eq!(data.result_revision, data.revision);
     }
 
 }
