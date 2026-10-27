@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import {
   getWebApiStatus,
   saveWebApiSettings,
+  saveWebApiShareSessions,
   restartWebServer,
   getWebServerAddress,
   getWebQuickAccessUrl,
@@ -10,7 +11,7 @@ import {
   writeClientData,
   openUrl,
 } from '../../services/tauri';
-import { getAppSettings } from '../../utils/settings';
+import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { isBrowserClient } from '../../services/platform';
 import './WebManageDialog.css';
 
@@ -131,6 +132,8 @@ export const WebManageSettings: FC = () => {
   const [quickUrl, setQuickUrl] = useState('');
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [copied, setCopied] = useState(false);
+  const [shareSessions, setShareSessions] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -138,6 +141,7 @@ export const WebManageSettings: FC = () => {
       setPort(status.port);
       setUsername(status.username);
       setHasPassword(status.hasPassword);
+      setShareSessions(Boolean(status.shareSessions));
       const addr = await getWebServerAddress();
       setServerAddress(addr);
       setServerRunning(addr.startsWith('http'));
@@ -201,14 +205,36 @@ export const WebManageSettings: FC = () => {
     };
   }, [customEndpoint, serverRunning]);
 
+  // 切换「与桌面共享终端会话」：设置独立保存、立即生效，无需重启服务。
+  // 关闭共享会立刻断开 Web 端正在接入的桌面终端（WS 每 5 秒复核授权）。
+  const handleToggleShare = async (enabled: boolean) => {
+    if (shareBusy) return;
+    setShareBusy(true);
+    setServerError('');
+    const previous = shareSessions;
+    setShareSessions(enabled);
+    try {
+      await saveWebApiShareSessions(enabled);
+      // 同步前端本地设置缓存：终端只读判定与服务器启停时的透传读取的都是它。
+      saveAppSettings({ ...getAppSettings(), webApiShareSessions: enabled });
+    } catch (e: any) {
+      setShareSessions(previous);
+      setServerError(e?.toString() || '保存共享设置失败');
+      console.error('[WebAPI] 切换共享设置失败:', e);
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
   const handleToggleServer = async () => {
     setServerLoading(true);
     setServerError('');
     try {
-      const shareSessions = getAppSettings().webApiShareSessions;
+      // 共享开关独立保存（handleToggleShare），启停服务只透传当前值。
+      const currentShare = shareSessions;
       if (serverRunning) {
         // 停止：关闭开关后 restart_web_server 会检测 enabled=false 并停止。
-        await saveWebApiSettings(false, port, username, '', shareSessions);
+        await saveWebApiSettings(false, port, username, '', currentShare);
         await restartWebServer();
         setServerRunning(false);
         setServerAddress('已停止');
@@ -218,7 +244,7 @@ export const WebManageSettings: FC = () => {
           setServerLoading(false);
           return;
         }
-        await saveWebApiSettings(true, port, username, webPassword, shareSessions);
+        await saveWebApiSettings(true, port, username, webPassword, currentShare);
         const result = await restartWebServer();
         const addr = await getWebServerAddress();
         setServerAddress(addr);
@@ -350,6 +376,21 @@ export const WebManageSettings: FC = () => {
               )}
             </div>
           )}
+
+          <div className="web-field web-field-inline web-share-row">
+            <span className="web-label" id="web-api-share-sessions-label">共享桌面会话</span>
+            <label className="settings-toggle" htmlFor="web-api-share-sessions">
+              <input
+                id="web-api-share-sessions"
+                type="checkbox"
+                aria-labelledby="web-api-share-sessions-label"
+                checked={shareSessions}
+                disabled={shareBusy}
+                onChange={(e) => { void handleToggleShare(e.target.checked); }}
+              />
+              <span>开启后，手机与网页端可查看并接管桌面端创建的终端（接管不能关闭桌面会话，关闭共享立即断开在飞连接）</span>
+            </label>
+          </div>
 
           <div className="web-status-row">
             <span className={`web-status-dot ${serverRunning ? 'on' : 'off'}`} />

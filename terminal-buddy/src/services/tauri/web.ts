@@ -17,8 +17,14 @@ export async function getWebApiStatus(): Promise<{
   username: string;
   hasPassword: boolean;
   pageTitle: string;
+  shareSessions: boolean;
 }> {
   return invoke('get_web_api_status');
+}
+
+/** 切换「与桌面共享终端会话」：Web/手机端可查看并接管桌面端创建的终端（立即生效）。 */
+export async function saveWebApiShareSessions(enabled: boolean): Promise<void> {
+  return invoke('save_web_api_share_sessions', { enabled });
 }
 
 /** Docker 网页端修改管理员登录密码：需验证旧密码，新密码至少 8 个字符。 */

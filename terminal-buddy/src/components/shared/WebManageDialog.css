@@ -280,3 +280,19 @@
   color: #fff;
   border-color: var(--accent-color);
 }
+
+.web-share-row {
+  margin-top: 4px;
+}
+
+.web-share-row .settings-toggle {
+  align-items: start;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.web-share-row .settings-toggle span {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
