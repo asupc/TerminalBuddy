@@ -30,6 +30,10 @@ pub const PSUEDOCONSOLE_INHERIT_CURSOR: DWORD = 0x1;
 pub const PSEUDOCONSOLE_RESIZE_QUIRK: DWORD = 0x2;
 #[allow(dead_code)]
 pub const PSEUDOCONSOLE_WIN32_INPUT_MODE: DWORD = 0x4;
+/// 透传模式：conhost 不再自己应答终端查询（DA1 等），而是把查询原样转给终端。
+/// 新版 Windows 11 才支持，创建失败时必须回退到 0。
+#[allow(dead_code)]
+pub const PSEUDOCONSOLE_PASSTHROUGH_MODE: DWORD = 0x8;
 
 shared_library!(ConPtyFuncs,
     pub fn CreatePseudoConsole(
@@ -78,25 +82,84 @@ impl Drop for PsuedoCon {
 }
 
 impl PsuedoCon {
+    /// 把 ConPTY 的实际工作模式追加写入 %TEMP%/terminal-buddy-conpty-mode.log。
+    /// 应用侧没有安装 log 日志器，`log::info!`/`log::warn!` 不会被任何 sink 收走，
+    /// 排查透传是否生效只能靠这个文件。
+    fn report_mode(line: &str) {
+        use std::io::Write;
+        let path = std::env::temp_dir().join("terminal-buddy-conpty-mode.log");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = writeln!(file, "{}", line);
+        }
+    }
+
     pub fn new(size: COORD, input: FileDescriptor, output: FileDescriptor) -> Result<Self, Error> {
+        // 优先使用 ConPTY 透传模式（dwFlags=0x8）：
+        // 默认模式下 conhost 会自己截答 DA1（`ESC[c`）并不把查询转给终端，而终端侧的
+        // OSC 4/10/11 颜色应答要走「前端 → IPC → PTY」回程（约 20ms）。结果 TUI（如 pi）
+        // 先收到 DA1 就判定"终端不报颜色"，颜色应答晚到后已被丢弃——表现为 pi 的用户消息
+        // 面板丢失背景色。透传模式下 DA1 交回终端，应答顺序变成「颜色 → DA1」，与
+        // Windows Terminal 一致。
+        //
+        // 透传模式只有新版 conhost 支持（旧版直接返回失败），因此失败时回退到 0
+        // （VS Code / node-pty 同款默认行为）。设置 TERMINAL_BUDDY_CONPTY_PASSTHROUGH=0
+        // 可强制关闭，便于对照排查。
+        let passthrough = std::env::var("TERMINAL_BUDDY_CONPTY_PASSTHROUGH")
+            .map(|value| value.trim() != "0")
+            .unwrap_or(true);
+
         let mut con: HPCON = INVALID_HANDLE_VALUE;
-        // Match VS Code/node-pty's standard ConPTY mode. Inherit-cursor is left
-        // disabled so ConPTY does not inject cursor-position queries on startup.
-        let result = unsafe {
+        // 透传模式不再依赖 inherit-cursor；默认模式同样保持不注入光标位置查询。
+        let mut flags: DWORD = if passthrough {
+            PSEUDOCONSOLE_PASSTHROUGH_MODE
+        } else {
+            0
+        };
+        let mut result = unsafe {
             (CONPTY.CreatePseudoConsole)(
                 size,
                 input.as_raw_handle() as _,
                 output.as_raw_handle() as _,
-                0,
+                flags,
                 &mut con,
             )
         };
+        if passthrough && result != S_OK {
+            log::warn!(
+                "ConPTY passthrough mode rejected (HRESULT {}), falling back to dwFlags=0",
+                result
+            );
+            Self::report_mode(&format!(
+                "passthrough(dwFlags=0x{:X}) rejected, HRESULT=0x{:08X}, falling back",
+                PSEUDOCONSOLE_PASSTHROUGH_MODE, result as u32
+            ));
+            con = INVALID_HANDLE_VALUE;
+            flags = 0;
+            result = unsafe {
+                (CONPTY.CreatePseudoConsole)(
+                    size,
+                    input.as_raw_handle() as _,
+                    output.as_raw_handle() as _,
+                    flags,
+                    &mut con,
+                )
+            };
+        }
         ensure!(
             result == S_OK,
             "failed to create psuedo console: HRESULT {}",
             result
         );
-        log::info!("ConPTY created with dwFlags=0 (standard mode, matching VS Code)");
+        log::info!("ConPTY created with dwFlags={} (passthrough={})", flags, flags != 0);
+        Self::report_mode(&format!(
+            "created dwFlags=0x{:X} passthrough={}",
+            flags,
+            flags != 0
+        ));
         Ok(Self { con })
     }
 
