@@ -14,7 +14,7 @@
 - **Agent 管理**：新增 Pi 卡片，支持 `pi --version` 检测（含 `--help` 签名校验，避免同名命令误判）、npm 安装/更新；Docker 运行镜像内置 Node 24，Windows 预检 Node ≥ 22.19 与 Git Bash，缺失时给出明确安装指引
 - **启动与命令模板**：Agent 管理新增 Pi 基础启动命令（默认 `pi --approve`）；命令模板/建议加入 `pi`、`pi -c`、`pi -r`、`pi --session`、`pi -p`、`pi --tui-mode regular`；项目右键新增「启动 Pi」，项目编辑支持启用/关闭 Pi
 - **Pi 会话历史**：扫描 `~/.pi/agent/sessions`（支持 `PI_CODING_AGENT_SESSION_DIR` / `settings.sessionDir`），按树形 JSONL 的活动分支解析与索引，支持列表、全文搜索、回放、重命名、收藏、归档、删除（移入回收目录）与 Markdown/JSONL 导出；历史标签按安装状态显示
-- **精确绑定与恢复**：启动 `pi` 时自动注入 `--session-id` 并登记 provider/sessionId；Pi 扩展与 Hook 上报 `session_start` 等事件；容器重启后页签按 `pi --session` 恢复；Codex 页签同样接入通用会话绑定/恢复链路
+- **精确绑定与恢复**：Pi 会话绑定由扩展与 Hook 上报 `session_start` 等事件完成（新启动的 `pi` 不注入 `--session-id`，仅恢复会话时带 `--session`）；容器重启后页签按 `pi --session` 恢复；Codex 页签同样接入通用会话绑定/恢复链路
 - **状态与通知**：解析 Pi OSC 7501 与扩展事件，标签指示灯/桌面/机器人通知支持 working、blocked、done、error；终端环境自动设置 `PI_PROGRAM_STATUS`、`PI_CLIPBOARD_OSC52`、`PI_TRUE_COLOR`、`PI_HYPERLINKS`、`PI_IMAGE_PROTOCOL=none`
 - **Pi 模型菜单**：调用 `pi --list-models` 获取 provider/model，项目/历史右键可按 provider/model/thinking 启动与恢复，标签显示模型 chip
 - **Pi 供应商管理**：设置页「模型供应商」新增 Pi 分页，管理兼容端点的 baseUrl、API 协议、密钥、模型、思考级别映射与 compat 覆盖，保存/删除自动同步到 Pi 的 `models.json`（带归属标记，只动本应用条目，手写条目与内置覆盖原样保留）；密钥支持明文（加密落盘）/ `$环境变量` / `!命令` 三种形态，支持从 models.json 导入已有端点；右键菜单 Pi 无供应商时跳转到 Pi 分页

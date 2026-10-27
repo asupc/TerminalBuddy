@@ -140,15 +140,15 @@ cd android
 ./gradlew :app:assembleRelease      # Release（未配签名时为 unsigned）
 ```
 
-无需本机安装 JDK 与 Android SDK 的方式：在仓库根目录执行 `./build-android.sh`，通过一次性 Docker 容器产出 `dist/TerminalBuddy_<版本>_android.apk`（Release 已签名）。
+无需本机安装 JDK 与 Android SDK 的方式：在仓库根目录执行 `./scripts/build-android.sh`，通过一次性 Docker 容器产出 `dist/TerminalBuddy_<版本>_android.apk`（Release 已签名）。
 
 在 Android Studio 中直接打开 `android/` 目录即可。
 
-仓库根目录的一键脚本（参考葫芦娃 `build-android-release.bat`）：
+仓库 `scripts/` 目录的一键脚本（参考葫芦娃 `build-android-release.bat`）：
 
 ```bat
-build-android.bat            :: 自动找 JDK/SDK → 编译已签名的 Release APK → 安装 → 启动
-build-android.bat <序列号>   :: 多台设备时指定目标
+scripts\build-android.bat            :: 自动找 JDK/SDK → 编译已签名的 Release APK → 安装 → 启动
+scripts\build-android.bat <序列号>   :: 多台设备时指定目标
 ```
 
 产物位于 `android/app/build/outputs/apk/release/app-release.apk`，使用项目现有 Release 签名。

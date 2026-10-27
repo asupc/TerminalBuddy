@@ -421,7 +421,7 @@ v1.8.0 将原「容器环境」升级为完整的 Agent 管理与模型配置中
 
 - **安装与启动**：Agent 管理新增 Pi 卡片，支持检测、一键安装/更新与基础启动命令（默认 `pi --approve`）。Pi 需要 Node.js ≥ 22.19；Docker 镜像已内置 Node 24，Windows 还需安装 Git Bash。首次使用请在终端运行 `pi` 并通过 `/login` 完成登录；
 - **会话历史**：自动扫描 `~/.pi/agent/sessions`（支持 `PI_CODING_AGENT_SESSION_DIR` 与 `settings.sessionDir`），按 Pi 树形 JSONL 的活动分支索引，与 Claude / Codex 历史共用面板，支持搜索、回放、重命名、收藏、归档、删除与 Markdown/JSONL 导出；历史标签仅在检测到 Pi 已安装时显示；
-- **精确绑定与恢复**：TerminalBuddy 启动 Pi 时注入 `--session-id` 并记录会话，容器重启后按 `pi --session` 恢复页签（Codex 页签同样支持 `codex resume` 恢复）；Pi 扩展可精确上报手动启动的会话；
+- **精确绑定与恢复**：TerminalBuddy 启动 Pi 时注入扩展并由其上报会话绑定（新启动不注入 `--session-id`，仅恢复会话时带 `--session`），容器重启后按 `pi --session` 恢复页签（Codex 页签同样支持 `codex resume` 恢复）；Pi 扩展可精确上报手动启动的会话；
 - **模型菜单与状态**：项目/历史右键可按 Pi 的 provider/model/thinking 启动或恢复，标签显示模型 chip；解析 OSC 7501 与扩展事件，显示 working / blocked / done / error 状态灯，并支持桌面与机器人通知；
 - **供应商管理**：设置页「模型供应商」新增 Pi 分页，管理兼容端点（baseUrl、API 协议、密钥、模型、思考级别映射），保存后自动同步到 Pi 的 `models.json`，多 provider 并存、保存即生效；密钥支持明文 / `$环境变量` / `!命令` 三种形态，已用 `/login` 登录的凭证不受影响；
 - **扩展与工具确认**：Pi 扩展随启动自动注入，也可在 Agent 管理全局安装；工具确认默认关闭，开启后 `bash/edit/write` 执行前会请求允许或拒绝（超时自动放行，保持 Pi 原生行为）。
@@ -514,9 +514,9 @@ npm run tauri build
 除 Windows 安装包外，还提供服务器 / NAS 部署与跨平台构建方式：
 
 - **Docker 服务器部署**：在浏览器中使用与桌面同款的功能，手机访问自动分流至独立手机版界面，详见 [DEPLOY_README.md](DEPLOY_README.md) 与 [docs/Docker与完整网页界面.md](docs/Docker与完整网页界面.md)；
-- **飞牛 fnOS 一键部署**：执行 `./deploy-fnos.sh` 将 TerminalBuddy 部署到飞牛 NAS，默认在飞牛上编译镜像（部署机无需安装 Docker / Node / Rust），内置写入探测、健康检查与失败自动回退；
-- **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./build-windows-exe.sh`，借助一次性 Docker 容器完成交叉编译，产出 `dist/` 下的单文件 exe 与 `.sha256` 校验，宿主机无需安装任何工具链；
-- **Android 客户端构建**：Linux 上在仓库根目录执行 `./build-android.sh`，借助一次性 Docker 容器完成 Release 打包与 apksigner 签名校验，产出 `dist/` 下的 APK 与 `.sha256`，宿主机无需安装任何工具链；本机已具备 JDK 17+ 与 Android SDK 时也可 `cd android && ./gradlew :app:assembleDebug`（详见 [android/README.md](android/README.md)），Windows 直装设备用 `build-android.bat`。
+- **飞牛 fnOS 一键部署**：执行 `./scripts/deploy-fnos.sh` 将 TerminalBuddy 部署到飞牛 NAS，默认在飞牛上编译镜像（部署机无需安装 Docker / Node / Rust），内置写入探测、健康检查与失败自动回退；
+- **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./scripts/build-windows-exe.sh`，借助一次性 Docker 容器完成交叉编译，产出 `dist/` 下的单文件 exe 与 `.sha256` 校验，宿主机无需安装任何工具链；
+- **Android 客户端构建**：Linux 上在仓库根目录执行 `./scripts/build-android.sh`，借助一次性 Docker 容器完成 Release 打包与 apksigner 签名校验，产出 `dist/` 下的 APK 与 `.sha256`，宿主机无需安装任何工具链；本机已具备 JDK 17+ 与 Android SDK 时也可 `cd android && ./gradlew :app:assembleDebug`（详见 [android/README.md](android/README.md)），Windows 直装设备用 `scripts/build-android.bat`。
 
 ---
 ## 八、安全与隐私设计

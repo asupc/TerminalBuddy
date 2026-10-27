@@ -50,14 +50,14 @@ npm run dev:web
 
 ## Windows 一键启动
 
-在仓库根目录双击 `startDockerServer.bat`，默认优先使用已安装并运行的 Docker；Docker 不可用时退回本机独立服务端模式。两种方式使用同一份服务端程序，首次运行会按对应模式构建，服务就绪后自动打开浏览器。
+双击 `scripts\startDockerServer.bat`，默认优先使用已安装并运行的 Docker；Docker 不可用时退回本机独立服务端模式。两种方式使用同一份服务端程序，首次运行会按对应模式构建，服务就绪后自动打开浏览器。
 
 需要 Docker 容器时，在命令行执行：
 
 ```bat
-startDockerServer.bat docker
-startDockerServer.bat docker-stop
-startDockerServer.bat docker-logs
+scripts\startDockerServer.bat docker
+scripts\startDockerServer.bat docker-stop
+scripts\startDockerServer.bat docker-logs
 ```
 
 首次启动时，脚本会检查 `.env`，不存在就用默认值生成，并确认 `TERMINAL_BUDDY_WORKSPACE` 指向的目录存在；容器健康后自动打开浏览器。首次打开网页会要求创建管理员密码（至少 8 个字符），无需再手动准备密码文件。
@@ -161,7 +161,7 @@ Windows 默认终端接管、系统托盘、注册表开机启动、`mstsc` 与�
 
 | 文件或目录 | 改动 |
 | --- | --- |
-| 根目录 `Dockerfile`、`compose.yaml`、`.dockerignore`、`.env.example`、`.gitignore`、`startDockerServer.bat` | 多阶段镜像、数据卷、项目挂载、默认忽略规则与 Windows 本机/Docker 一键启动 |
+| 根目录 `Dockerfile`、`compose.yaml`、`.dockerignore`、`.env.example`、`.gitignore`、`scripts/startDockerServer.bat` | 多阶段镜像、数据卷、项目挂载、默认忽略规则与 Windows 本机/Docker 一键启动 |
 | `terminal-buddy/package.json`、`vite.config.ts` | 演示/正式网页模式、Tauri 浏览器适配别名、HTTP/WebSocket 开发代理 |
 | `terminal-buddy/preview-web.bat`、`start-web-server.ps1` | Windows 演示启动和显式编译的独立服务启动 |
 | `src/main.tsx`、`src/components/browser/`、`src/mock/setupMock.ts` | 登录入口，演示数据仅在演示模式启用 |
