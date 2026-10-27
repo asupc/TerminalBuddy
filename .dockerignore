@@ -7,7 +7,7 @@
 **/target
 **/dist
 **/dist-web
-terminal-buddy/src-tauri/resources
+terminal-buddy/src-tauri/resources/vscode-terminal
 terminal-buddy/plugins
 server-data
 **/server-data

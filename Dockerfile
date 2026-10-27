@@ -29,6 +29,7 @@ WORKDIR /build/src-tauri
 ARG TARGETARCH
 COPY terminal-buddy/src-tauri/Cargo.toml terminal-buddy/src-tauri/Cargo.lock terminal-buddy/src-tauri/build.rs ./
 COPY terminal-buddy/src-tauri/src ./src
+COPY terminal-buddy/src-tauri/resources ./resources
 COPY terminal-buddy/src-tauri/portable-pty-patched ./portable-pty-patched
 # 源码层失效后继续复用下载和依赖编译缓存；并发构建串行写入同一缓存。
 # git 切换或源码归档可能保留较旧的 mtime，刷新本地源码时间，避免误用旧产物。
@@ -41,12 +42,14 @@ RUN --mount=type=cache,id=terminal-buddy-cargo-registry,target=/usr/local/cargo/
     && cargo build --locked --release --no-default-features --features server --bin terminal-buddy-server \
     && install -D target/release/terminal-buddy-server /out/terminal-buddy-server
 
-FROM debian:bookworm-slim
+FROM node:24-bookworm-slim
 # procps 提供 Codex 后台服务依赖的 ps 命令，随运行镜像预装。
+# Node 24 满足 Pi Agent 的 Node >= 22.19 要求；npm 全局前缀指向用户可写的 ~/.local。
 # /root 仅开放路径穿越，供 /root/... 工作区在容器内按宿主机同路径挂载。
 RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client libssl3 libssh2-1 tini procps && rm -rf /var/lib/apt/lists/* \
+    && (userdel -r node 2>/dev/null || true) && (groupdel node 2>/dev/null || true) \
     && useradd --create-home --uid 1000 --shell /bin/bash terminalbuddy \
-    && mkdir -p /data /workspace && chown terminalbuddy:terminalbuddy /data /workspace \
+    && mkdir -p /data /workspace /home/terminalbuddy/.local/bin && chown terminalbuddy:terminalbuddy /data /workspace /home/terminalbuddy/.local \
     && chmod 0711 /root
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
@@ -60,6 +63,7 @@ ENV TERMINAL_BUDDY_DATA_DIR=/data \
     TERMINAL_BUDDY_PORT=9600 \
     TERMINAL_BUDDY_USERNAME=admin \
     TERMINAL_BUDDY_DEPLOYMENT=docker \
+    NPM_CONFIG_PREFIX=/home/terminalbuddy/.local \
     PATH=/home/terminalbuddy/.local/bin:$PATH \
     HOME=/home/terminalbuddy \
     LANG=C.UTF-8 \
