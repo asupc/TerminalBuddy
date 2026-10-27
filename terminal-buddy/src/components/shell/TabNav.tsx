@@ -561,6 +561,13 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           <div
             className={`tab-nav-settings-btn ${activeSpecialTab === 'git-history' ? 'active' : ''}`}
             onClick={() => openGitHistoryTab(gitHistoryTab)}
+            onAuxClick={(event) => {
+              if (event.button === 1) {
+                event.preventDefault();
+                closeGitHistoryTab();
+              }
+            }}
+            onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
             title={`${gitHistoryTab.repoRoot} - Git 历史记录`}
           >
             <span className="tab-nav-dot" style={{ background: '#e6a23c' }} />
@@ -614,7 +621,15 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
             </div>
             {!collapsedGroups.has("replay-group") && claudeReplayTabs.map(tab => (
               <div key={sessionReplayTabKey(tab)} className={`tab-nav-settings-btn tab-nav-replay-item ${activeSpecialTab === "claude-replay" && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? "active" : ""}`}
-                onClick={() => openClaudeReplayTab(tab)} title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'pi' ? 'Pi' : 'Claude Code'} · ${tab.title}`}>
+                onClick={() => openClaudeReplayTab(tab)}
+                onAuxClick={(event) => {
+                  if (event.button === 1) {
+                    event.preventDefault();
+                    closeClaudeReplayTab(tab.sessionId, tab.provider);
+                  }
+                }}
+                onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
+                title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'pi' ? 'Pi' : 'Claude Code'} · ${tab.title}`}>
                 <span className="tab-nav-name">{tab.title}</span>
                 <button type="button" className="tree-item-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}
                   title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>

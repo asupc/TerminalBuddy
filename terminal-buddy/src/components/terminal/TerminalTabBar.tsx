@@ -322,6 +322,13 @@ export const TerminalTabBar: FC = () => {
         <div
           className={`terminal-tab ${activeSpecialTab === 'git-history' ? 'active' : ''}`}
           onClick={() => openGitHistoryTab(gitHistoryTab)}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              closeGitHistoryTab();
+            }
+          }}
+          onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
           title={`${gitHistoryTab.repoRoot} - Git 历史记录`}
         >
           <GitBranch className="terminal-tab-history-icon" aria-hidden="true" />
@@ -340,7 +347,15 @@ export const TerminalTabBar: FC = () => {
       {claudeReplayTabs.length > 0 && <span className="terminal-replay-group-label">会话详情</span>}
       {claudeReplayTabs.map(tab => (
         <div key={sessionReplayTabKey(tab)} className={`terminal-tab ${activeSpecialTab === 'claude-replay' && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? 'active' : ''}`}
-          onClick={() => openClaudeReplayTab(tab)} title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'pi' ? 'Pi' : 'Claude Code'} · ${tab.title}`}>
+          onClick={() => openClaudeReplayTab(tab)}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              closeClaudeReplayTab(tab.sessionId, tab.provider);
+            }
+          }}
+          onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+          title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'pi' ? 'Pi' : 'Claude Code'} · ${tab.title}`}>
           <History className="terminal-tab-history-icon" aria-hidden="true" />
           <span className="terminal-tab-name">{tab.title}</span>
           <button className="terminal-tab-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}
