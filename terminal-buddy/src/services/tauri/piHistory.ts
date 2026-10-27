@@ -57,10 +57,14 @@ export function exportPiSession(
 export interface PiModel {
   id: string;
   thinking: string[];
+  /** TerminalBuddy 卡片配置的默认思考级别；直接启动时作为 --thinking 传入。 */
+  defaultThinking?: string;
 }
 
 export interface PiModelProvider {
   provider: string;
+  /** 是否为 TerminalBuddy 设置的默认供应商（右键菜单平铺其模型）。 */
+  isDefault?: boolean;
   models: PiModel[];
 }
 

@@ -109,7 +109,7 @@ function ModelRowEditor({ model, index, candidates, disabled, isDefault, onPatch
             disabled={disabled}
             onChange={e => onPatch(e.target.checked
               ? { reasoning: true }
-              : { reasoning: false, thinkingLevelMap: { levels: {} } })}
+              : { reasoning: false, thinkingLevelMap: { levels: {} }, defaultThinking: null })}
           />
           推理
         </label>
@@ -144,6 +144,18 @@ function ModelRowEditor({ model, index, candidates, disabled, isDefault, onPatch
                 value={model.maxTokens || ''} onChange={e => onPatch({ maxTokens: tokenCount(e.target.value) })}
                 placeholder="留空使用 Pi 默认" />
             </label>
+            {model.reasoning && (
+              <label className="claude-form-row">默认思考级别
+                <select disabled={disabled} value={model.defaultThinking ?? ''}
+                  title="右键按模型启动时直接以该级别传入 --thinking；不指定则由 Pi 自行决定"
+                  onChange={e => onPatch({ defaultThinking: e.target.value || null })}>
+                  <option value="">不指定（跟 Pi 默认）</option>
+                  {PI_THINKING_LEVELS.map(level => (
+                    <option key={level} value={level}>{level}</option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
           <label className="pi-provider-checkbox">
             <input type="checkbox" checked={model.imageInput} disabled={disabled}
@@ -215,7 +227,7 @@ export function PiModelPicker({ models, selected, defaultModel, disabled, refres
         ))}
       </div>}
       {!selected.length && <p className={descriptionClass}>点击"添加模型"新增一行，可手动输入或从候选中选择。</p>}
-      <p className={descriptionClass}>已配置 {new Set(selected.map(model => model.id.trim()).filter(Boolean)).size} 个模型 · 候选列表 {models.length} 个。开启"推理"的模型可配置思考级别映射；默认模型用于常规启动。</p>
+      <p className={descriptionClass}>已配置 {new Set(selected.map(model => model.id.trim()).filter(Boolean)).size} 个模型 · 候选列表 {models.length} 个。开启"推理"的模型可配置思考级别映射与默认思考级别（右键按模型启动直接生效）；默认模型用于常规启动。</p>
     </div>
   );
 }

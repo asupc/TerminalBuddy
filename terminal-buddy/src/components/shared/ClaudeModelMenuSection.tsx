@@ -51,8 +51,8 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
       return piProviders.map(provider => ({
         providerId: provider.provider,
         providerName: provider.provider,
-        isDefault: false,
-        models: provider.models.map(model => ({ id: model.id, effort: '思考级别', contextWindow: 0 })),
+        isDefault: provider.isDefault ?? false,
+        models: provider.models.map(model => ({ id: model.id, effort: model.defaultThinking ?? '默认', contextWindow: 0, thinking: model.defaultThinking })),
       }));
     }
     return (codexState?.providers ?? []).map(provider => ({
@@ -63,7 +63,6 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
   const loaded = source === 'claude' ? claudeLoaded : source === 'pi' ? piLoaded : codexState !== null;
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [subPos, setSubPos] = useState<{ left: number; top: number } | null>(null);
-  const [openPiModel, setOpenPiModel] = useState<{ providerId: string; modelId: string; left: number; top: number } | null>(null);
   const anchorRef = useRef<DOMRect | null>(null);
   const subRef = useRef<HTMLDivElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
@@ -157,14 +156,7 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
       {defaultTarget && <ModelItems
         target={defaultTarget}
         itemClassName={itemClassName}
-        onPickModel={(providerId, modelId, anchor) => {
-          if (source === 'pi' && anchor) {
-            const rect = anchor.getBoundingClientRect();
-            setOpenPiModel({ providerId, modelId, left: rect.right + 2, top: rect.top - 4 });
-          } else {
-            onPickModel(providerId, modelId);
-          }
-        }}
+        onPickModel={onPickModel}
       />}
       {otherTargets.map(target => (
         <div
@@ -193,39 +185,7 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
           <div className={`${itemClassName} claude-model-menu-head`}>
             {openTarget.providerName} · {openTarget.models.length} 个可用模型
           </div>
-          <ModelItems target={openTarget} itemClassName={itemClassName} onPickModel={(providerId, modelId, anchor) => {
-            if (source === 'pi' && anchor) {
-              const rect = anchor.getBoundingClientRect();
-              setOpenPiModel({ providerId, modelId, left: rect.right + 2, top: rect.top - 4 });
-            } else {
-              onPickModel(providerId, modelId);
-            }
-          }} />
-        </div>,
-        document.body,
-      )}
-      {source === 'pi' && openPiModel && createPortal(
-        <div
-          className="claude-model-submenu"
-          style={{ left: openPiModel.left, top: openPiModel.top }}
-          onMouseDown={e => e.stopPropagation()}
-          onClick={e => e.stopPropagation()}
-        >
-          <div className={`${itemClassName} claude-model-menu-head`}>思考级别 · {openPiModel.modelId}</div>
-          {[undefined, 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map(level => (
-            <div
-              key={level ?? 'default'}
-              className={itemClassName}
-              onClick={e => {
-                e.stopPropagation();
-                setOpenPiModel(null);
-                onPickModel(openPiModel.providerId, openPiModel.modelId, level);
-              }}
-            >
-              <span className="claude-model-menu-play">▶</span>
-              <span className="claude-model-menu-label">{level ?? '默认'}</span>
-            </div>
-          ))}
+          <ModelItems target={openTarget} itemClassName={itemClassName} onPickModel={onPickModel} />
         </div>,
         document.body,
       )}
@@ -236,7 +196,7 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
 function ModelItems({ target, itemClassName, onPickModel }: {
   target: LlmLaunchTarget;
   itemClassName: string;
-  onPickModel: (providerId: string, modelId: string, anchor?: HTMLElement) => void;
+  onPickModel: (providerId: string, modelId: string, thinking?: string) => void;
 }) {
   if (target.models.length === 0) {
     return <div className={`${itemClassName} claude-model-menu-disabled`}>该供应商暂无可用模型</div>;
@@ -248,7 +208,7 @@ function ModelItems({ target, itemClassName, onPickModel }: {
           key={model.id}
           className={itemClassName}
           title={`${model.id}（${model.effort}）`}
-          onClick={e => { e.stopPropagation(); onPickModel(target.providerId, model.id, e.currentTarget); }}
+          onClick={e => { e.stopPropagation(); onPickModel(target.providerId, model.id, model.thinking); }}
         >
           <span className="claude-model-menu-play">▶</span>
           <span className="claude-model-menu-label mono">{model.id}</span>

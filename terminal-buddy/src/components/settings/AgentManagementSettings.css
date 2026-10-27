@@ -299,3 +299,66 @@
   .agent-command-label { flex-basis: 100%; }
   .agent-command-editor input { flex-basis: 100%; }
 }
+
+/* ===== Agent 管理页：每个工具独立成卡、品牌标与内联版本 ===== */
+.agent-cli-list .container-environment-tool {
+  margin: 0 12px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+
+.agent-cli-list .container-environment-tool:first-of-type {
+  margin-top: 12px;
+}
+
+/* 覆盖通用列表的细线分隔：卡片自身有完整边框。 */
+.agent-cli-list .container-environment-tool + .container-environment-tool {
+  border-top: 1px solid var(--border);
+}
+
+.agent-cli-list .container-environment-hint {
+  margin: 2px 0 0;
+}
+
+.agent-cli-list .container-environment-hint:empty {
+  display: none;
+}
+
+.agent-cli-version {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: nowrap;
+}
+
+.agent-cli-version-muted {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+/* 品牌标底衬：Claude 星芒与 Pi 几何标内嵌官方原色，仅配淡色底衬；Codex 六瓣结用 currentColor 染 OpenAI 绿。 */
+.agent-cli-list .agent-cli-claude .container-environment-tool-icon {
+  background: color-mix(in srgb, #d97757 12%, transparent);
+}
+
+.agent-cli-list .agent-cli-codex .container-environment-tool-icon {
+  color: #10a37f;
+  background: color-mix(in srgb, #10a37f 12%, transparent);
+}
+
+.agent-cli-list .agent-cli-pi .container-environment-tool-icon {
+  background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+}
+
+.agent-cli-list .container-environment-tool-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}

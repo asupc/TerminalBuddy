@@ -47,6 +47,8 @@ export interface PiModelConfig {
   id: string;
   name: string;
   reasoning: boolean;
+  /** 默认思考级别（null = 不指定，启动时不传 --thinking）。仅 TerminalBuddy 启动用。 */
+  defaultThinking?: string | null;
   thinkingLevelMap: PiThinkingLevelMap;
   imageInput: boolean;
   contextWindow: number;
@@ -91,6 +93,8 @@ export interface PiProviderInput {
 
 export interface PiProviderState {
   providers: PiProviderView[];
+  /** TerminalBuddy 侧的默认供应商卡片 id（右键菜单平铺其模型）。 */
+  activeProviderId: string | null;
   agentDir: string;
   modelsPath: string;
   configError: string | null;
@@ -104,7 +108,7 @@ export function emptyPiCompat(): PiCompatConfig {
 
 export function emptyPiModel(id = ''): PiModelConfig {
   return {
-    id, name: '', reasoning: false, thinkingLevelMap: { levels: {} },
+    id, name: '', reasoning: false, defaultThinking: null, thinkingLevelMap: { levels: {} },
     imageInput: true, contextWindow: 0, maxTokens: 0, compat: emptyPiCompat(),
   };
 }
@@ -113,8 +117,16 @@ export function getPiProviderState(): Promise<PiProviderState> {
   return invoke('get_pi_provider_state');
 }
 
-export function savePiProvider(input: PiProviderInput): Promise<PiProviderState> {
-  return invoke('save_pi_provider', { input });
+export function savePiProvider(input: PiProviderInput, activate = false): Promise<PiProviderState> {
+  return invoke('save_pi_provider', { input, activate });
+}
+
+export function activatePiProvider(id: string): Promise<PiProviderState> {
+  return invoke('activate_pi_provider', { id });
+}
+
+export function clearDefaultPiProvider(): Promise<PiProviderState> {
+  return invoke('clear_default_pi_provider');
 }
 
 export function deletePiProvider(id: string): Promise<PiProviderState> {

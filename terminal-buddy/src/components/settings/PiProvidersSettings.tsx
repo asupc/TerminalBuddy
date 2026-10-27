@@ -3,6 +3,8 @@ import {
   PI_API_OPTIONS,
   PI_KEY_MODE_OPTIONS,
   PI_THINKING_FORMAT_OPTIONS,
+  activatePiProvider,
+  clearDefaultPiProvider,
   deletePiProvider,
   emptyPiCompat,
   fetchPiProviderModels,
@@ -42,14 +44,27 @@ function emptyEditor(): Editor {
 }
 
 function compatToText(compat: PiCompatConfig): string {
-  const keys = Object.keys(compat.extra);
-  return keys.length ? JSON.stringify(compat.extra, null, 2) : '';
+  // 后端序列化会省略空 extra；此处按空对象处理。
+  const extra = compat.extra ?? {};
+  const keys = Object.keys(extra);
+  return keys.length ? JSON.stringify(extra, null, 2) : '';
+}
+
+/** 归一化后端视图：空字段（compat.extra / thinkingLevelMap.levels）会被省略，编辑器需要空对象兜底。 */
+function normalizeModel(model: PiModelConfig): PiModelConfig {
+  return {
+    ...model,
+    defaultThinking: model.defaultThinking ?? null,
+    thinkingLevelMap: { levels: model.thinkingLevelMap?.levels ?? {} },
+    compat: { ...model.compat, extra: model.compat?.extra ?? {} },
+  };
 }
 
 function editorFrom(provider: PiProviderView): Editor {
   return {
     ...provider,
-    models: provider.models.map(model => ({ ...model })),
+    compat: { ...provider.compat, extra: provider.compat?.extra ?? {} },
+    models: provider.models.map(normalizeModel),
     headers: { ...provider.headers },
     apiKey: '',
     compatExtraText: compatToText(provider.compat),
@@ -117,7 +132,7 @@ export const PiProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
     setEditor(provider ? editorFrom(provider) : emptyEditor());
   };
 
-  const save = async () => {
+  const save = async (activate: boolean) => {
     if (!editor) return;
     let compatExtra: Record<string, unknown> = {};
     const extraText = editor.compatExtraText.trim();
@@ -149,7 +164,9 @@ export const PiProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
       availableModels: models,
       compat: { ...editor.compat, extra: compatExtra },
     };
-    await mutate('save', () => savePiProvider(input), 'Pi 供应商已保存并同步到 models.json', true);
+    const willActivate = activate || state?.providers.length === 0 || (!!editor.id && state?.activeProviderId === editor.id);
+    await mutate('save', () => savePiProvider(input, activate),
+      willActivate ? 'Pi 供应商已保存并设为默认，同步到 models.json' : 'Pi 供应商已保存并同步到 models.json', true);
   };
 
   const fetchModels = async () => {
@@ -191,8 +208,11 @@ export const PiProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
 
       <p className="pi-provider-description">
         管理 Pi 的兼容端点：保存后自动同步到 Pi 的 models.json，Pi 多 provider 并存、保存即生效（打开 /model 可见）。
-        已用 /login 登录的内置供应商不受影响；auth.json 凭证优先于此处配置的密钥。
+        设为默认后右键启动菜单会平铺该供应商的模型；已用 /login 登录的内置供应商不受影响，auth.json 凭证优先于此处配置的密钥。
       </p>
+      {state && state.providers.length > 0 && !state.activeProviderId && !state.configError && (
+        <p className="pi-provider-description">当前未设置默认供应商，可选择一项设为默认；右键菜单仍可按供应商选择模型启动。</p>
+      )}
       {state && <p className="pi-provider-path" title={state.modelsPath}>配置文件：{state.modelsPath}</p>}
       {(loadError || state?.configError) && <div className="pi-provider-error" role="alert">{loadError || state?.configError}</div>}
       {pending === 'load' && !state && <div className="claude-segment-empty">正在读取 Pi 配置…</div>}
@@ -204,11 +224,14 @@ export const PiProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
       )}
 
       <div className="llm-provider-list">
-        {state?.providers.map(provider => (
-          <div key={provider.id} className="llm-provider-card pi-provider-card">
+        {state?.providers.map(provider => {
+          const isActive = state.activeProviderId === provider.id;
+          return (
+          <div key={provider.id} className={`llm-provider-card pi-provider-card${isActive ? ' is-active' : ''}`}>
             <div className="llm-provider-head">
               <span className="pi-provider-avatar"><Server size={18} /></span>
               <span className="llm-provider-name" title={provider.name}>{provider.name}</span>
+              {isActive && <span className="llm-badge default">默认</span>}
               {editor?.id === provider.id && <span className="llm-badge editing">编辑中</span>}
             </div>
             <div className="llm-provider-meta"><span title={provider.baseUrl}>{provider.baseUrl}</span></div>
@@ -236,11 +259,15 @@ export const PiProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
               </span>
             </div>
             <div className="llm-provider-actions">
+              {isActive
+                ? <button type="button" className="claude-segment-btn mini" disabled={busy} onClick={() => { void mutate('clear-default', clearDefaultPiProvider, '已取消默认供应商，右键菜单不再平铺模型'); }}>取消默认</button>
+                : <button type="button" className="claude-segment-btn mini" disabled={busy} onClick={() => { void mutate('activate', () => activatePiProvider(provider.id), `「${provider.name}」已设为默认供应商`); }}>设为默认</button>}
               <button type="button" className="claude-segment-btn mini" disabled={busy} onClick={() => edit(provider)}><Pencil size={12} /> 编辑</button>
-              <button type="button" className="claude-segment-btn mini danger" disabled={busy} onClick={() => setDeleteTarget(provider)}><Trash2 size={12} /> 删除</button>
+              <button type="button" className="claude-segment-btn mini danger" disabled={busy || isActive} title={isActive ? '请先取消默认后再删除' : undefined} onClick={() => setDeleteTarget(provider)}><Trash2 size={12} /> 删除</button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {state && state.externalProviderIds.length > 0 && (
@@ -261,10 +288,11 @@ export const PiProvidersSettings: FC<{ active: boolean }> = ({ active }) => {
       {editor && (
         <Dialog title={editor.id ? '编辑 Pi 供应商' : '添加 Pi 供应商'} className="pi-provider-dialog" closeDisabled={busy}
           onClose={() => { requestVersion.current += 1; setEditor(null); setModels([]); }}
-          onSubmit={event => { event.preventDefault(); void save(); }}
+          onSubmit={event => { event.preventDefault(); void save(false); }}
           footer={<>
             <button type="button" className="btn-secondary" disabled={busy} onClick={() => { requestVersion.current += 1; setEditor(null); setModels([]); }}>取消</button>
-            <button type="submit" className="btn-primary" disabled={busy}>{pending === 'save' ? '保存中…' : '保存'}</button>
+            <button type="submit" className="btn-secondary" disabled={busy}>{pending === 'save' ? '保存中…' : '保存'}</button>
+            <button type="button" className="btn-primary" disabled={busy} onClick={event => { if (event.currentTarget.form?.reportValidity()) void save(true); }}>保存并设为默认</button>
           </>}>
           <fieldset className="pi-provider-fields" disabled={busy}>
             <label className="claude-form-row">名称

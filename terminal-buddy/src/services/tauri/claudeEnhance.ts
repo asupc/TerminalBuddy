@@ -60,6 +60,8 @@ export interface LlmLaunchModel {
   id: string;
   effort: string;
   contextWindow: number;
+  /** Pi 模型的默认思考级别（点击直接启动时作为 --thinking 传入）。 */
+  thinking?: string;
 }
 
 export interface LlmLaunchTarget {

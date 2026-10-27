@@ -77,6 +77,11 @@
   color: var(--accent);
 }
 
+.pi-providers-settings .pi-provider-card.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-primary));
+}
+
 .pi-provider-model-tags {
   display: flex;
   flex-wrap: wrap;

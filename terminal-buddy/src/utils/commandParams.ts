@@ -25,7 +25,7 @@ export interface StrippedPiSessionArgs {
   session?: string;
 }
 
-/** 剥除 Pi 的 --session/--session-id（不含启动时自动注入的短参数场景）。 */
+/** 剥除 Pi 的 --session 恢复参数。 */
 export function stripPiSessionArgs(params: string): StrippedPiSessionArgs {
   const match = params.match(SAVED_PI_SESSION_RE);
   const session = match ? (match[1] ?? match[2] ?? match[3]) : undefined;
@@ -48,9 +48,12 @@ export function stripCodexResumeArgs(params: string): StrippedCodexResumeArgs {
   };
 }
 
-/** 剥除 --resume 并压缩多余空格；入参为空或剥空后返回 undefined，适合直接作为启动参数。 */
+/** 剥除所有 Agent 的会话恢复参数（Claude `--resume`、Pi `--session`、Codex `resume <id>`）
+ * 并压缩多余空格；入参为空或剥空后返回 undefined。「以此配置新建终端」等场景要的是
+ * 全新会话，恢复页签 extraParams 里的旧会话引用必须全部剥除。 */
 export function withoutResumeArgs(params: string | undefined | null): string | undefined {
   if (!params) return undefined;
-  const stripped = stripResumeArgs(params).params.replace(/\s+/g, ' ').trim();
+  const stripped = stripCodexResumeArgs(stripPiSessionArgs(stripResumeArgs(params).params).params).params
+    .replace(/\s+/g, ' ').trim();
   return stripped || undefined;
 }
