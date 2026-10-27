@@ -21,8 +21,8 @@ import com.terminalbuddy.android.ui.TerminalBuddyTheme
 class MainActivity : ComponentActivity() {
     private var notificationTarget by mutableStateOf<AiNotificationTarget?>(null)
 
-    override fun onStart() {
-        super.onStart()
+    override fun onResume() {
+        super.onResume()
         (application as TerminalBuddyApplication).taskNotifications.setForeground(true)
     }
 

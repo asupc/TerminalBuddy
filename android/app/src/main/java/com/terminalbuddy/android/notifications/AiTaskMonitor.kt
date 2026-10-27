@@ -1,15 +1,20 @@
 package com.terminalbuddy.android.notifications
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
-import android.util.Log
+import androidx.core.content.ContextCompat
 import com.terminalbuddy.android.TerminalBuddyApplication
 import com.terminalbuddy.android.data.AiConnection
 import com.terminalbuddy.android.data.AiRepository
+import com.terminalbuddy.android.data.ApiException
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,7 +23,7 @@ import kotlinx.coroutines.flow.collect
 
 internal data class AiTaskMonitorState(
     val active: Boolean = false, val reconnecting: Boolean = false, val tasksRunning: Boolean = false,
-    val pollingFallback: Boolean = false,
+    val pollingFallback: Boolean = false, val networkBlocked: Boolean = false,
 )
 
 /** 账号级通知连接由 Application 持有，不随页面 Socket 的停止或账号切换而关闭。 */
@@ -40,6 +45,21 @@ internal class AiTaskMonitor(
     private var polling: Job? = null
     private var lastPollSucceeded = false
     private var lastPollAt = 0L
+    internal var lastFrameAt = 0L
+        private set
+    internal var lastSyncAt = 0L
+        private set
+    private var networkBlocked = false
+    private var powerReceiverRegistered = false
+    private val powerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val power = context.getSystemService(PowerManager::class.java)
+            notifications.recordDiagnostic("电源状态变化：休眠=${power.isDeviceIdleMode}，省电=${power.isPowerSaveMode}")
+            resetConnections()
+            update()
+            refresh.trySend(Unit)
+        }
+    }
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private var networkRegistered = false
     private var network: Network? = null
@@ -47,6 +67,7 @@ internal class AiTaskMonitor(
         override fun onAvailable(available: Network) {
             if (network == available) return
             network = available
+            notifications.recordDiagnostic("默认网络可用，重建通知连接")
             resetConnections()
             update()
             refresh.trySend(Unit)
@@ -55,7 +76,18 @@ internal class AiTaskMonitor(
         override fun onLost(lost: Network) {
             if (network != lost) return
             network = null
+            networkBlocked = false
+            notifications.recordDiagnostic("默认网络断开")
             resetConnections()
+            publishState()
+            refresh.trySend(Unit)
+        }
+
+        override fun onBlockedStatusChanged(changed: Network, blocked: Boolean) {
+            if (changed != network || networkBlocked == blocked) return
+            networkBlocked = blocked
+            notifications.recordDiagnostic("系统限制后台网络：$blocked")
+            if (!blocked) { resetConnections(); update() }
             publishState()
             refresh.trySend(Unit)
         }
@@ -79,6 +111,9 @@ internal class AiTaskMonitor(
             if (networkRegistered) runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
             networkRegistered = false
             network = null
+            networkBlocked = false
+            if (powerReceiverRegistered) runCatching { context.unregisterReceiver(powerReceiver) }
+            powerReceiverRegistered = false
             publishState()
             return
         }
@@ -90,6 +125,7 @@ internal class AiTaskMonitor(
             subscription !in desired || subscriptions[subscription]?.isActive != true ||
                 now - (lastReceived[subscription] ?: now) >= RECEIVE_TIMEOUT
         }.forEach { subscription ->
+            if (subscription in desired) notifications.recordDiagnostic("接收超时或订阅已退出，重建通知连接")
             subscriptions.remove(subscription)?.cancel()
             connected.remove(subscription)
             lastReceived.remove(subscription)
@@ -107,22 +143,36 @@ internal class AiTaskMonitor(
                 connectivity.registerDefaultNetworkCallback(networkCallback, Handler(Looper.getMainLooper()))
             }.isSuccess
         }
+        if (!powerReceiverRegistered) powerReceiverRegistered = runCatching {
+            ContextCompat.registerReceiver(context, powerReceiver, IntentFilter().apply {
+                addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
+                addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+            }, ContextCompat.RECEIVER_NOT_EXPORTED)
+        }.isSuccess
         if (polling?.isActive != true) polling = scope.launch {
             var failures = 0
             while (isActive) {
+                val previousSuccess = lastPollSucceeded
                 lastPollSucceeded = try {
                     syncTaskNotifications(context.applicationContext as TerminalBuddyApplication)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w("AiTaskMonitor", "后台摘要同步异常，将继续重试", e)
+                    notifications.recordDiagnostic("后台摘要同步异常：${e.javaClass.simpleName}")
                     false
                 }
                 lastPollAt = SystemClock.elapsedRealtime()
+                if (lastPollSucceeded) lastSyncAt = lastPollAt
+                if (lastPollSucceeded != previousSuccess) {
+                    notifications.recordDiagnostic(if (lastPollSucceeded) "后台摘要同步成功" else "后台摘要同步失败，等待重试")
+                }
                 if (!running) break
                 failures = if (lastPollSucceeded) 0 else (failures + 1).coerceAtMost(4)
                 publishState()
-                val delayMillis = if (lastPollSucceeded) 3_000L else (3_000L shl failures).coerceAtMost(30_000)
+                // 实时连接健康时降低补偿频率；断线时才使用三秒轮询，避免长期后台高频请求。
+                val realtimeHealthy = connected.map { it.accountId }.containsAll(notifications.monitoredAccounts())
+                val delayMillis = if (lastPollSucceeded) { if (realtimeHealthy) 30_000L else 3_000L }
+                    else (3_000L shl failures).coerceAtMost(30_000)
                 withTimeoutOrNull(delayMillis) { refresh.receive() }
             }
         }
@@ -137,18 +187,20 @@ internal class AiTaskMonitor(
                 lastReceived[subscription] = SystemClock.elapsedRealtime()
                 repository.observeNotificationSessions(subscription.connection).collect { sessions ->
                     if (repository.accounts.connection(subscription.accountId) == subscription.connection) {
-                        lastReceived[subscription] = SystemClock.elapsedRealtime()
-                        connected.add(subscription)
+                        lastFrameAt = SystemClock.elapsedRealtime()
+                        lastReceived[subscription] = lastFrameAt
+                        if (connected.add(subscription)) notifications.recordDiagnostic("账号通知连接已收到消息帧")
                         retries = 0
                         publishState()
                         // 删除由 REST 的请求前基线处理，避免删除刚在手机上发送的新任务。
-                        notifications.observe(subscription.accountId, sessions)
+                        notifications.observe(subscription.accountId, sessions, accountSnapshot = true)
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
-                Log.w("AiTaskMonitor", "账号 ${subscription.accountId} 的后台通知连接已断开，将自动重连")
+            } catch (e: Exception) {
+                val code = if (e is ApiException) "，HTTP ${e.code}" else ""
+                notifications.recordDiagnostic("通知连接断开：${e.javaClass.simpleName}$code，将自动重连")
             } finally {
                 if (subscriptions[subscription] == currentCoroutineContext()[Job]) {
                     connected.remove(subscription)
@@ -164,10 +216,11 @@ internal class AiTaskMonitor(
     private fun publishState() {
         val accounts = notifications.monitoredAccounts()
         val active = accounts.isNotEmpty()
-        val reconnecting = active && !connected.map { it.accountId }.containsAll(accounts)
+        val reconnecting = active && (networkBlocked || !connected.map { it.accountId }.containsAll(accounts))
         mutableState.value = AiTaskMonitorState(
             active, reconnecting, notifications.hasActiveTasks(),
-            reconnecting && lastPollSucceeded && SystemClock.elapsedRealtime() - lastPollAt < RECEIVE_TIMEOUT,
+            reconnecting && !networkBlocked && lastPollSucceeded && SystemClock.elapsedRealtime() - lastPollAt < RECEIVE_TIMEOUT,
+            networkBlocked,
         )
     }
 

@@ -809,7 +809,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
      * 运行中的快照不推进已读基线，结束或等待确认后仍能识别未查看结果。
      */
     private fun recordSessions(sessions: List<AiSession>): Set<String> {
-        repository.accounts.activeId?.let { taskNotifications.observe(it, sessions) }
+        repository.accounts.activeId?.let { taskNotifications.observe(it, sessions, accountSnapshot = true) }
         ensureViewedBaseline(sessions)
         val visibleIds = sessions.mapTo(mutableSetOf()) { it.id }
         viewedRevisions.keys.retainAll(visibleIds)

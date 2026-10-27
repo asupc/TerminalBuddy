@@ -14,7 +14,8 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
-import android.util.Log
+import android.os.Process
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -25,6 +26,9 @@ import androidx.work.WorkManager
 import com.terminalbuddy.android.MainActivity
 import com.terminalbuddy.android.R
 import com.terminalbuddy.android.data.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -32,6 +36,10 @@ import java.util.concurrent.TimeUnit
 
 /** 通知只携带账号 ID 和会话 ID，凭据始终从本机加密存储读取。 */
 data class AiNotificationTarget(val accountId: String, val sessionId: String)
+
+internal data class AiTaskServiceState(
+    val running: Boolean = false, val starting: Boolean = false, val error: String? = null,
+)
 
 /** 所有入口在主线程串行合并，前台实时流、后台服务和补偿任务共用一份事件基线。 */
 class AiTaskNotifications(private val context: Context, private val repository: AiRepository) {
@@ -51,14 +59,23 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         ApiJson.decodeFromString<Map<String, Map<String, Snapshot>>>(preferences.getString("snapshots", "{}").orEmpty())
             .mapValues { (_, value) -> value.toMutableMap() }.toMutableMap()
     }.getOrDefault(mutableMapOf())
+    // 老版本已保存过的账号沿用现有基线；新账号只在收到完整列表后建立基线。
+    private val initializedAccounts = preferences.getStringSet("initialized_accounts", snapshots.keys)
+        .orEmpty().toMutableSet()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val diagnostics = AiNotificationDiagnostics(context)
+    private val mutableServiceState = MutableStateFlow(AiTaskServiceState())
+    internal val serviceState = mutableServiceState.asStateFlow()
+    private var serviceStartWatchdog: Job? = null
     private var foreground = false
     private var monitoringSuspended = false
-    internal var serviceRunning = false
+    internal val serviceRunning get() = mutableServiceState.value.running
     private var workScheduled = false
     private val monitor by lazy { AiTaskMonitor(context.applicationContext, repository, this) }
     internal val monitorState get() = monitor.state
 
     fun initialize() {
+        recordDiagnostic("通知进程启动 pid=${Process.myPid()}")
         manager.createNotificationChannels(listOf(
             alertChannel(DECISION_CHANNEL, LEGACY_DECISION_CHANNEL, "任务决策横幅通知",
                 "AI 需要选择、回答或授权时，通过声音、振动和横幅提醒"),
@@ -97,9 +114,12 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     }
 
     fun setForeground(active: Boolean) {
-        // 退出前用仍可见的状态确认保活，之后仅维持已经开始的应用级监听。
-        if (!active) ensureMonitoring()
         foreground = active
+        val now = SystemClock.elapsedRealtime()
+        fun age(time: Long) = if (time == 0L) "尚未成功" else "${(now - time).coerceAtLeast(0) / 1000}秒前"
+        // 在前台恢复触发补拉之前保存间隔，避免新响应掩盖此前后台停收的证据。
+        recordDiagnostic("${if (active) "应用进入前台" else "应用进入后台"}，服务运行=$serviceRunning，" +
+            "最近帧=${age(monitor.lastFrameAt)}，最近同步=${age(monitor.lastSyncAt)}")
         if (active) {
             monitoringSuspended = false
             syncAccounts()
@@ -149,7 +169,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
 
     fun observe(
         accountId: String, sessions: List<AiSession>, completeList: Boolean = false,
-        knownBeforeRequest: Set<String> = emptySet(),
+        knownBeforeRequest: Set<String> = emptySet(), accountSnapshot: Boolean = false,
     ) {
         if (repository.accounts.connection(accountId) == null) return
         val account = snapshots.getOrPut(accountId) { mutableMapOf() }
@@ -176,7 +196,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             }
             if (approvalIds.isEmpty()) cancelEvent(accountId, session.id, decision = true)
             // 后台断线期间可能错过 running → idle 的整个回合；完成版本仍可补发提醒。
-            val missedResult = old != null && session.resultRevision > old.resultRevision
+            val missedResult = if (old != null) session.resultRevision > old.resultRevision
+                else accountId in initializedAccounts && session.resultRevision > 0
             var resultPending = !session.running && (old?.active == true || old?.resultPending == true || missedResult)
             if (resultPending && showEvent(accountId, session, decision = false)) resultPending = false
             // 新回合开始后移除上一回合结果，保留各任务相互独立的提醒。
@@ -201,6 +222,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
                 changed = true
             }
         }
+        // 首次完整列表只接纳历史；此后新增会话即使整个回合都发生在断线期间也能补报。
+        if ((completeList || accountSnapshot) && initializedAccounts.add(accountId)) changed = true
         if (changed) persist()
         ensureMonitoring()
     }
@@ -213,6 +236,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     }
 
     fun removeAccount(accountId: String) {
+        initializedAccounts.remove(accountId)
         snapshots.remove(accountId)?.keys?.forEach { cancelSession(accountId, it) }
         persist()
         ensureMonitoring()
@@ -225,44 +249,99 @@ class AiTaskNotifications(private val context: Context, private val repository: 
 
     internal fun hasActiveTasks(): Boolean = snapshots.values.any { account -> account.values.any { it.active } }
 
+    internal fun recordDiagnostic(message: String) { diagnostics.record(message) }
+
     internal fun monitorStarted() {
-        serviceRunning = true
+        serviceStartWatchdog?.cancel()
+        serviceStartWatchdog = null
+        mutableServiceState.value = AiTaskServiceState(running = true)
+        recordDiagnostic("前台接收服务已启动，持续持有接收唤醒锁")
         ensureMonitoring()
     }
 
-    internal fun refreshMonitoring() {
+    internal fun refreshMonitoring() { ensureMonitoring() }
+
+    internal fun monitorFailed(error: Throwable, reason: String = "后台接收服务启动失败") {
+        serviceStartWatchdog?.cancel()
+        serviceStartWatchdog = null
+        monitoringSuspended = true
+        val detail = "$reason（${error.javaClass.simpleName}）"
+        mutableServiceState.value = AiTaskServiceState(error = reason)
+        recordDiagnostic(detail)
+    }
+
+    internal fun monitorStopped() {
+        mutableServiceState.value = mutableServiceState.value.copy(running = false, starting = false)
+        recordDiagnostic("前台接收服务停止")
+        ensureMonitoring()
+    }
+
+    internal fun retryMonitoring() {
+        if (!foreground) return
+        monitoringSuspended = false
         ensureMonitoring()
         monitor.refreshNow()
     }
 
-    internal fun suspendMonitoring() { monitoringSuspended = true }
-
-    internal fun monitorStopped() {
-        serviceRunning = false
-        ensureMonitoring()
+    internal fun restoreFromSystem(action: String) {
+        recordDiagnostic("系统恢复接收服务：${action.substringAfterLast('.')}")
+        ensureMonitoring(allowBackgroundStart = true)
     }
 
-    private fun ensureMonitoring() {
-        // 实时接收属于 Application，服务启动异常不能把接收一并关闭。
-        if (foreground || serviceRunning || monitor.running) monitor.update()
-        // Android 12+ 只允许从可见页面启动前台服务；后台恢复由 WorkManager 补偿。
-        if (!foreground || monitoringSuspended || serviceRunning || monitoredAccounts().isEmpty()) return
-        serviceRunning = true
+    private fun ensureMonitoring(allowBackgroundStart: Boolean = false) {
+        // 监听只由 Application 持有；服务从后台被系统重建时也需要先恢复订阅。
+        if (foreground || serviceRunning || monitor.running || allowBackgroundStart) monitor.update()
+        // 普通入口只从已 Resume 的 Activity 启动；仅系统开机/升级广播允许后台恢复。
+        if ((!foreground && !allowBackgroundStart) || monitoringSuspended || serviceRunning ||
+            mutableServiceState.value.starting || monitoredAccounts().isEmpty()) return
+        mutableServiceState.value = AiTaskServiceState(starting = true)
+        recordDiagnostic("申请启动前台接收服务")
         runCatching { ContextCompat.startForegroundService(context, Intent(context, AiTaskMonitorService::class.java)) }
-            .onFailure {
-                serviceRunning = false
-                monitoringSuspended = true
-                Log.w("AiTaskNotifications", "后台保活服务未能启动，继续应用级任务监听", it)
+            .onSuccess {
+                serviceStartWatchdog = scope.launch {
+                    delay(10_000)
+                    if (mutableServiceState.value.starting) {
+                        monitorFailed(IllegalStateException(), "后台接收服务未响应启动请求")
+                    }
+                }
             }
+            .onFailure { monitorFailed(it) }
+    }
+
+    internal fun diagnosticReport(): String {
+        val state = monitorState.value
+        val service = serviceState.value
+        val power = context.getSystemService(PowerManager::class.java)
+        return buildString {
+            appendLine("Terminal Buddy 通知诊断")
+            appendLine("设备：${Build.MANUFACTURER} ${Build.MODEL}，Android ${Build.VERSION.RELEASE} / API ${Build.VERSION.SDK_INT}")
+            appendLine("进程：${Process.myPid()}，应用前台：$foreground，登录账号：${monitoredAccounts().size}")
+            appendLine("服务运行：${service.running}，启动中：${service.starting}，错误：${service.error ?: "无"}")
+            appendLine("通知权限：${notificationsEnabled(context)}，决策横幅：${decisionAlertsEnabled(context)}，结束横幅：${resultAlertsEnabled(context)}")
+            appendLine("后台受限：${backgroundRestricted(context)}，电池优化豁免：${power.isIgnoringBatteryOptimizations(context.packageName)}")
+            appendLine("设备休眠：${power.isDeviceIdleMode}，省电模式：${power.isPowerSaveMode}")
+            appendLine("监听账号：${state.active}，重连中：${state.reconnecting}，轮询补偿：${state.pollingFallback}，网络被系统限制：${state.networkBlocked}")
+            val now = SystemClock.elapsedRealtime()
+            fun age(time: Long) = if (time == 0L) "本进程尚未成功" else "${(now - time).coerceAtLeast(0) / 1000} 秒前"
+            appendLine("最近通知帧：${age(monitor.lastFrameAt)}，最近摘要同步：${age(monitor.lastSyncAt)}")
+            appendLine("最近状态记录（不包含账号凭据与对话内容）：")
+            append(diagnostics.text())
+        }
     }
 
     internal fun monitoringNotification(
         reconnecting: Boolean = true, tasksRunning: Boolean = hasActiveTasks(), pollingFallback: Boolean = false,
+        networkBlocked: Boolean = monitorState.value.networkBlocked,
     ): Notification =
         NotificationCompat.Builder(context, MONITOR_CHANNEL)
             .setSmallIcon(R.drawable.ic_task_notification)
-            .setContentTitle(if (reconnecting) "AI 消息连接正在重连" else "AI 消息接收已连接")
+            .setContentTitle(when {
+                networkBlocked -> "AI 后台联网受限"
+                reconnecting -> "AI 消息连接正在重连"
+                else -> "AI 消息接收已连接"
+            })
             .setContentText(when {
+                networkBlocked -> "请在系统应用设置中允许后台联网"
                 pollingFallback -> "实时连接正在恢复，暂通过后台同步接收消息"
                 reconnecting -> "正在恢复后台消息连接，连接恢复后自动补收提醒"
                 tasksRunning -> "任务执行中，后台接收决策和结束消息"
@@ -298,7 +377,8 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             .setContentIntent(taskIntent(accountId, session.id)).setAutoCancel(true).build()
         // 用户可在调用间隙撤销权限，不能因此中断任务同步。
         return runCatching { manager.notify(eventTag(accountId, session.id, decision), EVENT_ID, notification) }
-            .onFailure { Log.w("AiTaskNotifications", "任务通知未能发送，将在下次同步重试", it) }.isSuccess
+            .onSuccess { recordDiagnostic("${if (decision) "决策" else "结束"}通知已交给系统，应用前台=$foreground，服务运行=$serviceRunning") }
+            .onFailure { recordDiagnostic("发送任务通知失败：${it.javaClass.simpleName}，等待后续同步重试") }.isSuccess
     }
 
     private fun taskIntent(accountId: String, sessionId: String): PendingIntent = PendingIntent.getActivity(
@@ -322,7 +402,10 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     }
 
     private fun eventTag(accountId: String, id: String, decision: Boolean) = "$accountId:$id:${if (decision) "decision" else "result"}"
-    private fun persist() { preferences.edit().putString("snapshots", ApiJson.encodeToString(snapshots)).apply() }
+    private fun persist() {
+        preferences.edit().putString("snapshots", ApiJson.encodeToString(snapshots))
+            .putStringSet("initialized_accounts", initializedAccounts.toSet()).apply()
+    }
 
     companion object {
         private const val LEGACY_DECISION_CHANNEL = "ai_task_decisions"

@@ -101,6 +101,18 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
     }))
 }
 
+// 通知连接只承载短摘要，发送卡住或客户端不再响应心跳时及时回收。
+// 与不设固定时限的对话正文流分开，避免大量失效后台连接长期驻留服务端。
+const NOTIFICATION_SEND_TIMEOUT: Duration = Duration::from_secs(15);
+const NOTIFICATION_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(45);
+
+async fn send_notification_frame(
+    sender: &mut futures_util::stream::SplitSink<axum::extract::ws::WebSocket, Message>,
+    message: Message,
+) -> bool {
+    matches!(tokio::time::timeout(NOTIFICATION_SEND_TIMEOUT, sender.send(message)).await, Ok(Ok(())))
+}
+
 /// 账号级通知连接独立于对话页面，持续发现空闲会话、跨端新任务与待处理决策。
 pub async fn notifications_socket(ws: WebSocketUpgrade, State(state): State<AppState>, Query(params): Query<HashMap<String, String>>) -> Result<impl IntoResponse, ApiError> {
     let token = params.get("token").cloned().ok_or_else(|| ApiError::Unauthorized("请先登录".into()))?;
@@ -111,30 +123,37 @@ pub async fn notifications_socket(ws: WebSocketUpgrade, State(state): State<AppS
         let (mut sender, mut receiver) = socket.split();
         let send_updates = async {
             let mut previous: Vec<_> = initial.iter().map(|s| (s.id.clone(), s.revision)).collect();
-            if sender.send(Message::Text(json!({"type":"sessions","sessions":initial}).to_string().into())).await.is_err() { return; }
+            if !send_notification_frame(&mut sender, Message::Text(json!({"type":"sessions","sessions":initial}).to_string().into())).await { return; }
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut heartbeat = tokio::time::Instant::now();
             loop {
                 interval.tick().await;
+                let heartbeat_due = heartbeat.elapsed() >= Duration::from_secs(10);
+                // 即使会话持续变化也定期 Ping，不能只发送数据而永远不确认接收端存活。
+                if heartbeat_due && !send_notification_frame(&mut sender, Message::Ping(Vec::new().into())).await { break; }
                 let current = { let owner = owner.clone(); tokio::task::spawn_blocking(move || service::list(&owner)).await };
                 let Ok(Ok(sessions)) = current else { break; };
                 let versions: Vec<_> = sessions.iter().map(|s| (s.id.clone(), s.revision)).collect();
-                // 空闲时也发应用层心跳，手机能发现 TCP 存活但消息流已经停滞的连接。
-                if versions == previous && heartbeat.elapsed() < Duration::from_secs(10) { continue; }
-                previous = versions;
-                if sender.send(Message::Text(json!({"type":"sessions","sessions":sessions}).to_string().into())).await.is_err() { break; }
-                heartbeat = tokio::time::Instant::now();
+                // 保留应用层心跳，兼容旧客户端的最后接收时间与摘要补偿。
+                if versions != previous || heartbeat_due {
+                    if !send_notification_frame(&mut sender, Message::Text(json!({"type":"sessions","sessions":sessions}).to_string().into())).await { break; }
+                    previous = versions;
+                }
+                if heartbeat_due { heartbeat = tokio::time::Instant::now(); }
             }
         };
         let watch_connection = async {
             let mut interval = tokio::time::interval(Duration::from_secs(10));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let deadline = tokio::time::sleep(NOTIFICATION_HEARTBEAT_TIMEOUT);
+            tokio::pin!(deadline);
             loop {
                 tokio::select! {
+                    _ = &mut deadline => break,
                     message = receiver.next() => match message {
                         Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                        Some(Ok(_)) => {},
+                        Some(Ok(_)) => deadline.as_mut().reset(tokio::time::Instant::now() + NOTIFICATION_HEARTBEAT_TIMEOUT),
                     },
                     _ = interval.tick() => {
                         if verify_token(&token, &state.jwt_secret).is_err() || !SettingsService::get_settings().web_api_enabled { break; }

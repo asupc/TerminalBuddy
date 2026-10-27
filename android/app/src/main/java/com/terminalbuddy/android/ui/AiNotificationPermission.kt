@@ -30,6 +30,7 @@ internal fun AiNotificationPermission() {
     var backgroundRestricted by remember { mutableStateOf(AiTaskNotifications.backgroundRestricted(context)) }
     val notifications = remember(context) { (context.applicationContext as TerminalBuddyApplication).taskNotifications }
     val monitor by notifications.monitorState.collectAsStateWithLifecycle()
+    val service by notifications.serviceState.collectAsStateWithLifecycle()
     fun refreshSettings() {
         enabled = AiTaskNotifications.notificationsEnabled(context)
         decisionAlerts = AiTaskNotifications.decisionAlertsEnabled(context)
@@ -62,6 +63,13 @@ internal fun AiNotificationPermission() {
                 else -> AiTaskNotifications.openResultSettings(context)
             }
         }) { Text(if (enabled) "设置横幅" else "开启通知") }
+    }
+    if (enabled && monitor.active && !service.running && !service.starting) Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("后台接收服务未运行，切换应用后提醒可能延迟", Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+        TextButton({ notifications.retryMonitoring() }) { Text("重试接收") }
     }
     if (enabled && backgroundRestricted && monitor.active) Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
