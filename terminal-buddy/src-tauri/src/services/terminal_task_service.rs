@@ -94,15 +94,6 @@ fn pi_executable_end(command: &str) -> Option<usize> {
     matches!(name.as_str(), "pi" | "pi.exe" | "pi.cmd" | "pi.bat").then_some(end)
 }
 
-fn has_pi_session_args(args: &str) -> bool {
-    args.split_whitespace().any(|token| {
-        matches!(
-            token.trim_matches(['\'', '"']),
-            "--session" | "--session-id" | "-c" | "--continue" | "-r" | "--resume" | "--fork" | "--no-session"
-        ) || token.starts_with("--session=")
-    })
-}
-
 /// `__TB_PI_REF__:<provider>:<model>[:thinking]` → `pi --provider ... --model ...`。
 /// 模型 ID 只允许安全字符，避免把任意文本拼进启动命令。
 fn expand_pi_ref(command: &str) -> String {
@@ -239,7 +230,6 @@ pub fn prepare_launch(
         let command = expand_pi_ref(&command);
         if let Some(end) = pi_executable_end(&command) {
             tracked.pi_candidate = true;
-            let command = command;
             let mut args = command[end..].to_string();
             // 未显式指定扩展时注入 TerminalBuddy 扩展（精确绑定/状态上报）。
             let has_extension = args.split_whitespace().any(|token| {
@@ -251,12 +241,8 @@ pub fn prepare_launch(
                     args.push_str(&format!(" --extension \"{quoted}\""));
                 }
             }
-            if !has_pi_session_args(&args) {
-                // 新会话预生成 ID：命令改写失败不影响原命令执行。
-                let session_id = uuid::Uuid::new_v4().to_string();
-                bind(&mut tracked, "pi", &session_id);
-                return format!("{} --session-id {}{}", &command[..end], session_id, args);
-            }
+            // 恢复会话：命令自带 --session <id> 时直接绑定；新启动不注入会话参数，
+            // 绑定由 Pi 扩展上报与目录扫描兜底完成。
             if let Some(id) = pi_session_arg(&args) {
                 if uuid::Uuid::parse_str(&id).is_ok() {
                     bind(&mut tracked, "pi", &id);
@@ -620,13 +606,11 @@ mod tests {
     }
 
     #[test]
-    fn detects_session_flags_and_refuses_to_inject_twice() {
-        for args in ["--session x", "--session-id abc", "-c", "--continue", "-r", "--resume x", "--fork", "--no-session", "--session=x"] {
-            assert!(has_pi_session_args(args), "{args}");
-        }
-        assert!(!has_pi_session_args("--approve --model x"));
+    fn extracts_pi_session_arg_for_resume_binding() {
         assert_eq!(pi_session_arg("--session-id 01900000-0000-7000-8000-000000000001"), Some("01900000-0000-7000-8000-000000000001".to_string()));
+        assert_eq!(pi_session_arg("--session 01900000-0000-7000-8000-000000000002"), Some("01900000-0000-7000-8000-000000000002".to_string()));
         assert_eq!(pi_session_arg("--session=/tmp/a.jsonl"), Some("/tmp/a.jsonl".to_string()));
+        assert_eq!(pi_session_arg("--approve --model x"), None);
     }
 
     #[test]

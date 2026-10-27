@@ -460,7 +460,8 @@ pub fn run() {
             pi_history_get_replay, pi_history_rename, pi_history_set_flags,
             pi_history_delete, pi_history_delete_many, pi_history_export,
             get_pi_models,
-            get_pi_provider_state, save_pi_provider, delete_pi_provider,
+            get_pi_provider_state, save_pi_provider, activate_pi_provider,
+            clear_default_pi_provider, delete_pi_provider,
             import_pi_provider, fetch_pi_provider_models,
             get_pi_extension_state, install_pi_extension, uninstall_pi_extension,
             // Claude 配置 / 资产库 / MCP（三期）

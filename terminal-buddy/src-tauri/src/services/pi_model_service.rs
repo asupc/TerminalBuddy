@@ -1,5 +1,7 @@
 //! Pi 模型目录：直接读取 `pi --list-models`，不复制 Pi 的 provider/auth 体系。
 //! 结果按 provider 分组缓存 5 分钟；未安装或未登录时返回明确错误。
+//! TerminalBuddy 侧的默认供应商标记与模型默认思考级别（pi_providers.json）
+//! 会联查并标注到目录条目上，右键菜单据此直接启动。
 use serde::Serialize;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
@@ -15,12 +17,18 @@ pub struct PiModel {
     pub id: String,
     /// Pi 的 --thinking 可用级别；前端据此展开思考级别选择。
     pub thinking: Vec<String>,
+    /// TerminalBuddy 卡片配置的默认思考级别（直接启动时作为 --thinking 传入）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_thinking: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PiModelProvider {
     pub provider: String,
+    /// 是否为 TerminalBuddy 设置的默认供应商（右键菜单平铺其模型）。
+    #[serde(default)]
+    pub is_default: bool,
     pub models: Vec<PiModel>,
 }
 
@@ -141,16 +149,32 @@ fn parse_models(text: &str) -> Vec<PiModelProvider> {
         match providers.iter_mut().find(|entry| entry.provider == provider) {
             Some(entry) => {
                 if !entry.models.iter().any(|entry| entry.id == model) {
-                    entry.models.push(PiModel { id: model.to_string(), thinking: thinking.clone() });
+                    entry.models.push(PiModel { id: model.to_string(), thinking: thinking.clone(), default_thinking: None });
                 }
             }
             None => providers.push(PiModelProvider {
                 provider: provider.to_string(),
-                models: vec![PiModel { id: model.to_string(), thinking }],
+                is_default: false,
+                models: vec![PiModel { id: model.to_string(), thinking, default_thinking: None }],
             }),
         }
     }
     providers
+}
+
+/// 叠加 TerminalBuddy 卡片配置：默认供应商标记 + 各模型默认思考级别。
+fn apply_launch_defaults(providers: &mut [PiModelProvider]) {
+    let defaults = super::pi_provider_service::launch_defaults();
+    for entry in providers.iter_mut() {
+        entry.is_default = defaults.default_provider.as_deref() == Some(entry.provider.as_str());
+        if let Some(levels) = defaults.default_thinking.get(&entry.provider) {
+            for model in &mut entry.models {
+                if let Some(level) = levels.get(&model.id) {
+                    model.default_thinking = Some(level.clone());
+                }
+            }
+        }
+    }
 }
 
 pub fn list_models(force: bool) -> Result<Vec<PiModelProvider>, String> {
@@ -162,10 +186,11 @@ pub fn list_models(force: bool) -> Result<Vec<PiModelProvider>, String> {
         }
     }
     let output = run_with_timeout(&mut pi_command()?, Duration::from_secs(15))?;
-    let providers = parse_models(&output);
+    let mut providers = parse_models(&output);
     if providers.is_empty() {
         return Err("Pi 没有返回可用模型，请先在终端运行 pi 并完成 /login".to_string());
     }
+    apply_launch_defaults(&mut providers);
     if let Ok(mut cache) = cache().lock() {
         cache.fetched_at = Some(Instant::now());
         cache.providers = providers.clone();

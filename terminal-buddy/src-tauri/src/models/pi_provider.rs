@@ -198,6 +198,10 @@ pub struct PiModelConfig {
     pub name: String,
     #[serde(default)]
     pub reasoning: bool,
+    /// 默认思考级别（仅 TerminalBuddy 启动时展开为 `--thinking`，
+    /// 不写入 Pi 的 models.json）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_thinking: Option<String>,
     #[serde(default)]
     pub thinking_level_map: PiThinkingLevelMap,
     /// 是否支持图片输入；输出时映射为 `input: ["text"]` / `["text", "image"]`。
@@ -228,10 +232,23 @@ impl PiModelConfig {
         if !self.reasoning && !thinking_level_map.levels.is_empty() {
             return Err(format!("模型「{id}」未开启推理时不能配置思考级别映射"));
         }
+        let default_thinking = self
+            .default_thinking
+            .map(|level| level.trim().to_string())
+            .filter(|level| !level.is_empty());
+        if let Some(level) = &default_thinking {
+            if !self.reasoning {
+                return Err(format!("模型「{id}」未开启推理时不能设置默认思考级别"));
+            }
+            if !PI_THINKING_LEVELS.contains(&level.as_str()) {
+                return Err(format!("模型「{id}」的默认思考级别「{level}」不受支持"));
+            }
+        }
         Ok(Self {
             id,
             name,
             reasoning: self.reasoning,
+            default_thinking,
             thinking_level_map,
             image_input: self.image_input,
             context_window: self.context_window,
@@ -277,6 +294,10 @@ pub struct PiProvider {
 pub struct PiProviderFile {
     #[serde(default)]
     pub providers: Vec<PiProvider>,
+    /// TerminalBuddy 侧的默认供应商卡片 id（右键菜单平铺 / 直接启动用）；
+    /// Pi 的 models.json 没有全局默认概念，此值不写回 models.json。
+    #[serde(default)]
+    pub current_provider_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -329,6 +350,9 @@ pub struct PiProviderView {
 #[serde(rename_all = "camelCase")]
 pub struct PiProviderState {
     pub providers: Vec<PiProviderView>,
+    /// TerminalBuddy 侧的默认供应商卡片 id（与 Claude/Codex 的默认供应商一致：
+    /// 右键菜单平铺该供应商的模型）。
+    pub active_provider_id: Option<String>,
     pub agent_dir: String,
     pub models_path: String,
     pub config_error: Option<String>,

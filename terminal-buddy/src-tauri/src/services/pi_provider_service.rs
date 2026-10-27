@@ -242,6 +242,7 @@ fn parse_managed_entry(id: &str, entry: &Value) -> Option<PiProviderInput> {
             id: id.to_string(),
             name: model.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
             reasoning: model.get("reasoning").and_then(Value::as_bool).unwrap_or(false),
+            default_thinking: None,
             thinking_level_map: PiThinkingLevelMap { levels },
             image_input: model
                 .get("input")
@@ -359,6 +360,10 @@ impl ProviderStore {
             .map(|p| Ok(p.to_view(&key_for(p)?)))
             .collect::<Result<Vec<_>, String>>()?;
         Ok(PiProviderState {
+            active_provider_id: file
+                .current_provider_id
+                .clone()
+                .filter(|id| providers.iter().any(|p| &p.id == id)),
             providers,
             agent_dir: self.agent_dir.to_string_lossy().to_string(),
             models_path: models_path(&self.agent_dir).to_string_lossy().to_string(),
@@ -438,7 +443,12 @@ impl ProviderStore {
         write_transaction(&writes, backup.then(|| root.as_path()), atomic_write_private)
     }
 
-    fn save(&self, input: PiProviderInput, previous_key_hint: Option<String>) -> Result<PiProviderState, String> {
+    fn save(
+        &self,
+        input: PiProviderInput,
+        activate: bool,
+        previous_key_hint: Option<String>,
+    ) -> Result<PiProviderState, String> {
         let mut file = self.read()?;
         let previous = if input.id.trim().is_empty() {
             None
@@ -493,10 +503,19 @@ impl ProviderStore {
         if provider.id.is_empty() {
             provider.id = uuid::Uuid::new_v4().to_string();
         }
+        let is_first = !file.providers.iter().any(|p| p.id == provider.id);
         if let Some(slot) = file.providers.iter_mut().find(|p| p.id == provider.id) {
             *slot = provider.clone();
         } else {
             file.providers.push(provider.clone());
+        }
+        // 与 Codex 一致的默认逻辑：首个供应商自动设默认、保存当前默认或
+        // 显式"保存并设为默认"时更新默认标记。
+        let should_activate = activate
+            || (is_first && file.providers.len() == 1)
+            || file.current_provider_id.as_deref() == Some(provider.id.as_str());
+        if should_activate {
+            file.current_provider_id = Some(provider.id.clone());
         }
         self.commit(&file, Some((&provider, previous_pi_key)), None, false)?;
         self.view(&file)
@@ -504,6 +523,9 @@ impl ProviderStore {
 
     fn delete(&self, id: &str) -> Result<PiProviderState, String> {
         let mut file = self.read()?;
+        if file.current_provider_id.as_deref() == Some(id) {
+            return Err("请先取消默认供应商，再删除默认供应商".to_string());
+        }
         let index = file
             .providers
             .iter()
@@ -578,6 +600,26 @@ impl ProviderStore {
         // 更新列表不改写 Pi 的 models.json。
         self.commit(&file, None, None, false)
     }
+
+    /// 设为默认供应商（仅记录 TerminalBuddy 侧标记，不改 models.json）。
+    fn activate(&self, id: &str) -> Result<PiProviderState, String> {
+        let mut file = self.read()?;
+        if !file.providers.iter().any(|p| p.id == id) {
+            return Err("Pi 供应商不存在，可能已被删除".to_string());
+        }
+        file.current_provider_id = Some(id.to_string());
+        // 只更新应用数据，不需要同步 models.json。
+        self.commit(&file, None, None, false)?;
+        self.view(&file)
+    }
+
+    /// 取消默认供应商：保留卡片，右键菜单不再平铺。
+    fn clear_default(&self) -> Result<PiProviderState, String> {
+        let mut file = self.read()?;
+        file.current_provider_id = None;
+        self.commit(&file, None, None, false)?;
+        self.view(&file)
+    }
 }
 
 pub fn get_provider_state() -> Result<PiProviderState, String> {
@@ -586,14 +628,73 @@ pub fn get_provider_state() -> Result<PiProviderState, String> {
     store.view(&store.read()?)
 }
 
-pub fn save_provider(input: PiProviderInput) -> Result<PiProviderState, String> {
+pub fn save_provider(input: PiProviderInput, activate: bool) -> Result<PiProviderState, String> {
     let _guard = config_lock().lock().map_err(|_| lock_error())?;
-    store()?.save(input, None)
+    store()?.save(input, activate, None)
 }
 
 pub fn delete_provider(id: &str) -> Result<PiProviderState, String> {
     let _guard = config_lock().lock().map_err(|_| lock_error())?;
     store()?.delete(id)
+}
+
+pub fn activate_provider(id: &str) -> Result<PiProviderState, String> {
+    let _guard = config_lock().lock().map_err(|_| lock_error())?;
+    store()?.activate(id)
+}
+
+pub fn clear_default_provider() -> Result<PiProviderState, String> {
+    let _guard = config_lock().lock().map_err(|_| lock_error())?;
+    store()?.clear_default()
+}
+
+/// TerminalBuddy 侧的启动默认值（供 pi_model_service 联查，不读 models.json、不解密）：
+/// 默认供应商的 Pi 侧键名，与每张卡片各模型的默认思考级别。
+pub struct PiLaunchDefaults {
+    pub default_provider: Option<String>,
+    /// `pi_provider_id` → (`model id` → thinking level)。
+    pub default_thinking: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+}
+
+pub fn launch_defaults() -> PiLaunchDefaults {
+    let empty = PiLaunchDefaults {
+        default_provider: None,
+        default_thinking: std::collections::HashMap::new(),
+    };
+    let Ok(store) = store() else {
+        return empty;
+    };
+    let file = match store.read() {
+        Ok(file) => file,
+        Err(_) => return empty,
+    };
+    PiLaunchDefaults {
+        default_provider: file
+            .current_provider_id
+            .as_deref()
+            .and_then(|id| {
+                file.providers
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map(|p| p.pi_provider_id.clone())
+            }),
+        default_thinking: file
+            .providers
+            .iter()
+            .map(|p| {
+                let models = p
+                    .models
+                    .iter()
+                    .filter_map(|m| {
+                        m.default_thinking
+                            .clone()
+                            .map(|level| (m.id.clone(), level))
+                    })
+                    .collect();
+                (p.pi_provider_id.clone(), models)
+            })
+            .collect(),
+    }
 }
 
 pub fn import_provider(pi_provider_id: &str) -> Result<PiProviderState, String> {
@@ -677,6 +778,7 @@ mod tests {
             id: id.to_string(),
             name: String::new(),
             reasoning: false,
+            default_thinking: None,
             thinking_level_map: PiThinkingLevelMap::default(),
             image_input: true,
             context_window: 0,
@@ -731,7 +833,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let state = store.0.save(input("Acme"), None).unwrap();
+        let state = store.0.save(input("Acme"), false, None).unwrap();
         assert_eq!(state.providers.len(), 1);
         assert_eq!(state.providers[0].key_tail, "1234");
         assert!(state.providers[0].key_set);
@@ -752,15 +854,17 @@ mod tests {
     #[test]
     fn rename_moves_key_and_delete_removes_entry() {
         let store = TestStore::new();
-        let state = store.0.save(input("Acme"), None).unwrap();
+        let state = store.0.save(input("Acme"), false, None).unwrap();
         let id = state.providers[0].id.clone();
         let mut renamed = input("Acme Renamed");
         renamed.id = id.clone();
         renamed.pi_provider_id = "acme-v2".to_string();
-        store.0.save(renamed, None).unwrap();
+        store.0.save(renamed, false, None).unwrap();
         let providers = store.models_json().get("providers").unwrap().clone();
         assert!(providers.get("acme").is_none());
         assert!(providers.get("acme-v2").is_some());
+        // 首个保存的供应商是默认供应商，先取消默认再删除。
+        store.0.clear_default().unwrap();
         // 删除后 models.json 不再残留，应用数据同步清空。
         let state = store.0.delete(&id).unwrap();
         assert!(state.providers.is_empty());
@@ -779,7 +883,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let error = store.0.save(input("Acme"), None).unwrap_err();
+        let error = store.0.save(input("Acme"), false, None).unwrap_err();
         assert!(error.contains("非本应用管理"), "{error}");
     }
 
@@ -789,7 +893,7 @@ mod tests {
         let mut draft = input("Env");
         draft.api_key = Some("$MY_API_KEY".to_string());
         draft.key_mode = "env".to_string();
-        let state = store.0.save(draft, None).unwrap();
+        let state = store.0.save(draft, false, None).unwrap();
         assert_eq!(state.providers[0].key_mode, "env");
         assert_eq!(state.providers[0].key_tail, "$MY_API_KEY");
         let entry = store.models_json().get("providers").unwrap().get("acme").unwrap().clone();
@@ -840,7 +944,7 @@ mod tests {
             ..model("thinker")
         }];
         draft.model = "thinker".to_string();
-        store.0.save(draft, None).unwrap();
+        store.0.save(draft, false, None).unwrap();
         let models = store.models_json()
             .get("providers").unwrap()
             .get("acme").unwrap()
@@ -849,5 +953,88 @@ mod tests {
         let map = models[0].get("thinkingLevelMap").unwrap();
         assert_eq!(map.get("off").unwrap(), &Value::Null);
         assert_eq!(map.get("max").unwrap(), "Max");
+    }
+
+    #[test]
+    fn default_provider_lifecycle() {
+        let store = TestStore::new();
+        // 首个供应商自动设为默认。
+        let first = store.0.save(input("Acme"), false, None).unwrap();
+        let first_id = first.providers[0].id.clone();
+        assert_eq!(first.active_provider_id.as_deref(), Some(first_id.as_str()));
+        // 第二个供应商不自动激活。
+        let mut second = input("Beta");
+        second.pi_provider_id = "beta".to_string();
+        let second_state = store.0.save(second, false, None).unwrap();
+        let second_id = second_state.providers.iter().find(|p| p.pi_provider_id == "beta").unwrap().id.clone();
+        assert_eq!(second_state.active_provider_id.as_deref(), Some(first_id.as_str()));
+        // 设为默认 / 取消默认。
+        let state = store.0.activate(&second_id).unwrap();
+        assert_eq!(state.active_provider_id.as_deref(), Some(second_id.as_str()));
+        let state = store.0.clear_default().unwrap();
+        assert!(state.active_provider_id.is_none());
+        // 取消默认后可删除。
+        store.0.delete(&second_id).unwrap();
+        // 默认供应商删除被拒绝。
+        let state = store.0.activate(&first_id).unwrap();
+        assert_eq!(state.active_provider_id.as_deref(), Some(first_id.as_str()));
+        let error = store.0.delete(&first_id).unwrap_err();
+        assert!(error.contains("请先取消默认"), "{error}");
+        // 取消默认后即可删除。
+        store.0.clear_default().unwrap();
+        let state = store.0.delete(&first_id).unwrap();
+        assert!(state.providers.is_empty());
+        assert!(state.active_provider_id.is_none());
+    }
+
+    #[test]
+    fn default_thinking_stays_app_side_and_feeds_launch_defaults() {
+        let store = TestStore::new();
+        let mut draft = input("Thinking");
+        draft.models = vec![PiModelConfig {
+            reasoning: true,
+            default_thinking: Some("high".to_string()),
+            ..model("thinker")
+        }];
+        draft.model = "thinker".to_string();
+        let state = store.0.save(draft, false, None).unwrap();
+        assert_eq!(state.providers[0].models[0].default_thinking.as_deref(), Some("high"));
+        // 不写入 models.json（Pi schema 没有该字段）。
+        let entry = store.models_json().get("providers").unwrap().get("acme").unwrap().clone();
+        let model_json = entry.get("models").unwrap().as_array().unwrap()[0].clone();
+        assert!(model_json.get("defaultThinking").is_none());
+        // launch_defaults 输出默认供应商键名与模型默认思考级别。
+        // 注意：launch_defaults 走 PathService，测试环境已注入临时目录。
+        std::env::set_var("PI_CODING_AGENT_DIR", store.0.agent_dir.to_string_lossy().as_ref());
+        let defaults = launch_defaults();
+        assert_eq!(defaults.default_provider.as_deref(), Some("acme"));
+        assert_eq!(
+            defaults.default_thinking.get("acme").and_then(|m| m.get("thinker")).map(String::as_str),
+            Some("high")
+        );
+        std::env::remove_var("PI_CODING_AGENT_DIR");
+    }
+
+    #[test]
+    fn default_thinking_requires_reasoning_and_valid_level() {
+        let store = TestStore::new();
+        let mut draft = input("Bad");
+        draft.models = vec![PiModelConfig {
+            default_thinking: Some("high".to_string()),
+            ..model("plain")
+        }];
+        draft.model = "plain".to_string();
+        let error = store.0.save(draft, false, None).unwrap_err();
+        assert!(error.contains("不能设置默认思考级别"), "{error}");
+
+        let mut draft = input("BadLevel");
+        draft.models = vec![PiModelConfig {
+            reasoning: true,
+            default_thinking: Some("ultra".to_string()),
+            ..model("thinker")
+        }];
+        draft.model = "thinker".to_string();
+        let error = store.0.save(draft, false, None).unwrap_err();
+        assert!(error.contains("不受支持"), "{error}");
     }
 }
