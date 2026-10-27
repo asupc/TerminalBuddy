@@ -98,4 +98,26 @@ await withEnvironment({
   assert.equal(calls.at(-1).body.event, 'ToolCall');
 });
 
+// RPC 模式（原生会话）：无 Hook 环境但开启审批时，只注册 tool_call，经扩展 UI 代答。
+await withEnvironment({ TERMINAL_BUDDY_PI_TOOL_APPROVAL: '1' }, async () => {
+  calls.length = 0;
+  const pi = makePi();
+  const create = await loadExtension();
+  create(pi);
+  assert.equal(pi.handlers.size, 1, '无 Hook 环境只注册 tool_call');
+  assert.ok(pi.handlers.has('tool_call'));
+
+  const ctx = { ...makeContext(), ui: { confirm: async () => false }, mode: 'rpc' };
+  const blocked = await pi.handlers.get('tool_call')({ toolName: 'bash', input: { command: 'rm -rf /' } }, ctx);
+  assert.deepEqual(blocked, { block: true, reason: '用户在 TerminalBuddy 中拒绝了本次工具调用' });
+  assert.equal(calls.length, 0, '无 Hook 环境不上报 HTTP');
+
+  ctx.ui.confirm = async () => true;
+  const allowed = await pi.handlers.get('tool_call')({ toolName: 'edit', input: { path: 'a.rs' } }, ctx);
+  assert.equal(allowed, undefined);
+
+  const unattended = await pi.handlers.get('tool_call')({ toolName: 'write', input: {} }, { ...makeContext(), mode: 'json' });
+  assert.equal(unattended, undefined, '无 UI 的模式保持 Pi 原生行为');
+});
+
 console.log('Pi extension event mapping: OK');
