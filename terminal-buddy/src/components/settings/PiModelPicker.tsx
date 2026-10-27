@@ -97,7 +97,7 @@ function ModelRowEditor({ model, index, candidates, disabled, isDefault, onPatch
         <ModelCombobox
           value={model.id}
           options={candidates}
-          onChange={value => onPatch({ id: value })}
+          onChange={value => onPatch({ id: value, name: value })}
           ariaLabel={`模型 ID ${index + 1}`}
           disabled={disabled}
           inputRef={element => { inputRef.current = element; }}
@@ -128,11 +128,6 @@ function ModelRowEditor({ model, index, candidates, disabled, isDefault, onPatch
       </div>
       {expanded && (
         <div className="pi-model-detail">
-          <label className="claude-form-row">显示名称
-            <input value={model.name} maxLength={80} disabled={disabled}
-              onChange={e => onPatch({ name: e.target.value })}
-              placeholder="留空使用模型 ID；也用于 --model 匹配" />
-          </label>
           <div className="claude-form-row-inline">
             <label className="claude-form-row">上下文窗口（tokens）
               <input type="number" min={0} max={4294967295} step={1} disabled={disabled}
