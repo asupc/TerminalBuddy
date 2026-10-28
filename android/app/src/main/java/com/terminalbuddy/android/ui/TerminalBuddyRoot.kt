@@ -54,7 +54,7 @@ fun TerminalBuddyRoot(
     val pageAiUi = if (aiUi.selected != null) aiUi else aiSnapshot.value
     // 根节点统一铺底色：Compose 的 Column/Box 不会自动绘制 Material 背景，否则会露出窗口默认底色。
     Surface(Modifier.fillMaxSize(), color = TbColors.Canvas) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().skinBackground()) {
             AnimatedContent(targetState = page, transitionSpec = { pageSlideTransition() }, label = "页面转场") { destination ->
                 if (destination == RootPage.Home) {
                     Box(

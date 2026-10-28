@@ -1,11 +1,16 @@
 package com.terminalbuddy.android.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -52,7 +57,7 @@ object TbColors {
 internal data class ThemeControls(
     val darkTheme: Boolean = false,
     val onDarkThemeChange: (Boolean) -> Unit = {},
-    val skin: AppSkin = AppSkin.Green,
+    val skin: AppSkin = AppSkin.Pine,
     val onSkinChange: (AppSkin) -> Unit = {},
 )
 
@@ -63,7 +68,7 @@ internal val LocalThemeControls = staticCompositionLocalOf { ThemeControls() }
 fun TerminalBuddyTheme(
     darkTheme: Boolean = false,
     onDarkThemeChange: (Boolean) -> Unit = {},
-    skin: AppSkin = AppSkin.Green,
+    skin: AppSkin = AppSkin.Pine,
     onSkinChange: (AppSkin) -> Unit = {},
     content: @Composable () -> Unit,
 ) {
@@ -93,5 +98,32 @@ fun TerminalBuddyTheme(
             ),
             content = content,
         )
+    }
+}
+
+/** 弥散皮肤使用低浓度色晕，其余皮肤保持纯色底，正文和卡片仍使用实色。 */
+@Composable
+internal fun Modifier.skinBackground(): Modifier {
+    val controls = LocalThemeControls.current
+    val baseModifier = background(TbColors.Canvas)
+    if (!controls.skin.diffuseBackground) return baseModifier
+    val colors = controls.skin.previewColors
+    val upperAlpha = if (controls.darkTheme) .10f else .12f
+    val lowerAlpha = if (controls.darkTheme) .14f else .18f
+    return baseModifier.drawWithCache {
+        val upperGlow = Brush.radialGradient(
+            colors = listOf(colors[0].copy(alpha = upperAlpha), Color.Transparent),
+            center = Offset(size.width * .05f, size.height * .08f),
+            radius = size.maxDimension.coerceAtLeast(1f) * .78f,
+        )
+        val lowerGlow = Brush.radialGradient(
+            colors = listOf(colors[1].copy(alpha = lowerAlpha), Color.Transparent),
+            center = Offset(size.width * .95f, size.height * .72f),
+            radius = size.maxDimension.coerceAtLeast(1f) * .7f,
+        )
+        onDrawBehind {
+            drawRect(upperGlow)
+            drawRect(lowerGlow)
+        }
     }
 }

@@ -18,9 +18,19 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -150,20 +160,49 @@ private fun AiSkinPreference() {
 @Composable
 private fun AiSkinSelectionSheet(dismiss: () -> Unit) {
     val controls = LocalThemeControls.current
-    AiSheet("选择皮肤", dismiss) {
-        LazyColumn(
-            Modifier.fillMaxWidth().weight(1f, fill = false).selectableGroup(),
-            contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item(key = "skin-hint") {
-                Text("当前为${if (controls.darkTheme) "深色" else "浅色"}模式，点按皮肤即可立即应用并保存。",
-                    style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-            }
-            items(AppSkin.entries.chunked(2), key = { it.first().id }) { skins ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    skins.forEach { skin ->
-                        AiSkinChoice(skin, controls.darkTheme, controls.skin == skin,
-                            select = { controls.onSkinChange(skin) }, modifier = Modifier.weight(1f))
+    val largeFont = LocalDensity.current.fontScale >= 1.3f
+    AiSheet("选择你的配色", dismiss) {
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f, fill = false)) {
+            val columns = if (maxWidth < 360.dp || largeFont) 1 else 2
+            val diffuseSkins = AppSkin.entries.filter { it.diffuseBackground }
+            val classicSkins = AppSkin.entries.filter { it != AppSkin.Pine && !it.diffuseBackground }
+            LazyColumn(
+                Modifier.fillMaxWidth().selectableGroup(),
+                contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item(key = "skin-hint") {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("当前使用 · ${controls.skin.title}", style = MaterialTheme.typography.titleSmall, color = TbColors.Text)
+                        Text("${if (controls.darkTheme) "深色" else "浅色"}模式 · 点击即刻应用，自动记住选择。",
+                            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+                    }
+                }
+                item(key = "default-skin") {
+                    AiSkinChoice(AppSkin.Pine, controls.darkTheme, controls.skin == AppSkin.Pine,
+                        select = { controls.onSkinChange(AppSkin.Pine) }, compact = true)
+                }
+                item(key = "diffuse-heading") {
+                    Text("弥散灵感", style = MaterialTheme.typography.titleMedium)
+                }
+                items(diffuseSkins.chunked(columns), key = { "diffuse-${it.first().id}" }) { skins ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        skins.forEach { skin ->
+                            AiSkinChoice(skin, controls.darkTheme, controls.skin == skin,
+                                select = { controls.onSkinChange(skin) }, modifier = Modifier.weight(1f))
+                        }
+                        if (skins.size < columns) Spacer(Modifier.weight(1f))
+                    }
+                }
+                item(key = "classic-heading") {
+                    Text("经典配色", style = MaterialTheme.typography.titleMedium)
+                }
+                items(classicSkins.chunked(columns), key = { "classic-${it.first().id}" }) { skins ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        skins.forEach { skin ->
+                            AiSkinChoice(skin, controls.darkTheme, controls.skin == skin,
+                                select = { controls.onSkinChange(skin) }, modifier = Modifier.weight(1f))
+                        }
+                        if (skins.size < columns) Spacer(Modifier.weight(1f))
                     }
                 }
             }
@@ -173,46 +212,90 @@ private fun AiSkinSelectionSheet(dismiss: () -> Unit) {
 
 @Composable
 private fun AiSkinChoice(
-    skin: AppSkin, darkTheme: Boolean, selected: Boolean, select: () -> Unit, modifier: Modifier = Modifier,
+    skin: AppSkin, darkTheme: Boolean, selected: Boolean, select: () -> Unit,
+    modifier: Modifier = Modifier, compact: Boolean = false,
 ) {
     val colors = skin.colorScheme(darkTheme)
     Surface(
-        modifier = modifier.selectable(selected = selected, role = Role.RadioButton, onClick = select),
-        color = colors.surface, shape = RoundedCornerShape(16.dp),
+        modifier = modifier.fillMaxWidth().selectable(selected = selected, role = Role.RadioButton, onClick = select)
+            .semantics(mergeDescendants = true) { stateDescription = if (selected) "正在使用" else "未选择" },
+        color = colors.surface, shape = RoundedCornerShape(20.dp),
         border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) colors.primary else colors.outlineVariant),
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            AiSkinPreview(colors)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(skin.title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
-                    color = colors.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (selected) Icon(Icons.Outlined.CheckCircle, null, Modifier.size(20.dp), tint = colors.primary)
-                else Spacer(Modifier.size(20.dp))
+        if (compact) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AiSkinPreview(skin, darkTheme, Modifier.size(width = 84.dp, height = 76.dp))
+                AiSkinLabel(skin, darkTheme, selected, Modifier.weight(1f))
             }
-            Text(skin.description, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
+        } else {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                AiSkinPreview(skin, darkTheme, Modifier.fillMaxWidth().height(100.dp))
+                AiSkinLabel(skin, darkTheme, selected)
+            }
         }
     }
 }
 
-/** 装饰性的缩略预览与真实页面使用同一份背景、卡片、字段和按钮色。 */
 @Composable
-private fun AiSkinPreview(colors: ColorScheme) {
-    Column(
-        Modifier.fillMaxWidth().height(76.dp).background(colors.background, RoundedCornerShape(12.dp)).padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            Icon(Icons.Outlined.Terminal, null, Modifier.size(12.dp), tint = colors.primary)
-            Box(Modifier.width(30.dp).height(3.dp).background(colors.onSurfaceVariant.copy(alpha = .5f), RoundedCornerShape(2.dp)))
+private fun AiSkinLabel(skin: AppSkin, darkTheme: Boolean, selected: Boolean, modifier: Modifier = Modifier) {
+    val colors = skin.colorScheme(darkTheme)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(skin.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
+                color = colors.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (selected) Icon(Icons.Outlined.CheckCircle, null, Modifier.size(20.dp), tint = colors.primary)
+            else Spacer(Modifier.size(20.dp))
         }
-        Surface(Modifier.fillMaxWidth(), color = colors.surface, shape = RoundedCornerShape(8.dp)) {
-            Column(Modifier.padding(7.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.fillMaxWidth(.65f).height(3.dp).background(colors.onSurfaceVariant.copy(alpha = .4f), RoundedCornerShape(2.dp)))
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Box(Modifier.weight(1f).height(9.dp).background(colors.surfaceVariant, RoundedCornerShape(3.dp)))
-                    Box(Modifier.width(25.dp).height(9.dp).background(colors.primary, RoundedCornerShape(3.dp)))
+        Text(skin.description, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+            maxLines = 3, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** 弥散缩略图沿用参考色组，深色模式降低亮度；图形仅作装饰。 */
+@Composable
+private fun AiSkinPreview(skin: AppSkin, darkTheme: Boolean, modifier: Modifier = Modifier) {
+    val colors = skin.colorScheme(darkTheme)
+    val previewColors = skin.previewColors.map { if (darkTheme) lerp(colors.background, it, .55f) else it }
+    val swatches = skin.previewColors.ifEmpty { listOf(colors.primary, colors.secondaryContainer, colors.surfaceVariant) }
+    Box(
+        modifier.clearAndSetSemantics { }.clip(RoundedCornerShape(12.dp)).background(colors.background).drawWithCache {
+            val gradient = previewColors.takeIf { it.size >= 2 }?.let { Brush.linearGradient(it.map { color -> color.copy(alpha = .65f) }) }
+            val upperGlow = previewColors.firstOrNull()?.let { color ->
+                Brush.radialGradient(
+                    listOf(color.copy(alpha = .55f), Color.Transparent),
+                    center = Offset(size.width * .12f, size.height * .1f), radius = size.maxDimension.coerceAtLeast(1f),
+                )
+            }
+            val lowerGlow = previewColors.getOrNull(1)?.let { color ->
+                Brush.radialGradient(
+                    listOf(color.copy(alpha = .5f), Color.Transparent),
+                    center = Offset(size.width * .58f, size.height * .95f), radius = size.maxDimension.coerceAtLeast(1f) * .85f,
+                )
+            }
+            onDrawBehind {
+                gradient?.let { drawRect(it) }
+                upperGlow?.let { drawRect(it) }
+                lowerGlow?.let { drawRect(it) }
+            }
+        },
+    ) {
+        Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Outlined.Palette, null, Modifier.size(14.dp), tint = colors.primary)
+                Box(Modifier.width(28.dp).height(4.dp).background(colors.primary.copy(alpha = .5f), RoundedCornerShape(3.dp)))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Box(Modifier.size(width = 56.dp, height = 23.dp).background(colors.surface.copy(alpha = .72f), RoundedCornerShape(9.dp)),
+                    contentAlignment = Alignment.Center) {
+                    Box(Modifier.width(28.dp).height(4.dp).background(colors.primary.copy(alpha = .65f), RoundedCornerShape(3.dp)))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                swatches.forEach { color ->
+                    Surface(Modifier.size(14.dp), color = color, shape = CircleShape,
+                        border = BorderStroke(1.dp, colors.surface.copy(alpha = .8f))) { }
                 }
             }
         }
