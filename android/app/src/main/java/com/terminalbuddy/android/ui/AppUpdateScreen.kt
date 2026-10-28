@@ -93,6 +93,7 @@ internal fun AppUpdateScreen(back: () -> Unit, vm: AppUpdateViewModel = viewMode
             BuildConnection(ui, vm)
         } else {
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                val controlsMaxHeight = maxHeight * .55f
                 if (maxWidth >= 600.dp && maxHeight < 520.dp) {
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         BuildControls(ui, vm, { cancelling = it }, Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()))
@@ -100,7 +101,7 @@ internal fun AppUpdateScreen(back: () -> Unit, vm: AppUpdateViewModel = viewMode
                     }
                 } else {
                     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        BuildControls(ui, vm, { cancelling = it }, Modifier.heightIn(max = maxHeight * .55f)
+                        BuildControls(ui, vm, { cancelling = it }, Modifier.heightIn(max = controlsMaxHeight)
                             .verticalScroll(rememberScrollState()))
                         BuildOutput(ui, vm, ::install, { history = true }, Modifier.weight(1f).fillMaxWidth())
                     }
