@@ -1,12 +1,13 @@
 //! 原生 AI 消息 API。复用现有 JWT 和项目范围，任务启动后立即返回。
 use axum::{extract::{Path, Query, State, ws::{Message, WebSocketUpgrade}}, response::IntoResponse, Json};
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use serde_json::json;
 use std::{collections::HashMap, time::Duration};
-use crate::{models::ai_chat::*, services::{ai_chat_service as service, SettingsService}, web::{auth::{ClaimsFromRequest, verify_token}, error::ApiError, server::AppState}};
+use crate::{models::{ai_chat::*, session_history::{SessionHistoryItem, SessionHistoryScanResult}}, services::{ai_chat_service as service, SettingsService}, web::{auth::{ClaimsFromRequest, verify_token}, error::ApiError, server::AppState}};
 
 fn service_error(error: String) -> ApiError {
-    if error == "AI 会话不存在" { ApiError::NotFound(error) }
+    if error.contains("不存在") { ApiError::NotFound(error) }
     else if error.contains("正在") { ApiError::Conflict(error) }
     else { ApiError::BadRequest(error) }
 }
@@ -21,10 +22,37 @@ pub async fn list(claims: ClaimsFromRequest) -> Result<Json<Vec<AiSession>>, Api
 }
 pub async fn create(claims: ClaimsFromRequest, Json(mut input): Json<CreateAiSession>) -> Result<Json<AiSession>, ApiError> {
     tokio::task::spawn_blocking(move || {
+        // 恢复历史会话时以历史会话所在项目为准，请求携带的项目路径仅用于初始选择。
+        if input.resume_session_id.as_deref().is_some_and(|id| !id.trim().is_empty()) {
+            let page = service::replay_page(&input.provider, input.resume_session_id.as_deref().unwrap_or(""), 0, 1).map_err(service_error)?;
+            input.project_path = page.project_dir;
+        }
         input.project_path = super::ensure_project_scope(&input.project_path)?;
         if !std::path::Path::new(&input.project_path).is_dir() { return Err(ApiError::BadRequest("项目目录不可访问".into())); }
         service::create(&claims.0.sub, input).map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryQuery {
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub project_dir: Option<String>,
+    #[serde(default)]
+    pub include_archived: bool,
+}
+
+/// App 端按项目 + Agent 浏览 CLI 历史会话（与 PC 端共享同一 SQLite 索引）。
+pub async fn history(_claims: ClaimsFromRequest, Query(q): Query<HistoryQuery>) -> Result<Json<Vec<SessionHistoryItem>>, ApiError> {
+    blocking(move || service::list_history(&q.agent, q.include_archived, q.project_dir.as_deref())).await
+}
+
+/// 展开历史列表前的增量索引：本批同步返回，剩余由后台补齐（与 PC 端历史面板一致）。
+pub async fn history_rescan(State(state): State<AppState>, _claims: ClaimsFromRequest, Query(q): Query<HistoryQuery>) -> Result<Json<SessionHistoryScanResult>, ApiError> {
+    let app = state.app_handle.clone();
+    blocking(move || service::rescan_history(&app, &q.agent)).await
 }
 pub async fn get(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
     blocking(move || service::get_with_summary(&id, &claims.0.sub)).await

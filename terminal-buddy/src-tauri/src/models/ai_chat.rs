@@ -87,6 +87,9 @@ pub struct CreateAiSession {
     pub provider_id: Option<String>,
     pub project_path: String,
     pub model: Option<String>,
+    /// 从 CLI 历史会话恢复：绑定历史线程并预填最近消息，项目以历史会话所在目录为准。
+    #[serde(default)]
+    pub resume_session_id: Option<String>,
 }
 
 #[derive(Deserialize)]

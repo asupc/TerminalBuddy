@@ -72,6 +72,9 @@ pub fn build_router(state: AppState) -> Router {
     // AI 会话的长文本和历史记录不设正文大小、请求处理时长或实时连接配额。
     let ai_router = Router::new()
         .route("/api/ai/catalog", get(handlers::ai_chat_handler::catalog))
+        // CLI 历史会话（按项目 + Agent 浏览，与 PC 端共享同一索引）
+        .route("/api/ai/history", get(handlers::ai_chat_handler::history))
+        .route("/api/ai/history/rescan", post(handlers::ai_chat_handler::history_rescan))
         .route("/api/ai/sessions", get(handlers::ai_chat_handler::list).post(handlers::ai_chat_handler::create))
         .route("/api/ai/sessions/{id}", get(handlers::ai_chat_handler::get).delete(handlers::ai_chat_handler::delete))
         .route("/api/ai/sessions/{id}/messages", post(handlers::ai_chat_handler::send))

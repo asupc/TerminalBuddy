@@ -109,6 +109,9 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
 pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
     if !matches!(input.provider.as_str(), "claude" | "codex" | "pi") { return Err("请选择 Claude、Codex 或 Pi".into()); }
     if input.model.as_ref().is_some_and(|v| !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/[]@+".contains(c))) { return Err("模型名称无效".into()); }
+    if let Some(resume_id) = input.resume_session_id.clone().filter(|id| !id.trim().is_empty()) {
+        return resume_from_history(owner, input, &resume_id);
+    }
     let selection = super::ai_catalog_service::selection(&input.provider, input.provider_id.as_deref(), input.model.as_deref())?;
     let id = Uuid::new_v4().to_string();
     let data = AiSession { id: id.clone(), title: "新对话".into(), provider: input.provider,
@@ -121,6 +124,104 @@ pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
     Ok(data)
+}
+
+/// 恢复历史会话时预填的最大消息条数：按 seq 从尾部截取，避免超大转录拖慢创建。
+const RESUME_PREFILL_MESSAGES: usize = 300;
+
+/// CLI 历史会话的分发入口：三种 Agent 共用 `models::session_history` 协议。
+pub fn list_history(agent: &str, include_archived: bool, project_dir: Option<&str>) -> Result<Vec<crate::models::session_history::SessionHistoryItem>> {
+    match agent {
+        "claude" => super::claude_history_service::list_sessions(include_archived, project_dir),
+        "codex" => super::codex_history_service::list_sessions(include_archived, project_dir),
+        "pi" => super::pi_history_service::list_sessions(include_archived, project_dir),
+        _ => Err("未知 Agent，请选择 Claude、Codex 或 Pi".into()),
+    }
+}
+
+/// 打开历史列表前的增量索引（与 PC 端历史面板同一入口，剩余由后台补齐）。
+pub fn rescan_history(app: &crate::runtime::AppHandle, agent: &str) -> Result<crate::models::session_history::SessionHistoryScanResult> {
+    match agent {
+        "claude" => super::claude_history_service::scan_and_index(app),
+        "codex" => super::codex_history_service::scan_and_index(app),
+        "pi" => super::pi_history_service::scan_and_index(app),
+        _ => Err("未知 Agent，请选择 Claude、Codex 或 Pi".into()),
+    }
+}
+
+/// 读取历史会话回放页（分页），三种 Agent 返回同一协议结构。
+pub fn replay_page(agent: &str, session_id: &str, offset: usize, limit: usize) -> Result<crate::models::session_history::SessionReplayPage> {
+    match agent {
+        "claude" => super::claude_history_service::get_replay(session_id, offset, limit),
+        "codex" => super::codex_history_service::get_replay(session_id, offset, limit),
+        "pi" => super::pi_history_service::get_replay(session_id, offset, limit),
+        _ => Err("未知 Agent，请选择 Claude、Codex 或 Pi".into()),
+    }
+}
+
+/// 从 CLI 历史会话恢复为原生 AI 会话：绑定历史线程并预填最近消息，之后的发送
+/// 走各 Agent 已有的续接通道（Claude `--resume`、Codex `thread/resume`、Pi 复用会话文件）。
+fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> Result<AiSession> {
+    let provider = input.provider.as_str();
+    // 第一页只取元数据：标题、项目目录与消息总数均来自历史索引。
+    let first = replay_page(provider, resume_id, 0, 1)?;
+    if first.project_dir.trim().is_empty() { return Err("历史会话缺少项目目录，无法恢复".into()); }
+    // 幂等：同账号已恢复过同一历史线程时直接复用，避免两个进程写同一份转录。
+    if let Some(existing) = find_by_thread(owner, provider, resume_id) { return Ok(existing); }
+    // Pi 的 RPC 会话 ID 即 AiSession ID（进程按该 ID 落盘并复用同一会话文件）。
+    let id = if provider == "pi" { resume_id.to_string() } else { Uuid::new_v4().to_string() };
+    let path = directory()?.join(format!("{id}.json"));
+    if provider == "pi" && path.is_file() {
+        return Err("该 Pi 历史会话正被其他账号使用，无法恢复".into());
+    }
+    let title = if first.title.trim().is_empty() { "恢复的对话".to_string() } else { first.title };
+    let messages = prefill_history_messages(provider, resume_id, first.total.max(0) as usize)?;
+    let selection = super::ai_catalog_service::selection(provider, input.provider_id.as_deref(), input.model.as_deref())?;
+    let data = AiSession { id: id.clone(), title, provider: provider.to_string(),
+        provider_id: selection.as_ref().map(|(id, _)| id.clone()), provider_name: selection.map(|(_, name)| name),
+        project_path: first.project_dir, model: input.model.filter(|m| !m.trim().is_empty()),
+        status: "idle".into(), messages, approvals: Vec::new(), error: None,
+        usage: Some(usage::initial()), usage_checkpoint: None,
+        updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0,
+        owner: owner.into(), thread_id: Some(resume_id.to_string()), request_ids: Vec::new(), pending_inputs: Vec::new() };
+    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path });
+    persist(&cell)?;
+    registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
+    Ok(data)
+}
+
+/// 在已落盘的 AI 会话里找绑定同一历史线程的会话（磁盘 JSON 持久化过 owner 与 threadId）。
+fn find_by_thread(owner: &str, provider: &str, thread_id: &str) -> Option<AiSession> {
+    let dir = directory().ok()?;
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext != "json") { continue; }
+        let Ok(bytes) = fs::read(&path) else { continue };
+        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else { continue };
+        if value["owner"] != owner || value["provider"] != provider || value["threadId"] != thread_id { continue; }
+        if let Ok(data) = serde_json::from_slice::<AiSession>(&bytes) { return Some(data); }
+    }
+    None
+}
+
+/// 预填历史消息：按 seq 保留最近若干条，角色收敛到客户端支持的三种。
+fn prefill_history_messages(provider: &str, session_id: &str, total: usize) -> Result<Vec<AiMessage>> {
+    if total == 0 { return Ok(Vec::new()); }
+    let mut messages = Vec::new();
+    let mut offset = total.saturating_sub(RESUME_PREFILL_MESSAGES);
+    while offset < total {
+        let page = replay_page(provider, session_id, offset, 100)?;
+        if page.messages.is_empty() { break; }
+        let mut advanced = false;
+        for item in page.messages {
+            if offset >= total { break; }
+            offset += 1; advanced = true;
+            if !matches!(item.role.as_str(), "user" | "assistant" | "tool") || item.text.trim().is_empty() { continue; }
+            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0) });
+        }
+        if !advanced { break; }
+    }
+    Ok(messages)
 }
 pub fn delete(id: &str, owner: &str) -> Result<()> {
     let cell = load(id, owner)?;
