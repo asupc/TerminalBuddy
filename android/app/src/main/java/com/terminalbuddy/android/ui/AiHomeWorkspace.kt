@@ -71,7 +71,7 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel) {
     AiCard(shape = RoundedCornerShape(24.dp)) {
         // 整卡按 3/4 高度压缩：内边距、行距、行高与控件最小高度同步等比缩小。
         Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-            AiSectionTitle("开启新会话", "选好项目，交给你熟悉的助手", compact = true)
+            AiSectionTitle("开启新会话", compact = true)
             AiChoiceField("工作项目", Icons.Outlined.FolderOpen, ui.projectPath, "选择一个项目",
                 ui.projects.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject,
                 compact = true, inlineLabel = true)
