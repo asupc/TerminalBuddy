@@ -38,6 +38,7 @@ private enum class AiPage { Home, Accounts, Connection, ServiceInfo, AppUpdate }
 fun AiScreen(ui: AiUiState, vm: AiViewModel) {
     var page by rememberSaveable { mutableStateOf(AiPage.Home) }
     var tab by rememberSaveable { mutableStateOf(AiHomeTab.QuickStart) }
+    var recentSessionsRequest by rememberSaveable { mutableIntStateOf(0) }
     val tabState = rememberSaveableStateHolder()
     var loginAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
@@ -109,10 +110,13 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
             Box(Modifier.widthIn(max = 680.dp).fillMaxSize()) {
                 tabState.SaveableStateProvider("home:${ui.activeAccountId}:${tab.name}") {
                     when (tab) {
-                        AiHomeTab.QuickStart -> AiHomeWorkspace(ui, vm, sessions = { tab = AiHomeTab.Sessions })
+                        AiHomeTab.QuickStart -> AiHomeWorkspace(ui, vm, sessions = {
+                            recentSessionsRequest++
+                            tab = AiHomeTab.Sessions
+                        })
                         AiHomeTab.Sessions -> AiSessionsScreen(ui, vm,
                             start = { tab = AiHomeTab.QuickStart }, delete = { deleting = it },
-                            deleteAll = { confirmDeleteAll = true })
+                            deleteAll = { confirmDeleteAll = true }, recentRequest = recentSessionsRequest)
                         AiHomeTab.Profile -> AiProfileScreen(ui,
                             notifications = { notificationSettings = true },
                             sendMode = { sendModeSheet = true }, accounts = openAccounts,
