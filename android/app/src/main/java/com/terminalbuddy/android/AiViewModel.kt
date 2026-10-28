@@ -48,20 +48,17 @@ data class AiUiState(
     val historyProjectPath: String = "",
     /** 连续发送方式：false 回复期间在服务端排队等待，true 中断当前回复立即发送。 */
     val sendImmediate: Boolean = false,
+    val history: AiHistoryState = AiHistoryState(),
 ) {
     /** 仅首次取数限制操作，后续刷新保留已有内容并保持页面可操作。 */
     val initialLoading get() = loading && !homeLoaded
     val launchProject get() = projects.find { it.path == projectPath }
     /** 只列出当前项目启用的 Agent 对应供应商。 */
-    val availableProviders get() = providers.filter { provider ->
-        launchProject?.let {
-            when (provider.agent) {
-                "codex" -> it.enabledAgents.codex
-                "pi" -> it.enabledAgents.pi
-                else -> it.enabledAgents.claude
-            }
-        } == true
-    }
+    fun projectProviders(project: AiProject) = providers.filter { project.enabledAgents.enabled(it.agent) }
+    fun projectModels(project: AiProject, agent: String? = null) = projectProviders(project)
+        .filter { agent == null || it.agent == agent }
+        .flatMap { provider -> provider.models.map { AiLaunchModel(provider, it) } }
+    val availableProviders get() = launchProject?.let(::projectProviders).orEmpty()
     val availableAgents get() = listOf("claude", "codex", "pi").filter { agent -> availableProviders.any { it.agent == agent } }
     val launchProvider get() = availableProviders.find { it.id == providerId }
     /** 汇总当前 Agent 的全部模型，启动时仍使用模型所属的供应商。 */
@@ -104,12 +101,14 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private var generation = 0
     private var authJob: Job? = null
     private var refreshJob: Job? = null
-    private var historyJob: Job? = null
+    private var cliHistoryJob: Job? = null
     private var streamJob: Job? = null
     private var pollingJob: Job? = null
     private var selectJob: Job? = null
     private var sendJob: Job? = null
     private var actionJob: Job? = null
+    private var historyJob: Job? = null
+    private var historyReplayJob: Job? = null
     /** 尚未落盘的本地新对话；为空表示当前会话已经存在于服务端。 */
     private var pending: AiSession? = null
     /** 最后实际查看到的版本；首页发现新结果时保留这条已读基线。 */
@@ -192,10 +191,18 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun cancelConnectionJobs() {
+        cancelHistoryJobs()
         stopRealtime()
         refreshJob?.cancel(); refreshJob = null
         selectJob?.cancel(); selectJob = null
         mutable.update { it.copy(loading = false, loadingSession = false) }
+    }
+
+    private fun cancelHistoryJobs() {
+        cliHistoryJob?.cancel(); cliHistoryJob = null
+        historyJob?.cancel(); historyJob = null
+        historyReplayJob?.cancel(); historyReplayJob = null
+        mutable.update { it.copy(historyLoading = false, history = it.history.copy(loading = false, loadingReplay = false)) }
     }
 
     /** 网络恢复后取消旧连接和退避等待，立即建立实时连接并补拉完整会话。 */
@@ -206,6 +213,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         if (mutable.value.selected == null) {
             if (mutable.value.deletingAll) startHomePolling() else refresh()
         } else if (pending == null) startRealtime(reconnecting = true)
+        if (mutable.value.history.selected != null && mutable.value.history.replay == null) loadCodexReplay()
+        if (mutable.value.history.expanded && !mutable.value.history.loaded) loadCodexHistory()
     }
 
     override fun onCleared() {
@@ -223,7 +232,11 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         if (active && store.loggedIn && !mutable.value.authenticating) {
             if (mutable.value.selected == null) refresh()
             else if (pending == null) startRealtime(reconnecting = true)
+            val history = mutable.value.history
+            if (history.selected != null && history.replay == null && history.replayError == null) loadCodexReplay()
+            if (history.expanded && !history.loaded && history.error == null) loadCodexHistory()
         } else {
+            cancelHistoryJobs()
             stopRealtime()
             refreshJob?.cancel(); refreshJob = null
             mutable.update { it.copy(loading = false) }
@@ -285,6 +298,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 清空当前连接的内存状态和在途任务，各账号的磁盘数据仍按身份隔离。 */
     private fun resetConnection() {
         generation++
+        cancelHistoryJobs()
         stopRealtime(); refreshJob?.cancel(); refreshJob = null; selectJob?.cancel(); cancelSend(); actionJob?.cancel()
         repository.sessionCache.invalidate()
         drafts.clear(); requests.clear(); pending = null
@@ -348,7 +362,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         if (!store.loggedIn || mutable.value.authenticating || refreshJob?.isActive == true || mutable.value.deletingAll) return
         val epoch = generation
         refreshJob = viewModelScope.launch {
-            mutable.update { it.copy(loading = !it.homeLoaded) }
+            mutable.update { it.copy(loading = true) }
             var retries = 0
             try {
                 while (isActive && epoch == generation) {
@@ -471,7 +485,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleHistory() {
         val ui = mutable.value
         if (ui.historyExpanded) {
-            historyJob?.cancel()
+            cliHistoryJob?.cancel()
             mutable.update { it.copy(historyExpanded = false, historySessions = emptyList(), historyLoading = false) }
         } else {
             mutable.update { it.copy(historyExpanded = true) }
@@ -488,8 +502,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val ui = mutable.value
         val agent = ui.launchProvider?.agent ?: return
         val project = ui.launchProject ?: return
-        historyJob?.cancel()
-        historyJob = viewModelScope.launch {
+        cliHistoryJob?.cancel()
+        cliHistoryJob = viewModelScope.launch {
             mutable.update { it.copy(historyLoading = true, historyAgent = agent, historyProjectPath = project.path) }
             try {
                 runCatching { repository.rescanHistory(agent) }
@@ -517,7 +531,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val provider = ui.launchProvider ?: return
         if (ui.working || ui.authenticating) return
         val model = ui.launchModel?.id.orEmpty()
-        historyJob?.cancel()
+        cliHistoryJob?.cancel()
         refreshJob?.cancel(); selectJob?.cancel(); cancelSend(); stopRealtime()
         mutable.update { it.copy(working = true, error = null) }
         viewModelScope.launch {
@@ -541,6 +555,121 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             reconcile(ui.copy(providerId = target.provider.id, modelId = target.model.id))
         }
         saveSelection()
+    }
+
+    /** 项目页的选择一次性应用，复用快速开始的本地会话壳与首次发送流程。 */
+    fun createFromProject(path: String, modelKey: String) {
+        val ui = mutable.value
+        if (ui.working || ui.authenticating || ui.initialLoading) return
+        val project = ui.projects.find { it.path == path } ?: return
+        val target = ui.projectModels(project).find { it.key == modelKey } ?: return
+        mutable.update { it.copy(projectPath = path, providerId = target.provider.id, modelId = target.model.id) }
+        saveSelection()
+        create()
+    }
+
+    fun toggleCodexHistory() {
+        val expanded = !mutable.value.history.expanded
+        mutable.update { it.copy(history = it.history.copy(expanded = expanded)) }
+        if (expanded && !mutable.value.history.loaded) loadCodexHistory()
+    }
+
+    fun loadCodexHistory() {
+        if (!store.loggedIn || mutable.value.authenticating || historyJob?.isActive == true) return
+        val epoch = generation
+        historyJob = viewModelScope.launch {
+            mutable.update { it.copy(history = it.history.copy(loading = true, error = null)) }
+            try {
+                val scan = repository.scanCodexHistory()
+                val sessions = repository.codexHistory()
+                if (epoch == generation) mutable.update {
+                    it.copy(history = it.history.copy(sessions = sessions, loaded = true, indexing = scan.pending > 0))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (epoch == generation) {
+                    if (e is ApiException && e.code == 401) failure(e)
+                    else mutable.update { it.copy(history = it.history.copy(error = if (e is ApiException && e.code == 404)
+                        "服务端暂不支持 Codex 历史，请更新 TerminalBuddy 服务端" else e.userMessage())) }
+                }
+            } finally {
+                if (historyJob === coroutineContext.job) {
+                    historyJob = null
+                    mutable.update { it.copy(history = it.history.copy(loading = false)) }
+                }
+            }
+        }
+    }
+
+    fun openCodexHistory(session: AiHistorySession) {
+        if (mutable.value.authenticating || mutable.value.working) return
+        historyReplayJob?.cancel(); historyReplayJob = null
+        mutable.update { it.copy(history = it.history.copy(selected = session, replay = null, replayError = null, loadingReplay = false)) }
+        loadCodexReplay()
+    }
+
+    fun closeCodexHistory() {
+        if (mutable.value.working) return
+        historyReplayJob?.cancel(); historyReplayJob = null
+        mutable.update { it.copy(history = it.history.copy(selected = null, replay = null, replayError = null, loadingReplay = false)) }
+    }
+
+    fun loadCodexReplay(more: Boolean = false) {
+        if (!store.loggedIn || mutable.value.authenticating) return
+        val history = mutable.value.history
+        val session = history.selected ?: return
+        if (historyReplayJob?.isActive == true) return
+        val offset = if (more) history.replay?.messages?.size ?: 0 else 0
+        if (more && offset.toLong() >= (history.replay?.total ?: 0)) return
+        val epoch = generation
+        historyReplayJob = viewModelScope.launch {
+            mutable.update { it.copy(history = it.history.copy(loadingReplay = true, replayError = null)) }
+            try {
+                val page = repository.codexHistoryReplay(session.sessionId, offset)
+                if (epoch == generation && mutable.value.history.selected?.sessionId == session.sessionId) mutable.update {
+                    val messages = if (offset == 0) page.messages
+                        else (it.history.replay?.messages.orEmpty() + page.messages).distinctBy(AiHistoryMessage::seq)
+                    it.copy(history = it.history.copy(replay = page.copy(messages = messages)))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (epoch == generation) {
+                    if (e is ApiException && e.code == 401) failure(e)
+                    else mutable.update { it.copy(history = it.history.copy(replayError = e.userMessage())) }
+                }
+            } finally {
+                if (historyReplayJob === coroutineContext.job) {
+                    historyReplayJob = null
+                    mutable.update { it.copy(history = it.history.copy(loadingReplay = false)) }
+                }
+            }
+        }
+    }
+
+    fun resumeCodexHistory(modelKey: String) {
+        val ui = mutable.value
+        val source = ui.history.selected ?: return
+        if (ui.working || ui.authenticating) return
+        val project = historyProject(ui.projects, ui.history.replay?.projectDir ?: source.projectDir) ?: return
+        val target = ui.projectModels(project, "codex").find { it.key == modelKey } ?: return
+        val epoch = generation
+        actionJob = viewModelScope.launch {
+            mutable.update { it.copy(working = true, error = null) }
+            try {
+                val session = repository.resumeCodexHistory(source.sessionId, target.provider, target.model)
+                if (epoch != generation) return@launch
+                mutable.update { it.copy(history = it.history.copy(selected = null, replay = null)) }
+                open(session.id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (epoch == generation) failure(e)
+            } finally {
+                if (epoch == generation) mutable.update { it.copy(working = false) }
+            }
+        }
     }
 
     /** 先显示内存 / SQLite 中的完整会话，网络请求与磁盘恢复并行，随后静默同步。 */

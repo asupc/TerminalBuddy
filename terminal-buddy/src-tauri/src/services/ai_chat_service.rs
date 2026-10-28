@@ -106,7 +106,7 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
     sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
     Ok(sessions)
 }
-pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
+fn new_session(owner: &str, input: CreateAiSession) -> Result<AiSession> {
     if !matches!(input.provider.as_str(), "claude" | "codex" | "pi") { return Err("请选择 Claude、Codex 或 Pi".into()); }
     if input.model.as_ref().is_some_and(|v| !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/[]@+".contains(c))) { return Err("模型名称无效".into()); }
     if let Some(resume_id) = input.resume_session_id.clone().filter(|id| !id.trim().is_empty()) {
@@ -120,7 +120,10 @@ pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new() };
-    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{id}.json")) });
+    Ok(data)
+}
+fn save_new_session(data: AiSession) -> Result<AiSession> {
+    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{}.json", data.id)) });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
     Ok(data)
@@ -222,6 +225,47 @@ fn prefill_history_messages(provider: &str, session_id: &str, total: usize) -> R
         if !advanced { break; }
     }
     Ok(messages)
+}
+pub fn create(owner: &str, input: CreateAiSession) -> Result<AiSession> {
+    if input.resume_session_id.as_deref().is_some_and(|id| !id.trim().is_empty()) { return new_session(owner, input); }
+    save_new_session(new_session(owner, input)?)
+}
+
+fn history_messages(session_id: &str, history: &crate::models::session_history::SessionReplayPage) -> Vec<AiMessage> {
+    history.messages.iter().filter_map(|message| {
+        let mut parts = Vec::new();
+        if !message.text.trim().is_empty() { parts.push(message.text.clone()); }
+        for tool in &message.tools {
+            parts.push(if tool.summary.is_empty() { tool.name.clone() } else { format!("{}\n{}", tool.name, tool.summary) });
+        }
+        if parts.is_empty() { return None; }
+        Some(AiMessage { id: format!("history-{session_id}-{}", message.seq), role: message.role.clone(),
+            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at) })
+    }).collect()
+}
+
+/// 保留原生 threadId，首条新消息走现有 thread/resume，而非新建无上下文的线程。
+pub fn resume_codex_history(owner: &str, session_id: &str, project_path: String, input: ResumeCodexHistory,
+    history: crate::models::session_history::SessionReplayPage) -> Result<AiSession> {
+    Uuid::parse_str(session_id).map_err(|_| "Codex 历史会话标识无效")?;
+    static RESUME_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = RESUME_LOCK.lock().map_err(|_| "历史会话恢复锁不可用")?;
+    let mut data = new_session(owner, CreateAiSession { provider: "codex".into(), provider_id: input.provider_id,
+        project_path, model: input.model, resume_session_id: None })?;
+    // 网络重试或重复点击复用同账号、同线程和同启动配置的会话，不产生重复副本。
+    for item in list(owner)? {
+        let Ok(existing) = get(&item.id, owner) else { continue; };
+        if existing.provider == "codex" && existing.thread_id.as_deref() == Some(session_id)
+            && existing.project_path == data.project_path && existing.provider_id == data.provider_id && existing.model == data.model {
+            return Ok(existing);
+        }
+    }
+    data.title = history.title.clone();
+    data.thread_id = Some(session_id.into());
+    data.messages = history_messages(session_id, &history);
+    // 历史索引缺少完整缓存与推理分项，不把不完整的旧统计冒充完整累计。
+    data.usage = None;
+    save_new_session(data)
 }
 pub fn delete(id: &str, owner: &str) -> Result<()> {
     let cell = load(id, owner)?;
@@ -1513,6 +1557,35 @@ pub fn shutdown_all() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imported_history_keeps_message_ids_text_tools_and_timestamps() {
+        let history = serde_json::from_value(json!({
+            "total": 4, "title": "Codex 历史", "projectDir": "/project", "model": null,
+            "inputTokens": 0, "outputTokens": 0, "startedAt": null, "updatedAt": 456,
+            "messages": [
+                {"seq": 0, "role": "user", "timestamp": 123, "text": "继续处理中文任务", "tools": [], "toolName": null},
+                {"seq": 1, "role": "assistant", "timestamp": null, "text": "已完成分析", "tools": [], "toolName": null},
+                {"seq": 2, "role": "tool", "timestamp": null, "text": "", "tools": [{"name": "exec", "summary": "执行结果"}], "toolName": "exec"},
+                {"seq": 3, "role": "assistant", "timestamp": null, "text": "", "tools": [], "toolName": null}
+            ]
+        })).unwrap();
+        let messages = history_messages("original-thread", &history);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].id, "history-original-thread-0");
+        assert_eq!(messages[0].text, "继续处理中文任务");
+        assert_eq!(messages[0].created_at, 123);
+        assert_eq!(messages[1].created_at, 456);
+        assert_eq!(messages[2].role, "tool");
+        assert_eq!(messages[2].text, "exec\n执行结果");
+    }
+
+    #[test]
+    fn resume_history_accepts_server_default_model_without_client_path() {
+        let input: ResumeCodexHistory = serde_json::from_value(json!({"providerId": "default:codex"})).unwrap();
+        assert_eq!(input.provider_id.as_deref(), Some("default:codex"));
+        assert!(input.model.is_none());
+    }
 
     fn cell() -> Cell {
         let data = serde_json::from_value(json!({

@@ -75,6 +75,7 @@ pub fn build_router(state: AppState) -> Router {
         // CLI 历史会话（按项目 + Agent 浏览，与 PC 端共享同一索引）
         .route("/api/ai/history", get(handlers::ai_chat_handler::history))
         .route("/api/ai/history/rescan", post(handlers::ai_chat_handler::history_rescan))
+        .route("/api/ai/codex-history/{id}/resume", post(handlers::ai_chat_handler::resume_codex_history))
         .route("/api/ai/sessions", get(handlers::ai_chat_handler::list).post(handlers::ai_chat_handler::create))
         .route("/api/ai/sessions/{id}", get(handlers::ai_chat_handler::get).delete(handlers::ai_chat_handler::delete))
         .route("/api/ai/sessions/{id}/messages", post(handlers::ai_chat_handler::send))

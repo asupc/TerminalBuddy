@@ -1,13 +1,10 @@
 package com.terminalbuddy.android.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -92,6 +89,10 @@ private enum class AiPage { Home, Accounts, Connection }
             }, remove = vm::removeAccount, clearError = vm::clearError)
         return
     }
+    if (ui.history.selected != null) {
+        AiCodexHistoryScreen(ui, vm)
+        return
+    }
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
         PageHeader("TerminalBuddy", reconnecting = ui.reconnecting) {
             var menu by remember { mutableStateOf(false) }
@@ -135,174 +136,10 @@ private enum class AiPage { Home, Accounts, Connection }
         }
         AiNotificationPermission()
         ui.error?.let { AiError(it, vm::clearError) }
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
-        ) {
-            item(key = "connection") {
-                Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Dns, null, Modifier.size(18.dp), tint = TbColors.TextMuted)
-                    Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                ui.username, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleSmall,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                            AiStatusDot(TbColors.Accent)
-                            Text("已登录", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
-                        }
-                        Text(
-                            ui.server, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-            item(key = "launch") {
-                AiCard {
-                    Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("新对话", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                            Button(
-                                vm::create, enabled = ui.canCreate, shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                modifier = Modifier.heightIn(min = 48.dp),
-                            ) {
-                                if (ui.working) CircularProgressIndicator(Modifier.size(16.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
-                                else Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(if (ui.working) "创建中" else "开始对话")
-                            }
-                        }
-                        AiChoiceField(
-                            "项目", Icons.Outlined.FolderOpen, ui.projectPath, "选择项目",
-                            ui.projects.map { AiChoice(it.path, it.name, it.path) },
-                            !ui.initialLoading && !ui.working, vm::selectProject,
-                        )
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AiChoiceField(
-                                "Agent", Icons.Outlined.AutoAwesome, ui.launchProvider?.agent.orEmpty(), "选择 Agent",
-                                ui.availableAgents.map { AiChoice(it, when (it) {
-                                    "codex" -> "Codex"
-                                    "pi" -> "Pi"
-                                    else -> "Claude Code"
-                                }, agent = it) },
-                                !ui.initialLoading && !ui.working, vm::selectAgent, Modifier.weight(1f),
-                            )
-                            AiChoiceField(
-                                "模型", Icons.Outlined.Tune, ui.launchModelKey, "选择模型",
-                                ui.availableModels.map { target ->
-                                    val details = buildList {
-                                        add(target.provider.name)
-                                        if (target.provider.isDefault) add("服务端默认供应商")
-                                        if (target.model.effort.isNotBlank()) add("推理等级：${target.model.effortLabel}")
-                                    }
-                                    AiChoice(target.key, target.model.title, details.joinToString(" · "))
-                                },
-                                !ui.initialLoading && !ui.working, vm::selectModel, Modifier.weight(1f),
-                            )
-                        }
-                        val hint = when {
-                            ui.initialLoading -> "正在同步项目和模型…"
-                            ui.projects.isEmpty() -> "服务端还没有登记项目，请添加后重新进入工作台。"
-                            ui.availableAgents.isEmpty() -> "该项目尚未启用 Claude Code 或 Codex，请在服务端配置。"
-                            ui.availableModels.isEmpty() -> "该 Agent 暂无可用模型，请配置后重新进入工作台。"
-                            else -> null
-                        }
-                        hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted) }
-                    }
-                }
-                Spacer(Modifier.height(18.dp))
-            }
-            if (ui.launchProject != null && ui.launchProvider != null) item(key = "history") {
-                AiHistorySection(
-                    ui,
-                    toggle = vm::toggleHistory,
-                    resume = vm::resumeHistory,
-                )
-                Spacer(Modifier.height(18.dp))
-            }
-            item(key = "recent-title") {
-                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("最近对话", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                    Text("${ui.sessions.size} 段对话", style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
-                    TextButton(
-                        onClick = { confirmDeleteAll = true },
-                        enabled = deletableCount > 0 && !ui.loading && !ui.working,
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        colors = ButtonDefaults.textButtonColors(contentColor = TbColors.Danger),
-                    ) {
-                        if (ui.deletingAll) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (ui.deletingAll) "删除中…" else "一键删除", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-            }
-            if (ui.sessions.isEmpty()) item(key = "empty") {
-                AiCard {
-                    Row(
-                        Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        AiSmallIcon(Icons.Outlined.ChatBubbleOutline)
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("还没有对话", style = MaterialTheme.typography.titleSmall)
-                            Text("选好项目和模型，开始第一段对话。", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-                        }
-                    }
-                }
-            }
-            itemsIndexed(ui.sessions, key = { _, session -> session.id }) { index, session ->
-                val projectName = ui.projects.find { it.path == session.projectPath }?.name
-                    ?: session.projectPath.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
-                Surface(
-                    onClick = { vm.open(session.id) }, enabled = !ui.deletingAll, color = TbColors.Surface,
-                    shape = RoundedCornerShape(
-                        topStart = if (index == 0) 14.dp else 0.dp, topEnd = if (index == 0) 14.dp else 0.dp,
-                        bottomStart = if (index == ui.sessions.lastIndex) 14.dp else 0.dp,
-                        bottomEnd = if (index == ui.sessions.lastIndex) 14.dp else 0.dp,
-                    ),
-                    border = BorderStroke(1.dp, TbColors.Border),
-                ) {
-                    Column {
-                        Row(
-                            Modifier.fillMaxWidth().padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            AiAgentBadge(session.provider)
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(
-                                        session.title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    )
-                                    if (session.id in ui.unviewedIds) Text(
-                                        if (session.status == "idle") "已完成未查看" else "未查看",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = TbColors.Accent, modifier = Modifier.semantics { stateDescription = "有尚未查看的结果" },
-                                    )
-                                    if (session.running || session.status == "error" || session.status == "interrupted") {
-                                        Text(
-                                            session.statusLabel, style = MaterialTheme.typography.labelSmall,
-                                            color = if (session.status == "error") TbColors.Danger else TbColors.Accent,
-                                        )
-                                    }
-                                }
-                                Text(
-                                    "$projectName · ${session.targetLabel}", style = MaterialTheme.typography.bodySmall,
-                                    color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            IconButton({ deleting = session }, enabled = !session.running && !ui.working) {
-                                Icon(Icons.Outlined.DeleteOutline, "删除对话", Modifier.size(18.dp), tint = TbColors.TextMuted)
-                            }
-                        }
-                        if (index != ui.sessions.lastIndex) AiDivider(Modifier.padding(start = 52.dp))
-                    }
-                }
-            }
-        }
+        AiHomeWorkspace(ui, vm,
+            accounts = { page = AiPage.Accounts; vm.clearError() },
+            delete = { deleting = it }, deleteAll = { confirmDeleteAll = true },
+        )
     }
     if (notificationSettings) AiNotificationSettings { notificationSettings = false }
     if (sendModeSheet) AiSendModeSheet(ui.sendImmediate, vm::setSendImmediate) { sendModeSheet = false }
@@ -322,21 +159,21 @@ private enum class AiPage { Home, Accounts, Connection }
     }
 }
 
-private data class AiChoice(val id: String, val title: String, val subtitle: String = "", val agent: String? = null)
+internal data class AiChoice(val id: String, val title: String, val subtitle: String = "", val agent: String? = null)
 
 /** 历史区最多直接渲染的条数：CLI 转录可能有几百条，超出部分提示到服务端查看。 */
 private const val HISTORY_SECTION_LIMIT = 50
 
 /** 历史会话区：默认收起，展开后列出当前项目 + Agent 的 CLI 转录历史，点击恢复继续对话。 */
 @Composable
-private fun AiHistorySection(ui: AiUiState, toggle: () -> Unit, resume: (AiHistorySession) -> Unit) {
+internal fun AiHistorySection(ui: AiUiState, toggle: () -> Unit, resume: (AiHistorySession) -> Unit) {
     val agent = ui.launchProvider?.agent ?: return
     val agentLabel = when (agent) {
         "codex" -> "Codex"
         "pi" -> "Pi"
         else -> "Claude Code"
     }
-    AiCard {
+    Column {
         Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Surface(onClick = toggle, color = TbColors.SurfaceHover, shape = RoundedCornerShape(10.dp)) {
                 Row(
@@ -487,7 +324,7 @@ private fun AiSendModeOption(
 
 /** 首页只显示当前值，完整名称、路径与选中状态放在二级选择面板。 */
 @Composable
-private fun AiChoiceField(
+internal fun AiChoiceField(
     label: String, icon: ImageVector, selectedId: String, placeholder: String, choices: List<AiChoice>,
     enabled: Boolean, select: (String) -> Unit, modifier: Modifier = Modifier,
 ) {

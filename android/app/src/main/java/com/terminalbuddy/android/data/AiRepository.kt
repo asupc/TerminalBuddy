@@ -3,6 +3,7 @@ package com.terminalbuddy.android.data
 import android.content.Context
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -156,6 +157,50 @@ class AiRepository(context: Context) {
 
     suspend fun catalog(): AiCatalog = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "catalog")))
     suspend fun projects(): List<AiProject> = ApiJson.decodeFromJsonElement(request("GET", listOf("projects")))
+
+    /** 复用桌面端已有历史命令；重扫采用服务端的发起即返回、异步轮询协议。 */
+    private suspend fun historyCommand(command: String, args: JsonObject = JsonObject(emptyMap())): JsonElement {
+        val connection = AiConnection(store.server, store.username, store.token)
+        val result = request("POST", listOf("desktop", "invoke", command), args,
+            server = connection.server, token = connection.token, client = ai)
+        val jobId = (result as? JsonObject)?.text("\$jobId").orEmpty()
+        if (jobId.isBlank()) return result
+        while (true) {
+            delay(500)
+            val job = request("GET", listOf("desktop", "jobs", jobId),
+                server = connection.server, token = connection.token, client = ai).asObject()
+            when (job.text("status")) {
+                "done" -> return job["value"] ?: throw ApiException(502, "历史索引任务未返回结果")
+                "failed" -> throw ApiException(400, job.text("message", fallback = "历史索引失败"))
+                "running" -> Unit
+                else -> throw ApiException(502, "历史索引任务状态不正确，请更新服务端")
+            }
+        }
+    }
+
+    suspend fun scanCodexHistory(): AiHistoryScan =
+        ApiJson.decodeFromJsonElement(historyCommand("codex_history_rescan"))
+
+    suspend fun codexHistory(): List<AiHistorySession> = ApiJson.decodeFromJsonElement(
+        historyCommand("codex_history_list", jsonBody {
+            put("includeArchived", false)
+            put("projectDir", JsonNull)
+        }),
+    )
+
+    suspend fun codexHistoryReplay(id: String, offset: Int): AiHistoryReplay = ApiJson.decodeFromJsonElement(
+        historyCommand("codex_history_get_replay", jsonBody {
+            put("sessionId", id)
+            put("offset", offset)
+            put("limit", 50)
+        }),
+    )
+
+    suspend fun resumeCodexHistory(id: String, target: AiProvider, model: AiModel): AiSession =
+        ApiJson.decodeFromJsonElement(request("POST", listOf("ai", "codex-history", id, "resume"), jsonBody {
+            put("providerId", target.id)
+            if (model.id.isNotBlank()) put("model", model.id)
+        }))
     suspend fun session(id: String): AiSession = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions", id)))
 
     suspend fun create(project: AiProject, provider: AiProvider, model: String, resumeSessionId: String? = null): AiSession =

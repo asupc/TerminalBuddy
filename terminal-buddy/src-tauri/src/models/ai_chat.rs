@@ -109,6 +109,15 @@ pub struct FlushAiQueue {
     pub request_id: Option<String>,
 }
 
+/// 历史来源由服务端索引决定，客户端只选择继续对话所用的供应商和模型。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeCodexHistory {
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    pub model: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnswerAiApproval {

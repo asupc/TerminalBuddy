@@ -14,6 +14,24 @@ fn service_error(error: String) -> ApiError {
 async fn blocking<T: Send + 'static>(job: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<Json<T>, ApiError> {
     tokio::task::spawn_blocking(job).await.map_err(|e| ApiError::Internal(e.to_string()))?.map(Json).map_err(service_error)
 }
+/// 以最具体的已登记项目决定可用 Agent，避免子项目禁用后仍继承父目录的权限。
+fn ensure_agent_project(path: &str, agent: &str) -> Result<String, ApiError> {
+    let project_path = super::ensure_project_scope(path)?;
+    if !std::path::Path::new(&project_path).is_dir() { return Err(ApiError::BadRequest("项目目录不可访问".into())); }
+    let projects = crate::commands::profile::get_projects().map_err(ApiError::Internal)?;
+    let project = projects.iter().filter_map(|project| {
+        super::canonical_scope_key(&project.path).ok().map(|key| (key, project))
+    }).filter(|(key, _)| project_path == *key || project_path.starts_with(&format!("{key}/")))
+        .max_by_key(|(key, _)| key.len());
+    let enabled = project.is_some_and(|(_, project)| match agent {
+        "claude" => project.enabled_agents.claude,
+        "codex" => project.enabled_agents.codex,
+        "pi" => project.enabled_agents.pi,
+        _ => false,
+    });
+    if !enabled { return Err(ApiError::Forbidden("该项目未启用所选 Agent，请先在服务端配置并刷新工作台".into())); }
+    Ok(project_path)
+}
 pub async fn catalog(_claims: ClaimsFromRequest) -> Result<Json<AiCatalog>, ApiError> {
     blocking(crate::services::ai_catalog_service::catalog).await
 }
@@ -27,8 +45,7 @@ pub async fn create(claims: ClaimsFromRequest, Json(mut input): Json<CreateAiSes
             let page = service::replay_page(&input.provider, input.resume_session_id.as_deref().unwrap_or(""), 0, 1).map_err(service_error)?;
             input.project_path = page.project_dir;
         }
-        input.project_path = super::ensure_project_scope(&input.project_path)?;
-        if !std::path::Path::new(&input.project_path).is_dir() { return Err(ApiError::BadRequest("项目目录不可访问".into())); }
+        input.project_path = ensure_agent_project(&input.project_path, &input.provider)?;
         service::create(&claims.0.sub, input).map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
@@ -53,6 +70,14 @@ pub async fn history(_claims: ClaimsFromRequest, Query(q): Query<HistoryQuery>) 
 pub async fn history_rescan(State(state): State<AppState>, _claims: ClaimsFromRequest, Query(q): Query<HistoryQuery>) -> Result<Json<SessionHistoryScanResult>, ApiError> {
     let app = state.app_handle.clone();
     blocking(move || service::rescan_history(&app, &q.agent)).await
+}
+pub async fn resume_codex_history(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<ResumeCodexHistory>) -> Result<Json<AiSession>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        uuid::Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("Codex 历史会话标识无效".into()))?;
+        let history = crate::services::codex_history_service::get_replay(&id, 0, usize::MAX).map_err(service_error)?;
+        let project_path = ensure_agent_project(&history.project_dir, "codex")?;
+        service::resume_codex_history(&claims.0.sub, &id, project_path, input, history).map(Json).map_err(service_error)
+    }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
 pub async fn get(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
     blocking(move || service::get_with_summary(&id, &claims.0.sub)).await

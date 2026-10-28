@@ -53,16 +53,14 @@ data class AiSession(
 
 /** `/api/projects` 返回的已登记项目，enabledAgents 决定首页可选哪些 Agent。 */
 @Serializable
-data class AiAgents(val claude: Boolean = true, val codex: Boolean = true, val pi: Boolean = true)
-
-/** `/api/ai/history` 返回的 CLI 历史会话（与 PC 端共享同一索引），可恢复为可继续对话的会话。 */
-@Serializable
-data class AiHistorySession(
-    val sessionId: String, val projectDir: String, val title: String,
-    val updatedAt: Long = 0, val startedAt: Long? = null, val messageCount: Long = 0,
-    val model: String? = null, val starred: Boolean = false, val archived: Boolean = false,
-) {
-    val displayTitle get() = title.takeIf(String::isNotBlank) ?: "未命名会话"
+data class AiAgents(val claude: Boolean = true, val codex: Boolean = true, val pi: Boolean = true) {
+    fun enabled(agent: String): Boolean = when (agent) {
+        "claude" -> claude
+        "codex" -> codex
+        "pi" -> pi
+        else -> false
+    }
+    val names get() = listOf("claude", "codex", "pi").filter(::enabled)
 }
 
 @Serializable
