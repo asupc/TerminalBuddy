@@ -19,7 +19,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -333,16 +332,17 @@ internal fun AiChoiceField(
             if (selectedAgent != null) AiAgentLogo(selectedAgent, Modifier.size(if (compact) 16.dp else 20.dp))
             else Icon(icon, null, Modifier.size(if (compact) 16.dp else 20.dp), tint = TbColors.TextMuted)
             if (inlineLabel) {
-                // 标签在左、当前值靠右，同一行显示。
+                // 标签与当前值紧挨着，左侧对齐，只在两者间留一点间距。
                 Text(label, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 13.sp else 18.sp),
                     color = TbColors.TextMuted, maxLines = 1)
                 Text(
                     selected?.title ?: placeholder,
-                    Modifier.weight(1f),
+                    Modifier.weight(1f, fill = false),
                     style = MaterialTheme.typography.labelLarge.copy(lineHeight = if (compact) 16.sp else 20.sp),
                     color = if (selected == null) TbColors.TextMuted else TbColors.Text,
-                    textAlign = TextAlign.End, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
+                Spacer(Modifier.weight(1f))
             } else {
                 Column(Modifier.weight(1f)) {
                     Text(label, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 13.sp else 18.sp),

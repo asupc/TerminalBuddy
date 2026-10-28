@@ -117,19 +117,25 @@ internal fun AiProfileScreen(
 @Composable
 private fun AiThemePreference() {
     val controls = LocalThemeControls.current
+    val fixedMode = controls.skin.fixedDarkTheme
+    val effectiveDarkTheme = controls.skin.isDark(controls.darkTheme)
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             AiSmallIcon(Icons.Outlined.Contrast)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("外观", style = MaterialTheme.typography.titleSmall)
-                Text("切换浅色与深色模式", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+                Text(
+                    if (fixedMode != null) "当前皮肤固定${if (fixedMode) "深色" else "浅色"}，切换其他皮肤后可调整"
+                    else "切换浅色与深色模式",
+                    style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+                )
             }
         }
         Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             listOf(false, true).forEach { dark ->
-                val selected = controls.darkTheme == dark
+                val selected = effectiveDarkTheme == dark
                 Surface(
-                    modifier = Modifier.weight(1f).selectable(selected, role = Role.RadioButton,
+                    modifier = Modifier.weight(1f).selectable(selected, enabled = fixedMode == null, role = Role.RadioButton,
                         onClick = { controls.onDarkThemeChange(dark) }),
                     color = if (selected) TbColors.Accent else TbColors.Canvas,
                     shape = RoundedCornerShape(14.dp),
@@ -164,8 +170,9 @@ private fun AiSkinSelectionSheet(dismiss: () -> Unit) {
     AiSheet("选择你的配色", dismiss) {
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f, fill = false)) {
             val columns = if (maxWidth < 360.dp || largeFont) 1 else 2
+            val fixedSkins = AppSkin.entries.filter { it.fixedDarkTheme != null }
             val diffuseSkins = AppSkin.entries.filter { it.diffuseBackground }
-            val classicSkins = AppSkin.entries.filter { it != AppSkin.Pine && !it.diffuseBackground }
+            val classicSkins = AppSkin.entries.filter { it != AppSkin.Pine && !it.diffuseBackground && it.fixedDarkTheme == null }
             LazyColumn(
                 Modifier.fillMaxWidth().selectableGroup(),
                 contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -173,8 +180,24 @@ private fun AiSkinSelectionSheet(dismiss: () -> Unit) {
                 item(key = "skin-hint") {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("当前使用 · ${controls.skin.title}", style = MaterialTheme.typography.titleSmall, color = TbColors.Text)
-                        Text("${if (controls.darkTheme) "深色" else "浅色"}模式 · 点击即刻应用，自动记住选择。",
+                        Text("${if (controls.skin.isDark(controls.darkTheme)) "深色" else "浅色"}模式 · 点击即刻应用，自动记住选择。",
                             style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+                    }
+                }
+                item(key = "fixed-heading") {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("纯色外观", style = MaterialTheme.typography.titleMedium)
+                        Text("与电脑端同款配色，纯黑固定深色，纯白固定浅色。",
+                            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+                    }
+                }
+                items(fixedSkins.chunked(columns), key = { "fixed-${it.first().id}" }) { skins ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        skins.forEach { skin ->
+                            AiSkinChoice(skin, controls.darkTheme, controls.skin == skin,
+                                select = { controls.onSkinChange(skin) }, modifier = Modifier.weight(1f))
+                        }
+                        if (skins.size < columns) Spacer(Modifier.weight(1f))
                     }
                 }
                 item(key = "default-skin") {
@@ -283,7 +306,12 @@ private fun AiSkinPreview(skin: AppSkin, darkTheme: Boolean, modifier: Modifier 
     ) {
         Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(Icons.Outlined.Palette, null, Modifier.size(14.dp), tint = colors.primary)
+                val previewIcon = when (skin.fixedDarkTheme) {
+                    true -> Icons.Outlined.DarkMode
+                    false -> Icons.Outlined.LightMode
+                    null -> Icons.Outlined.Palette
+                }
+                Icon(previewIcon, null, Modifier.size(14.dp), tint = colors.primary)
                 Box(Modifier.width(28.dp).height(4.dp).background(colors.primary.copy(alpha = .5f), RoundedCornerShape(3.dp)))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {

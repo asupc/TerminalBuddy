@@ -1,7 +1,7 @@
 import { readClientData, writeClientData } from '../services/tauri';
 import type { HotkeyActionId } from '../services/hotkeys';
 
-export type ThemeSkin = 'dark' | 'light' | 'pure-black' | 'pure-white' | 'cartoon' | 'starry' | 'cyber' | 'sakura';
+export type ThemeSkin = 'dark' | 'light' | 'cartoon' | 'starry' | 'cyber' | 'sakura';
 export type ThemeMode = ThemeSkin | 'system';
 export type DecorativeThemeSkin = 'cartoon' | 'starry' | 'cyber' | 'sakura';
 
@@ -19,8 +19,6 @@ export const isDecorativeThemeSkin = (value: ThemeSkin): value is DecorativeThem
 export const isThemeSkin = (value: unknown): value is ThemeSkin => (
   value === 'dark'
   || value === 'light'
-  || value === 'pure-black'
-  || value === 'pure-white'
   || value === 'cartoon'
   || value === 'starry'
   || value === 'cyber'
@@ -325,12 +323,10 @@ export const applyTheme = (theme: ThemeMode) => {
     skin = theme;
   }
 
-  // 固定皮肤按自身配色决定明暗语义，只有 system 才读取系统偏好。
-  const mode = skin === 'dark' || skin === 'pure-black' || skin === 'starry' || skin === 'cyber' ? 'dark' : 'light';
+  const mode = skin === 'dark' || skin === 'starry' || skin === 'cyber' ? 'dark' : 'light';
   root.setAttribute('data-theme', mode);
   if (skin !== 'dark' && skin !== 'light') root.setAttribute('data-skin', skin);
   else root.removeAttribute('data-skin');
-  root.toggleAttribute('data-decorative-skin', isDecorativeThemeSkin(skin));
   applyAppOpacity(getAppSettings(), skin);
 
   // 广播当前生效主题，供终端等组件跟随应用主题切换
@@ -347,8 +343,6 @@ export const applyListSelectionStyle = (s: AppSettings) => {
   const skinPalette: Record<ThemeSkin, { ideaBg: string; ideaFg: string; defaultBg: string; defaultFg: string }> = {
     dark: { ideaBg: '#4d7db9', ideaFg: '#ffffff', defaultBg: '#37373d', defaultFg: '#ffffff' },
     light: { ideaBg: 'rgba(0, 120, 212, 0.15)', ideaFg: '#005a9e', defaultBg: '#e8e8e8', defaultFg: '#333333' },
-    'pure-black': { ideaBg: '#183b29', ideaFg: '#e8f8ee', defaultBg: '#262626', defaultFg: '#f5f5f5' },
-    'pure-white': { ideaBg: '#e0f2e6', ideaFg: '#126b35', defaultBg: '#ededed', defaultFg: '#1a1a1a' },
     cartoon: { ideaBg: 'rgba(239, 111, 155, 0.18)', ideaFg: '#9f3f62', defaultBg: '#fff0f5', defaultFg: '#8b4a64' },
     starry: { ideaBg: 'rgba(192, 138, 255, 0.24)', ideaFg: '#fff9ff', defaultBg: '#373477', defaultFg: '#fff9ff' },
     cyber: { ideaBg: 'rgba(255, 45, 186, 0.2)', ideaFg: '#f8e9ff', defaultBg: '#321332', defaultFg: '#f8e9ff' },

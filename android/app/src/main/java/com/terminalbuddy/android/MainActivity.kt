@@ -72,12 +72,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateSystemBars(darkTheme: Boolean, skin: AppSkin) {
+        val effectiveDarkTheme = skin.isDark(darkTheme)
+        val navigationBarScrim = if (skin.fixedDarkTheme == false) {
+            AppSkin.PureBlack.colorScheme(true).background
+        } else {
+            skin.colorScheme(true).background
+        }
         enableEdgeToEdge(
-            statusBarStyle = if (darkTheme) SystemBarStyle.dark(Color.TRANSPARENT)
+            statusBarStyle = if (effectiveDarkTheme) SystemBarStyle.dark(Color.TRANSPARENT)
                 else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
             // Android 8.0 不支持深色导航图标，浅色模式下用深色底保护白色系统按钮。
-            navigationBarStyle = if (darkTheme) SystemBarStyle.dark(Color.TRANSPARENT)
-                else SystemBarStyle.light(Color.TRANSPARENT, skin.colorScheme(true).background.toArgb()),
+            navigationBarStyle = if (effectiveDarkTheme) SystemBarStyle.dark(Color.TRANSPARENT)
+                else SystemBarStyle.light(Color.TRANSPARENT, navigationBarScrim.toArgb()),
         )
         window.setBackgroundDrawable(ColorDrawable(
             skin.colorScheme(darkTheme).background.toArgb()

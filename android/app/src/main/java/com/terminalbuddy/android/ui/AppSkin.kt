@@ -15,7 +15,23 @@ enum class AppSkin(
     darkColors: ColorScheme,
     val previewColors: List<Color> = emptyList(),
     val diffuseBackground: Boolean = false,
+    /** 固定纯色皮肤的明暗状态；其他皮肤继续使用单独保存的外观模式。 */
+    val fixedDarkTheme: Boolean? = null,
 ) {
+    PureBlack(
+        id = "pure_black", title = "纯黑", description = "电脑端同款深色 · 固定配色",
+        lightColors = desktopColorScheme(darkTheme = true),
+        darkColors = desktopColorScheme(darkTheme = true),
+        fixedDarkTheme = true,
+    ),
+
+    PureWhite(
+        id = "pure_white", title = "纯白", description = "电脑端同款浅色 · 固定配色",
+        lightColors = desktopColorScheme(darkTheme = false),
+        darkColors = desktopColorScheme(darkTheme = false),
+        fixedDarkTheme = false,
+    ),
+
     Pine(
         id = "pine", title = "松柏绿", description = "默认配色 · 清爽自然",
         lightColors = skinColorScheme(
@@ -312,12 +328,41 @@ enum class AppSkin(
         onTertiaryFixed = lightColors.onTertiaryFixed, onTertiaryFixedVariant = lightColors.onTertiaryFixedVariant,
     )
 
-    fun colorScheme(darkTheme: Boolean): ColorScheme = if (darkTheme) darkPalette else lightColors
+    fun isDark(darkTheme: Boolean): Boolean = fixedDarkTheme ?: darkTheme
+
+    fun colorScheme(darkTheme: Boolean): ColorScheme = if (isDark(darkTheme)) darkPalette else lightColors
 
     companion object {
         /** 未保存或无效的皮肤标识回退到默认松柏绿。 */
         fun fromId(id: String?): AppSkin = entries.firstOrNull { it.id == id } ?: Pine
     }
+}
+
+/** 对齐桌面端 global.css 的深浅色令牌，纯色面板不叠加 Material 色调染色。 */
+private fun desktopColorScheme(darkTheme: Boolean): ColorScheme {
+    val primary = if (darkTheme) Color(0xFF4B95E9) else Color(0xFF176FBD)
+    val background = if (darkTheme) Color(0xFF181A1D) else Color(0xFFF3F4F6)
+    val surface = if (darkTheme) Color(0xFF202226) else Color(0xFFFFFFFF)
+    return skinColorScheme(
+        darkTheme = darkTheme,
+        primary = primary,
+        ink = Color.White,
+        background = background,
+        surface = surface,
+        field = if (darkTheme) Color(0xFF2A2D31) else Color(0xFFE9EBEE),
+        tint = if (darkTheme) lerp(background, primary, .17f) else lerp(surface, primary, .11f),
+        text = if (darkTheme) Color(0xFFE3E5E8) else Color(0xFF24272C),
+        muted = if (darkTheme) Color(0xFF9AA0A8) else Color(0xFF626870),
+        border = if (darkTheme) Color(0xFF34383D) else Color(0xFFD6D9DE),
+        primaryContainerInk = if (darkTheme) Color(0xFFEDF5FF) else Color(0xFF125F9F),
+    ).copy(
+        outline = if (darkTheme) Color(0xFF6F767F) else Color(0xFF8A9098),
+        surfaceContainerHigh = if (darkTheme) Color(0xFF25282C) else Color(0xFFFFFFFF),
+        surfaceContainerHighest = if (darkTheme) Color(0xFF292C30) else Color(0xFFEDF0F3),
+        surfaceTint = Color.Transparent,
+        tertiary = if (darkTheme) Color(0xFFD9A441) else Color(0xFF9A6B12),
+        error = if (darkTheme) Color(0xFFEF6B73) else Color(0xFFC9434D),
+    )
 }
 
 /** 补齐 Material 语义色，确保正文、弹层、选中态和背景使用同一套皮肤。 */

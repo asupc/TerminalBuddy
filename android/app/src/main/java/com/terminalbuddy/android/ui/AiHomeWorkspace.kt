@@ -24,10 +24,10 @@ internal fun AiHomeWorkspace(ui: AiUiState, vm: AiViewModel, sessions: () -> Uni
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         item(key = "launch") { AiQuickStart(ui, vm) }
-        // 标题与下方卡片之间的间距比列表通用间距小三分之一（20 → 13）。
+        // 标题与卡片间距在上次减三分之一（20 → 13）的基础上再减半（→ 6.5）；卡片之间减三分之一（20 → 13）。
         item(key = "recent") {
-            Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                AiSectionTitle("继续上次的对话") {
+            Column(verticalArrangement = Arrangement.spacedBy(6.5.dp)) {
+                AiSectionTitle("最近任务") {
                     TextButton(sessions) {
                         Text("查看全部")
                         Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
@@ -40,7 +40,7 @@ internal fun AiHomeWorkspace(ui: AiUiState, vm: AiViewModel, sessions: () -> Uni
                             if (ui.initialLoading) "准备好后，你的近期会话会显示在这里。" else "选择项目与模型，开启你的新想法。")
                     }
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
                         recent.forEach { session ->
                             AiSessionCard(ui, session, open = { vm.open(session.id) }, compact = true)
                         }
@@ -78,7 +78,7 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel) {
             if (agents.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("选择助手", style = MaterialTheme.typography.labelMedium.copy(lineHeight = 13.sp), color = TbColors.TextMuted)
                 AiAgentTabs(agents, ui.launchProvider?.agent.orEmpty(), vm::selectAgent,
-                    enabledAgents = if (enabled) ui.availableAgents else emptyList(), compact = true)
+                    enabledAgents = if (enabled) ui.availableAgents else emptyList())
             }
             AiChoiceField("使用模型", Icons.Outlined.Tune, ui.launchModelKey, "选择模型",
                 modelChoices(ui.availableModels), enabled, vm::selectModel, compact = true, inlineLabel = true)

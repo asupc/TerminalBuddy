@@ -63,13 +63,12 @@ internal fun AiBottomNavigation(selected: AiHomeTab, unread: Int, select: (AiHom
 @Composable
 internal fun AiAgentTabs(
     agents: List<String>, selected: String, select: (String) -> Unit,
-    modifier: Modifier = Modifier, enabledAgents: List<String> = agents, compact: Boolean = false,
+    modifier: Modifier = Modifier, enabledAgents: List<String> = agents,
 ) {
     Row(
         modifier.fillMaxWidth().selectableGroup()
-            .background(TbColors.SurfaceHover, RoundedCornerShape(if (compact) 12.dp else 16.dp))
-            .padding(if (compact) 3.dp else 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 4.dp),
+            .background(TbColors.SurfaceHover, RoundedCornerShape(16.dp)).padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         agents.forEach { agent ->
             val active = selected == agent
@@ -80,31 +79,26 @@ internal fun AiAgentTabs(
                     selected = active, enabled = enabled, role = Role.Tab, onClick = { select(agent) },
                 ),
                 color = if (active) TbColors.Accent else TbColors.SurfaceHover,
-                shape = RoundedCornerShape(if (compact) 9.dp else 12.dp),
+                shape = RoundedCornerShape(12.dp),
             ) {
                 if (agents.size > 2) {
                     Column(
-                        Modifier.fillMaxWidth().heightIn(min = if (compact) 48.dp else 64.dp)
-                            .padding(horizontal = 4.dp, vertical = if (compact) 8.dp else 10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
+                        Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         AiAgentLogo(agent, Modifier.size(18.dp), tint = ink)
                         Text(if (agent == "claude") "Claude" else agentTitle(agent),
-                            style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 15.sp else 18.sp),
-                            color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            style = MaterialTheme.typography.labelMedium, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 } else {
                     Row(
-                        Modifier.heightIn(min = if (compact) 36.dp else 48.dp)
-                            .padding(horizontal = 8.dp, vertical = if (compact) 6.dp else 10.dp),
+                        Modifier.heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally),
                     ) {
                         AiAgentLogo(agent, Modifier.size(18.dp), tint = ink)
                         Text(if (agent == "claude") "Claude" else agentTitle(agent),
-                            style = MaterialTheme.typography.labelLarge.copy(lineHeight = if (compact) 16.sp else 20.sp),
-                            color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            style = MaterialTheme.typography.labelLarge, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
