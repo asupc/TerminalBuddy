@@ -67,7 +67,7 @@ internal fun AiAgentTabs(
 ) {
     Row(
         modifier.fillMaxWidth().selectableGroup()
-            .background(TbColors.SurfaceHover, RoundedCornerShape(16.dp)).padding(4.dp),
+            .background(TbColors.ButtonTrack, RoundedCornerShape(16.dp)).padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         agents.forEach { agent ->
@@ -78,7 +78,7 @@ internal fun AiAgentTabs(
                 modifier = Modifier.weight(1f).alpha(if (enabled) 1f else .45f).selectable(
                     selected = active, enabled = enabled, role = Role.Tab, onClick = { select(agent) },
                 ),
-                color = if (active) TbColors.ButtonBackground else TbColors.SurfaceHover,
+                color = if (active) TbColors.ButtonBackground else TbColors.ButtonTrack,
                 shape = RoundedCornerShape(12.dp),
                 border = if (active) primaryControlBorder() else null,
             ) {

@@ -338,27 +338,27 @@ enum class AppSkin(
     }
 }
 
-/** 纯黑画布搭配深色面板；强调文字保持可读，实心控件使用独立的黑色填充。 */
+/** 纯黑画布、炭黑卡片与墨黑控件逐层提亮，搭配柔和的文字及暗色分隔线。 */
 private fun desktopColorScheme(darkTheme: Boolean): ColorScheme {
-    val primary = if (darkTheme) Color(0xFFE3E5E8) else Color(0xFF111111)
-    val background = if (darkTheme) Color.Black else Color(0xFFF3F4F6)
-    val surface = if (darkTheme) Color(0xFF202226) else Color(0xFFFFFFFF)
+    val primary = if (darkTheme) Color(0xFFE1E4EA) else Color(0xFF22262D)
+    val background = if (darkTheme) Color.Black else Color(0xFFF5F6F7)
+    val surface = if (darkTheme) Color(0xFF111315) else Color(0xFFFFFFFF)
     return skinColorScheme(
         darkTheme = darkTheme,
         primary = primary,
         ink = if (darkTheme) Color(0xFF181A1D) else Color.White,
         background = background,
         surface = surface,
-        field = if (darkTheme) Color(0xFF2A2D31) else Color(0xFFE9EBEE),
-        tint = if (darkTheme) lerp(background, primary, .17f) else lerp(surface, primary, .11f),
-        text = if (darkTheme) Color(0xFFE3E5E8) else Color(0xFF24272C),
-        muted = if (darkTheme) Color(0xFF9AA0A8) else Color(0xFF626870),
-        border = if (darkTheme) Color(0xFF34383D) else Color(0xFFD6D9DE),
-        primaryContainerInk = if (darkTheme) Color(0xFFE3E5E8) else Color(0xFF363A40),
+        field = if (darkTheme) Color(0xFF191C20) else Color(0xFFEFF1F3),
+        tint = if (darkTheme) Color(0xFF20252C) else Color(0xFFE8EBEF),
+        text = if (darkTheme) Color(0xFFF0F2F5) else Color(0xFF20242A),
+        muted = if (darkTheme) Color(0xFFADB3BD) else Color(0xFF5E6672),
+        border = if (darkTheme) Color(0xFF2B2F35) else Color(0xFFE2E5EA),
+        primaryContainerInk = if (darkTheme) Color(0xFFF0F2F5) else Color(0xFF2F3540),
     ).copy(
-        outline = if (darkTheme) Color(0xFF6F767F) else Color(0xFF8A9098),
-        surfaceContainerHigh = if (darkTheme) Color(0xFF25282C) else Color(0xFFFFFFFF),
-        surfaceContainerHighest = if (darkTheme) Color(0xFF292C30) else Color(0xFFEDF0F3),
+        outline = if (darkTheme) Color(0xFF858C97) else Color(0xFF777F8C),
+        surfaceContainerHigh = if (darkTheme) Color(0xFF1C1F24) else Color(0xFFFFFFFF),
+        surfaceContainerHighest = if (darkTheme) Color(0xFF262B32) else Color(0xFFE8EBEF),
         surfaceTint = Color.Transparent,
         tertiary = if (darkTheme) Color(0xFFD9A441) else Color(0xFF9A6B12),
         error = if (darkTheme) Color(0xFFEF6B73) else Color(0xFFC9434D),

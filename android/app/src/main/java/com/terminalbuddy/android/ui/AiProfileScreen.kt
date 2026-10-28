@@ -139,7 +139,8 @@ private fun AiThemePreference() {
                         onClick = { controls.onDarkThemeChange(dark) }),
                     color = if (selected) TbColors.ButtonBackground else TbColors.Canvas,
                     shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, if (selected) TbColors.Accent else TbColors.Border),
+                    border = if (selected && fixedMode != null) primaryControlBorder()
+                        else BorderStroke(1.dp, if (selected) TbColors.Accent else TbColors.Border),
                 ) {
                     Row(Modifier.heightIn(min = 52.dp).padding(horizontal = 12.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
