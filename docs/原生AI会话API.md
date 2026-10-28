@@ -42,13 +42,14 @@ REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离
 | `GET /api/ai/sessions` | 列表，不附带完整消息 |
 | `POST /api/ai/sessions` | `{ "provider": "claude", "providerId": "llm:供应商UUID", "projectPath": "/workspace/project", "model": "已配置模型" }`；可选 `resumeSessionId` 恢复 CLI 历史会话——项目以历史所在目录为准，预填最近 300 条消息，Claude/Codex/Pi 分别经 `--resume` / `thread/resume` / 会话文件复用续接，重复恢复同一历史线程返回已有会话 |
 | `GET /api/ai/sessions/{id}` | 读取完整会话 |
-| `POST /api/ai/sessions/{id}/messages` | `{ "text": "用户消息", "requestId": "UUID" }` |
+| `POST /api/ai/sessions/{id}/messages` | `{ "text": "用户消息", "requestId": "UUID", "immediate": false }`；`immediate` 为「立即发送」：回复进行中发送时中断当前回复优先处理（默认排队等待回复结束） |
+| `POST /api/ai/sessions/{id}/flush` | `{ "requestId": "可选，移到队首" }`——「立即发送」排队消息：把指定消息移到队首并中断当前回复，停止后立即按序送出；worker 已退出（中断/出错后队列保留）时直接按队首启动新回合 |
 | `POST /api/ai/sessions/{id}/stop` | 中断执行 |
 | `POST /api/ai/sessions/{id}/approvals` | `{ "approvalId": "...", "decision": "accept 或 decline", "answers": {} }` |
 | `DELETE /api/ai/sessions/{id}` | 删除空闲会话 |
 | `/ws/ai/{id}?token=...` | 实时状态与消息 |
 
-提交消息立即返回，CLI 在专用工作线程执行。`requestId` 持久化去重，避免网络中断后重试产生重复回合。同一会话由单个工作线程串行处理输入；Codex 主回合结束但仍有后台工作时返回 `background` 状态，允许发送“继续”等补充消息，并保留中断能力。后台命令按条目状态更新，子代理结合协作事件、线程通知与只读状态查询更新，不把子线程结束误判为主回合完成；新的主回合切换事件过滤标识，上一回合的已知后台命令仍可回传输出。不同会话的任务不设并发配额。应用不限制会话数量、每会话消息数量、用户输入长度、回复及工具输出长度、CLI 单行输出长度或任务运行时长，正文和错误输出均完整记录。标题预览不影响消息正文。
+提交消息立即返回，CLI 在专用工作线程执行。`requestId` 持久化去重，避免网络中断后重试产生重复回合。回复进行中发送的消息进入服务端排队（`pendingInputs`，随会话快照同步给客户端），当前回合结束后按序自动续发；「立即发送」（`immediate` 或 flush 接口）会中断当前回复并按成功收尾，队列立即开始送出——中断/出错后保留的队列在用户下次发送或 flush 时按序带出。同一会话由单个工作线程串行处理输入；Codex 主回合结束但仍有后台工作时返回 `background` 状态，允许发送“继续”等补充消息，并保留中断能力。后台命令按条目状态更新，子代理结合协作事件、线程通知与只读状态查询更新，不把子线程结束误判为主回合完成；新的主回合切换事件过滤标识，上一回合的已知后台命令仍可回传输出。不同会话的任务不设并发配额。应用不限制会话数量、每会话消息数量、用户输入长度、回复及工具输出长度、CLI 单行输出长度或任务运行时长，正文和错误输出均完整记录。标题预览不影响消息正文。
 
 AI REST 接口不使用普通 API 的请求正文大小和处理超时限制；安卓 AI 请求及实时流也不设固定连接、读写或调用超时。模型及供应商自身的上下文窗口、输出能力、额度和限流仍以其实际支持为准。
 
