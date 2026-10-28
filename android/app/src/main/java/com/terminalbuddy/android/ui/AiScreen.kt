@@ -104,8 +104,10 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
     }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     Column(Modifier.fillMaxSize().imePadding()) {
-        PageHeader(tab.title, reconnecting = ui.reconnecting, subtitle = tab.subtitle)
-        ui.error?.let { AiError(it, vm::clearError) }
+        if (tab != AiHomeTab.Sessions) {
+            PageHeader(tab.title, reconnecting = ui.reconnecting, subtitle = tab.subtitle)
+            ui.error?.let { AiError(it, vm::clearError) }
+        }
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
             Box(Modifier.widthIn(max = 680.dp).fillMaxSize()) {
                 tabState.SaveableStateProvider("home:${ui.activeAccountId}:${tab.name}") {

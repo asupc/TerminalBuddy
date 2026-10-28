@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.sp
 
 internal enum class AiHomeTab(val title: String, val subtitle: String, val icon: ImageVector) {
     QuickStart("快速开始", "从一个新想法开始", Icons.Outlined.Bolt),
-    Sessions("会话", "让每一次思考，都能继续", Icons.Outlined.ChatBubbleOutline),
+    Sessions("会话", "", Icons.Outlined.ChatBubbleOutline),
     Profile("我的", "你的空间，你的习惯", Icons.Outlined.PersonOutline),
 }
 

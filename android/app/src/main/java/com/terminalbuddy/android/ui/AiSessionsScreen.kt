@@ -7,8 +7,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -17,9 +15,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,8 +27,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 最近会话汇总全部助手；服务端历史按独立的助手、项目浏览，不改变快速开始配置。 */
-@OptIn(ExperimentalMaterial3Api::class)
+/** 顶部标题栏直接切换最近会话与服务端历史；服务端筛选独立于快速开始配置。 */
 @Composable
 internal fun AiSessionsScreen(
     ui: AiUiState, vm: AiViewModel, start: () -> Unit,
@@ -48,38 +43,41 @@ internal fun AiSessionsScreen(
             }
         }
         val scope = rememberCoroutineScope()
-        val focus = LocalFocusManager.current
-        val keyboard = LocalSoftwareKeyboardController.current
-        LaunchedEffect(pager.targetPage) {
-            keyboard?.hide()
-            focus.clearFocus()
-        }
+        val compact = LocalConfiguration.current.screenHeightDp < 480
         Column(Modifier.fillMaxSize()) {
-            TabRow(
-                selectedTabIndex = pager.currentPage,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                containerColor = Color.Transparent, contentColor = TbColors.Accent,
-                divider = { AiDivider() },
+            Row(
+                Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp)
+                    .padding(top = if (compact) 8.dp else 24.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                listOf("最近会话", "服务端会话").forEachIndexed { index, title ->
-                    Tab(
-                        selected = pager.currentPage == index,
-                        onClick = { scope.launch { pager.animateScrollToPage(index) } },
-                        selectedContentColor = TbColors.Text, unselectedContentColor = TbColors.TextMuted,
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                                if (index == 0 && ui.sessions.isNotEmpty()) {
-                                    Surface(color = TbColors.SurfaceHover, shape = RoundedCornerShape(6.dp)) {
-                                        Text(if (ui.sessions.size > 99) "99+" else ui.sessions.size.toString(), Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                            style = MaterialTheme.typography.labelSmall, color = TbColors.TextSoft)
+                TabRow(
+                    selectedTabIndex = pager.currentPage,
+                    modifier = Modifier.weight(1f),
+                    containerColor = Color.Transparent, contentColor = TbColors.Accent,
+                    divider = { AiDivider() },
+                ) {
+                    listOf("最近会话", "服务端会话").forEachIndexed { index, title ->
+                        Tab(
+                            selected = pager.currentPage == index,
+                            onClick = { scope.launch { pager.animateScrollToPage(index) } },
+                            selectedContentColor = TbColors.Text, unselectedContentColor = TbColors.TextMuted,
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                    Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                                    if (index == 0 && ui.sessions.isNotEmpty()) {
+                                        Surface(color = TbColors.SurfaceHover, shape = RoundedCornerShape(6.dp)) {
+                                            Text(if (ui.sessions.size > 99) "99+" else ui.sessions.size.toString(), Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                style = MaterialTheme.typography.labelSmall, color = TbColors.TextSoft)
+                                        }
                                     }
                                 }
-                            }
-                        },
-                    )
+                            },
+                        )
+                    }
                 }
+                AiReconnectingIndicator(ui.reconnecting, Modifier.padding(start = 12.dp))
             }
+            ui.error?.let { AiError(it, vm::clearError) }
             HorizontalPager(
                 state = pager, modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalAlignment = Alignment.Top,
@@ -98,25 +96,18 @@ private fun AiRecentSessions(
     ui: AiUiState, vm: AiViewModel, start: () -> Unit,
     delete: (AiSession) -> Unit, deleteAll: () -> Unit,
 ) {
-    var query by rememberSaveable(ui.activeAccountId) { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
-    val needle = query.trim()
-    val sessions = ui.sessions.filter { session ->
-        needle.isEmpty() || session.title.contains(needle, true) ||
-            session.projectPath.contains(needle, true) || session.targetLabel.contains(needle, true) ||
-            ui.projects.any { it.path == session.projectPath && it.name.contains(needle, true) }
-    }.sortedByDescending { it.updatedAt }
+    val sessions = ui.sessions.sortedByDescending { it.updatedAt }
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item(key = "search") { AiSessionSearchField(query, { query = it }) }
         item(key = "summary") {
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                 val unread = sessions.count { it.id in ui.unviewedIds }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(if (needle.isEmpty()) "全部会话" else "搜索结果", style = MaterialTheme.typography.titleSmall)
+                    Text("全部会话", style = MaterialTheme.typography.titleSmall)
                     Text("${sessions.size} 段会话${if (unread > 0) " · $unread 段有更新" else " · 最近更新优先"}",
                         style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
                 }
@@ -140,12 +131,9 @@ private fun AiRecentSessions(
             }
         } else if (sessions.isEmpty()) item(key = "empty") {
             AiCard(shape = RoundedCornerShape(20.dp)) {
-                AiEmptyState(Icons.Outlined.ChatBubbleOutline,
-                    if (needle.isNotEmpty()) "没有找到相关会话" else "还没有最近会话",
-                    if (needle.isNotEmpty()) "试试会话标题、项目名称或模型名称。" else "在快速开始中开启对话，所有助手的会话都会汇总在这里。") {
-                    TextButton({ if (needle.isNotEmpty()) query = "" else start() }) {
-                        Text(if (needle.isNotEmpty()) "清空搜索" else "开启新会话")
-                    }
+                AiEmptyState(Icons.Outlined.ChatBubbleOutline, "还没有最近会话",
+                    "在快速开始中开启对话，所有助手的会话都会汇总在这里。") {
+                    TextButton(start) { Text("开启新会话") }
                 }
             }
         }
@@ -153,20 +141,6 @@ private fun AiRecentSessions(
             AiSessionCard(ui, session, { vm.open(session.id) }, { delete(session) })
         }
     }
-}
-
-@Composable
-private fun AiSessionSearchField(query: String, change: (String) -> Unit) {
-    val focus = LocalFocusManager.current
-    val keyboard = LocalSoftwareKeyboardController.current
-    OutlinedTextField(query, change, Modifier.fillMaxWidth(),
-        placeholder = { Text("搜索会话或项目") }, singleLine = true, shape = RoundedCornerShape(16.dp),
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); focus.clearFocus() }),
-        leadingIcon = { Icon(Icons.Outlined.Search, "搜索会话或项目", Modifier.size(21.dp)) },
-        trailingIcon = {
-            if (query.isNotEmpty()) IconButton({ change("") }) { Icon(Icons.Outlined.Close, "清空搜索", Modifier.size(20.dp)) }
-        })
 }
 
 /** 同一会话卡片用于首页预览和完整列表，状态、未读和时间保持一致；compact 为首页的四分之三高度版本。 */
