@@ -31,21 +31,31 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 固定助手切换区；项目默认收起，展开后按项目懒加载，历史记录仍使用外层惰性列表。 */
+/** 助手按服务端安装状态展示；项目默认收起，展开后按项目懒加载，历史记录仍使用外层惰性列表。 */
 @Composable
 internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
-    var agent by rememberSaveable(ui.activeAccountId) { mutableStateOf("claude") }
+    val agents = listOf("claude", "codex", "pi").filter(ui::agentInstalled)
+    var selectedAgent by rememberSaveable(ui.activeAccountId) { mutableStateOf("claude") }
+    val agent = selectedAgent.takeIf { it in agents } ?: agents.firstOrNull()
     var resumingId by remember(ui.activeAccountId) { mutableStateOf<String?>(null) }
     LaunchedEffect(ui.working) { if (!ui.working) resumingId = null }
     var limits by rememberSaveable(ui.activeAccountId, agent) { mutableStateOf(mapOf<String, Int>()) }
     val projects = ui.projects.distinctBy { it.path }
     val listState = rememberSaveable(ui.activeAccountId, agent, saver = LazyListState.Saver) { LazyListState() }
-    LaunchedEffect(agent, ui.activeAccountId, ui.connectionRevision) { vm.reloadExpandedServerHistory(agent) }
+    LaunchedEffect(agent, ui.activeAccountId, ui.connectionRevision) {
+        if (agent != null) vm.reloadExpandedServerHistory(agent)
+    }
     Column(Modifier.fillMaxSize()) {
+        if (agent == null) {
+            AiCard(Modifier.fillMaxWidth().padding(20.dp), shape = RoundedCornerShape(20.dp)) {
+                AiEmptyState(Icons.Outlined.SmartToy, "暂无已安装的智能体", "请先在服务端 Agent 管理中安装助手，再查看历史会话。")
+            }
+            return@Column
+        }
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 20.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("智能体", style = MaterialTheme.typography.labelLarge, color = TbColors.TextSoft)
-            AiAgentTabs(listOf("claude", "codex", "pi"), agent, { agent = it })
+            AiAgentTabs(agents, agent, { selectedAgent = it })
         }
         LazyColumn(
             Modifier.fillMaxWidth().weight(1f), state = listState,
