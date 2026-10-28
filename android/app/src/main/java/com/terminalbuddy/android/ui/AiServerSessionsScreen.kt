@@ -197,7 +197,7 @@ private fun AiServerHistoryCard(agent: String, session: AiHistorySession, enable
             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             AiAgentBadge(agent, size = 26.dp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text(session.displayTitle, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(session.displayTitle, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val details = buildList {
                     add("${session.messageCount} 条消息")
                     if (session.updatedAt > 0) add(SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(session.updatedAt)))
