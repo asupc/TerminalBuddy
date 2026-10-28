@@ -46,6 +46,8 @@ data class AiUiState(
     val historyLoading: Boolean = false,
     val historyAgent: String? = null,
     val historyProjectPath: String = "",
+    /** 连续发送方式：false 回复期间在服务端排队等待，true 中断当前回复立即发送。 */
+    val sendImmediate: Boolean = false,
 ) {
     /** 仅首次取数限制操作，后续刷新保留已有内容并保持页面可操作。 */
     val initialLoading get() = loading && !homeLoaded
@@ -91,6 +93,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             providerId = repository.selectedProvider,
             modelId = repository.selectedModel,
             accounts = repository.accounts.accounts, activeAccountId = repository.accounts.activeId,
+            sendImmediate = repository.sendImmediate,
         )
     )
     val state = mutable.asStateFlow()
@@ -295,6 +298,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         modelId = repository.selectedModel,
         accounts = repository.accounts.accounts, activeAccountId = repository.accounts.activeId,
         connectionRevision = mutable.value.connectionRevision + 1,
+        sendImmediate = repository.sendImmediate,
     )
 
     fun logout() {
@@ -702,7 +706,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 // 真实会话 ID 就绪后启动实时订阅和轮询，首次发送也能持续接收回复。
                 repository.accounts.activeId?.let { taskNotifications.expectTask(it, target) }
                 startRealtime()
-                val result = repository.send(target.id, text, request.second)
+                // 回复进行中：排队模式由服务端按序自动续发；立即发送则中断当前回复优先处理。
+                val result = repository.send(target.id, text, request.second, ui.sendImmediate)
                 if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
                 requests.remove(target.id)
                 // 幂等重试可能返回历史消息；成功响应本身即可确认，不能只按新增消息判断。
@@ -719,6 +724,17 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 if (epoch == generation) mutable.update { it.copy(sending = false) }
             }
         }
+    }
+
+    /** 立即发送排队消息：服务端把该消息移到队首并中断当前回复，停止后立即送出。 */
+    fun sendQueuedNow(requestId: String) {
+        action { repository.flush(it.id, requestId) }
+    }
+
+    /** 发送方式是全局设置，立即生效并持久化，不影响服务端已排队的消息。 */
+    fun setSendImmediate(value: Boolean) {
+        repository.sendImmediate = value
+        mutable.update { it.copy(sendImmediate = value) }
     }
 
     fun stop() = action { repository.stop(it.id) }

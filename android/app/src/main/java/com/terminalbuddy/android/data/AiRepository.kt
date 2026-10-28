@@ -51,6 +51,11 @@ class AiRepository(context: Context) {
     val selectedProvider get() = preferences.getString(preferenceKey("provider"), "").orEmpty()
     val selectedModel get() = preferences.getString(preferenceKey("model"), "").orEmpty()
 
+    /** 连续发送方式是全局偏好，不随账号隔离：false 回复期间排队等待，true 中断当前回复立即发送。 */
+    var sendImmediate: Boolean
+        get() = preferences.getBoolean("ai_send_immediate", false)
+        set(value) { preferences.edit().putBoolean("ai_send_immediate", value).apply() }
+
     fun saveSelection(project: String, provider: String, model: String) {
         preferences.edit().putString(preferenceKey("project"), project)
             .putString(preferenceKey("provider"), provider).putString(preferenceKey("model"), model).apply()
@@ -181,12 +186,22 @@ class AiRepository(context: Context) {
             )
         )
 
-    /** requestId 由调用方生成并持久化在内存里；失败重试复用同一个值，服务端据此去重。 */
-    suspend fun send(id: String, text: String, requestId: String): AiSession =
+    /** requestId 由调用方生成并持久化在内存里；失败重试复用同一个值，服务端据此去重。
+     *  immediate 为「立即发送」：回复进行中发送时，服务端会中断当前回复优先处理。 */
+    suspend fun send(id: String, text: String, requestId: String, immediate: Boolean = false): AiSession =
         ApiJson.decodeFromJsonElement(
             request("POST", listOf("ai", "sessions", id, "messages"), jsonBody {
                 put("text", text)
                 put("requestId", requestId)
+                if (immediate) put("immediate", true)
+            })
+        )
+
+    /** 「立即发送」排队消息：把该消息移到队首，并中断当前回复立即处理，返回最新会话。 */
+    suspend fun flush(id: String, requestId: String?): AiSession =
+        ApiJson.decodeFromJsonElement(
+            request("POST", listOf("ai", "sessions", id, "flush"), jsonBody {
+                if (!requestId.isNullOrBlank()) put("requestId", requestId)
             })
         )
 

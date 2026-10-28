@@ -57,6 +57,7 @@ private enum class AiPage { Home, Accounts, Connection }
     var deleting by remember { mutableStateOf<AiSession?>(null) }
     var confirmDeleteAll by remember { mutableStateOf(false) }
     var notificationSettings by rememberSaveable { mutableStateOf(false) }
+    var sendModeSheet by rememberSaveable { mutableStateOf(false) }
     val deletableCount = ui.sessions.count { !it.running }
     val openConnection: (String?, Boolean, Boolean) -> Unit = { id, adding, fromAccounts ->
         loginAccountId = id
@@ -117,6 +118,9 @@ private enum class AiPage { Home, Accounts, Connection }
                     DropdownMenuItem(text = { Text("通知设置") },
                         leadingIcon = { Icon(Icons.Outlined.Notifications, null, Modifier.size(20.dp)) },
                         onClick = { menu = false; notificationSettings = true })
+                    DropdownMenuItem(text = { Text("发送方式") },
+                        leadingIcon = { Icon(Icons.Outlined.Bolt, null, Modifier.size(20.dp)) },
+                        onClick = { menu = false; sendModeSheet = true })
                     DropdownMenuItem(text = { Text("账号切换") }, enabled = enabled,
                         leadingIcon = { Icon(Icons.Outlined.ManageAccounts, null, Modifier.size(20.dp)) },
                         onClick = { menu = false; page = AiPage.Accounts; vm.clearError() })
@@ -301,6 +305,7 @@ private enum class AiPage { Home, Accounts, Connection }
         }
     }
     if (notificationSettings) AiNotificationSettings { notificationSettings = false }
+    if (sendModeSheet) AiSendModeSheet(ui.sendImmediate, vm::setSendImmediate) { sendModeSheet = false }
     deleting?.let { session -> AiDeleteDialog(session, { deleting = null }) { deleting = null; vm.delete(session) } }
     if (confirmDeleteAll) {
         AlertDialog(
@@ -429,6 +434,54 @@ private fun formatHistoryTime(timestamp: Long): String {
         now.get(Calendar.YEAR) == time.get(Calendar.YEAR) ->
             SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
         else -> SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(timestamp))
+    }
+}
+
+/** 连续发送方式：排队由 App 本地缓存等回复结束再自动发送，立即发送则中断当前回复优先处理。 */
+@Composable
+private fun AiSendModeSheet(sendImmediate: Boolean, select: (Boolean) -> Unit, dismiss: () -> Unit) {
+    AiSheet("发送方式", dismiss) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            AiSendModeOption(
+                Icons.Outlined.Schedule, "排队发送", "AI 回复期间发送的消息在服务端排队（App 关闭或被杀也不丢失），当前回复结束后自动按序发送；不想等待可点排队消息的「立即发送」。",
+                selected = !sendImmediate,
+            ) { select(false); dismiss() }
+            AiSendModeOption(
+                Icons.Outlined.Bolt, "立即发送", "AI 回复期间发送新消息会中断当前回复，优先处理这条新消息。",
+                selected = sendImmediate,
+            ) { select(true); dismiss() }
+            Text(
+                "默认排队发送，仅影响本机 App 的连续发送行为，电脑端与 Web 端不受影响。",
+                Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiSendModeOption(
+    icon: ImageVector, title: String, description: String, selected: Boolean, onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        color = if (selected) TbColors.Accent.copy(alpha = .12f) else TbColors.SurfaceHover,
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(icon, null, Modifier.size(22.dp), tint = if (selected) TbColors.Accent else TbColors.TextMuted)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(description, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+            }
+            if (selected) Icon(Icons.Outlined.Check, "已选择", Modifier.size(20.dp), tint = TbColors.Accent)
+        }
     }
 }
 

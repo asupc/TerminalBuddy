@@ -274,7 +274,49 @@ private fun AiConversation(
                     expanded = usageExpanded, onExpandedChange = { usageExpanded = it },
                     modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
             }
+            AiQueuedMessages(ui, session, vm::sendQueuedNow)
             AiComposer(ui, session, { scroll.following = true; vm.send() }, vm::stop, vm::draft)
+        }
+    }
+}
+
+/** 服务端排队消息：当前回复结束后自动按序发送；点「立即发送」可中断当前回复立即送出。 */
+@Composable
+private fun AiQueuedMessages(ui: AiUiState, session: AiSession, sendNow: (String) -> Unit) {
+    if (session.pendingInputs.isEmpty()) return
+    // 中断进行中或动作在途时禁用，避免与停止请求竞争；等待中的排队仍可查看。
+    val enabled = !ui.working && session.status != "stopping"
+    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.widthIn(max = 760.dp).fillMaxWidth().heightIn(max = 176.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "排队中 · 当前回复结束后自动发送", Modifier.padding(start = 12.dp),
+                style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
+            )
+            session.pendingInputs.forEach { item ->
+                Surface(
+                    color = TbColors.CanvasSoft, shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, TbColors.Border),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Outlined.Schedule, null, Modifier.size(16.dp), tint = TbColors.TextMuted)
+                        Text(
+                            item.text, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                            color = TbColors.TextSoft, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        )
+                        TextButton(
+                            { sendNow(item.requestId) }, enabled = enabled,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        ) { Text("立即发送", style = MaterialTheme.typography.labelMedium) }
+                    }
+                }
+            }
         }
     }
 }
@@ -284,7 +326,7 @@ private fun AiConversation(
 private fun AiComposer(
     ui: AiUiState, session: AiSession, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit,
 ) {
-    // 回复中输入了草稿就显示发送（消息排队，回合结束自动发送）；空白才显示中断。
+    // 回复中输入了草稿就显示发送（按发送方式排队等待或中断立即发送）；空白才显示中断。
     val showStop = session.running && ui.draft.isBlank()
     val actionEnabled = if (showStop) !ui.working && session.status != "stopping" else session.canSend && ui.draft.isNotBlank() && !ui.sending && !ui.loadingSession
     Surface(color = TbColors.Surface) {
@@ -319,7 +361,15 @@ private fun AiComposer(
                     )
                     IconButton(
                         if (showStop) stop else send, enabled = actionEnabled, modifier = Modifier.size(48.dp)
-                            .semantics { contentDescription = if (showStop) "中断回复" else if (ui.sending) "正在发送" else if (session.running) "发送排队消息" else "发送消息" },
+                            .semantics {
+                                contentDescription = when {
+                                    showStop -> "中断回复"
+                                    ui.sending -> "正在发送"
+                                    session.running && ui.sendImmediate -> "立即发送"
+                                    session.running -> "发送排队消息"
+                                    else -> "发送消息"
+                                }
+                            },
                     ) {
                         Box(
                             Modifier.size(32.dp).background(
