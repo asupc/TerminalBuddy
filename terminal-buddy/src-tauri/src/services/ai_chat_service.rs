@@ -17,7 +17,7 @@ static RUNNING: AtomicUsize = AtomicUsize::new(0);
 struct RunningTask;
 impl Drop for RunningTask { fn drop(&mut self) { RUNNING.fetch_sub(1, Ordering::Relaxed); } }
 
-enum Control { Stop, Retire, Message { text: String, request_id: String }, Approval(AnswerAiApproval) }
+enum Control { Stop, Flush, Retire, Message { text: String, request_id: String }, Approval(AnswerAiApproval) }
 enum WorkerExit { Completed, Retired }
 struct Cell {
     data: Mutex<AiSession>,
@@ -291,6 +291,12 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
         touch(&mut data);
         let snapshot = data.clone();
         if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+        // 立即发送：请求 worker 尽快结束当前回合并按成功收尾，队列自动按序续发。
+        if input.immediate && control.as_ref().ok_or("AI 输入通道不可用")?.send(Control::Flush).is_err() {
+            *data = before;
+            persist_data(&cell, &data)?;
+            return Err("服务端进程已退出，请再次发送消息".into());
+        }
         return Ok(snapshot);
     }
     let before = data.clone();
@@ -322,6 +328,70 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
         return Err(error);
     }
     Ok(snapshot)
+}
+
+/// 「立即发送」排队消息：可选把指定消息移到队首，并中断当前回复立即处理。
+/// worker 已退出（中断/出错后队列保留）时直接按队首启动新回合，其余随后自动续发。
+pub fn flush(id: &str, owner: &str, request_id: Option<&str>) -> Result<()> {
+    let cell = load(id, owner)?;
+    let control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+    let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    if !cell.path.is_file() { return Err("AI 会话不存在".into()); }
+    if data.status == "stopping" { return Err("正在中断当前回复，请稍候".into()); }
+    if data.pending_inputs.is_empty() { return Err("没有排队中的消息".into()); }
+    let before = data.clone();
+    // 指定消息移到队首：立即发送优先处理它，其余排队消息保持顺序随后送出。
+    if let Some(request_id) = request_id {
+        let Some(index) = data.pending_inputs.iter().position(|item| item.request_id == request_id) else {
+            return Err("该消息不在排队队列中".into());
+        };
+        if index > 0 {
+            let item = data.pending_inputs.remove(index);
+            data.pending_inputs.insert(0, item);
+        }
+    }
+    if let Some(tx) = control.as_ref() {
+        // Codex/Pi 空闲常驻进程：直接把队首交给常驻通道发出，无需打断。
+        if matches!(data.provider.as_str(), "codex" | "pi") && matches!(data.status.as_str(), "idle" | "background") {
+            let next = data.pending_inputs.remove(0);
+            usage::begin_turn(&mut data);
+            data.status = "running".into(); data.error = None; data.approvals.clear(); touch(&mut data);
+            if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+            let message = Control::Message { text: next.text, request_id: next.request_id };
+            if tx.send(message).is_err() {
+                *data = before;
+                persist_data(&cell, &data)?;
+                return Err("服务端进程已退出，请再次发送消息".into());
+            }
+            return Ok(());
+        }
+        if !matches!(data.status.as_str(), "running" | "approval" | "background") {
+            return Err("会话不在执行中，请稍后重试".into());
+        }
+        // 正在回复或等待确认：请求 worker 尽快结束当前回合并按成功收尾，队列自动按序续发。
+        if tx.send(Control::Flush).is_err() { *data = before; return Err("执行已经结束，请稍后重试".into()); }
+        data.status = "stopping".into(); touch(&mut data);
+        if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+        return Ok(());
+    }
+    // worker 已退出（中断/出错后队列保留）：直接按队首启动新回合，其余随后自动续发。
+    let next = data.pending_inputs.remove(0);
+    usage::begin_turn(&mut data);
+    data.status = "running".into(); data.error = None; data.approvals.clear(); touch(&mut data);
+    if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+    drop(data); drop(control);
+    let thread_name = format!("ai-{id}");
+    if let Err(error) = start_turn(&cell, next.clone(), thread_name) {
+        let detail = error.clone();
+        update(&cell, |data| {
+            data.pending_inputs.insert(0, next);
+            data.status = "error".into(); data.error = Some(error); touch(data);
+            data.result_revision = data.revision;
+        });
+        persist(&cell)?;
+        return Err(detail);
+    }
+    Ok(())
 }
 
 /// 启动一个新回合的 worker 线程。调用方负责消息入列与状态迁移；本函数只安装
@@ -751,6 +821,8 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
         }
         while let Ok(control) = controls.try_recv() {
             if matches!(control, Control::Stop) { return Err("已中断".into()); }
+            // 「立即发送」：尽快结束当前回合并按成功收尾，由 finish 自动续发队列。
+            if matches!(control, Control::Flush) { return Ok(()); }
             if let Control::Approval(answer) = control {
                 if let Some(request) = pending.remove(&answer.approval_id) {
                     let stdin = input.as_mut().ok_or("Claude 输入通道已关闭，请重新发送消息")?;
@@ -1047,6 +1119,8 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
         while let Ok(control) = controls.try_recv() {
             match control {
                 Control::Stop => return Err("已中断".into()),
+                // 「立即发送」：结束本回合并按成功收尾，队列由 finish 续发（常驻进程随之重启）。
+                Control::Flush => return Ok(WorkerExit::Completed),
                 Control::Retire => return Ok(WorkerExit::Retired),
                 Control::Message { text, request_id: accepted_id } => {
                     request_id = Some(accepted_id);
@@ -1083,6 +1157,33 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
             update(cell, |data| { state.usage.completed(data); usage::finish_turn(data); });
             codex_status(cell, &state, &background, request_id.as_deref(), resume_request.is_some() || turn_request.is_some());
             persist(cell)?;
+        }
+        // 排队消息按序自动续发：回合结束回到空闲后，在常驻进程内直接开始下一回合，
+        // 不经空闲停留，与 Pi 结算处续发、Claude 的 finish 续发行为一致。
+        if state.thread_id.is_some() && resume_request.is_none() && turn_request.is_none() && settle_at.is_none() {
+            let next = match cell.data.lock() {
+                Ok(mut data) if matches!(data.status.as_str(), "idle") && !data.pending_inputs.is_empty() => {
+                    let next = data.pending_inputs.remove(0);
+                    usage::begin_turn(&mut data);
+                    data.status = "running".into(); data.error = None; data.approvals.clear(); touch(&mut data);
+                    persist_data(cell, &data).ok().map(|_| next)
+                }
+                _ => None,
+            };
+            if let Some(next) = next {
+                let Some(id) = state.thread_id.clone() else { continue };
+                request_id = Some(next.request_id);
+                state.usage = usage::CodexUsageTracker::default();
+                if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
+                let permissions = super::ai_permission_service::for_agent("codex")?;
+                let mut params = json!({"threadId":id,"cwd":session.project_path,"developerInstructions":decision_instructions});
+                permissions.apply_thread(&mut params);
+                if let Some(model) = &session.model { params["model"] = json!(model); }
+                resume_request = Some(codex_request(stdin, &mut next_id, "thread/resume", params)?);
+                queued_prompt = Some(next.text);
+                state.turn_id = None;
+                continue;
+            }
         }
         if checkpoint.elapsed() > Duration::from_secs(5) {
             let revision = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.revision;
@@ -1296,6 +1397,11 @@ fn run_pi(cell: &Cell, session: &AiSession, prompt: &str, stdin: ChildStdin, con
                 Control::Stop => {
                     if let Some(stdin) = input.as_mut() { let _ = pi_request(stdin, &mut next_id, "abort", json!({})); }
                     return Err("已中断".into());
+                }
+                // 「立即发送」：同样请求中断尽快停下，但按成功收尾，由 finish 续发队列。
+                Control::Flush => {
+                    if let Some(stdin) = input.as_mut() { let _ = pi_request(stdin, &mut next_id, "abort", json!({})); }
+                    return Ok(WorkerExit::Completed);
                 }
                 Control::Retire => { drop(input.take()); retired = true; }
                 Control::Message { text, .. } => {

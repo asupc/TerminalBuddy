@@ -97,6 +97,16 @@ pub struct CreateAiSession {
 pub struct SendAiMessage {
     pub text: String,
     pub request_id: String,
+    /// 立即发送：入队后中断当前回复，停止后优先处理这条消息（默认排队等待回复结束）。
+    #[serde(default)]
+    pub immediate: bool,
+}
+
+/// 「立即发送」排队消息：可选把指定消息移到队首，再中断当前回复立即处理。
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FlushAiQueue {
+    pub request_id: Option<String>,
 }
 
 #[derive(Deserialize)]
