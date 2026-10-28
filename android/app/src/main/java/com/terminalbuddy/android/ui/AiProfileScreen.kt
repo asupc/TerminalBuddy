@@ -1,8 +1,10 @@
 package com.terminalbuddy.android.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
@@ -13,6 +15,7 @@ import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -59,6 +62,8 @@ internal fun AiProfileScreen(
                 AiCard(shape = RoundedCornerShape(20.dp)) {
                     AiThemePreference()
                     AiDivider(Modifier.padding(horizontal = 16.dp))
+                    AiSkinPreference()
+                    AiDivider(Modifier.padding(start = 60.dp, end = 16.dp))
                     AiSettingsRow(Icons.Outlined.NotificationsNone, "通知", "任务进度、决策与完成提醒", click = notifications)
                     AiDivider(Modifier.padding(start = 60.dp, end = 16.dp))
                     AiSettingsRow(Icons.Outlined.Bolt, "发送方式",
@@ -107,7 +112,7 @@ private fun AiThemePreference() {
             AiSmallIcon(Icons.Outlined.Contrast)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("外观", style = MaterialTheme.typography.titleSmall)
-                Text("选择适合你的黑白主题", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+                Text("切换浅色与深色模式", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
             }
         }
         Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -127,6 +132,87 @@ private fun AiThemePreference() {
                         Text(if (dark) "深色" else "浅色", style = MaterialTheme.typography.labelLarge, color = ink)
                         if (selected) Icon(Icons.Outlined.Check, "已选择", Modifier.size(17.dp), tint = ink)
                     }
+                }
+            }
+        }
+    }
+}
+
+/** 入口保持紧凑，完整配色预览放在可滚动的选择面板。 */
+@Composable
+private fun AiSkinPreference() {
+    val controls = LocalThemeControls.current
+    var selecting by rememberSaveable { mutableStateOf(false) }
+    AiSettingsRow(Icons.Outlined.Palette, "皮肤选择", controls.skin.title, click = { selecting = true })
+    if (selecting) AiSkinSelectionSheet { selecting = false }
+}
+
+@Composable
+private fun AiSkinSelectionSheet(dismiss: () -> Unit) {
+    val controls = LocalThemeControls.current
+    AiSheet("选择皮肤", dismiss) {
+        LazyColumn(
+            Modifier.fillMaxWidth().weight(1f, fill = false).selectableGroup(),
+            contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item(key = "skin-hint") {
+                Text("当前为${if (controls.darkTheme) "深色" else "浅色"}模式，点按皮肤即可立即应用并保存。",
+                    style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+            }
+            items(AppSkin.entries.chunked(2), key = { it.first().id }) { skins ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    skins.forEach { skin ->
+                        AiSkinChoice(skin, controls.darkTheme, controls.skin == skin,
+                            select = { controls.onSkinChange(skin) }, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiSkinChoice(
+    skin: AppSkin, darkTheme: Boolean, selected: Boolean, select: () -> Unit, modifier: Modifier = Modifier,
+) {
+    val colors = skin.colorScheme(darkTheme)
+    Surface(
+        modifier = modifier.selectable(selected = selected, role = Role.RadioButton, onClick = select),
+        color = colors.surface, shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) colors.primary else colors.outlineVariant),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            AiSkinPreview(colors)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(skin.title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
+                    color = colors.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (selected) Icon(Icons.Outlined.CheckCircle, null, Modifier.size(20.dp), tint = colors.primary)
+                else Spacer(Modifier.size(20.dp))
+            }
+            Text(skin.description, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** 装饰性的缩略预览与真实页面使用同一份背景、卡片、字段和按钮色。 */
+@Composable
+private fun AiSkinPreview(colors: ColorScheme) {
+    Column(
+        Modifier.fillMaxWidth().height(76.dp).background(colors.background, RoundedCornerShape(12.dp)).padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Icon(Icons.Outlined.Terminal, null, Modifier.size(12.dp), tint = colors.primary)
+            Box(Modifier.width(30.dp).height(3.dp).background(colors.onSurfaceVariant.copy(alpha = .5f), RoundedCornerShape(2.dp)))
+        }
+        Surface(Modifier.fillMaxWidth(), color = colors.surface, shape = RoundedCornerShape(8.dp)) {
+            Column(Modifier.padding(7.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.fillMaxWidth(.65f).height(3.dp).background(colors.onSurfaceVariant.copy(alpha = .4f), RoundedCornerShape(2.dp)))
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(Modifier.weight(1f).height(9.dp).background(colors.surfaceVariant, RoundedCornerShape(3.dp)))
+                    Box(Modifier.width(25.dp).height(9.dp).background(colors.primary, RoundedCornerShape(3.dp)))
                 }
             }
         }

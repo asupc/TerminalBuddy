@@ -13,8 +13,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.toArgb
 import com.terminalbuddy.android.notifications.AiNotificationTarget
 import com.terminalbuddy.android.notifications.AiTaskNotifications
+import com.terminalbuddy.android.ui.AppSkin
 import com.terminalbuddy.android.ui.TerminalBuddyRoot
 import com.terminalbuddy.android.ui.TerminalBuddyTheme
 
@@ -42,15 +44,23 @@ class MainActivity : ComponentActivity() {
         notificationTarget = AiTaskNotifications.consumeTarget(intent)
         val preferences = getSharedPreferences("terminal_buddy_appearance", MODE_PRIVATE)
         val initialDarkTheme = preferences.getBoolean("dark_theme", false)
-        updateSystemBars(initialDarkTheme)
+        val initialSkin = AppSkin.fromId(preferences.getString("color_skin", null))
+        updateSystemBars(initialDarkTheme, initialSkin)
         setContent {
             var darkTheme by rememberSaveable { mutableStateOf(initialDarkTheme) }
-            SideEffect { updateSystemBars(darkTheme) }
+            var skinId by rememberSaveable { mutableStateOf(initialSkin.id) }
+            val skin = AppSkin.fromId(skinId)
+            SideEffect { updateSystemBars(darkTheme, skin) }
             TerminalBuddyTheme(
                 darkTheme = darkTheme,
+                skin = skin,
                 onDarkThemeChange = { enabled ->
                     darkTheme = enabled
                     preferences.edit().putBoolean("dark_theme", enabled).apply()
+                },
+                onSkinChange = { selected ->
+                    skinId = selected.id
+                    preferences.edit().putString("color_skin", selected.id).apply()
                 },
             ) {
                 TerminalBuddyRoot(
@@ -61,16 +71,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun updateSystemBars(darkTheme: Boolean) {
+    private fun updateSystemBars(darkTheme: Boolean, skin: AppSkin) {
         enableEdgeToEdge(
             statusBarStyle = if (darkTheme) SystemBarStyle.dark(Color.TRANSPARENT)
                 else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
             // Android 8.0 不支持深色导航图标，浅色模式下用深色底保护白色系统按钮。
             navigationBarStyle = if (darkTheme) SystemBarStyle.dark(Color.TRANSPARENT)
-                else SystemBarStyle.light(Color.TRANSPARENT, Color.rgb(24, 24, 27)),
+                else SystemBarStyle.light(Color.TRANSPARENT, skin.colorScheme(true).background.toArgb()),
         )
         window.setBackgroundDrawable(ColorDrawable(
-            if (darkTheme) Color.rgb(16, 16, 18) else Color.rgb(247, 247, 248)
+            skin.colorScheme(darkTheme).background.toArgb()
         ))
     }
 }
