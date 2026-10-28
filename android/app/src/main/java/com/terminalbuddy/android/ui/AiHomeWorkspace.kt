@@ -78,7 +78,7 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel) {
             if (agents.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("选择助手", style = MaterialTheme.typography.labelMedium.copy(lineHeight = 13.sp), color = TbColors.TextMuted)
                 AiAgentTabs(agents, ui.launchProvider?.agent.orEmpty(), vm::selectAgent,
-                    enabledAgents = if (enabled) ui.availableAgents else emptyList())
+                    enabledAgents = if (enabled) ui.availableAgents else emptyList(), stacked = true)
             }
             AiChoiceField("使用模型", Icons.Outlined.Tune, ui.launchModelKey, "选择模型",
                 modelChoices(ui.availableModels), enabled, vm::selectModel, compact = true, inlineLabel = true)
@@ -94,6 +94,7 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel) {
                 Text(it, style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp), color = TbColors.TextMuted)
             }
             Button(vm::create, enabled = ui.canCreate, shape = RoundedCornerShape(12.dp),
+                colors = primaryButtonColors(), border = primaryControlBorder(),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
                 contentPadding = PaddingValues(horizontal = 15.dp, vertical = 12.dp)) {
                 if (ui.working) CircularProgressIndicator(Modifier.size(14.dp), color = LocalContentColor.current, strokeWidth = 2.dp)

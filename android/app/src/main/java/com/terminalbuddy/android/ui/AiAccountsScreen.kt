@@ -48,7 +48,8 @@ import com.terminalbuddy.android.data.AiAccount
                         verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         AiSmallIcon(Icons.Outlined.ManageAccounts)
                         Text("还没有保存的账号", style = MaterialTheme.typography.titleSmall)
-                        Button(add, enabled = !ui.authenticating, shape = RoundedCornerShape(10.dp)) { Text("添加账号") }
+                        Button(add, enabled = !ui.authenticating, shape = RoundedCornerShape(10.dp),
+                            colors = primaryButtonColors(), border = primaryControlBorder()) { Text("添加账号") }
                     }
                 }
             }

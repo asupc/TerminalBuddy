@@ -115,6 +115,7 @@ internal fun AiProjectConfigSheet(ui: AiUiState, project: AiProject, dismiss: ()
             target?.let { Text("${project.name} · ${agentTitle(agent)} · ${it.provider.name}",
                 Modifier.padding(bottom = 9.dp), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted) }
             Button({ target?.let { start(it.key) } }, Modifier.fillMaxWidth(),
+                colors = primaryButtonColors(), border = primaryControlBorder(),
                 enabled = target != null && !ui.working && !ui.initialLoading, shape = RoundedCornerShape(11.dp)) {
                 Icon(Icons.Outlined.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("使用此配置开始对话")
             }

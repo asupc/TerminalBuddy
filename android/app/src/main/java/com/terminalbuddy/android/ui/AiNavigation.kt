@@ -59,11 +59,11 @@ internal fun AiBottomNavigation(selected: AiHomeTab, unread: Int, select: (AiHom
     }
 }
 
-/** 助手选择使用相同的名称与标识，黑白主题下都明确显示选中态。 */
+/** 助手选择使用相同的名称与标识，黑白主题下都明确显示选中态。stacked 为卡片样式：上方图标、下方文字。 */
 @Composable
 internal fun AiAgentTabs(
     agents: List<String>, selected: String, select: (String) -> Unit,
-    modifier: Modifier = Modifier, enabledAgents: List<String> = agents,
+    modifier: Modifier = Modifier, enabledAgents: List<String> = agents, stacked: Boolean = false,
 ) {
     Row(
         modifier.fillMaxWidth().selectableGroup()
@@ -73,15 +73,16 @@ internal fun AiAgentTabs(
         agents.forEach { agent ->
             val active = selected == agent
             val enabled = agent in enabledAgents
-            val ink = if (active) TbColors.AccentInk else if (enabled) TbColors.TextSoft else TbColors.TextMuted
+            val ink = if (active) TbColors.ButtonForeground else if (enabled) TbColors.TextSoft else TbColors.TextMuted
             Surface(
                 modifier = Modifier.weight(1f).alpha(if (enabled) 1f else .45f).selectable(
                     selected = active, enabled = enabled, role = Role.Tab, onClick = { select(agent) },
                 ),
-                color = if (active) TbColors.Accent else TbColors.SurfaceHover,
+                color = if (active) TbColors.ButtonBackground else TbColors.SurfaceHover,
                 shape = RoundedCornerShape(12.dp),
+                border = if (active) primaryControlBorder() else null,
             ) {
-                if (agents.size > 2) {
+                if (stacked || agents.size > 2) {
                     Column(
                         Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp, vertical = 10.dp),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),

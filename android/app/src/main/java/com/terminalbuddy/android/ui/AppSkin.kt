@@ -19,14 +19,14 @@ enum class AppSkin(
     val fixedDarkTheme: Boolean? = null,
 ) {
     PureBlack(
-        id = "pure_black", title = "纯黑", description = "电脑端同款深色 · 固定配色",
+        id = "pure_black", title = "纯黑", description = "固定深色 · 黑色系按钮",
         lightColors = desktopColorScheme(darkTheme = true),
         darkColors = desktopColorScheme(darkTheme = true),
         fixedDarkTheme = true,
     ),
 
     PureWhite(
-        id = "pure_white", title = "纯白", description = "电脑端同款浅色 · 固定配色",
+        id = "pure_white", title = "纯白", description = "固定浅色 · 黑色系按钮",
         lightColors = desktopColorScheme(darkTheme = false),
         darkColors = desktopColorScheme(darkTheme = false),
         fixedDarkTheme = false,
@@ -338,10 +338,10 @@ enum class AppSkin(
     }
 }
 
-/** 沿用桌面端的背景与文字色阶，按钮和选中态统一使用中性灰强调。 */
+/** 纯黑画布搭配深色面板；强调文字保持可读，实心控件使用独立的黑色填充。 */
 private fun desktopColorScheme(darkTheme: Boolean): ColorScheme {
-    val primary = if (darkTheme) Color(0xFFB8BDC5) else Color(0xFF4B5058)
-    val background = if (darkTheme) Color(0xFF181A1D) else Color(0xFFF3F4F6)
+    val primary = if (darkTheme) Color(0xFFE3E5E8) else Color(0xFF111111)
+    val background = if (darkTheme) Color.Black else Color(0xFFF3F4F6)
     val surface = if (darkTheme) Color(0xFF202226) else Color(0xFFFFFFFF)
     return skinColorScheme(
         darkTheme = darkTheme,

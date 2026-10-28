@@ -1,5 +1,6 @@
 package com.terminalbuddy.android.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -36,6 +37,13 @@ object TbColors {
         @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.primaryContainer
     val AccentInk: Color
         @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.onPrimary
+    /** 纯色皮肤的实心控件使用黑底浅字，文字链接仍沿用可读的强调色。 */
+    val ButtonBackground: Color
+        @Composable @ReadOnlyComposable get() = if (LocalThemeControls.current.skin.fixedDarkTheme != null) Color.Black
+            else MaterialTheme.colorScheme.primary
+    val ButtonForeground: Color
+        @Composable @ReadOnlyComposable get() = if (LocalThemeControls.current.skin.fixedDarkTheme != null) Color.White
+            else MaterialTheme.colorScheme.onPrimary
     val Text: Color
         @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.onSurface
     val TextSoft: Color
@@ -62,6 +70,24 @@ internal data class ThemeControls(
 )
 
 internal val LocalThemeControls = staticCompositionLocalOf { ThemeControls() }
+
+/** 纯色皮肤统一使用黑色实心按钮，其他皮肤沿用 Material 默认按钮配色。 */
+@Composable
+internal fun primaryButtonColors(tonal: Boolean = false): ButtonColors {
+    if (LocalThemeControls.current.skin.fixedDarkTheme == null) {
+        return if (tonal) ButtonDefaults.filledTonalButtonColors() else ButtonDefaults.buttonColors()
+    }
+    return ButtonDefaults.buttonColors(
+        containerColor = TbColors.ButtonBackground,
+        contentColor = TbColors.ButtonForeground,
+    )
+}
+
+/** 细描边保证黑色控件在纯黑画布和深色面板中仍有清楚轮廓。 */
+@Composable
+internal fun primaryControlBorder(): BorderStroke? = if (LocalThemeControls.current.skin.fixedDarkTheme != null) {
+    BorderStroke(1.dp, TbColors.TextMuted)
+} else null
 
 /** 深浅模式和皮肤独立保存，各页面、卡片与弹层统一更新。 */
 @Composable

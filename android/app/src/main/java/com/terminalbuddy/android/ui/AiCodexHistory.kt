@@ -123,6 +123,7 @@ internal fun AiCodexHistoryScreen(ui: AiUiState, vm: AiViewModel) {
                 else AiChoiceField("继续对话使用的模型", Icons.Outlined.Tune, target?.key.orEmpty(), "选择模型",
                     modelChoices(models), !ui.working, { chosenModel = it })
                 Button({ target?.let { vm.resumeCodexHistory(it.key) } }, Modifier.fillMaxWidth(),
+                    colors = primaryButtonColors(), border = primaryControlBorder(),
                     enabled = target != null && replay != null && !ui.working && !history.loadingReplay) {
                     if (ui.working) CircularProgressIndicator(Modifier.size(16.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
                     else Icon(Icons.Outlined.ChatBubbleOutline, null, Modifier.size(18.dp))

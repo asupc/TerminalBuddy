@@ -245,6 +245,7 @@ private fun AiConversation(
                 ) {
                     FilledTonalButton(
                         { scroll.following = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        colors = primaryButtonColors(tonal = true), border = primaryControlBorder(),
                         elevation = ButtonDefaults.filledTonalButtonElevation(defaultElevation = 2.dp),
                     ) {
                         Icon(Icons.Outlined.KeyboardArrowDown, null, Modifier.size(18.dp))
@@ -376,16 +377,17 @@ private fun AiComposer(
                                 }
                             },
                     ) {
-                        Box(
-                            Modifier.size(32.dp).background(
-                                TbColors.Accent.copy(alpha = if (actionEnabled) 1f else .35f), RoundedCornerShape(10.dp),
-                            ),
-                            contentAlignment = Alignment.Center,
+                        Surface(
+                            Modifier.size(32.dp),
+                            color = TbColors.ButtonBackground.copy(alpha = if (actionEnabled) 1f else .35f),
+                            shape = RoundedCornerShape(10.dp), border = primaryControlBorder(),
                         ) {
-                            Icon(
-                                if (showStop) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null,
-                                Modifier.size(18.dp), tint = TbColors.AccentInk,
-                            )
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Icon(
+                                    if (showStop) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null,
+                                    Modifier.size(18.dp), tint = TbColors.ButtonForeground,
+                                )
+                            }
                         }
                     }
                 }

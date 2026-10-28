@@ -137,13 +137,13 @@ private fun AiThemePreference() {
                 Surface(
                     modifier = Modifier.weight(1f).selectable(selected, enabled = fixedMode == null, role = Role.RadioButton,
                         onClick = { controls.onDarkThemeChange(dark) }),
-                    color = if (selected) TbColors.Accent else TbColors.Canvas,
+                    color = if (selected) TbColors.ButtonBackground else TbColors.Canvas,
                     shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, if (selected) TbColors.Accent else TbColors.Border),
                 ) {
                     Row(Modifier.heightIn(min = 52.dp).padding(horizontal = 12.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
-                        val ink = if (selected) TbColors.AccentInk else TbColors.TextSoft
+                        val ink = if (selected) TbColors.ButtonForeground else TbColors.TextSoft
                         Icon(if (dark) Icons.Outlined.DarkMode else Icons.Outlined.LightMode, null, Modifier.size(20.dp), tint = ink)
                         Text(if (dark) "深色" else "浅色", style = MaterialTheme.typography.labelLarge, color = ink)
                         if (selected) Icon(Icons.Outlined.Check, "已选择", Modifier.size(17.dp), tint = ink)
@@ -187,7 +187,7 @@ private fun AiSkinSelectionSheet(dismiss: () -> Unit) {
                 item(key = "fixed-heading") {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("纯色外观", style = MaterialTheme.typography.titleMedium)
-                        Text("与电脑端同款配色，纯黑固定深色，纯白固定浅色。",
+                        Text("纯黑固定深色，纯白固定浅色，均采用黑色系按钮。",
                             style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
                     }
                 }

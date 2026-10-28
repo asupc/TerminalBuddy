@@ -120,6 +120,7 @@ internal fun AiConnection(
                     Button(
                         submit, Modifier.fillMaxWidth().padding(top = 6.dp).heightIn(min = 56.dp),
                         enabled = canSubmit, shape = RoundedCornerShape(16.dp),
+                        colors = primaryButtonColors(), border = primaryControlBorder(),
                         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
                     ) {
                         if (ui.authenticating) {
