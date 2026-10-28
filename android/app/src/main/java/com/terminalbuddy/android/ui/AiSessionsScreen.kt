@@ -162,7 +162,7 @@ internal fun AiSessionCard(
                 horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp)) {
                 AiAgentBadge(session.provider, size = if (compact) 23.dp else 30.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 3.dp)) {
-                    Text(session.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    Text(session.title, maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall.copy(lineHeight = if (compact) 17.sp else 22.sp))
                     Text(projectName.ifBlank { "未命名项目" }, color = TbColors.TextMuted, maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
