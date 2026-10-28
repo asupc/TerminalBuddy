@@ -13,19 +13,25 @@ export function isPiCommand(command: string): boolean {
   return /(?:^|[\s"'=])pi(?:\.cmd|\.exe|\.bat)?(?=$|[\s"'=])/i.test(command);
 }
 
-/** 解析 Pi 模型引用；thinking 缺省时返回 undefined。 */
+/** 解析 Pi 模型引用；thinking 缺省时返回 undefined。
+ * 模型 ID 可能自带冒号（如 `cn:mimo-v2.6-pro`）：provider 取首个冒号前，
+ * 仅当末段恰为合法思考级别时才剥离为 thinking，其余冒号段全部归 model。 */
 export function parsePiRef(command: string): { providerId: string; modelId: string; thinking?: string } | null {
   const token = command.trimStart().split(/\s/, 1)[0] ?? '';
   if (!token.startsWith(PI_REF_PREFIX)) return null;
   const rest = token.slice(PI_REF_PREFIX.length);
-  const parts = rest.split(':');
-  if (parts.length < 2 || !parts[0] || !parts[1]) return null;
-  const thinking = parts.length > 2 ? parts[2] : undefined;
-  return {
-    providerId: parts[0],
-    modelId: parts[1],
-    thinking: thinking && PI_THINKING_LEVELS.includes(thinking) ? thinking : undefined,
-  };
+  const sep = rest.indexOf(':');
+  if (sep <= 0 || sep === rest.length - 1) return null;
+  const providerId = rest.slice(0, sep);
+  let modelId = rest.slice(sep + 1);
+  let thinking: string | undefined;
+  const tail = modelId.lastIndexOf(':');
+  const level = tail > 0 ? modelId.slice(tail + 1) : '';
+  if (PI_THINKING_LEVELS.includes(level)) {
+    thinking = level;
+    modelId = modelId.slice(0, tail);
+  }
+  return { providerId, modelId, thinking };
 }
 
 /** 与模型引用展开冲突的参数：展开结果自带同名 flag，须从基础命令中剔除。 */

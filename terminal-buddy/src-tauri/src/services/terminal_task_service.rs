@@ -95,6 +95,8 @@ fn pi_executable_end(command: &str) -> Option<usize> {
 }
 
 /// `__TB_PI_REF__:<provider>:<model>[:thinking]` → `pi --provider ... --model ...`。
+/// 模型 ID 可能自带冒号（如 `cn:mimo-v2.6-pro`）：provider 取首个冒号前，
+/// 仅当末段恰为合法思考级别时才剥离为 thinking，其余冒号段全部归 model。
 /// 模型 ID 只允许安全字符，避免把任意文本拼进启动命令。
 fn expand_pi_ref(command: &str) -> String {
     const PREFIX: &str = "__TB_PI_REF__:";
@@ -103,11 +105,16 @@ fn expand_pi_ref(command: &str) -> String {
     let mut parts = rest.splitn(2, char::is_whitespace);
     let reference = parts.next().unwrap_or_default();
     let tail = parts.next().unwrap_or_default().trim();
-    let mut segments = reference.split(':');
-    let (Some(provider), Some(model)) = (segments.next(), segments.next()) else { return command.to_string(); };
-    let thinking = segments.next().filter(|level| matches!(*level, "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"));
+    let Some((provider, mut model)) = reference.split_once(':') else { return command.to_string(); };
+    let mut thinking = None;
+    if let Some((head, level)) = model.rsplit_once(':') {
+        if matches!(level, "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") {
+            thinking = Some(level);
+            model = head;
+        }
+    }
     let safe = |value: &str| !value.is_empty()
-        && value.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/'));
+        && value.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/' | ':'));
     if !safe(provider) || !safe(model) {
         return command.to_string();
     }
@@ -622,6 +629,19 @@ mod tests {
         assert!(!expanded.contains("--thinking low"));
         assert_eq!(expand_pi_ref("pi --approve"), "pi --approve");
         assert_eq!(expand_pi_ref("__TB_PI_REF__:bad provider:model"), "__TB_PI_REF__:bad provider:model");
+    }
+
+    #[test]
+    fn expands_pi_model_refs_with_colons_in_model_ids() {
+        // 模型 ID 自带冒号时不能被当成 provider/thinking 拆散（如 sub2api 的 `cn:mimo-v2.6-pro`）。
+        assert_eq!(
+            expand_pi_ref("__TB_PI_REF__:sub2api:cn:mimo-v2.6-pro --approve"),
+            "pi --provider sub2api --model cn:mimo-v2.6-pro --approve"
+        );
+        assert_eq!(
+            expand_pi_ref("__TB_PI_REF__:sub2api:cn:deepseek-v4.1-flash:high"),
+            "pi --provider sub2api --model cn:deepseek-v4.1-flash --thinking high"
+        );
     }
 
     #[test]
