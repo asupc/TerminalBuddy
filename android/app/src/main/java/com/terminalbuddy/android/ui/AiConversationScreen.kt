@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.*
+import com.terminalbuddy.android.notifications.AiBackgroundCompatibility
 import com.terminalbuddy.android.notifications.AiTaskNotifications
 
 /** 对话二级页：会话摘要、自然段回复与紧凑输入区。 */
@@ -58,6 +59,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     var menu by rememberSaveable(session.id) { mutableStateOf(false) }
     var information by rememberSaveable(session.id) { mutableStateOf(false) }
     var usageInformation by rememberSaveable(session.id) { mutableStateOf(false) }
+    var vivoBackgroundGuide by rememberSaveable(session.id) { mutableStateOf(false) }
     var deleting by rememberSaveable(session.id) { mutableStateOf(false) }
     Scaffold(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
@@ -105,7 +107,9 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
                     menu = false; AiTaskNotifications.openResultSettings(context)
                 })
                 AiConversationAction(Icons.Outlined.BatteryFull, "后台运行设置", {
-                    menu = false; AiTaskNotifications.openBackgroundSettings(context)
+                    menu = false
+                    if (AiBackgroundCompatibility.isVivoDevice()) vivoBackgroundGuide = true
+                    else AiTaskNotifications.openBackgroundSettings(context)
                 })
                 AiConversationAction(Icons.Outlined.Info, "对话信息", { menu = false; information = true })
                 AiConversationAction(Icons.Outlined.DataUsage, "上下文与 Token", { menu = false; usageInformation = true })
@@ -131,6 +135,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
             }
         }
     }
+    if (vivoBackgroundGuide) AiVivoBackgroundGuide { vivoBackgroundGuide = false }
     if (usageInformation) AiUsageSheet(session, ui.selectedModelLabel, ui.selectedEffortLabel) { usageInformation = false }
     if (deleting) AiDeleteDialog(session, { deleting = false }) { deleting = false; vm.delete(session) }
 }

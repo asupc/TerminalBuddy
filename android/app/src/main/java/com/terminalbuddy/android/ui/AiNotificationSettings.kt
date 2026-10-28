@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.terminalbuddy.android.TerminalBuddyApplication
+import com.terminalbuddy.android.notifications.AiBackgroundCompatibility
 import com.terminalbuddy.android.notifications.AiTaskNotifications
 
 /** 将通知权限、任务提醒和后台运行入口集中在同一个面板，返回系统设置后刷新状态。 */
@@ -36,6 +37,10 @@ internal fun AiNotificationSettings(dismiss: () -> Unit) {
     val notifications = remember(context) { (context.applicationContext as TerminalBuddyApplication).taskNotifications }
     val monitor by notifications.monitorState.collectAsStateWithLifecycle()
     val service by notifications.serviceState.collectAsStateWithLifecycle()
+    val reception by notifications.backgroundReception.collectAsStateWithLifecycle()
+    val isVivo = remember { AiBackgroundCompatibility.isVivoDevice() }
+    var showVivoGuide by remember { mutableStateOf(false) }
+    val vivoGuideChecked by notifications.vivoGuideChecked.collectAsStateWithLifecycle()
     var copied by remember { mutableStateOf(false) }
     var enabled by remember { mutableStateOf(AiTaskNotifications.notificationsEnabled(context)) }
     var decisionAlerts by remember { mutableStateOf(AiTaskNotifications.decisionAlertsEnabled(context)) }
@@ -87,10 +92,25 @@ internal fun AiNotificationSettings(dismiss: () -> Unit) {
                 },
             ) { notifications.retryMonitoring() }
             AiNotificationSettingRow(
-                Icons.Outlined.BatteryFull, "后台运行设置",
-                if (backgroundRestricted) "后台运行受限 · 请允许后台运行和自启动"
-                else "系统电池限制已解除 · 持续接收消息会增加耗电",
-            ) { AiTaskNotifications.openBackgroundSettings(context) }
+                Icons.Outlined.BatteryFull, if (isVivo) "vivo 后台运行设置" else "后台运行设置",
+                when {
+                    isVivo && backgroundRestricted -> "检查电池优化、后台耗电和自启动设置"
+                    isVivo && !vivoGuideChecked -> "仍需检查 vivo 后台耗电和自启动设置"
+                    isVivo -> "已检查设置指引 · 后台接收仍需实际验证"
+                    backgroundRestricted -> "后台运行受限 · 请允许后台运行和自启动"
+                    else -> "系统电池限制已解除 · 持续接收消息会增加耗电"
+                },
+            ) {
+                if (isVivo) showVivoGuide = true else AiTaskNotifications.openBackgroundSettings(context)
+            }
+            if (isVivo) AiNotificationSettingRow(
+                Icons.Outlined.Sync, "上次后台接收记录",
+                when {
+                    !reception.checked -> "尚无记录 · 在后台运行至少90秒后返回查看"
+                    reception.interrupted -> "约${reception.receptionGapMillis / 1000}秒没有状态更新 · 请检查后台设置"
+                    else -> "返回前台前收到过状态 · 请确认实际任务提醒是否及时"
+                },
+            ) { showVivoGuide = true }
             AiNotificationSettingRow(
                 Icons.Outlined.ContentCopy, if (copied) "已复制通知诊断" else "复制通知诊断",
                 "复制服务、网络和最近通知记录，帮助排查后台延迟；不包含凭据和对话内容",
@@ -100,6 +120,10 @@ internal fun AiNotificationSettings(dismiss: () -> Unit) {
                 copied = true
             }
         }
+    }
+    if (showVivoGuide) AiVivoBackgroundGuide {
+        showVivoGuide = false
+        backgroundRestricted = AiTaskNotifications.backgroundRestricted(context)
     }
 }
 

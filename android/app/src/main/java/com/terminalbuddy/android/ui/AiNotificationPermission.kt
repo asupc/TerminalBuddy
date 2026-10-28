@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.terminalbuddy.android.TerminalBuddyApplication
+import com.terminalbuddy.android.notifications.AiBackgroundCompatibility
 import com.terminalbuddy.android.notifications.AiTaskNotifications
 
 /** 首页与对话页都可处理通知和后台运行权限，返回系统设置时刷新实际状态。 */
@@ -31,6 +32,10 @@ internal fun AiNotificationPermission() {
     val notifications = remember(context) { (context.applicationContext as TerminalBuddyApplication).taskNotifications }
     val monitor by notifications.monitorState.collectAsStateWithLifecycle()
     val service by notifications.serviceState.collectAsStateWithLifecycle()
+    val reception by notifications.backgroundReception.collectAsStateWithLifecycle()
+    val isVivo = remember { AiBackgroundCompatibility.isVivoDevice() }
+    var showVivoGuide by remember { mutableStateOf(false) }
+    val vivoGuideChecked by notifications.vivoGuideChecked.collectAsStateWithLifecycle()
     fun refreshSettings() {
         enabled = AiTaskNotifications.notificationsEnabled(context)
         decisionAlerts = AiTaskNotifications.decisionAlertsEnabled(context)
@@ -71,11 +76,21 @@ internal fun AiNotificationPermission() {
             style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
         TextButton({ notifications.retryMonitoring() }) { Text("重试接收") }
     }
-    if (enabled && backgroundRestricted && monitor.active) Row(
+    val vivoNeedsAttention = isVivo && (!vivoGuideChecked || reception.interrupted)
+    if (enabled && monitor.active && (backgroundRestricted || vivoNeedsAttention)) Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("允许后台运行，避免切换应用后提醒延迟", Modifier.weight(1f),
-            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-        TextButton({ AiTaskNotifications.openBackgroundSettings(context) }) { Text("允许后台") }
+        Text(when {
+            isVivo && reception.interrupted -> "上次后台长时间未收到状态，请检查 vivo 后台设置"
+            isVivo -> "检查 vivo 后台耗电和自启动设置，减少提醒延迟"
+            else -> "允许后台运行，避免切换应用后提醒延迟"
+        }, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+        TextButton({
+            if (isVivo) showVivoGuide = true else AiTaskNotifications.openBackgroundSettings(context)
+        }) { Text(if (isVivo) "后台设置" else "允许后台") }
+    }
+    if (showVivoGuide) AiVivoBackgroundGuide {
+        showVivoGuide = false
+        refreshSettings()
     }
 }

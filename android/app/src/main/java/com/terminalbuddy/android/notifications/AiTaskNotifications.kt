@@ -66,6 +66,11 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     private val diagnostics = AiNotificationDiagnostics(context)
     private val mutableServiceState = MutableStateFlow(AiTaskServiceState())
     internal val serviceState = mutableServiceState.asStateFlow()
+    private val mutableBackgroundReception = MutableStateFlow(AiBackgroundReceptionState())
+    internal val backgroundReception = mutableBackgroundReception.asStateFlow()
+    private val mutableVivoGuideChecked = MutableStateFlow(AiBackgroundCompatibility.vivoGuideChecked(context))
+    internal val vivoGuideChecked = mutableVivoGuideChecked.asStateFlow()
+    private var backgroundStartedAt: Long? = null
     private var serviceStartWatchdog: Job? = null
     private var foreground = false
     private var monitoringSuspended = false
@@ -114,8 +119,12 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     }
 
     fun setForeground(active: Boolean) {
-        foreground = active
         val now = SystemClock.elapsedRealtime()
+        // 在前台补拉前判断上次后台接收间隔，避免恢复后的新响应掩盖停收。
+        if (active && !foreground) inspectBackgroundReception(now)
+        if (!active && foreground) backgroundStartedAt = now
+        if (active) backgroundStartedAt = null
+        foreground = active
         fun age(time: Long) = if (time == 0L) "尚未成功" else "${(now - time).coerceAtLeast(0) / 1000}秒前"
         // 在前台恢复触发补拉之前保存间隔，避免新响应掩盖此前后台停收的证据。
         recordDiagnostic("${if (active) "应用进入前台" else "应用进入后台"}，服务运行=$serviceRunning，" +
@@ -126,6 +135,17 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         }
         ensureMonitoring()
         monitor.refreshNow()
+    }
+
+    private fun inspectBackgroundReception(now: Long) {
+        if (!AiBackgroundCompatibility.isVivoDevice() || monitoredAccounts().isEmpty()) return
+        val startedAt = backgroundStartedAt ?: return
+        val reception = AiBackgroundReceptionState.afterBackground(
+            startedAt, now, maxOf(monitor.lastFrameAt, monitor.lastSyncAt),
+        ) ?: return
+        mutableBackgroundReception.value = reception
+        recordDiagnostic("vivo 后台接收记录：后台=${reception.backgroundMillis / 1000}秒，" +
+            "最近状态更新=${reception.receptionGapMillis / 1000}秒前，长时间停收=${reception.interrupted}")
     }
 
     /** 登出只停止对应账号的监听；切换账号保留原账号正在执行的任务。 */
@@ -251,6 +271,13 @@ class AiTaskNotifications(private val context: Context, private val repository: 
 
     internal fun recordDiagnostic(message: String) { diagnostics.record(message) }
 
+    internal fun markVivoGuideChecked() {
+        AiBackgroundCompatibility.markVivoGuideChecked(context)
+        mutableVivoGuideChecked.value = true
+        recordDiagnostic("用户已检查 vivo 设置指引；厂商后台授权仍需实际接收验证")
+        retryMonitoring()
+    }
+
     internal fun monitorStarted() {
         serviceStartWatchdog?.cancel()
         serviceStartWatchdog = null
@@ -312,13 +339,21 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         val state = monitorState.value
         val service = serviceState.value
         val power = context.getSystemService(PowerManager::class.java)
+        val reception = backgroundReception.value
         return buildString {
             appendLine("Terminal Buddy 通知诊断")
             appendLine("设备：${Build.MANUFACTURER} ${Build.MODEL}，Android ${Build.VERSION.RELEASE} / API ${Build.VERSION.SDK_INT}")
             appendLine("进程：${Process.myPid()}，应用前台：$foreground，登录账号：${monitoredAccounts().size}")
             appendLine("服务运行：${service.running}，启动中：${service.starting}，错误：${service.error ?: "无"}")
             appendLine("通知权限：${notificationsEnabled(context)}，决策横幅：${decisionAlertsEnabled(context)}，结束横幅：${resultAlertsEnabled(context)}")
-            appendLine("后台受限：${backgroundRestricted(context)}，电池优化豁免：${power.isIgnoringBatteryOptimizations(context.packageName)}")
+            appendLine("标准后台受限：${backgroundRestricted(context)}，电池优化豁免：${power.isIgnoringBatteryOptimizations(context.packageName)}")
+            if (AiBackgroundCompatibility.isVivoDevice()) {
+                appendLine("vivo 设置指引已检查：${AiBackgroundCompatibility.vivoGuideChecked(context)}；厂商后台授权无法通过公开接口确认")
+                appendLine(if (reception.checked) "上次后台=${reception.backgroundMillis / 1000}秒，" +
+                    "返回前最近状态更新=${reception.receptionGapMillis / 1000}秒前，长时间停收=${reception.interrupted}"
+                    else "上次后台接收记录：尚无持续至少90秒的后台记录")
+                appendLine("后台停收不等于已确认冻结，实际任务通知仍需在手机后台验证")
+            }
             appendLine("设备休眠：${power.isDeviceIdleMode}，省电模式：${power.isPowerSaveMode}")
             appendLine("监听账号：${state.active}，重连中：${state.reconnecting}，轮询补偿：${state.pollingFallback}，网络被系统限制：${state.networkBlocked}")
             val now = SystemClock.elapsedRealtime()

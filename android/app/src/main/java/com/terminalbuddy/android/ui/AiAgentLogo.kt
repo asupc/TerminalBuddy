@@ -11,6 +11,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.terminalbuddy.android.R
@@ -21,16 +22,18 @@ import com.terminalbuddy.android.R
  * Pi 使用 pi.dev 官方三色几何标（橙/蓝/黄），必须保留原色，不能经 Icon 染色。
  */
 @Composable
-internal fun AiAgentLogo(agent: String, modifier: Modifier = Modifier, contentDescription: String? = null) {
+internal fun AiAgentLogo(
+    agent: String, modifier: Modifier = Modifier, contentDescription: String? = null, tint: Color = TbColors.Text,
+) {
     when (agent.lowercase()) {
         "codex" -> Icon(
-            painterResource(R.drawable.ai_logo_codex), contentDescription, modifier.size(20.dp), tint = TbColors.Text,
+            painterResource(R.drawable.ai_logo_codex), contentDescription, modifier.size(20.dp), tint = tint,
         )
         "claude", "claude code" -> Icon(
-            painterResource(R.drawable.ai_logo_claude), contentDescription, modifier.size(20.dp), tint = TbColors.Text,
+            painterResource(R.drawable.ai_logo_claude), contentDescription, modifier.size(20.dp), tint = tint,
         )
         "pi" -> Image(painterResource(R.drawable.ai_logo_pi), contentDescription, modifier.size(20.dp))
-        else -> Icon(Icons.Outlined.AutoAwesome, contentDescription, modifier.size(20.dp), tint = TbColors.Text)
+        else -> Icon(Icons.Outlined.AutoAwesome, contentDescription, modifier.size(20.dp), tint = tint)
     }
 }
 

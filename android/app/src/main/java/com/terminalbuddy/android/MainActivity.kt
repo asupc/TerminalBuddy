@@ -67,10 +67,10 @@ class MainActivity : ComponentActivity() {
                 else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
             // Android 8.0 不支持深色导航图标，浅色模式下用深色底保护白色系统按钮。
             navigationBarStyle = if (darkTheme) SystemBarStyle.dark(Color.TRANSPARENT)
-                else SystemBarStyle.light(Color.TRANSPARENT, Color.rgb(16, 20, 21)),
+                else SystemBarStyle.light(Color.TRANSPARENT, Color.rgb(24, 24, 27)),
         )
         window.setBackgroundDrawable(ColorDrawable(
-            if (darkTheme) Color.rgb(12, 15, 16) else Color.rgb(245, 247, 246)
+            if (darkTheme) Color.rgb(16, 16, 18) else Color.rgb(247, 247, 248)
         ))
     }
 }

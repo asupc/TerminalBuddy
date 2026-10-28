@@ -6,7 +6,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,23 +22,23 @@ import com.terminalbuddy.android.data.AiAccount
     remove: (String) -> Unit, clearError: () -> Unit,
 ) {
     var deleting by remember { mutableStateOf<AiAccount?>(null) }
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))) {
-        Row(Modifier.fillMaxWidth().padding(start = if (back == null) 16.dp else 4.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            if (back != null) IconButton(back) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回 AI 首页", Modifier.size(20.dp), tint = TbColors.TextMuted)
+    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+        if (back != null) {
+            AiSubpageHeader("账号切换", back) {
+                TextButton(add, enabled = !ui.authenticating) {
+                    Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("添加账号")
+                }
             }
-            Text("账号列表", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            TextButton(add, enabled = !ui.authenticating) {
-                Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("添加账号")
+        } else {
+            PageHeader("选择账号", subtitle = "连接你保存的工作空间") {
+                IconButton(add, enabled = !ui.authenticating) { Icon(Icons.Outlined.Add, "添加账号", Modifier.size(24.dp)) }
             }
-            ThemeToggleButton()
         }
         ui.error?.let { AiError(it, clearError) }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item {
                 Text("添加多个 TerminalBuddy 账号，点击即可切换。", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
             }
@@ -57,9 +56,9 @@ import com.terminalbuddy.android.data.AiAccount
                 val current = account.id == ui.activeAccountId
                 val switching = account.id == ui.switchingAccountId
                 Surface(onClick = { if (!current) select(account) }, enabled = !ui.authenticating,
-                    color = if (current) TbColors.Accent.copy(alpha = .12f) else TbColors.Surface, shape = RoundedCornerShape(12.dp),
+                    color = if (current) TbColors.Accent.copy(alpha = .12f) else TbColors.Surface, shape = RoundedCornerShape(20.dp),
                     border = BorderStroke(1.dp, if (current) TbColors.Accent.copy(alpha = .25f) else TbColors.Border)) {
-                    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 16.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         AiSmallIcon(Icons.Outlined.PersonOutline)
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {

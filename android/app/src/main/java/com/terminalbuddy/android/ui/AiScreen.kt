@@ -1,21 +1,16 @@
 package com.terminalbuddy.android.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -23,19 +18,11 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
-import com.terminalbuddy.android.R
 import com.terminalbuddy.android.data.AiHistorySession
 import com.terminalbuddy.android.data.AiSession
 import java.text.SimpleDateFormat
@@ -43,32 +30,44 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private enum class AiPage { Home, Accounts, Connection }
+private enum class AiPage { Home, Accounts, Connection, ServiceInfo }
 
-/** AI 首页：服务连接、新对话配置、最近对话和账号管理。 */
-@Composable fun AiScreen(ui: AiUiState, vm: AiViewModel) {
+/** 一级入口共用底部导航，账号、服务信息和对话保留独立的二级页面。 */
+@Composable
+fun AiScreen(ui: AiUiState, vm: AiViewModel) {
     var page by rememberSaveable { mutableStateOf(AiPage.Home) }
+    var tab by rememberSaveable { mutableStateOf(AiHomeTab.QuickStart) }
+    val tabState = rememberSaveableStateHolder()
     var loginAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
-    var connectionFromAccounts by rememberSaveable { mutableStateOf(false) }
-    var deleting by remember { mutableStateOf<AiSession?>(null) }
-    var confirmDeleteAll by remember { mutableStateOf(false) }
+    var connectionReturnPage by rememberSaveable { mutableStateOf(AiPage.Home) }
+    var handledConnectionRevision by rememberSaveable { mutableLongStateOf(ui.connectionRevision) }
+    var deleting by remember(ui.activeAccountId) { mutableStateOf<AiSession?>(null) }
+    var confirmDeleteAll by remember(ui.activeAccountId) { mutableStateOf(false) }
     var notificationSettings by rememberSaveable { mutableStateOf(false) }
     var sendModeSheet by rememberSaveable { mutableStateOf(false) }
     val deletableCount = ui.sessions.count { !it.running }
     val openConnection: (String?, Boolean, Boolean) -> Unit = { id, adding, fromAccounts ->
         loginAccountId = id
         addingAccount = adding
-        connectionFromAccounts = fromAccounts
+        connectionReturnPage = if (fromAccounts) AiPage.Accounts else if (page == AiPage.ServiceInfo) AiPage.ServiceInfo else AiPage.Home
         page = AiPage.Connection
         vm.clearError()
     }
+    val openAccounts: () -> Unit = { page = AiPage.Accounts; vm.clearError() }
     val back: () -> Unit = {
         vm.cancelAuthentication()
-        page = if (page == AiPage.Connection && connectionFromAccounts) AiPage.Accounts else AiPage.Home
+        page = if (page == AiPage.Connection) connectionReturnPage else AiPage.Home
     }
-    BackHandler(page != AiPage.Home || ui.authenticating) { back() }
-    LaunchedEffect(ui.connectionRevision) { if (ui.authenticated) page = AiPage.Home }
+    BackHandler(page != AiPage.Home || ui.authenticating || tab != AiHomeTab.QuickStart) {
+        if (page != AiPage.Home || ui.authenticating) back() else tab = AiHomeTab.QuickStart
+    }
+    LaunchedEffect(ui.connectionRevision) {
+        if (handledConnectionRevision != ui.connectionRevision) {
+            handledConnectionRevision = ui.connectionRevision
+            if (ui.authenticated) page = AiPage.Home
+        }
+    }
     LaunchedEffect(ui.notificationLoginAccountId) {
         ui.notificationLoginAccountId?.let { openConnection(it, false, true) }
     }
@@ -77,7 +76,7 @@ private enum class AiPage { Home, Accounts, Connection }
         AiConnection(ui, vm::login, if (page == AiPage.Connection) back else null,
             initialServer = account?.server ?: ui.server,
             initialUsername = account?.username ?: if (addingAccount) "" else ui.username,
-            title = if (addingAccount) "添加账号" else if (account?.loggedIn == false) "重新登录" else "服务连接",
+            title = if (addingAccount) "添加账号" else if (account?.loggedIn == false) "重新登录" else "连接服务",
             adding = addingAccount)
         return
     }
@@ -93,66 +92,44 @@ private enum class AiPage { Home, Accounts, Connection }
         AiCodexHistoryScreen(ui, vm)
         return
     }
-    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
-        PageHeader("TerminalBuddy", reconnecting = ui.reconnecting) {
-            var menu by remember { mutableStateOf(false) }
-            val enabled = !ui.working && !ui.authenticating
-            val themeControls = LocalThemeControls.current
-            Box {
-                IconButton({ menu = true }) {
-                    Icon(Icons.Outlined.MoreHoriz, "更多", Modifier.size(20.dp), tint = TbColors.TextMuted)
-                }
-                DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem(
-                        text = { Text(if (themeControls.darkTheme) "切换为浅色模式" else "切换为深色模式") },
-                        leadingIcon = {
-                            Icon(if (themeControls.darkTheme) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, null, Modifier.size(20.dp))
-                        },
-                        modifier = Modifier.semantics {
-                            stateDescription = if (themeControls.darkTheme) "深色模式" else "浅色模式"
-                        },
-                        onClick = {
-                            menu = false
-                            themeControls.onDarkThemeChange(!themeControls.darkTheme)
-                        },
-                    )
-                    DropdownMenuItem(text = { Text("通知设置") },
-                        leadingIcon = { Icon(Icons.Outlined.Notifications, null, Modifier.size(20.dp)) },
-                        onClick = { menu = false; notificationSettings = true })
-                    DropdownMenuItem(text = { Text("发送方式") },
-                        leadingIcon = { Icon(Icons.Outlined.Bolt, null, Modifier.size(20.dp)) },
-                        onClick = { menu = false; sendModeSheet = true })
-                    DropdownMenuItem(text = { Text("账号切换") }, enabled = enabled,
-                        leadingIcon = { Icon(Icons.Outlined.ManageAccounts, null, Modifier.size(20.dp)) },
-                        onClick = { menu = false; page = AiPage.Accounts; vm.clearError() })
-                    DropdownMenuItem(text = { Text("服务连接") }, enabled = enabled,
-                        leadingIcon = { Icon(Icons.Outlined.Dns, null, Modifier.size(20.dp)) },
-                        onClick = { menu = false; openConnection(ui.activeAccountId, false, false) })
-                    DropdownMenuItem(text = { Text("退出 AI 服务") }, enabled = enabled,
-                        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Logout, null, Modifier.size(20.dp)) },
-                        onClick = { menu = false; vm.logout() })
+    if (page == AiPage.ServiceInfo) {
+        AiServiceInfoScreen(ui, back) { openConnection(ui.activeAccountId, false, false) }
+        return
+    }
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    Column(Modifier.fillMaxSize().imePadding()) {
+        PageHeader(tab.title, reconnecting = ui.reconnecting, subtitle = tab.subtitle)
+        ui.error?.let { AiError(it, vm::clearError) }
+        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.widthIn(max = 680.dp).fillMaxSize()) {
+                tabState.SaveableStateProvider("home:${ui.activeAccountId}:${tab.name}") {
+                    when (tab) {
+                        AiHomeTab.QuickStart -> AiHomeWorkspace(ui, vm, sessions = { tab = AiHomeTab.Sessions })
+                        AiHomeTab.Sessions -> AiSessionsScreen(ui, vm,
+                            start = { tab = AiHomeTab.QuickStart }, delete = { deleting = it },
+                            deleteAll = { confirmDeleteAll = true })
+                        AiHomeTab.Profile -> AiProfileScreen(ui,
+                            notifications = { notificationSettings = true },
+                            sendMode = { sendModeSheet = true }, accounts = openAccounts,
+                            serviceInfo = { page = AiPage.ServiceInfo }, logout = vm::logout)
+                    }
                 }
             }
         }
-        AiNotificationPermission()
-        ui.error?.let { AiError(it, vm::clearError) }
-        AiHomeWorkspace(ui, vm,
-            accounts = { page = AiPage.Accounts; vm.clearError() },
-            delete = { deleting = it }, deleteAll = { confirmDeleteAll = true },
-        )
+        if (!keyboardVisible) AiBottomNavigation(tab, ui.unviewedIds.size) { tab = it }
     }
     if (notificationSettings) AiNotificationSettings { notificationSettings = false }
     if (sendModeSheet) AiSendModeSheet(ui.sendImmediate, vm::setSendImmediate) { sendModeSheet = false }
     deleting?.let { session -> AiDeleteDialog(session, { deleting = null }) { deleting = null; vm.delete(session) } }
     if (confirmDeleteAll) {
         AlertDialog(
-            onDismissRequest = { confirmDeleteAll = false }, title = { Text("一键删除对话") },
-            text = { Text("将删除 ${deletableCount} 段未运行对话及其消息。正在回复或等待确认的对话会保留，项目文件不会被删除。") },
+            onDismissRequest = { confirmDeleteAll = false }, title = { Text("清理空闲会话") },
+            text = { Text("将删除当前账号全部 $deletableCount 段空闲会话及其消息。正在回复或等待确认的会话会保留，项目文件不会被删除。") },
             confirmButton = {
                 TextButton(
                     onClick = { confirmDeleteAll = false; vm.deleteAll() },
                     enabled = deletableCount > 0 && !ui.loading && !ui.working,
-                ) { Text("删除", color = TbColors.Danger) }
+                ) { Text("确认清理", color = TbColors.Danger) }
             },
             dismissButton = { TextButton({ confirmDeleteAll = false }) { Text("取消") } },
         )
@@ -334,23 +311,23 @@ internal fun AiChoiceField(
     LaunchedEffect(available) { if (!available) expanded = false }
     Surface(
         onClick = { expanded = true }, modifier = modifier.fillMaxWidth().alpha(if (available) 1f else .5f),
-        enabled = available, color = TbColors.SurfaceHover, shape = RoundedCornerShape(9.dp),
+        enabled = available, color = TbColors.SurfaceHover, shape = RoundedCornerShape(14.dp),
     ) {
         Row(
-            Modifier.heightIn(min = 52.dp).padding(horizontal = 8.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically,
+            Modifier.heightIn(min = 60.dp).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val selectedAgent = selected?.agent
             if (selectedAgent != null) AiAgentLogo(selectedAgent, Modifier.size(20.dp))
-            else Icon(icon, null, Modifier.size(16.dp), tint = TbColors.TextMuted)
+            else Icon(icon, null, Modifier.size(20.dp), tint = TbColors.TextMuted)
             Column(Modifier.weight(1f)) {
-                Text(label, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+                Text(label, style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
                 Text(
                     selected?.title ?: placeholder, style = MaterialTheme.typography.labelLarge,
                     color = if (selected == null) TbColors.TextMuted else TbColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(14.dp), tint = TbColors.TextMuted)
+            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(18.dp), tint = TbColors.TextMuted)
         }
     }
     if (expanded && available) {
@@ -412,110 +389,4 @@ internal fun AiDeleteDialog(session: AiSession, dismiss: () -> Unit, confirm: ()
         confirmButton = { TextButton(confirm) { Text("删除", color = TbColors.Danger) } },
         dismissButton = { TextButton(dismiss) { Text("取消") } },
     )
-}
-
-/** 服务连接表单：品牌与登录内容整体居中，小屏和键盘弹出时仍可滚动。 */
-@Composable
-private fun AiConnection(
-    ui: AiUiState, login: (String, String, String) -> Unit, back: (() -> Unit)?,
-    initialServer: String, initialUsername: String, title: String, adding: Boolean,
-) {
-    var server by rememberSaveable(initialServer, title) { mutableStateOf(initialServer) }
-    var username by rememberSaveable(initialUsername, title) { mutableStateOf(initialUsername) }
-    var password by remember { mutableStateOf("") }
-    var visible by remember { mutableStateOf(false) }
-    Column(
-        Modifier.fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical)),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (back != null) {
-                IconButton(back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回", Modifier.size(20.dp)) }
-                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = TbColors.Text)
-            } else {
-                Spacer(Modifier.weight(1f))
-            }
-            ThemeToggleButton()
-        }
-        Column(
-            Modifier.weight(1f).fillMaxWidth().imePadding().verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Column(
-                Modifier.widthIn(max = 420.dp).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Column(
-                    Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.terminal_buddy_logo),
-                        contentDescription = "Terminal Buddy 标志", modifier = Modifier.size(88.dp),
-                    )
-                    Text(
-                        "Terminal Buddy", Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineMedium,
-                        fontSize = 32.sp, lineHeight = 40.sp, color = TbColors.Text, textAlign = TextAlign.Center,
-                    )
-                    Text(
-                        "继续服务器上的 Claude 与 Codex 对话", Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted, textAlign = TextAlign.Center,
-                    )
-                }
-                AiCard {
-                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedTextField(
-                            server, { server = it }, Modifier.fillMaxWidth(), label = { Text("服务地址") },
-                            placeholder = { Text("http://192.168.1.10:9600") }, singleLine = true, enabled = !ui.authenticating,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), shape = RoundedCornerShape(10.dp),
-                            textStyle = MaterialTheme.typography.bodyMedium,
-                        )
-                        OutlinedTextField(
-                            username, { username = it }, Modifier.fillMaxWidth(), label = { Text("服务账号") },
-                            singleLine = true, enabled = !ui.authenticating, shape = RoundedCornerShape(10.dp),
-                            textStyle = MaterialTheme.typography.bodyMedium,
-                        )
-                        OutlinedTextField(
-                            password, { password = it }, Modifier.fillMaxWidth(), label = { Text("服务密码") },
-                            singleLine = true, enabled = !ui.authenticating, textStyle = MaterialTheme.typography.bodyMedium,
-                            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(10.dp),
-                            trailingIcon = {
-                                IconButton({ visible = !visible }) {
-                                    Icon(
-                                        if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                        if (visible) "隐藏密码" else "显示密码", Modifier.size(20.dp),
-                                    )
-                                }
-                            },
-                        )
-                        ui.error?.let { Text(it, color = TbColors.Danger, style = MaterialTheme.typography.bodySmall) }
-                        Button(
-                            { login(server, username, password) }, Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            enabled = !ui.authenticating, shape = RoundedCornerShape(10.dp),
-                        ) {
-                            if (ui.authenticating) {
-                                CircularProgressIndicator(Modifier.size(16.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Text(if (ui.authenticating) "正在连接…" else if (adding) "登录并添加" else "连接并登录")
-                        }
-                    }
-                }
-                Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Outlined.Lock, null, Modifier.padding(top = 2.dp).size(14.dp), tint = TbColors.TextMuted)
-                    Text(
-                        "使用 TerminalBuddy 服务账号。密码不会保存，登录令牌由设备加密保存。",
-                        color = TbColors.TextMuted, style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-        }
-    }
 }
