@@ -31,7 +31,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private enum class AiPage { Home, Accounts, Connection, ServiceInfo }
+private enum class AiPage { Home, Accounts, Connection, ServiceInfo, AppUpdate }
 
 /** 一级入口共用底部导航，账号、服务信息和对话保留独立的二级页面。 */
 @Composable
@@ -93,6 +93,10 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
         AiCodexHistoryScreen(ui, vm)
         return
     }
+    if (page == AiPage.AppUpdate) {
+        AppUpdateScreen(back)
+        return
+    }
     if (page == AiPage.ServiceInfo) {
         AiServiceInfoScreen(ui, back) { openConnection(ui.activeAccountId, false, false) }
         return
@@ -112,7 +116,8 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                         AiHomeTab.Profile -> AiProfileScreen(ui,
                             notifications = { notificationSettings = true },
                             sendMode = { sendModeSheet = true }, accounts = openAccounts,
-                            serviceInfo = { page = AiPage.ServiceInfo }, logout = vm::logout)
+                            serviceInfo = { page = AiPage.ServiceInfo },
+                            onlineUpdate = { page = AiPage.AppUpdate }, logout = vm::logout)
                     }
                 }
             }

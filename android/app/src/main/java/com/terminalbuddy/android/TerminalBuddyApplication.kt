@@ -2,10 +2,14 @@ package com.terminalbuddy.android
 
 import android.app.Application
 import com.terminalbuddy.android.data.AiRepository
+import com.terminalbuddy.android.data.AppUpdateRepository
+import com.terminalbuddy.android.data.AppUpdateDownloader
 import com.terminalbuddy.android.notifications.AiTaskNotifications
 
 class TerminalBuddyApplication : Application() {
     val aiRepository by lazy { AiRepository(this) }
+    val appUpdateRepository by lazy { AppUpdateRepository(this) }
+    val appUpdateDownloader by lazy { AppUpdateDownloader(this, appUpdateRepository) }
     val taskNotifications by lazy { AiTaskNotifications(this, aiRepository) }
 
     override fun onCreate() {

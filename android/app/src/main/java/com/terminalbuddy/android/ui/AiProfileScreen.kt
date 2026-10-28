@@ -40,7 +40,7 @@ import com.terminalbuddy.android.AiUiState
 @Composable
 internal fun AiProfileScreen(
     ui: AiUiState, notifications: () -> Unit, sendMode: () -> Unit,
-    accounts: () -> Unit, serviceInfo: () -> Unit, logout: () -> Unit,
+    accounts: () -> Unit, serviceInfo: () -> Unit, onlineUpdate: () -> Unit, logout: () -> Unit,
 ) {
     var confirmLogout by remember(ui.activeAccountId) { mutableStateOf(false) }
     val enabled = !ui.working && !ui.authenticating
@@ -88,6 +88,8 @@ internal fun AiProfileScreen(
                     AiSettingsRow(Icons.Outlined.ManageAccounts, "账号切换", "${ui.accounts.size} 个已保存账号", enabled, accounts)
                     AiDivider(Modifier.padding(start = 60.dp, end = 16.dp))
                     AiSettingsRow(Icons.Outlined.Dns, "服务信息", "连接地址、服务状态与应用版本", enabled, serviceInfo)
+                    AiDivider(Modifier.padding(start = 60.dp, end = 16.dp))
+                    AiSettingsRow(Icons.Outlined.SystemUpdate, "在线更新", "连接葫芦娃打包服务，编译、下载并安装", click = onlineUpdate)
                 }
                 AiNotificationPermission()
             }
@@ -423,7 +425,7 @@ private fun AiInfoRow(label: String, value: String) {
 }
 
 @Composable
-private fun appVersion(): String {
+internal fun appVersion(): String {
     val context = LocalContext.current
     return remember(context) {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
