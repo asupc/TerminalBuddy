@@ -12,6 +12,10 @@
 # 产物:dist/TerminalBuddy_<版本>_android.apk 及同名 .sha256(仓库内
 # release.keystore 自动完成 Release 签名,并在容器内用 apksigner 校验)。
 # Windows 上带 adb 直装的版本见 scripts/build-android.bat 与 scripts/build-android.ps1。
+#
+# 每次构建自动把版本号自增一:versionName 末段 +1(如 1.0.0 → 1.0.1)、
+# versionCode 同步 +1,构建成功后回写 android/app/build.gradle.kts(记得随
+# 代码提交);构建失败则不回写,不消耗版本号。
 
 set -euo pipefail
 
@@ -30,6 +34,9 @@ usage() {
   --rebuild      强制重建构建工具链镜像(--no-cache)
   --clean-cache  删除 Docker 命名卷中的 Gradle 缓存后重新构建
   -h, --help     显示本帮助
+
+说明:每次构建自动 versionName 末段 +1 / versionCode +1,
+      构建成功后回写 android/app/build.gradle.kts。
 
 环境变量:
   TERMINAL_BUDDY_ANDROID_IMAGE         自定义工具链镜像名,默认 terminal-buddy-android-builder:latest
@@ -58,6 +65,23 @@ if [ ! -f "$REPO_ROOT/android/build.gradle.kts" ] || [ ! -f "$DOCKERFILE" ]; the
     echo "错误:项目结构不完整,请在仓库根目录运行本脚本。" >&2
     exit 1
 fi
+
+# 版本号自增:versionName 末段 +1、versionCode +1;新版本注入容器内副本构建,
+# 成功后才回写仓库文件,失败不消耗版本号
+GRADLE_FILE="$REPO_ROOT/android/app/build.gradle.kts"
+CURRENT_VERSION="$(grep -m1 -oE 'versionName *= *"[^"]+"' "$GRADLE_FILE" | sed -E 's/.*"([^"]+)"/\1/')"
+CURRENT_CODE="$(grep -m1 -oE 'versionCode *= *[0-9]+' "$GRADLE_FILE" | grep -oE '[0-9]+$')"
+if ! [[ "$CURRENT_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    echo "错误:versionName 不是三段式数字版本号(当前:$CURRENT_VERSION),无法自动自增。" >&2
+    exit 1
+fi
+if [ -z "$CURRENT_CODE" ]; then
+    echo "错误:未能从 $GRADLE_FILE 解析出 versionCode。" >&2
+    exit 1
+fi
+NEW_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+NEW_CODE="$((CURRENT_CODE + 1))"
+echo "==> 版本号自增:versionName $CURRENT_VERSION → $NEW_VERSION,versionCode $CURRENT_CODE → $NEW_CODE"
 
 echo "==> [1/3] 准备构建镜像:$IMAGE"
 if [ "$REBUILD" -eq 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -91,6 +115,8 @@ docker rm -f "$BUILD_CONTAINER" >/dev/null 2>&1 || true
 docker run --rm -i --name "$BUILD_CONTAINER" \
     -e HOST_UID="$(id -u)" \
     -e HOST_GID="$(id -g)" \
+    -e NEW_VERSION="$NEW_VERSION" \
+    -e NEW_CODE="$NEW_CODE" \
     -e HOME=/cache/home \
     -e GRADLE_USER_HOME=/cache/gradle \
     -v "$REPO_ROOT:/src:ro" \
@@ -99,7 +125,7 @@ docker run --rm -i --name "$BUILD_CONTAINER" \
     "$IMAGE" bash -s <<'CONTAINER_SCRIPT'
 set -euo pipefail
 
-echo "    [1/4] 复制源码到容器内工作目录"
+echo "    [1/5] 复制源码到容器内工作目录"
 rm -rf /build/android
 mkdir -p /build
 (
@@ -116,7 +142,11 @@ chmod +x /build/android/gradlew
 
 cd /build/android
 
-echo "    [2/4] 编译 Release APK"
+echo "    [2/5] 注入自增版本号(versionName $NEW_VERSION / versionCode $NEW_CODE)"
+sed -i -E "s/versionName *= *\"[^\"]+\"/versionName = \"$NEW_VERSION\"/" app/build.gradle.kts
+sed -i -E "s/versionCode *= *[0-9]+/versionCode = $NEW_CODE/" app/build.gradle.kts
+
+echo "    [3/5] 编译 Release APK"
 ./gradlew :app:assembleRelease --console=plain
 
 APK="app/build/outputs/apk/release/app-release.apk"
@@ -125,18 +155,21 @@ if [ ! -f "$APK" ]; then
     exit 1
 fi
 
-echo "    [3/4] 校验 Release 签名"
+echo "    [4/5] 校验 Release 签名"
 APKSIGNER="$(ls -1 "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)"
 "$APKSIGNER" verify --print-certs "$APK"
 
-echo "    [4/4] 收集产物"
-VERSION="$(grep -m1 -oE 'versionName *= *"[^"]+"' app/build.gradle.kts | sed -E 's/.*"([^"]+)"/\1/')"
-TARGET="/out/TerminalBuddy_${VERSION}_android.apk"
+echo "    [5/5] 收集产物"
+TARGET="/out/TerminalBuddy_${NEW_VERSION}_android.apk"
 cp -f "$APK" "$TARGET"
 HASH="$(sha256sum "$APK" | cut -d' ' -f1)"
 printf '%s  %s\n' "$HASH" "$(basename "$TARGET")" > "/out/$(basename "$TARGET").sha256"
 ls -lh "$TARGET"
 CONTAINER_SCRIPT
 
-echo "==> [3/3] 构建完成"
+# 构建成功,把自增后的版本号回写进仓库,下次构建在此基础上继续自增
+sed -i -E "s/versionName *= *\"[^\"]+\"/versionName = \"$NEW_VERSION\"/" "$GRADLE_FILE"
+sed -i -E "s/versionCode *= *[0-9]+/versionCode = $NEW_CODE/" "$GRADLE_FILE"
+
+echo "==> [3/3] 构建完成,已回写版本号 versionName $NEW_VERSION / versionCode $NEW_CODE(记得随代码提交)"
 ls -lh "$OUTPUT_DIR"/*_android.apk "$OUTPUT_DIR"/*_android.apk.sha256 2>/dev/null | tail -n 2 || true
