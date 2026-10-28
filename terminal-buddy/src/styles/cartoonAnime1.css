@@ -164,84 +164,84 @@
   --skin-tab-active: rgba(232, 198, 201, 0.58);
 }
 
-[data-skin] .app-container {
+[data-decorative-skin] .app-container {
   position: relative;
   isolation: isolate;
   background: var(--skin-canvas);
 }
 
-[data-skin] .main-content {
+[data-decorative-skin] .main-content {
   z-index: 1;
   background: transparent;
 }
 
 /* 侧栏面板的通用进入动画会从 opacity: 0 淡入。半透明皮肤下这会让
    面板短暂露出完整背景，看起来像不透明度先归零再恢复。 */
-[data-skin] .ui-style-sidebar .nav-panel-slot.active > * {
+[data-decorative-skin] .ui-style-sidebar .nav-panel-slot.active > * {
   animation: none;
 }
 
-[data-skin] .activity-bar,
-[data-skin] .config-nav {
+[data-decorative-skin] .activity-bar,
+[data-decorative-skin] .config-nav {
   background: var(--bg-secondary);
 }
 
-[data-skin] .tab-nav {
+[data-decorative-skin] .tab-nav {
   background: var(--bg-secondary);
 }
 
-[data-skin] .file-nav {
+[data-decorative-skin] .file-nav {
   --file-nav-surface: var(--bg-secondary);
   --file-nav-toolbar: transparent;
   --file-nav-control: var(--skin-control-surface);
 }
 
-[data-skin] .file-nav > .panel-titlebar,
-[data-skin] .file-nav-filter,
-[data-skin] .tab-nav > .panel-titlebar {
+[data-decorative-skin] .file-nav > .panel-titlebar,
+[data-decorative-skin] .file-nav-filter,
+[data-decorative-skin] .tab-nav > .panel-titlebar {
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-[data-skin] .tab-nav-search,
-[data-skin] .tab-nav-rename-input {
+[data-decorative-skin] .tab-nav-search,
+[data-decorative-skin] .tab-nav-rename-input {
   background: var(--skin-control-surface);
 }
 
-[data-skin] .file-nav-content {
+[data-decorative-skin] .file-nav-content {
   background: transparent;
 }
 
-[data-skin] .terminal-tab-bar {
+[data-decorative-skin] .terminal-tab-bar {
   /* A backdrop filter here turns this scrolling element into the containing
      block for its fixed context menu, causing the menu to be clipped. */
   background: var(--bg-secondary);
   border-bottom-color: var(--skin-toolbar-border);
 }
 
-[data-skin] .terminal-tab.active {
+[data-decorative-skin] .terminal-tab.active {
   background: var(--skin-tab-active);
 }
 
-[data-skin] .terminal-panel,
-[data-skin] .terminal-content,
-[data-skin] .terminal-content.split-grid .split-cell {
+[data-decorative-skin] .terminal-panel,
+[data-decorative-skin] .terminal-content,
+[data-decorative-skin] .terminal-content.split-grid .split-cell {
   background: transparent;
 }
 
 /* 空分屏没有 TerminalInstance 绘制表面，需与左侧面板使用同一透明度背景。 */
-[data-skin] .terminal-content.split-grid .split-blank {
+[data-decorative-skin] .terminal-content.split-grid .split-blank {
   background: var(--bg-secondary);
 }
 
-[data-skin] .terminal-empty,
-[data-skin] .terminal-starting,
-[data-skin] .lazy-panel-loading {
+[data-decorative-skin] .terminal-empty,
+[data-decorative-skin] .terminal-starting,
+[data-decorative-skin] .lazy-panel-loading {
   background: var(--bg-secondary);
 }
 
-[data-skin] .cartoon-anime1-overlay {
+[data-decorative-skin] .cartoon-anime1-overlay {
   position: absolute;
   z-index: 0;
   inset: 36px 0 0;
@@ -251,9 +251,9 @@
   user-select: none;
 }
 
-[data-skin] .cartoon-anime1-left,
-[data-skin] .cartoon-anime1-center,
-[data-skin] .cartoon-anime1-hero {
+[data-decorative-skin] .cartoon-anime1-left,
+[data-decorative-skin] .cartoon-anime1-center,
+[data-decorative-skin] .cartoon-anime1-hero {
   position: absolute;
   bottom: 0;
   display: block;
@@ -264,21 +264,21 @@
   opacity: 0.78;
 }
 
-[data-skin] .cartoon-anime1-left {
+[data-decorative-skin] .cartoon-anime1-left {
   left: 1%;
   width: min(22%, 340px);
   height: min(38%, 374px);
   opacity: 0.68;
 }
 
-[data-skin] .cartoon-anime1-center {
+[data-decorative-skin] .cartoon-anime1-center {
   left: 24%;
   width: min(23%, 356px);
   height: min(42%, 424px);
   opacity: 0.62;
 }
 
-[data-skin] .cartoon-anime1-hero {
+[data-decorative-skin] .cartoon-anime1-hero {
   right: 0.4%;
   width: min(42%, 650px);
   height: min(58%, 590px);
@@ -347,12 +347,12 @@
 }
 
 @media (max-width: 900px) {
-  [data-skin] .cartoon-anime1-left,
-  [data-skin] .cartoon-anime1-center {
+  [data-decorative-skin] .cartoon-anime1-left,
+  [data-decorative-skin] .cartoon-anime1-center {
     opacity: 0.42;
   }
 
-  [data-skin] .cartoon-anime1-hero {
+  [data-decorative-skin] .cartoon-anime1-hero {
     opacity: 0.56;
   }
 }

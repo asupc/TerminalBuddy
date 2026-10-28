@@ -77,12 +77,15 @@ interface TitleBarProps {
 interface ThemeSkinOption {
   id: ThemeSkin;
   label: string;
+  description?: string;
   icon: LucideIcon;
 }
 
 const THEME_SKINS: ReadonlyArray<ThemeSkinOption> = [
   { id: 'dark', label: '深色模式', icon: Moon },
   { id: 'light', label: '浅色模式', icon: Sun },
+  { id: 'pure-black', label: '纯黑', description: '固定深色 · 简洁纯色', icon: Moon },
+  { id: 'pure-white', label: '纯白', description: '固定浅色 · 简洁纯色', icon: Sun },
   { id: 'cartoon', label: '甜系少女', icon: Heart },
   { id: 'starry', label: '星空魔法', icon: Sparkles },
   { id: 'cyber', label: '霓虹赛博', icon: Zap },
@@ -471,6 +474,9 @@ export const TitleBar: FC<TitleBarProps> = ({
                             <span>{option.label}</span>
                             {selected && <Check className="theme-skin-check" aria-hidden="true" />}
                           </span>
+                          {option.description && (
+                            <span className="theme-skin-option-description">{option.description}</span>
+                          )}
                         </button>
                         {decorativeSkin && (
                           <label className="theme-skin-opacity-control">

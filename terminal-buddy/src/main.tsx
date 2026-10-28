@@ -9,6 +9,7 @@ import WebEntry from './components/browser/WebEntry';
 import { installBrowserKeyGuard } from './services/browserKeys';
 import './styles/global.css';
 import './styles/cartoonAnime1.css';
+import './styles/pureThemes.css';
 import './components/browser/WebEntry.css';
 
 // 输入框保留原生编辑菜单，支持密码粘贴等操作；其它区域禁用默认右键菜单。

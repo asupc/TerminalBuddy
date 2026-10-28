@@ -245,6 +245,23 @@ const LIGHT_COLORS: TerminalColors = {
   brightWhite: '#8C959F',
 };
 
+// 纯色皮肤使用不透明画布，保留 ANSI 语义色以保证命令输出可读。
+const PURE_BLACK_COLORS: TerminalColors = {
+  ...DARK_COLORS,
+  background: '#000000',
+  foreground: '#E6E6E6',
+  cursor: '#07C160',
+  cursorAccent: '#000000',
+  selectionBackground: '#244534',
+};
+
+const PURE_WHITE_COLORS: TerminalColors = {
+  ...LIGHT_COLORS,
+  foreground: '#1A1A1A',
+  cursor: '#07883C',
+  selectionBackground: '#CDEBD8',
+};
+
 const CARTOON_COLORS: TerminalColors = {
   background: 'rgba(255, 253, 248, 0)',
   foreground: '#71475C',
@@ -401,7 +418,9 @@ export const resolveTerminalColors = (
   let colors: TerminalColors;
   // 跟随开关开启且未显式指定非默认配色 → 跟随应用主题
   if (followEnabled && (!themeId || themeId === 'dark-default')) {
-    if (appTheme === 'cartoon') colors = CARTOON_COLORS;
+    if (appTheme === 'pure-black') colors = PURE_BLACK_COLORS;
+    else if (appTheme === 'pure-white') colors = PURE_WHITE_COLORS;
+    else if (appTheme === 'cartoon') colors = CARTOON_COLORS;
     else if (appTheme === 'starry') colors = STARRY_COLORS;
     else if (appTheme === 'cyber') colors = CYBER_COLORS;
     else if (appTheme === 'sakura') colors = SAKURA_COLORS;
