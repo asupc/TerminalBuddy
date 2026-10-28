@@ -55,6 +55,16 @@ data class AiSession(
 @Serializable
 data class AiAgents(val claude: Boolean = true, val codex: Boolean = true, val pi: Boolean = true)
 
+/** `/api/ai/history` 返回的 CLI 历史会话（与 PC 端共享同一索引），可恢复为可继续对话的会话。 */
+@Serializable
+data class AiHistorySession(
+    val sessionId: String, val projectDir: String, val title: String,
+    val updatedAt: Long = 0, val startedAt: Long? = null, val messageCount: Long = 0,
+    val model: String? = null, val starred: Boolean = false, val archived: Boolean = false,
+) {
+    val displayTitle get() = title.takeIf(String::isNotBlank) ?: "未命名会话"
+}
+
 @Serializable
 data class AiProject(val name: String, val path: String, val enabledAgents: AiAgents = AiAgents())
 

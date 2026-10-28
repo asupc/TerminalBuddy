@@ -153,7 +153,7 @@ class AiRepository(context: Context) {
     suspend fun projects(): List<AiProject> = ApiJson.decodeFromJsonElement(request("GET", listOf("projects")))
     suspend fun session(id: String): AiSession = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions", id)))
 
-    suspend fun create(project: AiProject, provider: AiProvider, model: String): AiSession =
+    suspend fun create(project: AiProject, provider: AiProvider, model: String, resumeSessionId: String? = null): AiSession =
         ApiJson.decodeFromJsonElement(
             request(
                 "POST", listOf("ai", "sessions"),
@@ -162,7 +162,22 @@ class AiRepository(context: Context) {
                     put("provider", provider.agent)
                     put("providerId", provider.id)
                     if (model.isNotBlank()) put("model", model.trim())
+                    // 恢复历史会话时服务端以历史所在项目为准，此处的项目路径仅作初始提示。
+                    if (!resumeSessionId.isNullOrBlank()) put("resumeSessionId", resumeSessionId)
                 },
+            )
+        )
+
+    /** 展开历史列表前的增量索引：本批同步返回，剩余由服务端后台补齐。 */
+    suspend fun rescanHistory(agent: String) {
+        request("POST", listOf("ai", "history", "rescan"), query = mapOf("agent" to agent))
+    }
+
+    suspend fun history(agent: String, projectPath: String): List<AiHistorySession> =
+        ApiJson.decodeFromJsonElement(
+            request(
+                "GET", listOf("ai", "history"),
+                query = mapOf("agent" to agent, "projectDir" to projectPath),
             )
         )
 
@@ -272,9 +287,10 @@ class AiRepository(context: Context) {
     private suspend fun request(
         method: String, path: List<String>, body: JsonElement? = null,
         server: String = store.server, token: String = store.token, client: OkHttpClient? = null,
+        query: Map<String, String> = emptyMap(),
     ): JsonElement = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder()
-            .url(ServerAddress.endpoint(server, path))
+            .url(ServerAddress.endpoint(server, path, query))
             .header("Accept", "application/json")
             .header("User-Agent", USER_AGENT)
             .apply { if (token.isNotBlank()) header("Authorization", "Bearer $token") }

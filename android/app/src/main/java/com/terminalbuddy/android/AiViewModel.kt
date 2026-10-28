@@ -40,6 +40,12 @@ data class AiUiState(
     val accounts: List<AiAccount> = emptyList(), val activeAccountId: String? = null,
     val switchingAccountId: String? = null,
     val notificationLoginAccountId: String? = null,
+    /** 历史会话区默认收起，展开后按当前项目 + Agent 拉取 CLI 转录历史。 */
+    val historyExpanded: Boolean = false,
+    val historySessions: List<AiHistorySession> = emptyList(),
+    val historyLoading: Boolean = false,
+    val historyAgent: String? = null,
+    val historyProjectPath: String = "",
 ) {
     /** 仅首次取数限制操作，后续刷新保留已有内容并保持页面可操作。 */
     val initialLoading get() = loading && !homeLoaded
@@ -95,6 +101,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private var generation = 0
     private var authJob: Job? = null
     private var refreshJob: Job? = null
+    private var historyJob: Job? = null
     private var streamJob: Job? = null
     private var pollingJob: Job? = null
     private var selectJob: Job? = null
@@ -439,6 +446,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     fun selectProject(path: String) {
         mutable.update { reconcile(it.copy(projectPath = path)) }
         saveSelection()
+        reloadHistoryIfExpanded()
     }
 
     fun selectAgent(agent: String) {
@@ -452,6 +460,75 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             reconcile(ui.copy(providerId = provider.id, modelId = ""))
         }
         saveSelection()
+        reloadHistoryIfExpanded()
+    }
+
+    /** 展开 / 收起历史会话区；展开时按当前项目 + Agent 拉取，切换选择后自动重载。 */
+    fun toggleHistory() {
+        val ui = mutable.value
+        if (ui.historyExpanded) {
+            historyJob?.cancel()
+            mutable.update { it.copy(historyExpanded = false, historySessions = emptyList(), historyLoading = false) }
+        } else {
+            mutable.update { it.copy(historyExpanded = true) }
+            loadHistory()
+        }
+    }
+
+    private fun reloadHistoryIfExpanded() {
+        if (mutable.value.historyExpanded) loadHistory()
+    }
+
+    /** 增量索引失败不阻断列表（可能只是后台补齐未完成），列表失败才提示。 */
+    private fun loadHistory() {
+        val ui = mutable.value
+        val agent = ui.launchProvider?.agent ?: return
+        val project = ui.launchProject ?: return
+        historyJob?.cancel()
+        historyJob = viewModelScope.launch {
+            mutable.update { it.copy(historyLoading = true, historyAgent = agent, historyProjectPath = project.path) }
+            try {
+                runCatching { repository.rescanHistory(agent) }
+                val sessions = repository.history(agent, project.path)
+                mutable.update { state ->
+                    // 请求期间用户可能已切换项目或 Agent，过期结果直接丢弃。
+                    if (!state.historyExpanded || state.historyAgent != agent || state.historyProjectPath != project.path) state
+                    else state.copy(historySessions = sessions, historyLoading = false)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                mutable.update { state ->
+                    if (!state.historyExpanded || state.historyAgent != agent || state.historyProjectPath != project.path) state
+                    else state.copy(historyLoading = false, error = e.userMessage())
+                }
+            }
+        }
+    }
+
+    /** 恢复 CLI 历史会话为可继续对话的原生会话：服务端绑定历史线程并预填最近消息。 */
+    fun resumeHistory(item: AiHistorySession) {
+        val ui = mutable.value
+        val project = ui.launchProject ?: return
+        val provider = ui.launchProvider ?: return
+        if (ui.working || ui.authenticating) return
+        val model = ui.launchModel?.id.orEmpty()
+        historyJob?.cancel()
+        refreshJob?.cancel(); selectJob?.cancel(); cancelSend(); stopRealtime()
+        mutable.update { it.copy(working = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val session = repository.create(project, provider, model, item.sessionId)
+                mutable.update { it.copy(working = false) }
+                // 列表由账号级通知流自行刷新；这里直接进入恢复出的会话。
+                open(session.id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                mutable.update { it.copy(working = false) }
+                failure(e)
+            }
+        }
     }
 
     fun selectModel(key: String) {
