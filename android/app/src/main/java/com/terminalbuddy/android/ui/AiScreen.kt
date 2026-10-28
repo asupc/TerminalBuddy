@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.AiHistorySession
@@ -303,7 +304,7 @@ private fun AiSendModeOption(
 @Composable
 internal fun AiChoiceField(
     label: String, icon: ImageVector, selectedId: String, placeholder: String, choices: List<AiChoice>,
-    enabled: Boolean, select: (String) -> Unit, modifier: Modifier = Modifier,
+    enabled: Boolean, select: (String) -> Unit, modifier: Modifier = Modifier, compact: Boolean = false,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     val selected = choices.find { it.id == selectedId }
@@ -311,23 +312,27 @@ internal fun AiChoiceField(
     LaunchedEffect(available) { if (!available) expanded = false }
     Surface(
         onClick = { expanded = true }, modifier = modifier.fillMaxWidth().alpha(if (available) 1f else .5f),
-        enabled = available, color = TbColors.SurfaceHover, shape = RoundedCornerShape(14.dp),
+        enabled = available, color = TbColors.SurfaceHover, shape = RoundedCornerShape(if (compact) 11.dp else 14.dp),
     ) {
         Row(
-            Modifier.heightIn(min = 60.dp).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
+            Modifier.heightIn(min = if (compact) 45.dp else 60.dp)
+                .padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val selectedAgent = selected?.agent
-            if (selectedAgent != null) AiAgentLogo(selectedAgent, Modifier.size(20.dp))
-            else Icon(icon, null, Modifier.size(20.dp), tint = TbColors.TextMuted)
+            if (selectedAgent != null) AiAgentLogo(selectedAgent, Modifier.size(if (compact) 16.dp else 20.dp))
+            else Icon(icon, null, Modifier.size(if (compact) 16.dp else 20.dp), tint = TbColors.TextMuted)
             Column(Modifier.weight(1f)) {
-                Text(label, style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
+                Text(label, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 13.sp else 18.sp),
+                    color = TbColors.TextMuted)
                 Text(
-                    selected?.title ?: placeholder, style = MaterialTheme.typography.labelLarge,
+                    selected?.title ?: placeholder,
+                    style = MaterialTheme.typography.labelLarge.copy(lineHeight = if (compact) 16.sp else 20.sp),
                     color = if (selected == null) TbColors.TextMuted else TbColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(18.dp), tint = TbColors.TextMuted)
+            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(if (compact) 15.dp else 18.dp), tint = TbColors.TextMuted)
         }
     }
     if (expanded && available) {

@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiLaunchModel
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
@@ -116,17 +117,18 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel) {
     val agents = listOf("claude", "codex") + if ("pi" in ui.availableAgents) listOf("pi") else emptyList()
     val enabled = !ui.initialLoading && !ui.working && !ui.authenticating
     AiCard(shape = RoundedCornerShape(24.dp)) {
-        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            AiSectionTitle("开启新会话", "选好项目，交给你熟悉的助手")
+        // 整卡按 3/4 高度压缩：内边距、行距、行高与控件最小高度同步等比缩小。
+        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
+            AiSectionTitle("开启新会话", "选好项目，交给你熟悉的助手", compact = true)
             AiChoiceField("工作项目", Icons.Outlined.FolderOpen, ui.projectPath, "选择一个项目",
-                ui.projects.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("选择助手", style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
+                ui.projects.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject, compact = true)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("选择助手", style = MaterialTheme.typography.labelMedium.copy(lineHeight = 13.sp), color = TbColors.TextMuted)
                 AiAgentTabs(agents, ui.launchProvider?.agent.orEmpty(), vm::selectAgent,
-                    enabledAgents = if (enabled) ui.availableAgents else emptyList())
+                    enabledAgents = if (enabled) ui.availableAgents else emptyList(), compact = true)
             }
             AiChoiceField("使用模型", Icons.Outlined.Tune, ui.launchModelKey, "选择模型",
-                modelChoices(ui.availableModels), enabled, vm::selectModel)
+                modelChoices(ui.availableModels), enabled, vm::selectModel, compact = true)
             val hint = when {
                 ui.initialLoading -> "正在同步项目和模型…"
                 ui.projects.isEmpty() -> "请先在服务端登记项目。"
@@ -134,15 +136,18 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel) {
                 ui.availableModels.isEmpty() -> "当前助手暂无可用模型，请在服务端配置。"
                 else -> null
             }
-            hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted) }
-            Button(vm::create, enabled = ui.canCreate, shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp)) {
-                if (ui.working) CircularProgressIndicator(Modifier.size(18.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
-                else Icon(Icons.Outlined.Add, null, Modifier.size(21.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (ui.working) "正在创建…" else "开始对话", Modifier.weight(1f))
-                Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(20.dp))
+            hint?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp), color = TbColors.TextMuted)
+            }
+            Button(vm::create, enabled = ui.canCreate, shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
+                contentPadding = PaddingValues(horizontal = 15.dp, vertical = 12.dp)) {
+                if (ui.working) CircularProgressIndicator(Modifier.size(14.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
+                else Icon(Icons.Outlined.Add, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (ui.working) "正在创建…" else "开始对话", Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelLarge.copy(lineHeight = 15.sp))
+                Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(15.dp))
             }
         }
     }
