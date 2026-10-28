@@ -66,6 +66,28 @@ data class AiAgents(val claude: Boolean = true, val codex: Boolean = true, val p
 @Serializable
 data class AiProject(val name: String, val path: String, val enabledAgents: AiAgents = AiAgents())
 
+/** `/api/container/environment` 的单助手安装状态，status 与服务端「Agent 管理」一致。 */
+@Serializable
+data class AiAgentCliStatus(val status: String = "")
+
+/** 服务端「Agent 管理」检测的 CLI 安装状态，未安装的助手不在快速开始中展示。 */
+@Serializable
+data class AiAgentEnvironment(
+    val claude: AiAgentCliStatus? = null,
+    val codex: AiAgentCliStatus? = null,
+    val pi: AiAgentCliStatus? = null,
+) {
+    /** 与桌面端可用判定一致：安装中 / 更新中同样视作可用。 */
+    fun installed(agent: String): Boolean = when (agent) {
+        "claude" -> available(claude)
+        "codex" -> available(codex)
+        "pi" -> available(pi)
+        else -> false
+    }
+    private fun available(status: AiAgentCliStatus?) =
+        status?.status == "installed" || status?.status == "installing" || status?.status == "updating"
+}
+
 @Serializable
 data class AiCatalog(val providers: List<AiProvider> = emptyList())
 

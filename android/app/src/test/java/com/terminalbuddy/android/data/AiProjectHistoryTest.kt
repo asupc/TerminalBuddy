@@ -22,6 +22,23 @@ class AiProjectHistoryTest {
     }
 
     @Test
+    fun `installed agents filter by environment and fall back to all when unknown`() {
+        // 检测失败或旧服务端无接口时按全部已安装处理，避免助手整体消失。
+        val unknown = AiUiState()
+        assertNull(unknown.installedAgents)
+        assertTrue(unknown.agentInstalled("claude"))
+        assertTrue(unknown.agentInstalled("pi"))
+        val detected = unknown.copy(agentEnvironment = AiAgentEnvironment(
+            claude = AiAgentCliStatus("installed"), codex = AiAgentCliStatus("notInstalled"),
+        ))
+        // 未返回的助手按未安装处理，与桌面端可用判定一致。
+        assertEquals(listOf("claude"), detected.installedAgents)
+        assertTrue(detected.agentInstalled("claude"))
+        assertFalse(detected.agentInstalled("codex"))
+        assertFalse(detected.agentInstalled("pi"))
+    }
+
+    @Test
     fun `history path matching handles windows case boundaries and nested projects`() {
         val parent = AiProject("父项目", "C:\\Work")
         val child = AiProject("子项目", "C:\\Work\\Buddy", AiAgents(codex = false))

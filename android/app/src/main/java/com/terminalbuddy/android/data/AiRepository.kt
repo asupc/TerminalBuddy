@@ -157,6 +157,9 @@ class AiRepository(context: Context) {
 
     suspend fun catalog(): AiCatalog = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "catalog")))
     suspend fun projects(): List<AiProject> = ApiJson.decodeFromJsonElement(request("GET", listOf("projects")))
+    /** 服务端「Agent 管理」的 CLI 安装状态；旧服务端无此接口时由调用方回退为全部可用。 */
+    suspend fun agentEnvironment(): AiAgentEnvironment =
+        ApiJson.decodeFromJsonElement(request("GET", listOf("container", "environment")))
 
     /** 复用桌面端已有历史命令；重扫采用服务端的发起即返回、异步轮询协议。 */
     private suspend fun historyCommand(command: String, args: JsonObject = JsonObject(emptyMap())): JsonElement {
