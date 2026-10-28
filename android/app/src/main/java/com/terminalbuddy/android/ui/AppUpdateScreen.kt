@@ -25,8 +25,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,7 +40,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** 与葫芦娃共用构建服务，使用当前应用的原生主题和独立登录态。 */
+/** 仅用服务地址连接独立更新接口，保留原生主题和完整构建工作台。 */
 @Composable
 internal fun AppUpdateScreen(back: () -> Unit, vm: AppUpdateViewModel = viewModel()) {
     val ui by vm.state.collectAsStateWithLifecycle()
@@ -162,29 +160,16 @@ internal fun AppUpdateScreen(back: () -> Unit, vm: AppUpdateViewModel = viewMode
 @Composable
 private fun BuildConnection(ui: AppUpdateUiState, vm: AppUpdateViewModel) {
     var server by rememberSaveable(ui.server) { mutableStateOf(ui.server) }
-    var username by rememberSaveable(ui.username) { mutableStateOf(ui.username) }
-    // 密码只保留在当前页面内存，成功后销毁；仅加密保存令牌。
-    var password by remember { mutableStateOf("") }
-    var visible by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("连接打包服务", style = MaterialTheme.typography.headlineSmall)
-        Text("输入葫芦娃 App 使用的服务地址，并使用葫芦娃账号登录，即可编译、下载和安装 TerminalBuddy。",
+        Text("输入 TerminalBuddy 更新服务地址，即可编译、下载和安装最新版本，无需账号和密码。",
             style = MaterialTheme.typography.bodyMedium, color = TbColors.TextMuted)
         OutlinedTextField(server, { server = it }, Modifier.fillMaxWidth(), enabled = !ui.working,
             label = { Text("服务地址") }, placeholder = { Text("http://taihe.678120.cn:8086") },
-            supportingText = { Text("支持主服务地址或 TerminalBuddy 打包接口地址") },
+            supportingText = { Text("支持服务地址或完整的独立更新接口地址") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), singleLine = true)
-        OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), enabled = !ui.working,
-            label = { Text("葫芦娃账号") }, singleLine = true)
-        OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), enabled = !ui.working,
-            label = { Text("葫芦娃密码") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = { IconButton({ visible = !visible }) {
-                Icon(if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (visible) "隐藏密码" else "显示密码")
-            } })
-        Button({ vm.login(server, username, password) }, Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            enabled = !ui.working && server.isNotBlank() && password.isNotBlank(), shape = RoundedCornerShape(14.dp)) {
+        Button({ vm.connect(server) }, Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            enabled = !ui.working && server.isNotBlank(), shape = RoundedCornerShape(14.dp)) {
             if (ui.working) {
                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                 Spacer(Modifier.width(8.dp))
@@ -264,9 +249,9 @@ private fun BuildControls(ui: AppUpdateUiState, vm: AppUpdateViewModel, cancel: 
                     Text(task.stageLabel, style = MaterialTheme.typography.labelLarge)
                     Text("#${task.id} · ${task.elapsedLabel(ui.clock)}", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
                 }
-                TextButton({ cancel(task) }, enabled = !ui.working && task.status != "CANCELLING") {
+                if (task.canCancel) TextButton({ cancel(task) }, enabled = !ui.working && task.status != "CANCELLING") {
                     Text(if (task.status == "CANCELLING") "正在取消" else "取消任务", color = TbColors.Danger)
-                }
+                } else Text("其他设备发起", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
             }
         }
     }

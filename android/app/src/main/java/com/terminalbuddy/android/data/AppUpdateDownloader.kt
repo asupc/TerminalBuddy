@@ -40,7 +40,7 @@ class AppUpdateDownloader(private val context: Context, private val repository: 
             val ticket = repository.ticket(task.id, logs)
             val path = ticket.text("path")
             // 只接受当前服务下的短时票据地址，下载不会向其他主机发送凭据。
-            require(Regex("^/api/public/android-downloads/[A-Za-z0-9_-]+$").matches(path)) { "下载地址无效，请重新下载" }
+            require(Regex("^/api/public/terminalbuddy/android/downloads/[A-Za-z0-9_-]+$").matches(path)) { "下载地址无效，请重新下载" }
             val name = ticket.text("filename").ifBlank {
                 if (logs) "terminalbuddy-task-${task.id}.log" else "terminalbuddy-${task.id}.apk"
             }
@@ -53,7 +53,7 @@ class AppUpdateDownloader(private val context: Context, private val repository: 
             val target = targetFile()
             check(target.parentFile?.isDirectory == true || target.parentFile?.mkdirs() == true) { "无法创建下载目录，请检查手机存储空间" }
             if (target.exists()) check(target.delete()) { "无法清理旧文件，请稍后重试" }
-            val url = ServerAddress.endpoint(repository.store.server, path.removePrefix("/api/").split('/'))
+            val url = ServerAddress.endpoint(repository.server, path.removePrefix("/api/").split('/'))
             val request = DownloadManager.Request(Uri.parse(url.toString()))
                 .setTitle(if (logs) "TerminalBuddy 构建日志" else "TerminalBuddy 安装包")
                 .setDescription("任务 #${task.id} · $name")

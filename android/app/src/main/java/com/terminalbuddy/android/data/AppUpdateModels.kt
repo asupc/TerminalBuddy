@@ -13,7 +13,7 @@ data class AndroidBuildTask(
     val commit: String, val commitSubject: String, val versionCode: Long?, val versionName: String,
     val artifactName: String, val apkSize: Long, val error: String,
     val requestedBy: String, val createdAt: String, val startedAt: String, val completedAt: String,
-    val serverId: String = "local", val sha256: String = "",
+    val serverId: String = "local", val sha256: String = "", val canCancel: Boolean = false,
 ) {
     val building get() = type == "BUILD"
     val active get() = status in setOf("QUEUED", "RUNNING", "CANCELLING")
@@ -56,7 +56,7 @@ data class AndroidBuildTask(
             raw.text("commit"), raw.text("commitSubject"), raw.number("versionCode")?.toLong(), raw.text("versionName"),
             raw.text("artifactName"), raw.number("apkSize")?.toLong() ?: 0, raw.text("error"),
             raw.text("requestedBy"), raw.text("createdAt"), raw.text("startedAt"), raw.text("completedAt"),
-            raw.text("serverId", fallback = "local"), raw.text("sha256"),
+            raw.text("serverId", fallback = "local"), raw.text("sha256"), raw.buildFlag("canCancel"),
         )
     }
 }

@@ -14,7 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 
 /** 构建状态独立于终端账号；切换节点、任务或服务后丢弃旧请求的返回值。 */
 data class AppUpdateUiState(
-    val server: String = "", val username: String = "admin", val editing: Boolean = true,
+    val server: String = "", val editing: Boolean = true,
     val working: Boolean = false, val error: String? = null,
     val build: AndroidBuildState = AndroidBuildState(), val clock: Long = System.currentTimeMillis(),
 )
@@ -26,7 +26,7 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
     private val refreshLock = Mutex()
     private var revision = 0
     private val mutable = MutableStateFlow(AppUpdateUiState(
-        server = repository.store.server, username = repository.store.username, editing = !repository.store.loggedIn,
+        server = repository.server, editing = !repository.connected,
         build = AndroidBuildState(serverId = repository.selectedServer(), download = downloader.state.value),
     ))
     val state = mutable.asStateFlow()
@@ -43,20 +43,20 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
         mutable.update { it.copy(editing = true, error = null) }
     }
     fun keepConnection() {
-        if (!repository.store.loggedIn || mutable.value.working) return
+        if (!repository.connected || mutable.value.working) return
         mutable.update { it.copy(editing = false, error = null) }
         viewModelScope.launch { refresh() }
     }
-    val canKeepConnection get() = repository.store.loggedIn
+    val canKeepConnection get() = repository.connected
 
-    fun login(server: String, username: String, password: String) {
+    fun connect(server: String) {
         if (mutable.value.working) return
         revision++
         mutable.update { it.copy(working = true, error = null) }
         viewModelScope.launch {
             try {
-                repository.login(server, username, password)
-                mutable.update { it.copy(server = repository.store.server, username = repository.store.username,
+                repository.connect(server)
+                mutable.update { it.copy(server = repository.server,
                     editing = false, working = false,
                     build = AndroidBuildState(serverId = repository.selectedServer(), download = downloader.state.value)) }
                 refresh()
@@ -66,7 +66,7 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     suspend fun refresh() {
-        if (mutable.value.editing || mutable.value.working || !repository.store.loggedIn || !refreshLock.tryLock()) return
+        if (mutable.value.editing || mutable.value.working || !repository.connected || !refreshLock.tryLock()) return
         val epoch = revision
         val previous = mutable.value.build
         try {
@@ -94,10 +94,9 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
         } catch (error: CancellationException) { throw error }
         catch (error: Throwable) {
             if (epoch == revision) {
-                if (error is ApiException && error.code == 401) {
-                    repository.store.clear()
+                if (error is ApiException && (error.code == 401 || error.code == 404 && !previous.loaded)) {
                     revision++
-                    mutable.update { it.copy(editing = true, error = "葫芦娃登录已过期，请重新登录") }
+                    mutable.update { it.copy(editing = true, error = "此地址尚未提供免登录更新接口，请先更新葫芦娃后端") }
                 } else mutable.update { it.copy(build = it.build.copy(connectionError = true, error = error.userMessage())) }
             }
         } finally { refreshLock.unlock() }
@@ -137,7 +136,6 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
             catch (error: CancellationException) { throw error }
             catch (error: Throwable) {
                 if (error is ApiException && error.code == 401) {
-                    repository.store.clear()
                     mutable.update { it.copy(editing = true) }
                 }
                 mutable.update { it.copy(error = error.userMessage()) }

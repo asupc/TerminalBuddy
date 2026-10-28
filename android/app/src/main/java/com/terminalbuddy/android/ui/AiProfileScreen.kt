@@ -89,7 +89,7 @@ internal fun AiProfileScreen(
                     AiDivider(Modifier.padding(start = 60.dp, end = 16.dp))
                     AiSettingsRow(Icons.Outlined.Dns, "服务信息", "连接地址、服务状态与应用版本", enabled, serviceInfo)
                     AiDivider(Modifier.padding(start = 60.dp, end = 16.dp))
-                    AiSettingsRow(Icons.Outlined.SystemUpdate, "在线更新", "连接葫芦娃打包服务，编译、下载并安装", click = onlineUpdate)
+                    AiSettingsRow(Icons.Outlined.SystemUpdate, "在线更新", "免登录连接更新服务，编译、下载并安装", click = onlineUpdate)
                 }
                 AiNotificationPermission()
             }

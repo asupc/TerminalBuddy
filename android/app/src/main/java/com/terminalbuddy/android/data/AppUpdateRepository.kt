@@ -9,32 +9,45 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** 复用葫芦娃的 TerminalBuddy 构建接口，认证与终端服务完全独立。 */
+/** 仅连接 TerminalBuddy 免登录更新接口，永不请求或发送葫芦娃后台令牌。 */
 class AppUpdateRepository(context: Context) {
-    val store = SessionStore(context, "terminal_buddy_build_connection", "terminal_buddy_build_session_v1")
     private val preferences = context.getSharedPreferences("terminal_buddy_build_selection", Context.MODE_PRIVATE)
+    private val legacy = context.getSharedPreferences("terminal_buddy_build_connection", Context.MODE_PRIVATE)
+    @Volatile var server: String = preferences.getString("public_server", null)
+        ?: legacy.getString("server", "").orEmpty(); private set
+    val connected get() = server.isNotBlank()
+
+    init {
+        // 旧版只迁移地址；删除构建功能曾保存的后台令牌，不再实例化旧认证存储。
+        if (server.isNotBlank()) preferences.edit().putString("public_server", server).apply()
+        legacy.edit().clear().apply()
+    }
     private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS)
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
-    private val project = listOf("terminalbuddy", "android")
+    private val project = listOf("public", "terminalbuddy", "android")
 
-    fun selectedServer(): String = preferences.getString(store.server, "local").orEmpty().ifBlank { "local" }
-    fun selectServer(id: String) { preferences.edit().putString(store.server, id).apply() }
+    fun selectedServer(): String = preferences.getString(server, "local").orEmpty().ifBlank { "local" }
+    fun selectServer(id: String) { preferences.edit().putString(server, id).apply() }
 
-    suspend fun login(address: String, username: String, password: String) {
-        val server = normalizeAddress(address)
-        val user = username.trim().ifBlank { "admin" }
-        val data = request("POST", listOf("auth", "login"), jsonBody {
-            put("username", user); put("password", password)
-        }, server = server, token = "").asObject()
-        val token = data.text("token")
-        require(token.isNotBlank()) { "服务未返回登录令牌，请确认葫芦娃服务地址" }
-        // 登录成功还需确认项目接口存在，避免误连终端服务或旧版本后端。
-        request("GET", project + "servers", server = server, token = token)
-        store.save(server, data.text("username", fallback = user), token)
+    suspend fun connect(address: String) {
+        val normalized = normalizeAddress(address)
+        val servers = request("GET", project + "servers", server = normalized)
+        require(servers is JsonArray) { "此地址未提供独立更新接口，请先更新葫芦娃后端" }
+        check(preferences.edit().putString("public_server", normalized).commit()) { "无法保存服务地址" }
+        server = normalized
+    }
+
+    @Synchronized private fun clientId(address: String): String {
+        val key = "client:$address"
+        preferences.getString(key, null)?.let { return it }
+        val id = UUID.randomUUID().toString().replace("-", "")
+        check(preferences.edit().putString(key, id).commit()) { "无法保存更新客户端标识" }
+        return id
     }
 
     suspend fun status(serverId: String): AndroidBuildStatus = try {
@@ -54,10 +67,10 @@ class AppUpdateRepository(context: Context) {
 
     private suspend fun request(
         method: String, path: List<String>, body: JsonElement? = null, query: Map<String, String> = emptyMap(),
-        server: String = store.server, token: String = store.token,
+        server: String = this.server,
     ): JsonElement = suspendCancellableCoroutine { continuation ->
         val builder = Request.Builder().url(ServerAddress.endpoint(server, path, query)).header("Accept", "application/json")
-        if (token.isNotBlank()) builder.header("Authorization", "Bearer $token")
+        builder.header("X-TerminalBuddy-Client", clientId(server))
         builder.method(method, if (method == "POST") (body?.toString() ?: "{}")
             .toRequestBody("application/json; charset=utf-8".toMediaType()) else null)
         val call = http.newCall(builder.build())
@@ -72,8 +85,8 @@ class AppUpdateRepository(context: Context) {
                         val raw = runCatching { ApiJson.parseToJsonElement(response.body?.string().orEmpty()) }.getOrNull() as? JsonObject
                         if (!response.isSuccessful) throw ApiException(response.code,
                             raw?.text("message")?.ifBlank { null } ?: if (response.code == 404)
-                                "服务未提供 TerminalBuddy 打包接口，请确认葫芦娃服务地址及后端版本" else "请求失败（${response.code}）")
-                        if (raw == null || !raw.containsKey("code")) throw ApiException(502, "返回格式不正确，请填写葫芦娃服务地址")
+                                "服务未提供免登录更新接口，请先更新葫芦娃后端或确认服务地址" else "请求失败（${response.code}）")
+                        if (raw == null || !raw.containsKey("code")) throw ApiException(502, "返回格式不正确，请填写 TerminalBuddy 更新服务地址")
                         val code = raw.number("code")?.toInt() ?: 502
                         if (code != 200) throw ApiException(code, raw.text("message", fallback = "操作失败"))
                         raw["data"] ?: JsonNull
@@ -85,12 +98,12 @@ class AppUpdateRepository(context: Context) {
     }
 
     companion object {
-        /** 同时接受主服务地址和葫芦娃已有的打包 API 地址，保留反向代理子路径。 */
+        /** 支持独立更新接口完整地址及旧版服务地址，保留反向代理子路径。 */
         fun normalizeAddress(input: String): String {
             val parsed = input.trim().toHttpUrlOrNull()
-                ?: throw IllegalArgumentException("请输入完整的葫芦娃服务地址，例如 http://taihe.678120.cn:8086")
+                ?: throw IllegalArgumentException("请输入完整的更新服务地址，例如 http://taihe.678120.cn:8086")
             val path = parsed.encodedPath.trimEnd('/')
-            val suffix = listOf("/api/terminalbuddy/android", "/api/android").firstOrNull { path.endsWith(it) }
+            val suffix = listOf("/api/public/terminalbuddy/android", "/api/terminalbuddy/android", "/api/android").firstOrNull { path.endsWith(it) }
             val url = if (suffix == null) parsed else parsed.newBuilder().encodedPath(path.removeSuffix(suffix).ifBlank { "/" }).build()
             return ServerAddress.normalize(url.toString())
         }
