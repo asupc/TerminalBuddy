@@ -29,7 +29,7 @@
 - **供应商与模型目录（M7-02）**：手机首页供应商目录加入 Pi 供应商卡片（`pi:<卡片ID>`，含默认卡片标记、模型与默认思考级别），启动展开为 `--provider/--model/--thinking`；新增「服务端默认配置」占位；模型卡片配置的 contextWindow 用于上下文用量展示
 - **用量与审批（M7-03）**：回合结束后调用 `get_session_stats` 做权威 Token 结算（覆盖工具嵌套的模型消耗），contextUsage 映射上下文占用与窗口；RPC 扩展交互桥把 `extension_ui_request`（select/confirm/input/editor）映射为手机审批卡并代答 `extension_ui_response`，通知类请求静默忽略；压缩时上下文用量即时失效
 - **Pi 扩展双通道审批**：扩展在 RPC 模式（原生会话）下经扩展 UI 确认 `bash/edit/write`，桌面终端链路保持 HTTP Hook 不变；工具审批仍默认关闭
-- **Android 客户端（M7-05）**：项目 Agent 开关识别 `pi`（默认启用）、Agent 选择与供应商过滤加入 Pi、会话/供应商标签显示「Pi」、新增 π 线条矢量标志；审批卡、Token 用量、会话恢复等既有能力对 Pi 会话直接生效
+- **Android 客户端（M7-05）**：项目 Agent 开关识别 `pi`（默认启用）、Agent 选择与供应商过滤加入 Pi、会话/供应商标签显示「Pi」、Agent 标志使用 pi.dev 官方三色几何图（还原官方配色，不再手绘 π 线条）；审批卡、Token 用量、会话恢复等既有能力对 Pi 会话直接生效
 
 ### π Pi Agent 全面支持（P0/P1）
 
