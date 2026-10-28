@@ -37,8 +37,10 @@ REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离
 | 路径 | 请求 |
 | --- | --- |
 | `GET /api/ai/catalog` | 供应商列表：`id`、`agent`、`name`、`isDefault`、可用 `models` |
+| `GET /api/ai/history?agent=claude` | CLI 历史会话列表（可选 `projectDir`、`includeArchived`），三种 Agent 共用同一结构，与 PC 端历史面板共享索引 |
+| `POST /api/ai/history/rescan?agent=claude` | 展开历史列表前的增量索引，剩余由服务端后台补齐 |
 | `GET /api/ai/sessions` | 列表，不附带完整消息 |
-| `POST /api/ai/sessions` | `{ "provider": "claude", "providerId": "llm:供应商UUID", "projectPath": "/workspace/project", "model": "已配置模型" }` |
+| `POST /api/ai/sessions` | `{ "provider": "claude", "providerId": "llm:供应商UUID", "projectPath": "/workspace/project", "model": "已配置模型" }`；可选 `resumeSessionId` 恢复 CLI 历史会话——项目以历史所在目录为准，预填最近 300 条消息，Claude/Codex/Pi 分别经 `--resume` / `thread/resume` / 会话文件复用续接，重复恢复同一历史线程返回已有会话 |
 | `GET /api/ai/sessions/{id}` | 读取完整会话 |
 | `POST /api/ai/sessions/{id}/messages` | `{ "text": "用户消息", "requestId": "UUID" }` |
 | `POST /api/ai/sessions/{id}/stop` | 中断执行 |

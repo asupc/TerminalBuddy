@@ -9,6 +9,12 @@
 
 ## [未发布]
 
+### 📱 App 历史会话浏览与恢复（M7-06）
+
+- **历史会话接口**：新增 `GET /api/ai/history`（按 `agent` + `projectDir` 过滤）与 `POST /api/ai/history/rescan`（展开前的增量索引，与 PC 端历史面板同一入口），三种 Agent 共用 `models::session_history` 协议，Claude / Codex / Pi 的转录历史首次对手机端可见；
+- **恢复交互**：`CreateAiSession` 新增 `resumeSessionId`——服务端从历史索引定位项目与标题、绑定原会话线程（Claude `--resume`、Codex `thread/resume`、Pi 以历史会话 ID 复用同一会话文件）并预填最近 300 条消息（按 seq 从尾部截取，角色收敛为 user/assistant/tool），项目以历史会话所在目录为准并沿用项目白名单校验；同一账号重复恢复同一历史线程自动复用已有会话，Pi 会话被其他账号占用时明确报错；
+- **安卓客户端**：首页新增「历史会话」折叠区（默认收起），展开后列出当前项目 + 所选 Agent 的历史列表（标题、消息数、模型、相对时间），切换项目 / Agent 自动重载，点击一条即恢复并直接进入对话；增量扫描失败不阻断列表展示。
+
 ### 📱 原生 AI 会话接入 Pi（App 功能集成）
 
 - **Pi 原生会话（M7-01/02）**：`ai_chat_service` 新增 Pi RPC 驱动——以 `pi --mode rpc --session-id <会话ID>` 常驻运行，会话 ID 直接复用 TerminalBuddy 的 AI 会话 ID（Pi 按该 ID 落盘、复用同一会话文件并随项目目录归档，恢复无需额外映射）；`text_delta`/`message_end` 流式与权威正文、`tool_execution_*` 工具卡片、`agent_settled` 回合结束全量映射，空闲进程保留、手机续发消息直接走 `prompt` 复用
