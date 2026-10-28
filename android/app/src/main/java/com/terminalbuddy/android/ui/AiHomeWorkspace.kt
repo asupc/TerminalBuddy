@@ -2,7 +2,6 @@ package com.terminalbuddy.android.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
@@ -25,23 +24,29 @@ internal fun AiHomeWorkspace(ui: AiUiState, vm: AiViewModel, sessions: () -> Uni
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         item(key = "launch") { AiQuickStart(ui, vm) }
-        item(key = "recent-heading") {
-            AiSectionTitle("继续上次的对话") {
-                TextButton(sessions) {
-                    Text("查看全部")
-                    Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
+        // 标题与下方卡片之间的间距比列表通用间距小三分之一（20 → 13）。
+        item(key = "recent") {
+            Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
+                AiSectionTitle("继续上次的对话") {
+                    TextButton(sessions) {
+                        Text("查看全部")
+                        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
+                    }
+                }
+                if (recent.isEmpty()) {
+                    AiCard(shape = RoundedCornerShape(20.dp)) {
+                        AiEmptyState(Icons.Outlined.ChatBubbleOutline,
+                            if (ui.initialLoading) "正在同步会话" else "第一段对话，从这里开始",
+                            if (ui.initialLoading) "准备好后，你的近期会话会显示在这里。" else "选择项目与模型，开启你的新想法。")
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                        recent.forEach { session ->
+                            AiSessionCard(ui, session, open = { vm.open(session.id) }, compact = true)
+                        }
+                    }
                 }
             }
-        }
-        if (recent.isEmpty()) item(key = "recent-empty") {
-            AiCard(shape = RoundedCornerShape(20.dp)) {
-                AiEmptyState(Icons.Outlined.ChatBubbleOutline,
-                    if (ui.initialLoading) "正在同步会话" else "第一段对话，从这里开始",
-                    if (ui.initialLoading) "准备好后，你的近期会话会显示在这里。" else "选择项目与模型，开启你的新想法。")
-            }
-        }
-        items(recent, key = { "recent-${it.id}" }) { session ->
-            AiSessionCard(ui, session, open = { vm.open(session.id) })
         }
     }
 }

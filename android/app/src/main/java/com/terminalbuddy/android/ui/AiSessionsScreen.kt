@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.AiSession
@@ -179,27 +180,36 @@ internal fun AiSessionsScreen(
     }
 }
 
-/** 同一会话卡片用于首页预览和完整列表，状态、未读和时间保持一致。 */
+/** 同一会话卡片用于首页预览和完整列表，状态、未读和时间保持一致；compact 为首页的四分之三高度版本。 */
 @Composable
-internal fun AiSessionCard(ui: AiUiState, session: AiSession, open: () -> Unit, delete: (() -> Unit)? = null) {
+internal fun AiSessionCard(
+    ui: AiUiState, session: AiSession, open: () -> Unit, delete: (() -> Unit)? = null, compact: Boolean = false,
+) {
     var menu by remember(session.id) { mutableStateOf(false) }
     val projectName = ui.projects.find { it.path == session.projectPath }?.name
         ?: session.projectPath.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
     val unread = session.id in ui.unviewedIds
     Surface(onClick = open, enabled = !ui.working && !ui.deletingAll, color = TbColors.Surface,
-        shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, TbColors.Border)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                AiAgentBadge(session.provider)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(session.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(projectName.ifBlank { "未命名项目" }, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+        shape = RoundedCornerShape(if (compact) 15.dp else 20.dp), border = BorderStroke(1.dp, TbColors.Border)) {
+        Column(
+            Modifier.fillMaxWidth().padding(if (compact) 12.dp else 16.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 9.dp else 12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp)) {
+                AiAgentBadge(session.provider, size = if (compact) 23.dp else 30.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 3.dp)) {
+                    Text(session.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall.copy(lineHeight = if (compact) 17.sp else 22.sp))
+                    Text(projectName.ifBlank { "未命名项目" }, color = TbColors.TextMuted, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall.copy(lineHeight = if (compact) 15.sp else 20.sp))
                 }
-                if (delete == null) Icon(Icons.Outlined.ChevronRight, null, Modifier.size(20.dp), tint = TbColors.TextMuted)
+                if (delete == null) Icon(Icons.Outlined.ChevronRight, null,
+                    Modifier.size(if (compact) 15.dp else 20.dp), tint = TbColors.TextMuted)
                 else Box {
                     IconButton({ menu = true }, enabled = !ui.working && !ui.deletingAll) {
-                        Icon(Icons.Outlined.MoreHoriz, "会话操作", Modifier.size(20.dp), tint = TbColors.TextMuted)
+                        Icon(Icons.Outlined.MoreHoriz, "会话操作", Modifier.size(if (compact) 15.dp else 20.dp), tint = TbColors.TextMuted)
                     }
                     DropdownMenu(menu, { menu = false }) {
                         DropdownMenuItem(text = { Text("删除会话") }, enabled = !session.running && !ui.working && !ui.deletingAll,
@@ -214,12 +224,14 @@ internal fun AiSessionCard(ui: AiUiState, session: AiSession, open: () -> Unit, 
                     unread -> "有新进展"
                     else -> session.providerLabel
                 }
-                Text(status, style = MaterialTheme.typography.labelMedium,
+                Text(status, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 14.sp else 18.sp),
                     color = if (session.status == "error") TbColors.Danger else if (unread || session.running) TbColors.Text else TbColors.TextMuted)
-                Text("·", color = TbColors.TextMuted)
-                Text(session.modelLabel, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(sessionTime(session.updatedAt), style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+                Text("·", color = TbColors.TextMuted, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 14.sp else 18.sp))
+                Text(session.modelLabel, Modifier.weight(1f), color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = if (compact) 15.sp else 20.sp))
+                Text(sessionTime(session.updatedAt),
+                    style = MaterialTheme.typography.labelSmall.copy(lineHeight = if (compact) 13.sp else 16.sp),
+                    color = TbColors.TextMuted)
             }
         }
     }

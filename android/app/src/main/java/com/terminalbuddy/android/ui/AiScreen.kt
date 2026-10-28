@@ -312,13 +312,20 @@ internal fun AiChoiceField(
     val selected = choices.find { it.id == selectedId }
     val available = enabled && choices.isNotEmpty()
     LaunchedEffect(available) { if (!available) expanded = false }
+    val verticalPadding = if (compact) 6.dp else 10.dp
+    // 左右排列少了一行文字，用与原上下两行完全一致的高度兜底，保证卡片总高不随排布变化。
+    val stackedLineHeight = if (compact) 29.sp else 38.sp
+    val minHeight = if (inlineLabel) maxOf(
+        if (compact) 45.dp else 60.dp,
+        with(LocalDensity.current) { stackedLineHeight.toDp() } + verticalPadding * 2,
+    ) else if (compact) 45.dp else 60.dp
     Surface(
         onClick = { expanded = true }, modifier = modifier.fillMaxWidth().alpha(if (available) 1f else .5f),
         enabled = available, color = TbColors.SurfaceHover, shape = RoundedCornerShape(if (compact) 11.dp else 14.dp),
     ) {
         Row(
-            Modifier.heightIn(min = if (compact) 45.dp else 60.dp)
-                .padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 10.dp),
+            Modifier.heightIn(min = minHeight)
+                .padding(horizontal = 14.dp, vertical = verticalPadding),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {

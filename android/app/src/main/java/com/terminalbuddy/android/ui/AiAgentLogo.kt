@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.terminalbuddy.android.R
 
@@ -39,11 +40,11 @@ internal fun AiAgentLogo(
 
 /** 首页对话列表与空对话提示共用的 30dp 标志容器。 */
 @Composable
-internal fun AiAgentBadge(agent: String, modifier: Modifier = Modifier) {
+internal fun AiAgentBadge(agent: String, modifier: Modifier = Modifier, size: Dp = 30.dp) {
     Box(
-        modifier.background(TbColors.SurfaceHover, RoundedCornerShape(9.dp)).size(30.dp),
+        modifier.background(TbColors.SurfaceHover, RoundedCornerShape(size * .3f)).size(size),
         contentAlignment = Alignment.Center,
     ) {
-        AiAgentLogo(agent)
+        AiAgentLogo(agent, Modifier.size(size * .67f))
     }
 }
