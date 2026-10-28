@@ -332,17 +332,22 @@ internal fun AiChoiceField(
             if (selectedAgent != null) AiAgentLogo(selectedAgent, Modifier.size(if (compact) 16.dp else 20.dp))
             else Icon(icon, null, Modifier.size(if (compact) 16.dp else 20.dp), tint = TbColors.TextMuted)
             if (inlineLabel) {
-                // 标签与当前值紧挨着，左侧对齐，只在两者间留一点间距。
-                Text(label, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 13.sp else 18.sp),
-                    color = TbColors.TextMuted, maxLines = 1)
-                Text(
-                    selected?.title ?: placeholder,
-                    Modifier.weight(1f, fill = false),
-                    style = MaterialTheme.typography.labelLarge.copy(lineHeight = if (compact) 16.sp else 20.sp),
-                    color = if (selected == null) TbColors.TextMuted else TbColors.Text,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.weight(1f))
+                // 标签与当前值紧挨着：内层 Row 占满图标与箭头之间的全部宽度，
+                // 标签按内容宽度，值吃掉剩余空间（不能和占位 Spacer 平分权重，否则会被提前截断）。
+                Row(
+                    Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(label, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 13.sp else 18.sp),
+                        color = TbColors.TextMuted, maxLines = 1)
+                    Text(
+                        selected?.title ?: placeholder,
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge.copy(lineHeight = if (compact) 16.sp else 20.sp),
+                        color = if (selected == null) TbColors.TextMuted else TbColors.Text,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
             } else {
                 Column(Modifier.weight(1f)) {
                     Text(label, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 13.sp else 18.sp),
