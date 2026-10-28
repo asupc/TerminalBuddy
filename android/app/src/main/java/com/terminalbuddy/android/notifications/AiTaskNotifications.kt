@@ -28,6 +28,7 @@ import com.terminalbuddy.android.R
 import com.terminalbuddy.android.data.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -68,8 +69,9 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     internal val serviceState = mutableServiceState.asStateFlow()
     private val mutableBackgroundReception = MutableStateFlow(AiBackgroundReceptionState())
     internal val backgroundReception = mutableBackgroundReception.asStateFlow()
-    private val mutableVivoGuideChecked = MutableStateFlow(AiBackgroundCompatibility.vivoGuideChecked(context))
-    internal val vivoGuideChecked = mutableVivoGuideChecked.asStateFlow()
+    private val mutableVivoGuideChecked: MutableStateFlow<Boolean> =
+        MutableStateFlow(AiBackgroundCompatibility.vivoGuideChecked(context))
+    internal val vivoGuideChecked: StateFlow<Boolean> = mutableVivoGuideChecked.asStateFlow()
     private var backgroundStartedAt: Long? = null
     private var serviceStartWatchdog: Job? = null
     private var foreground = false
