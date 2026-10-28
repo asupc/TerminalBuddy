@@ -338,15 +338,15 @@ enum class AppSkin(
     }
 }
 
-/** 对齐桌面端 global.css 的深浅色令牌，纯色面板不叠加 Material 色调染色。 */
+/** 沿用桌面端的背景与文字色阶，按钮和选中态统一使用中性灰强调。 */
 private fun desktopColorScheme(darkTheme: Boolean): ColorScheme {
-    val primary = if (darkTheme) Color(0xFF4B95E9) else Color(0xFF176FBD)
+    val primary = if (darkTheme) Color(0xFFB8BDC5) else Color(0xFF4B5058)
     val background = if (darkTheme) Color(0xFF181A1D) else Color(0xFFF3F4F6)
     val surface = if (darkTheme) Color(0xFF202226) else Color(0xFFFFFFFF)
     return skinColorScheme(
         darkTheme = darkTheme,
         primary = primary,
-        ink = Color.White,
+        ink = if (darkTheme) Color(0xFF181A1D) else Color.White,
         background = background,
         surface = surface,
         field = if (darkTheme) Color(0xFF2A2D31) else Color(0xFFE9EBEE),
@@ -354,7 +354,7 @@ private fun desktopColorScheme(darkTheme: Boolean): ColorScheme {
         text = if (darkTheme) Color(0xFFE3E5E8) else Color(0xFF24272C),
         muted = if (darkTheme) Color(0xFF9AA0A8) else Color(0xFF626870),
         border = if (darkTheme) Color(0xFF34383D) else Color(0xFFD6D9DE),
-        primaryContainerInk = if (darkTheme) Color(0xFFEDF5FF) else Color(0xFF125F9F),
+        primaryContainerInk = if (darkTheme) Color(0xFFE3E5E8) else Color(0xFF363A40),
     ).copy(
         outline = if (darkTheme) Color(0xFF6F767F) else Color(0xFF8A9098),
         surfaceContainerHigh = if (darkTheme) Color(0xFF25282C) else Color(0xFFFFFFFF),
