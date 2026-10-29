@@ -19,13 +19,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
@@ -257,6 +256,7 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
     val unread = session.id in ui.unviewedIds
     val enabled = !ui.working && !ui.deletingAll
     val active = session.running
+    val accentColor = TbColors.Accent
     val status = when {
         active -> session.statusLabel
         unread -> "有新进展"
@@ -271,6 +271,9 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                         enabled = enabled, onClick = open,
                         onLongClickLabel = "打开会话操作菜单", onLongClick = { menu = true },
                     )
+                    .drawBehind {
+                        if (active) drawRect(accentColor, size = Size(4.dp.toPx(), size.height))
+                    }
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(9.dp),
             ) {
@@ -297,21 +300,36 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                     Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        buildAnnotatedString {
-                            append(project.ifBlank { "未命名项目" })
-                            append(" · ")
-                            withStyle(SpanStyle(
-                                color = if (active || unread) TbColors.Accent else TbColors.TextMuted,
-                                fontWeight = MaterialTheme.typography.labelMedium.fontWeight,
-                            )) { append(status) }
-                            append(" · ")
-                            append(session.modelLabel)
-                        },
-                        Modifier.weight(1f), color = TbColors.TextMuted,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
-                    )
+                    Row(
+                        Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            project.ifBlank { "未命名项目" }, Modifier.weight(1f, fill = false),
+                            color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
+                        )
+                        Text("·", color = TbColors.TextMuted,
+                            style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
+                        if (active || unread) {
+                            Surface(color = Color.White, contentColor = Color(0xFF181B20), shape = RoundedCornerShape(6.dp)) {
+                                Text(
+                                    status, Modifier.padding(horizontal = 7.dp, vertical = 3.dp), maxLines = 1,
+                                    style = MaterialTheme.typography.labelSmall.copy(lineHeight = 13.sp),
+                                )
+                            }
+                        } else {
+                            Text(status, color = TbColors.TextMuted, maxLines = 1,
+                                style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
+                        }
+                        Text("·", color = TbColors.TextMuted,
+                            style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
+                        Text(
+                            session.modelLabel, Modifier.weight(1f), color = TbColors.TextMuted,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
+                        )
+                    }
                     Text(
                         sessionTime(session.updatedAt), maxLines = 1,
                         style = MaterialTheme.typography.labelSmall.copy(lineHeight = 13.sp),
