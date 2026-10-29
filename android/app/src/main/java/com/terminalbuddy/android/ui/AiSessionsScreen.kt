@@ -148,6 +148,10 @@ private fun AiSessionTabs(pager: PagerState, counts: List<Int?>, select: (Int) -
     }
 }
 
+private data class AiRecentSessionGroup(
+    val key: String, val title: String, val sessions: List<AiSession>,
+)
+
 @Composable
 private fun AiRecentSessions(
     ui: AiUiState, vm: AiViewModel, start: () -> Unit,
@@ -157,9 +161,18 @@ private fun AiRecentSessions(
     val sessions = remember(ui.sessions) { ui.sessions.sortedByDescending { it.updatedAt } }
     val today = LocalDate.now()
     val zone = ZoneId.systemDefault()
-    val groups = remember(sessions, today, zone) {
-        sessions.groupBy { session ->
-            session.updatedAt.takeIf { it > 0 }?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+    val groups = remember(sessions, ui.unviewedIds, today, zone) {
+        // 状态优先于日期：运行中置顶，其次未读；各组沿用更新时间倒序。
+        val (runningSessions, idleSessions) = sessions.partition { it.running }
+        val (unreadSessions, viewedSessions) = idleSessions.partition { it.id in ui.unviewedIds }
+        buildList {
+            if (runningSessions.isNotEmpty()) add(AiRecentSessionGroup("running", "运行中", runningSessions))
+            if (unreadSessions.isNotEmpty()) add(AiRecentSessionGroup("unread", "未读", unreadSessions))
+            viewedSessions.groupBy { session ->
+                session.updatedAt.takeIf { it > 0 }?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+            }.forEach { (date, daySessions) ->
+                add(AiRecentSessionGroup("day:$date", sessionDateLabel(date, today), daySessions))
+            }
         }
     }
     val unread = sessions.count { it.id in ui.unviewedIds }
@@ -203,18 +216,18 @@ private fun AiRecentSessions(
                 }
             }
         }
-        groups.forEach { (date, daySessions) ->
-            item(key = "day:$date") {
-                // 日期分组：上方留白 + 小标题 + 贯穿的分隔线，让不同日期之间的边界更明确。
+        groups.forEach { group ->
+            item(key = group.key) {
+                // 状态与日期分组共用标题和分隔线，让置顶顺序与分组边界保持清晰。
                 Column(Modifier.padding(top = 20.dp, bottom = 2.dp)) {
                     AiListLabel(
-                        sessionDateLabel(date, today),
-                        trailing = "${daySessions.size} 段",
+                        group.title,
+                        trailing = "${group.sessions.size} 段",
                     )
                     HorizontalDivider(Modifier.padding(top = 8.dp), color = TbColors.Border)
                 }
             }
-            items(daySessions, key = { "session-${it.id}" }) { session ->
+            items(group.sessions, key = { "session-${it.id}" }) { session ->
                 AiRecentSessionRow(ui, session, { vm.open(session.id) }, { delete(session) })
             }
         }
