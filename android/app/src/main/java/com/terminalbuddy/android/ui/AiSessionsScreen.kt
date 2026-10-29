@@ -257,11 +257,22 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
     val enabled = !ui.working && !ui.deletingAll
     val active = session.running
     val accentColor = TbColors.Accent
+    val failed = session.status == "error" || session.status == "interrupted"
     val status = when {
         active -> session.statusLabel
         unread -> "有新进展"
-        session.status == "error" || session.status == "interrupted" -> session.statusLabel
+        failed -> session.statusLabel
         else -> session.providerLabel
+    }
+    val statusInk = when {
+        active -> TbColors.AccentInk
+        unread -> TbColors.Accent
+        else -> TbColors.TextSoft
+    }
+    val statusFill = when {
+        active -> TbColors.Accent
+        unread -> TbColors.Accent.copy(alpha = .14f)
+        else -> TbColors.SurfaceHover
     }
     Column(Modifier.fillMaxWidth()) {
         Box {
@@ -304,8 +315,8 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                         Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        if (active || unread) {
-                            Surface(color = Color.White, contentColor = Color(0xFF181B20), shape = RoundedCornerShape(6.dp)) {
+                        if (active || unread || failed) {
+                            Surface(color = statusFill, contentColor = statusInk, shape = RoundedCornerShape(6.dp)) {
                                 Text(
                                     status, Modifier.padding(horizontal = 7.dp, vertical = 3.dp), maxLines = 1,
                                     style = MaterialTheme.typography.labelSmall.copy(lineHeight = 13.sp),
