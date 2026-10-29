@@ -176,7 +176,6 @@ private fun AiRecentSessions(
             }
         }
     }
-    val unread = sessions.count { it.id in ui.unviewedIds }
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 28.dp),
@@ -187,7 +186,7 @@ private fun AiRecentSessions(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "全部会话（${sessions.size}条 ${unread}条未读）", Modifier.weight(1f),
+                    "全部会话", Modifier.weight(1f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall,
                 )
