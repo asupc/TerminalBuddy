@@ -392,13 +392,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     } catch (error) { showToast('Pi 模型启动失败：' + String(error), 'error'); }
   };
 
-  const startProjectWithPi = async (project: Project) => {
-    closeContextMenu();
-    try {
-      await openTerminalInDir(project.path, { command: currentPiCommand(), name: project.name, groupName: project.name });
-    } catch (error) { showToast('启动 Pi 失败：' + String(error), 'error'); }
-  };
-
   const gotoProvidersSettings = (source: 'claude' | 'codex' | 'pi' = 'claude') => {
     useAppStore.getState().setProviderSettingsTab(source);
     closeContextMenu();
@@ -705,9 +698,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                 try { await openTerminalInDir(project.path, { groupName: project.name }); }
                 catch (err) { console.error(err); }
               }}>命令行</div>
-              {projectEnabledAgents(project).pi && (agentAvailability?.pi ?? true) && (
-                <div className="context-menu-item" onClick={() => void startProjectWithPi(project)}>启动 Pi</div>
-              )}
               {matchingProjectPresets(extraParamPresets, profiles, project).map(preset => (
                 <div key={preset.id} className="context-menu-item" onClick={async () => {
                   closeContextMenu();
