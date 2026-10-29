@@ -282,8 +282,8 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
             ) {
                 Box {
                     AiAgentBadge(session.provider, size = 34.dp)
-                    // 运行中在徽标右下角加一颗小圆点，与状态胶囊双重提示。
-                    if (active) Box(
+                    // 运行中或未读时在徽标右下角加一颗小圆点，与状态胶囊双重提示。
+                    if (active || unread) Box(
                         Modifier.align(Alignment.BottomEnd).size(11.dp)
                             .background(TbColors.Canvas, CircleShape)
                             .padding(2.dp)
@@ -300,8 +300,6 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                             maxLines = 1, overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp),
                         )
-                        // 未读且不在运行中的会话，用一颗圆点提示有新进展。
-                        if (unread && !active) AiStatusDot(TbColors.Accent, size = 7.dp)
                     }
                     Text(
                         "${project.ifBlank { "未命名项目" }} · ${session.providerLabel} / ${session.modelLabel}",
