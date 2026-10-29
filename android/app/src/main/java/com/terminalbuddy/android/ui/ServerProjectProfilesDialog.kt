@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -92,7 +91,6 @@ private fun ServerProfileRow(
     profile: ServerProfile, launchingId: String?, loading: Boolean, terminals: List<ServerTerminal>,
     launch: (ServerProfile) -> Unit, open: (ServerTerminal) -> Unit,
 ) {
-    var details by remember(profile.id) { mutableStateOf(false) }
     val launching = launchingId == profile.id
     Column(Modifier.fillMaxWidth().padding(start = 16.dp)) {
         Surface(onClick = { launch(profile) }, enabled = profile.canLaunch && launchingId == null && !loading,
@@ -112,17 +110,6 @@ private fun ServerProfileRow(
                 if (launching) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Outlined.PlayArrow, "执行${profile.name}", Modifier.size(22.dp),
                     tint = if (profile.canLaunch) TbColors.Accent else TbColors.TextMuted)
-            }
-        }
-        TextButton({ details = !details }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-            Text(if (details) "收起配置详情" else "查看配置详情", style = MaterialTheme.typography.labelSmall)
-        }
-        if (details) SelectionContainer {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("起始路径：${profile.startupPath.ifBlank { "继承项目目录" }}",
-                    style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-                Text(profile.startupCommands.joinToString("\n").ifBlank { "未配置启动命令，将打开终端" },
-                    fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
             }
         }
         terminals.forEach { terminal -> ContinueTerminal(terminal, launchingId == null) { open(terminal) } }
