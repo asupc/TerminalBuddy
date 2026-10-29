@@ -253,7 +253,7 @@ private fun AiConversation(
                         Text("回到最新")
                     }
                 }
-                // 决策覆盖在消息区底部，紧贴上下文卡片上方，不随消息滚动也不挤占正文布局。
+                // 决策覆盖在消息区底部，不随消息滚动也不挤占正文布局。
                 val approvalMaxHeight = (maxHeight * .8f).coerceAtMost(400.dp)
                 Column(
                     Modifier.align(Alignment.BottomCenter).widthIn(max = 760.dp).fillMaxWidth()
@@ -275,12 +275,12 @@ private fun AiConversation(
                     color = TbColors.Danger, style = MaterialTheme.typography.bodySmall,
                 )
             }
+            AiQueuedMessages(ui, session, vm::sendQueuedNow)
             Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
                 AiUsageCard(session, modelLabel, effortLabel, usageDetails,
                     expanded = usageExpanded, onExpandedChange = { usageExpanded = it },
                     modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
             }
-            AiQueuedMessages(ui, session, vm::sendQueuedNow)
             AiComposer(ui, session, { scroll.following = true; vm.send() }, vm::stop, vm::draft)
         }
     }
