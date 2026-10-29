@@ -23,6 +23,7 @@ internal data class ServerTerminalUiState(
     val launchingId: String? = null, val selected: ServerTerminal? = null,
     val connected: Boolean = false, val status: String = "等待连接",
     val terminalError: String? = null, val ended: Boolean = false, val closing: Boolean = false,
+    val outputLog: String = "", val renderingError: String? = null, val rendererReady: Boolean = false,
 )
 
 internal class ServerTerminalViewModel(application: Application) : AndroidViewModel(application) {
@@ -43,6 +44,8 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
     private var outputCols = 80
     private var outputRows = 24
     private val frames = ArrayDeque<ServerTerminalFrame>()
+    private val outputLog = ServerTerminalLog()
+    private var logJob: Job? = null
     private var bufferedCharacters = 0
     private var renderer: ((JsonObject) -> Unit)? = null
 
@@ -136,7 +139,7 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
         attempts = 0
         mutable.update { it.copy(
             selected = terminal, dialogOpen = false, connected = false, status = "等待连接",
-            terminalError = null, ended = false, closing = false,
+            terminalError = null, ended = false, closing = false, renderingError = null, rendererReady = false,
         ) }
     }
 
@@ -151,7 +154,8 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
     fun setVisible(value: Boolean) {
         visible = value
         if (value) {
-            if (renderer != null && socket == null && !mutable.value.ended) connect()
+            // 先建立原生日志连接；网页渲染器的加载与布局不能阻塞输出订阅。
+            if (socket == null && !mutable.value.ended) connect()
         } else {
             disconnect()
             mutable.update { it.copy(connected = false, status = if (it.ended) it.status else "已暂停查看") }
@@ -160,14 +164,18 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
 
     fun attachRenderer(render: (JsonObject) -> Unit) {
         renderer = render
+        mutable.update { it.copy(renderingError = null, rendererReady = true) }
         render(replayMessage())
-        if (visible && socket == null && !mutable.value.ended) connect()
     }
 
-    fun detachRenderer() { renderer = null }
+    fun detachRenderer() {
+        renderer = null
+        mutable.update { it.copy(rendererReady = false) }
+    }
 
     fun renderingFailed() {
-        mutable.update { it.copy(terminalError = "终端画面渲染失败，请返回后重新打开终端") }
+        renderer = null
+        mutable.update { it.copy(rendererReady = false, renderingError = "终端画面暂不可用，已显示文本日志。") }
     }
 
     fun resize(newCols: Int, newRows: Int) {
@@ -248,7 +256,7 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
     private fun connect() {
         val connection = mutable.value.connection ?: return
         val terminal = mutable.value.selected ?: return
-        if (!visible || renderer == null || mutable.value.ended) return
+        if (!visible || mutable.value.ended) return
         disconnect()
         val epoch = streamGeneration
         mutable.update { it.copy(connected = false, status = "正在连接", terminalError = null) }
@@ -333,9 +341,22 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
         }
     }
 
-    private fun clearFrames() { frames.clear(); bufferedCharacters = 0 }
+    private fun clearFrames() {
+        frames.clear()
+        bufferedCharacters = 0
+        logJob?.cancel()
+        logJob = null
+        outputLog.clear()
+        mutable.update { it.copy(outputLog = "") }
+    }
     private fun appendFrame(frame: ServerTerminalFrame) {
         if (frame.data.isEmpty()) return
+        outputLog.append(frame.data)
+        // 高频输出合并发布，避免每个 PTY 分片都触发整个 Compose 页面重绘。
+        if (logJob?.isActive != true) logJob = viewModelScope.launch {
+            delay(100)
+            mutable.update { it.copy(outputLog = outputLog.snapshot()) }
+        }
         val bounded = frame.copy(data = frame.data.takeLast(MAX_BUFFER_CHARACTERS))
         frames.addLast(bounded)
         bufferedCharacters += bounded.data.length

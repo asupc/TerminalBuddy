@@ -8,7 +8,10 @@ import android.graphics.Color as AndroidColor
 import android.os.Handler
 import android.os.Looper
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -16,7 +19,11 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.annotation.Keep
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -27,6 +34,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -35,6 +43,8 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import com.terminalbuddy.android.ServerTerminalUiState
 import com.terminalbuddy.android.ServerTerminalViewModel
 import com.terminalbuddy.android.data.ApiJson
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.io.ByteArrayInputStream
@@ -46,6 +56,23 @@ internal fun ServerTerminalScreen(ui: ServerTerminalUiState, vm: ServerTerminalV
     val host = remember(ui.connection, terminal.id) { LocalTerminalView(context, vm) }
     var command by rememberSaveable(terminal.id) { mutableStateOf("") }
     var confirmClose by remember(terminal.id) { mutableStateOf(false) }
+    var showTextLog by rememberSaveable(terminal.id) { mutableStateOf(false) }
+    val textMode = showTextLog || !ui.rendererReady || ui.renderingError != null
+    var followLogs by remember(terminal.id) { mutableStateOf(true) }
+    val logScroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(logScroll) {
+        snapshotFlow { Triple(logScroll.isScrollInProgress, logScroll.value, logScroll.maxValue) }
+            .collect { (scrolling, position, maximum) ->
+                if (scrolling) followLogs = position >= maximum - 24
+            }
+    }
+    LaunchedEffect(ui.outputLog, textMode, logScroll.maxValue) {
+        if (textMode && followLogs && !logScroll.isScrollInProgress) {
+            withFrameNanos { }
+            logScroll.scrollTo(logScroll.maxValue)
+        }
+    }
     val send = { if (ui.connected && !ui.closing) { vm.input(command + "\r"); command = "" } }
     BackHandler(onBack = vm::leaveTerminal)
     DisposableEffect(host) { onDispose { host.dispose() } }
@@ -56,7 +83,9 @@ internal fun ServerTerminalScreen(ui: ServerTerminalUiState, vm: ServerTerminalV
     }
     Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
         AiSubpageHeader(terminal.profileName, vm::leaveTerminal) {
-            IconButton(host::copySelection) { Icon(Icons.Outlined.ContentCopy, "复制选中的终端内容") }
+            IconButton({ if (textMode) host.copyText(ui.outputLog) else host.copySelection() }) {
+                Icon(Icons.Outlined.ContentCopy, if (textMode) "复制文本日志" else "复制选中的终端内容")
+            }
             IconButton({ confirmClose = true }, enabled = !ui.ended && !ui.closing) {
                 Icon(Icons.Outlined.Close, "关闭服务端终端", tint = TbColors.Danger)
             }
@@ -67,6 +96,9 @@ internal fun ServerTerminalScreen(ui: ServerTerminalUiState, vm: ServerTerminalV
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(ui.status, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
                 color = if (ui.connected) TbColors.Accent else TbColors.TextMuted)
+            TextButton({ showTextLog = !showTextLog }, enabled = ui.rendererReady && ui.renderingError == null) {
+                Text(if (textMode) "终端画面" else "文本日志")
+            }
             if (!ui.connected) {
                 TextButton(vm::refreshService, enabled = !ui.closing) { Text("刷新服务") }
                 TextButton(vm::reconnect, enabled = !ui.ended && !ui.closing) { Text("重新连接") }
@@ -76,13 +108,32 @@ internal fun ServerTerminalScreen(ui: ServerTerminalUiState, vm: ServerTerminalV
             Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
                 style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
         }
-        AndroidView(factory = { host.view }, modifier = Modifier.fillMaxWidth().weight(1f))
+        ui.renderingError?.let {
+            Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+        }
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            AndroidView(factory = { host.view }, modifier = Modifier.matchParentSize())
+            if (textMode) Surface(Modifier.matchParentSize(), color = TbColors.Canvas) {
+                SelectionContainer {
+                    Box(Modifier.fillMaxSize().verticalScroll(logScroll).horizontalScroll(rememberScrollState()).padding(12.dp)) {
+                        Text(ui.outputLog.ifEmpty { "等待服务端输出…" }, fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall, color = TbColors.Text)
+                    }
+                }
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton({ vm.input("\u0003") }, enabled = ui.connected && !ui.closing) { Text("Ctrl+C") }
             TextButton({ vm.input("\t") }, enabled = ui.connected && !ui.closing) { Text("Tab") }
             TextButton({ vm.input("\r") }, enabled = ui.connected && !ui.closing) { Text("回车") }
             Spacer(Modifier.weight(1f))
-            IconButton(host::scrollToBottom) { Icon(Icons.Outlined.VerticalAlignBottom, "滚动到底部") }
+            IconButton({
+                if (textMode) {
+                    followLogs = true
+                    scope.launch { logScroll.scrollTo(logScroll.maxValue) }
+                } else host.scrollToBottom()
+            }) { Icon(Icons.Outlined.VerticalAlignBottom, "滚动到底部") }
         }
         Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -121,8 +172,26 @@ private class LocalTerminalView(context: Context, private val vm: ServerTerminal
     val view = WebView(context)
     private var disposed = false
     private var ready = false
+    private var failed = false
+    private val main = Handler(Looper.getMainLooper())
+    private val readyTimeout = Runnable { fail() }
+
+    private fun fail() {
+        if (disposed || failed) return
+        failed = true
+        ready = false
+        main.removeCallbacks(readyTimeout)
+        vm.renderingFailed()
+    }
     init {
+        view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         view.setBackgroundColor(AndroidColor.rgb(16, 20, 24))
+        view.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR) main.post { fail() }
+                return true
+            }
+        }
         view.settings.apply {
             javaScriptEnabled = true
             allowFileAccess = false
@@ -132,12 +201,17 @@ private class LocalTerminalView(context: Context, private val vm: ServerTerminal
         }
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = true
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) { fail() }
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+                // 图标等非必要请求不能使已经正常显示的终端失效。
+                if (request.isForMainFrame || request.url.lastPathSegment in setOf("compat.js", "terminal.js", "xterm.js", "fit.js", "xterm.css")) fail()
+            }
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
                 val uri = request.url
                 val name = uri.path?.removePrefix("/terminal/")
                 val mime = when (name) {
                     "index.html" -> "text/html"
-                    "terminal.js", "xterm.js", "fit.js" -> "application/javascript"
+                    "compat.js", "terminal.js", "xterm.js", "fit.js" -> "application/javascript"
                     "xterm.css" -> "text/css"
                     else -> null
                 }
@@ -150,17 +224,19 @@ private class LocalTerminalView(context: Context, private val vm: ServerTerminal
         }
         view.addJavascriptInterface(TerminalJavascriptBridge(
             readyAction = {
-                if (!disposed) {
+                if (!disposed && !failed) {
                     ready = true
+                    main.removeCallbacks(readyTimeout)
                     vm.attachRenderer { message ->
-                        if (!disposed) view.evaluateJavascript("window.terminalHost.receive($message)", null)
+                        if (!disposed && ready) view.evaluateJavascript("window.terminalHost.receive($message)", null)
                     }
                 }
             },
             resizeAction = { cols, rows -> if (!disposed) vm.resize(cols, rows) },
             inputAction = { data -> if (!disposed) vm.input(data) },
-            errorAction = { if (!disposed) vm.renderingFailed() },
+            errorAction = { fail() },
         ), "AndroidTerminal")
+        main.postDelayed(readyTimeout, 10_000)
         view.loadUrl("https://appassets.androidplatform.net/terminal/index.html")
     }
     fun scrollToBottom() {
@@ -170,14 +246,17 @@ private class LocalTerminalView(context: Context, private val vm: ServerTerminal
         if (!ready || disposed) return
         view.evaluateJavascript("window.terminalHost.selection()") { value ->
             val text = (runCatching { ApiJson.parseToJsonElement(value) }.getOrNull() as? JsonPrimitive)?.contentOrNull.orEmpty()
-            if (text.isNotEmpty()) {
-                val clipboard = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("终端内容", text))
-            }
+            copyText(text)
         }
+    }
+    fun copyText(text: String) {
+        if (text.isEmpty()) return
+        val clipboard = view.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("终端内容", text))
     }
     fun dispose() {
         disposed = true
+        main.removeCallbacks(readyTimeout)
         vm.detachRenderer()
         view.removeJavascriptInterface("AndroidTerminal")
         view.stopLoading()
