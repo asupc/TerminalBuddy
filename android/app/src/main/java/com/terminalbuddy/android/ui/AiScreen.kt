@@ -425,12 +425,11 @@ internal fun AiSheet(
 ) {
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     ModalBottomSheet(
-        // 使用弹框窗口的实际约束，整体高度包含拖拽条、标题和底部安全区。
-        modifier = if (heightFraction != null) Modifier.fillMaxHeight(heightFraction) else Modifier,
         onDismissRequest = dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = TbColors.Surface,
     ) {
-        Column(if (heightFraction != null) Modifier.fillMaxWidth().weight(1f)
+        // 高度限制放在内容区，让弹层按完整窗口高度计算底部停靠位置。
+        Column(if (heightFraction != null) Modifier.fillMaxWidth().fillMaxHeight(heightFraction)
             else Modifier.fillMaxWidth().heightIn(max = screenHeight * .8f)) {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)

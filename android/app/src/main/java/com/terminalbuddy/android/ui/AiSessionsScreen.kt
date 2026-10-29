@@ -1,6 +1,5 @@
 package com.terminalbuddy.android.ui
 
-import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -19,7 +18,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -40,7 +38,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
 
-/** 会话页使用轻量分段布局；三个板块共用标题，底部一级导航保持独立。 */
+/** 会话页使用轻量分段布局；三个板块直接位于顶部，底部一级导航保持独立。 */
 @Composable
 internal fun AiSessionsScreen(
     ui: AiUiState, vm: AiViewModel, start: () -> Unit,
@@ -57,50 +55,16 @@ internal fun AiSessionsScreen(
             }
         }
         val scope = rememberCoroutineScope()
-        val compact = LocalConfiguration.current.screenHeightDp < 480
         val currentTerminalUi = if (terminalVm.isCurrentAccount() && terminalUi.connection == terminalVm.state.value.connection) {
             terminalUi
         } else ServerTerminalUiState()
-        val serverName = remember(ui.server) {
-            Uri.parse(ui.server).host?.takeIf(String::isNotBlank) ?: "当前服务"
-        }
         LaunchedEffect(ui.activeAccountId, ui.connectionRevision, pager.currentPage) {
             terminalVm.bindAccount()
             if (!terminalVm.state.value.loaded || pager.currentPage == 2) terminalVm.refresh()
         }
         Column(Modifier.fillMaxSize()) {
-            Column(
-                Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp)
-                    .padding(top = if (compact) 8.dp else 20.dp, bottom = if (compact) 10.dp else 20.dp),
-                verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp),
-            ) {
-                if (!compact) Row(verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AiStatusDot(if (ui.reconnecting) TbColors.TextMuted else TbColors.Accent)
-                    Text(serverName, Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
-                    if (!ui.reconnecting) Text("· 已登录", style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
-                    AiReconnectingIndicator(ui.reconnecting)
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("会话", style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium)
-                            if (compact) AiReconnectingIndicator(ui.reconnecting, Modifier.padding(start = 8.dp))
-                        }
-                        if (!compact) Text("从上一次的进展继续。", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-                    }
-                    Button(start, enabled = !ui.working && !ui.deletingAll, shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp), modifier = Modifier.heightIn(min = 48.dp)) {
-                        Icon(Icons.Outlined.Add, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("新会话", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-            }
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp).selectableGroup()
+                Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp).padding(top = 12.dp).selectableGroup()
                     .background(TbColors.SurfaceHover, RoundedCornerShape(16.dp)).padding(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {

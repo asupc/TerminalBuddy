@@ -215,6 +215,7 @@ code{font-family:var(--mono)}
   font:500 10.5px/1.5 var(--mono);letter-spacing:.03em;color:var(--ink-3);
 }
 .stage-bar .hint{min-width:0}
+.stage-tools{display:flex;align-items:center;gap:8px;flex:none}
 .mode-switch{
   display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:2px;background:var(--card);flex:none;
 }
@@ -976,10 +977,12 @@ tbody tr:hover td,tbody tr:hover th{background:color-mix(in srgb,var(--accent) 4
     <div class="proposal-stage">
       <div class="stage-bar">
         <span class="hint">点击标签切换板块 · 项目可展开 · 配置可启动</span>
-        <span class="mode-switch" aria-label="手机深浅色">
-          <button type="button" data-mode="light" class="on" aria-pressed="true">浅色</button>
-          <button type="button" data-mode="dark" aria-pressed="false">深色</button>
-        </span>
+        <div class="stage-tools">
+          <span class="mode-switch" aria-label="手机深浅色">
+            <button type="button" data-mode="light" class="on" aria-pressed="true">浅色</button>
+            <button type="button" data-mode="dark" aria-pressed="false">深色</button>
+          </span>
+        </div>
       </div>
       <div class="device-hold">
         <div class="device" data-skin="pine" data-mode="light">
@@ -1317,10 +1320,12 @@ tbody tr:hover td,tbody tr:hover th{background:color-mix(in srgb,var(--accent) 4
     <div class="proposal-stage">
       <div class="stage-bar">
         <span class="hint">项目切片可切换 · 终端瓦片可启动 · 可切深浅色</span>
-        <span class="mode-switch" aria-label="手机深浅色">
-          <button type="button" data-mode="light" class="on" aria-pressed="true">浅色</button>
-          <button type="button" data-mode="dark" aria-pressed="false">深色</button>
-        </span>
+        <div class="stage-tools">
+          <span class="mode-switch" aria-label="手机深浅色">
+            <button type="button" data-mode="light" class="on" aria-pressed="true">浅色</button>
+            <button type="button" data-mode="dark" aria-pressed="false">深色</button>
+          </span>
+        </div>
       </div>
       <div class="device-hold">
         <div class="device" data-skin="sea" data-mode="light">
