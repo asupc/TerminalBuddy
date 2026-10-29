@@ -6,8 +6,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -18,9 +18,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,7 +38,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
 
-/** 会话页使用轻量分段布局；三个板块直接位于顶部，底部一级导航保持独立。 */
+/** 会话页使用文字标签和随滑动移动的指示线，底部一级导航保持独立。 */
 @Composable
 internal fun AiSessionsScreen(
     ui: AiUiState, vm: AiViewModel, start: () -> Unit,
@@ -63,38 +63,15 @@ internal fun AiSessionsScreen(
             if (!terminalVm.state.value.loaded || pager.currentPage == 2) terminalVm.refresh()
         }
         Column(Modifier.fillMaxSize()) {
-            Row(
-                Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp).padding(top = 12.dp).selectableGroup()
-                    .background(TbColors.SurfaceHover, RoundedCornerShape(16.dp)).padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                val counts = listOf(
+            AiSessionTabs(
+                pager = pager,
+                counts = listOf(
                     ui.sessions.size.takeIf { ui.homeLoaded },
                     ui.projects.distinctBy { it.path }.size.takeIf { ui.homeLoaded },
                     currentTerminalUi.terminals.size.takeIf { currentTerminalUi.loaded },
-                )
-                listOf("最近", "服务端", "终端").forEachIndexed { index, title ->
-                    val selected = pager.currentPage == index
-                    Surface(
-                        modifier = Modifier.weight(1f).selectable(selected = selected, role = Role.Tab,
-                            onClick = { scope.launch { pager.animateScrollToPage(index) } }),
-                        color = if (selected) TbColors.Surface else Color.Transparent,
-                        shape = RoundedCornerShape(12.dp), shadowElevation = if (selected) 1.dp else 0.dp,
-                    ) {
-                        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
-                            Text(title, Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = if (selected) TbColors.Text else TbColors.TextMuted)
-                            counts[index]?.let { count ->
-                                Text(if (count > 99) "99+" else count.toString(), style = MaterialTheme.typography.labelSmall,
-                                    color = if (selected) TbColors.TextSoft else TbColors.TextMuted)
-                            }
-                        }
-                    }
-                }
-            }
+                ),
+                select = { index -> scope.launch { pager.animateScrollToPage(index) } },
+            )
             ui.error?.let { AiError(it, vm::clearError) }
             HorizontalPager(
                 state = pager, modifier = Modifier.fillMaxWidth().weight(1f),
@@ -107,6 +84,65 @@ internal fun AiSessionsScreen(
                 }
             }
         }
+    }
+}
+
+/** 主导航保持透明底，数量作为辅助信息，指示线与分页手势同步。 */
+@Composable
+private fun AiSessionTabs(pager: PagerState, counts: List<Int?>, select: (Int) -> Unit) {
+    val titles = listOf("最近", "服务端", "终端")
+    BoxWithConstraints(
+        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp).padding(top = 4.dp),
+    ) {
+        val tabWidth = maxWidth / titles.size
+        Row(Modifier.fillMaxWidth().selectableGroup()) {
+            titles.forEachIndexed { index, title ->
+                val selected = pager.currentPage == index
+                Tab(
+                    selected = selected,
+                    onClick = { select(index) },
+                    modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                    selectedContentColor = TbColors.Text,
+                    unselectedContentColor = TbColors.TextSoft,
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                    ) {
+                        Text(
+                            title, Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontSize = 15.sp,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            ),
+                        )
+                        counts[index]?.let { count ->
+                            Box(
+                                Modifier.defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
+                                    .background(if (selected) TbColors.SurfaceHover else Color.Transparent, RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 5.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    if (count > 99) "99+" else count.toString(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (selected) TbColors.TextSoft else TbColors.TextMuted,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        HorizontalDivider(Modifier.align(Alignment.BottomCenter), color = TbColors.BorderSoft)
+        val pagePosition = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, titles.lastIndex.toFloat())
+        Box(
+            Modifier.align(Alignment.BottomStart)
+                .offset(x = tabWidth * (pagePosition + .5f) - 12.dp)
+                .size(width = 24.dp, height = 3.dp)
+                .background(TbColors.Accent, RoundedCornerShape(2.dp)),
+        )
     }
 }
 

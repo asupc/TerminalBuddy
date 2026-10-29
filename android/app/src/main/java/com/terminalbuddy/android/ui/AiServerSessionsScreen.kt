@@ -3,11 +3,11 @@ package com.terminalbuddy.android.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -18,10 +18,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.terminalbuddy.android.AiServerHistoryKey
@@ -61,23 +63,38 @@ internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
                 Text("服务端历史", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                 Text("按项目归档", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
             }
-            Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.fillMaxWidth().selectableGroup()
+                    .background(TbColors.Surface, RoundedCornerShape(12.dp))
+                    .border(1.dp, TbColors.BorderSoft, RoundedCornerShape(12.dp))
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
                 agents.forEach { choice ->
                     val selected = choice == agent
-                    val ink = if (selected) TbColors.AccentInk else TbColors.TextSoft
-                    Surface(
-                        modifier = Modifier.weight(1f).selectable(selected = selected, role = Role.Tab,
-                            onClick = { selectedAgent = choice }),
-                        color = if (selected) TbColors.Accent else TbColors.Surface,
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, if (selected) TbColors.Accent else TbColors.Border),
+                    val ink = if (selected) TbColors.Text else TbColors.TextSoft
+                    Tab(
+                        selected = selected,
+                        onClick = { selectedAgent = choice },
+                        modifier = Modifier.weight(1f).clip(RoundedCornerShape(9.dp))
+                            .background(if (selected) TbColors.SurfaceHover else Color.Transparent),
+                        selectedContentColor = TbColors.Text,
+                        unselectedContentColor = TbColors.TextSoft,
                     ) {
-                        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 6.dp),
+                        Row(
+                            Modifier.heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally)) {
+                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                        ) {
                             AiAgentLogo(choice, Modifier.size(16.dp), tint = ink)
-                            Text(if (choice == "claude") "Claude" else agentTitle(choice),
-                                style = MaterialTheme.typography.labelMedium, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                if (choice == "claude") "Claude" else agentTitle(choice),
+                                Modifier.weight(1f, fill = false),
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                ),
+                                color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
                 }
