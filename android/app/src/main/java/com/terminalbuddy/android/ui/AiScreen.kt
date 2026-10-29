@@ -128,7 +128,8 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                         }, more = terminalVm::showConfigurations)
                         AiHomeTab.Sessions -> AiSessionsScreen(ui, vm,
                             start = { tab = AiHomeTab.QuickStart }, delete = { deleting = it },
-                            deleteAll = { confirmDeleteAll = true }, recentRequest = recentSessionsRequest)
+                            deleteAll = { confirmDeleteAll = true }, recentRequest = recentSessionsRequest,
+                            terminalUi = terminalUi, terminalVm = terminalVm)
                         AiHomeTab.Profile -> AiProfileScreen(ui,
                             notifications = { notificationSettings = true },
                             sendMode = { sendModeSheet = true }, accounts = openAccounts,
@@ -418,15 +419,21 @@ internal fun AiChoiceField(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AiSheet(title: String, dismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * .8f
+internal fun AiSheet(
+    title: String, dismiss: () -> Unit, heightFraction: Float? = null,
+    action: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit,
+) {
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     ModalBottomSheet(
         onDismissRequest = dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = TbColors.Surface,
     ) {
-        Column(Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
+        // 高度限制放在内容区，让弹层按完整窗口高度计算底部停靠位置。
+        Column(if (heightFraction != null) Modifier.fillMaxWidth().fillMaxHeight(heightFraction)
+            else Modifier.fillMaxWidth().heightIn(max = screenHeight * .8f)) {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                action()
                 IconButton(dismiss) { Icon(Icons.Outlined.Close, "关闭$title", Modifier.size(20.dp), tint = TbColors.TextMuted) }
             }
             AiDivider()

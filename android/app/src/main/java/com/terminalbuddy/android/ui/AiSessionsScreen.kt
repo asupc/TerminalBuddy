@@ -1,11 +1,14 @@
 package com.terminalbuddy.android.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -15,26 +18,35 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
+import com.terminalbuddy.android.ServerTerminalUiState
+import com.terminalbuddy.android.ServerTerminalViewModel
 import com.terminalbuddy.android.data.AiSession
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
 
-/** 顶部标题栏直接切换最近会话与服务端历史；服务端筛选独立于快速开始配置。 */
+/** 会话页使用文字标签和随滑动移动的指示线，底部一级导航保持独立。 */
 @Composable
 internal fun AiSessionsScreen(
     ui: AiUiState, vm: AiViewModel, start: () -> Unit,
     delete: (AiSession) -> Unit, deleteAll: () -> Unit, recentRequest: Int,
+    terminalUi: ServerTerminalUiState, terminalVm: ServerTerminalViewModel,
 ) {
     key(ui.activeAccountId) {
-        val pager = rememberPagerState { 2 }
+        val pager = rememberPagerState { 3 }
         var handledRecentRequest by rememberSaveable { mutableIntStateOf(recentRequest) }
         LaunchedEffect(recentRequest) {
             if (handledRecentRequest != recentRequest) {
@@ -43,40 +55,23 @@ internal fun AiSessionsScreen(
             }
         }
         val scope = rememberCoroutineScope()
-        val compact = LocalConfiguration.current.screenHeightDp < 480
+        val currentTerminalUi = if (terminalVm.isCurrentAccount() && terminalUi.connection == terminalVm.state.value.connection) {
+            terminalUi
+        } else ServerTerminalUiState()
+        LaunchedEffect(ui.activeAccountId, ui.connectionRevision, pager.currentPage) {
+            terminalVm.bindAccount()
+            if (!terminalVm.state.value.loaded || pager.currentPage == 2) terminalVm.refresh()
+        }
         Column(Modifier.fillMaxSize()) {
-            Row(
-                Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp)
-                    .padding(top = if (compact) 8.dp else 24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TabRow(
-                    selectedTabIndex = pager.currentPage,
-                    modifier = Modifier.weight(1f),
-                    containerColor = Color.Transparent, contentColor = TbColors.Accent,
-                    divider = { AiDivider() },
-                ) {
-                    listOf("最近会话", "服务端会话").forEachIndexed { index, title ->
-                        Tab(
-                            selected = pager.currentPage == index,
-                            onClick = { scope.launch { pager.animateScrollToPage(index) } },
-                            selectedContentColor = TbColors.Text, unselectedContentColor = TbColors.TextMuted,
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                    Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                                    if (index == 0 && ui.sessions.isNotEmpty()) {
-                                        Surface(color = TbColors.SurfaceHover, shape = RoundedCornerShape(6.dp)) {
-                                            Text(if (ui.sessions.size > 99) "99+" else ui.sessions.size.toString(), Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                style = MaterialTheme.typography.labelSmall, color = TbColors.TextSoft)
-                                        }
-                                    }
-                                }
-                            },
-                        )
-                    }
-                }
-                AiReconnectingIndicator(ui.reconnecting, Modifier.padding(start = 12.dp))
-            }
+            AiSessionTabs(
+                pager = pager,
+                counts = listOf(
+                    ui.sessions.size.takeIf { ui.homeLoaded },
+                    ui.projects.distinctBy { it.path }.size.takeIf { ui.homeLoaded },
+                    currentTerminalUi.terminals.size.takeIf { currentTerminalUi.loaded },
+                ),
+                select = { index -> scope.launch { pager.animateScrollToPage(index) } },
+            )
             ui.error?.let { AiError(it, vm::clearError) }
             HorizontalPager(
                 state = pager, modifier = Modifier.fillMaxWidth().weight(1f),
@@ -85,9 +80,69 @@ internal fun AiSessionsScreen(
                 when (page) {
                     0 -> AiRecentSessions(ui, vm, start, delete, deleteAll)
                     1 -> AiServerSessionsScreen(ui, vm)
+                    2 -> AiTerminalSessionsScreen(currentTerminalUi, terminalVm)
                 }
             }
         }
+    }
+}
+
+/** 主导航保持透明底，数量作为辅助信息，指示线与分页手势同步。 */
+@Composable
+private fun AiSessionTabs(pager: PagerState, counts: List<Int?>, select: (Int) -> Unit) {
+    val titles = listOf("最近", "服务端", "终端")
+    BoxWithConstraints(
+        Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp).padding(top = 4.dp),
+    ) {
+        val tabWidth = maxWidth / titles.size
+        Row(Modifier.fillMaxWidth().selectableGroup()) {
+            titles.forEachIndexed { index, title ->
+                val selected = pager.currentPage == index
+                Tab(
+                    selected = selected,
+                    onClick = { select(index) },
+                    modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                    selectedContentColor = TbColors.Text,
+                    unselectedContentColor = TbColors.TextSoft,
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                    ) {
+                        Text(
+                            title, Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontSize = 15.sp,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            ),
+                        )
+                        counts[index]?.let { count ->
+                            Box(
+                                Modifier.defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
+                                    .background(if (selected) TbColors.SurfaceHover else Color.Transparent, RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 5.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    if (count > 99) "99+" else count.toString(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (selected) TbColors.TextSoft else TbColors.TextMuted,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        HorizontalDivider(Modifier.align(Alignment.BottomCenter), color = TbColors.BorderSoft)
+        val pagePosition = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, titles.lastIndex.toFloat())
+        Box(
+            Modifier.align(Alignment.BottomStart)
+                .offset(x = tabWidth * (pagePosition + .5f) - 12.dp)
+                .size(width = 24.dp, height = 3.dp)
+                .background(TbColors.Accent, RoundedCornerShape(2.dp)),
+        )
     }
 }
 
@@ -97,20 +152,24 @@ private fun AiRecentSessions(
     delete: (AiSession) -> Unit, deleteAll: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
-    val sessions = ui.sessions.sortedByDescending { it.updatedAt }
+    val sessions = remember(ui.sessions) { ui.sessions.sortedByDescending { it.updatedAt } }
+    val today = LocalDate.now()
+    val zone = ZoneId.systemDefault()
+    val groups = remember(sessions, today, zone) {
+        sessions.groupBy { session ->
+            session.updatedAt.takeIf { it > 0 }?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+        }
+    }
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item(key = "summary") {
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                 val unread = sessions.count { it.id in ui.unviewedIds }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("全部会话", style = MaterialTheme.typography.titleSmall)
-                    Text("${sessions.size} 段会话${if (unread > 0) " · $unread 段有更新" else " · 最近更新优先"}",
-                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-                }
+                Text("全部会话", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Text(if (unread > 0) "$unread 段有更新" else "最近更新优先",
+                    style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
                 Box {
                     IconButton({ menu = true }) { Icon(Icons.Outlined.MoreHoriz, "更多会话操作", tint = TbColors.TextMuted) }
                     DropdownMenu(menu, { menu = false }) {
@@ -123,23 +182,95 @@ private fun AiRecentSessions(
             }
         }
         if (ui.initialLoading && sessions.isEmpty()) item(key = "loading") {
-            AiCard(shape = RoundedCornerShape(20.dp)) {
-                Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text("正在同步会话…", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-                }
+            Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("正在同步会话…", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
             }
         } else if (sessions.isEmpty()) item(key = "empty") {
-            AiCard(shape = RoundedCornerShape(20.dp)) {
-                AiEmptyState(Icons.Outlined.ChatBubbleOutline, "还没有最近会话",
-                    "在快速开始中开启对话，所有助手的会话都会汇总在这里。") {
-                    TextButton(start) { Text("开启新会话") }
+            AiEmptyState(Icons.Outlined.ChatBubbleOutline, "还没有最近会话",
+                "在快速开始中开启对话，所有助手的会话都会汇总在这里。") {
+                TextButton(start) { Text("开启新会话") }
+            }
+        }
+        groups.forEach { (date, daySessions) ->
+            item(key = "day:$date") {
+                Text(sessionDateLabel(date, today), Modifier.padding(top = 16.dp, bottom = 6.dp),
+                    style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+            }
+            items(daySessions, key = { "session-${it.id}" }) { session ->
+                AiRecentSessionRow(ui, session, { vm.open(session.id) }, { delete(session) })
+            }
+        }
+        if (sessions.isNotEmpty()) item(key = "end") {
+            Text("已显示全部 ${sessions.size} 段会话", Modifier.fillMaxWidth().padding(top = 20.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+        }
+    }
+}
+
+private fun sessionDateLabel(date: LocalDate?, today: LocalDate): String = when (date) {
+    null -> "更早"
+    today -> "今天"
+    today.minusDays(1) -> "昨天"
+    else -> date.format(DateTimeFormatter.ofPattern(if (date.year == today.year) "M月d日" else "yyyy年M月d日", Locale.CHINA))
+}
+
+/** 会话页专用轻列表，首页继续使用原有的紧凑卡片。 */
+@Composable
+private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Unit, delete: () -> Unit) {
+    var menu by remember(session.id) { mutableStateOf(false) }
+    val project = ui.projects.find { it.path == session.projectPath }?.name
+        ?: session.projectPath.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
+    val unread = session.id in ui.unviewedIds
+    val enabled = !ui.working && !ui.deletingAll
+    val status = when {
+        session.running || session.status in listOf("error", "interrupted") -> session.statusLabel
+        unread -> "有新进展"
+        else -> "空闲"
+    }
+    val statusColor = when {
+        session.status == "error" -> TbColors.Danger
+        session.running || unread -> TbColors.Accent
+        else -> TbColors.TextMuted
+    }
+    Column {
+        Surface(onClick = open, enabled = enabled, color = TbColors.Canvas) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AiAgentBadge(session.provider, size = 34.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(session.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleSmall)
+                        if (unread) AiStatusDot(TbColors.Accent, Modifier.semantics { contentDescription = "有新进展" })
+                    }
+                    Text("${project.ifBlank { "未命名项目" }} · ${session.providerLabel} / ${session.modelLabel}",
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Surface(color = if (session.running || unread || session.status == "error") statusColor.copy(alpha = .1f)
+                            else TbColors.SurfaceHover, shape = RoundedCornerShape(6.dp)) {
+                            Text(status, Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall, color = statusColor)
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Text(sessionTime(session.updatedAt), style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+                    }
+                }
+                Box {
+                    IconButton({ menu = true }, enabled = enabled) {
+                        Icon(Icons.Outlined.MoreHoriz, "会话操作", Modifier.size(18.dp), tint = TbColors.TextMuted)
+                    }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem(text = { Text("删除会话") }, enabled = !session.running && enabled,
+                            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp)) },
+                            onClick = { menu = false; delete() })
+                    }
                 }
             }
         }
-        items(sessions, key = { "session-${it.id}" }) { session ->
-            AiSessionCard(ui, session, { vm.open(session.id) }, { delete(session) })
-        }
+        AiDivider()
     }
 }
 
