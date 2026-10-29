@@ -100,7 +100,6 @@ private fun ServerProfileRow(
                 Icon(Icons.Outlined.Terminal, null, Modifier.size(20.dp), tint = TbColors.TextMuted)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(profile.name, style = MaterialTheme.typography.titleSmall)
-                    Text(profile.terminalType.uppercase(), style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
                     if (profile.startupCommands.isNotEmpty()) Text(profile.startupCommands.joinToString("\n"),
                         fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
                         color = TbColors.TextMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)

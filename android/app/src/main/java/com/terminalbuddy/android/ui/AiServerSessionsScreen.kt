@@ -131,19 +131,6 @@ internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
                     }
                 }
                 if (history.expanded) {
-                    item(key = "controls:$prefix") {
-                        Row(Modifier.fillMaxWidth().padding(start = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(when {
-                                history.loading && !history.loaded -> "正在同步历史会话…"
-                                history.loaded -> "${history.sessions.size} 段会话 · 最近更新优先"
-                                else -> "项目历史会话"
-                            }, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
-                            IconButton({ vm.loadServerHistory(agent, project.path) }, enabled = !history.loading && !ui.working && !ui.authenticating) {
-                                if (history.loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                else Icon(Icons.Outlined.Refresh, "刷新${project.name}的历史会话", Modifier.size(20.dp), tint = TbColors.TextMuted)
-                            }
-                        }
-                    }
                     history.error?.let { error -> item(key = "error:$prefix") {
                         Surface(Modifier.fillMaxWidth().padding(start = 12.dp), color = TbColors.Surface, shape = RoundedCornerShape(14.dp)) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
