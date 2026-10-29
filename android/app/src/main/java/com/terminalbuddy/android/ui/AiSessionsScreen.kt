@@ -20,9 +20,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.terminalbuddy.android.AiUiState
@@ -284,17 +287,10 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                                 .background(TbColors.Accent, CircleShape),
                         )
                     }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            session.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleSmall.copy(lineHeight = 17.sp),
-                        )
-                        Text(
-                            project.ifBlank { "未命名项目" }, color = TbColors.TextMuted,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
-                        )
-                    }
+                    Text(
+                        session.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall.copy(lineHeight = 17.sp),
+                    )
                     Icon(Icons.Outlined.ChevronRight, null, Modifier.size(15.dp), tint = TbColors.TextMuted)
                 }
                 Row(
@@ -302,14 +298,17 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        status, maxLines = 1,
-                        style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp),
-                        color = if (active || unread) TbColors.Accent else TbColors.TextMuted,
-                    )
-                    Text("·", color = TbColors.TextMuted,
-                        style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
-                    Text(
-                        session.modelLabel, Modifier.weight(1f), color = TbColors.TextMuted,
+                        buildAnnotatedString {
+                            append(project.ifBlank { "未命名项目" })
+                            append(" · ")
+                            withStyle(SpanStyle(
+                                color = if (active || unread) TbColors.Accent else TbColors.TextMuted,
+                                fontWeight = MaterialTheme.typography.labelMedium.fontWeight,
+                            )) { append(status) }
+                            append(" · ")
+                            append(session.modelLabel)
+                        },
+                        Modifier.weight(1f), color = TbColors.TextMuted,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
                     )
