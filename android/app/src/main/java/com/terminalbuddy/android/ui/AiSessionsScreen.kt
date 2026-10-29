@@ -2,6 +2,7 @@ package com.terminalbuddy.android.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -283,70 +284,71 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
             if (active) Modifier.background(TbColors.Accent.copy(alpha = .09f)) else Modifier,
         ),
     ) {
-        Surface(onClick = open, enabled = enabled, color = Color.Transparent) {
-            Row(
-                Modifier.fillMaxWidth()
-                    .drawBehind {
-                        if (active) drawRect(accentColor, size = Size(4.dp.toPx(), size.height))
-                    }
-                    .padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Box {
-                    AiAgentBadge(session.provider, size = 34.dp)
-                    // 运行中或未读时在徽标右下角加一颗小圆点，与状态胶囊双重提示。
-                    if (active || unread) Box(
-                        Modifier.align(Alignment.BottomEnd).size(11.dp)
-                            .background(TbColors.Canvas, CircleShape)
-                            .padding(2.dp)
-                            .background(TbColors.Accent, CircleShape),
-                    )
-                }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            session.title, Modifier.weight(1f, fill = false),
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp),
+        Box {
+            Surface(color = Color.Transparent) {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .combinedClickable(
+                            enabled = enabled, onClick = open,
+                            onLongClickLabel = "打开会话操作菜单", onLongClick = { menu = true },
+                        )
+                        .drawBehind {
+                            if (active) drawRect(accentColor, size = Size(4.dp.toPx(), size.height))
+                        }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box {
+                        AiAgentBadge(session.provider, size = 34.dp)
+                        // 运行中或未读时在徽标右下角加一颗小圆点，与状态胶囊双重提示。
+                        if (active || unread) Box(
+                            Modifier.align(Alignment.BottomEnd).size(11.dp)
+                                .background(TbColors.Canvas, CircleShape)
+                                .padding(2.dp)
+                                .background(TbColors.Accent, CircleShape),
                         )
                     }
-                    Text(
-                        "${project.ifBlank { "未命名项目" }} · ${session.providerLabel} / ${session.modelLabel}",
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
-                    )
-                }
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        sessionTime(session.updatedAt),
-                        style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted, maxLines = 1,
-                    )
-                    status?.let {
-                        Surface(color = statusFill, shape = RoundedCornerShape(6.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
                             Text(
-                                it, Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                                style = MaterialTheme.typography.labelSmall, color = statusInk, maxLines = 1,
+                                session.title, Modifier.weight(1f, fill = false),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp),
                             )
+                        }
+                        Text(
+                            "${project.ifBlank { "未命名项目" }} · ${session.providerLabel} / ${session.modelLabel}",
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
+                        )
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            sessionTime(session.updatedAt),
+                            style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted, maxLines = 1,
+                        )
+                        status?.let {
+                            Surface(color = statusFill, shape = RoundedCornerShape(6.dp)) {
+                                Text(
+                                    it, Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                    style = MaterialTheme.typography.labelSmall, color = statusInk, maxLines = 1,
+                                )
+                            }
                         }
                     }
                 }
-                Box {
-                    IconButton({ menu = true }, enabled = enabled, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Outlined.MoreHoriz, "会话操作", Modifier.size(17.dp), tint = TbColors.TextMuted)
-                    }
-                    DropdownMenu(menu, { menu = false }) {
-                        DropdownMenuItem(text = { Text("删除会话") }, enabled = !session.running && enabled,
-                            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp)) },
-                            onClick = { menu = false; delete() })
-                    }
-                }
+            }
+            DropdownMenu(menu, { menu = false }) {
+                DropdownMenuItem(text = { Text("删除会话") }, enabled = !session.running && enabled,
+                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp)) },
+                    onClick = { menu = false; delete() })
             }
         }
         // 行间分割线贯穿整行宽度，比之前的细线更清楚。
