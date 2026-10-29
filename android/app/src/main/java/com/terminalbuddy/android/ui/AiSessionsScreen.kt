@@ -246,6 +246,7 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
     val unread = session.id in ui.unviewedIds
     val enabled = !ui.working && !ui.deletingAll
     val active = session.running
+    val accentColor = TbColors.Accent
     val failed = session.status == "error" || session.status == "interrupted"
     val status = when {
         active -> session.statusLabel
@@ -273,7 +274,7 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
             Row(
                 Modifier.fillMaxWidth()
                     .drawBehind {
-                        if (active) drawRect(TbColors.Accent, size = Size(4.dp.toPx(), size.height))
+                        if (active) drawRect(accentColor, size = Size(4.dp.toPx(), size.height))
                     }
                     .padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
