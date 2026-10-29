@@ -275,7 +275,7 @@ private fun AiConversation(
                     color = TbColors.Danger, style = MaterialTheme.typography.bodySmall,
                 )
             }
-            AiQueuedMessages(ui, session, vm::sendQueuedNow, vm::editQueuedMessage, vm::deleteQueuedMessage)
+            AiQueuedMessages(ui, session, vm::sendQueuedNow, vm::deleteQueuedMessage)
             Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
                 AiUsageCard(session, modelLabel, effortLabel, usageDetails,
                     expanded = usageExpanded, onExpandedChange = { usageExpanded = it },
@@ -286,20 +286,16 @@ private fun AiConversation(
     }
 }
 
-/** 服务端排队消息：单行预览，支持立即发送、原地编辑和删除。 */
+/** 服务端排队消息：单行预览，右侧依次为删除和立即发送。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AiQueuedMessages(
-    ui: AiUiState, session: AiSession, sendNow: (String) -> Unit,
-    edit: (String, String, () -> Unit) -> Unit, delete: (String) -> Unit,
+    ui: AiUiState, session: AiSession, sendNow: (String) -> Unit, delete: (String) -> Unit,
 ) {
-    var editingRequestId by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
-    var editingText by rememberSaveable(session.id) { mutableStateOf("") }
+    if (session.pendingInputs.isEmpty()) return
     // 中断进行中或动作在途时禁用，避免与停止请求竞争；等待中的排队仍可查看。
     val enabled = !ui.working && !ui.loadingSession && session.status != "stopping"
-    if (session.pendingInputs.isNotEmpty()) Box(
-        Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center,
-    ) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
         Column(
             Modifier.widthIn(max = 760.dp).fillMaxWidth().heightIn(max = 140.dp)
                 .verticalScroll(rememberScrollState()),
@@ -330,6 +326,10 @@ private fun AiQueuedMessages(
                                 maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                             )
                             IconButton(
+                                { delete(item.requestId) }, modifier = Modifier.size(32.dp), enabled = actionEnabled,
+                                colors = IconButtonDefaults.iconButtonColors(contentColor = TbColors.Danger),
+                            ) { Icon(Icons.Outlined.DeleteOutline, "删除排队消息", Modifier.size(18.dp)) }
+                            IconButton(
                                 { sendNow(item.requestId) }, modifier = Modifier.size(32.dp), enabled = actionEnabled,
                                 colors = IconButtonDefaults.iconButtonColors(contentColor = TbColors.Accent),
                             ) {
@@ -338,49 +338,11 @@ private fun AiQueuedMessages(
                                     color = TbColors.TextMuted, strokeWidth = 1.5.dp,
                                 ) else Icon(Icons.Outlined.ArrowUpward, "立即发送", Modifier.size(18.dp))
                             }
-                            IconButton(
-                                { editingText = item.text; editingRequestId = item.requestId },
-                                modifier = Modifier.size(32.dp), enabled = actionEnabled,
-                                colors = IconButtonDefaults.iconButtonColors(contentColor = TbColors.TextMuted),
-                            ) { Icon(Icons.Outlined.Edit, "编辑排队消息", Modifier.size(18.dp)) }
-                            IconButton(
-                                { delete(item.requestId) }, modifier = Modifier.size(32.dp), enabled = actionEnabled,
-                                colors = IconButtonDefaults.iconButtonColors(contentColor = TbColors.Danger),
-                            ) { Icon(Icons.Outlined.DeleteOutline, "删除排队消息", Modifier.size(18.dp)) }
                         }
                     }
                 }
             }
         }
-    }
-    editingRequestId?.let { requestId ->
-        val queued = session.pendingInputs.any { it.requestId == requestId }
-        AlertDialog(
-            onDismissRequest = { if (!ui.working) editingRequestId = null },
-            title = { Text("编辑排队消息") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = editingText, onValueChange = { editingText = it },
-                        modifier = Modifier.fillMaxWidth(), enabled = enabled && queued,
-                        label = { Text("消息内容") }, minLines = 3, maxLines = 8,
-                    )
-                    if (!queued) Text(
-                        "该消息已发送或已移出队列，无法继续编辑。",
-                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    { edit(requestId, editingText) { editingRequestId = null } },
-                    enabled = enabled && queued && editingText.isNotBlank(),
-                ) { Text(if (ui.working) "保存中…" else "保存") }
-            },
-            dismissButton = {
-                TextButton({ editingRequestId = null }, enabled = !ui.working) { Text("取消") }
-            },
-        )
     }
 }
 

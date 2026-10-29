@@ -262,12 +262,6 @@ class AiRepository(context: Context) {
             })
         )
 
-    /** 编辑尚未发送的排队消息，保留原请求标识和顺序。 */
-    suspend fun updatePendingInput(id: String, requestId: String, text: String): AiSession =
-        ApiJson.decodeFromJsonElement(
-            request("PATCH", listOf("ai", "sessions", id, "pending", requestId), jsonBody { put("text", text) })
-        )
-
     suspend fun deletePendingInput(id: String, requestId: String): AiSession =
         ApiJson.decodeFromJsonElement(
             request("DELETE", listOf("ai", "sessions", id, "pending", requestId))

@@ -296,7 +296,7 @@ private fun AiSendModeSheet(sendImmediate: Boolean, select: (Boolean) -> Unit, d
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             AiSendModeOption(
-                Icons.Outlined.Schedule, "排队发送", "AI 回复期间发送的消息在服务端排队（App 关闭或被杀也不丢失），当前回复结束后自动按序发送；排队消息可编辑、删除，不想等待可点发送箭头立即发送。",
+                Icons.Outlined.Schedule, "排队发送", "AI 回复期间发送的消息在服务端排队（App 关闭或被杀也不丢失），当前回复结束后自动按序发送；排队消息可删除，不想等待可点最右侧的发送箭头立即发送。",
                 selected = !sendImmediate,
             ) { select(false); dismiss() }
             AiSendModeOption(

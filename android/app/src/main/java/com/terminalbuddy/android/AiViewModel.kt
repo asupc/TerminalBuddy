@@ -980,12 +980,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         action { repository.flush(it.id, requestId) }
     }
 
-    fun editQueuedMessage(requestId: String, text: String, onSaved: () -> Unit) {
-        val value = text.trim()
-        if (value.isEmpty()) return
-        action(onSuccess = onSaved) { repository.updatePendingInput(it.id, requestId, value) }
-    }
-
     fun deleteQueuedMessage(requestId: String) {
         action { repository.deletePendingInput(it.id, requestId) }
     }
@@ -1103,7 +1097,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 中断 / 确认这类动作完成后主动拉一次完整会话，走与 WebSocket 相同的合并逻辑。 */
-    private fun action(onSuccess: () -> Unit = {}, block: suspend (AiSession) -> Unit) {
+    private fun action(block: suspend (AiSession) -> Unit) {
         val session = mutable.value.selected ?: return
         if (actionJob?.isActive == true) return
         val epoch = generation
@@ -1111,10 +1105,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(working = true, error = null) }
             try {
                 block(session)
-                if (epoch == generation) {
-                    receive(repository.session(session.id))
-                    onSuccess()
-                }
+                if (epoch == generation) receive(repository.session(session.id))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
