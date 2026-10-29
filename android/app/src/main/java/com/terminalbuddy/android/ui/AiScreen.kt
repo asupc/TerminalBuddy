@@ -128,7 +128,8 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                         }, more = terminalVm::showConfigurations)
                         AiHomeTab.Sessions -> AiSessionsScreen(ui, vm,
                             start = { tab = AiHomeTab.QuickStart }, delete = { deleting = it },
-                            deleteAll = { confirmDeleteAll = true }, recentRequest = recentSessionsRequest)
+                            deleteAll = { confirmDeleteAll = true }, recentRequest = recentSessionsRequest,
+                            terminalUi = terminalUi, terminalVm = terminalVm)
                         AiHomeTab.Profile -> AiProfileScreen(ui,
                             notifications = { notificationSettings = true },
                             sendMode = { sendModeSheet = true }, accounts = openAccounts,
