@@ -304,13 +304,6 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                         Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text(
-                            project.ifBlank { "未命名项目" }, Modifier.weight(1f, fill = false),
-                            color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
-                        )
-                        Text("·", color = TbColors.TextMuted,
-                            style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
                         if (active || unread) {
                             Surface(color = Color.White, contentColor = Color(0xFF181B20), shape = RoundedCornerShape(6.dp)) {
                                 Text(
@@ -322,6 +315,13 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                             Text(status, color = TbColors.TextMuted, maxLines = 1,
                                 style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
                         }
+                        Text("·", color = TbColors.TextMuted,
+                            style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
+                        Text(
+                            project.ifBlank { "未命名项目" }, Modifier.weight(1f, fill = false),
+                            color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
+                        )
                         Text("·", color = TbColors.TextMuted,
                             style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
                         Text(
