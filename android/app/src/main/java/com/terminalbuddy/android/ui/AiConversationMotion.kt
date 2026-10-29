@@ -99,7 +99,7 @@ internal sealed interface AiConversationEntry {
 /** 按本轮用户消息计算耗时，逐字更新和滚动离屏都不会重置计时。 */
 @Composable
 internal fun rememberAiReplyElapsedSeconds(session: AiSession, active: Boolean): Long {
-    val request = session.messages.lastOrNull { it.role == "user" }
+    val request = session.conversationMessages.lastOrNull { it.role == "user" }
     val startedAt = remember(session.id, request?.id) {
         request?.createdAt?.takeIf { it > 0 } ?: System.currentTimeMillis()
     }
@@ -117,11 +117,12 @@ internal fun rememberAiReplyElapsedSeconds(session: AiSession, active: Boolean):
 
 @Composable
 internal fun rememberAiConversationMotion(session: AiSession, loading: Boolean): AiConversationMotion {
+    val messages = remember(session.messages, session.pendingInputs) { session.conversationMessages }
     val motion = remember(session.id) {
-        AiConversationMotion().also { if (!loading) it.update(session.messages) }
+        AiConversationMotion().also { if (!loading) it.update(messages) }
     }
-    LaunchedEffect(motion, session.messages, loading) {
-        if (!loading) motion.update(session.messages)
+    LaunchedEffect(motion, messages, loading) {
+        if (!loading) motion.update(messages)
     }
     LaunchedEffect(motion) {
         snapshotFlow { motion.messages.any { it.isRevealing } }.collect { pending ->

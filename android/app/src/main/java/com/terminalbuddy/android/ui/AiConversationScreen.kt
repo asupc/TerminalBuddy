@@ -130,7 +130,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
                     AiInfoField("供应商与模型", session.targetLabel)
                     AiInfoField("思考强度", ui.selectedEffortLabel)
                     AiInfoField("当前状态", "${session.statusLabel} · ${if (ui.connected) "实时连接" else "自动同步"}")
-                    AiInfoField("消息数量", "${session.messages.size} 条")
+                    AiInfoField("消息数量", "${session.conversationMessages.size} 条")
                 }
             }
         }
@@ -190,7 +190,7 @@ private fun AiConversation(
             } == true
         }
     }
-    val latestMessage = session.messages.lastOrNull()
+    val latestMessage = session.conversationMessages.lastOrNull()
     val assistantOutput = latestMessage?.let { it.role == "assistant" && it.text.isNotBlank() } == true
     val showReplyIndicator = !ui.loadingSession && session.running &&
         (session.status == "approval" || session.status == "background" || session.status == "stopping" || (!assistantOutput && !renderedAssistantOutput && !revealing))
@@ -316,10 +316,11 @@ private fun AiQueuedMessages(ui: AiUiState, session: AiSession, sendNow: (String
                             item.text, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
                             color = TbColors.TextSoft, maxLines = 2, overflow = TextOverflow.Ellipsis,
                         )
+                        val submitting = item.requestId.startsWith("local-")
                         TextButton(
-                            { sendNow(item.requestId) }, enabled = enabled,
+                            { sendNow(item.requestId) }, enabled = enabled && !submitting,
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        ) { Text("立即发送", style = MaterialTheme.typography.labelMedium) }
+                        ) { Text(if (submitting) "正在排队…" else "立即发送", style = MaterialTheme.typography.labelMedium) }
                     }
                 }
             }

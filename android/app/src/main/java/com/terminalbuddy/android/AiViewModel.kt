@@ -126,9 +126,14 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 会话 ID → 待发送文本 + requestId；结果未知时重试复用同一个 requestId。 */
     private val requests = mutableMapOf<String, Pair<String, String>>()
     private data class OutgoingMessage(
-        val sessionId: String, val message: AiMessage, val draft: String, val previousUserMessageIds: Set<String>,
-    )
-    /** 本地先展示的用户消息，收到服务端确认前不被实时快照覆盖。 */
+        val sessionId: String, val message: AiMessage, val draft: String, val queued: Boolean,
+    ) {
+        val requestId get() = message.id.removePrefix("local-")
+        fun display(session: AiSession): AiSession = if (queued) {
+            session.copy(pendingInputs = session.pendingInputs + AiPendingInput(message.text, message.id))
+        } else session.copy(messages = session.messages + message)
+    }
+    /** 未确认消息按发送时的任务状态展示在队列或正文，实时快照不会覆盖占位。 */
     private var outgoing: OutgoingMessage? = null
 
     private val connectivity = requireNotNull(application.getSystemService(ConnectivityManager::class.java))
@@ -895,7 +900,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             val selected = current.selected
             if (selected == null || selected.id != message.sessionId) current
             else current.copy(
-                selected = selected.copy(messages = selected.messages.filterNot { it.id == message.message.id }),
+                selected = selected.copy(
+                    messages = selected.messages.filterNot { it.id == message.message.id },
+                    pendingInputs = selected.pendingInputs.filterNot { it.requestId == message.message.id },
+                ),
                 draft = restored,
             )
         }
@@ -916,13 +924,13 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             ?: (text to UUID.randomUUID().toString()).also { requests[session.id] = it }
         val message = OutgoingMessage(
             session.id, AiMessage("local-${request.second}", "user", text, System.currentTimeMillis()), ui.draft,
-            session.messages.filter { it.role == "user" }.mapTo(mutableSetOf()) { it.id },
+            queued = session.running || session.pendingInputs.isNotEmpty(),
         )
         outgoing = message
         drafts[session.id] = ""
-        // 点击即显示并清空输入，不等待创建会话或发送接口返回。
+        // 任务未结束时只在下方队列显示，发送确认后即可继续添加下一条。
         mutable.update {
-            it.copy(selected = session.copy(messages = session.messages + message.message), draft = "", sending = true, error = null)
+            it.copy(selected = message.display(session), draft = "", sending = true, error = null)
         }
         val notificationAccountId = repository.accounts.activeId
         notificationAccountId?.let { taskNotifications.expectTask(it, session) }
@@ -1113,15 +1121,16 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         repository.sessionCache.scope()?.let { repository.sessionCache.save(it, session) }
         if (pending?.id == session.id) pending = null
         val message = outgoing?.takeIf { it.sessionId == session.id }
-        // 只匹配本次发送后新增的用户消息，历史中相同的正文不能提前确认本次发送。
-        val accepted = message != null && session.messages.any {
-            it.role == "user" && it.id !in message.previousUserMessageIds && it.text == message.message.text
-        }
+        // 入队也算发送确认；按请求标识匹配，连续发送相同正文仍是独立消息。
+        val accepted = message != null && (
+            session.messages.any { it.role == "user" && it.id == message.requestId } ||
+                session.pendingInputs.any { it.requestId == message.requestId }
+        )
         if (accepted) {
             outgoing = null
             requests.remove(session.id)
         }
-        val displayed = if (message != null && !accepted) session.copy(messages = session.messages + message.message) else session
+        val displayed = if (message != null && !accepted) message.display(session) else session
         // 只有当前可见会话的有效正文快照才算查看；后台或迟到的响应不能清除提示。
         if (visible) markViewed(session.id, session.revision)
         mutable.update { current ->

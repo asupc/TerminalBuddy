@@ -31,6 +31,13 @@ data class AiSession(
     val running get() = status == "running" || status == "approval" || status == "background" || status == "stopping"
     /** 回复/等待确认期间发送的消息会排队，回合结束后自动按序发送；中断瞬间禁发防误触。 */
     val canSend get() = status != "stopping"
+    /** 旧快照可能同时包含队列消息，正文只显示已经实际发出的消息。 */
+    val conversationMessages: List<AiMessage>
+        get() {
+            if (pendingInputs.isEmpty()) return messages
+            val pendingIds = pendingInputs.mapTo(mutableSetOf()) { it.requestId }
+            return messages.filterNot { it.id in pendingIds }
+        }
     /** 排队待发条数，供状态提示展示。 */
     val pendingCount get() = pendingInputs.size
     val statusLabel get() = when (status) {

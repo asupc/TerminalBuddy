@@ -287,7 +287,7 @@ private fun formatHistoryTime(timestamp: Long): String {
     }
 }
 
-/** 连续发送方式：排队由 App 本地缓存等回复结束再自动发送，立即发送则中断当前回复优先处理。 */
+/** 连续发送方式：服务端保存队列并自动续发，立即发送则中断当前回复优先处理。 */
 @Composable
 private fun AiSendModeSheet(sendImmediate: Boolean, select: (Boolean) -> Unit, dismiss: () -> Unit) {
     AiSheet("发送方式", dismiss) {
