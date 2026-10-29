@@ -419,15 +419,22 @@ internal fun AiChoiceField(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AiSheet(title: String, dismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * .8f
+internal fun AiSheet(
+    title: String, dismiss: () -> Unit, heightFraction: Float? = null,
+    action: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit,
+) {
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     ModalBottomSheet(
+        // 使用弹框窗口的实际约束，整体高度包含拖拽条、标题和底部安全区。
+        modifier = if (heightFraction != null) Modifier.fillMaxHeight(heightFraction) else Modifier,
         onDismissRequest = dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = TbColors.Surface,
     ) {
-        Column(Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
+        Column(if (heightFraction != null) Modifier.fillMaxWidth().weight(1f)
+            else Modifier.fillMaxWidth().heightIn(max = screenHeight * .8f)) {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                action()
                 IconButton(dismiss) { Icon(Icons.Outlined.Close, "关闭$title", Modifier.size(20.dp), tint = TbColors.TextMuted) }
             }
             AiDivider()
