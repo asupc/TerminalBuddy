@@ -1,13 +1,10 @@
 package com.terminalbuddy.android.ui
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -17,13 +14,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.terminalbuddy.android.AiServerHistoryKey
@@ -36,7 +30,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 助手按服务端安装状态展示；项目默认收起，展开后按项目懒加载，历史记录仍使用外层惰性列表。 */
+/** 助手按服务端安装状态展示；项目默认收起，展开后按项目懒加载，历史记录由外层惰性列表承载。 */
 @Composable
 internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
     val agents = listOf("claude", "codex", "pi").filter(ui::agentInstalled)
@@ -52,187 +46,187 @@ internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
     }
     Column(Modifier.fillMaxSize()) {
         if (agent == null) {
-            AiCard(Modifier.fillMaxWidth().padding(20.dp), shape = RoundedCornerShape(14.dp)) {
+            AiCard(Modifier.fillMaxWidth().padding(20.dp), shape = RoundedCornerShape(16.dp)) {
                 AiEmptyState(Icons.Outlined.SmartToy, "暂无已安装的智能体", "请先在服务端 Agent 管理中安装助手，再查看历史会话。")
             }
             return@Column
         }
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 20.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("服务端历史", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            AiSectionRow("服务端历史", "展开项目，续接之前在这个项目里的对话") {
+                AiCountBadge("${projects.size} 个项目")
             }
-            Row(
-                Modifier.fillMaxWidth().selectableGroup()
-                    .background(TbColors.Surface, RoundedCornerShape(12.dp))
-                    .border(1.dp, TbColors.BorderSoft, RoundedCornerShape(12.dp))
-                    .padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                agents.forEach { choice ->
-                    val selected = choice == agent
-                    val ink = if (selected) TbColors.Text else TbColors.TextSoft
-                    Tab(
-                        selected = selected,
-                        onClick = { selectedAgent = choice },
-                        modifier = Modifier.weight(1f).clip(RoundedCornerShape(9.dp))
-                            .background(if (selected) TbColors.SurfaceHover else Color.Transparent),
-                        selectedContentColor = TbColors.Text,
-                        unselectedContentColor = TbColors.TextSoft,
-                    ) {
-                        Row(
-                            Modifier.heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                        ) {
-                            AiAgentLogo(choice, Modifier.size(16.dp), tint = ink)
-                            Text(
-                                if (choice == "claude") "Claude" else agentTitle(choice),
-                                Modifier.weight(1f, fill = false),
-                                style = MaterialTheme.typography.labelLarge.copy(
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                ),
-                                color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-            }
-        }
+            AiServerAgentTabs(agents, agent) { selectedAgent = it }        }
         LazyColumn(
             Modifier.fillMaxWidth().weight(1f), state = listState,
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item(key = "projects-heading") {
-                Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("服务端项目", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
-                    Text("${projects.size} 个项目", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
-                }
-            }
             if (ui.initialLoading && projects.isEmpty()) item(key = "loading-projects") {
-                AiCard(shape = RoundedCornerShape(14.dp)) {
+                AiCard(shape = RoundedCornerShape(16.dp)) {
                     Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                         Text("正在同步服务端项目…", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
                     }
                 }
             } else if (projects.isEmpty()) item(key = "empty-projects") {
-                AiCard(shape = RoundedCornerShape(14.dp)) {
-                    AiEmptyState(Icons.Outlined.FolderOpen, "还没有服务端项目", "请先在当前服务端登记项目，随后可在这里查看历史会话。")
+                AiCard(shape = RoundedCornerShape(16.dp)) {
+                    AiEmptyState(Icons.Outlined.FolderOpen, "还没有服务端项目", "请先在服务端登记项目，随后可在这里查看历史会话。")
                 }
             }
             projects.forEach { project ->
                 val history = ui.serverHistory[AiServerHistoryKey(agent, project.path)] ?: AiServerProjectHistory()
-                val prefix = "$agent:${project.path.length}:${project.path}"
-                item(key = "project:$prefix") {
-                    AiHistoryProjectHeader(project, history, !ui.working && !ui.authenticating) {
-                        vm.toggleServerHistory(agent, project.path)
-                    }
-                }
-                if (history.expanded) {
-                    history.error?.let { error -> item(key = "error:$prefix") {
-                        Surface(Modifier.fillMaxWidth().padding(start = 12.dp), color = TbColors.Surface, shape = RoundedCornerShape(14.dp)) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("历史会话加载失败", style = MaterialTheme.typography.titleSmall)
-                                Text(error, style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
-                                TextButton({ vm.loadServerHistory(agent, project.path) }, enabled = !history.loading && !ui.working && !ui.authenticating) {
-                                    Text("重新加载")
-                                }
+                item(key = "project:$agent:${project.path}") {
+                    AiServerHistoryProjectCard(
+                        project = project, agent = agent, history = history,
+                        limit = limits[project.path] ?: 10, resumingId = resumingId, ui = ui,
+                        toggle = { vm.toggleServerHistory(agent, project.path) },
+                        load = { vm.loadServerHistory(agent, project.path) },
+                        more = { limits = limits + (project.path to (limits[project.path] ?: 10) + 10) },
+                        open = { session ->
+                            if (agent == "codex") vm.openCodexHistory(session)
+                            else {
+                                resumingId = session.sessionId
+                                vm.resumeServerHistory(agent, project, session)
                             }
-                        }
-                    } }
-                    if (history.loaded && history.sessions.isEmpty() && history.error == null) item(key = "empty:$prefix") {
-                        Surface(Modifier.padding(start = 12.dp), color = TbColors.Surface, shape = RoundedCornerShape(14.dp)) {
-                            AiEmptyState(Icons.Outlined.History, "暂无 ${agentTitle(agent)} 历史会话", "在服务端使用该助手进行对话后，可刷新查看记录。")
-                        }
-                    }
-                    val canResume = ui.projectModels(project, agent).isNotEmpty()
-                    if (agent != "codex" && !canResume && history.sessions.isNotEmpty()) item(key = "configuration:$prefix") {
-                        Text(if (!project.enabledAgents.enabled(agent)) "该项目尚未启用 ${agentTitle(agent)}，启用后可继续历史对话。"
-                            else "该项目暂无可用模型，请先在服务端配置。",
-                            Modifier.padding(start = 14.dp, bottom = 4.dp), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-                    }
-                    val limit = limits[project.path] ?: 10
-                    items(history.sessions.take(limit), key = { "session:$prefix:${it.sessionId}" }) { session ->
-                        AiServerHistoryCard(
-                            agent, session, enabled = !ui.working && !ui.authenticating && (agent == "codex" || canResume),
-                            loading = ui.working && resumingId == session.sessionId,
-                            open = {
-                                if (agent == "codex") vm.openCodexHistory(session)
-                                else {
-                                    resumingId = session.sessionId
-                                    vm.resumeServerHistory(agent, project, session)
-                                }
-                            },
+                        },
+                    )
+                }
+            }
+            if (projects.isNotEmpty()) item(key = "projects-foot") {
+                Text(
+                    "共 ${projects.size} 个项目 · 历史记录来自服务端转录",
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 智能体切换：图标 + 名称的下划线标签，与板块一级切换（顶部文字标签）区分层级。
+ * 服务端板块的助手只决定「看谁的历史」，不影响快速开始里的选择。
+ */
+@Composable
+private fun AiServerAgentTabs(agents: List<String>, selected: String, select: (String) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        agents.forEach { choice ->
+            val active = choice == selected
+            val ink = if (active) TbColors.Text else TbColors.TextSoft
+            Column(
+                Modifier
+                    .selectable(selected = active, role = Role.Tab, onClick = { select(choice) })
+                    .padding(top = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    AiAgentLogo(choice, Modifier.size(15.dp), tint = ink)
+                    Text(
+                        if (choice == "claude") "Claude" else agentTitle(choice), maxLines = 1,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                        ),
+                        color = ink,
+                    )
+                }
+                // 固定宽度的短线：选中时点亮，未选中留透明占位，切换时行高与列宽都不跳动。
+                Box(
+                    Modifier.width(18.dp).height(2.dp)
+                        .background(if (active) TbColors.Accent else Color.Transparent, RoundedCornerShape(1.dp)),
+                )
+            }
+        }
+    }
+}
+
+/** 一个项目 = 一张折叠卡：标题行回答「哪个项目」，展开后列出可续接的历史会话。
+ * 层级与「服务端项目与配置」弹窗一致，只把明细换成历史记录行。
+ */
+@Composable
+private fun AiServerHistoryProjectCard(
+    project: AiProject, agent: String, history: AiServerProjectHistory, limit: Int,
+    resumingId: String?, ui: AiUiState,
+    toggle: () -> Unit, load: () -> Unit, more: () -> Unit, open: (AiHistorySession) -> Unit,
+) {
+    val busy = ui.working || ui.authenticating
+    // codex 的历史只读回放，不依赖模型配置；claude / pi 需要能解析模型才能续接。
+    val resumable = agent == "codex" || ui.projectModels(project, agent).isNotEmpty()
+    val shown = history.sessions.take(limit)
+    AiProjectAccordion(
+        name = project.name, path = project.path, expanded = history.expanded, enabled = !busy,
+        count = if (history.loaded) "${history.sessions.size} 段" else null,
+        toggle = toggle,
+    ) {
+        history.error?.let { error ->
+            Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("历史会话加载失败", style = MaterialTheme.typography.titleSmall)
+                Text(error, style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
+                TextButton({ load() }, enabled = !history.loading && !busy, contentPadding = PaddingValues(0.dp)) {
+                    Text("重新加载")
+                }
+            }
+            AiDivider()
+        }
+        if (history.loading && shown.isEmpty()) Text(
+            "正在读取 ${agentTitle(agent)} 历史…", Modifier.padding(vertical = 14.dp),
+            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+        )
+        if (history.loaded && history.sessions.isEmpty() && history.error == null) Text(
+            "暂无 ${agentTitle(agent)} 历史会话", Modifier.padding(vertical = 14.dp),
+            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+        )
+        if (!resumable && history.sessions.isNotEmpty()) Text(
+            if (!project.enabledAgents.enabled(agent)) "该项目尚未启用 ${agentTitle(agent)}，启用后可继续历史对话。"
+            else "该项目暂无可用模型，请先在服务端配置。",
+            Modifier.padding(vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+        )
+        shown.forEachIndexed { index, session ->
+            AiAccordionRow(
+                enabled = !busy && resumable,
+                // 最后一行不再画分隔线，避免和卡片底边形成双线；后面还有「加载更多」时保留。
+                showDivider = index < shown.lastIndex || history.sessions.size > limit,
+                trailing = {
+                    if (ui.working && resumingId == session.sessionId) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = TbColors.TextMuted)
+                    } else {
+                        Icon(
+                            if (agent == "codex") Icons.Outlined.ChevronRight else Icons.Outlined.Replay,
+                            if (agent == "codex") "查看历史记录" else "继续历史对话",
+                            Modifier.size(18.dp), tint = TbColors.TextMuted,
                         )
                     }
-                    if (history.sessions.size > limit) item(key = "more:$prefix") {
-                        TextButton({ limits = limits + (project.path to limit + 10) },
-                            modifier = Modifier.fillMaxWidth().padding(start = 12.dp)) {
-                            Text("加载更多（还有 ${history.sessions.size - limit} 段）")
-                            Spacer(Modifier.width(4.dp))
-                            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(18.dp))
-                        }
-                    }
-                    item(key = "space:$prefix") { Spacer(Modifier.height(6.dp)) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AiHistoryProjectHeader(project: AiProject, history: AiServerProjectHistory, enabled: Boolean, toggle: () -> Unit) {
-    val rotation by animateFloatAsState(if (history.expanded) 180f else 0f, label = "项目展开箭头")
-    Surface(
-        onClick = toggle, enabled = enabled,
-        modifier = Modifier.fillMaxWidth().semantics { stateDescription = if (history.expanded) "已展开" else "已折叠" },
-        color = if (history.expanded) TbColors.Accent.copy(alpha = .05f) else TbColors.Surface,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, if (history.expanded) TbColors.Accent.copy(alpha = .3f) else TbColors.Border),
-    ) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.size(34.dp).background(TbColors.SurfaceHover, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
-                Icon(if (history.expanded) Icons.Outlined.FolderOpen else Icons.Outlined.Folder, null, Modifier.size(20.dp), tint = TbColors.Accent)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(project.name, style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(project.path, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (history.loaded) Text("${history.sessions.size} 段", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
-            Icon(Icons.Outlined.ExpandMore, if (history.expanded) "收起项目历史" else "展开项目历史",
-                Modifier.size(22.dp).rotate(rotation), tint = TbColors.TextMuted)
-        }
-    }
-}
-
-@Composable
-private fun AiServerHistoryCard(agent: String, session: AiHistorySession, enabled: Boolean, loading: Boolean, open: () -> Unit) {
-    Surface(
-        onClick = open, enabled = enabled,
-        modifier = Modifier.fillMaxWidth().padding(start = 12.dp).alpha(if (enabled || loading) 1f else .55f),
-        color = TbColors.Canvas, shape = RoundedCornerShape(10.dp),
-    ) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            AiAgentBadge(agent, size = 26.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                },
+                onClick = { open(session) },
+            ) {
                 Text(session.displayTitle, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val details = buildList {
-                    add("${session.messageCount} 条消息")
-                    if (session.updatedAt > 0) add(SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(session.updatedAt)))
-                    session.model?.takeIf(String::isNotBlank)?.let { add(it) }
-                }
-                Text(details.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    buildList {
+                        add("${session.messageCount} 条消息")
+                        if (session.updatedAt > 0) add(SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(session.updatedAt)))
+                        session.model?.takeIf(String::isNotBlank)?.let(::add)
+                    }.joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
-            if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            else Icon(if (agent == "codex") Icons.Outlined.ChevronRight else Icons.Outlined.Replay,
-                if (agent == "codex") "查看历史记录" else "继续历史对话", Modifier.size(20.dp), tint = TbColors.TextMuted)
+        }
+        if (history.sessions.size > limit) TextButton(
+            more, modifier = Modifier.fillMaxWidth().padding(top = 2.dp), contentPadding = PaddingValues(vertical = 6.dp),
+        ) {
+            Text("加载更多（还有 ${history.sessions.size - limit} 段）", style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
         }
     }
 }

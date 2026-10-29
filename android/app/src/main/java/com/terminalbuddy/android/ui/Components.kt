@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -14,6 +15,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,7 +33,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -174,3 +180,137 @@ internal fun AiCard(
         Column(content = content)
     }
 }
+
+/**
+ * 折叠项目卡：标题行给出名称、路径与数量，展开后由调用方铺开缩进的明细行。
+ * 服务端历史与终端配置共用同一套层级，不再各自实现一份「项目 → 明细」。
+ * icon 传 null 时按展开状态显示文件夹 / 打开的文件夹。
+ */
+@Composable
+internal fun AiProjectAccordion(
+    name: String,
+    path: String,
+    expanded: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    count: String? = null,
+    icon: ImageVector? = null,
+    iconTint: Color = TbColors.Accent,
+    toggle: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit = {},
+) {
+    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "项目展开箭头")
+    AiCard(
+        modifier = modifier.fillMaxWidth().semantics {
+            stateDescription = if (expanded) "已展开" else "已折叠"
+        },
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Surface(
+            onClick = toggle, enabled = enabled, color = Color.Transparent,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = 12.dp, end = 8.dp, top = 11.dp, bottom = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    Modifier.size(34.dp).background(TbColors.SurfaceHover, RoundedCornerShape(10.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        icon ?: if (expanded) Icons.Outlined.FolderOpen else Icons.Outlined.Folder,
+                        null, Modifier.size(19.dp), tint = iconTint,
+                    )
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (path.isNotBlank()) Text(
+                        path, style = MaterialTheme.typography.labelSmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                        color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                count?.let { AiCountBadge(it) }
+                Icon(
+                    Icons.Outlined.ExpandMore, if (expanded) "收起" else "展开",
+                    Modifier.size(20.dp).graphicsLayer { rotationZ = rotation }, tint = TbColors.TextSoft,
+                )
+            }
+        }
+        if (expanded) {
+            AiDivider()
+            Column(
+                Modifier.fillMaxWidth().background(TbColors.CanvasSoft)
+                    .padding(start = 18.dp, end = 12.dp, top = 2.dp, bottom = 6.dp),
+                content = content,
+            )
+        }
+    }
+}
+
+/** 项目卡标题行右侧的数量角标；数字与单位分开排，避免和标题抢宽度。 */
+@Composable
+internal fun AiCountBadge(text: String) {
+    Surface(color = TbColors.SurfaceHover, shape = RoundedCornerShape(6.dp)) {
+        Text(
+            text, Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+            style = MaterialTheme.typography.labelSmall, color = TbColors.TextSoft, maxLines = 1,
+        )
+    }
+}
+
+/** 展开卡内部的明细行：右侧保留动作图标，行间用细线分隔，不重复画卡片描边。 */
+@Composable
+internal fun AiAccordionRow(
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    iconColor: Color = TbColors.TextMuted,
+    showDivider: Boolean = true,
+    trailing: @Composable () -> Unit = {},
+    onClick: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        onClick = onClick, enabled = enabled, color = Color.Transparent,
+        modifier = modifier.fillMaxWidth().alpha(if (enabled) 1f else .55f),
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                icon?.let { Icon(it, null, Modifier.size(17.dp), tint = iconColor) }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
+                trailing()
+            }
+            if (showDivider) AiDivider()
+        }
+    }
+}
+
+/** 板块内的小标题，例如「已打开」「项目配置」；外边距由调用方按所在列表的间距补。 */
+@Composable
+internal fun AiListLabel(text: String, modifier: Modifier = Modifier, trailing: String? = null) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(text, style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted, modifier = Modifier.weight(1f))
+        trailing?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted) }
+    }
+}
+
+/** 板块标题行：左侧标题与说明，右侧操作入口。 */
+@Composable
+internal fun AiSectionRow(
+    title: String, subtitle: String, modifier: Modifier = Modifier,
+    trailing: @Composable RowScope.() -> Unit = {},
+) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted, maxLines = 2)
+        }
+        trailing()
+    }
+}
+

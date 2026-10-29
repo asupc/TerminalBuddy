@@ -17,10 +17,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -160,18 +162,25 @@ private fun AiRecentSessions(
             session.updatedAt.takeIf { it > 0 }?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
         }
     }
+    val unread = sessions.count { it.id in ui.unviewedIds }
+    val running = sessions.count { it.running }
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 28.dp),
     ) {
         item(key = "summary") {
-            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                val unread = sessions.count { it.id in ui.unviewedIds }
-                Text("全部会话", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                Text(if (unread > 0) "$unread 段有更新" else "最近更新优先",
-                    style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+            AiSectionRow(
+                title = "全部会话",
+                subtitle = buildList {
+                    if (sessions.isNotEmpty()) add("${sessions.size} 段会话")
+                    if (running > 0) add("$running 段运行中")
+                    if (unread > 0) add("$unread 段有更新")
+                }.joinToString(" · ").ifBlank { "最近更新优先" },
+            ) {
                 Box {
-                    IconButton({ menu = true }) { Icon(Icons.Outlined.MoreHoriz, "更多会话操作", tint = TbColors.TextMuted) }
+                    IconButton({ menu = true }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Outlined.MoreHoriz, "更多会话操作", tint = TbColors.TextMuted)
+                    }
                     DropdownMenu(menu, { menu = false }) {
                         DropdownMenuItem(text = { Text(if (ui.deletingAll) "正在清理…" else "清理全部空闲会话") },
                             leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp)) },
@@ -187,15 +196,20 @@ private fun AiRecentSessions(
                 Text("正在同步会话…", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
             }
         } else if (sessions.isEmpty()) item(key = "empty") {
-            AiEmptyState(Icons.Outlined.ChatBubbleOutline, "还没有最近会话",
-                "在快速开始中开启对话，所有助手的会话都会汇总在这里。") {
-                TextButton(start) { Text("开启新会话") }
+            AiCard(shape = RoundedCornerShape(16.dp)) {
+                AiEmptyState(Icons.Outlined.ChatBubbleOutline, "还没有最近会话",
+                    "在快速开始中开启对话，所有助手的会话都会汇总在这里。") {
+                    TextButton(start) { Text("开启新会话") }
+                }
             }
         }
         groups.forEach { (date, daySessions) ->
             item(key = "day:$date") {
-                Text(sessionDateLabel(date, today), Modifier.padding(top = 16.dp, bottom = 6.dp),
-                    style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+                // 日期分组：今天 / 昨天 / 具体日期，数量跟在后面作为辅助信息。
+                AiListLabel(
+                    sessionDateLabel(date, today), Modifier.padding(top = 18.dp, bottom = 6.dp),
+                    trailing = "${daySessions.size} 段",
+                )
             }
             items(daySessions, key = { "session-${it.id}" }) { session ->
                 AiRecentSessionRow(ui, session, { vm.open(session.id) }, { delete(session) })
@@ -203,7 +217,7 @@ private fun AiRecentSessions(
         }
         if (sessions.isNotEmpty()) item(key = "end") {
             Text("已显示全部 ${sessions.size} 段会话", Modifier.fillMaxWidth().padding(top = 20.dp),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
         }
     }
@@ -216,7 +230,10 @@ private fun sessionDateLabel(date: LocalDate?, today: LocalDate): String = when 
     else -> date.format(DateTimeFormatter.ofPattern(if (date.year == today.year) "M月d日" else "yyyy年M月d日", Locale.CHINA))
 }
 
-/** 会话页专用轻列表，首页继续使用原有的紧凑卡片。 */
+/**
+ * 会话页专用轻列表：左侧助手标识 + 标题/项目与模型 + 右下时间与状态胶囊。
+ * 运行中的会话整行带浅色底和左侧强调条，一眼能区分「在跑」与「空闲」。
+ */
 @Composable
 private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Unit, delete: () -> Unit) {
     var menu by remember(session.id) { mutableStateOf(false) }
@@ -224,43 +241,60 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
         ?: session.projectPath.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
     val unread = session.id in ui.unviewedIds
     val enabled = !ui.working && !ui.deletingAll
+    val highlighted = session.running || unread || session.status == "error"
     val status = when {
         session.running || session.status in listOf("error", "interrupted") -> session.statusLabel
         unread -> "有新进展"
-        else -> "空闲"
+        else -> null
     }
     val statusColor = when {
         session.status == "error" -> TbColors.Danger
         session.running || unread -> TbColors.Accent
         else -> TbColors.TextMuted
     }
-    Column {
-        Surface(onClick = open, enabled = enabled, color = TbColors.Canvas) {
-            Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                AiAgentBadge(session.provider, size = 34.dp)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(session.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleSmall)
-                        if (unread) AiStatusDot(TbColors.Accent, Modifier.semantics { contentDescription = "有新进展" })
+    Column(Modifier.fillMaxWidth()) {
+        Surface(
+            onClick = open, enabled = enabled, color = Color.Transparent,
+            modifier = Modifier.fillMaxWidth().then(
+                // 运行中的行铺一层极浅的强调底色，左侧补一条 3dp 实线，与空闲行区分开。
+                if (highlighted) Modifier.background(
+                    Brush.horizontalGradient(
+                        listOf(TbColors.Accent.copy(alpha = .08f), TbColors.Accent.copy(alpha = 0f)),
+                    ),
+                ) else Modifier,
+            ),
+        ) {
+            Row(
+                Modifier.fillMaxWidth()
+                    .drawBehind {
+                        if (highlighted) drawRect(statusColor, size = Size(3.dp.toPx(), size.height))
                     }
-                    Text("${project.ifBlank { "未命名项目" }} · ${session.providerLabel} / ${session.modelLabel}",
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Surface(color = if (session.running || unread || session.status == "error") statusColor.copy(alpha = .1f)
-                            else TbColors.SurfaceHover, shape = RoundedCornerShape(6.dp)) {
-                            Text(status, Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall, color = statusColor)
+                    .padding(start = 12.dp, end = 4.dp, top = 11.dp, bottom = 11.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp),
+            ) {
+                AiAgentBadge(session.provider, size = 32.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(session.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "${project.ifBlank { "未命名项目" }} · ${session.providerLabel} / ${session.modelLabel}",
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(sessionTime(session.updatedAt), style = MaterialTheme.typography.labelSmall,
+                        color = TbColors.TextMuted, maxLines = 1)
+                    status?.let {
+                        Surface(color = statusColor.copy(alpha = .1f), shape = RoundedCornerShape(6.dp)) {
+                            Text(it, Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall, color = statusColor, maxLines = 1)
                         }
-                        Spacer(Modifier.weight(1f))
-                        Text(sessionTime(session.updatedAt), style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
                     }
                 }
                 Box {
-                    IconButton({ menu = true }, enabled = enabled) {
-                        Icon(Icons.Outlined.MoreHoriz, "会话操作", Modifier.size(18.dp), tint = TbColors.TextMuted)
+                    IconButton({ menu = true }, enabled = enabled, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Outlined.MoreHoriz, "会话操作", Modifier.size(17.dp), tint = TbColors.TextMuted)
                     }
                     DropdownMenu(menu, { menu = false }) {
                         DropdownMenuItem(text = { Text("删除会话") }, enabled = !session.running && enabled,
@@ -270,7 +304,7 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                 }
             }
         }
-        AiDivider()
+        AiDivider(Modifier.padding(start = 12.dp))
     }
 }
 
