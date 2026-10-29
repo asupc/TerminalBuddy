@@ -249,7 +249,6 @@ private fun sessionDateLabel(date: LocalDate?, today: LocalDate): String = when 
 /** 参考首页最近任务的两层信息布局，使用平面列表和分隔线，不添加卡片外观。 */
 @Composable
 private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Unit, delete: () -> Unit) {
-    var menu by remember(session.id) { mutableStateOf(false) }
     val project = ui.projects.find { it.path == session.projectPath }?.name
         ?: session.projectPath.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
     val unread = session.id in ui.unviewedIds
@@ -274,83 +273,76 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
         else -> TbColors.SurfaceHover
     }
     Column(Modifier.fillMaxWidth()) {
-        Box {
-            Column(
-                Modifier.fillMaxWidth()
-                    .combinedClickable(
-                        enabled = enabled, onClick = open,
-                        onLongClickLabel = "打开会话操作菜单", onLongClick = { menu = true },
+        Column(
+            Modifier.fillMaxWidth()
+                .combinedClickable(
+                    enabled = enabled, onClick = open,
+                    onLongClickLabel = "删除会话", onLongClick = if (active) null else delete,
+                )
+                .drawBehind {
+                    if (active) drawRect(accentColor, size = Size(4.dp.toPx(), size.height))
+                }
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box {
+                    AiAgentBadge(session.provider, size = 23.dp)
+                    if (active || unread) Box(
+                        Modifier.align(Alignment.BottomEnd).size(9.dp)
+                            .background(TbColors.Canvas, CircleShape)
+                            .padding(2.dp)
+                            .background(TbColors.Accent, CircleShape),
                     )
-                    .drawBehind {
-                        if (active) drawRect(accentColor, size = Size(4.dp.toPx(), size.height))
-                    }
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
+                }
+                Text(
+                    session.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall.copy(lineHeight = 17.sp),
+                )
+                Icon(Icons.Outlined.ChevronRight, null, Modifier.size(15.dp), tint = TbColors.TextMuted)
+            }
+            Row(
+                Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Box {
-                        AiAgentBadge(session.provider, size = 23.dp)
-                        if (active || unread) Box(
-                            Modifier.align(Alignment.BottomEnd).size(9.dp)
-                                .background(TbColors.Canvas, CircleShape)
-                                .padding(2.dp)
-                                .background(TbColors.Accent, CircleShape),
-                        )
-                    }
-                    Text(
-                        session.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleSmall.copy(lineHeight = 17.sp),
-                    )
-                    Icon(Icons.Outlined.ChevronRight, null, Modifier.size(15.dp), tint = TbColors.TextMuted)
-                }
-                Row(
-                    Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(
-                        Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        if (active || unread || failed) {
-                            Surface(color = statusFill, contentColor = statusInk, shape = RoundedCornerShape(4.dp)) {
-                                Text(
-                                    status, Modifier.padding(horizontal = 6.dp, vertical = 2.dp), maxLines = 1,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
-                                )
-                            }
-                        } else {
-                            Text(status, color = TbColors.TextMuted, maxLines = 1,
-                                style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
+                    if (active || unread || failed) {
+                        Surface(color = statusFill, contentColor = statusInk, shape = RoundedCornerShape(4.dp)) {
+                            Text(
+                                status, Modifier.padding(horizontal = 6.dp, vertical = 2.dp), maxLines = 1,
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
+                            )
                         }
-                        Text("·", color = TbColors.TextMuted,
+                    } else {
+                        Text(status, color = TbColors.TextMuted, maxLines = 1,
                             style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
-                        Text(
-                            project.ifBlank { "未命名项目" }, Modifier.weight(1f, fill = false),
-                            color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
-                        )
-                        Text("·", color = TbColors.TextMuted,
-                            style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
-                        Text(
-                            session.modelLabel, Modifier.weight(1f), color = TbColors.TextMuted,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
-                        )
                     }
+                    Text("·", color = TbColors.TextMuted,
+                        style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
                     Text(
-                        sessionTime(session.updatedAt), maxLines = 1,
-                        style = MaterialTheme.typography.labelSmall.copy(lineHeight = 13.sp),
-                        color = TbColors.TextMuted,
+                        project.ifBlank { "未命名项目" }, Modifier.weight(1f, fill = false),
+                        color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
+                    )
+                    Text("·", color = TbColors.TextMuted,
+                        style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
+                    Text(
+                        session.modelLabel, Modifier.weight(1f), color = TbColors.TextMuted,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
                     )
                 }
-            }
-            DropdownMenu(menu, { menu = false }) {
-                DropdownMenuItem(text = { Text("删除会话") }, enabled = !session.running && enabled,
-                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp)) },
-                    onClick = { menu = false; delete() })
+                Text(
+                    sessionTime(session.updatedAt), maxLines = 1,
+                    style = MaterialTheme.typography.labelSmall.copy(lineHeight = 13.sp),
+                    color = TbColors.TextMuted,
+                )
             }
         }
         HorizontalDivider(color = TbColors.BorderSoft)
