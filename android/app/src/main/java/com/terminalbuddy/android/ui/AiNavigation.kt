@@ -1,5 +1,6 @@
 package com.terminalbuddy.android.ui
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
@@ -9,12 +10,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -28,7 +33,11 @@ internal enum class AiHomeTab(val title: String, val subtitle: String, val icon:
 
 /** 三个一级入口始终位于底部；二级页面由根导航接管。 */
 @Composable
-internal fun AiBottomNavigation(selected: AiHomeTab, unread: Int, select: (AiHomeTab) -> Unit) {
+internal fun AiBottomNavigation(
+    selected: AiHomeTab, unread: Int, select: (AiHomeTab) -> Unit, locateUnread: () -> Unit,
+) {
+    val viewConfiguration = LocalViewConfiguration.current
+    var lastSessionTapAt by remember { mutableLongStateOf(0L) }
     Surface(color = TbColors.Surface) {
         Column {
             AiDivider()
@@ -36,7 +45,22 @@ internal fun AiBottomNavigation(selected: AiHomeTab, unread: Int, select: (AiHom
                 AiHomeTab.entries.forEach { tab ->
                     NavigationBarItem(
                         selected = selected == tab,
-                        onClick = { select(tab) },
+                        onClick = {
+                            select(tab)
+                            if (tab == AiHomeTab.Sessions) {
+                                val now = SystemClock.uptimeMillis()
+                                val doubleTap = lastSessionTapAt > 0 && now - lastSessionTapAt in
+                                    viewConfiguration.doubleTapMinTimeMillis..viewConfiguration.doubleTapTimeoutMillis
+                                lastSessionTapAt = if (doubleTap) 0L else now
+                                if (doubleTap) locateUnread()
+                            } else lastSessionTapAt = 0L
+                        },
+                        modifier = if (tab == AiHomeTab.Sessions && unread > 0) Modifier.semantics {
+                            customActions = listOf(CustomAccessibilityAction("定位未读会话") {
+                                locateUnread()
+                                true
+                            })
+                        } else Modifier,
                         icon = {
                             BadgedBox(badge = {
                                 if (tab == AiHomeTab.Sessions && unread > 0) {

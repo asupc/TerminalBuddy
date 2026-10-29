@@ -1,11 +1,15 @@
 package com.terminalbuddy.android.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -46,13 +50,14 @@ import java.util.Locale
 internal fun AiSessionsScreen(
     ui: AiUiState, vm: AiViewModel, start: () -> Unit,
     delete: (AiSession) -> Unit, deleteAll: () -> Unit, recentRequest: Int,
+    unreadRequest: Int, unreadRequestHandled: (Int) -> Unit,
     terminalUi: ServerTerminalUiState, terminalVm: ServerTerminalViewModel,
 ) {
     key(ui.activeAccountId) {
         val pager = rememberPagerState { 3 }
         var handledRecentRequest by rememberSaveable { mutableIntStateOf(recentRequest) }
-        LaunchedEffect(recentRequest) {
-            if (handledRecentRequest != recentRequest) {
+        LaunchedEffect(recentRequest, unreadRequest) {
+            if (handledRecentRequest != recentRequest || unreadRequest > 0) {
                 pager.scrollToPage(0)
                 handledRecentRequest = recentRequest
             }
@@ -81,7 +86,9 @@ internal fun AiSessionsScreen(
                 verticalAlignment = Alignment.Top,
             ) { page ->
                 when (page) {
-                    0 -> AiRecentSessions(ui, vm, start, delete, deleteAll)
+                    0 -> AiRecentSessions(ui, vm, start, delete, deleteAll,
+                        unreadRequest = if (pager.settledPage == 0) unreadRequest else 0,
+                        unreadRequestHandled = unreadRequestHandled)
                     1 -> AiServerSessionsScreen(ui, vm)
                     2 -> AiTerminalSessionsScreen(currentTerminalUi, terminalVm)
                 }
@@ -157,8 +164,14 @@ private data class AiRecentSessionGroup(
 private fun AiRecentSessions(
     ui: AiUiState, vm: AiViewModel, start: () -> Unit,
     delete: (AiSession) -> Unit, deleteAll: () -> Unit,
+    unreadRequest: Int, unreadRequestHandled: (Int) -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    var lastLocatedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var highlightedSessionId by remember { mutableStateOf<String?>(null) }
+    var highlightRequest by remember { mutableIntStateOf(0) }
+    val highlightAlpha = remember { Animatable(0f) }
     val sessions = remember(ui.sessions) { ui.sessions.sortedByDescending { it.updatedAt } }
     val today = LocalDate.now()
     val zone = ZoneId.systemDefault()
@@ -176,8 +189,41 @@ private fun AiRecentSessions(
             }
         }
     }
+    LaunchedEffect(unreadRequest) {
+        if (unreadRequest == 0) return@LaunchedEffect
+        val unreadSessions = groups.flatMap { it.sessions }.filter { it.id in ui.unviewedIds }
+        if (unreadSessions.isNotEmpty()) {
+            val next = (unreadSessions.indexOfFirst { it.id == lastLocatedSessionId } + 1) % unreadSessions.size
+            val target = unreadSessions[next]
+            // LazyColumn 首项为汇总行，每个分组还各有一个标题，不能直接使用会话下标。
+            var itemIndex = 1
+            for (group in groups) {
+                itemIndex++
+                val indexInGroup = group.sessions.indexOfFirst { it.id == target.id }
+                if (indexInGroup >= 0) {
+                    listState.animateScrollToItem(itemIndex + indexInGroup)
+                    lastLocatedSessionId = target.id
+                    highlightedSessionId = target.id
+                    highlightRequest++
+                    break
+                }
+                itemIndex += group.sessions.size
+            }
+        }
+        unreadRequestHandled(unreadRequest)
+    }
+    LaunchedEffect(highlightRequest) {
+        if (highlightedSessionId == null) return@LaunchedEffect
+        highlightAlpha.snapTo(1f)
+        highlightAlpha.animateTo(0f, keyframes {
+            durationMillis = 2000
+            1f at 1600
+            0f at 2000
+        })
+        highlightedSessionId = null
+    }
     LazyColumn(
-        Modifier.fillMaxSize(),
+        Modifier.fillMaxSize(), state = listState,
         contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 28.dp),
     ) {
         item(key = "summary") {
@@ -228,7 +274,8 @@ private fun AiRecentSessions(
                 }
             }
             items(group.sessions, key = { "session-${it.id}" }) { session ->
-                AiRecentSessionRow(ui, session, { vm.open(session.id) }, { delete(session) })
+                AiRecentSessionRow(ui, session, { vm.open(session.id) }, { delete(session) },
+                    highlightAlpha = if (highlightedSessionId == session.id) highlightAlpha.value else 0f)
             }
         }
         if (sessions.isNotEmpty()) item(key = "end") {
@@ -248,7 +295,9 @@ private fun sessionDateLabel(date: LocalDate?, today: LocalDate): String = when 
 
 /** 参考首页最近任务的两层信息布局，使用平面列表和分隔线，不添加卡片外观。 */
 @Composable
-private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Unit, delete: () -> Unit) {
+private fun AiRecentSessionRow(
+    ui: AiUiState, session: AiSession, open: () -> Unit, delete: () -> Unit, highlightAlpha: Float = 0f,
+) {
     val project = ui.projects.find { it.path == session.projectPath }?.name
         ?: session.projectPath.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
     val unread = session.id in ui.unviewedIds
@@ -282,6 +331,9 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                 .drawBehind {
                     if (active) drawRect(accentColor, size = Size(4.dp.toPx(), size.height))
                 }
+                .then(if (highlightAlpha > 0f) Modifier.border(
+                    2.dp, accentColor.copy(alpha = highlightAlpha), RoundedCornerShape(10.dp),
+                ) else Modifier)
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {

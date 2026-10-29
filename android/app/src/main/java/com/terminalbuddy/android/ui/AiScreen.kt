@@ -45,6 +45,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
     var page by rememberSaveable { mutableStateOf(AiPage.Home) }
     var tab by rememberSaveable { mutableStateOf(AiHomeTab.QuickStart) }
     var recentSessionsRequest by rememberSaveable { mutableIntStateOf(0) }
+    var unreadSessionRequest by remember(ui.activeAccountId) { mutableIntStateOf(0) }
     val tabState = rememberSaveableStateHolder()
     var loginAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
@@ -129,6 +130,10 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                         AiHomeTab.Sessions -> AiSessionsScreen(ui, vm,
                             start = { tab = AiHomeTab.QuickStart }, delete = { deleting = it },
                             deleteAll = { confirmDeleteAll = true }, recentRequest = recentSessionsRequest,
+                            unreadRequest = unreadSessionRequest,
+                            unreadRequestHandled = { request ->
+                                if (unreadSessionRequest == request) unreadSessionRequest = 0
+                            },
                             terminalUi = terminalUi, terminalVm = terminalVm)
                         AiHomeTab.Profile -> AiProfileScreen(ui,
                             notifications = { notificationSettings = true },
@@ -139,7 +144,14 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                 }
             }
         }
-        if (!keyboardVisible) AiBottomNavigation(tab, ui.unviewedIds.size) { tab = it }
+        if (!keyboardVisible) AiBottomNavigation(tab, ui.unviewedIds.size,
+            select = { tab = it },
+            locateUnread = {
+                if (ui.sessions.any { it.id in ui.unviewedIds }) {
+                    unreadSessionRequest++
+                    tab = AiHomeTab.Sessions
+                }
+            })
     }
     if (terminalUi.dialogOpen && terminalVm.isCurrentAccount()) ServerProjectProfilesDialog(terminalUi, terminalVm)
     if (notificationSettings) AiNotificationSettings { notificationSettings = false }
