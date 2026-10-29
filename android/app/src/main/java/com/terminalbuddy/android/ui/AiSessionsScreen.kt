@@ -354,7 +354,7 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                     onClick = { menu = false; delete() })
             }
         }
-        HorizontalDivider(color = TbColors.Border)
+        HorizontalDivider(color = TbColors.BorderSoft)
     }
 }
 
