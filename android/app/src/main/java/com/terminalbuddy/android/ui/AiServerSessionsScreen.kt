@@ -61,7 +61,6 @@ internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("服务端历史", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                Text("按项目归档", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
             }
             Row(
                 Modifier.fillMaxWidth().selectableGroup()
