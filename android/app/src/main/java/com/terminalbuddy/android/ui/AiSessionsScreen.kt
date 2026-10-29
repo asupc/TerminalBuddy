@@ -9,6 +9,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -19,7 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -205,11 +205,14 @@ private fun AiRecentSessions(
         }
         groups.forEach { (date, daySessions) ->
             item(key = "day:$date") {
-                // 日期分组：今天 / 昨天 / 具体日期，数量跟在后面作为辅助信息。
-                AiListLabel(
-                    sessionDateLabel(date, today), Modifier.padding(top = 18.dp, bottom = 6.dp),
-                    trailing = "${daySessions.size} 段",
-                )
+                // 日期分组：上方留白 + 小标题 + 贯穿的分隔线，让不同日期之间的边界更明确。
+                Column(Modifier.padding(top = 20.dp, bottom = 2.dp)) {
+                    AiListLabel(
+                        sessionDateLabel(date, today),
+                        trailing = "${daySessions.size} 段",
+                    )
+                    HorizontalDivider(Modifier.padding(top = 8.dp), color = TbColors.Border)
+                }
             }
             items(daySessions, key = { "session-${it.id}" }) { session ->
                 AiRecentSessionRow(ui, session, { vm.open(session.id) }, { delete(session) })
@@ -231,8 +234,9 @@ private fun sessionDateLabel(date: LocalDate?, today: LocalDate): String = when 
 }
 
 /**
- * 会话页专用轻列表：左侧助手标识 + 标题/项目与模型 + 右下时间与状态胶囊。
- * 运行中的会话整行带浅色底和左侧强调条，一眼能区分「在跑」与「空闲」。
+ * 会话页专用列表行：左侧助手标识 + 标题/项目与模型 + 右侧时间与状态胶囊。
+ * 运行中的会话用强调色实心胶囊 + 左侧竖条 + 整行浅底，状态一眼可见；
+ * 失败与中断不再使用红色，统一用中性标签，避免列表出现报警色块。
  */
 @Composable
 private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Unit, delete: () -> Unit) {
@@ -241,54 +245,83 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
         ?: session.projectPath.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
     val unread = session.id in ui.unviewedIds
     val enabled = !ui.working && !ui.deletingAll
-    val highlighted = session.running || unread || session.status == "error"
+    val active = session.running
+    val failed = session.status == "error" || session.status == "interrupted"
     val status = when {
-        session.running || session.status in listOf("error", "interrupted") -> session.statusLabel
+        active -> session.statusLabel
         unread -> "有新进展"
+        failed -> session.statusLabel
         else -> null
     }
-    val statusColor = when {
-        session.status == "error" -> TbColors.Danger
-        session.running || unread -> TbColors.Accent
-        else -> TbColors.TextMuted
+    val statusInk = when {
+        active -> TbColors.AccentInk
+        unread -> TbColors.Accent
+        else -> TbColors.TextSoft
     }
-    Column(Modifier.fillMaxWidth()) {
-        Surface(
-            onClick = open, enabled = enabled, color = Color.Transparent,
-            modifier = Modifier.fillMaxWidth().then(
-                // 运行中的行铺一层极浅的强调底色，左侧补一条 3dp 实线，与空闲行区分开。
-                if (highlighted) Modifier.background(
-                    Brush.horizontalGradient(
-                        listOf(TbColors.Accent.copy(alpha = .08f), TbColors.Accent.copy(alpha = 0f)),
-                    ),
-                ) else Modifier,
-            ),
-        ) {
+    val statusFill = when {
+        active -> TbColors.Accent
+        unread -> TbColors.Accent.copy(alpha = .14f)
+        else -> TbColors.SurfaceHover
+    }
+    Column(
+        Modifier.fillMaxWidth().then(
+            // 运行中的行整行铺一层浅强调底，即使快速滑动也能看出哪条在跑。
+            if (active) Modifier.background(TbColors.Accent.copy(alpha = .09f)) else Modifier,
+        ),
+    ) {
+        Surface(onClick = open, enabled = enabled, color = Color.Transparent) {
             Row(
                 Modifier.fillMaxWidth()
                     .drawBehind {
-                        if (highlighted) drawRect(statusColor, size = Size(3.dp.toPx(), size.height))
+                        if (active) drawRect(TbColors.Accent, size = Size(4.dp.toPx(), size.height))
                     }
-                    .padding(start = 12.dp, end = 4.dp, top = 11.dp, bottom = 11.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp),
+                    .padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                AiAgentBadge(session.provider, size = 32.dp)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(session.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleSmall)
+                Box {
+                    AiAgentBadge(session.provider, size = 34.dp)
+                    // 运行中在徽标右下角加一颗小圆点，与状态胶囊双重提示。
+                    if (active) Box(
+                        Modifier.align(Alignment.BottomEnd).size(11.dp)
+                            .background(TbColors.Canvas, CircleShape)
+                            .padding(2.dp)
+                            .background(TbColors.Accent, CircleShape),
+                    )
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            session.title, Modifier.weight(1f, fill = false),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp),
+                        )
+                        // 未读且不在运行中的会话，用一颗圆点提示有新进展。
+                        if (unread && !active) AiStatusDot(TbColors.Accent, size = 7.dp)
+                    }
                     Text(
                         "${project.ifBlank { "未命名项目" }} · ${session.providerLabel} / ${session.modelLabel}",
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                        style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
                     )
                 }
-                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(sessionTime(session.updatedAt), style = MaterialTheme.typography.labelSmall,
-                        color = TbColors.TextMuted, maxLines = 1)
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        sessionTime(session.updatedAt),
+                        style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted, maxLines = 1,
+                    )
                     status?.let {
-                        Surface(color = statusColor.copy(alpha = .1f), shape = RoundedCornerShape(6.dp)) {
-                            Text(it, Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall, color = statusColor, maxLines = 1)
+                        Surface(color = statusFill, shape = RoundedCornerShape(6.dp)) {
+                            Text(
+                                it, Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                style = MaterialTheme.typography.labelSmall, color = statusInk, maxLines = 1,
+                            )
                         }
                     }
                 }
@@ -304,7 +337,8 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                 }
             }
         }
-        AiDivider(Modifier.padding(start = 12.dp))
+        // 行间分割线贯穿整行宽度，比之前的细线更清楚。
+        HorizontalDivider(color = TbColors.Border)
     }
 }
 
@@ -353,7 +387,8 @@ internal fun AiSessionCard(
                     else -> session.providerLabel
                 }
                 Text(status, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 14.sp else 18.sp),
-                    color = if (session.status == "error") TbColors.Danger else if (unread || session.running) TbColors.Text else TbColors.TextMuted)
+                    // 失败与中断同样不用报警色，运行中与未读用正文色强调。
+                    color = if (unread || session.running) TbColors.Text else TbColors.TextMuted)
                 Text("·", color = TbColors.TextMuted, style = MaterialTheme.typography.labelMedium.copy(lineHeight = if (compact) 14.sp else 18.sp))
                 Text(session.modelLabel, Modifier.weight(1f), color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall.copy(lineHeight = if (compact) 15.sp else 20.sp))

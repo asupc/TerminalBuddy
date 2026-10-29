@@ -40,7 +40,9 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -160,10 +162,10 @@ internal fun AiDivider(modifier: Modifier = Modifier) {
     HorizontalDivider(modifier, color = TbColors.BorderSoft)
 }
 
-/** 状态小圆点：绿色表示在线/执行中，红色表示失败，灰色表示空闲。 */
+/** 状态小圆点：强调色表示在线/执行中或未读，灰色表示空闲。尺寸由调用方按所在行的字号决定。 */
 @Composable
-internal fun AiStatusDot(color: Color, modifier: Modifier = Modifier) {
-    Box(modifier.size(5.dp).background(color, CircleShape))
+internal fun AiStatusDot(color: Color, modifier: Modifier = Modifier, size: Dp = 5.dp) {
+    Box(modifier.size(size).background(color, CircleShape))
 }
 
 /** 带描边的卡片容器，AI 首页和会话页的卡片都复用它。 */
@@ -294,7 +296,11 @@ internal fun AiAccordionRow(
 @Composable
 internal fun AiListLabel(text: String, modifier: Modifier = Modifier, trailing: String? = null) {
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted, modifier = Modifier.weight(1f))
+        Text(
+            text, Modifier.weight(1f), maxLines = 1,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = TbColors.TextSoft,
+        )
         trailing?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted) }
     }
 }
