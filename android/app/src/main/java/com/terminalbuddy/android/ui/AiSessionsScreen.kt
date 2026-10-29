@@ -316,10 +316,10 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         if (active || unread || failed) {
-                            Surface(color = statusFill, contentColor = statusInk, shape = RoundedCornerShape(6.dp)) {
+                            Surface(color = statusFill, contentColor = statusInk, shape = RoundedCornerShape(4.dp)) {
                                 Text(
-                                    status, Modifier.padding(horizontal = 7.dp, vertical = 3.dp), maxLines = 1,
-                                    style = MaterialTheme.typography.labelSmall.copy(lineHeight = 13.sp),
+                                    status, Modifier.padding(horizontal = 6.dp, vertical = 2.dp), maxLines = 1,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
                                 )
                             }
                         } else {
