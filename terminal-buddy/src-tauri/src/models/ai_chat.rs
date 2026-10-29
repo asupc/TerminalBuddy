@@ -109,6 +109,13 @@ pub struct FlushAiQueue {
     pub request_id: Option<String>,
 }
 
+/// 只修改尚未出队的消息，保留请求标识与排队顺序。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAiPendingInput {
+    pub text: String,
+}
+
 /// 历史来源由服务端索引决定，客户端只选择继续对话所用的供应商和模型。
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

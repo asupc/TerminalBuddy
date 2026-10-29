@@ -426,6 +426,35 @@ pub fn flush(id: &str, owner: &str, request_id: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// 原地编辑队列，不改变消息的请求标识与排队顺序。
+pub fn update_pending_input(id: &str, owner: &str, request_id: &str, text: String) -> Result<AiSession> {
+    if text.trim().is_empty() { return Err("消息不能为空".into()); }
+    change_pending_input(id, owner, request_id, Some(text))
+}
+
+pub fn delete_pending_input(id: &str, owner: &str, request_id: &str) -> Result<AiSession> {
+    change_pending_input(id, owner, request_id, None)
+}
+
+fn change_pending_input(id: &str, owner: &str, request_id: &str, text: Option<String>) -> Result<AiSession> {
+    let cell = load(id, owner)?;
+    // 与发送、删除会话、回合交接串行；已被 worker 取走的消息不能再编辑或删除。
+    let _control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+    let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    if !cell.path.is_file() { return Err("AI 会话不存在".into()); }
+    let index = data.pending_inputs.iter().position(|item| item.request_id == request_id)
+        .ok_or("该消息已发送或已移出队列，请刷新会话")?;
+    let before = data.clone();
+    match text {
+        Some(text) => data.pending_inputs[index].text = text,
+        None => { data.pending_inputs.remove(index); },
+    }
+    // 删除后仍保留 request_ids 去重记录，避免旧的发送重试令消息重新入队。
+    touch(&mut data);
+    if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+    Ok(data.clone())
+}
+
 /// 调用方持有 control 和 data 锁直到 worker 安装完成，避免队列交接时重复启动。
 fn start_turn(cell: &Arc<Cell>, next: PendingInput, control: &mut Option<mpsc::Sender<Control>>) -> Result<()> {
     let thread_name = cell.path.file_stem().and_then(|id| id.to_str())

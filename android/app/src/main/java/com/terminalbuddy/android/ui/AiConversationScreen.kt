@@ -275,7 +275,7 @@ private fun AiConversation(
                     color = TbColors.Danger, style = MaterialTheme.typography.bodySmall,
                 )
             }
-            AiQueuedMessages(ui, session, vm::sendQueuedNow)
+            AiQueuedMessages(ui, session, vm::sendQueuedNow, vm::editQueuedMessage, vm::deleteQueuedMessage)
             Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
                 AiUsageCard(session, modelLabel, effortLabel, usageDetails,
                     expanded = usageExpanded, onExpandedChange = { usageExpanded = it },
@@ -286,45 +286,101 @@ private fun AiConversation(
     }
 }
 
-/** 服务端排队消息：当前回复结束后自动按序发送；点「立即发送」可中断当前回复立即送出。 */
+/** 服务端排队消息：单行预览，支持立即发送、原地编辑和删除。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AiQueuedMessages(ui: AiUiState, session: AiSession, sendNow: (String) -> Unit) {
-    if (session.pendingInputs.isEmpty()) return
+private fun AiQueuedMessages(
+    ui: AiUiState, session: AiSession, sendNow: (String) -> Unit,
+    edit: (String, String, () -> Unit) -> Unit, delete: (String) -> Unit,
+) {
+    var editingRequestId by rememberSaveable(session.id) { mutableStateOf<String?>(null) }
+    var editingText by rememberSaveable(session.id) { mutableStateOf("") }
     // 中断进行中或动作在途时禁用，避免与停止请求竞争；等待中的排队仍可查看。
-    val enabled = !ui.working && session.status != "stopping"
-    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+    val enabled = !ui.working && !ui.loadingSession && session.status != "stopping"
+    if (session.pendingInputs.isNotEmpty()) Box(
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center,
+    ) {
         Column(
-            Modifier.widthIn(max = 760.dp).fillMaxWidth().heightIn(max = 176.dp)
+            Modifier.widthIn(max = 760.dp).fillMaxWidth().heightIn(max = 140.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
                 "排队中 · 当前回复结束后自动发送", Modifier.padding(start = 12.dp),
                 style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            session.pendingInputs.forEach { item ->
-                Surface(
-                    color = TbColors.CanvasSoft, shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, TbColors.Border),
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
+                session.pendingInputs.forEach { item ->
+                    val submitting = item.requestId.startsWith("local-")
+                    val actionEnabled = enabled && !submitting
+                    Surface(
+                        color = TbColors.CanvasSoft, shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, TbColors.Border),
                     ) {
-                        Icon(Icons.Outlined.Schedule, null, Modifier.size(16.dp), tint = TbColors.TextMuted)
-                        Text(
-                            item.text, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                            color = TbColors.TextSoft, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        )
-                        val submitting = item.requestId.startsWith("local-")
-                        TextButton(
-                            { sendNow(item.requestId) }, enabled = enabled && !submitting,
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        ) { Text(if (submitting) "正在排队…" else "立即发送", style = MaterialTheme.typography.labelMedium) }
+                        // 原有约 56.dp 的消息行压缩到 44.dp，高度减少约五分之一。
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(start = 12.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(Icons.Outlined.Schedule, null, Modifier.size(16.dp), tint = TbColors.TextMuted)
+                            Text(
+                                item.text.replace('\n', ' ').replace('\r', ' '), Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall, color = TbColors.TextSoft,
+                                maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                            )
+                            IconButton(
+                                { sendNow(item.requestId) }, modifier = Modifier.size(32.dp), enabled = actionEnabled,
+                                colors = IconButtonDefaults.iconButtonColors(contentColor = TbColors.Accent),
+                            ) {
+                                if (submitting) CircularProgressIndicator(
+                                    Modifier.size(14.dp).semantics { contentDescription = "正在排队" },
+                                    color = TbColors.TextMuted, strokeWidth = 1.5.dp,
+                                ) else Icon(Icons.Outlined.ArrowUpward, "立即发送", Modifier.size(18.dp))
+                            }
+                            IconButton(
+                                { editingText = item.text; editingRequestId = item.requestId },
+                                modifier = Modifier.size(32.dp), enabled = actionEnabled,
+                                colors = IconButtonDefaults.iconButtonColors(contentColor = TbColors.TextMuted),
+                            ) { Icon(Icons.Outlined.Edit, "编辑排队消息", Modifier.size(18.dp)) }
+                            IconButton(
+                                { delete(item.requestId) }, modifier = Modifier.size(32.dp), enabled = actionEnabled,
+                                colors = IconButtonDefaults.iconButtonColors(contentColor = TbColors.Danger),
+                            ) { Icon(Icons.Outlined.DeleteOutline, "删除排队消息", Modifier.size(18.dp)) }
+                        }
                     }
                 }
             }
         }
+    }
+    editingRequestId?.let { requestId ->
+        val queued = session.pendingInputs.any { it.requestId == requestId }
+        AlertDialog(
+            onDismissRequest = { if (!ui.working) editingRequestId = null },
+            title = { Text("编辑排队消息") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editingText, onValueChange = { editingText = it },
+                        modifier = Modifier.fillMaxWidth(), enabled = enabled && queued,
+                        label = { Text("消息内容") }, minLines = 3, maxLines = 8,
+                    )
+                    if (!queued) Text(
+                        "该消息已发送或已移出队列，无法继续编辑。",
+                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    { edit(requestId, editingText) { editingRequestId = null } },
+                    enabled = enabled && queued && editingText.isNotBlank(),
+                ) { Text(if (ui.working) "保存中…" else "保存") }
+            },
+            dismissButton = {
+                TextButton({ editingRequestId = null }, enabled = !ui.working) { Text("取消") }
+            },
+        )
     }
 }
 

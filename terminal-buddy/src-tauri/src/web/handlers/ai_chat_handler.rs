@@ -98,6 +98,20 @@ pub async fn flush(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input
         service::get(&id, &claims.0.sub).map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
+pub async fn update_pending_input(
+    claims: ClaimsFromRequest, Path((id, request_id)): Path<(String, String)>, Json(input): Json<UpdateAiPendingInput>,
+) -> Result<Json<AiSession>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let session = service::get(&id, &claims.0.sub).map_err(service_error)?;
+        super::ensure_project_scope(&session.project_path)?;
+        service::update_pending_input(&id, &claims.0.sub, &request_id, input.text).map(Json).map_err(service_error)
+    }).await.map_err(|e| ApiError::Internal(e.to_string()))?
+}
+pub async fn delete_pending_input(
+    claims: ClaimsFromRequest, Path((id, request_id)): Path<(String, String)>,
+) -> Result<Json<AiSession>, ApiError> {
+    blocking(move || service::delete_pending_input(&id, &claims.0.sub, &request_id)).await
+}
 pub async fn stop(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<()>, ApiError> {
     blocking(move || service::stop(&id, &claims.0.sub)).await
 }
