@@ -424,7 +424,8 @@ internal fun AiSheet(
 ) {
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     ModalBottomSheet(
-        modifier = if (heightFraction != null) Modifier.height(screenHeight * heightFraction) else Modifier,
+        // 使用弹框窗口的实际约束，整体高度包含拖拽条、标题和底部安全区。
+        modifier = if (heightFraction != null) Modifier.fillMaxHeight(heightFraction) else Modifier,
         onDismissRequest = dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = TbColors.Surface,
     ) {

@@ -21,7 +21,7 @@ import com.terminalbuddy.android.data.ServerTerminal
 
 @Composable
 internal fun ServerProjectProfilesDialog(ui: ServerTerminalUiState, vm: ServerTerminalViewModel) {
-    var collapsed by remember { mutableStateOf(emptySet<String>()) }
+    var expandedProject by remember { mutableStateOf<String?>(null) }
     val busy = ui.launchingId != null
     AiSheet("服务端项目与配置", vm::dismissConfigurations, heightFraction = .75f, action = {
         IconButton(vm::refresh, enabled = !ui.loading && !busy) {
@@ -47,10 +47,10 @@ internal fun ServerProjectProfilesDialog(ui: ServerTerminalUiState, vm: ServerTe
             }
             ui.projects.forEach { project ->
                 val profiles = ui.profiles.filter { it.projectName == project.name }
-                val expanded = project.name !in collapsed
+                val expanded = expandedProject == project.name
                 item(key = "project:${project.name}") {
                     Surface(onClick = {
-                        collapsed = if (expanded) collapsed + project.name else collapsed - project.name
+                        expandedProject = if (expandedProject == project.name) null else project.name
                     }, color = TbColors.SurfaceHover, shape = RoundedCornerShape(10.dp)) {
                         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
