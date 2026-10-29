@@ -1,5 +1,8 @@
 package com.terminalbuddy.android.ui
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -10,6 +13,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -48,30 +54,49 @@ internal fun ServerProjectProfilesDialog(ui: ServerTerminalUiState, vm: ServerTe
                 val profiles = ui.profiles.filter { it.projectName == project.name }
                 val expanded = expandedProject == project.name
                 item(key = "project:${project.name}") {
-                    Surface(onClick = {
-                        expandedProject = if (expandedProject == project.name) null else project.name
-                    }, color = TbColors.SurfaceHover, shape = RoundedCornerShape(10.dp)) {
-                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight, null, Modifier.size(20.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(project.name, style = MaterialTheme.typography.titleSmall)
-                                if (project.path.isNotBlank()) Text(project.path,
-                                    style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val rotation by animateFloatAsState(
+                        if (expanded) 90f else 0f,
+                        animationSpec = tween(240, easing = FastOutSlowInEasing), label = "配置项目展开箭头",
+                    )
+                    // 标题与明细保留在同一个列表项里，避免收起时明细被列表提前移除。
+                    Column(Modifier.fillMaxWidth().semantics {
+                        stateDescription = if (expanded) "已展开" else "已折叠"
+                    }) {
+                        Surface(onClick = {
+                            expandedProject = if (expandedProject == project.name) null else project.name
+                        }, color = TbColors.SurfaceHover, shape = RoundedCornerShape(10.dp)) {
+                            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(
+                                    Icons.Outlined.ChevronRight, if (expanded) "收起" else "展开",
+                                    Modifier.size(20.dp).graphicsLayer { rotationZ = rotation },
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(project.name, style = MaterialTheme.typography.titleSmall)
+                                    if (project.path.isNotBlank()) Text(project.path,
+                                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Text("${profiles.size}", style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
                             }
-                            Text("${profiles.size}", style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
                         }
-                    }
-                }
-                if (expanded) {
-                    if (profiles.isEmpty()) item(key = "empty:${project.name}") {
-                        Text("暂无配置", Modifier.padding(start = 28.dp, top = 6.dp, bottom = 6.dp),
-                            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
-                    }
-                    items(profiles, key = { "profile:${it.id}" }) { profile ->
-                        ServerProfileRow(profile, ui.launchingId, ui.loading && !ui.loaded,
-                            ui.terminals.filter { it.profileId == profile.id }, vm::launch, vm::open)
+                        AiAccordionContent(expanded) {
+                            Column(
+                                Modifier.fillMaxWidth().padding(top = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (profiles.isEmpty()) {
+                                    Text("暂无配置", Modifier.padding(start = 28.dp, top = 6.dp, bottom = 6.dp),
+                                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+                                }
+                                profiles.forEach { profile ->
+                                    key(profile.id) {
+                                        ServerProfileRow(profile, ui.launchingId, ui.loading && !ui.loaded,
+                                            ui.terminals.filter { it.profileId == profile.id }, vm::launch, vm::open)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

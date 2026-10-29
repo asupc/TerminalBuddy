@@ -1,7 +1,14 @@
 package com.terminalbuddy.android.ui
 
 import android.os.SystemClock
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -201,7 +208,10 @@ internal fun AiProjectAccordion(
     toggle: () -> Unit,
     content: @Composable ColumnScope.() -> Unit = {},
 ) {
-    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "项目展开箭头")
+    val rotation by animateFloatAsState(
+        if (expanded) 180f else 0f,
+        animationSpec = tween(240, easing = FastOutSlowInEasing), label = "项目展开箭头",
+    )
     AiCard(
         modifier = modifier.fillMaxWidth().semantics {
             stateDescription = if (expanded) "已展开" else "已折叠"
@@ -240,7 +250,7 @@ internal fun AiProjectAccordion(
                 )
             }
         }
-        if (expanded) {
+        AiAccordionContent(expanded) {
             AiDivider()
             Column(
                 Modifier.fillMaxWidth().background(TbColors.CanvasSoft)
@@ -248,6 +258,24 @@ internal fun AiProjectAccordion(
                 content = content,
             )
         }
+    }
+}
+
+/** 项目明细从顶部平滑伸缩并淡入淡出，收起动画结束后再移除内容。 */
+@Composable
+internal fun AiAccordionContent(expanded: Boolean, content: @Composable ColumnScope.() -> Unit) {
+    AnimatedVisibility(
+        visible = expanded,
+        enter = expandVertically(tween(240, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
+            fadeIn(tween(180)),
+        exit = shrinkVertically(tween(240, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top) +
+            fadeOut(tween(120)),
+    ) {
+        Column(
+            // 异步历史加载完成时，明细高度变化也保持连续。
+            Modifier.fillMaxWidth().animateContentSize(tween(240, easing = FastOutSlowInEasing)),
+            content = content,
+        )
     }
 }
 
