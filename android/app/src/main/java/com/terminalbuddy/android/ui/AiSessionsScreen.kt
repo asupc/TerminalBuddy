@@ -19,8 +19,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -247,11 +245,7 @@ private fun sessionDateLabel(date: LocalDate?, today: LocalDate): String = when 
     else -> date.format(DateTimeFormatter.ofPattern(if (date.year == today.year) "M月d日" else "yyyy年M月d日", Locale.CHINA))
 }
 
-/**
- * 会话页专用列表行：左侧助手标识 + 标题/项目与模型 + 右侧时间与状态胶囊。
- * 运行中的会话用强调色实心胶囊 + 左侧竖条 + 整行浅底，状态一眼可见；
- * 失败与中断不再使用红色，统一用中性标签，避免列表出现报警色块。
- */
+/** 参考首页最近任务的两层信息布局，使用平面列表和分隔线，不添加卡片外观。 */
 @Composable
 private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Unit, delete: () -> Unit) {
     var menu by remember(session.id) { mutableStateOf(false) }
@@ -260,89 +254,70 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
     val unread = session.id in ui.unviewedIds
     val enabled = !ui.working && !ui.deletingAll
     val active = session.running
-    val accentColor = TbColors.Accent
-    val failed = session.status == "error" || session.status == "interrupted"
     val status = when {
         active -> session.statusLabel
         unread -> "有新进展"
-        failed -> session.statusLabel
-        else -> null
+        session.status == "error" || session.status == "interrupted" -> session.statusLabel
+        else -> session.providerLabel
     }
-    val statusInk = when {
-        active -> TbColors.AccentInk
-        unread -> TbColors.Accent
-        else -> TbColors.TextSoft
-    }
-    val statusFill = when {
-        active -> TbColors.Accent
-        unread -> TbColors.Accent.copy(alpha = .14f)
-        else -> TbColors.SurfaceHover
-    }
-    Column(
-        Modifier.fillMaxWidth().then(
-            // 运行中的行整行铺一层浅强调底，即使快速滑动也能看出哪条在跑。
-            if (active) Modifier.background(TbColors.Accent.copy(alpha = .09f)) else Modifier,
-        ),
-    ) {
+    Column(Modifier.fillMaxWidth()) {
         Box {
-            Surface(color = Color.Transparent) {
+            Column(
+                Modifier.fillMaxWidth()
+                    .combinedClickable(
+                        enabled = enabled, onClick = open,
+                        onLongClickLabel = "打开会话操作菜单", onLongClick = { menu = true },
+                    )
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
                 Row(
-                    Modifier.fillMaxWidth()
-                        .combinedClickable(
-                            enabled = enabled, onClick = open,
-                            onLongClickLabel = "打开会话操作菜单", onLongClick = { menu = true },
-                        )
-                        .drawBehind {
-                            if (active) drawRect(accentColor, size = Size(4.dp.toPx(), size.height))
-                        }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Box {
-                        AiAgentBadge(session.provider, size = 34.dp)
-                        // 运行中或未读时在徽标右下角加一颗小圆点，与状态胶囊双重提示。
+                        AiAgentBadge(session.provider, size = 23.dp)
                         if (active || unread) Box(
-                            Modifier.align(Alignment.BottomEnd).size(11.dp)
+                            Modifier.align(Alignment.BottomEnd).size(9.dp)
                                 .background(TbColors.Canvas, CircleShape)
                                 .padding(2.dp)
                                 .background(TbColors.Accent, CircleShape),
                         )
                     }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                session.title, Modifier.weight(1f, fill = false),
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp),
-                            )
-                        }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            "${project.ifBlank { "未命名项目" }} · ${session.providerLabel} / ${session.modelLabel}",
+                            session.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleSmall.copy(lineHeight = 17.sp),
+                        )
+                        Text(
+                            project.ifBlank { "未命名项目" }, color = TbColors.TextMuted,
                             maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
                         )
                     }
-                    Column(
-                        horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            sessionTime(session.updatedAt),
-                            style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted, maxLines = 1,
-                        )
-                        status?.let {
-                            Surface(color = statusFill, shape = RoundedCornerShape(6.dp)) {
-                                Text(
-                                    it, Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                                    style = MaterialTheme.typography.labelSmall, color = statusInk, maxLines = 1,
-                                )
-                            }
-                        }
-                    }
+                    Icon(Icons.Outlined.ChevronRight, null, Modifier.size(15.dp), tint = TbColors.TextMuted)
+                }
+                Row(
+                    Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        status, maxLines = 1,
+                        style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp),
+                        color = if (active || unread) TbColors.Accent else TbColors.TextMuted,
+                    )
+                    Text("·", color = TbColors.TextMuted,
+                        style = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp))
+                    Text(
+                        session.modelLabel, Modifier.weight(1f), color = TbColors.TextMuted,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
+                    )
+                    Text(
+                        sessionTime(session.updatedAt), maxLines = 1,
+                        style = MaterialTheme.typography.labelSmall.copy(lineHeight = 13.sp),
+                        color = TbColors.TextMuted,
+                    )
                 }
             }
             DropdownMenu(menu, { menu = false }) {
@@ -351,7 +326,6 @@ private fun AiRecentSessionRow(ui: AiUiState, session: AiSession, open: () -> Un
                     onClick = { menu = false; delete() })
             }
         }
-        // 行间分割线贯穿整行宽度，比之前的细线更清楚。
         HorizontalDivider(color = TbColors.Border)
     }
 }
