@@ -33,56 +33,67 @@ pub async fn start(
     headers: HeaderMap,
     Json(req): Json<StartTerminalRequest>,
 ) -> Result<Json<TerminalInfo>, ApiError> {
-    let ts = state.app_handle.state::<TerminalService>();
-    let creator = match client_kind_from_headers(&headers) {
-        crate::models::TerminalClientKind::Mobile => TerminalCreator::Mobile,
-        crate::models::TerminalClientKind::Desktop => TerminalCreator::Desktop,
-    };
-    let terminal_id = if req.profile_id.trim().is_empty() {
-        ts.create_blank_terminal(
-            crate::commands::terminal::default_terminal_type(),
-            req.display_name.as_deref(),
-            req.startup_group.as_deref(),
-            req.rows.unwrap_or(0),
-            req.cols.unwrap_or(0),
-            req.startup_path.as_deref(),
-            req.startup_command.as_deref(),
-            req.extra_param_tag.as_deref(),
-            req.extra_param_tag_color.as_deref(),
-            state.app_handle.clone(),
-            TerminalOwner::Web,
-            creator,
-        )
-    } else {
-        ts.create_terminal(
-            &req.profile_id,
-            req.display_name.as_deref(),
-            req.extra_startup_params.as_deref(),
-            req.extra_startup_mode.as_deref(),
-            req.rows.unwrap_or(0),
-            req.cols.unwrap_or(0),
-            req.startup_path.as_deref(),
-            req.extra_param_tag.as_deref(),
-            req.extra_param_tag_color.as_deref(),
-            state.app_handle.clone(),
-            TerminalOwner::Web,
-            creator,
-        )
-    }
-    // 创建失败的中文原因（引用失效 / 旧路径过期 / 参数校验）必须原样提示给
-    // 用户，不能走 Internal 的通用 500 文案；「拒绝启动并提示重新选择」是
-    // 设计的验收要求。
-    .map_err(ApiError::BadRequest)?;
+    let app_handle = state.app_handle;
+    // 配置读取、PTY 创建和初始化在阻塞线程执行，避免占用 HTTP/WS 调度线程。
+    tokio::task::spawn_blocking(move || {
+        let ts = app_handle.state::<TerminalService>();
+        let creator = match client_kind_from_headers(&headers) {
+            crate::models::TerminalClientKind::Mobile => TerminalCreator::Mobile,
+            crate::models::TerminalClientKind::Desktop => TerminalCreator::Desktop,
+        };
+        if !req.profile_id.trim().is_empty() {
+            crate::services::ProfileService::get_profile(&req.profile_id)
+                .map_err(|_| ApiError::BadRequest("该配置已删除或不存在，请刷新项目配置后重试".to_string()))?;
+        }
+        let terminal_id = if req.profile_id.trim().is_empty() {
+            ts.create_blank_terminal(
+                crate::commands::terminal::default_terminal_type(),
+                req.display_name.as_deref(),
+                req.startup_group.as_deref(),
+                req.rows.unwrap_or(0),
+                req.cols.unwrap_or(0),
+                req.startup_path.as_deref(),
+                req.startup_command.as_deref(),
+                req.extra_param_tag.as_deref(),
+                req.extra_param_tag_color.as_deref(),
+                app_handle.clone(),
+                TerminalOwner::Web,
+                creator,
+            )
+        } else {
+            ts.create_terminal(
+                &req.profile_id,
+                req.display_name.as_deref(),
+                req.extra_startup_params.as_deref(),
+                req.extra_startup_mode.as_deref(),
+                req.rows.unwrap_or(0),
+                req.cols.unwrap_or(0),
+                req.startup_path.as_deref(),
+                req.extra_param_tag.as_deref(),
+                req.extra_param_tag_color.as_deref(),
+                app_handle.clone(),
+                TerminalOwner::Web,
+                creator,
+            )
+        }
+        // 创建失败的中文原因（引用失效 / 旧路径过期 / 参数校验）必须原样提示给
+        // 用户，不能走 Internal 的通用 500 文案；「拒绝启动并提示重新选择」是
+        // 设计的验收要求。
+        .map_err(ApiError::BadRequest)?;
 
-    // 两种创建路径统一从实例表取 TerminalInfo：空白终端没有 profile，
-    // 手工拼装会在这里分叉两份字段映射，list_terminals_info 已是唯一权威来源。
-    let info = ts
-        .list_terminals_info()
-        .into_iter()
-        .find(|info| info.id == terminal_id)
-        .ok_or_else(|| ApiError::Internal("终端已创建但查询信息失败".to_string()))?;
-    let _ = state.app_handle.emit("terminal-created", info.clone());
-    Ok(Json(info))
+        // 两种创建路径统一从实例表取 TerminalInfo：空白终端没有 profile，
+        // 手工拼装会在这里分叉两份字段映射，list_terminals_info 已是唯一权威来源。
+        let info = ts
+            .list_terminals_info()
+            .into_iter()
+            .find(|info| info.id == terminal_id)
+            .ok_or_else(|| ApiError::Internal("终端已创建但查询信息失败".to_string()))?;
+        let _ = app_handle.emit("terminal-created", info.clone());
+        Ok(Json(info))
+    })
+    .await
+    .map_err(|error| ApiError::Internal(error.to_string()))?
+
 }
 
 /// 关闭 Web 池终端：手机和电脑浏览器均可关闭，与创建端设备无关。

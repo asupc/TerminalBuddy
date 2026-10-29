@@ -22,6 +22,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.terminalbuddy.android.ServerTerminalViewModel
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.AiHistorySession
@@ -36,6 +39,9 @@ private enum class AiPage { Home, Accounts, Connection, ServiceInfo, AppUpdate }
 /** 一级入口共用底部导航，账号、服务信息和对话保留独立的二级页面。 */
 @Composable
 fun AiScreen(ui: AiUiState, vm: AiViewModel) {
+    val terminalVm: ServerTerminalViewModel = viewModel()
+    val terminalUi by terminalVm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(ui.authenticated, ui.activeAccountId, ui.connectionRevision) { terminalVm.bindAccount() }
     var page by rememberSaveable { mutableStateOf(AiPage.Home) }
     var tab by rememberSaveable { mutableStateOf(AiHomeTab.QuickStart) }
     var recentSessionsRequest by rememberSaveable { mutableIntStateOf(0) }
@@ -102,6 +108,10 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
         AiServiceInfoScreen(ui, back) { openConnection(ui.activeAccountId, false, false) }
         return
     }
+    if (ui.authenticated && terminalVm.isCurrentAccount() && terminalUi.selected != null) {
+        ServerTerminalScreen(terminalUi, terminalVm)
+        return
+    }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     Column(Modifier.fillMaxSize().imePadding()) {
         if (tab != AiHomeTab.Sessions) {
@@ -115,7 +125,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
                         AiHomeTab.QuickStart -> AiHomeWorkspace(ui, vm, sessions = {
                             recentSessionsRequest++
                             tab = AiHomeTab.Sessions
-                        })
+                        }, more = terminalVm::showConfigurations)
                         AiHomeTab.Sessions -> AiSessionsScreen(ui, vm,
                             start = { tab = AiHomeTab.QuickStart }, delete = { deleting = it },
                             deleteAll = { confirmDeleteAll = true }, recentRequest = recentSessionsRequest)
@@ -130,6 +140,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
         }
         if (!keyboardVisible) AiBottomNavigation(tab, ui.unviewedIds.size) { tab = it }
     }
+    if (terminalUi.dialogOpen && terminalVm.isCurrentAccount()) ServerProjectProfilesDialog(terminalUi, terminalVm)
     if (notificationSettings) AiNotificationSettings { notificationSettings = false }
     if (sendModeSheet) AiSendModeSheet(ui.sendImmediate, vm::setSendImmediate) { sendModeSheet = false }
     deleting?.let { session -> AiDeleteDialog(session, { deleting = null }) { deleting = null; vm.delete(session) } }

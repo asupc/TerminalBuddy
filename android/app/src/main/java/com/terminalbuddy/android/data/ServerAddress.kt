@@ -37,4 +37,12 @@ object ServerAddress {
         normalize(server).toHttpUrlOrNull()!!.newBuilder()
             .addPathSegment("ws").addPathSegment("ai").addPathSegment(sessionId)
             .addQueryParameter("token", token).build()
+
+    /** 与网页端共用终端回放、尺寸接管和输入协议，保留反向代理子路径。 */
+    fun terminalSocket(server: String, terminalId: String, token: String): HttpUrl =
+        normalize(server).toHttpUrlOrNull()!!.newBuilder()
+            .addPathSegment("ws").addPathSegment("terminal").addPathSegment(terminalId)
+            .addQueryParameter("token", token).addQueryParameter("replay", "1")
+            .addQueryParameter("takeover", "1").addQueryParameter("viewport", "1").build()
+
 }

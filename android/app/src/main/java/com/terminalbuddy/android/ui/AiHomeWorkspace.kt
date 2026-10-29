@@ -17,13 +17,13 @@ import com.terminalbuddy.android.AiViewModel
 
 /** 快速开始聚焦创建会话，近期会话作为次级入口。 */
 @Composable
-internal fun AiHomeWorkspace(ui: AiUiState, vm: AiViewModel, sessions: () -> Unit) {
+internal fun AiHomeWorkspace(ui: AiUiState, vm: AiViewModel, sessions: () -> Unit, more: () -> Unit) {
     val recent = ui.sessions.sortedByDescending { it.updatedAt }.take(2)
     LazyColumn(
         Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item(key = "launch") { AiQuickStart(ui, vm) }
+        item(key = "launch") { AiQuickStart(ui, vm, more) }
         // 标题与卡片间距在上次减三分之一（20 → 13）的基础上再减半（→ 6.5）；卡片之间减三分之一（20 → 13）。
         item(key = "recent") {
             Column(verticalArrangement = Arrangement.spacedBy(6.5.dp)) {
@@ -63,7 +63,7 @@ internal fun modelChoices(models: List<AiLaunchModel>) = models.map { target ->
 }
 
 @Composable
-private fun AiQuickStart(ui: AiUiState, vm: AiViewModel) {
+private fun AiQuickStart(ui: AiUiState, vm: AiViewModel, more: () -> Unit) {
     // 同步期间以常见助手占位；完成后只保留项目已启用且服务端 Agent 管理中已安装的助手。
     val agents = if (ui.initialLoading) listOf("claude", "codex")
         else ui.availableAgents.filter(ui::agentInstalled)
@@ -71,7 +71,11 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel) {
     AiCard(shape = RoundedCornerShape(24.dp)) {
         // 整卡按 3/4 高度压缩：内边距、行距、行高与控件最小高度同步等比缩小。
         Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-            AiSectionTitle("开启新会话", compact = true)
+            AiSectionTitle("开启新会话", compact = true) {
+                IconButton(more, modifier = Modifier.size(32.dp), enabled = ui.authenticated && !ui.authenticating) {
+                    Icon(Icons.Outlined.MoreHoriz, "更多服务端项目配置", Modifier.size(22.dp), tint = TbColors.TextMuted)
+                }
+            }
             AiChoiceField("工作项目", Icons.Outlined.FolderOpen, ui.projectPath, "选择一个项目",
                 ui.projects.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject,
                 compact = true, inlineLabel = true)
