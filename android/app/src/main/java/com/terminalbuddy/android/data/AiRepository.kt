@@ -52,14 +52,23 @@ class AiRepository(context: Context) {
     val selectedProvider get() = preferences.getString(preferenceKey("provider"), "").orEmpty()
     val selectedModel get() = preferences.getString(preferenceKey("model"), "").orEmpty()
 
+    /** 同一助手的模型可能来自不同供应商，两者一起按当前账号保存。 */
+    fun selectedAgentProvider(agent: String) = preferences.getString(preferenceKey("provider:$agent"), "").orEmpty()
+    fun selectedAgentModel(agent: String) = preferences.getString(preferenceKey("model:$agent"), "").orEmpty()
+
     /** 连续发送方式是全局偏好，不随账号隔离：false 回复期间排队等待，true 中断当前回复立即发送。 */
     var sendImmediate: Boolean
         get() = preferences.getBoolean("ai_send_immediate", false)
         set(value) { preferences.edit().putBoolean("ai_send_immediate", value).apply() }
 
-    fun saveSelection(project: String, provider: String, model: String) {
-        preferences.edit().putString(preferenceKey("project"), project)
-            .putString(preferenceKey("provider"), provider).putString(preferenceKey("model"), model).apply()
+    fun saveSelection(project: String, provider: String, model: String, agent: String?) {
+        val edit = preferences.edit().putString(preferenceKey("project"), project)
+            .putString(preferenceKey("provider"), provider).putString(preferenceKey("model"), model)
+        if (!agent.isNullOrBlank() && provider.isNotBlank()) {
+            edit.putString(preferenceKey("provider:$agent"), provider)
+                .putString(preferenceKey("model:$agent"), model)
+        }
+        edit.apply()
     }
 
     /** null 表示尚未初始化，空表表示这个账号已经建立过已读基线。 */

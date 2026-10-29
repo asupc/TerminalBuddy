@@ -480,7 +480,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun saveSelection() {
         val ui = mutable.value
-        repository.saveSelection(ui.projectPath, ui.providerId, ui.modelId)
+        repository.saveSelection(ui.projectPath, ui.providerId, ui.modelId, ui.launchProvider?.agent)
     }
 
     fun selectProject(path: String) {
@@ -493,11 +493,17 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { ui ->
             if (ui.launchProvider?.agent == agent) return@update ui
             val choices = ui.availableProviders.filter { it.agent == agent }
-            val provider = choices.firstOrNull { it.isDefault && it.models.isNotEmpty() }
+            val savedProviderId = repository.selectedAgentProvider(agent)
+            val savedModelId = repository.selectedAgentModel(agent)
+            val savedProvider = choices.find { provider ->
+                provider.id == savedProviderId && provider.models.any { it.id == savedModelId }
+            }
+            val provider = savedProvider
+                ?: choices.firstOrNull { it.isDefault && it.models.isNotEmpty() }
                 ?: choices.firstOrNull { it.models.isNotEmpty() }
                 ?: choices.firstOrNull()
                 ?: return@update ui
-            reconcile(ui.copy(providerId = provider.id, modelId = ""))
+            reconcile(ui.copy(providerId = provider.id, modelId = if (savedProvider != null) savedModelId else ""))
         }
         saveSelection()
         reloadHistoryIfExpanded()
