@@ -13,7 +13,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /** 与网页端共用项目、配置与 PTY 接口。创建终端的 POST 不自动重试。 */
-class ServerTerminalRepository {
+internal class ServerTerminalRepository {
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .callTimeout(45, TimeUnit.SECONDS).retryOnConnectionFailure(false)

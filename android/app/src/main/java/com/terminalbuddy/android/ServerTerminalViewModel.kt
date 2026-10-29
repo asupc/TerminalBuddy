@@ -15,7 +15,7 @@ import okhttp3.WebSocketListener
 import java.util.ArrayDeque
 
 /** 普通终端的连接与导航独立于 AI 会话；账号切换会使旧请求、回调和查看连接失效。 */
-data class ServerTerminalUiState(
+internal data class ServerTerminalUiState(
     val connection: AiConnection? = null,
     val dialogOpen: Boolean = false, val loading: Boolean = false, val loaded: Boolean = false,
     val projects: List<AiProject> = emptyList(), val profiles: List<ServerProfile> = emptyList(),
@@ -25,7 +25,7 @@ data class ServerTerminalUiState(
     val terminalError: String? = null, val ended: Boolean = false, val closing: Boolean = false,
 )
 
-class ServerTerminalViewModel(application: Application) : AndroidViewModel(application) {
+internal class ServerTerminalViewModel(application: Application) : AndroidViewModel(application) {
     private val store = (application as TerminalBuddyApplication).aiRepository.store
     private val repository = ServerTerminalRepository()
     private val mutable = MutableStateFlow(ServerTerminalUiState())
