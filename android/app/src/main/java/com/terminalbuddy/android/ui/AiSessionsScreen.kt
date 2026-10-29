@@ -177,22 +177,22 @@ private fun AiRecentSessions(
         }
     }
     val unread = sessions.count { it.id in ui.unviewedIds }
-    val running = sessions.count { it.running }
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 28.dp),
     ) {
         item(key = "summary") {
-            AiSectionRow(
-                title = "全部会话",
-                subtitle = buildList {
-                    if (sessions.isNotEmpty()) add("${sessions.size} 段会话")
-                    if (running > 0) add("$running 段运行中")
-                    if (unread > 0) add("$unread 段有更新")
-                }.joinToString(" · ").ifBlank { "最近更新优先" },
+            Row(
+                Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                Text(
+                    "全部会话（${sessions.size}条 ${unread}条未读）", Modifier.weight(1f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall,
+                )
                 Box {
-                    IconButton({ menu = true }, modifier = Modifier.size(40.dp)) {
+                    IconButton({ menu = true }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Outlined.MoreHoriz, "更多会话操作", tint = TbColors.TextMuted)
                     }
                     DropdownMenu(menu, { menu = false }) {
