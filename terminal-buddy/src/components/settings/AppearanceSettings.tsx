@@ -23,7 +23,7 @@ export const AppearanceSettings: FC<AppearanceSettingsProps> = ({ settings, upda
         <div className="settings-row">
           <div className="settings-row-info">
             <div className="settings-row-title">显示任务摘要</div>
-            <p className="settings-row-desc">在窗口标题和会话标签中显示当前 Claude / Codex 会话摘要，方便区分同一项目的多个任务。默认关闭，与手机版同步；尚无摘要时显示原名称。</p>
+            <p className="settings-row-desc">在窗口标题和会话标签中显示当前 Claude / Codex 会话摘要，方便区分同一项目的多个任务。默认关闭；尚无摘要时显示原名称。</p>
             {summaryError && <p className="settings-row-desc" role="alert">{summaryError}</p>}
           </div>
           <div className="settings-row-ctrl">

@@ -2,9 +2,9 @@
 
 ## 项目结构
 
-- **仓库根目录只是个壳。** 所有源码都在 `terminal-buddy/` 下。桌面端前端：`terminal-buddy/src/`，Rust 后端：`terminal-buddy/src-tauri/`，Web 前端：`terminal-buddy/web/`。
-- 桌面端前端：React 19、TypeScript 6、Zustand 5、xterm.js 6、Monaco Editor、React Flow。
-- Web 前端：独立 React SPA（`web/`），构建时通过 `include_dir!` 嵌入 Rust 二进制。**该目录已封存（2026-10）**：代码冻结，后续功能变更（含桌面端修复）不再同步修改，除非明确要求，不要改动 `web/`。
+- **仓库根目录只是个壳。** 所有源码都在 `terminal-buddy/` 下。桌面端前端：`terminal-buddy/src/`，Rust 后端：`terminal-buddy/src-tauri/`。
+- 桌面端前端：React 19、TypeScript 6、Zustand 5、xterm.js 6、Monaco Editor、React Flow；`src/` 以 `--mode browser` 构建出完整网页界面（`dist-web`，桌面版内嵌 + Docker 服务端托管）。
+- **独立手机 SPA（`web/`）已于 2026-10 彻底退役**：所有构建脚本与 Rust 二进制都不再构建/打包它，手机浏览器直接使用完整网页界面。`web/` 目录仅作历史参考保留，不要改动，也不要在任何构建中重新引入。
 - Rust 后端：Tauri 2、axum（Web API）、portable-pty（ConPTY）、ssh2、bcrypt、JWT、rusqlite。
 - 后端分三层：**commands**（薄 Tauri 包装层）→ **services**（业务逻辑 + 持久化）→ **models**（数据结构），外加一个 `web` 模块提供 HTTP/WS API。
 
@@ -14,22 +14,20 @@
 
 ```bash
 npm install                  # 安装桌面端前端依赖
-cd web && npm install        # 安装 Web 前端依赖（独立的 node_modules；web 已封存，一般无需执行）
 
 npm run dev                  # 只启动 Vite dev server（1420 端口，不含 Rust）
 npm run tauri dev            # 完整 Tauri 开发模式（Vite + Rust 一起跑）
 npm run build                # 类型检查 + Vite 构建（tsc && vite build）
 npm run tauri build          # 生产构建（NSIS 安装包）；beforeBuildCommand 会自动执行
-                             # prepare:vscode-terminal + 桌面端构建 + Web 端构建
+                             # prepare:vscode-terminal + 桌面端构建 + dist-web 构建
 
 npx tsc --noEmit             # 桌面端 TypeScript 类型检查
-cd web && npx tsc --noEmit   # Web 端 TypeScript 类型检查（web 已封存，一般无需执行）
 
 cd src-tauri && cargo check  # Rust 编译检查
 cd src-tauri && cargo test --lib   # Rust 单元测试（25 个文件、约 164 个用例）
 ```
 
-仓库根目录 `scripts/` 下的快捷脚本：`scripts/dev.bat` 会先构建 Web 前端再启动 `tauri dev`；`scripts/build-windows-exe.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/windows-build/Dockerfile`，cargo-xwin 交叉编译）一键产出 Windows 单文件 exe：源码只读挂载，构建与缓存在容器/命名卷内完成，宿主机不安装工具链，仅输出到仓库根目录 `dist/`（含 `.sha256`），不生成安装包 —— 需要 NSIS 安装包请在 Windows 上使用 `terminal-buddy/build.bat`。`scripts/build-android.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/android-build/Dockerfile`，JDK 17 + Android SDK 36）构建 Android Release APK 并用 apksigner 校验签名：源码只读挂载，Gradle 缓存在命名卷 `terminal-buddy-android-cache` 内，产物输出到仓库根目录 `dist/`（含 `.sha256`）；Windows 上直装设备用 `scripts/build-android.bat`。
+仓库根目录 `scripts/` 下的快捷脚本：`scripts/dev.bat` 直接启动 `tauri dev`（不再预构建任何 Web 前端）；`scripts/build-windows-exe.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/windows-build/Dockerfile`，cargo-xwin 交叉编译）一键产出 Windows 单文件 exe：源码只读挂载（`terminal-buddy/web` 退役目录随拷贝排除），构建与缓存在容器/命名卷内完成，宿主机不安装工具链，仅输出到仓库根目录 `dist/`（含 `.sha256`），不生成安装包 —— 需要 NSIS 安装包请在 Windows 上使用 `terminal-buddy/build.bat`。`scripts/build-android.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/android-build/Dockerfile`，JDK 17 + Android SDK 36）构建 Android Release APK 并用 apksigner 校验签名：源码只读挂载，Gradle 缓存在命名卷 `terminal-buddy-android-cache` 内，产物输出到仓库根目录 `dist/`（含 `.sha256`）；Windows 上直装设备用 `scripts/build-android.bat`。
 
 仓库没有 lint 和格式化工具。TypeScript strict 模式开启了 `noUnusedLocals` 和 `noUnusedParameters`，未使用的绑定会让 `tsc` 失败。测试方面只有 Rust 单元测试（`cargo test --lib`）和独立的 `node scripts/test-*.mjs` 脚本，前端没有测试套件。
 
@@ -40,7 +38,7 @@ cd src-tauri && cargo test --lib   # Rust 单元测试（25 个文件、约 164 
 3. 改动 Rust 后，再执行 `cargo test --lib`
 4. 新增或删除 Tauri 命令时，在 `terminal-buddy/` 下执行 `python scripts/check-invoke-coverage.py`
 
-`web/` 已封存、不再改动，常规验证跳过 Web 端类型检查；仅当确实改动了 `web/` 时才补跑 `cd web && npx tsc --noEmit`。
+`web/`（独立手机 SPA）已退役且不参与任何构建，无需对它做类型检查；所有构建产物只来自 `src/`（桌面 + browser 模式）。
 
 ## Rust 相关约定
 
@@ -50,7 +48,7 @@ cd src-tauri && cargo test --lib   # Rust 单元测试（25 个文件、约 164 
 - `portable-pty` 是**本地打补丁**的版本，位于 `src-tauri/portable-pty-patched/` —— 未经补丁验证，绝不要从 crates.io 更新它。
 - 所有 Tauri 命令都注册在 `lib.rs` 的 `invoke_handler![]` 里。新增命令的流程：在 `commands/` 定义 → 在 `commands/mod.rs` 重新导出 → 加进 `invoke_handler![]`。前端的 `invoke()` 调用必须是该列表的子集，由 `scripts/check-invoke-coverage.py` 校验。
 - `commands/workspace.rs` 后端已存在，但**故意不注册** —— 没有桌面端 UI 消费它，不过 `workspace_service` 与 `Workspaces/*.json` 存储仍然保留。
-- Rust ↔ TypeScript 序列化统一用 `camelCase`（`serde(rename_all = "camelCase")`）。**唯一例外：** `commands/fs.rs::FileNode` 是 snake_case，`web/src/types.ts` 与之保持一致。
+- Rust ↔ TypeScript 序列化统一用 `camelCase`（`serde(rename_all = "camelCase")`）。**唯一例外：** `commands/fs.rs::FileNode` 是 snake_case，桌面端与浏览器端的文件树类型与之保持一致。
 - 终端的基座 PTY 始终是 `cmd.exe`；所选 shell / SSH / Docker / K8s / MSTSC 命令是通过 PTY writer 注入的。
 - REST handler 里的重活（转录索引、目录列举、git 操作）必须走 `tokio::task::spawn_blocking`。
 

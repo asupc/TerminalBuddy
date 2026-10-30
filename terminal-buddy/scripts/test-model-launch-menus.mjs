@@ -47,10 +47,6 @@ function nodes(tree) {
   if (!tree || typeof tree !== 'object') return [];
   return [tree, ...nodes(tree.props?.children)];
 }
-function text(node) {
-  if (Array.isArray(node)) return node.map(text).join('');
-  return typeof node === 'object' && node ? text(node.props?.children) : String(node ?? '');
-}
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const claude = load('src/utils/claudeLaunch.ts');
 const codex = load('src/utils/codexLaunch.ts', { './claudeLaunch': claude });
@@ -59,9 +55,6 @@ const projectPath = load('src/utils/projectPath.ts', { '../services/platform': {
 const startupPresets = load('src/utils/startupPresets.ts');
 const TreeView = () => null;
 const ClaudeModelMenuSection = () => null;
-const ProjectContextMenu = () => null;
-const CodexProvidersPanel = () => null;
-const LlmProvidersDialog = () => null;
 const event = { preventDefault() {}, stopPropagation() {}, clientX: 30, clientY: 40,
   currentTarget: { getBoundingClientRect: () => ({ left: 30, bottom: 40 }) } };
 
@@ -99,46 +92,6 @@ function desktop(command, kind = 'profile', terminalType = 'cmd') {
   return { sections, launches, settings, profile, project };
 }
 
-async function web(command, kind = 'profile', terminalType = 'bash') {
-  const react = hooks(), launches = [];
-  const project = { name: '服务器工作区', path: '/test/project', startupCommand: command };
-  const profile = { id: 'profile', name: '测试命令', group: project.name, terminalType, startupPath: '', startupCommands: [command] };
-  const state = { profiles: [profile], projects: [project], extraParamPresets: [], setView() {} };
-  const useStore = selector => selector(state);
-  useStore.getState = () => state;
-  useStore.setState = next => Object.assign(state, next);
-  const api = {
-    getProfiles: async () => [profile], getProjects: async () => [project], getRuntime: async () => ({ platform: 'linux' }),
-    getLlmLaunchTargets: async () => [{ providerId: 'claude-provider', providerName: 'Claude 供应商', isDefault: true,
-      models: [{ id: 'claude-model', effort: 'high' }] }],
-    getCodexProviderState: async () => ({ activeProviderId: 'codex-provider', providers: [{ id: 'codex-provider',
-      name: 'Codex 供应商', models: ['codex-model'], modelReasoningEfforts: { 'codex-model': 'max' } }] }),
-    createTerminal: async (...args) => { launches.push(args); return { id: 'terminal' }; },
-  };
-  const Projects = load('web/src/screens/Projects.tsx', {
-    react, '../api': { api }, '../store': { useStore },
-    '../components/Dialog': {}, '../components/ExtraParamsDialog': {},
-    '../components/CodexProvidersPanel': { CodexProvidersPanel }, '../components/LlmProvidersDialog': { LlmProvidersDialog },
-    '../components/ProfileEditorDialog': {}, '../components/ProjectContextMenu': { ProjectContextMenu },
-    '../components/ProjectEditorDialog': {}, '../hooks/useLongPressMenu': { useLongPressMenu: () => () => ({}) },
-    '../hooks/useMediaQuery': { useHasHover: () => true },
-    '../utils/projects': load('web/src/utils/projects.ts', { '../api': { api } }),
-    '../utils/codexLaunch': load('web/src/utils/codexLaunch.ts'),
-  }).default;
-  function render() { react.begin(); return Projects({ onOpenFiles() {} }); }
-  render();
-  await react.mount();
-  const label = kind === 'profile' ? `配置操作 ${profile.name}` : `项目操作 ${project.name}`;
-  nodes(render()).find(node => node.props['aria-label'] === label).props.onClick(event);
-  const menu = nodes(render()).find(node => node.type === ProjectContextMenu);
-  const sections = nodes(menu).filter(node => node.type === React.Fragment && ['claude', 'codex'].includes(node.key));
-  if (sections.length) {
-    const contents = nodes(menu);
-    assert.ok(contents.indexOf(sections[0]) > contents.findIndex(node => node.props.children === '命令行'));
-  }
-  return { sections, launches, render, profile, project };
-}
-
 for (const kind of ['profile', 'group']) {
   for (const [command, order] of [
     ['claude --model old --verbose', ['claude', 'codex']],
@@ -147,9 +100,7 @@ for (const kind of ['profile', 'group']) {
     ['"codex.exe" --sandbox read-only', ['codex', 'claude']],
   ]) {
     const d = desktop(command, kind);
-    const w = await web(command, kind);
     assert.deepEqual(d.sections.map(section => section.props.source), order);
-    assert.deepEqual(w.sections.map(section => section.key), order);
     for (const source of ['claude', 'codex']) {
       const expected = source === 'claude'
         ? claudeRef.buildClaudeRefCommand('provider', 'model', claude.inheritableClaudeArgs(command, claude.DEFAULT_CLAUDE_COMMAND))
@@ -168,33 +119,15 @@ for (const kind of ['profile', 'group']) {
       }
       ds.props.onGotoProviders();
       assert.equal(d.settings.at(-1), source);
-      const ws = w.sections.find(section => section.key === source);
-      const model = `${source}-model`;
-      nodes(ws).find(node => node.type === 'button' && text(node).startsWith(model)).props.onClick();
-      await tick();
-      const wc = w.launches.at(-1);
-      const webExpected = expected.replace('provider:model', `${source}-provider:${model}`);
-      assert.equal(wc[0], kind === 'profile' ? w.profile.id : '');
-      if (kind === 'profile') {
-        assert.deepEqual(wc[1], { extraStartupParams: webExpected, extraStartupMode: 'independent' });
-      } else {
-        assert.deepEqual(wc[1], { displayName: w.project.name, startupPath: w.project.path,
-          startupGroup: w.project.name, startupCommand: webExpected });
-      }
-      nodes(ws).find(node => text(node) === '配置模型供应商…').props.onClick();
-      const dialogType = source === 'claude' ? LlmProvidersDialog : CodexProvidersPanel;
-      assert.ok(nodes(w.render()).some(node => node.type === dialogType), '配置入口应打开对应工具供应商');
     }
   }
 }
 for (const command of ['', 'npm run dev']) {
   for (const kind of ['profile', 'group']) {
     assert.equal(desktop(command, kind).sections.length, 0);
-    assert.equal((await web(command, kind)).sections.length, 0);
   }
 }
 for (const terminalType of ['ssh', 'docker', 'k8s']) {
   assert.equal(desktop('claude', 'profile', terminalType).sections.length, 0);
-  assert.equal((await web('codex', 'profile', terminalType)).sections.length, 0);
 }
-console.log('PASS: 双端项目/配置菜单排序、双向模型切换、命令整体替换、目录保留及配置入口；普通命令和远程终端不显示模型区');
+console.log('PASS: 项目/配置菜单排序、双向模型切换、命令整体替换、目录保留及配置入口；普通命令和远程终端不显示模型区');

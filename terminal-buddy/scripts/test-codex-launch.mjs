@@ -16,9 +16,8 @@ function load(file, mocks = {}) {
 }
 const claude = load('src/utils/claudeLaunch.ts');
 const desktop = load('src/utils/codexLaunch.ts', { './claudeLaunch': claude });
-const mobile = load('web/src/utils/codexLaunch.ts');
 
-for (const utils of [desktop, mobile]) {
+for (const utils of [desktop]) {
   for (const command of ['codex', 'codex --sandbox workspace-write', 'codex.cmd --resume', '"codex.exe" -m old']) {
     assert.equal(utils.isCodexCommand(command), true, command);
   }
@@ -43,12 +42,10 @@ assert.deepEqual(desktop.parseModelRef('__TB_CLAUDE_REF__:p:claude-model'), { pr
 for (const command of ['codex', '__TB_CODEX_REF__:missing', '__TB_CODEX_REF__::model', '__TB_CODEX_REF__:p:']) {
   assert.equal(desktop.parseCodexRef(command), null);
 }
-console.log('PASS: 桌面与手机 Codex 引用、参数继承、冲突配置剔除、跨工具默认命令及模型标签解析');
+console.log('PASS: 桌面 Codex 引用、参数继承、冲突配置剔除、跨工具默认命令及模型标签解析');
 
-const mobileProjects = load('web/src/utils/projects.ts', { '../api': { api: {} } });
 for (const source of [[], ['codex --model old --sandbox read-only'], ['echo before', 'codex --resume session']]) {
   assert.equal(claude.inheritableClaudeArgs(source, claude.DEFAULT_CLAUDE_COMMAND), '--dangerously-skip-permissions');
-  assert.equal(mobileProjects.modelCommand('p', 'm', source), '__TB_CLAUDE_REF__:p:m --dangerously-skip-permissions');
   assert.equal(claude.inheritableClaudeArgs(source), '', '历史恢复仍由已有参数控制');
 }
 for (const [source, expected] of [
@@ -57,6 +54,5 @@ for (const [source, expected] of [
   [[claude.DEFAULT_CLAUDE_COMMAND], '--dangerously-skip-permissions'],
 ]) {
   assert.equal(claude.inheritableClaudeArgs(source, claude.DEFAULT_CLAUDE_COMMAND), expected);
-  assert.equal(mobileProjects.modelCommand('p', 'm', source), ['__TB_CLAUDE_REF__:p:m', expected].filter(Boolean).join(' '));
 }
-console.log('PASS: 双端 Codex 切换 Claude 使用默认命令，同类参数和历史恢复保持原行为');
+console.log('PASS: Codex 切换 Claude 使用默认命令，同类参数和历史恢复保持原行为');

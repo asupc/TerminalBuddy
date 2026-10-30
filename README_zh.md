@@ -359,9 +359,8 @@ TerminalBuddy 内置了轻量级开发工作台，查看配置文件与修改源
 #### Web 远程连接优势：
 
 - **轻量嵌入式服务**：基于 Rust axum 打造的高性能轻量 Web 服务，资源开销几乎为零；
-- **浏览器直达桌面同款界面**：电脑浏览器打开服务地址即进入与桌面端一致的完整工作界面（`/m/` 为手机版，手机访问自动分流），扫描二维码 / 点击快捷链接可携 token 免密进入；
+- **浏览器直达桌面同款界面**：电脑或手机浏览器打开服务地址即进入与桌面端一致的完整工作界面，扫描二维码 / 点击快捷链接可携 token 免密进入；
 - **局域网自动寻址与二维码生成**：自动识别本机局域网 IP（如 `http://192.168.10.88:9600`）并生成大尺寸高清二维码，手机相机扫码即可秒级免密接入；
-- **移动端优先的交互设计**：手机版界面提供专属虚拟方向键、特殊控制键栏与触屏手势缩放支持；
 - **PC / Web 严格会话隔离**：通过底层状态机实现物理隔离（`webApiShareSessions`），保障桌面本地私密终端不被外部意外窃视。
 
 ---
@@ -407,7 +406,6 @@ v1.8.0 将原「容器环境」升级为完整的 Agent 管理与模型配置中
 - **安卓原生客户端**（`android/`，Kotlin + Jetpack Compose）：账号密码登录后即可选择项目、供应商与模型开始对话；流式逐字显示、工具执行日志折叠展示、跟随滚动与「回到最新」、浅色 / 深色主题切换；登录令牌经 Android Keystore 加密存储，会话保存在服务端，App 退到后台任务继续执行；
 - **连续发送方式（App）**：安卓客户端支持「排队发送」（默认）与「立即发送」两种方式（首页菜单「发送方式」）——回复期间发送的消息在服务端排队（App 被杀也不丢失），当前回复结束后按序自动送出，排队列表中每条可点「立即发送」中断当前回复立即发出；立即发送模式下新消息会直接中断当前回复优先处理；
 - **历史会话恢复（App）**：安卓客户端新增「历史会话」折叠区——展开即按当前项目 + Agent 列出电脑端 CLI 的转录历史（Claude / Codex / Pi 共用同一索引，展开前自动增量扫描），点击任意一条即在服务端创建绑定原会话线程的原生会话并预填最近消息：Claude 走 `claude --resume`、Codex 走 `thread/resume`、Pi 复用同一会话文件，继续对话即无缝续接；同一历史线程重复恢复自动复用已有会话；
-- **Web 手机版**：手机浏览器访问自动分流至独立手机 SPA，补齐项目与命令管理、Claude / Codex 供应商设置；容器重启后网页端可自动恢复页签并以 `claude --resume` 续接会话。
 
 ---
 ### 12. Codex 会话历史、任务摘要与断线恢复
@@ -465,7 +463,7 @@ TerminalBuddy 采用了现代桌面软件的高性能分层架构，兼顾了底
 - **IPC 桥接层**：强类型安全的 Tauri Invoke 桥接通道，数据采用标准的 camelCase 序列化；
 - **底层后端**：Rust (edition 2021)，通过 `portable-pty` 直接与 Windows 内部的 ConPTY 虚拟终端通信；基于 Win32 原生 API 保证密码凭证安全；
 - **网络与服务**：内置基于 axum 的高性能异步 Web API，支持移动端/跨终端无缝连接。
-- **Web 前端**：独立 React SPA（`web/`），构建产物通过 `include_dir!` 嵌入 Rust 二进制，与桌面端共享同一套 Web API 与手机版界面；
+- **Web 前端**：桌面端 `src/` 以 browser 模式构建出完整网页界面（dist-web），由内嵌 Web API 同源托管；独立手机 SPA（`web/`）已于 2026-10 退役，不再随任何构建打包；
 - **Android 客户端**：Kotlin + Jetpack Compose 原生应用（`android/`），通过 Web API（REST + WebSocket）提供原生 AI 对话能力。
 
 ---
@@ -513,7 +511,7 @@ npm run tauri build
 ### Docker 服务器部署与多端构建
 除 Windows 安装包外，还提供服务器 / NAS 部署与跨平台构建方式：
 
-- **Docker 服务器部署**：在浏览器中使用与桌面同款的功能，手机访问自动分流至独立手机版界面，详见 [DEPLOY_README.md](DEPLOY_README.md) 与 [docs/Docker与完整网页界面.md](docs/Docker与完整网页界面.md)；
+- **Docker 服务器部署**：在电脑或手机浏览器中使用与桌面同款的功能，详见 [DEPLOY_README.md](DEPLOY_README.md) 与 [docs/Docker与完整网页界面.md](docs/Docker与完整网页界面.md)；
 - **飞牛 fnOS 一键部署**：执行 `./scripts/deploy-fnos.sh` 将 TerminalBuddy 部署到飞牛 NAS，默认在飞牛上编译镜像（部署机无需安装 Docker / Node / Rust），内置写入探测、健康检查与失败自动回退；
 - **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./scripts/build-windows-exe.sh`，借助一次性 Docker 容器完成交叉编译，产出 `dist/` 下的单文件 exe 与 `.sha256` 校验，宿主机无需安装任何工具链；
 - **Android 客户端构建**：`cd android && ./gradlew :app:assembleDebug`（需 JDK 17+ 与 Android SDK），详见 [android/README.md](android/README.md)。

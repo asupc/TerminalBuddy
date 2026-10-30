@@ -112,13 +112,12 @@ mkdir -p /build
     cd /src
     tar -cf - \
         --exclude='terminal-buddy/node_modules' \
-        --exclude='terminal-buddy/web/node_modules' \
+        --exclude='terminal-buddy/web' \
         --exclude='terminal-buddy/src-tauri/target' \
         --exclude='terminal-buddy/.winbuild-cache' \
         --exclude='terminal-buddy/release' \
         --exclude='terminal-buddy/dist' \
         --exclude='terminal-buddy/dist-web' \
-        --exclude='terminal-buddy/web/dist' \
         --exclude='terminal-buddy/src-tauri/resources/vscode-terminal' \
         --exclude='terminal-buddy/server-data' \
         --exclude='.git' \
@@ -137,7 +136,6 @@ export npm_config_cache="$HOME/.npm"
 
 echo "    [2/5] 安装前端依赖"
 npm ci --no-audit --no-fund
-(cd web && npm ci --no-audit --no-fund)
 
 echo "    [3/5] 准备 Windows 终端插件资源"
 npm run prepare:vscode-terminal

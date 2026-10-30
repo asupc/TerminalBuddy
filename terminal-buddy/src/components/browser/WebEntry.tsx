@@ -103,7 +103,6 @@ export default function WebEntry() {
       </>}
       {error && <div role="alert" className="web-login-error">{error}</div>}
       <button disabled={!ready || busy} type="submit">{busy ? (setupRequired ? '正在创建…' : '正在登录…') : ready ? (setupRequired ? '创建管理员并进入' : '登录') : '等待服务连接'}</button>
-      <a className="web-mobile-entry" href="/m/">打开手机界面</a>
     </form>
   </div>;
 }

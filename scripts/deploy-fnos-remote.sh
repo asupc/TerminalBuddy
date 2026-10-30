@@ -90,7 +90,6 @@ find "${SRC_DIR}" -type f \
 
 [ -f "${SRC_DIR}/Dockerfile" ]          || fail "源码包中缺少 Dockerfile"
 [ -f "${SRC_DIR}/compose.yaml" ]        || fail "源码包中缺少 compose.yaml"
-[ -d "${SRC_DIR}/terminal-buddy/web" ]  || fail "源码包中缺少 terminal-buddy/web，源码不完整"
 
 # ---------- 3. 应用目录与属主 ----------
 # 飞牛 /vol1 使用自家 TrimACL，POSIX ACL 不参与判定，因此以 chown 为准。
@@ -291,7 +290,7 @@ else
   fi
 
   # Docker 的 COPY 缓存按文件内容校验（不看 mtime），源码没变时连 build 都不发起。
-  BUILD_INPUTS=(Dockerfile .dockerignore compose.yaml terminal-buddy/src terminal-buddy/web terminal-buddy/package.json terminal-buddy/package-lock.json terminal-buddy/src-tauri terminal-buddy/vite.config.ts terminal-buddy/index.html terminal-buddy/tsconfig.json terminal-buddy/tsconfig.node.json)
+  BUILD_INPUTS=(Dockerfile .dockerignore compose.yaml terminal-buddy/src terminal-buddy/package.json terminal-buddy/package-lock.json terminal-buddy/src-tauri terminal-buddy/vite.config.ts terminal-buddy/index.html terminal-buddy/tsconfig.json terminal-buddy/tsconfig.node.json)
   hash_inputs() {
     local paths=() item
     for item in "${BUILD_INPUTS[@]}"; do

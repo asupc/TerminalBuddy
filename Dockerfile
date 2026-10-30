@@ -12,17 +12,6 @@ COPY terminal-buddy/index.html terminal-buddy/tsconfig*.json terminal-buddy/vite
 COPY terminal-buddy/src ./src
 RUN npm run build:web:desktop
 
-# 手机 SPA 独立构建，桌面源码变化不会使手机端 npm ci 的缓存失效。
-# 沿用父目录依赖并保留 web/ 与 src/ 的相对位置，供手机端复用桌面端工具代码。
-FROM frontend-deps AS mobile-frontend
-WORKDIR /build/frontend/web
-COPY terminal-buddy/web/package.json terminal-buddy/web/package-lock.json ./
-RUN --mount=type=cache,id=terminal-buddy-npm,target=/root/.npm,sharing=locked \
-    npm ci --prefer-offline --ignore-scripts --no-audit --no-fund
-COPY terminal-buddy/web ./
-COPY terminal-buddy/src /build/frontend/src
-RUN npm run build
-
 FROM rust:1-bookworm AS backend
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev libssh2-1-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/src-tauri
@@ -55,10 +44,8 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 COPY --from=backend /out/terminal-buddy-server /usr/local/bin/terminal-buddy-server
 COPY --from=frontend /build/frontend/dist-web /opt/terminal-buddy/web
-COPY --from=mobile-frontend /build/frontend/web/dist /opt/terminal-buddy/mobile
 ENV TERMINAL_BUDDY_DATA_DIR=/data \
     TERMINAL_BUDDY_WEB_DIST=/opt/terminal-buddy/web \
-    TERMINAL_BUDDY_MOBILE_DIST=/opt/terminal-buddy/mobile \
     TERMINAL_BUDDY_WORKSPACE_DIR=/workspace \
     TERMINAL_BUDDY_PORT=9600 \
     TERMINAL_BUDDY_USERNAME=admin \

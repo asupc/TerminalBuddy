@@ -111,13 +111,12 @@ rm -rf /build && mkdir -p /build
     cd /src
     tar -cf - \
         --exclude='terminal-buddy/node_modules' \
-        --exclude='terminal-buddy/web/node_modules' \
+        --exclude='terminal-buddy/web' \
         --exclude='terminal-buddy/src-tauri/target' \
         --exclude='terminal-buddy/.winbuild-cache' \
         --exclude='terminal-buddy/release' \
         --exclude='terminal-buddy/dist' \
         --exclude='terminal-buddy/dist-web' \
-        --exclude='terminal-buddy/web/dist' \
         --exclude='terminal-buddy/src-tauri/resources/vscode-terminal' \
         --exclude='terminal-buddy/server-data' \
         --exclude='.git' \

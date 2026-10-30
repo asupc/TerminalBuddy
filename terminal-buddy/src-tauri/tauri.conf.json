@@ -5,7 +5,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1450",
-    "beforeBuildCommand": "npm run prepare:vscode-terminal && npm run build && npm run build:web:desktop && cd web && npm run build",
+    "beforeBuildCommand": "npm run prepare:vscode-terminal && npm run build && npm run build:web:desktop",
     "frontendDist": "../dist"
   },
   "app": {

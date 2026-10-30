@@ -112,10 +112,10 @@ fi
 
 WORKER_SCRIPT="${SCRIPT_DIR}/update-fnos-container.sh"
 for file in Dockerfile .dockerignore terminal-buddy/package-lock.json \
-  terminal-buddy/web/package-lock.json terminal-buddy/src-tauri/Cargo.lock; do
+  terminal-buddy/src-tauri/Cargo.lock; do
   [ -f "${SOURCE_DIR}/${file}" ] || fail "源码不完整，缺少 ${SOURCE_DIR}/${file}（可用 --source-dir 指定源码根目录）"
 done
-for dir in terminal-buddy/src terminal-buddy/web/src terminal-buddy/src-tauri/src \
+for dir in terminal-buddy/src terminal-buddy/src-tauri/src \
   terminal-buddy/src-tauri/portable-pty-patched; do
   [ -d "${SOURCE_DIR}/${dir}" ] || fail "源码不完整，缺少 ${SOURCE_DIR}/${dir}（可用 --source-dir 指定源码根目录）"
 done

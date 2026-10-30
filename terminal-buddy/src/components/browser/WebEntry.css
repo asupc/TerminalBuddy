@@ -7,8 +7,6 @@
 .web-login-card input { display: block; box-sizing: border-box; width: 100%; margin-top: 8px; padding: 10px 12px; background: #14171d; color: inherit; border: 1px solid #485469; border-radius: 6px; }
 .web-login-card button { width: 100%; padding: 12px; border: 0; border-radius: 6px; background: #4a7ed9; color: white; cursor: pointer; }
 .web-login-card button:disabled { opacity: .55; cursor: default; }
-.web-mobile-entry { display: block; margin-top: 18px; color: #a5c5ff; text-align: center; font-size: 13px; text-decoration: none; }
-.web-mobile-entry:hover { text-decoration: underline; }
 .web-login-error { margin: 12px 0; color: #ffb8b8; line-height: 1.5; }
 .web-login-hint { color: #9ca9ba; font-size: 13px; }
 .web-login-card input:read-only { color: #9ca9ba; }

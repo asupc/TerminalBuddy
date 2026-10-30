@@ -100,7 +100,6 @@ find "${SRC_DIR}" -type f \
 
 [ -f "${SRC_DIR}/Dockerfile" ]         || fail "源码包中缺少 Dockerfile"
 [ -f "${SRC_DIR}/compose.yaml" ]       || fail "源码包中缺少 compose.yaml"
-[ -d "${SRC_DIR}/terminal-buddy/web" ] || fail "源码包中缺少 terminal-buddy/web，源码不完整"
 
 # ---------- 3. 目录安全校验 ----------
 # 必须在任何 chown/mkdir 之前完成：工作区会以同路径挂载并递归 chown 给容器用户，
@@ -257,7 +256,7 @@ else
   # Docker 的 COPY 缓存按文件内容校验（不看 mtime），源码没变时连 build 都不发起。
   BUILD_INPUTS=(
     Dockerfile .dockerignore compose.yaml
-    terminal-buddy/src terminal-buddy/web
+    terminal-buddy/src
     terminal-buddy/package.json terminal-buddy/package-lock.json
     terminal-buddy/src-tauri terminal-buddy/vite.config.ts terminal-buddy/index.html
     terminal-buddy/tsconfig.json terminal-buddy/tsconfig.node.json

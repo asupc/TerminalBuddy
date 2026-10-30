@@ -10,17 +10,6 @@ if errorlevel 2 goto host_is_terminalbuddy
 if errorlevel 1 goto kill_failed
 
 :kill_done
-echo Building web frontend...
-cd web
-call npm run build
-if errorlevel 1 (
-    echo.
-    echo Web build failed!
-    cd ..
-    pause
-    exit /b 1
-)
-cd ..
 echo Building Tauri app...
 call npx tauri build --no-bundle
 if errorlevel 1 (

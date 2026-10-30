@@ -226,6 +226,7 @@ tar -czf "${SRC_TARBALL}" \
   --exclude='./node_modules' --exclude='*/node_modules' \
   --exclude='./target' --exclude='*/target' \
   --exclude='./dist' --exclude='*/dist' --exclude='./dist-web' --exclude='*/dist-web' \
+  --exclude='./terminal-buddy/web' \
   --exclude='./server-data' --exclude='*/server-data' \
   --exclude='./workspace' --exclude='./docs' --exclude='./design' \
   --exclude='./terminal-buddy/src-tauri/resources' \
