@@ -1,6 +1,47 @@
 /* 本地渲染层不持有登录令牌，不发网络请求。通信由 Android 原生层负责。 */
 (() => {
   'use strict';
+  // 与桌面端的鼠标坐标保护保持一致，在 xterm 编码前拦截无效触摸坐标。
+  function installMouseGuard(terminal) {
+    const element = terminal.element;
+    const service = terminal._core?._mouseCoordsService;
+    if (!element || !service) return () => {};
+
+    let lastTouch = null;
+    function rememberTouch(event) {
+      if (event.type === 'touchcancel' || event.touches.length > 1) {
+        lastTouch = null;
+        return;
+      }
+      const touch = event.touches.item(0) || event.changedTouches.item(0);
+      lastTouch = touch && Number.isFinite(touch.clientX) && Number.isFinite(touch.clientY)
+        ? { clientX: touch.clientX, clientY: touch.clientY }
+        : null;
+    }
+
+    const originalGetCoords = service.getMouseReportCoords;
+    function guardedGetCoords(event, screenElement) {
+      let position = event;
+      if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) {
+        // xterm 惯性事件只带位移；沿用离手位置，避免生成 CSI <…;NaN;NaNM。
+        if (event.type !== '-xterm-gesturechange' || !lastTouch) return undefined;
+        position = lastTouch;
+      }
+      const report = originalGetCoords.call(service, position, screenElement);
+      if (!report || ![report.col, report.row, report.x, report.y].every(Number.isFinite)) return undefined;
+      return report;
+    }
+    service.getMouseReportCoords = guardedGetCoords;
+    const touchEvents = ['touchstart', 'touchmove', 'touchend', 'touchcancel'];
+    for (const type of touchEvents) {
+      element.addEventListener(type, rememberTouch, { capture: true, passive: true });
+    }
+    return () => {
+      for (const type of touchEvents) element.removeEventListener(type, rememberTouch, true);
+      if (service.getMouseReportCoords === guardedGetCoords) service.getMouseReportCoords = originalGetCoords;
+      lastTouch = null;
+    };
+  }
   try {
     const container = document.getElementById('terminal');
     const terminal = new Terminal({
@@ -10,6 +51,7 @@
     const fit = new FitAddon.FitAddon();
     terminal.loadAddon(fit);
     terminal.open(container);
+    const removeMouseGuard = installMouseGuard(terminal);
     let lastSize = '';
     let localSize = { cols: terminal.cols, rows: terminal.rows };
     let queue = Promise.resolve();
@@ -65,7 +107,7 @@
       },
       selection() { return terminal.getSelection(); },
       scrollToBottom() { terminal.scrollToBottom(); },
-      dispose() { disposed = true; terminal.dispose(); },
+      dispose() { disposed = true; removeMouseGuard(); terminal.dispose(); },
     };
     if (typeof ResizeObserver === 'function') new ResizeObserver(measure).observe(container);
     window.addEventListener('resize', measure);
