@@ -60,6 +60,10 @@ bcrypt = "0.17"
 futures-util = "0.3"
 encoding_rs = "0.8"
 include_dir = "0.7"
+# 内嵌 dist-web 前端产物：compression 特性在编译期按 deflate 压缩，
+# 二进制体积从约 17 MB 降到约 5 MB（见 web/server.rs 的 WebDesktopDist）。
+# interpolate-folder-path 让 #[folder] 能写 $CARGO_MANIFEST_DIR 相对路径。
+rust-embed = { version = "8", features = ["compression", "interpolate-folder-path"] }
 hex = "0.4"
 rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }

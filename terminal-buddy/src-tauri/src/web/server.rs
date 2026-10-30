@@ -16,7 +16,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
-use axum::response::{IntoResponse, Redirect};
+use axum::response::IntoResponse;
 
 use crate::web::auth::HasJwtSecret;
 use crate::web::handlers;
@@ -57,16 +57,18 @@ impl HasJwtSecret for AppState {
 }
 
 // Embed web frontend files for release mode
-#[cfg(all(not(debug_assertions), feature = "desktop"))]
-static WEB_DIST: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
-
 /// 桌面版内嵌的完整网页界面：src/ 前端以 `--mode browser` 构建（独立服务端在 `/`
-/// 服务的就是这份产物）。桌面版浏览器访问与独立服务端同款布局——`/` 完整界面、
-/// `/m/` 手机 SPA（`WEB_DIST`），手机 UA 访问 `/` 自动分流到手机版。
+/// 服务的就是这份产物）。手机浏览器同样使用这份完整界面（独立手机 SPA 已于
+/// 2026-10 退役，不再随构建打包）。
+///
+/// 用 rust-embed 的 compression 特性而非 include_dir：前端产物约 17 MB，deflate
+/// 后只剩 5 MB，二进制体积因此少约 12 MB。代价是每次响应要现场解压（几 MB 的
+/// js 约数十毫秒，静态资源仍走浏览器缓存），换取的是分发包体积。
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
-static WEB_DESKTOP_DIST: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/../dist-web");
+#[derive(rust_embed::RustEmbed)]
+#[folder = "$CARGO_MANIFEST_DIR/../dist-web"]
+#[compression = "deflate"]
+struct WebDesktopDist;
 
 pub fn build_router(state: AppState) -> Router {
     // AI 会话的长文本和历史记录不设正文大小、请求处理时长或实时连接配额。
@@ -239,56 +241,28 @@ pub fn build_router(state: AppState) -> Router {
     #[cfg(not(feature = "desktop"))]
     let router = router.route("/api/auth/setup", post(handlers::auth_handler::setup_admin));
 
-    // 桌面版 debug：直连场景服务 web/dist（手机 SPA），完整界面走 vite dev server。
+    // 桌面版 debug：完整界面一般走 vite dev server，直连场景退回服务 dist-web
+    // （需先执行过 npm run build:web:desktop；未构建时此处 404 属预期）。
     #[cfg(all(debug_assertions, feature = "desktop"))]
     let router = {
         use tower_http::services::{ServeDir, ServeFile};
-        let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| format!("{}/../web/dist", env!("CARGO_MANIFEST_DIR")));
+        let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| format!("{}/../dist-web", env!("CARGO_MANIFEST_DIR")));
         router.fallback_service(
             ServeDir::new(&dist).not_found_service(ServeFile::new(std::path::Path::new(&dist).join("index.html"))),
         )
     };
 
-    // 独立服务端（Docker）：/ 服务完整界面（dist-web），/m/ 服务手机 SPA（web/dist），
-    // 访问 / 时按 User-Agent 分流——手机 UA 自动跳转手机版。静态资源互不冲突
-    // （手机 SPA 以相对路径 base 构建，其资源都在 /m/ 前缀下）。
+    // 独立服务端（Docker）：/ 服务完整界面（dist-web），未知路径回退 index.html
+    // （SPA 路由）。手机浏览器同样使用完整界面，不再分流独立手机 SPA。
     #[cfg(not(feature = "desktop"))]
     let router = {
-        use axum::response::{IntoResponse, Redirect};
         use tower_http::services::{ServeDir, ServeFile};
         let dist = std::env::var("TERMINAL_BUDDY_WEB_DIST").unwrap_or_else(|_| format!("{}/../dist-web", env!("CARGO_MANIFEST_DIR")));
-        let mobile_dist = std::env::var("TERMINAL_BUDDY_MOBILE_DIST").unwrap_or_else(|_| format!("{}/../web/dist", env!("CARGO_MANIFEST_DIR")));
-        let index_path = std::path::Path::new(&dist).join("index.html");
-        let root_entry = move |headers: axum::http::HeaderMap| {
-            let index_path = index_path.clone();
-            async move {
-                if crate::web::client_kind::client_kind_from_headers(&headers)
-                    == crate::models::TerminalClientKind::Mobile
-                {
-                    return Redirect::to("/m/").into_response();
-                }
-                match tokio::fs::read(&index_path).await {
-                    Ok(bytes) => {
-                        ([("content-type", "text/html; charset=utf-8")], bytes).into_response()
-                    }
-                    Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
-                }
-            }
-        };
-        router
-            // 精确路由优先于 fallback：/ 在这里按设备分流，其余静态资源仍走 fallback。
-            .route("/", get(root_entry))
-            .nest_service(
-                "/m",
-                ServeDir::new(&mobile_dist).not_found_service(ServeFile::new(
-                    std::path::Path::new(&mobile_dist).join("index.html"),
-                )),
-            )
-            .fallback_service(
-                ServeDir::new(&dist).not_found_service(ServeFile::new(
-                    std::path::Path::new(&dist).join("index.html"),
-                )),
-            )
+        router.fallback_service(
+            ServeDir::new(&dist).not_found_service(ServeFile::new(
+                std::path::Path::new(&dist).join("index.html"),
+            )),
+        )
     };
 
     #[cfg(all(not(debug_assertions), feature = "desktop"))]
@@ -323,49 +297,35 @@ pub fn build_router(state: AppState) -> Router {
 
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
 async fn serve_embedded_file(req: axum::extract::Request) -> axum::response::Response {
-    let path = req.uri().path();
-    // 手机 UA 访问根路径自动分流到手机版（与独立服务端一致），查询串原样带过去
-    // （?token= 免密登录在两个界面里都支持）。
-    if path == "/"
-        && crate::web::client_kind::client_kind_from_headers(req.headers())
-            == crate::models::TerminalClientKind::Mobile
-    {
-        let target = match req.uri().query() {
-            Some(query) => format!("/m/?{}", query),
-            None => "/m/".to_string(),
-        };
-        return Redirect::to(&target).into_response();
-    }
-    // 手机 SPA 以相对路径 base 构建，/m 缺斜杠时资源会解析到根前缀，补上再进。
-    if path == "/m" {
-        return Redirect::to("/m/").into_response();
-    }
-    // /m/ 前缀 → 手机 SPA（web/dist）；其余路径 → 完整桌面界面（dist-web）
-    if let Some(mobile_path) = path.strip_prefix("/m/") {
-        return serve_from_embedded(&WEB_DIST, mobile_path);
-    }
-    serve_from_embedded(&WEB_DESKTOP_DIST, path.trim_start_matches('/'))
+    // 所有路径（含手机浏览器）统一服务完整桌面界面（dist-web）。
+    serve_from_embedded(req.uri().path().trim_start_matches('/'))
 }
 
-/// 从 include_dir 目录服务静态文件：空路径与未知路径回退 index.html（SPA 路由），
-/// 连 index.html 都缺（前端产物未随二进制嵌入）时 404。只接受 `'static` 目录
-/// （两个嵌入产物都是 static），contents() 因此零拷贝进响应体。
+/// 从内嵌的 dist-web 服务静态文件：空路径与未知路径回退 index.html（SPA 路由），
+/// 连 index.html 都缺（前端产物未随二进制嵌入）时 404。
+///
+/// rust-embed 在编译期把文件按 deflate 压缩存进二进制，`data` 因此必须现场解压，
+/// 无法零拷贝；解压结果直接作为响应体，不额外缓存 —— 静态资源由浏览器按
+/// 内容哈希文件名长期缓存，每个文件实际上只在首次访问时解压一次。
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
-fn serve_from_embedded(dir: &'static include_dir::Dir<'static>, path: &str) -> axum::response::Response {
-    let file = if path.is_empty() { None } else { dir.get_file(path) };
-    match file.or_else(|| dir.get_file("index.html")) {
-        Some(file) => {
-            let content_type = file
-                .path()
-                .to_str()
-                .map(guess_content_type)
-                .unwrap_or("application/octet-stream");
-            (
-                [(axum::http::header::CONTENT_TYPE, content_type)],
-                file.contents(),
-            )
-                .into_response()
-        }
+fn serve_from_embedded(path: &str) -> axum::response::Response {
+    let embedded = |name: &str| -> Option<rust_embed::EmbeddedFile> {
+        <WebDesktopDist as rust_embed::Embed>::get(name)
+    };
+    // SPA 路由（如 /settings）没有对应文件，回退 index.html；MIME 按实际命中的
+    // 文件名判定，不能拿请求路径猜。
+    let resolved = if path.is_empty() {
+        None
+    } else {
+        embedded(path).map(|file| (path, file))
+    };
+    let resolved = resolved.or_else(|| embedded("index.html").map(|file| ("index.html", file)));
+    match resolved {
+        Some((name, file)) => (
+            [(axum::http::header::CONTENT_TYPE, guess_content_type(name))],
+            file.data.into_owned(),
+        )
+            .into_response(),
         None => axum::http::StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -378,6 +338,7 @@ fn guess_content_type(path: &str) -> &'static str {
         Some("css") => "text/css",
         Some("json") => "application/json",
         Some("png") => "image/png",
+        Some("webp") => "image/webp",
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("svg") => "image/svg+xml",
         Some("ico") => "image/x-icon",
