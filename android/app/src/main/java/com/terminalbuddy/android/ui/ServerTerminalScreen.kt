@@ -36,7 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -56,8 +55,7 @@ internal fun ServerTerminalScreen(ui: ServerTerminalUiState, vm: ServerTerminalV
     val host = remember(ui.connection, terminal.id) { LocalTerminalView(context, vm) }
     var command by rememberSaveable(terminal.id) { mutableStateOf("") }
     var confirmClose by remember(terminal.id) { mutableStateOf(false) }
-    var showTextLog by rememberSaveable(terminal.id) { mutableStateOf(false) }
-    val textMode = showTextLog || !ui.rendererReady || ui.renderingError != null
+    val textMode = !ui.rendererReady || ui.renderingError != null
     var followLogs by remember(terminal.id) { mutableStateOf(true) }
     val logScroll = rememberScrollState()
     val scope = rememberCoroutineScope()
@@ -89,28 +87,6 @@ internal fun ServerTerminalScreen(ui: ServerTerminalUiState, vm: ServerTerminalV
             IconButton({ confirmClose = true }, enabled = !ui.ended && !ui.closing) {
                 Icon(Icons.Outlined.Close, "关闭服务端终端", tint = TbColors.Danger)
             }
-        }
-        Text(listOfNotNull(terminal.group.takeIf(String::isNotBlank), terminal.directory).joinToString(" · "),
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall,
-            color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(ui.status, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                color = if (ui.connected) TbColors.Accent else TbColors.TextMuted)
-            TextButton({ showTextLog = !showTextLog }, enabled = ui.rendererReady && ui.renderingError == null) {
-                Text(if (textMode) "终端画面" else "文本日志")
-            }
-            if (!ui.connected) {
-                TextButton(vm::refreshService, enabled = !ui.closing) { Text("刷新服务") }
-                TextButton(vm::reconnect, enabled = !ui.ended && !ui.closing) { Text("重新连接") }
-            }
-        }
-        ui.terminalError?.let {
-            Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
-        }
-        ui.renderingError?.let {
-            Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             AndroidView(factory = { host.view }, modifier = Modifier.matchParentSize())
