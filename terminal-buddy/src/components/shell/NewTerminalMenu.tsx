@@ -4,7 +4,8 @@ import { saveEnableTabNavigation } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
-import type { ExtraParamMode, Profile } from '../../types';
+import { ProjectLaunchMenuItems } from '../shared/ProjectLaunchMenuItems';
+import type { ExtraParamMode, Profile, Project } from '../../types';
 import { matchingStartupPresets } from '../../utils/startupPresets';
 
 interface NewTerminalMenuProps {
@@ -42,8 +43,10 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
   onClose,
 }) => {
   const presets = useAppStore(state => state.extraParamPresets);
+  const projects = useAppStore(state => state.projects);
   const [submenuLeft, setSubmenuLeft] = useState(x);
   const [hoveredTarget, setHoveredTarget] = useState<{ target: Profile; x: number; y: number } | null>(null);
+  const [hoveredProject, setHoveredProject] = useState<{ project: Project; x: number; y: number } | null>(null);
   const matchingPresets = (target: Profile) => matchingStartupPresets(presets, target.startupCommands);
 
   const handleSelect = (item: TreeItem) => {
@@ -55,20 +58,47 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
     }
   };
 
+  /** 悬停行右侧浮动菜单的落点：右缘放不下时翻到左侧（宽度按菜单类型估算）。 */
+  const hoverMenuPos = (rowBounds: DOMRect, menuWidth: number): { x: number; y: number } => {
+    const menuBounds = submenuRef.current?.getBoundingClientRect();
+    return {
+      x: menuBounds && menuBounds.right + menuWidth <= window.innerWidth - 8
+        ? menuBounds.right
+        : Math.max(8, (menuBounds?.left ?? rowBounds.left) - menuWidth),
+      y: Math.max(8, Math.min(rowBounds.top, window.innerHeight - 80)),
+    };
+  };
+
   const handleTargetHover = (event: React.MouseEvent) => {
     const row = (event.target as HTMLElement).closest<HTMLElement>('.tree-item');
-    const marker = row?.querySelector<HTMLElement>('[data-profile-id]');
-    const target = marker && visibleSubmenuItems.find(item => item.id === marker.dataset.profileId)?.data as Profile | undefined;
+    const marker = row?.querySelector<HTMLElement>('[data-profile-id], [data-project-id]');
+    if (!row || !marker) {
+      setHoveredTarget(null);
+      setHoveredProject(null);
+      return;
+    }
+    const rowBounds = row.getBoundingClientRect();
+    // 项目分组行：展开与「项目与命令」右键同步的启动菜单（命令行 / 预设 / Agent 模型）。
+    const projectId = marker.dataset.projectId;
+    if (projectId) {
+      const project = projects.find(p => p.name === projectId && p.path);
+      setHoveredTarget(null);
+      if (project) {
+        const { x, y } = hoverMenuPos(rowBounds, 250);
+        setHoveredProject(current => current?.project.name === project.name && current.x === x && current.y === y
+          ? current : { project, x, y });
+      } else {
+        setHoveredProject(null);
+      }
+      return;
+    }
+    setHoveredProject(null);
+    const target = visibleSubmenuItems.find(item => item.id === marker.dataset.profileId)?.data as Profile | undefined;
     if (!target || matchingPresets(target).length === 0) {
       setHoveredTarget(null);
       return;
     }
-    const rowBounds = row!.getBoundingClientRect();
-    const menuBounds = submenuRef.current?.getBoundingClientRect();
-    const menuWidth = 190;
-    const x = menuBounds && menuBounds.right + menuWidth <= window.innerWidth - 8
-      ? menuBounds.right : Math.max(8, (menuBounds?.left ?? rowBounds.left) - menuWidth);
-    const y = Math.max(8, Math.min(rowBounds.top, window.innerHeight - 80));
+    const { x, y } = hoverMenuPos(rowBounds, 190);
     setHoveredTarget(current => current?.target === target && current.x === x && current.y === y
       ? current : { target, x, y });
   };
@@ -81,7 +111,10 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
         ref={menuRef}
         style={{ left: x, top: y }}
         onMouseOver={event => {
-          if (!(event.target as HTMLElement).closest('.has-submenu')) setHoveredTarget(null);
+          if (!(event.target as HTMLElement).closest('.has-submenu')) {
+            setHoveredTarget(null);
+            setHoveredProject(null);
+          }
         }}
       >
         <div className="context-menu-item" onClick={() => { onStartBlankTerminal(defaultShellType()); onClose(); }}>
@@ -94,7 +127,7 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
           文本编辑器
         </div>
         <div
-          className={`context-menu-item has-submenu${hoveredTarget ? ' submenu-active' : ''}`}
+          className={`context-menu-item has-submenu${hoveredTarget || hoveredProject ? ' submenu-active' : ''}`}
           onMouseEnter={event => setSubmenuLeft(event.currentTarget.getBoundingClientRect().right)}
         >
           <span>新建配置终端</span>
@@ -107,7 +140,10 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
             <div
               className="new-terminal-profile-scroll"
               onMouseOver={handleTargetHover}
-              onScroll={() => setHoveredTarget(null)}
+              onScroll={() => {
+                setHoveredTarget(null);
+                setHoveredProject(null);
+              }}
             >
               <TreeView
                 items={submenuTree}
@@ -115,11 +151,25 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
                 onToggle={onToggleGroup}
                 selectedId={highlightedIndex >= 0 ? visibleSubmenuItems[highlightedIndex]?.id : undefined}
                 onSelect={handleSelect}
-                renderEnd={item => item.data && 'group' in (item.data as object) ? (
-                  <span data-profile-id={(item.data as Profile).id} className="submenu-profile-end">
-                    {matchingPresets(item.data as Profile).length > 0 && <span className="submenu-arrow">›</span>}
-                  </span>
-                ) : null}
+                renderEnd={item => {
+                  // 项目分组行：标记可展开与项目右键同步的启动菜单（Agent 启动入口）。
+                  if (item.isGroup) {
+                    const project = projects.find(p => p.name === item.id);
+                    return project?.path ? (
+                      <span data-project-id={project.name} className="submenu-profile-end">
+                        <span className="submenu-arrow">›</span>
+                      </span>
+                    ) : null;
+                  }
+                  if (item.data && 'group' in (item.data as object)) {
+                    return (
+                      <span data-profile-id={(item.data as Profile).id} className="submenu-profile-end">
+                        {matchingPresets(item.data as Profile).length > 0 && <span className="submenu-arrow">›</span>}
+                      </span>
+                    );
+                  }
+                  return null;
+                }}
                 className="submenu-tree"
                 indent={12}
               />
@@ -141,6 +191,15 @@ export const NewTerminalMenu: FC<NewTerminalMenuProps> = ({
                   <span className="new-terminal-preset-name">{preset.name}</span>
                 </div>
               ))}
+            </div>
+          )}
+          {hoveredProject && (
+            <div
+              className="new-terminal-preset-menu new-terminal-project-menu"
+              style={{ left: hoveredProject.x, top: hoveredProject.y, maxHeight: `calc(100vh - ${hoveredProject.y + 8}px)` }}
+              onMouseLeave={() => setHoveredProject(null)}
+            >
+              <ProjectLaunchMenuItems project={hoveredProject.project} onLaunched={onClose} />
             </div>
           )}
         </div>

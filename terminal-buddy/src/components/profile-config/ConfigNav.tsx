@@ -2,19 +2,19 @@ import React, { FC, useMemo, useState, useCallback, useRef, useEffect, useLayout
 import { useAppStore } from '../../stores/appStore';
 import { buildClaudeRefCommand, deleteProfile as deleteProfileCmd, getAllProfiles, updateProfile, saveConfigNavWidth, getBackendAppSettings, openInExplorer } from '../../services/tauri';
 import { openTerminalInDir } from '../../utils/openTerminalInDir';
-import { matchingProjectPresets, matchingStartupPresets } from '../../utils/startupPresets';
+import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
 import { buildPiRefCommand, inheritablePiArgs, isPiCommand } from '../../utils/piLaunch';
 import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
-import { currentClaudeCommand, currentCodexCommand, currentPiCommand } from '../../utils/agentCommands';
+import { currentClaudeCommand, currentPiCommand } from '../../utils/agentCommands';
 import type { EnabledAgents, ExtraParamMode, Profile } from '../../types';
-import { projectEnabledAgents, projectModelSources } from '../../types';
-import { useAgentAvailability } from '../../hooks/useAgentAvailability';
+import { projectEnabledAgents } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { ClaudeModelMenuSection } from '../shared/ClaudeModelMenuSection';
+import { ProjectLaunchMenuItems } from '../shared/ProjectLaunchMenuItems';
 import { open as openDirectory } from '@tauri-apps/plugin-dialog';
 import { saveProjects } from '../../services/tauri';
 import type { Project } from '../../types';
@@ -61,12 +61,9 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const extraParamPresets = useAppStore(s => s.extraParamPresets);
   const setDragProfileId = useAppStore(s => s.setDragProfileId);
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
-  const showToast = useAppStore(s => s.showToast);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshPiModels = useAppStore(s => s.refreshPiModels);
-  // 环境检测结果：未安装的 Agent 不出现在项目右键菜单里（检测返回前视为可用）。
-  const agentAvailability = useAgentAvailability();
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
@@ -349,47 +346,14 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, currentClaudeCommand())), undefined, undefined, undefined, undefined, 'independent');
   };
 
-  /** 分组模型启动：走 blank 链（恒为本地 shell），引用命令整条注入，模型名由 tab tag 呈现；
-   * Agent 管理的基础命令参数（如 --dangerously-skip-permissions）一并继承。 */
-  const startProjectWithModel = async (project: Project, providerId: string, modelId: string) => {
-    closeContextMenu();
-    try {
-      await openTerminalInDir(project.path, {
-        command: buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(undefined, currentClaudeCommand())),
-        name: project.name,
-        groupName: project.name,
-      });
-    } catch (error) {
-      showToast('模型启动失败：' + String(error), 'error');
-    }
-  };
-
   const startProfileWithCodexModel = (profile: Profile, providerId: string, modelId: string) => {
     closeContextMenu();
     onStartTerminal(profile, buildCodexRefCommand(providerId, modelId, profile.startupCommands), undefined, undefined, undefined, undefined, 'independent');
   };
 
-  const startProjectWithCodexModel = async (project: Project, providerId: string, modelId: string) => {
-    closeContextMenu();
-    try {
-      await openTerminalInDir(project.path, { command: buildCodexRefCommand(providerId, modelId, currentCodexCommand()), name: project.name, groupName: project.name });
-    } catch (error) { showToast('Codex 模型启动失败：' + String(error), 'error'); }
-  };
-
   const startProfileWithPiModel = (profile: Profile, providerId: string, modelId: string, thinking?: string) => {
     closeContextMenu();
     onStartTerminal(profile, buildPiRefCommand(providerId, modelId, thinking, inheritablePiArgs(profile.startupCommands, currentPiCommand())), undefined, undefined, undefined, undefined, 'independent');
-  };
-
-  const startProjectWithPiModel = async (project: Project, providerId: string, modelId: string, thinking?: string) => {
-    closeContextMenu();
-    try {
-      await openTerminalInDir(project.path, {
-        command: buildPiRefCommand(providerId, modelId, thinking, inheritablePiArgs(undefined, currentPiCommand())),
-        name: project.name,
-        groupName: project.name,
-      });
-    } catch (error) { showToast('Pi 模型启动失败：' + String(error), 'error'); }
   };
 
   const gotoProvidersSettings = (source: 'claude' | 'codex' | 'pi' = 'claude') => {
@@ -693,37 +657,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             const project = projects.find(item => item.name === groupContextMenu.group);
             if (!project?.path) return null;
             return <>
-              <div className="context-menu-item" onClick={async () => {
-                closeContextMenu();
-                try { await openTerminalInDir(project.path, { groupName: project.name }); }
-                catch (err) { console.error(err); }
-              }}>命令行</div>
-              {matchingProjectPresets(extraParamPresets, profiles, project).map(preset => (
-                <div key={preset.id} className="context-menu-item" onClick={async () => {
-                  closeContextMenu();
-                  try {
-                    await openTerminalInDir(project.path, {
-                      command: preset.params,
-                      groupName: project.name,
-                      presetTag: preset.name,
-                      presetTagColor: preset.tagColor,
-                    });
-                  }
-                  catch (err) { console.error(err); }
-                }}>
-                  命令行<span
-                    className="config-nav-preset-chip"
-                    style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
-                  >
-                    {preset.name}
-                  </span>
-                </div>
-              ))}
-              {modelMenuSections(projectModelSources(project).filter(source => agentAvailability?.[source] ?? true), (source, providerId, modelId, thinking) => {
-                if (source === 'claude') void startProjectWithModel(project, providerId, modelId);
-                else if (source === 'codex') void startProjectWithCodexModel(project, providerId, modelId);
-                else void startProjectWithPiModel(project, providerId, modelId, thinking);
-              })}
+              {/* 启动区（命令行 / 预设 / Agent 模型）与会话标签栏「新建配置终端」悬停菜单共用 */}
+              <ProjectLaunchMenuItems project={project} onLaunched={closeContextMenu} />
               <div className="context-menu-separator" />
               {supportsSystemExplorerOpen() && (
                 <div className="context-menu-item" onClick={async () => {
