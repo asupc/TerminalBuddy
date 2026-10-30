@@ -116,7 +116,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     Column(Modifier.fillMaxSize().imePadding()) {
         if (tab != AiHomeTab.Sessions) {
-            PageHeader(tab.title, reconnecting = ui.reconnecting, subtitle = tab.subtitle)
+            PageHeader(tab.title, reconnecting = ui.reconnecting, subtitle = tab.subtitle, connecting = ui.loading)
             ui.error?.let { AiError(it, vm::clearError) }
         }
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {

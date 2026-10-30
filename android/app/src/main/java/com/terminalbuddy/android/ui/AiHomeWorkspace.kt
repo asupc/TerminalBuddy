@@ -18,7 +18,7 @@ import com.terminalbuddy.android.AiViewModel
 /** 快速开始聚焦创建会话，近期会话作为次级入口。 */
 @Composable
 internal fun AiHomeWorkspace(ui: AiUiState, vm: AiViewModel, sessions: () -> Unit, more: () -> Unit) {
-    val recent = ui.sessions.sortedByDescending { it.updatedAt }.take(2)
+    val recent = ui.recentSessions
     LazyColumn(
         Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),

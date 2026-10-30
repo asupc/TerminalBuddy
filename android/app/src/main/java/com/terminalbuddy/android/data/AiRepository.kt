@@ -65,6 +65,32 @@ class AiRepository(context: Context) {
         }
     }
 
+    /** 最近任务只缓存首页的两条摘要，不将完整对话写入 SharedPreferences。 */
+    fun cachedRecentSessions(): List<AiSession> {
+        if (!store.loggedIn) return emptyList()
+        val key = preferenceKey("recent_sessions_v1")
+        val snapshot = preferences.getString(key, null) ?: return emptyList()
+        return runCatching { ApiJson.decodeFromString<List<AiSession>>(snapshot) }.getOrElse {
+            preferences.edit().remove(key).apply()
+            emptyList()
+        }
+    }
+
+    fun saveRecentSessions(sessions: List<AiSession>) {
+        if (!store.loggedIn) return
+        val recent = sessions.take(2).map { session ->
+            AiSession(
+                id = session.id, title = session.title, provider = session.provider, projectPath = session.projectPath,
+                providerId = session.providerId, providerName = session.providerName, model = session.model,
+                status = session.status, updatedAt = session.updatedAt, revision = session.revision,
+                resultRevision = session.resultRevision,
+            )
+        }
+        val key = preferenceKey("recent_sessions_v1")
+        val snapshot = ApiJson.encodeToString(recent)
+        if (preferences.getString(key, null) != snapshot) preferences.edit().putString(key, snapshot).apply()
+    }
+
     /** 同一助手的模型可能来自不同供应商，两者一起按当前账号保存。 */
     fun selectedAgentProvider(agent: String) = preferences.getString(preferenceKey("provider:$agent"), "").orEmpty()
     fun selectedAgentModel(agent: String) = preferences.getString(preferenceKey("model:$agent"), "").orEmpty()

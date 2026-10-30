@@ -67,7 +67,7 @@ internal fun AiSmallIcon(icon: ImageVector, modifier: Modifier = Modifier) {
 /** 页面标题栏：左对齐大标题，右侧操作区。 */
 @Composable
 fun PageHeader(
-    title: String, reconnecting: Boolean = false, subtitle: String = "",
+    title: String, reconnecting: Boolean = false, subtitle: String = "", connecting: Boolean = false,
     action: @Composable RowScope.() -> Unit = {},
 ) {
     val compact = LocalConfiguration.current.screenHeightDp < 480
@@ -82,7 +82,8 @@ fun PageHeader(
                     Text(title, Modifier.weight(1f, fill = false), color = TbColors.Text,
                         style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    AiReconnectingIndicator(reconnecting, Modifier.padding(start = 8.dp))
+                    AiReconnectingIndicator(connecting || reconnecting, Modifier.padding(start = 8.dp),
+                        label = if (connecting) "连接中" else "重连中")
                 }
                 if (!compact && subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = TbColors.TextMuted)
             }
@@ -110,13 +111,15 @@ internal fun AiError(message: String, dismiss: () -> Unit) {
     }
 }
 
-/** 标题后的重连菊花与文字：默认隐藏，一次展示至少持续一秒。 */
+/** 标题后的连接菊花与文字：默认隐藏，一次展示至少持续一秒。 */
 @Composable
-internal fun AiReconnectingIndicator(reconnecting: Boolean, modifier: Modifier = Modifier) {
+internal fun AiReconnectingIndicator(reconnecting: Boolean, modifier: Modifier = Modifier, label: String = "重连中") {
     var showing by remember { mutableStateOf(reconnecting) }
+    var shownLabel by remember { mutableStateOf(label) }
     var shownAt by remember { mutableLongStateOf(if (reconnecting) SystemClock.elapsedRealtime() else 0L) }
-    LaunchedEffect(reconnecting) {
+    LaunchedEffect(reconnecting, label) {
         if (reconnecting) {
+            shownLabel = label
             if (!showing) {
                 shownAt = SystemClock.elapsedRealtime()
                 showing = true
@@ -129,10 +132,10 @@ internal fun AiReconnectingIndicator(reconnecting: Boolean, modifier: Modifier =
     if (showing || reconnecting) {
         Row(modifier.semantics {
             liveRegion = LiveRegionMode.Polite
-            stateDescription = "正在重新连接"
+            stateDescription = shownLabel
         }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             AiConnectionSpinner(TbColors.Accent, Modifier.size(16.dp))
-            Text("重连中", style = MaterialTheme.typography.labelMedium, color = TbColors.Accent, maxLines = 1)
+            Text(shownLabel, style = MaterialTheme.typography.labelMedium, color = TbColors.Accent, maxLines = 1)
         }
     }
 }

@@ -28,6 +28,8 @@ data class AiUiState(
     val server: String = "", val username: String = "admin", val authenticated: Boolean = false,
     val authenticating: Boolean = false, val loading: Boolean = false, val loadingSession: Boolean = false,
     val sessions: List<AiSession> = emptyList(), val projects: List<AiProject> = emptyList(),
+    /** 首页最近任务独立恢复，避免将两条展示缓存当成完整会话列表。 */
+    val recentSessions: List<AiSession> = emptyList(),
     val providers: List<AiProvider> = emptyList(), val agentEnvironment: AiAgentEnvironment? = null,
     val projectPath: String = "", val providerId: String = "", val modelId: String = "",
     val selected: AiSession? = null, val draft: String = "", val sending: Boolean = false,
@@ -322,9 +324,15 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 首帧就使用当前账号的完整配置；有缓存时后台同步不会禁用控件或切换成占位内容。 */
     private fun restoredConnectionState(revision: Long = 0): AiUiState {
         val cached = repository.cachedQuickStart()
+        val recent = repository.cachedRecentSessions()
+        val viewed = repository.viewedRevisions()
+        val unviewed = if (viewed == null) emptySet() else recent.filter { session ->
+            session.status !in listOf("running", "background", "stopping") && session.revision > (viewed[session.id] ?: 1L)
+        }.mapTo(mutableSetOf()) { it.id }
         return AiUiState(
             store.server, store.username, store.loggedIn,
             loading = store.loggedIn,
+            recentSessions = recent, unviewedIds = unviewed,
             projects = cached?.projects.orEmpty(),
             providers = cached?.providers.orEmpty(),
             agentEnvironment = cached?.agentEnvironment,
@@ -412,6 +420,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                                 )
                             )
                         }
+                        updateRecentSessions(sessions)
                         saveSelection()
                         startHomePolling()
                         return@launch
@@ -455,6 +464,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     mutable.update {
                         it.copy(sessions = sessions, reconnecting = false, unviewedIds = unviewed)
                     }
+                    updateRecentSessions(sessions)
                     retries = 0
                 } catch (e: CancellationException) {
                     throw e
@@ -469,6 +479,14 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    /** 完整列表同步时直接替换；单个任务更新时保留尚未同步的缓存卡片。 */
+    private fun updateRecentSessions(sessions: List<AiSession> = mutable.value.sessions + mutable.value.recentSessions) {
+        val recent = sessions.filterNot { it.id.startsWith("local-") }.distinctBy { it.id }
+            .sortedByDescending { it.updatedAt }.take(2)
+        mutable.update { it.copy(recentSessions = recent) }
+        repository.saveRecentSessions(recent)
     }
 
     /** 保持服务端仍存在的选择；失效时回落到默认供应商和首个模型，但不静默切到其他项目。 */
@@ -807,6 +825,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val cacheScope = repository.sessionCache.scope()
         val cached = cacheScope?.let { repository.sessionCache.peek(it, id) }
         val initial = cached ?: mutable.value.sessions.find { it.id == id }
+            ?: mutable.value.recentSessions.find { it.id == id }
             ?: AiSession(id, "正在加载对话", "", "")
         repository.lastSession = id
         mutable.update {
@@ -1157,6 +1176,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     .sortedByDescending { it.updatedAt },
             )
         }
+        updateRecentSessions()
     }
 
     /** 首次使用时接纳现有历史；已保存的空表也必须保留，不能重新建立基线。 */
@@ -1198,7 +1218,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         ensureViewedBaseline()
         viewedRevisions.remove(id)
         repository.saveViewedRevisions(viewedRevisions)
-        mutable.update { it.copy(unviewedIds = it.unviewedIds - id) }
+        mutable.update {
+            it.copy(unviewedIds = it.unviewedIds - id, recentSessions = it.recentSessions.filterNot { session -> session.id == id })
+        }
+        updateRecentSessions()
     }
 
     private fun startRealtime(reconnecting: Boolean = false) {
