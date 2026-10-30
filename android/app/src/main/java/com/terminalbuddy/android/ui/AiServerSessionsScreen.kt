@@ -86,11 +86,8 @@ internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
                         load = { vm.loadServerHistory(agent, project.path) },
                         more = { limits = limits + (project.path to (limits[project.path] ?: 10) + 10) },
                         open = { session ->
-                            if (agent == "codex") vm.openCodexHistory(session)
-                            else {
-                                resumingId = session.sessionId
-                                vm.resumeServerHistory(agent, project, session)
-                            }
+                            resumingId = session.sessionId
+                            vm.resumeServerHistory(agent, project, session)
                         },
                     )
                 }
@@ -160,8 +157,7 @@ private fun AiServerHistoryProjectCard(
     toggle: () -> Unit, load: () -> Unit, more: () -> Unit, open: (AiHistorySession) -> Unit,
 ) {
     val busy = ui.working || ui.authenticating
-    // codex 的历史只读回放，不依赖模型配置；claude / pi 需要能解析模型才能续接。
-    val resumable = agent == "codex" || ui.projectModels(project, agent).isNotEmpty()
+    val resumable = ui.projectModels(project, agent).isNotEmpty()
     val shown = history.sessions.take(limit)
     AiProjectAccordion(
         name = project.name, path = project.path, expanded = history.expanded, enabled = !busy,
@@ -201,8 +197,7 @@ private fun AiServerHistoryProjectCard(
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = TbColors.TextMuted)
                     } else {
                         Icon(
-                            if (agent == "codex") Icons.Outlined.ChevronRight else Icons.Outlined.Replay,
-                            if (agent == "codex") "查看历史记录" else "继续历史对话",
+                            Icons.Outlined.Replay, "继续历史对话",
                             Modifier.size(18.dp), tint = TbColors.TextMuted,
                         )
                     }

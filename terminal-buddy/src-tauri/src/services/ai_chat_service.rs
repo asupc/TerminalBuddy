@@ -175,8 +175,28 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
     // 第一页只取元数据：标题、项目目录与消息总数均来自历史索引。
     let first = replay_page(provider, resume_id, 0, 1)?;
     if first.project_dir.trim().is_empty() { return Err("历史会话缺少项目目录，无法恢复".into()); }
-    // 幂等：同账号已恢复过同一历史线程时直接复用，避免两个进程写同一份转录。
-    if let Some(existing) = find_by_thread(owner, provider, resume_id) { return Ok(existing); }
+    let selection = super::ai_catalog_service::selection(provider, input.provider_id.as_deref(), input.model.as_deref())?;
+    let provider_id = selection.as_ref().map(|(id, _)| id.clone());
+    let model = input.model.filter(|model| !model.trim().is_empty());
+    // 复用同一历史线程，并纠正之前恢复时被快速开始覆盖的模型配置。
+    if let Some(existing) = find_by_thread(owner, provider, resume_id) {
+        let cell = load(&existing.id, owner)?;
+        let control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+        let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+        if data.provider_id != provider_id || data.model != model {
+            if control.is_some() || matches!(data.status.as_str(), "running" | "approval" | "background" | "stopping") {
+                return Err("该历史会话仍在执行，模型配置不一致，请先停止会话后重试".into());
+            }
+            let before = data.clone();
+            data.provider_id = provider_id;
+            data.provider_name = selection.map(|(_, name)| name);
+            data.model = model;
+            if let Some(usage) = data.usage.as_mut() { usage.context = AiContextUsage::default(); }
+            touch(&mut data);
+            if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+        }
+        return Ok(data.clone());
+    }
     // Pi 的 RPC 会话 ID 即 AiSession ID（进程按该 ID 落盘并复用同一会话文件）。
     let id = if provider == "pi" { resume_id.to_string() } else { Uuid::new_v4().to_string() };
     let path = directory()?.join(format!("{id}.json"));
@@ -185,10 +205,9 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
     }
     let title = if first.title.trim().is_empty() { "恢复的对话".to_string() } else { first.title };
     let messages = prefill_history_messages(provider, resume_id, first.total.max(0) as usize)?;
-    let selection = super::ai_catalog_service::selection(provider, input.provider_id.as_deref(), input.model.as_deref())?;
     let data = AiSession { id: id.clone(), title, provider: provider.to_string(),
-        provider_id: selection.as_ref().map(|(id, _)| id.clone()), provider_name: selection.map(|(_, name)| name),
-        project_path: first.project_dir, model: input.model.filter(|m| !m.trim().is_empty()),
+        provider_id, provider_name: selection.map(|(_, name)| name),
+        project_path: first.project_dir, model,
         status: "idle".into(), messages, approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0,

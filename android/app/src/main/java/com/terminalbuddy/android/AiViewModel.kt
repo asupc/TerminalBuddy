@@ -571,20 +571,25 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         job.start()
     }
 
-    /** 从浏览中的项目恢复 Claude / Pi，会话使用该项目的模型，保持首页启动配置不变。 */
+    /** 按历史模型及其供应商直接续接，独立于快速开始的选择。 */
     fun resumeServerHistory(agent: String, project: AiProject, item: AiHistorySession) {
         val ui = mutable.value
-        if (ui.working || ui.authenticating || !ui.authenticated || agent !in listOf("claude", "pi")) return
+        if (ui.working || ui.authenticating || !ui.authenticated || agent !in listOf("claude", "codex", "pi")) return
         val models = ui.projectModels(project, agent)
-        val target = models.find { it.key == ui.launchModelKey }
-            ?: models.find { it.model.id == item.model }
+        val historyModels = item.model?.trim()?.takeIf(String::isNotBlank)?.let { model ->
+            models.filter { it.model.id.equals(model, ignoreCase = true) }
+        }.orEmpty()
+        // 先保留历史模型；同名模型优先默认供应商，缺失时才回退项目默认模型。
+        val target = historyModels.firstOrNull { it.provider.isDefault } ?: historyModels.firstOrNull()
             ?: models.firstOrNull { it.provider.isDefault } ?: models.firstOrNull() ?: return
         val epoch = generation
         refreshJob?.cancel(); selectJob?.cancel(); cancelSend(); stopRealtime()
         mutable.update { it.copy(working = true, error = null) }
         actionJob = viewModelScope.launch {
             try {
-                val session = repository.create(project, target.provider, target.model.id, item.sessionId)
+                val session = if (agent == "codex")
+                    repository.resumeCodexHistory(item.sessionId, target.provider, target.model)
+                else repository.create(project, target.provider, target.model.id, item.sessionId)
                 if (epoch != generation) return@launch
                 mutable.update { it.copy(working = false) }
                 open(session.id)
