@@ -151,25 +151,30 @@ impl TerminalOutputBuffer {
 /// 定位 PowerShell 7.x 的 pwsh.exe：先查标准安装路径，再在 PATH 中查找
 fn resolve_pwsh_exe() -> Result<String, String> {
     #[cfg(not(windows))]
-    { return Ok("pwsh".to_string()); }
-    let default = r"C:\Program Files\PowerShell\7\pwsh.exe";
-    if std::path::Path::new(default).is_file() {
-        return Ok(default.to_string());
+    {
+        Ok("pwsh".to_string())
     }
-    // PATH 查找：把 PATH 按 ';' 拆分，逐个目录检查 pwsh.exe / pwsh
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            for name in &["pwsh.exe", "pwsh.cmd", "pwsh"] {
-                let candidate = dir.join(name);
-                if candidate.is_file() {
-                    if let Some(s) = candidate.to_str() {
-                        return Ok(s.to_string());
+    #[cfg(windows)]
+    {
+        let default = r"C:\Program Files\PowerShell\7\pwsh.exe";
+        if std::path::Path::new(default).is_file() {
+            return Ok(default.to_string());
+        }
+        // PATH 查找：把 PATH 按 ';' 拆分，逐个目录检查 pwsh.exe / pwsh
+        if let Some(paths) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&paths) {
+                for name in &["pwsh.exe", "pwsh.cmd", "pwsh"] {
+                    let candidate = dir.join(name);
+                    if candidate.is_file() {
+                        if let Some(s) = candidate.to_str() {
+                            return Ok(s.to_string());
+                        }
                     }
                 }
             }
         }
+        Err("未找到 PowerShell 7.x 可执行文件（pwsh.exe）。请从 https://aka.ms/install-powershell 安装 PowerShell 7，或将其所在目录加入 PATH".to_string())
     }
-    Err("未找到 PowerShell 7.x 可执行文件（pwsh.exe）。请从 https://aka.ms/install-powershell 安装 PowerShell 7，或将其所在目录加入 PATH".to_string())
 }
 
 pub struct TerminalInstance {

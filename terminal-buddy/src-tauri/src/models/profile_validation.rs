@@ -32,6 +32,7 @@ pub fn reject_control_chars(field_label: &str, value: &str) -> Result<(), String
 ///
 /// 引号区间内 cmd.exe 不再解释 `& | < > ^ ( )`，因此加引号即可；`"` 和 `%` 无法靠
 /// 引号隔离，由 `quote_cmd_argument` 单独拒绝。
+#[cfg(windows)]
 fn needs_cmd_quoting(c: char) -> bool {
     c.is_whitespace()
         || matches!(
@@ -54,28 +55,33 @@ fn needs_cmd_quoting(c: char) -> bool {
 pub fn quote_cmd_argument(field_label: &str, value: &str) -> Result<String, String> {
     reject_control_chars(field_label, value)?;
     #[cfg(not(windows))]
-    { return Ok(format!("'{}'", value.replace('\'', "'\\''"))); }
-    if let Some(bad) = value.chars().find(|c| matches!(c, '"' | '%')) {
-        return Err(format!(
-            "「{}」不能包含字符 {:?}：它在 cmd.exe 命令行中无法被安全转义。请去掉后重试。",
-            field_label, bad
-        ));
+    {
+        Ok(format!("'{}'", value.replace('\'', "'\\''")))
     }
-    if value.is_empty() {
-        return Ok("\"\"".to_string());
+    #[cfg(windows)]
+    {
+        if let Some(bad) = value.chars().find(|c| matches!(c, '"' | '%')) {
+            return Err(format!(
+                "「{}」不能包含字符 {:?}：它在 cmd.exe 命令行中无法被安全转义。请去掉后重试。",
+                field_label, bad
+            ));
+        }
+        if value.is_empty() {
+            return Ok("\"\"".to_string());
+        }
+        if !value.chars().any(needs_cmd_quoting) {
+            return Ok(value.to_string());
+        }
+        let trailing_backslashes = value.len() - value.trim_end_matches('\\').len();
+        let mut quoted = String::with_capacity(value.len() + trailing_backslashes + 2);
+        quoted.push('"');
+        quoted.push_str(value);
+        for _ in 0..trailing_backslashes {
+            quoted.push('\\');
+        }
+        quoted.push('"');
+        Ok(quoted)
     }
-    if !value.chars().any(needs_cmd_quoting) {
-        return Ok(value.to_string());
-    }
-    let trailing_backslashes = value.len() - value.trim_end_matches('\\').len();
-    let mut quoted = String::with_capacity(value.len() + trailing_backslashes + 2);
-    quoted.push('"');
-    quoted.push_str(value);
-    for _ in 0..trailing_backslashes {
-        quoted.push('\\');
-    }
-    quoted.push('"');
-    Ok(quoted)
 }
 
 /// 拒绝以 `-` 开头的值。

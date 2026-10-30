@@ -251,6 +251,7 @@ pub fn config_path(scope: &str, project_dir: Option<&str>) -> Result<String, Str
 /// 运行 `claude mcp list` 并解析。同步轮询带超时，防 CLI 卡死占住线程。
 pub fn probe(timeout_secs: u64) -> Result<Vec<McpProbeStatus>, String> {
     use std::process::{Command, Stdio};
+    #[cfg(windows)]
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     #[cfg(windows)]
