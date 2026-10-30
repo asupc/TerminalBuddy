@@ -84,20 +84,33 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
         val epoch = generation
         refreshJob = viewModelScope.launch {
             mutable.update { it.copy(loading = true, error = if (clearError) null else it.error) }
+            var retries = 0
             try {
-                val catalog = repository.catalog(connection)
-                if (epoch != generation) return@launch
-                val projects = catalog.projects.toMutableList()
-                catalog.profiles.forEach { profile ->
-                    if (projects.none { it.name == profile.projectName }) projects.add(AiProject(profile.projectName, ""))
+                // 网络故障持续重试，保留上次列表，不插入连接失败卡片。
+                while (isActive && epoch == generation) {
+                    try {
+                        val catalog = repository.catalog(connection)
+                        if (epoch != generation) return@launch
+                        val projects = catalog.projects.toMutableList()
+                        catalog.profiles.forEach { profile ->
+                            if (projects.none { it.name == profile.projectName }) projects.add(AiProject(profile.projectName, ""))
+                        }
+                        mutable.update { it.copy(
+                            projects = projects.sortedBy { project -> project.name.lowercase() },
+                            profiles = catalog.profiles, terminals = catalog.terminals, loaded = true,
+                        ) }
+                        return@launch
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) {
+                        if (epoch != generation) return@launch
+                        if (!e.isRetryableConnectionFailure()) {
+                            mutable.update { it.copy(error = e.userMessage()) }
+                            return@launch
+                        }
+                        delay(reconnectDelay(retries))
+                        retries = (retries + 1).coerceAtMost(4)
+                    }
                 }
-                mutable.update { it.copy(
-                    projects = projects.sortedBy { project -> project.name.lowercase() },
-                    profiles = catalog.profiles, terminals = catalog.terminals, loaded = true,
-                ) }
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) {
-                if (epoch == generation) mutable.update { it.copy(error = e.userMessage()) }
             } finally {
                 if (epoch == generation) mutable.update { it.copy(loading = false) }
             }
@@ -187,7 +200,7 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
     fun input(text: String) {
         if (text.isEmpty() || !mutable.value.connected || mutable.value.ended) return
         val sent = socket?.send(jsonBody { put("type", "input"); put("data", text) }.toString()) == true
-        if (!sent) mutable.update { it.copy(terminalError = "输入未发送，终端连接已断开，请重新连接后再操作") }
+        if (!sent) connectionLost(null)
     }
 
     fun reconnect() {
@@ -297,15 +310,19 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
             401 -> "登录已过期，请返回账号页面重新登录"
             403 -> "没有查看此终端的权限"
             404 -> "原终端已结束或因服务重启被移除。可刷新服务状态，查看更新后的服务。"
-            else -> "连接已中断。自升级或服务重启可能导致终端断开，已收到的输出保留；启动命令不会自动重跑。"
+            else -> null
+        }
+        val status = when {
+            terminalMissing -> "原终端已不存在"
+            forbidden -> "连接已中断"
+            else -> "正在重新连接"
         }
         mutable.update { it.copy(
-            connected = false, ended = terminalMissing, status = if (terminalMissing) "原终端已不存在" else "连接已中断",
-            terminalError = message,
+            connected = false, ended = terminalMissing, status = status, terminalError = message,
         ) }
-        if (forbidden || terminalMissing || !visible || attempts >= 5) return
-        val delayMillis = (1000L shl attempts).coerceAtMost(16000L)
-        attempts++
+        if (forbidden || terminalMissing || !visible) return
+        val delayMillis = reconnectDelay(attempts)
+        attempts = (attempts + 1).coerceAtMost(4)
         retryJob = viewModelScope.launch {
             delay(delayMillis)
             retryJob = null
@@ -368,6 +385,11 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
         put("type", "replay")
         put("frames", ApiJson.encodeToJsonElement(frames.toList()))
     }
+
+    private fun reconnectDelay(attempt: Int): Long = 1000L shl attempt.coerceIn(0, 4)
+
+    private fun Throwable.isRetryableConnectionFailure(): Boolean = isConnectionFailure() ||
+        this is ApiException && (code == 408 || code == 429 || code in 500..599)
 
     override fun onCleared() { disconnect(); renderer = null }
     private companion object { const val MAX_BUFFER_CHARACTERS = 2 * 1024 * 1024 }
