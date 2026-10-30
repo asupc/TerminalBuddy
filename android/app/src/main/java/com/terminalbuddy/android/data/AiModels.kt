@@ -95,6 +95,14 @@ data class AiAgentEnvironment(
         status?.status == "installed" || status?.status == "installing" || status?.status == "updating"
 }
 
+/** 快速开始的展示快照；与项目、供应商和模型选择一起按账号写入 SharedPreferences。 */
+@Serializable
+data class AiQuickStartCache(
+    val projects: List<AiProject>,
+    val providers: List<AiProvider>,
+    val agentEnvironment: AiAgentEnvironment? = null,
+)
+
 @Serializable
 data class AiCatalog(val providers: List<AiProvider> = emptyList())
 

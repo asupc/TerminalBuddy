@@ -90,16 +90,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as TerminalBuddyApplication).aiRepository
     private val store = repository.store
     private val taskNotifications = (application as TerminalBuddyApplication).taskNotifications
-    private val mutable = MutableStateFlow(
-        AiUiState(
-            store.server, store.username, store.loggedIn,
-            projectPath = repository.selectedProject,
-            providerId = repository.selectedProvider,
-            modelId = repository.selectedModel,
-            accounts = repository.accounts.accounts, activeAccountId = repository.accounts.activeId,
-            sendImmediate = repository.sendImmediate,
-        )
-    )
+    private val mutable = MutableStateFlow(restoredConnectionState())
     val state = mutable.asStateFlow()
 
     private var notificationTarget: AiNotificationTarget? = null
@@ -326,15 +317,26 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         viewedRevisions.clear(); viewedBaselineReady = false
     }
 
-    private fun connectionState() = AiUiState(
-        store.server, store.username, store.loggedIn,
-        projectPath = repository.selectedProject,
-        providerId = repository.selectedProvider,
-        modelId = repository.selectedModel,
-        accounts = repository.accounts.accounts, activeAccountId = repository.accounts.activeId,
-        connectionRevision = mutable.value.connectionRevision + 1,
-        sendImmediate = repository.sendImmediate,
-    )
+    private fun connectionState() = restoredConnectionState(mutable.value.connectionRevision + 1)
+
+    /** 首帧就使用当前账号的完整配置；有缓存时后台同步不会禁用控件或切换成占位内容。 */
+    private fun restoredConnectionState(revision: Long = 0): AiUiState {
+        val cached = repository.cachedQuickStart()
+        return AiUiState(
+            store.server, store.username, store.loggedIn,
+            loading = store.loggedIn,
+            projects = cached?.projects.orEmpty(),
+            providers = cached?.providers.orEmpty(),
+            agentEnvironment = cached?.agentEnvironment,
+            projectPath = repository.selectedProject,
+            providerId = repository.selectedProvider,
+            modelId = repository.selectedModel,
+            homeLoaded = cached != null,
+            accounts = repository.accounts.accounts, activeAccountId = repository.accounts.activeId,
+            connectionRevision = revision,
+            sendImmediate = repository.sendImmediate,
+        )
+    }
 
     fun logout() {
         authJob?.cancel(); authJob = null
@@ -485,7 +487,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun saveSelection() {
         val ui = mutable.value
-        repository.saveSelection(ui.projectPath, ui.providerId, ui.modelId, ui.launchProvider?.agent)
+        repository.saveSelection(
+            ui.projectPath, ui.providerId, ui.modelId, ui.launchProvider?.agent,
+            quickStart = if (ui.homeLoaded) AiQuickStartCache(ui.projects, ui.providers, ui.agentEnvironment) else null,
+        )
     }
 
     fun selectProject(path: String) {

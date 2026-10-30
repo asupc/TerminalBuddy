@@ -7,6 +7,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -52,6 +54,17 @@ class AiRepository(context: Context) {
     val selectedProvider get() = preferences.getString(preferenceKey("provider"), "").orEmpty()
     val selectedModel get() = preferences.getString(preferenceKey("model"), "").orEmpty()
 
+    /** 冷启动同步恢复展示数据；缓存损坏时回退到服务端同步，不影响进入页面。 */
+    fun cachedQuickStart(): AiQuickStartCache? {
+        if (!store.loggedIn) return null
+        val key = preferenceKey("quick_start_v1")
+        val snapshot = preferences.getString(key, null) ?: return null
+        return runCatching { ApiJson.decodeFromString<AiQuickStartCache>(snapshot) }.getOrElse {
+            preferences.edit().remove(key).apply()
+            null
+        }
+    }
+
     /** 同一助手的模型可能来自不同供应商，两者一起按当前账号保存。 */
     fun selectedAgentProvider(agent: String) = preferences.getString(preferenceKey("provider:$agent"), "").orEmpty()
     fun selectedAgentModel(agent: String) = preferences.getString(preferenceKey("model:$agent"), "").orEmpty()
@@ -61,13 +74,17 @@ class AiRepository(context: Context) {
         get() = preferences.getBoolean("ai_send_immediate", false)
         set(value) { preferences.edit().putBoolean("ai_send_immediate", value).apply() }
 
-    fun saveSelection(project: String, provider: String, model: String, agent: String?) {
+    fun saveSelection(
+        project: String, provider: String, model: String, agent: String?, quickStart: AiQuickStartCache? = null,
+    ) {
         val edit = preferences.edit().putString(preferenceKey("project"), project)
             .putString(preferenceKey("provider"), provider).putString(preferenceKey("model"), model)
         if (!agent.isNullOrBlank() && provider.isNotBlank()) {
             edit.putString(preferenceKey("provider:$agent"), provider)
                 .putString(preferenceKey("model:$agent"), model)
         }
+        // 选择与展示快照一次性更新内存，再异步落盘，下一次启动可直接还原整张配置卡。
+        if (quickStart != null) edit.putString(preferenceKey("quick_start_v1"), ApiJson.encodeToString(quickStart))
         edit.apply()
     }
 
