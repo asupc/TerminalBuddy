@@ -362,3 +362,37 @@
   height: 18px;
   display: block;
 }
+
+.agent-download-settings {
+  padding: 14px;
+}
+
+.agent-download-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.agent-download-source-row select {
+  max-width: 100%;
+  min-height: var(--control-height-sm);
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.agent-download-source-row select:disabled {
+  opacity: .55;
+}
+
+.agent-download-source-row select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

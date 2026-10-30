@@ -4,7 +4,7 @@ import {
   getAgentCli, getAgentCliEnvironment, installAgentCli, updateAgentCli,
   type AgentCli, type AgentCliStatus, type AgentCliEnvironment,
 } from '../../services/agentCli';
-import { saveAgentCommands, getBackendAppSettings } from '../../services/tauri';
+import { saveAgentCommands, getBackendAppSettings, saveAgentDownloadSource, type AgentDownloadSource } from '../../services/tauri';
 import { getPiExtensionState, installPiExtension, uninstallPiExtension, savePiToolApprovalEnabled, type PiExtensionState } from '../../services/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { DEFAULT_CLAUDE_COMMAND } from '../../utils/claudeLaunch';
@@ -72,6 +72,10 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
   const [actions, setActions] = useState<Record<AgentCli, ToolAction | null>>({ claude: null, codex: null, pi: null });
   const [errors, setErrors] = useState<Record<AgentCli, string>>({ claude: '', codex: '', pi: '' });
   const [error, setError] = useState('');
+  const [downloadSource, setDownloadSource] = useState<AgentDownloadSource | null>(null);
+  const [savingSource, setSavingSource] = useState(false);
+  const [sourceError, setSourceError] = useState('');
+  const sourcePending = useRef(false);
   const refreshPending = useRef(false);
   const busyTools = useRef(new Set<AgentCli>());
   const revisions = useRef<Record<AgentCli, number>>({ claude: 0, codex: 0, pi: 0 });
@@ -97,10 +101,20 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
 
   useEffect(() => {
     if (!active) return;
+    let cancelled = false;
+    setDownloadSource(null);
     void getBackendAppSettings()
-      .then(settings => setPiApprovalEnabled(Boolean(settings.piToolApprovalEnabled)))
-      .catch(() => {});
+      .then(settings => {
+        if (cancelled) return;
+        setPiApprovalEnabled(Boolean(settings.piToolApprovalEnabled));
+        setDownloadSource(settings.agentDownloadSource ?? 'npmmirror');
+        setSourceError('');
+      })
+      .catch(reason => {
+        if (!cancelled) setSourceError(`读取下载源失败：${reason instanceof Error ? reason.message : String(reason)}`);
+      });
     void getPiExtensionState().then(setPiExtension).catch(() => setPiExtension(null));
+    return () => { cancelled = true; };
   }, [active]);
 
   const togglePiApproval = async (enabled: boolean) => {
@@ -109,7 +123,7 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
       await savePiToolApprovalEnabled(enabled);
       setPiApprovalEnabled(enabled);
     } catch (reason) {
-      setErrors(value => ({ ...value, pi: `保存 Pi 工具确认设置失败：${reason instanceof Error ? reason.message : '请重试'}` }));
+      setErrors(value => ({ ...value, pi: `保存 Pi 工具确认设置失败：${reason instanceof Error ? reason.message : String(reason)}` }));
     } finally {
       setPiSettingsBusy(false);
     }
@@ -122,7 +136,7 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
       else await installPiExtension();
       setPiExtension(await getPiExtensionState());
     } catch (reason) {
-      setErrors(value => ({ ...value, pi: `Pi 扩展操作失败：${reason instanceof Error ? reason.message : '请重试'}` }));
+      setErrors(value => ({ ...value, pi: `Pi 扩展操作失败：${reason instanceof Error ? reason.message : String(reason)}` }));
     } finally {
       setPiSettingsBusy(false);
     }
@@ -171,7 +185,7 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
   }, [working, refresh]);
 
   const runAction = async (tool: AgentCli, action: ToolAction) => {
-    if (busyTools.current.has(tool) || isRunning(environment?.[tool])) return;
+    if (!downloadSource || sourcePending.current || busyTools.current.has(tool) || isRunning(environment?.[tool])) return;
     busyTools.current.add(tool);
     revisions.current[tool] += 1;
     setActions(value => ({ ...value, [tool]: action }));
@@ -193,11 +207,38 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
         } catch { /* 保留下方原始错误，允许重新检测或重试。 */ }
       }
       const label = action === 'check' ? '检查更新' : action === 'update' ? '更新' : '安装';
-      setErrors(value => ({ ...value, [tool]: `${label}失败：${reason instanceof Error ? reason.message : '请重试'}` }));
+      setErrors(value => ({ ...value, [tool]: `${label}失败：${reason instanceof Error ? reason.message : String(reason)}` }));
     } finally {
       revisions.current[tool] += 1;
       busyTools.current.delete(tool);
       setActions(value => ({ ...value, [tool]: null }));
+    }
+  };
+
+  const changeDownloadSource = async (source: AgentDownloadSource) => {
+    if (sourcePending.current || source === downloadSource) return;
+    sourcePending.current = true;
+    setSavingSource(true);
+    setSourceError('');
+    try {
+      await saveAgentDownloadSource(source);
+      setDownloadSource(source);
+      for (const tool of tools) revisions.current[tool.id] += 1;
+      setErrors({ claude: '', codex: '', pi: '' });
+      setEnvironment(current => {
+        if (!current) return null;
+        const next = { ...current };
+        for (const tool of tools) {
+          next[tool.id] = { ...current[tool.id], update: null, message: null, updatedVersion: null };
+        }
+        return next;
+      });
+      await refresh();
+    } catch (reason) {
+      setSourceError(`切换下载源失败：${reason instanceof Error ? reason.message : String(reason)}`);
+    } finally {
+      sourcePending.current = false;
+      setSavingSource(false);
     }
   };
 
@@ -227,6 +268,30 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
 
   return (
     <div className="agent-management-settings">
+      <div className="settings-card-group agent-download-settings">
+        <div className="agent-download-source-row">
+          <label htmlFor="agent-download-source">下载源</label>
+          <select
+            id="agent-download-source"
+            value={downloadSource ?? ''}
+            disabled={!downloadSource || savingSource || working || refreshing || tools.some(tool => actions[tool.id] !== null)}
+            onChange={event => { void changeDownloadSource(event.target.value as AgentDownloadSource); }}
+          >
+            {!downloadSource && <option value="">正在读取…</option>}
+            <option value="npmmirror">国内镜像（npmmirror，默认）</option>
+            <option value="official">官方源</option>
+          </select>
+          {savingSource && <LoaderCircle size={14} className="container-environment-spin" aria-label="保存中" />}
+        </div>
+        <p className="container-environment-hint">
+          {downloadSource === 'npmmirror'
+            ? 'registry.npmmirror.com · 检查、安装和更新均使用国内镜像。安装需要 Node.js，建议使用 22.19 或更高版本；镜像同步可能稍有延迟。'
+            : downloadSource === 'official'
+              ? 'registry.npmjs.org · 使用官方版本源和安装渠道，需要能访问国外下载站点。'
+              : '下载源用于版本检查、安装和更新，选择后自动保存。'}
+        </p>
+        {sourceError && <p className="container-environment-error" role="alert">{sourceError}</p>}
+      </div>
       <div className="settings-card-group container-environment-list agent-cli-list">
         <div className="card-group-header container-environment-toolbar">
           <span className="card-group-title">命令行工具</span>
@@ -273,10 +338,9 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
                   {update?.latestVersion && cli?.version !== update.latestVersion && <span className="agent-cli-version-muted">→ v{update.latestVersion}</span>}
                 </div>
                 <p className="container-environment-hint">
-                  {updating ? '正在下载安装新版本，离开设置页不会中断。'
-                    : installing ? '正在下载安装，离开设置页不会中断。'
-                      : cli && cli.status !== 'installed' ? (tool.id === 'pi' ? '通过 npm 安装到用户目录（需要 Node.js ≥ 22.19）' : '使用官方安装器安装')
-                        : null}
+                  {updating || installing ? `正在通过${downloadSource === 'npmmirror' ? '国内镜像' : '官方源'}下载安装，离开设置页不会中断。`
+                    : cli && cli.status !== 'installed' ? (tool.id === 'pi' ? '通过 npm 安装到用户目录（需要 Node.js ≥ 22.19）' : downloadSource === 'npmmirror' ? '通过国内 npm 镜像安装（需要 Node.js）' : '通过官方渠道安装')
+                      : null}
                 </p>
                 {updateText && <p className={`container-environment-update ${checking ? 'checking' : updated && update?.state !== 'available' ? 'upToDate' : update?.state}`} role="status" aria-live="polite">
                   {checking ? <LoaderCircle size={13} className="container-environment-spin" aria-hidden="true" />
@@ -294,7 +358,7 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
                 </span>
                 {cli && <button
                   type="button" className={`container-environment-action${nextAction === 'check' && !updating ? '' : ' primary'}`}
-                  disabled={busy} onClick={() => { void runAction(tool.id, nextAction); }}
+                  disabled={busy || savingSource || !downloadSource} onClick={() => { void runAction(tool.id, nextAction); }}
                   aria-label={`${buttonText} ${tool.name}`}
                 >
                   {busy ? <LoaderCircle size={14} className="container-environment-spin" aria-hidden="true" />
@@ -371,7 +435,7 @@ export function AgentManagementSettings({ active }: AgentManagementSettingsProps
           </section>;
         })}
       </div>
-      <p className="container-environment-hint container-environment-footer">每个工具可独立检查、更新与保存基础命令；更新成功后会自动显示实际安装的版本。</p>
+      <p className="container-environment-hint container-environment-footer">每个工具可独立检查、更新与保存基础命令；切换下载源后请重新检查更新，更新成功后请新建终端使用新版。</p>
     </div>
   );
 }

@@ -449,6 +449,7 @@ pub fn run() {
             save_agent_commands,
             save_pi_tool_approval_enabled,
             get_agent_cli_environment, get_agent_cli_status, install_agent_cli, update_agent_cli,
+            save_agent_download_source,
             clear_default_llm_provider,
             claude_history_rescan, claude_history_list, claude_history_search,
             claude_history_get_replay, claude_history_rename, claude_history_set_flags,

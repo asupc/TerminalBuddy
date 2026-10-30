@@ -63,6 +63,24 @@ fn default_single_instance() -> bool {
     true
 }
 
+/// Agent 版本检查与安装下载源；国内镜像通过 npm 分发官方发布的包。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentDownloadSource {
+    #[default]
+    Npmmirror,
+    Official,
+}
+
+impl AgentDownloadSource {
+    pub fn registry(self) -> &'static str {
+        match self {
+            Self::Npmmirror => "https://registry.npmmirror.com",
+            Self::Official => "https://registry.npmjs.org",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -115,6 +133,8 @@ pub struct AppSettings {
     /// Agent 管理中配置的 Agent 基础启动命令；空串 = 使用内置默认命令。
     #[serde(default)]
     pub agent_commands: AgentCommands,
+    #[serde(default)]
+    pub agent_download_source: AgentDownloadSource,
     /// Pi 工具确认：默认关闭，保持 Pi 原生全权限行为。
     #[serde(default)]
     pub pi_tool_approval_enabled: bool,
@@ -167,6 +187,7 @@ impl Default for AppSettings {
             default_terminal_enabled: false,
             default_terminal_backup: None,
             agent_commands: AgentCommands::default(),
+            agent_download_source: AgentDownloadSource::default(),
             pi_tool_approval_enabled: false,
         }
     }

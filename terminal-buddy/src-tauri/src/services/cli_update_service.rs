@@ -1,4 +1,4 @@
-//! 容器 CLI 更新检测，参考 CC Switch 的 dist-tags 查询与预发布通道判断。
+//! Agent CLI 更新检测：使用设置中的下载源查询 dist-tags 与预发布通道。
 use std::{cmp::Ordering, time::Duration};
 
 use reqwest::Client;
@@ -70,7 +70,7 @@ fn select_latest(tags: &Map<String, Value>, current: Option<&str>, preview_tags:
 
 async fn fetch_dist_tags(client: &Client, url: &str) -> Result<Map<String, Value>, String> {
     let response = client.get(url).send().await
-        .map_err(|_| "无法连接版本源，请检查容器网络后重试".to_string())?;
+        .map_err(|_| format!("无法连接版本源 {url}，请检查网络或在 Agent 管理中切换下载源后重试"))?;
     if !response.status().is_success() {
         return Err(format!("版本查询失败（HTTP {}），请稍后重试", response.status().as_u16()));
     }
@@ -98,7 +98,7 @@ fn update_from_tags(tags: Result<Map<String, Value>, String>, current: Option<&s
     }
 }
 
-pub async fn check_update(package: &str, current: Option<&str>, preview_tags: &[&str]) -> CliUpdate {
+pub async fn check_update(package: &str, current: Option<&str>, preview_tags: &[&str], registry: &str) -> CliUpdate {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(10))
@@ -106,7 +106,7 @@ pub async fn check_update(package: &str, current: Option<&str>, preview_tags: &[
     let tags = match client {
         Ok(client) => {
             // dist-tags 只有少量数据，不拉取包含全部历史版本的完整包元数据。
-            let url = format!("https://registry.npmjs.org/-/package/{}/dist-tags", package.replace('/', "%2f"));
+            let url = format!("{registry}/-/package/{}/dist-tags", package.replace('/', "%2f"));
             fetch_dist_tags(&client, &url).await
         }
         Err(_) => Err("无法创建版本查询连接，请重试".to_string()),

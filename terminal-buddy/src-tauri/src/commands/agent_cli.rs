@@ -36,3 +36,9 @@ pub async fn update_agent_cli(tool: String) -> Result<agent_cli_service::CliStat
     agent_cli_service::start_operation(parse_tool(&tool)?, Operation::Update).await
         .map_err(|error| error.message().to_string())
 }
+
+/// 切换源时清理旧版本查询；安装任务执行期间不允许切换。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn save_agent_download_source(source: crate::models::AgentDownloadSource) -> Result<(), String> {
+    claude_task(move || agent_cli_service::save_download_source(source)).await
+}

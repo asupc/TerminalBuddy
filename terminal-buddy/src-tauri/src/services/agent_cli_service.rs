@@ -1,6 +1,5 @@
-//! Agent CLI（Claude Code / Codex）检测、安装与更新：REST handler 与桌面 Tauri 命令共用的
-//! 平台无关核心。Unix（含 Docker）走官方 install.sh，Windows 走 install.ps1（Claude）或
-//! npm（Codex）；版本检测统一查 npm dist-tags。
+//! Agent CLI（Claude Code / Codex / Pi）检测、安装与更新。国内源通过 npm 安装官方包，
+//! 官方源保留原生安装器；版本检查与 npm 安装使用同一个 registry。
 use std::{
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
@@ -10,6 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::models::AgentDownloadSource;
+use crate::services::SettingsService;
 use crate::services::cli_update_service::{check_update, compare_versions, refresh_update_state, CliUpdate};
 
 #[derive(Debug)]
@@ -93,6 +94,23 @@ fn installation(tool: CliTool) -> &'static Mutex<Installation> {
         CliTool::Pi => &PI,
     };
     state.get_or_init(|| Mutex::new(Installation::default()))
+}
+
+/// 固定顺序持有各工具锁，防止切换源与启动安装交错；不打断已开始的下载。
+pub fn save_download_source(source: AgentDownloadSource) -> Result<(), String> {
+    let mut states = [CliTool::Claude, CliTool::Codex, CliTool::Pi].into_iter()
+        .map(|tool| installation(tool).lock().map_err(|_| "工具状态不可用".to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if states.iter().any(|state| state.operation.is_some()) {
+        return Err("正在安装或更新，请等待完成后再切换下载源".into());
+    }
+    SettingsService::mutate_settings(|settings| settings.agent_download_source = source)?;
+    for state in &mut states {
+        state.update = None;
+        state.error = None;
+        state.updated_version = None;
+    }
+    Ok(())
 }
 
 #[derive(serde::Serialize)]
@@ -527,12 +545,15 @@ pub async fn load_status(tool: CliTool, check_updates: bool) -> Result<CliStatus
     if matches!(status.status, "installing" | "updating") {
         return Err(AgentCliError::Conflict(format!("{} 正在安装或更新，请等待完成", tool.name())));
     }
-    let update = check_update(tool.package(), status.version.as_deref(), tool.preview_tags()).await;
+    let source = SettingsService::get_settings().agent_download_source;
+    let update = check_update(tool.package(), status.version.as_deref(), tool.preview_tags(), source.registry()).await;
     tokio::task::spawn_blocking(move || {
         {
             let mut state = installation(tool).lock().map_err(|_| "工具状态不可用".to_string())?;
             // 其他页面可能已启动更新，迟到的检查结果不能覆盖进行中的任务。
-            if state.operation.is_none() { state.update = Some(update); }
+            if state.operation.is_none() && SettingsService::get_settings().agent_download_source == source {
+                state.update = Some(update);
+            }
         }
         cli_status(tool)
     }).await.map_err(|error| AgentCliError::Failure(error.to_string()))?
@@ -551,7 +572,7 @@ fn update_target(current: Option<&str>, update: Option<&CliUpdate>) -> Result<St
 
 /// 触发安装或更新：后台线程执行，立即返回当前状态（HTTP 层映射 202）。
 pub async fn start_operation(tool: CliTool, operation: Operation) -> Result<CliStatus, AgentCliError> {
-    let target = tokio::task::spawn_blocking(move || {
+    let (target, source) = tokio::task::spawn_blocking(move || {
         let mut state = installation(tool).lock().map_err(|_| AgentCliError::Failure("工具状态不可用".into()))?;
         if state.operation.is_some() {
             return Err(AgentCliError::Conflict(format!("{} 正在安装或更新，请等待完成", tool.name())));
@@ -564,11 +585,11 @@ pub async fn start_operation(tool: CliTool, operation: Operation) -> Result<CliS
         state.previous_version = current;
         state.error = None;
         state.updated_version = None;
-        Ok(target)
+        Ok((target, SettingsService::get_settings().agent_download_source))
     }).await.map_err(|error| AgentCliError::Failure(error.to_string()))??;
-    // HTTP 立即返回，两个工具使用独立任务锁，下载与安装均在阻塞线程池中运行。
+    // HTTP 立即返回，各工具使用独立任务锁，下载与安装均在阻塞线程池中运行。
     tokio::spawn(async move {
-        let result = tokio::task::spawn_blocking(move || run_install(tool, target.as_deref())).await
+        let result = tokio::task::spawn_blocking(move || run_install(tool, target.as_deref(), source)).await
             .unwrap_or_else(|error| Err(format!("工具任务异常：{error}")));
         if let Ok(mut state) = installation(tool).lock() {
             state.operation = None;
@@ -710,14 +731,17 @@ fn validate_installed_version(tool: CliTool, version: Option<String>, target: Op
     Ok(version)
 }
 
-pub fn run_install(tool: CliTool, target: Option<&str>) -> Result<String, String> {
+pub fn run_install(tool: CliTool, target: Option<&str>, source: AgentDownloadSource) -> Result<String, String> {
     // 更新必须重新执行安装器，不能命中已安装时的快捷返回。
     if target.is_none() {
         if let Some(version) = detect_cli(tool) { return Ok(version); }
     }
     // Pi 在所有平台都走 npm：官方安装器没有 --yes，在无 TTY 的后台任务里不可靠。
     if tool == CliTool::Pi {
-        return run_install_pi(target);
+        return run_install_pi(target, source);
+    }
+    if source == AgentDownloadSource::Npmmirror {
+        return run_install_npm(tool, target, source);
     }
     #[cfg(unix)]
     return run_install_unix(tool, target);
@@ -766,35 +790,80 @@ fn git_bash_available() -> bool {
 }
 
 fn npm_install_command(npm: &Path) -> Command {
-    #[cfg(windows)]
-    {
-        let mut command = Command::new("cmd.exe");
-        command.arg("/C").arg(npm).args(["install", "--global", "--ignore-scripts"]);
-        command
-    }
-    #[cfg(not(windows))]
-    {
-        let mut command = Command::new(npm);
-        command.args(["install", "--global", "--ignore-scripts"]);
-        command
-    }
+    let mut command = executable_command(npm, &["install", "--global"]);
+    // 不依赖宿主机 npmrc 的 registry；生命周期脚本中的 npm 同样继承所选源。
+    command.args([
+        // 原生包体积较大，给下载留足时间；单次请求与重试仍有明确上限。
+        "--fetch-timeout=120000", "--fetch-retries=1",
+        "--fetch-retry-mintimeout=1000", "--fetch-retry-maxtimeout=3000",
+        "--no-audit", "--no-fund", "--include=optional", "--engine-strict",
+    ]);
+    command
 }
 
-fn pi_install_prefix() -> Result<PathBuf, String> {
+fn npm_install_prefix() -> Result<PathBuf, String> {
     #[cfg(windows)]
+    { Ok(home()?.join(".local/bin")) }
+    #[cfg(not(windows))]
+    { Ok(home()?.join(".local/share/terminal-buddy/npm")) }
+}
+
+/// npm 包确认可运行后才替换用户入口，避免原生安装器留下的旧版本抢占 PATH。
+fn activate_npm_install(tool: CliTool, prefix: &Path) -> Result<(), String> {
+    #[cfg(unix)]
     {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            return Ok(PathBuf::from(appdata).join("npm"));
+        use std::os::unix::fs::symlink;
+        let bin = home()?.join(".local/bin");
+        fs::create_dir_all(&bin).map_err(|error| format!("安装目录不可写：{error}"))?;
+        let staged = bin.join(format!(".{}-{}", tool.binary(), uuid::Uuid::new_v4()));
+        symlink(prefix.join("bin").join(tool.binary()), &staged)
+            .map_err(|error| format!("无法创建启动入口：{error}"))?;
+        if let Err(error) = fs::rename(&staged, bin.join(tool.binary())) {
+            let _ = fs::remove_file(&staged);
+            return Err(format!("无法更新启动入口：{error}"));
         }
-        Ok(home()?.join("AppData/Roaming/npm"))
     }
-    #[cfg(not(windows))]
+    #[cfg(windows)]
     {
-        Ok(home()?.join(".local"))
+        // 同目录的 .exe 比 npm 的 .cmd 优先。保留旧原生版备份，之后由 npm shim 启动新版。
+        let native = prefix.join(format!("{}.exe", tool.binary()));
+        if native.is_file() {
+            let backup = prefix.join(format!(".{}-native-{}.exe.bak", tool.binary(), uuid::Uuid::new_v4()));
+            fs::rename(&native, &backup).map_err(|error| format!(
+                "新版已下载，但无法替换旧版入口 {}，请关闭正在运行的 {} 后重试：{error}",
+                native.display(), tool.name(),
+            ))?;
+        }
     }
+    Ok(())
 }
 
-fn run_install_pi(target: Option<&str>) -> Result<String, String> {
+fn run_install_npm(tool: CliTool, target: Option<&str>, source: AgentDownloadSource) -> Result<String, String> {
+    let npm = npm_command()?;
+    let prefix = npm_install_prefix()?;
+    let dir = InstallDirectory::create(tool.binary())?;
+    let log = dir.0.join("install.log");
+    let mut installer = npm_install_command(&npm);
+    installer.arg(npm_package(tool, target))
+        .arg("--prefix").arg(&prefix)
+        .arg("--registry").arg(source.registry())
+        // Claude 的 postinstall 必须执行，不能沿用 Pi 的 --ignore-scripts。
+        .arg(if tool == CliTool::Pi { "--ignore-scripts" } else { "--ignore-scripts=false" })
+        .env("NPM_CONFIG_PREFIX", &prefix)
+        .env("NPM_CONFIG_REGISTRY", source.registry())
+        .env("npm_config_registry", source.registry());
+    run_logged(tool.name(), &mut installer, &log, Duration::from_secs(600))
+        .map_err(|error| format!("下载源：{}\n{error}", source.registry()))?;
+    #[cfg(windows)]
+    let entry = prefix.join(format!("{}.cmd", tool.binary()));
+    #[cfg(not(windows))]
+    let entry = prefix.join("bin").join(tool.binary());
+    validate_installed_version(tool, detect_candidates(tool, vec![entry]), target)?;
+    activate_npm_install(tool, &prefix)?;
+    validate_installed_version(tool, detect_cli(tool), target)
+}
+
+fn run_install_pi(target: Option<&str>, source: AgentDownloadSource) -> Result<String, String> {
     let (major, minor, _) = node_version()?;
     if (major, minor) < (22, 19) {
         return Err(format!(
@@ -805,25 +874,7 @@ fn run_install_pi(target: Option<&str>) -> Result<String, String> {
     if !git_bash_available() {
         return Err("未检测到 Git Bash。Pi Agent 在 Windows 上需要 Git Bash 执行工具，请安装 Git for Windows 后重试（https://git-scm.com/download/win）".to_string());
     }
-    let npm = npm_command()?;
-    let prefix = pi_install_prefix()?;
-    let dir = InstallDirectory::create("pi")?;
-    let log = dir.0.join("install.log");
-    let package = npm_package(CliTool::Pi, target);
-    let mut installer = npm_install_command(&npm);
-    installer.arg(&package).env("NPM_CONFIG_PREFIX", &prefix);
-    run_logged(CliTool::Pi.name(), &mut installer, &log, Duration::from_secs(600))?;
-    let mut candidates: Vec<PathBuf> = executable_names(CliTool::Pi.binary(), cfg!(windows))
-        .into_iter()
-        .map(|name| prefix.join("bin").join(&name))
-        .collect();
-    candidates.extend(
-        executable_names(CliTool::Pi.binary(), cfg!(windows))
-            .into_iter()
-            .map(|name| prefix.join(name)),
-    );
-    let version = detect_candidates(CliTool::Pi, candidates);
-    validate_installed_version(CliTool::Pi, version, target)
+    run_install_npm(CliTool::Pi, target, source)
 }
 
 // ==================== Unix（Docker / Linux / macOS）：官方 install.sh ====================
@@ -874,7 +925,7 @@ fn run_install_windows(tool: CliTool, target: Option<&str>) -> Result<String, St
     let npm_dir = std::env::var("APPDATA").map(|appdata| PathBuf::from(appdata).join("npm")).unwrap_or_else(|_| home.join("AppData/Roaming/npm"));
     match tool {
         CliTool::Claude => run_claude_install_windows(target, &home, &npm_dir),
-        CliTool::Codex => run_codex_install_windows(target, &npm_dir),
+        CliTool::Codex => run_install_npm(tool, target, AgentDownloadSource::Official),
         CliTool::Pi => Err("Pi 使用 npm 安装".to_string()),
     }
 }
@@ -950,20 +1001,6 @@ fn npm_package(tool: CliTool, target: Option<&str>) -> String {
         Some(version) => format!("{}@{version}", tool.package()),
         None => tool.package().to_string(),
     }
-}
-
-#[cfg(windows)]
-fn run_codex_install_windows(target: Option<&str>, npm_dir: &Path) -> Result<String, String> {
-    let npm = npm_command()?;
-    let dir = InstallDirectory::create("codex")?;
-    let log = dir.0.join("install.log");
-    let package = npm_package(CliTool::Codex, target);
-    let mut installer = Command::new("cmd.exe");
-    installer.arg("/C").arg(&npm).args(["install", "--global", &package]);
-    run_logged("Codex CLI", &mut installer, &log, Duration::from_secs(600))?;
-    let candidates: Vec<PathBuf> = executable_names(CliTool::Codex.binary(), true).into_iter().map(|name| npm_dir.join(name)).collect();
-    let version = detect_candidates(CliTool::Codex, candidates);
-    validate_installed_version(CliTool::Codex, version, target)
 }
 
 #[cfg(test)]

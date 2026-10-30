@@ -15,6 +15,11 @@ export interface AgentCommands {
   pi: string;
 }
 
+export type AgentDownloadSource = 'npmmirror' | 'official';
+
+export const saveAgentDownloadSource = (source: AgentDownloadSource) =>
+  invoke<void>('save_agent_download_source', { source });
+
 export async function getBackendAppSettings(): Promise<{
   closeBehavior: 'exit' | 'tray';
   launchWindowMode: 'windowed' | 'maximized';
@@ -28,6 +33,7 @@ export async function getBackendAppSettings(): Promise<{
   singleInstance: boolean;
   claudeHookConfigDir: string | null;
   agentCommands: AgentCommands;
+  agentDownloadSource?: AgentDownloadSource;
   piToolApprovalEnabled?: boolean;
 }> {
   return invoke('get_app_settings');
