@@ -53,7 +53,7 @@ internal fun AiTerminalSessionsScreen(ui: ServerTerminalUiState, vm: ServerTermi
             ) {
                 if (ui.loading) {
                     Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = TbColors.Accent)
+                        AiConnectionSpinner(TbColors.Accent, Modifier.size(20.dp))
                     }
                 }
             }
