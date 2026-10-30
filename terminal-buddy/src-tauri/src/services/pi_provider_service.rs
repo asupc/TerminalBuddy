@@ -11,7 +11,6 @@
 //! - 密钥形态：`literal` 在应用数据中加密保存，同步时解密明文写入
 //!   models.json（Pi 只认明文）；`env`/`command` 存原文、同步时原文写入。
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -743,6 +742,7 @@ pub async fn fetch_models(
 mod tests {
     use super::*;
     use crate::models::pi_provider::PI_API_KINDS;
+    use std::fs;
 
     struct TestStore(ProviderStore);
 

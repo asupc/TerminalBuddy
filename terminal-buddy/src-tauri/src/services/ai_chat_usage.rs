@@ -141,7 +141,7 @@ impl ClaudeUsageTracker {
         if self.final_received { return false; }
         let parent = value["parent_tool_use_id"].as_str().unwrap_or("");
         let main = parent.is_empty();
-        let mut message_id = None;
+        let message_id;
         let mut model = None;
         let tokens = match kind {
             "stream_event" => {
