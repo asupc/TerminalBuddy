@@ -10,7 +10,7 @@ interface SessionTaskLabelProps {
   manualTitle?: boolean;
 }
 
-/** 固定两行布局：第一行显示摘要或项目名称，第二行仅显示工具与模型标签。 */
+/** 固定两行布局：第一行显示摘要或会话名（项目名只在分组标题展示），第二行仅显示工具与模型标签。 */
 export function SessionTaskLabel({ task, fallbackName, fallbackProvider, fallbackModel, color, manualTitle }: SessionTaskLabelProps) {
   const provider = task?.provider ?? fallbackProvider;
   const providerName = provider === 'codex' ? 'Codex' : provider === 'pi' ? 'Pi' : 'Claude';

@@ -544,7 +544,56 @@
   margin-left: 2px;
 }
 
-/* AI 会话固定两行：摘要或项目名称在第一行，工具与模型标签在第二行。 */
+/* 项目分组标题：强调色文件夹图标 + 加粗项目名 + 淡底色带 + 计数徽章，
+   项目文字的醒目化全部在这一行完成，会话行不再重复项目名。 */
+.tree-item.tree-group-item {
+  min-height: 30px;
+  margin-top: 6px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  background: color-mix(in srgb, var(--bg-tertiary) 55%, transparent);
+}
+
+.tree-item.tree-group-item:hover {
+  background: var(--list-hover-bg);
+}
+
+.tree-group-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.tree-group-icon svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+
+.tree-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-group-item .tree-item-count {
+  padding: 2px 6px;
+  border-radius: 999px;
+  line-height: 1;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* AI 会话固定两行：摘要或会话名在第一行，工具与模型标签在第二行。 */
 .tab-nav-item.tab-nav-task-item {
   align-items: flex-start;
   gap: 6px;

@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>纵向会话标签 · 项目文字醒目化 · 设计预览</title>
+<style>
+  /* ===== 应用主题令牌（摘自 src/styles/global.css，与真实界面一致） ===== */
+  :root {
+    color-scheme: dark;
+    --bg-primary: #181a1d;
+    --bg-secondary: #202226;
+    --bg-tertiary: #2a2d31;
+    --bg-elevated: #25282c;
+    --text-primary: #e3e5e8;
+    --text-secondary: #9aa0a8;
+    --text-tertiary: #6f767f;
+    --accent: #4b95e9;
+    --accent-hover: #62a4ed;
+    --accent-contrast: #ffffff;
+    --border: #34383d;
+    --border-subtle: #2b2f33;
+    --danger: #ef6b73;
+    --success: #55b988;
+    --warning: #d9a441;
+    --blue: #70a7e5;
+    --list-hover-bg: #292c30;
+    --list-active-bg: color-mix(in srgb, var(--accent) 17%, transparent);
+    --radius-xs: 3px;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --panel-header-height: 40px;
+    --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.28);
+  }
+  [data-theme="light"] {
+    color-scheme: light;
+    --bg-primary: #f3f4f6;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e9ebee;
+    --bg-elevated: #ffffff;
+    --text-primary: #24272c;
+    --text-secondary: #626870;
+    --text-tertiary: #8a9098;
+    --accent: #176fbd;
+    --accent-hover: #0d62aa;
+    --accent-contrast: #ffffff;
+    --border: #d6d9de;
+    --border-subtle: #e4e6e9;
+    --danger: #c9434d;
+    --success: #23845b;
+    --warning: #9a6b12;
+    --blue: #2c6fb8;
+    --list-hover-bg: #edf0f3;
+    --list-active-bg: color-mix(in srgb, var(--accent) 11%, #ffffff);
+    --shadow-menu: 0 10px 30px rgba(24, 30, 38, 0.16);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 24px;
+    transition: background-color .18s cubic-bezier(.2,0,0,1), color .18s cubic-bezier(.2,0,0,1);
+  }
+
+  /* ===== 页面框架 ===== */
+  .page-head { display: flex; align-items: center; gap: 16px; margin-bottom: 6px; }
+  .page-head h1 { font-size: 18px; font-weight: 700; }
+  .page-sub { color: var(--text-secondary); margin-bottom: 20px; line-height: 1.7; }
+  .theme-btn {
+    margin-left: auto;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .cols { display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 34px; }
+  .col-label { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .col-label .tag {
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+    background: color-mix(in srgb, var(--text-secondary) 14%, transparent); color: var(--text-secondary);
+  }
+  .col-label .tag.new { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .col-label h2 { font-size: 14px; font-weight: 700; }
+
+  /* ===== 侧栏还原（.tab-nav / .tree-item 等均为应用真实样式） ===== */
+  .mock {
+    width: 288px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    overflow: visible;
+    box-shadow: var(--shadow-menu);
+  }
+  .mock-inner { border-radius: var(--radius-lg); overflow: hidden; }
+
+  .panel-titlebar {
+    display: flex; align-items: center; justify-content: space-between;
+    min-height: var(--panel-header-height); padding: 0 12px;
+    border-bottom: 1px solid var(--border-subtle); flex-shrink: 0;
+  }
+  .panel-title { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+  .panel-title-count {
+    font-size: 11px; color: var(--text-secondary);
+    background: color-mix(in srgb, var(--text-secondary) 13%, transparent);
+    padding: 1px 5px; border-radius: var(--radius-sm); min-width: 20px; text-align: center;
+  }
+  .tab-nav-content { padding: 4px 6px 8px; }
+
+  .tree-item {
+    display: flex; align-items: center; min-height: 28px;
+    padding: 3px 8px; cursor: pointer; font-size: 12px; color: var(--text-primary);
+    gap: 4px; border-radius: var(--radius-sm);
+    transition: background-color 90ms cubic-bezier(.2,0,0,1);
+  }
+  .tree-item:hover { background: var(--list-hover-bg); }
+
+  .tree-arrow {
+    width: 14px; height: 18px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-secondary); flex-shrink: 0;
+    transition: transform 140ms cubic-bezier(.2,0,0,1);
+  }
+  .tree-arrow.expanded { transform: rotate(90deg); }
+  .tree-arrow svg { width: 12px; height: 12px; }
+
+  .tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+  .tree-item-end { display: flex; align-items: center; gap: 2px; flex-shrink: 0; margin-left: auto; }
+  .tree-item-count {
+    font-size: 11px; color: var(--text-secondary); padding: 0 4px; border-radius: 3px;
+    min-width: 16px; text-align: center; flex-shrink: 0;
+  }
+  .tree-item-close {
+    background: none; border: none; color: var(--text-secondary); cursor: pointer;
+    width: 18px; height: 18px; padding: 2px; border-radius: 3px;
+    opacity: 0; transition: opacity .1s; line-height: 1; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .tree-item-close svg { width: 13px; height: 13px; stroke-width: 1.8; }
+  .tree-item:hover .tree-item-close { opacity: 1; }
+  .tree-item-close:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 11%, transparent); }
+
+  /* 状态灯 */
+  .tab-nav-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .tab-nav-dot.working { animation: working-pulse 1.2s ease-in-out infinite; }
+  @keyframes working-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* AI 会话两行卡（现状样式，新设计沿用不动） */
+  .tab-nav-item { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 7px 4px 22px;
+    cursor: pointer; border-radius: var(--radius-sm); position: relative; }
+  .tab-nav-item:hover { background: var(--list-hover-bg); }
+  .tab-nav-item.active { background: var(--list-active-bg); }
+  .tab-nav-item.active::before {
+    content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px;
+    background: var(--accent); border-radius: 2px;
+  }
+  .tab-nav-item.tab-nav-task-item { align-items: flex-start; gap: 6px; min-height: 48px; padding-top: 6px; padding-bottom: 6px; }
+  .tab-nav-task-item > .tab-nav-dot { margin-top: 5px; }
+  .tab-nav-task-label { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; overflow: hidden; }
+  .tab-nav-task-summary {
+    display: block; flex-shrink: 0; min-height: 18px; overflow: hidden; color: inherit;
+    font-size: 12px; font-weight: 500; line-height: 18px; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tab-nav-task-meta {
+    display: flex; align-items: center; gap: 5px; min-width: 0; min-height: 18px; flex-shrink: 0;
+    overflow: hidden; color: var(--text-secondary); font-size: 10px; line-height: 16px; white-space: nowrap;
+  }
+  .tab-nav-task-provider {
+    display: inline-flex; align-items: center; flex-shrink: 0; height: 18px; padding: 0 5px;
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 4px; background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--accent); font-weight: 600;
+  }
+  .tab-nav-task-provider[data-provider="claude"] {
+    border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+    background: color-mix(in srgb, var(--warning) 18%, transparent);
+    color: var(--warning);
+  }
+  .tab-nav-task-provider[data-provider="pi"] {
+    border-color: color-mix(in srgb, #b18cf0 42%, transparent);
+    background: color-mix(in srgb, #b18cf0 16%, transparent);
+    color: #b18cf0;
+  }
+  .tab-nav-task-model {
+    flex: 0 1 auto; min-width: 0; height: 18px; padding: 0 5px; overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--blue) 30%, transparent); border-radius: 4px;
+    background: color-mix(in srgb, var(--blue) 16%, transparent); color: var(--blue); text-overflow: ellipsis;
+  }
+  .tab-nav-task-model[data-pending="true"] {
+    border-color: var(--border);
+    background: color-mix(in srgb, var(--border) 35%, transparent);
+    color: var(--text-secondary);
+  }
+  .tab-nav-task-item > .tree-item-end { margin-top: 1px; }
+  .tab-nav-uptime { color: var(--text-tertiary); font-size: 11px; margin-left: 2px; }
+  .tab-nav-owner-badge {
+    font-size: 9px; padding: 1px 4px; border-radius: 3px;
+    background: rgba(59, 130, 246, 0.2); color: #60a5fa; font-weight: 500; line-height: 1; flex-shrink: 0;
+    margin-top: 3px;
+  }
+
+  /* ==================== 新设计专用样式（本次提案，仅分组标题） ==================== */
+  /* 项目分组标题：强调色文件夹图标 + 13px 加粗项目名 + 淡底色带 + 计数 pill */
+  .tree-group-item {
+    min-height: 30px; margin-top: 6px; padding-top: 5px; padding-bottom: 5px;
+    background: color-mix(in srgb, var(--bg-tertiary) 55%, transparent);
+  }
+  .tree-group-item:hover { background: var(--list-hover-bg); }
+  .tree-group-icon {
+    display: inline-flex; align-items: center; flex-shrink: 0; color: var(--accent);
+  }
+  .tree-group-icon svg { width: 13px; height: 13px; stroke-width: 2; }
+  .tree-group-name {
+    flex: 1; min-width: 0; overflow: hidden; color: var(--text-primary);
+    font-size: 13px; font-weight: 700; letter-spacing: 0.2px; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tree-group-item .tree-item-count {
+    padding: 2px 6px; border-radius: 999px; line-height: 1;
+    background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+    font-size: 10px; font-weight: 600;
+  }
+
+  /* 标注角标 */
+  .annotate { position: relative; }
+  .annotate .badge {
+    position: absolute; right: -34px; top: 50%; transform: translateY(-50%);
+    width: 22px; height: 22px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--accent); color: var(--accent-contrast);
+    font-size: 12px; font-weight: 700;
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+
+  /* ===== 设计说明 ===== */
+  .spec { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 34px; }
+  .spec-card {
+    flex: 1 1 300px; max-width: 420px;
+    background: var(--bg-secondary); border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg); padding: 16px;
+  }
+  .spec-card h3 { font-size: 13px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .spec-card .num {
+    width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--accent-contrast);
+    font-size: 11px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .spec-card p { color: var(--text-secondary); line-height: 1.8; font-size: 12px; }
+  .spec-card p b { color: var(--text-primary); font-weight: 600; }
+
+  /* ===== 状态画廊 ===== */
+  .gallery h2 { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+  .gallery-grid { display: flex; gap: 16px; flex-wrap: wrap; }
+  .gallery-cell {
+    width: 300px; background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle); border-radius: var(--radius-lg);
+    padding: 6px; overflow: hidden;
+  }
+  .gallery-cell .cap {
+    font-size: 11px; color: var(--text-secondary); padding: 6px 8px 8px; line-height: 1.6;
+  }
+  .gallery-cell .cap b { color: var(--text-primary); font-weight: 600; }
+
+  .foot-note {
+    margin-top: 34px; padding: 14px 16px;
+    border: 1px dashed var(--border); border-radius: var(--radius-lg);
+    color: var(--text-secondary); font-size: 12px; line-height: 1.9;
+  }
+  .foot-note code {
+    background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+    padding: 1px 6px; border-radius: var(--radius-xs); font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>纵向会话标签 · 项目文字醒目化 · 设计预览</h1>
+  <button class="theme-btn" onclick="const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'">切换深色 / 浅色</button>
+</div>
+<div class="page-sub">
+  左右对比同一份会话数据：左侧为现状，右侧为重新设计后的效果。颜色、字号、圆角均取自应用真实主题变量（global.css / TabNav.css），与实际界面一致。
+  <b style="color:var(--text-primary)">项目名只出现在分组标题上，会话行不再重复显示</b>；
+  交互：点击分组标题可折叠/展开，悬停行显示关闭按钮，右上角可切换深浅色。
+</div>
+
+<div class="cols">
+
+  <!-- ============ 现状 ============ -->
+  <div>
+    <div class="col-label"><span class="tag">现状</span><h2>项目文字不醒目</h2></div>
+    <div class="mock"><div class="mock-inner">
+      <div class="panel-titlebar">
+        <span class="panel-title">会话标签</span>
+        <span class="panel-title-count">5</span>
+      </div>
+      <div class="tab-nav-content">
+
+        <!-- 分组：terminal-buddy -->
+        <div class="tree-item" style="padding-left:8px" onclick="toggleGroup(this)">
+          <span class="tree-arrow expanded">▶</span>
+          <span class="tree-name" style="font-weight:600">terminal-buddy</span>
+          <span class="tree-item-end">
+            <span class="tree-item-count">3</span>
+            <button class="tree-item-close" title="关闭分组内所有终端">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </span>
+        </div>
+        <div class="group-body">
+          <!-- A：有摘要 + 激活态 -->
+          <div class="tree-item tab-nav-item tab-nav-task-item active" style="padding-left:20px">
+            <span class="tab-nav-dot working" style="background:var(--success)"></span>
+            <span class="tab-nav-task-label">
+              <span class="tab-nav-task-summary">修复登录页样式 bug</span>
+              <span class="tab-nav-task-meta">
+                <span class="tab-nav-task-provider" data-provider="claude">Claude</span>
+                <span class="tab-nav-task-model">Opus 4.5</span>
+              </span>
+            </span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+          </div>
+          <!-- B：无摘要 → 回落显示项目名 -->
+          <div class="tree-item tab-nav-item tab-nav-task-item" style="padding-left:20px">
+            <span class="tab-nav-dot" style="background:var(--text-tertiary)"></span>
+            <span class="tab-nav-task-label">
+              <span class="tab-nav-task-summary">terminal-buddy</span>
+              <span class="tab-nav-task-meta">
+                <span class="tab-nav-task-provider" data-provider="claude">Claude</span>
+                <span class="tab-nav-task-model">Opus 4.5</span>
+              </span>
+            </span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+          </div>
+          <!-- C：手动命名 + tabColor -->
+          <div class="tree-item tab-nav-item tab-nav-task-item" style="padding-left:20px">
+            <span class="tab-nav-dot" style="background:var(--warning)"></span>
+            <span class="tab-nav-task-label" style="color:#FFC107">
+              <span class="tab-nav-task-summary">联调构建产物</span>
+              <span class="tab-nav-task-meta">
+                <span class="tab-nav-task-provider" data-provider="pi">Pi</span>
+                <span class="tab-nav-task-model" data-pending="true">模型待识别</span>
+              </span>
+            </span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+          </div>
+        </div>
+
+        <!-- 分组：ops-scripts -->
+        <div class="tree-item" style="padding-left:8px" onclick="toggleGroup(this)">
+          <span class="tree-arrow expanded">▶</span>
+          <span class="tree-name" style="font-weight:600">ops-scripts</span>
+          <span class="tree-item-end">
+            <span class="tree-item-count">2</span>
+            <button class="tree-item-close" title="关闭分组内所有终端">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </span>
+        </div>
+        <div class="group-body">
+          <!-- D：无摘要 + Web 徽章 -->
+          <div class="tree-item tab-nav-item tab-nav-task-item" style="padding-left:20px">
+            <span class="tab-nav-dot" style="background:var(--text-tertiary)"></span>
+            <span class="tab-nav-task-label">
+              <span class="tab-nav-task-summary">ops-scripts</span>
+              <span class="tab-nav-task-meta">
+                <span class="tab-nav-task-provider" data-provider="claude">Claude</span>
+                <span class="tab-nav-task-model">Haiku 4.5</span>
+              </span>
+            </span>
+            <span class="tab-nav-owner-badge">Web</span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+          </div>
+          <!-- E：普通终端（现状本来就没有项目文字） -->
+          <div class="tree-item tab-nav-item" style="padding-left:20px">
+            <span class="tab-nav-dot" style="background:var(--success)"></span>
+            <span class="tree-name">PowerShell<span class="tab-nav-uptime"> · 12m</span></span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+          </div>
+        </div>
+
+      </div>
+    </div></div>
+  </div>
+
+  <!-- ============ 新设计 ============ -->
+  <div>
+    <div class="col-label"><span class="tag new">重新设计</span><h2>项目层级一眼可辨，会话行不重复项目名</h2></div>
+    <div class="mock" style="margin-right:34px"><div class="mock-inner">
+      <div class="panel-titlebar">
+        <span class="panel-title">会话标签</span>
+        <span class="panel-title-count">5</span>
+      </div>
+      <div class="tab-nav-content">
+
+        <!-- ① 分组：terminal-buddy -->
+        <div class="tree-item tree-group-item annotate" style="padding-left:8px" onclick="toggleGroup(this)">
+          <span class="tree-arrow expanded">▶</span>
+          <span class="tree-group-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>
+          </span>
+          <span class="tree-group-name">terminal-buddy</span>
+          <span class="tree-item-end">
+            <span class="tree-item-count">3</span>
+            <button class="tree-item-close" title="关闭分组内所有终端">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </span>
+          <span class="badge">①</span>
+        </div>
+        <div class="group-body">
+          <!-- A：有摘要 + 激活态 —— 第一行只有摘要 -->
+          <div class="tree-item tab-nav-item tab-nav-task-item active" style="padding-left:20px">
+            <span class="tab-nav-dot working" style="background:var(--success)"></span>
+            <span class="tab-nav-task-label">
+              <span class="tab-nav-task-summary">修复登录页样式 bug</span>
+              <span class="tab-nav-task-meta">
+                <span class="tab-nav-task-provider" data-provider="claude">Claude</span>
+                <span class="tab-nav-task-model">Opus 4.5</span>
+              </span>
+            </span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+          </div>
+          <!-- B：无摘要 → 回落显示会话名（不再是项目名） -->
+          <div class="tree-item tab-nav-item tab-nav-task-item annotate" style="padding-left:20px">
+            <span class="tab-nav-dot" style="background:var(--text-tertiary)"></span>
+            <span class="tab-nav-task-label">
+              <span class="tab-nav-task-summary">Claude Code</span>
+              <span class="tab-nav-task-meta">
+                <span class="tab-nav-task-provider" data-provider="claude">Claude</span>
+                <span class="tab-nav-task-model">Opus 4.5</span>
+              </span>
+            </span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+            <span class="badge">②</span>
+          </div>
+          <!-- C：手动命名 + tabColor -->
+          <div class="tree-item tab-nav-item tab-nav-task-item" style="padding-left:20px">
+            <span class="tab-nav-dot" style="background:var(--warning)"></span>
+            <span class="tab-nav-task-label" style="color:#FFC107">
+              <span class="tab-nav-task-summary">联调构建产物</span>
+              <span class="tab-nav-task-meta">
+                <span class="tab-nav-task-provider" data-provider="pi">Pi</span>
+                <span class="tab-nav-task-model" data-pending="true">模型待识别</span>
+              </span>
+            </span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+          </div>
+        </div>
+
+        <!-- ① 分组：ops-scripts -->
+        <div class="tree-item tree-group-item" style="padding-left:8px" onclick="toggleGroup(this)">
+          <span class="tree-arrow expanded">▶</span>
+          <span class="tree-group-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>
+          </span>
+          <span class="tree-group-name">ops-scripts</span>
+          <span class="tree-item-end">
+            <span class="tree-item-count">2</span>
+            <button class="tree-item-close" title="关闭分组内所有终端">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </span>
+        </div>
+        <div class="group-body">
+          <!-- D：有摘要 + Web 徽章 -->
+          <div class="tree-item tab-nav-item tab-nav-task-item" style="padding-left:20px">
+            <span class="tab-nav-dot" style="background:var(--text-tertiary)"></span>
+            <span class="tab-nav-task-label">
+              <span class="tab-nav-task-summary">整理 nginx 日志脚本</span>
+              <span class="tab-nav-task-meta">
+                <span class="tab-nav-task-provider" data-provider="claude">Claude</span>
+                <span class="tab-nav-task-model">Haiku 4.5</span>
+              </span>
+            </span>
+            <span class="tab-nav-owner-badge">Web</span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+          </div>
+          <!-- E：普通终端 —— 不变 -->
+          <div class="tree-item tab-nav-item" style="padding-left:20px">
+            <span class="tab-nav-dot" style="background:var(--success)"></span>
+            <span class="tree-name">PowerShell<span class="tab-nav-uptime"> · 12m</span></span>
+            <span class="tree-item-end"><button class="tree-item-close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button></span>
+          </div>
+        </div>
+
+      </div>
+    </div></div>
+  </div>
+</div>
+
+<!-- ============ 设计说明 ============ -->
+<div class="spec">
+  <div class="spec-card">
+    <h3><span class="num">①</span>分组标题：项目行做成「章节头」</h3>
+    <p>
+      项目文字的醒目化全部在分组标题完成：项目名从 12px 加粗小字升级为 <b>13px / 700 / 主文字色</b>，
+      左侧加<b>强调色文件夹图标</b>（展开为打开态、折叠为合起态），整行加<b>淡底色带</b>与会话行拉开层级；
+      会话数从灰字改为<b>强调色圆角徽章</b>。折叠交互、悬停关闭分组、缩进嵌套保持不变。
+    </p>
+  </div>
+  <div class="spec-card">
+    <h3><span class="num">②</span>会话行不再显示项目名</h3>
+    <p>
+      项目归属完全由分组标题承担，会话行第一行只留<b>会话自身信息</b>（任务摘要 / 手动名称 / 会话名），
+      不再重复项目名 —— 信息不冗余，窄侧栏下摘要也能显示更长。
+      第二行工具/模型标签、状态灯、Web 徽章、激活态左侧强调条、手动重命名等<b>全部保持不变</b>。
+    </p>
+  </div>
+  <div class="spec-card">
+    <h3><span class="num">③</span>无摘要时的回落改为「会话名」</h3>
+    <p>
+      现状：无任务摘要时第一行回落显示<b>项目名</b>（与分组标题重复）。
+      新设计：回落显示<b>会话名称</b>（profile 名，如 Claude Code / PowerShell），
+      摘要到达后自动替换为摘要；手动重命名仍固定显示、不被摘要覆盖。
+      普通终端与编辑器行样式不变。
+    </p>
+  </div>
+</div>
+
+<!-- ============ 状态画廊 ============ -->
+<div class="gallery">
+  <h2>关键状态一览（新设计）</h2>
+  <div class="gallery-grid">
+
+    <div class="gallery-cell">
+      <div class="tree-item tab-nav-item tab-nav-task-item" style="padding-left:12px">
+        <span class="tab-nav-dot working" style="background:var(--success)"></span>
+        <span class="tab-nav-task-label">
+          <span class="tab-nav-task-summary">修复登录页样式 bug</span>
+          <span class="tab-nav-task-meta">
+            <span class="tab-nav-task-provider" data-provider="claude">Claude</span>
+            <span class="tab-nav-task-model">Opus 4.5</span>
+          </span>
+        </span>
+      </div>
+      <div class="cap"><b>有摘要</b>：第一行只有摘要，项目名由上方分组标题承担。</div>
+    </div>
+
+    <div class="gallery-cell">
+      <div class="tree-item tab-nav-item tab-nav-task-item" style="padding-left:12px">
+        <span class="tab-nav-dot" style="background:var(--text-tertiary)"></span>
+        <span class="tab-nav-task-label">
+          <span class="tab-nav-task-summary">Claude Code</span>
+          <span class="tab-nav-task-meta">
+            <span class="tab-nav-task-provider" data-provider="claude">Claude</span>
+            <span class="tab-nav-task-model">Opus 4.5</span>
+          </span>
+        </span>
+      </div>
+      <div class="cap"><b>无摘要</b>：回落显示会话名（现状这里是项目名，与分组标题重复）。</div>
+    </div>
+
+    <div class="gallery-cell">
+      <div class="tree-item tab-nav-item tab-nav-task-item" style="padding-left:12px">
+        <span class="tab-nav-dot" style="background:#FFC107"></span>
+        <span class="tab-nav-task-label" style="color:#FFC107">
+          <span class="tab-nav-task-summary">联调构建产物</span>
+          <span class="tab-nav-task-meta">
+            <span class="tab-nav-task-provider" data-provider="pi">Pi</span>
+            <span class="tab-nav-task-model" data-pending="true">模型待识别</span>
+          </span>
+        </span>
+      </div>
+      <div class="cap"><b>手动命名 + 标签色</b>：手动名固定显示不被摘要覆盖，标签色（tabColor）照旧染整行。</div>
+    </div>
+
+    <div class="gallery-cell">
+      <div class="tree-item tab-nav-item tab-nav-task-item active" style="padding-left:12px">
+        <span class="tab-nav-dot working" style="background:var(--success)"></span>
+        <span class="tab-nav-task-label">
+          <span class="tab-nav-task-summary">给下拉框加防抖</span>
+          <span class="tab-nav-task-meta">
+            <span class="tab-nav-task-provider" data-provider="claude">Claude</span>
+            <span class="tab-nav-task-model">Opus 4.5</span>
+          </span>
+        </span>
+        <span class="tree-item-end"><button class="tree-item-close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button></span>
+      </div>
+      <div class="cap"><b>激活 + 悬停</b>：左侧强调条、悬停关闭按钮照旧。</div>
+    </div>
+
+    <div class="gallery-cell">
+      <div class="tree-item tree-group-item" style="padding-left:8px" onclick="toggleGroup(this)">
+        <span class="tree-arrow collapsed">▶</span>
+        <span class="tree-group-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+        </span>
+        <span class="tree-group-name">lab-experiments</span>
+        <span class="tree-item-end">
+          <span class="tree-item-count">4</span>
+          <button class="tree-item-close" title="关闭分组内所有终端">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </span>
+      </div>
+      <div class="cap"><b>折叠分组</b>：文件夹为合起态，计数徽章提示组内会话数。</div>
+    </div>
+
+    <div class="gallery-cell">
+      <div class="tree-item tab-nav-item" style="padding-left:12px">
+        <span class="tab-nav-dot" style="background:var(--success)"></span>
+        <span class="tree-name">PowerShell<span class="tab-nav-uptime"> · 12m</span></span>
+        <span class="tree-item-end"><button class="tree-item-close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button></span>
+      </div>
+      <div class="cap"><b>普通终端 / 编辑器行</b>：保持现状样式不变。</div>
+    </div>
+
+  </div>
+</div>
+
+<div class="foot-note">
+  <b>确认后将落地到以下文件（当前未改动任何代码）：</b><br>
+  · <code>terminal-buddy/src/components/shell/SessionTreeItem.tsx</code> —— 分组标题改为项目章节头（强调色文件夹图标 + 加粗名）；无摘要回落链去掉项目名、改用会话名<br>
+  · <code>terminal-buddy/src/components/shell/TabNav.css</code> —— 新增分组标题样式（色带 / 图标 / 加粗名 / 计数徽章），主题变量驱动，深浅色与卡通皮肤自动适配<br>
+  · <code>SessionTaskLabel.tsx</code> 两行结构不动；Web 端（web/）已封存，不做同步修改
+</div>
+
+<script>
+  function toggleGroup(header) {
+    const arrow = header.querySelector('.tree-arrow');
+    const collapsed = arrow.classList.toggle('collapsed');
+    arrow.classList.toggle('expanded', !collapsed);
+    const body = header.nextElementSibling;
+    if (body && body.classList.contains('group-body')) body.style.display = collapsed ? 'none' : '';
+    const icon = header.querySelector('.tree-group-icon svg');
+    if (icon) icon.innerHTML = collapsed
+      ? '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'
+      : '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>';
+  }
+</script>
+</body>
+</html>

@@ -1,9 +1,8 @@
 import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
-import { effectiveProfilePath, projectForDirectory } from '../../utils/projectPath';
 import { SessionTaskLabel } from './SessionTaskLabel';
 import { FC } from 'react';
-import { ChevronRight, X } from 'lucide-react';
+import { ChevronRight, Folder, FolderOpen, X } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { formatDuration } from '../../utils/formatDuration';
 import { isDockerClient } from '../../services/platform';
@@ -45,8 +44,6 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
 }) => {
   const sessions = useAppStore(s => s.sessions);
   const profiles = useAppStore(s => s.profiles);
-  const projects = useAppStore(s => s.projects);
-  const sessionDirectories = useAppStore(s => s.sessionDirectories);
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const activeSessionId = useAppStore(s => s.activeSessionId);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
@@ -111,14 +108,17 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
   return (
     <div>
       <div
-        className="tree-item"
+        className="tree-item tree-group-item"
         style={{ paddingLeft: `${indent}px` }}
         onClick={() => onToggleCollapse(item.id)}
       >
         <span className={`tree-arrow${isCollapsed ? '' : ' expanded'}`}>
           <ChevronRight aria-hidden="true" />
         </span>
-        <span className="tree-name" style={{ fontWeight: 600 }}>{item.label}</span>
+        <span className="tree-group-icon">
+          {isCollapsed ? <Folder aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}
+        </span>
+        <span className="tree-group-name">{item.label}</span>
         {renderGroupEnd(item)}
       </div>
       {!isCollapsed && item.children?.map((child) => {
@@ -150,14 +150,11 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
           ? getTaskLaunchInfo(childSession?.extraParams, profile?.startupCommands, childSession?.extraParamMode)
           : undefined;
         const provider = task?.provider ?? launchInfo?.provider;
-        const startupPath = childSession?.startupPath || (profile ? effectiveProfilePath(profile, projects) : '')
-          || sessionDirectories[child.id] || '';
-        const project = projectForDirectory(projects, startupPath)
-          ?? projects.find(project => project.name === (childSession?.groupName || profile?.group));
-        // 手动重命名过的会话固定显示手动名称；未取得摘要时才回落到项目名
+        // 手动重命名过的会话固定显示手动名称；未取得摘要时回落到会话名。
+        // 项目名只在分组标题展示，会话行不重复。
         const fallbackName = childSession?.manualTitle
           ? childSession.profileName
-          : (project?.name || childSession?.profileName || child.label);
+          : (childSession?.profileName || child.label);
         return (
           <div key={child.id}>
             {renamingSessionId === child.id ? (
