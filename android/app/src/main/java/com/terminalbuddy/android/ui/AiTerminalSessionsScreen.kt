@@ -51,15 +51,11 @@ internal fun AiTerminalSessionsScreen(ui: ServerTerminalUiState, vm: ServerTermi
                 title = "服务端终端",
                 subtitle = if (ui.loaded) "${ui.terminals.size} 个已打开 · $launchable 个可启动" else "读取当前服务的终端",
             ) {
-                IconButton(vm::refresh, enabled = !ui.loading && !busy, modifier = Modifier.size(40.dp)) {
-                    Icon(Icons.Outlined.Refresh, "刷新终端列表", Modifier.size(20.dp), tint = TbColors.TextMuted)
+                if (ui.loading) {
+                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = TbColors.Accent)
+                    }
                 }
-            }
-        }
-        if (ui.loading) item(key = "loading") {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-                if (!ui.loaded) Text("正在同步终端与项目配置…", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
             }
         }
         ui.error?.let { error -> item(key = "error") {
