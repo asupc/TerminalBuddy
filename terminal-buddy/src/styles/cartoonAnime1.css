@@ -35,7 +35,7 @@
   --shadow-menu: 0 12px 32px rgba(137, 77, 108, 0.18);
   --shadow-dialog: 0 24px 64px rgba(137, 77, 108, 0.22);
   --skin-canvas:
-    url('../assets/cartoon-anime1-background.png') center / cover no-repeat,
+    url('../assets/cartoon-anime1-background.webp') center / cover no-repeat,
     #fff7fb;
   --skin-art-shadow: drop-shadow(0 12px 22px rgba(196, 91, 139, 0.18));
   --skin-toolbar-surface: rgb(255 250 252 / var(--skin-app-opacity, 0));
@@ -75,7 +75,7 @@
   --shadow-menu: 0 12px 34px rgba(6, 8, 43, 0.48);
   --shadow-dialog: 0 24px 68px rgba(6, 8, 43, 0.58);
   --skin-canvas:
-    url('../assets/skin-starry-background.png') center bottom / cover no-repeat,
+    url('../assets/skin-starry-background.webp') center bottom / cover no-repeat,
     #17184d;
   --skin-art-shadow: drop-shadow(0 0 26px rgba(137, 125, 255, 0.3));
   --skin-toolbar-surface: rgb(27 29 88 / var(--skin-app-opacity, 0));
@@ -115,7 +115,7 @@
   --shadow-menu: 0 12px 34px rgba(0, 0, 0, 0.54);
   --shadow-dialog: 0 24px 70px rgba(0, 0, 0, 0.64);
   --skin-canvas:
-    url('../assets/skin-cyber-background.png') center bottom / cover no-repeat,
+    url('../assets/skin-cyber-background.webp') center bottom / cover no-repeat,
     #02030b;
   --skin-art-shadow: drop-shadow(0 0 25px rgba(255, 45, 186, 0.28));
   --skin-toolbar-surface: rgb(4 6 20 / var(--skin-app-opacity, 0));
@@ -155,7 +155,7 @@
   --shadow-menu: 0 12px 32px rgba(117, 67, 50, 0.17);
   --shadow-dialog: 0 24px 64px rgba(117, 67, 50, 0.24);
   --skin-canvas:
-    url('../assets/skin-sakura-background.png') center bottom / cover no-repeat,
+    url('../assets/skin-sakura-background.webp') center bottom / cover no-repeat,
     #fff8ef;
   --skin-art-shadow: drop-shadow(0 18px 20px rgba(133, 73, 62, 0.18));
   --skin-toolbar-surface: rgb(255 251 247 / var(--skin-app-opacity, 0));
@@ -295,13 +295,13 @@
 [data-skin="cartoon"] .cartoon-anime1-hero {
   width: min(36%, 590px);
   height: min(54%, 550px);
-  background-image: url('../assets/cartoon-anime1-hero.png');
+  background-image: url('../assets/cartoon-anime1-hero.webp');
   filter: drop-shadow(0 12px 24px rgba(196, 91, 139, 0.28)) saturate(1.12) contrast(1.05);
   opacity: 0.94;
 }
 
 [data-skin="starry"] .cartoon-anime1-left {
-  background-image: url('../assets/skin-starry-left.png');
+  background-image: url('../assets/skin-starry-left.webp');
 }
 
 [data-skin="starry"] .cartoon-anime1-center {
@@ -309,39 +309,39 @@
 }
 
 [data-skin="starry"] .cartoon-anime1-hero {
-  background-image: url('../assets/skin-starry-hero.png');
+  background-image: url('../assets/skin-starry-hero.webp');
 }
 
 [data-skin="cyber"] .cartoon-anime1-left {
-  background-image: url('../assets/skin-cyber-left.png');
+  background-image: url('../assets/skin-cyber-left.webp');
   mix-blend-mode: screen;
 }
 
 [data-skin="cyber"] .cartoon-anime1-center {
-  background-image: url('../assets/skin-cyber-center.png');
+  background-image: url('../assets/skin-cyber-center.webp');
   mix-blend-mode: screen;
 }
 
 [data-skin="cyber"] .cartoon-anime1-hero {
   width: min(38%, 590px);
   height: min(64%, 650px);
-  background-image: url('../assets/skin-cyber-hero.png');
+  background-image: url('../assets/skin-cyber-hero.webp');
 }
 
 [data-skin="sakura"] .cartoon-anime1-left {
-  background-image: url('../assets/skin-sakura-left.png');
+  background-image: url('../assets/skin-sakura-left.webp');
   mix-blend-mode: multiply;
 }
 
 [data-skin="sakura"] .cartoon-anime1-center {
-  background-image: url('../assets/skin-sakura-center.png');
+  background-image: url('../assets/skin-sakura-center.webp');
   mix-blend-mode: multiply;
 }
 
 [data-skin="sakura"] .cartoon-anime1-hero {
   width: min(40%, 565px);
   height: min(56%, 560px);
-  background-image: url('../assets/skin-sakura-hero.png');
+  background-image: url('../assets/skin-sakura-hero.webp');
   filter: drop-shadow(0 18px 22px rgba(133, 73, 62, 0.26)) saturate(1.08) contrast(1.06);
   opacity: 0.94;
 }

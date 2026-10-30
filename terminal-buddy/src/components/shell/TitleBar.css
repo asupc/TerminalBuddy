@@ -385,7 +385,7 @@
 
 .theme-skin-option-cartoon .theme-skin-preview {
   background:
-    url('../../assets/cartoon-anime1-background.png') center / cover no-repeat,
+    url('../../assets/cartoon-anime1-background.webp') center / cover no-repeat,
     #fff9fb;
 }
 
@@ -407,7 +407,7 @@
 
 .theme-skin-option-starry .theme-skin-preview {
   background:
-    url('../../assets/skin-starry-background.png') center / cover no-repeat,
+    url('../../assets/skin-starry-background.webp') center / cover no-repeat,
     #161851;
 }
 
@@ -429,7 +429,7 @@
 
 .theme-skin-option-cyber .theme-skin-preview {
   background:
-    url('../../assets/skin-cyber-background.png') center / cover no-repeat,
+    url('../../assets/skin-cyber-background.webp') center / cover no-repeat,
     #030510;
 }
 
@@ -452,7 +452,7 @@
 
 .theme-skin-option-sakura .theme-skin-preview {
   background:
-    url('../../assets/skin-sakura-background.png') center / cover no-repeat,
+    url('../../assets/skin-sakura-background.webp') center / cover no-repeat,
     #fff9ee;
 }
 

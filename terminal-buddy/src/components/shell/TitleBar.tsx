@@ -30,7 +30,7 @@ import { AiUsagePanel } from '../settings/AiUsagePanel';
 import { AboutDialog } from '../settings/AboutDialog';
 import { UpdatePopover, type UpdateCheckStatus } from '../settings/UpdatePopover';
 import { APP_VERSION } from '../../version';
-import appIcon from '../../assets/app-icon.png';
+import appIcon from '../../assets/app-icon.webp';
 import './TitleBar.css';
 import { isBrowserClient } from '../../services/platform';
 import {

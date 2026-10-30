@@ -1,6 +1,6 @@
 import { FC } from 'react';
 import { BookOpen, Download, Globe2, MessageSquareWarning } from 'lucide-react';
-import appIcon from '../../assets/app-icon.png';
+import appIcon from '../../assets/app-icon.webp';
 import { APP_VERSION } from '../../version';
 import { Dialog } from '../shared/Dialog';
 import { openUrl } from '../../services/tauri';
