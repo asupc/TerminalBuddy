@@ -4,10 +4,10 @@
 
 ## 运行方式
 
-- Claude：每回合启动 `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio`，用户消息以 JSON 行写入 stdin，后续回合使用 `--resume` 保留上下文。首个 `result` 仅表示一段回复结束；有后台任务时保持输入连接，继续接收任务状态、唤醒后的回复及后续结果。任务清空后关闭输入，读完输出并确认进程正常退出才结束本轮；中断和异常仍会清理进程树。
+- Claude：会话首次执行时启动 `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --permission-prompt-tool stdio`，用户消息以 JSON 行写入 stdin。回合结束后**保持 stdin 与进程存活**：排队消息在当前回合任务（含后台任务与待确认请求）全部结算后直接写入同一个进程，不需要重启或 `--resume`；只在服务重启、历史恢复或中断/异常后的冷启动使用 `--resume`。运行中插话同样写入该 stdin，由 CLI 自行选择接收节点。空闲会话删除或服务退出时回收进程树。
 - Codex：每个会话复用一个驻留的 `codex app-server`，通过 stdio JSON-RPC 完成初始化、thread 创建/恢复和 turn 提交。`turn/completed` 仅结束主回合，保留进程继续接收后台命令、子代理和自动唤醒回合的事件；后续用户消息送入同一进程，避免恢复历史时丢失仍在运行的任务。中断、删除会话和服务退出时回收进程树，删除后的迟到事件不能重建会话文件。
 - `GET /api/ai/catalog` 汇总服务器 Claude 通用供应商、容器 Claude 配置及 Codex 供应商的可用模型，供手机首页选择；目录不包含密钥。
-- 创建会话可指定 `providerId` 与模型；服务端保存所选供应商名称及标识。Claude 通过受限权限的临时 settings 应用对应地址、认证和模型配置，回合退出后删除；Codex 复用供应商注册与参数生成，按会话选择供应商与模型，不改变全局默认供应商。
+- 创建会话可指定 `providerId` 与模型；服务端保存所选供应商名称及标识。Claude 通过受限权限的临时 settings 应用对应地址、认证和模型配置，CLI 进程退出后删除；Codex 复用供应商注册与参数生成，按会话选择供应商与模型，不改变全局默认供应商。
 - 不指定供应商时保持旧版 CLI 默认配置行为；显式选择的供应商或模型失效时提示重新选择，不静默回退。
 - CLI 不在服务进程 PATH 中时，可通过 `TERMINAL_BUDDY_CLAUDE_BIN` / `TERMINAL_BUDDY_CODEX_BIN` 指定可执行文件绝对路径；同时会尝试用户的 `.local/bin`。
 - 会话在数据目录 `AiSessions/*.json` 私有文件中保存，每回合开始/结束及运行中的定期检查点采用原子写入。服务重启后未完成任务显示为中断。
@@ -42,8 +42,8 @@ REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离
 | `GET /api/ai/sessions` | 列表，不附带完整消息 |
 | `POST /api/ai/sessions` | `{ "provider": "claude", "providerId": "llm:供应商UUID", "projectPath": "/workspace/project", "model": "已配置模型" }`；可选 `resumeSessionId` 恢复 CLI 历史会话——项目以历史所在目录为准，预填最近 300 条消息，Claude/Codex/Pi 分别经 `--resume` / `thread/resume` / 会话文件复用续接，重复恢复同一历史线程返回已有会话 |
 | `GET /api/ai/sessions/{id}` | 读取完整会话 |
-| `POST /api/ai/sessions/{id}/messages` | `{ "text": "用户消息", "requestId": "UUID", "immediate": false }`；`immediate` 为「立即发送」：回复进行中发送时中断当前回复优先处理（默认排队等待回复结束） |
-| `POST /api/ai/sessions/{id}/flush` | `{ "requestId": "可选，移到队首" }`——「立即发送」排队消息：把指定消息移到队首并中断当前回复，停止后立即按序送出；worker 已退出（中断/出错后队列保留）时直接按队首启动新回合 |
+| `POST /api/ai/sessions/{id}/messages` | `{ "text": "用户消息", "requestId": "UUID", "steer": false }`；`steer` 为「原生插话」：回复进行中发送时把消息直接交给运行中的 CLI 进程，由它选择合适节点接收；默认排队，等当前回合任务完成后由服务端写入同一个 CLI 进程 |
+| `POST /api/ai/sessions/{id}/flush` | `{ "requestId": "可选，指定要插话的排队消息" }`——把该消息直接交给运行中的 CLI 进程；worker 已退出（中断/出错后队列保留）时按选中消息启动新回合 |
 | `PATCH /api/ai/sessions/{id}/pending/{requestId}` | `{ "text": "修改后的消息" }`——原地编辑尚未发送的排队消息，保留请求标识和队列顺序，返回最新会话；空白消息或已出队的消息拒绝修改 |
 | `DELETE /api/ai/sessions/{id}/pending/{requestId}` | 删除尚未发送的排队消息并返回最新会话，保留请求去重记录，避免旧发送请求重试时重新入队；已出队的消息拒绝删除 |
 | `POST /api/ai/sessions/{id}/stop` | 中断执行 |
@@ -51,7 +51,7 @@ REST 均要求现有 `ClaimsFromRequest` 鉴权，会话按登录用户名隔离
 | `DELETE /api/ai/sessions/{id}` | 删除空闲会话 |
 | `/ws/ai/{id}?token=...` | 实时状态与消息 |
 
-提交消息立即返回，CLI 在专用工作线程执行。`requestId` 持久化去重，避免网络中断后重试产生重复回合。回复进行中发送的消息进入服务端排队（`pendingInputs`，随会话快照同步给客户端），当前回合结束后按序自动续发；「立即发送」（`immediate` 或 flush 接口）会中断当前回复并按成功收尾，队列立即开始送出——中断/出错后保留的队列在用户下次发送或 flush 时按序带出。同一会话由单个工作线程串行处理输入；Codex 主回合结束但仍有后台工作时返回 `background` 状态，允许发送“继续”等补充消息，并保留中断能力。后台命令按条目状态更新，子代理结合协作事件、线程通知与只读状态查询更新，不把子线程结束误判为主回合完成；新的主回合切换事件过滤标识，上一回合的已知后台命令仍可回传输出。不同会话的任务不设并发配额。应用不限制会话数量、每会话消息数量、用户输入长度、回复及工具输出长度、CLI 单行输出长度或任务运行时长，正文和错误输出均完整记录。标题预览不影响消息正文。
+提交消息立即返回，CLI 在专用工作线程执行。`requestId` 持久化去重，避免网络中断后重试产生重复回合。回复进行中发送的消息默认进入服务端排队（`pendingInputs`，随会话快照同步给客户端），当前回合任务（含后台任务与待确认请求）全部结束后按序写入同一个 CLI 进程续发，不重启进程也不需要 `--resume`；「原生插话」（`steer` 或 flush 接口）把消息直接交给运行中的 CLI 进程，由 CLI 选择接收节点，不打断当前任务——中断/出错后保留的队列在用户下次发送或 flush 时按序带出。同一会话由单个工作线程串行处理输入；Codex 主回合结束但仍有后台工作时返回 `background` 状态，允许发送“继续”等补充消息，并保留中断能力。后台命令按条目状态更新，子代理结合协作事件、线程通知与只读状态查询更新，不把子线程结束误判为主回合完成；新的主回合切换事件过滤标识，上一回合的已知后台命令仍可回传输出。不同会话的任务不设并发配额。应用不限制会话数量、每会话消息数量、用户输入长度、回复及工具输出长度、CLI 单行输出长度或任务运行时长，正文和错误输出均完整记录。标题预览不影响消息正文。
 
 安卓对话页的排队消息以单行省略展示，每条右侧依次提供删除按钮和发送箭头，点击删除后不再自动发送。队列操作与 worker 出队串行，若消息已开始执行则拒绝编辑或删除，不影响已发送的正文。更改持久化后通过会话 revision 和实时快照同步。
 

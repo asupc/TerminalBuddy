@@ -11,7 +11,7 @@
 | 安卓会话模型 | `android/app/src/main/java/com/terminalbuddy/android/data/AiModels.kt:17`，`AiSession` 仅有消息、模型、状态等字段 | 需要增加可选 `usage` 模型 |
 | 安卓输入框 | `android/app/src/main/java/com/terminalbuddy/android/ui/AiConversationScreen.kt:244`，`AiComposer` 中是一个圆角 `Surface`，里面为输入框和发送按钮的 `Row` | 在该 `Surface` 内改为 `Column`，原输入行下增加统计行 |
 | 对话详情 | 同文件 `:124`，已有“对话信息”底部面板 | 可以复用 `AiSheet`，展开上下文及 token 明细 |
-| Claude 调用 | `terminal-buddy/src-tauri/src/services/ai_chat_service.rs:273`，每轮启动 `claude -p --output-format stream-json --verbose --include-partial-messages`，后续轮次 `--resume` | 已有结构化用量来源，无需解析终端画面 |
+| Claude 调用 | `terminal-buddy/src-tauri/src/services/ai_chat_service.rs:273`，会话首次启动 `claude -p --output-format stream-json --verbose --include-partial-messages`，回合结束后保持进程与 stdin，后续消息写入同一进程；仅冷启动/恢复使用 `--resume` | 已有结构化用量来源，无需解析终端画面 |
 | Claude 事件处理 | 同文件 `:353`、`:383`、`:408`，处理流式内容、完整助手消息与 `result` | 当前没有读取 `usage`、`modelUsage`，也没有处理压缩后的统计失效 |
 | Codex 事件处理 | 同文件 `:496`，处理 app-server 的消息、工具和回合状态 | 当前没有处理 `thread/tokenUsage/updated` |
 | Rust 会话模型 | `terminal-buddy/src-tauri/src/models/ai_chat.rs:23` | 需要增加可选统计字段，并在创建会话时初始化 |
