@@ -16,12 +16,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.toArgb
 import com.terminalbuddy.android.notifications.AiNotificationTarget
 import com.terminalbuddy.android.notifications.AiTaskNotifications
+import com.terminalbuddy.android.notifications.ServerNotificationTarget
 import com.terminalbuddy.android.ui.AppSkin
 import com.terminalbuddy.android.ui.TerminalBuddyRoot
 import com.terminalbuddy.android.ui.TerminalBuddyTheme
 
 class MainActivity : ComponentActivity() {
     private var notificationTarget by mutableStateOf<AiNotificationTarget?>(null)
+    private var serverNotificationTarget by mutableStateOf<ServerNotificationTarget?>(null)
 
     override fun onResume() {
         super.onResume()
@@ -37,11 +39,13 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         notificationTarget = AiTaskNotifications.consumeTarget(intent)
+        serverNotificationTarget = AiTaskNotifications.consumeServerTarget(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         notificationTarget = AiTaskNotifications.consumeTarget(intent)
+        serverNotificationTarget = AiTaskNotifications.consumeServerTarget(intent)
         val preferences = getSharedPreferences("terminal_buddy_appearance", MODE_PRIVATE)
         val initialDarkTheme = preferences.getBoolean("dark_theme", false)
         val initialSkin = AppSkin.fromId(preferences.getString("color_skin", null))
@@ -67,6 +71,8 @@ class MainActivity : ComponentActivity() {
                 TerminalBuddyRoot(
                     notificationTarget = notificationTarget,
                     onNotificationConsumed = { notificationTarget = null },
+                    serverNotificationTarget = serverNotificationTarget,
+                    onServerNotificationConsumed = { serverNotificationTarget = null },
                     simplified = simplified,
                     onSimplifiedChange = { enabled ->
                         simplified = enabled

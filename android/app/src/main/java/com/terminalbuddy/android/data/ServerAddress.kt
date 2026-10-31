@@ -32,6 +32,12 @@ object ServerAddress {
             .addPathSegment("ws").addPathSegment("ai")
             .addQueryParameter("token", token).build()
 
+    /** 服务端任务通知：完成 / 失败与待决策事件，独立于 AI 会话通知。 */
+    fun serverNotificationsSocket(server: String, token: String): HttpUrl =
+        normalize(server).toHttpUrlOrNull()!!.newBuilder()
+            .addPathSegment("ws").addPathSegment("notifications")
+            .addQueryParameter("token", token).build()
+
     /** 原生 AI 实时通道：`/ws/ai/{id}?token=...`。 */
     fun aiSocket(server: String, sessionId: String, token: String): HttpUrl =
         normalize(server).toHttpUrlOrNull()!!.newBuilder()

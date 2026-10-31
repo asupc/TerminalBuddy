@@ -332,6 +332,66 @@ class AiRepository(context: Context) {
      */
     fun observe(id: String) = observe(id, AiConnection(store.server, store.username, store.token))
 
+    /** 服务端任务通知：首帧为待决策快照，之后是完成 / 失败 / 决策事件与心跳。 */
+    internal fun observeServerNotifications(connection: AiConnection) = callbackFlow<ServerNotificationFrame> {
+        val socket = notificationRealtime.newWebSocket(
+            Request.Builder().url(ServerAddress.serverNotificationsSocket(connection.server, connection.token))
+                .header("User-Agent", USER_AGENT).build(),
+            object : WebSocketListener() {
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    try {
+                        val body = ApiJson.parseToJsonElement(text).asObject()
+                        when (body.text("type")) {
+                            "snapshot" -> {
+                                val decisions = ApiJson.decodeFromJsonElement<List<ServerNotificationEvent>>(
+                                    body["decisions"] ?: JsonArray(emptyList()),
+                                )
+                                trySend(ServerNotificationFrame.Snapshot(decisions))
+                            }
+                            "event" -> trySend(ServerNotificationFrame.Event(
+                                ApiJson.decodeFromJsonElement(body.getValue("event")),
+                            ))
+                            "heartbeat" -> trySend(ServerNotificationFrame.Heartbeat)
+                        }
+                    } catch (_: Exception) {
+                        close(ApiException(502, "服务端通知消息格式不正确，请更新服务端"))
+                    }
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    response?.close()
+                    close(when (response?.code) {
+                        401 -> ApiException(401, "服务登录已过期，请重新登录")
+                        404 -> ApiException(404, "服务端暂不支持任务通知，请更新服务端")
+                        else -> IOException("服务端通知连接断开", t)
+                    })
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    close(IOException("服务端通知连接已关闭"))
+                }
+            },
+        )
+        awaitClose { socket.cancel() }
+    }.buffer(Channel.CONFLATED)
+
+    /** 服务端通知断线时的决策补偿；服务端较旧时返回 404，由调用方忽略。 */
+    internal suspend fun serverDecisions(connection: AiConnection): List<ServerNotificationEvent> =
+        ApiJson.decodeFromJsonElement(
+            request("GET", listOf("notifications", "decisions"),
+                server = connection.server, token = connection.token),
+        )
+
+    /** 回答服务端终端决策：answers 以原始问题文本为键，全部回答后由服务端回填 CLI。 */
+    internal suspend fun answerServerDecision(
+        connection: AiConnection, decisionId: String, answers: Map<String, String>,
+    ) {
+        request("POST", listOf("notifications", "decisions", decisionId, "answer"), jsonBody {
+            put("answers", buildJsonObject { answers.forEach { (question, answer) -> put(question, answer) } })
+        }, server = connection.server, token = connection.token)
+    }
+
     /** 首帧、增量快照和空闲心跳均包含全部会话元数据，不传输消息正文。 */
     internal fun observeNotificationSessions(connection: AiConnection) = callbackFlow<List<AiSession>> {
         val socket = notificationRealtime.newWebSocket(

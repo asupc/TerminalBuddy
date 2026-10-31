@@ -19,7 +19,9 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.terminalbuddy.android.AiViewModel
+import com.terminalbuddy.android.ServerDecisionViewModel
 import com.terminalbuddy.android.notifications.AiNotificationTarget
+import com.terminalbuddy.android.notifications.ServerNotificationTarget
 
 private enum class RootPage { Home, AiConversation }
 
@@ -32,6 +34,9 @@ fun TerminalBuddyRoot(
     aiVm: AiViewModel = viewModel(), notificationTarget: AiNotificationTarget? = null,
     onNotificationConsumed: () -> Unit = {}, simplified: Boolean = false,
     onSimplifiedChange: (Boolean) -> Unit = {},
+    serverNotificationTarget: ServerNotificationTarget? = null,
+    onServerNotificationConsumed: () -> Unit = {},
+    serverDecisionVm: ServerDecisionViewModel = viewModel(),
 ) {
     val aiUi by aiVm.state.collectAsStateWithLifecycle()
     val holder = rememberSaveableStateHolder()
@@ -72,6 +77,11 @@ fun TerminalBuddyRoot(
                     }
                 }
             }
+            ServerDecisionHost(
+                vm = serverDecisionVm,
+                openRequest = serverNotificationTarget,
+                onRequestConsumed = onServerNotificationConsumed,
+            )
         }
     }
 }

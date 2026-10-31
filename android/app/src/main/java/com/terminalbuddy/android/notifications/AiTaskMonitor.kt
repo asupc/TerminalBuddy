@@ -15,6 +15,7 @@ import com.terminalbuddy.android.TerminalBuddyApplication
 import com.terminalbuddy.android.data.AiConnection
 import com.terminalbuddy.android.data.AiRepository
 import com.terminalbuddy.android.data.ApiException
+import com.terminalbuddy.android.data.ServerNotificationFrame
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,12 +33,17 @@ internal class AiTaskMonitor(
     private val repository: AiRepository,
     private val notifications: AiTaskNotifications,
 ) {
-    private data class Subscription(val accountId: String, val connection: AiConnection)
+    private enum class SubscriptionKind(val label: String) {
+        AiSessions("AI 会话"),
+        ServerNotifications("服务端任务"),
+    }
+    private data class Subscription(val accountId: String, val connection: AiConnection, val kind: SubscriptionKind)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val refresh = Channel<Unit>(Channel.CONFLATED)
     private val subscriptions = mutableMapOf<Subscription, Job>()
     private val connected = mutableSetOf<Subscription>()
+    private val unsupported = mutableSetOf<Subscription>()
     private val lastReceived = mutableMapOf<Subscription, Long>()
     private val mutableState = MutableStateFlow(AiTaskMonitorState())
     val state = mutableState.asStateFlow()
@@ -97,6 +103,7 @@ internal class AiTaskMonitor(
         subscriptions.values.toList().forEach { it.cancel() }
         subscriptions.clear()
         connected.clear()
+        unsupported.clear()
         lastReceived.clear()
         lastPollSucceeded = false
     }
@@ -117,9 +124,12 @@ internal class AiTaskMonitor(
             publishState()
             return
         }
-        val desired = accounts.mapNotNullTo(mutableSetOf()) { id ->
-            repository.accounts.connection(id)?.let { Subscription(id, it) }
+        val desired = accounts.flatMapTo(mutableSetOf()) { id ->
+            repository.accounts.connection(id)?.let { connection ->
+                SubscriptionKind.entries.map { kind -> Subscription(id, connection, kind) }
+            }.orEmpty()
         }
+        desired.removeAll(unsupported)
         val now = SystemClock.elapsedRealtime()
         subscriptions.keys.toList().filter { subscription ->
             subscription !in desired || subscriptions[subscription]?.isActive != true ||
@@ -170,7 +180,9 @@ internal class AiTaskMonitor(
                 failures = if (lastPollSucceeded) 0 else (failures + 1).coerceAtMost(4)
                 publishState()
                 // 实时连接健康时降低补偿频率；断线时才使用三秒轮询，避免长期后台高频请求。
-                val realtimeHealthy = connected.map { it.accountId }.containsAll(notifications.monitoredAccounts())
+                val realtimeHealthy = notifications.monitoredAccounts().all { account ->
+                    connected.any { it.accountId == account && it.kind == SubscriptionKind.AiSessions }
+                }
                 val delayMillis = if (lastPollSucceeded) { if (realtimeHealthy) 30_000L else 3_000L }
                     else (3_000L shl failures).coerceAtMost(30_000)
                 withTimeoutOrNull(delayMillis) { refresh.receive() }
@@ -185,22 +197,49 @@ internal class AiTaskMonitor(
         while (currentCoroutineContext().isActive) {
             try {
                 lastReceived[subscription] = SystemClock.elapsedRealtime()
-                repository.observeNotificationSessions(subscription.connection).collect { sessions ->
-                    if (repository.accounts.connection(subscription.accountId) == subscription.connection) {
-                        lastFrameAt = SystemClock.elapsedRealtime()
-                        lastReceived[subscription] = lastFrameAt
-                        if (connected.add(subscription)) notifications.recordDiagnostic("账号通知连接已收到消息帧")
-                        retries = 0
-                        publishState()
-                        // 删除由 REST 的请求前基线处理，避免删除刚在手机上发送的新任务。
-                        notifications.observe(subscription.accountId, sessions, accountSnapshot = true)
-                    }
+                when (subscription.kind) {
+                    SubscriptionKind.AiSessions -> repository.observeNotificationSessions(subscription.connection)
+                        .collect { sessions ->
+                            if (repository.accounts.connection(subscription.accountId) != subscription.connection) return@collect
+                            received(subscription)
+                            retries = 0
+                            // 删除由 REST 的请求前基线处理，避免删除刚在手机上发送的新任务。
+                            notifications.observe(subscription.accountId, sessions, accountSnapshot = true)
+                        }
+                    SubscriptionKind.ServerNotifications -> repository.observeServerNotifications(subscription.connection)
+                        .collect { frame ->
+                            if (repository.accounts.connection(subscription.accountId) != subscription.connection) return@collect
+                            received(subscription)
+                            retries = 0
+                            when (frame) {
+                                is ServerNotificationFrame.Snapshot ->
+                                    notifications.replaceServerDecisions(subscription.accountId, frame.decisions)
+                                is ServerNotificationFrame.Event ->
+                                    notifications.observeServerNotification(subscription.accountId, frame.event)
+                                ServerNotificationFrame.Heartbeat -> Unit
+                            }
+                        }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 val code = if (e is ApiException) "，HTTP ${e.code}" else ""
-                notifications.recordDiagnostic("通知连接断开：${e.javaClass.simpleName}$code，将自动重连")
+                val isUnsupported = subscription.kind == SubscriptionKind.ServerNotifications &&
+                    e is ApiException && e.code == 404
+                notifications.recordDiagnostic(
+                    if (isUnsupported) "服务端不支持任务通知，已暂停该通道"
+                    else "${subscription.kind.label}通知连接断开：${e.javaClass.simpleName}$code，将自动重连"
+                )
+                if (isUnsupported) {
+                    // 旧服务端不提供该接口；记录后不再反复重连，十分钟后或网络切换时重试。
+                    unsupported.add(subscription)
+                    scope.launch {
+                        delay(600_000)
+                        unsupported.remove(subscription)
+                        update()
+                    }
+                    return
+                }
             } finally {
                 if (subscriptions[subscription] == currentCoroutineContext()[Job]) {
                     connected.remove(subscription)
@@ -213,10 +252,23 @@ internal class AiTaskMonitor(
         }
     }
 
+    private fun received(subscription: Subscription) {
+        lastFrameAt = SystemClock.elapsedRealtime()
+        lastReceived[subscription] = lastFrameAt
+        if (connected.add(subscription)) {
+            notifications.recordDiagnostic("${subscription.kind.label}通知连接已收到消息帧")
+        }
+        publishState()
+    }
+
     private fun publishState() {
         val accounts = notifications.monitoredAccounts()
         val active = accounts.isNotEmpty()
-        val reconnecting = active && (networkBlocked || !connected.map { it.accountId }.containsAll(accounts))
+        // 连接健康只由 AI 会话通道决定；旧服务端没有服务端任务通知通道时，
+        // 不能让整套后台监听一直显示“重连中”。服务端通道自行退避重试。
+        val aiConnected = connected.filter { it.kind == SubscriptionKind.AiSessions }
+            .mapTo(mutableSetOf()) { it.accountId }
+        val reconnecting = active && (networkBlocked || !aiConnected.containsAll(accounts))
         mutableState.value = AiTaskMonitorState(
             active, reconnecting, notifications.hasActiveTasks(),
             reconnecting && !networkBlocked && lastPollSucceeded && SystemClock.elapsedRealtime() - lastPollAt < RECEIVE_TIMEOUT,

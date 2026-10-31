@@ -31,6 +31,20 @@ internal suspend fun syncTaskNotifications(application: TerminalBuddyApplication
                             if (repository.accounts.connection(id) == connection) {
                                 notifications.observe(id, sessions, completeList = true, knownBeforeRequest = knownIds)
                             }
+                            // 服务端通知连接断开时用 REST 补拉待决策；旧服务端没有该接口时忽略。
+                            val requestedAt = System.currentTimeMillis()
+                            val decisions = try {
+                                withTimeout(25_000) { repository.serverDecisions(connection) }
+                            } catch (_: TimeoutCancellationException) {
+                                null
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                null
+                            }
+                            if (decisions != null && repository.accounts.connection(id) == connection) {
+                                notifications.replaceServerDecisions(id, decisions, requestedAt)
+                            }
                             true
                         } catch (_: TimeoutCancellationException) {
                             false
