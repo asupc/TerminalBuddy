@@ -49,8 +49,8 @@ data class AiUiState(
     val historyLoading: Boolean = false,
     val historyAgent: String? = null,
     val historyProjectPath: String = "",
-    /** 连续发送方式：false 回复期间在服务端排队等待，true 中断当前回复立即发送。 */
-    val sendImmediate: Boolean = false,
+    /** 连续发送方式：false 等当前回合任务完成后排队续发，true 直接交给运行中的 CLI 进程插话。 */
+    val sendSteer: Boolean = false,
     val history: AiHistoryState = AiHistoryState(),
     val serverHistory: Map<AiServerHistoryKey, AiServerProjectHistory> = emptyMap(),
 ) {
@@ -342,7 +342,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             homeLoaded = cached != null,
             accounts = repository.accounts.accounts, activeAccountId = repository.accounts.activeId,
             connectionRevision = revision,
-            sendImmediate = repository.sendImmediate,
+            sendSteer = repository.sendSteer,
         )
     }
 
@@ -984,8 +984,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 // 真实会话 ID 就绪后启动实时订阅和轮询，首次发送也能持续接收回复。
                 repository.accounts.activeId?.let { taskNotifications.expectTask(it, target) }
                 startRealtime()
-                // 回复进行中：排队模式由服务端按序自动续发；立即发送则中断当前回复优先处理。
-                val result = repository.send(target.id, text, request.second, ui.sendImmediate)
+                // 回复进行中：排队模式等当前回合任务完成后由服务端续发；插话模式直接交给当前 CLI 进程。
+                val result = repository.send(target.id, text, request.second, ui.sendSteer)
                 if (epoch != generation || mutable.value.selected?.id != target.id) return@launch
                 requests.remove(target.id)
                 // 幂等重试可能返回历史消息；成功响应本身即可确认，不能只按新增消息判断。
@@ -1004,7 +1004,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 立即发送排队消息：服务端把该消息移到队首并中断当前回复，停止后立即送出。 */
+    /** 插话排队消息：服务端把该消息直接交给运行中的 CLI 进程，不中断当前任务。 */
     fun sendQueuedNow(requestId: String) {
         action { repository.flush(it.id, requestId) }
     }
@@ -1014,9 +1014,9 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 发送方式是全局设置，立即生效并持久化，不影响服务端已排队的消息。 */
-    fun setSendImmediate(value: Boolean) {
-        repository.sendImmediate = value
-        mutable.update { it.copy(sendImmediate = value) }
+    fun setSendSteer(value: Boolean) {
+        repository.sendSteer = value
+        mutable.update { it.copy(sendSteer = value) }
     }
 
     fun stop() = action { repository.stop(it.id) }

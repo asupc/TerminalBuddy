@@ -77,7 +77,7 @@ internal fun AiProfileScreen(
                     AiSettingsRow(Icons.Outlined.NotificationsNone, "通知", "任务进度、决策与完成提醒", click = notifications)
                     AiDivider(Modifier.padding(start = 60.dp, end = 16.dp))
                     AiSettingsRow(Icons.Outlined.Bolt, "发送方式",
-                        if (ui.sendImmediate) "立即发送 · 优先处理新消息" else "排队发送 · 当前回复结束后继续", click = sendMode)
+                        if (ui.sendSteer) "原生插话 · 直接交给当前进程" else "排队发送 · 当前回合任务完成后继续", click = sendMode)
                 }
             }
         }

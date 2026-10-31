@@ -155,7 +155,7 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
     }
     if (terminalUi.dialogOpen && terminalVm.isCurrentAccount()) ServerProjectProfilesDialog(terminalUi, terminalVm)
     if (notificationSettings) AiNotificationSettings { notificationSettings = false }
-    if (sendModeSheet) AiSendModeSheet(ui.sendImmediate, vm::setSendImmediate) { sendModeSheet = false }
+    if (sendModeSheet) AiSendModeSheet(ui.sendSteer, vm::setSendSteer) { sendModeSheet = false }
     deleting?.let { session -> AiDeleteDialog(session, { deleting = null }) { deleting = null; vm.delete(session) } }
     if (confirmDeleteAll) {
         AlertDialog(
@@ -287,21 +287,21 @@ private fun formatHistoryTime(timestamp: Long): String {
     }
 }
 
-/** 连续发送方式：服务端保存队列并自动续发，立即发送则中断当前回复优先处理。 */
+/** 连续发送方式：排队等当前回合任务全部完成后写入同一个 CLI 进程，原生插话则直接交给运行中的进程。 */
 @Composable
-private fun AiSendModeSheet(sendImmediate: Boolean, select: (Boolean) -> Unit, dismiss: () -> Unit) {
+private fun AiSendModeSheet(sendSteer: Boolean, select: (Boolean) -> Unit, dismiss: () -> Unit) {
     AiSheet("发送方式", dismiss) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             AiSendModeOption(
-                Icons.Outlined.Schedule, "排队发送", "AI 回复期间发送的消息在服务端排队（App 关闭或被杀也不丢失），当前回复结束后自动按序发送；排队消息可删除，不想等待可点最右侧的发送箭头立即发送。",
-                selected = !sendImmediate,
+                Icons.Outlined.Schedule, "排队发送", "AI 回复期间发送的消息在服务端排队（App 关闭或被杀也不丢失），等当前回合任务（含后台任务）全部完成后，由服务端写入同一个 CLI 进程继续，不中断任务，也不需要恢复历史。排队消息可删除，不想等待可点最右侧的发送箭头直接插话。",
+                selected = !sendSteer,
             ) { select(false); dismiss() }
             AiSendModeOption(
-                Icons.Outlined.Bolt, "立即发送", "AI 回复期间发送新消息会中断当前回复，优先处理这条新消息。",
-                selected = sendImmediate,
+                Icons.Outlined.Bolt, "原生插话", "AI 回复期间发送的新消息会直接交给运行中的 CLI 进程，由它决定在合适的节点接收并继续任务，不中断当前任务。",
+                selected = sendSteer,
             ) { select(true); dismiss() }
             Text(
                 "默认排队发送，仅影响本机 App 的连续发送行为，电脑端与 Web 端不受影响。",

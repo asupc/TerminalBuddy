@@ -95,10 +95,10 @@ class AiRepository(context: Context) {
     fun selectedAgentProvider(agent: String) = preferences.getString(preferenceKey("provider:$agent"), "").orEmpty()
     fun selectedAgentModel(agent: String) = preferences.getString(preferenceKey("model:$agent"), "").orEmpty()
 
-    /** 连续发送方式是全局偏好，不随账号隔离：false 回复期间排队等待，true 中断当前回复立即发送。 */
-    var sendImmediate: Boolean
-        get() = preferences.getBoolean("ai_send_immediate", false)
-        set(value) { preferences.edit().putBoolean("ai_send_immediate", value).apply() }
+    /** 连续发送方式是全局偏好，不随账号隔离：false 等当前回合任务完成后排队续发，true 原生插话。 */
+    var sendSteer: Boolean
+        get() = preferences.getBoolean("ai_send_steer", preferences.getBoolean("ai_send_immediate", false))
+        set(value) { preferences.edit().putBoolean("ai_send_steer", value).apply() }
 
     fun saveSelection(
         project: String, provider: String, model: String, agent: String?, quickStart: AiQuickStartCache? = null,
@@ -287,17 +287,17 @@ class AiRepository(context: Context) {
         )
 
     /** requestId 由调用方生成并持久化在内存里；失败重试复用同一个值，服务端据此去重。
-     *  immediate 为「立即发送」：回复进行中发送时，服务端会中断当前回复优先处理。 */
-    suspend fun send(id: String, text: String, requestId: String, immediate: Boolean = false): AiSession =
+     *  steer 为「原生插话」：回复进行中发送时，服务端把消息直接交给当前 CLI 进程。 */
+    suspend fun send(id: String, text: String, requestId: String, steer: Boolean = false): AiSession =
         ApiJson.decodeFromJsonElement(
             request("POST", listOf("ai", "sessions", id, "messages"), jsonBody {
                 put("text", text)
                 put("requestId", requestId)
-                if (immediate) put("immediate", true)
+                if (steer) put("steer", true)
             })
         )
 
-    /** 「立即发送」排队消息：把该消息移到队首，并中断当前回复立即处理，返回最新会话。 */
+    /** 「原生插话」排队消息：把该消息直接交给运行中的 CLI 进程，返回最新会话。 */
     suspend fun flush(id: String, requestId: String?): AiSession =
         ApiJson.decodeFromJsonElement(
             request("POST", listOf("ai", "sessions", id, "flush"), jsonBody {

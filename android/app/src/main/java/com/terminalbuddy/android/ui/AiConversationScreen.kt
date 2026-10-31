@@ -286,7 +286,7 @@ private fun AiConversation(
     }
 }
 
-/** 服务端排队消息：单行预览，右侧依次为删除和立即发送。 */
+/** 服务端排队消息：单行预览，右侧依次为删除和插话。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AiQueuedMessages(
@@ -302,7 +302,7 @@ private fun AiQueuedMessages(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                "排队中 · 当前回复结束后自动发送", Modifier.padding(start = 12.dp),
+                "排队中 · 当前回合任务完成后自动发送", Modifier.padding(start = 12.dp),
                 style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
@@ -336,7 +336,7 @@ private fun AiQueuedMessages(
                                 if (submitting) CircularProgressIndicator(
                                     Modifier.size(14.dp).semantics { contentDescription = "正在排队" },
                                     color = TbColors.TextMuted, strokeWidth = 1.5.dp,
-                                ) else Icon(Icons.Outlined.ArrowUpward, "立即发送", Modifier.size(18.dp))
+                                ) else Icon(Icons.Outlined.ArrowUpward, "插话这条消息", Modifier.size(18.dp))
                             }
                         }
                     }
@@ -351,7 +351,7 @@ private fun AiQueuedMessages(
 private fun AiComposer(
     ui: AiUiState, session: AiSession, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit,
 ) {
-    // 回复中输入了草稿就显示发送（按发送方式排队等待或中断立即发送）；空白才显示中断。
+    // 回复中输入了草稿就显示发送（按发送方式排队等待或原生插话）；空白才显示中断。
     val showStop = session.running && ui.draft.isBlank()
     val actionEnabled = if (showStop) !ui.working && session.status != "stopping" else session.canSend && ui.draft.isNotBlank() && !ui.sending && !ui.loadingSession
     Surface(color = TbColors.Surface) {
@@ -390,7 +390,7 @@ private fun AiComposer(
                                 contentDescription = when {
                                     showStop -> "中断回复"
                                     ui.sending -> "正在发送"
-                                    session.running && ui.sendImmediate -> "立即发送"
+                                    session.running && ui.sendSteer -> "原生插话"
                                     session.running -> "发送排队消息"
                                     else -> "发送消息"
                                 }
