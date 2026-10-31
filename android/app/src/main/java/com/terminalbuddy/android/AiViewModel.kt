@@ -642,6 +642,19 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         if (mutable.value.historyExpanded) loadHistory()
     }
 
+    /** 简版首页的历史 Tab 直接复用当前项目 + Agent 的 CLI 历史，不依赖旧首页的展开状态。 */
+    fun loadHistoryForSelection() {
+        val ui = mutable.value
+        if (!ui.authenticated || ui.authenticating) return
+        val agent = ui.launchProvider?.agent ?: return
+        val project = ui.launchProject ?: return
+        val sameTarget = ui.historyExpanded && ui.historyAgent == agent &&
+            ui.historyProjectPath == project.path
+        if (sameTarget && (ui.historyLoading || ui.historySessions.isNotEmpty() || cliHistoryJob?.isActive == true)) return
+        if (!ui.historyExpanded) mutable.update { it.copy(historyExpanded = true) }
+        loadHistory()
+    }
+
     /** 增量索引失败不阻断列表（可能只是后台补齐未完成），列表失败才提示。 */
     private fun loadHistory() {
         val ui = mutable.value
@@ -649,7 +662,14 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val project = ui.launchProject ?: return
         cliHistoryJob?.cancel()
         cliHistoryJob = viewModelScope.launch {
-            mutable.update { it.copy(historyLoading = true, historyAgent = agent, historyProjectPath = project.path) }
+            val switched = mutable.value.historyAgent != agent || mutable.value.historyProjectPath != project.path
+            mutable.update {
+                it.copy(
+                    historyLoading = true, historyAgent = agent, historyProjectPath = project.path,
+                    // 切换项目或 Agent 时先清空旧列表，避免短暂显示其他项目的“历史会话”。
+                    historySessions = if (switched) emptyList() else it.historySessions,
+                )
+            }
             try {
                 runCatching { repository.rescanHistory(agent) }
                 val sessions = repository.history(agent, project.path)

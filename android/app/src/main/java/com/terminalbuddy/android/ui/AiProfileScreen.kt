@@ -41,6 +41,7 @@ import com.terminalbuddy.android.AiUiState
 internal fun AiProfileScreen(
     ui: AiUiState, notifications: () -> Unit, sendMode: () -> Unit,
     accounts: () -> Unit, serviceInfo: () -> Unit, onlineUpdate: () -> Unit, logout: () -> Unit,
+    simplified: Boolean = false, onSimplifiedChange: (Boolean) -> Unit = {},
 ) {
     var confirmLogout by remember(ui.activeAccountId) { mutableStateOf(false) }
     val enabled = !ui.working && !ui.authenticating
@@ -70,6 +71,8 @@ internal fun AiProfileScreen(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 AiSectionTitle("偏好设置")
                 AiCard(shape = RoundedCornerShape(20.dp)) {
+                    AiModePreference(simplified, onSimplifiedChange)
+                    AiDivider(Modifier.padding(horizontal = 16.dp))
                     AiThemePreference()
                     AiDivider(Modifier.padding(horizontal = 16.dp))
                     AiSkinPreference()
@@ -154,6 +157,27 @@ private fun AiThemePreference() {
                 }
             }
         }
+    }
+}
+
+/** 简版与完整版共用同一个安装包，切换后立即生效并记住选择。 */
+@Composable
+private fun AiModePreference(simplified: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        AiSmallIcon(Icons.Outlined.Dashboard)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("界面模式", style = MaterialTheme.typography.titleSmall)
+            Text(
+                if (simplified) "简版 · 快速开始单页，最近任务与历史会话平铺"
+                else "完整版 · 快速开始 / 会话 / 我的三个入口",
+                style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+            )
+        }
+        Switch(checked = simplified, onCheckedChange = onChange)
     }
 }
 

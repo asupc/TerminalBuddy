@@ -156,12 +156,13 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
         ) }
     }
 
-    /** 页面返回只取消查看连接；PTY 与命令继续留在服务端。 */
+    /** 页面返回只取消查看连接；PTY 与命令继续留在服务端。返回后刷新已打开终端，去掉已经结束的条目。 */
     fun leaveTerminal() {
         visible = false
         disconnect()
         renderer = null
         mutable.update { it.copy(selected = null, connected = false) }
+        refreshCatalog(clearError = false)
     }
 
     fun setVisible(value: Boolean) {

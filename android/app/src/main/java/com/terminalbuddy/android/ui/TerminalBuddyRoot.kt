@@ -30,7 +30,8 @@ private enum class RootPage { Home, AiConversation }
 @Composable
 fun TerminalBuddyRoot(
     aiVm: AiViewModel = viewModel(), notificationTarget: AiNotificationTarget? = null,
-    onNotificationConsumed: () -> Unit = {},
+    onNotificationConsumed: () -> Unit = {}, simplified: Boolean = false,
+    onSimplifiedChange: (Boolean) -> Unit = {},
 ) {
     val aiUi by aiVm.state.collectAsStateWithLifecycle()
     val holder = rememberSaveableStateHolder()
@@ -61,7 +62,9 @@ fun TerminalBuddyRoot(
                         Modifier.fillMaxSize()
                             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
                     ) {
-                        holder.SaveableStateProvider("ai-home") { AiScreen(aiUi, aiVm) }
+                        holder.SaveableStateProvider("ai-home") {
+                            AiScreen(aiUi, aiVm, simplified = simplified, onSimplifiedChange = onSimplifiedChange)
+                        }
                     }
                 } else {
                     Box(Modifier.fillMaxSize()) {

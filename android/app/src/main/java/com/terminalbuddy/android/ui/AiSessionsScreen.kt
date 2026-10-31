@@ -295,7 +295,7 @@ private fun sessionDateLabel(date: LocalDate?, today: LocalDate): String = when 
 
 /** 参考首页最近任务的两层信息布局，使用平面列表和分隔线，不添加卡片外观。 */
 @Composable
-private fun AiRecentSessionRow(
+internal fun AiRecentSessionRow(
     ui: AiUiState, session: AiSession, open: () -> Unit, delete: () -> Unit, highlightAlpha: Float = 0f,
 ) {
     val project = ui.projects.find { it.path == session.projectPath }?.name

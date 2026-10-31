@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             var darkTheme by rememberSaveable { mutableStateOf(initialDarkTheme) }
             var skinId by rememberSaveable { mutableStateOf(initialSkin.id) }
+            var simplified by rememberSaveable { mutableStateOf(AppUiMode.isSimple(applicationContext)) }
             val skin = AppSkin.fromId(skinId)
             SideEffect { updateSystemBars(darkTheme, skin) }
             TerminalBuddyTheme(
@@ -66,6 +67,11 @@ class MainActivity : ComponentActivity() {
                 TerminalBuddyRoot(
                     notificationTarget = notificationTarget,
                     onNotificationConsumed = { notificationTarget = null },
+                    simplified = simplified,
+                    onSimplifiedChange = { enabled ->
+                        simplified = enabled
+                        AppUiMode.setSimple(applicationContext, enabled)
+                    },
                 )
             }
         }

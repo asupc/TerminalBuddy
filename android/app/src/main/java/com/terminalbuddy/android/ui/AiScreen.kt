@@ -34,11 +34,14 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private enum class AiPage { Home, Accounts, Connection, ServiceInfo, AppUpdate }
+private enum class AiPage { Home, Profile, Accounts, Connection, ServiceInfo, AppUpdate }
 
 /** 一级入口共用底部导航，账号、服务信息和对话保留独立的二级页面。 */
 @Composable
-fun AiScreen(ui: AiUiState, vm: AiViewModel) {
+fun AiScreen(
+    ui: AiUiState, vm: AiViewModel, simplified: Boolean = false,
+    onSimplifiedChange: (Boolean) -> Unit = {},
+) {
     val terminalVm: ServerTerminalViewModel = viewModel()
     val terminalUi by terminalVm.state.collectAsStateWithLifecycle()
     LaunchedEffect(ui.authenticated, ui.activeAccountId, ui.connectionRevision) { terminalVm.bindAccount() }
@@ -68,7 +71,13 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
         vm.cancelAuthentication()
         page = if (page == AiPage.Connection) connectionReturnPage else AiPage.Home
     }
-    BackHandler(page != AiPage.Home || ui.authenticating || tab != AiHomeTab.QuickStart) {
+    // 切换界面模式时回到首页，避免旧页面状态落在一个已经不存在的 Tab 上。
+    val changeMode: (Boolean) -> Unit = { simple ->
+        page = AiPage.Home
+        tab = AiHomeTab.QuickStart
+        onSimplifiedChange(simple)
+    }
+    BackHandler(page != AiPage.Home || ui.authenticating || (!simplified && tab != AiHomeTab.QuickStart)) {
         if (page != AiPage.Home || ui.authenticating) back() else tab = AiHomeTab.QuickStart
     }
     LaunchedEffect(ui.connectionRevision) {
@@ -109,49 +118,68 @@ fun AiScreen(ui: AiUiState, vm: AiViewModel) {
         AiServiceInfoScreen(ui, back) { openConnection(ui.activeAccountId, false, false) }
         return
     }
-    if (ui.authenticated && terminalVm.isCurrentAccount() && terminalUi.selected != null) {
-        ServerTerminalScreen(terminalUi, terminalVm)
-        return
-    }
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    Column(Modifier.fillMaxSize().imePadding()) {
-        if (tab != AiHomeTab.Sessions) {
-            PageHeader(tab.title, reconnecting = ui.reconnecting, subtitle = tab.subtitle, connecting = ui.loading)
+    if (simplified && page == AiPage.Profile) {
+        Column(Modifier.fillMaxSize()) {
+            AiSubpageHeader("我的", back)
             ui.error?.let { AiError(it, vm::clearError) }
+            Box(Modifier.fillMaxWidth().weight(1f)) {
+                AiProfileScreen(ui,
+                    notifications = { notificationSettings = true },
+                    sendMode = { sendModeSheet = true }, accounts = openAccounts,
+                    serviceInfo = { page = AiPage.ServiceInfo },
+                    onlineUpdate = { page = AiPage.AppUpdate }, logout = vm::logout,
+                    simplified = true, onSimplifiedChange = changeMode)
+            }
         }
-        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-            Box(Modifier.widthIn(max = 680.dp).fillMaxSize()) {
-                tabState.SaveableStateProvider("home:${ui.activeAccountId}:${tab.name}") {
-                    when (tab) {
-                        AiHomeTab.QuickStart -> AiHomeWorkspace(ui, vm, sessions = {
-                            recentSessionsRequest++
-                            tab = AiHomeTab.Sessions
-                        }, more = terminalVm::showConfigurations)
-                        AiHomeTab.Sessions -> AiSessionsScreen(ui, vm,
-                            start = { tab = AiHomeTab.QuickStart }, delete = { deleting = it },
-                            deleteAll = { confirmDeleteAll = true }, recentRequest = recentSessionsRequest,
-                            unreadRequest = unreadSessionRequest,
-                            unreadRequestHandled = { request ->
-                                if (unreadSessionRequest == request) unreadSessionRequest = 0
-                            },
-                            terminalUi = terminalUi, terminalVm = terminalVm)
-                        AiHomeTab.Profile -> AiProfileScreen(ui,
-                            notifications = { notificationSettings = true },
-                            sendMode = { sendModeSheet = true }, accounts = openAccounts,
-                            serviceInfo = { page = AiPage.ServiceInfo },
-                            onlineUpdate = { page = AiPage.AppUpdate }, logout = vm::logout)
+    } else if (ui.authenticated && terminalVm.isCurrentAccount() && terminalUi.selected != null) {
+        ServerTerminalScreen(terminalUi, terminalVm)
+    } else if (simplified) {
+        Column(Modifier.fillMaxSize().imePadding()) {
+            AiSimpleHome(ui, vm, terminalUi, terminalVm,
+                profile = { page = AiPage.Profile }, delete = { deleting = it })
+        }
+    } else {
+        val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        Column(Modifier.fillMaxSize().imePadding()) {
+            if (tab != AiHomeTab.Sessions) {
+                PageHeader(tab.title, reconnecting = ui.reconnecting, subtitle = tab.subtitle, connecting = ui.loading)
+                ui.error?.let { AiError(it, vm::clearError) }
+            }
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
+                Box(Modifier.widthIn(max = 680.dp).fillMaxSize()) {
+                    tabState.SaveableStateProvider("home:${ui.activeAccountId}:${tab.name}") {
+                        when (tab) {
+                            AiHomeTab.QuickStart -> AiHomeWorkspace(ui, vm, sessions = {
+                                recentSessionsRequest++
+                                tab = AiHomeTab.Sessions
+                            }, more = terminalVm::showConfigurations)
+                            AiHomeTab.Sessions -> AiSessionsScreen(ui, vm,
+                                start = { tab = AiHomeTab.QuickStart }, delete = { deleting = it },
+                                deleteAll = { confirmDeleteAll = true }, recentRequest = recentSessionsRequest,
+                                unreadRequest = unreadSessionRequest,
+                                unreadRequestHandled = { request ->
+                                    if (unreadSessionRequest == request) unreadSessionRequest = 0
+                                },
+                                terminalUi = terminalUi, terminalVm = terminalVm)
+                            AiHomeTab.Profile -> AiProfileScreen(ui,
+                                notifications = { notificationSettings = true },
+                                sendMode = { sendModeSheet = true }, accounts = openAccounts,
+                                serviceInfo = { page = AiPage.ServiceInfo },
+                                onlineUpdate = { page = AiPage.AppUpdate }, logout = vm::logout,
+                                simplified = simplified, onSimplifiedChange = changeMode)
+                        }
                     }
                 }
             }
+            if (!keyboardVisible) AiBottomNavigation(tab, ui.unviewedIds.size,
+                select = { tab = it },
+                locateUnread = {
+                    if (ui.sessions.any { it.id in ui.unviewedIds }) {
+                        unreadSessionRequest++
+                        tab = AiHomeTab.Sessions
+                    }
+                })
         }
-        if (!keyboardVisible) AiBottomNavigation(tab, ui.unviewedIds.size,
-            select = { tab = it },
-            locateUnread = {
-                if (ui.sessions.any { it.id in ui.unviewedIds }) {
-                    unreadSessionRequest++
-                    tab = AiHomeTab.Sessions
-                }
-            })
     }
     if (terminalUi.dialogOpen && terminalVm.isCurrentAccount()) ServerProjectProfilesDialog(terminalUi, terminalVm)
     if (notificationSettings) AiNotificationSettings { notificationSettings = false }
