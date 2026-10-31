@@ -153,7 +153,9 @@ AI 正文继续通过原有消息字段传输原始 Markdown，不改变 REST �
 - `src-tauri/src/services/ai_chat_approval.rs`：交互答案校验、Hook 问题格式归一化及普通授权协议响应。
 - `src-tauri/src/services/ai_chat_claude_hooks.rs`：原生 Claude Hook 目标登记、鉴权环境与会话事件投递。
 - `src-tauri/src/services/ai_chat_usage.rs`：用量归一化、消息快照合并、累计基线及上下文压缩状态。
+- `src-tauri/src/services/app_notification_service.rs`：终端完成 / 失败与决策的 App 通知事件流及待决策快照。
 - `src-tauri/src/web/handlers/ai_chat_handler.rs`：REST 和 WebSocket；磁盘及任务启动操作均通过 `spawn_blocking`。
+- `src-tauri/src/web/handlers/app_notification_handler.rs`：`/ws/notifications`、待决策列表与回答接口。
 - `src-tauri/src/web/server.rs`：HTTP/WS 路由注册。
 
 协议参考：[OpenAI Docs：Codex App Server](https://developers.openai.com/codex/app-server/)、[Claude Agent SDK 流式输出](https://platform.claude.com/docs/en/agent-sdk/streaming-output)。
@@ -165,3 +167,17 @@ AI 正文继续通过原有消息字段传输原始 Markdown，不改变 REST �
 通知连接另有每 10 秒一次的协议 Ping；客户端 45 秒没有任何回应或单帧发送等待超过 15 秒时回收连接，防止后台断网/冻结后遗留的 Socket 持续占用服务端资源。该限制仅用于 `/ws/ai` 通知摘要，不改变 `/ws/ai/{id}` 正文流和任务执行的时限；客户端继续以原有摘要帧接收数据，保持协议兼容。
 
 会话新增向后兼容的 `resultRevision`，默认 `0`，在完成、失败或中断时记录对应版本并随会话持久化。Android 将它与本机事件基线比较，补发断线期间错过的结束事件；仅标题或用量变化不会生成结束标记，首次完整列表同步建立账号历史基线，不批量通知旧结果；此后新出现且已经结束的会话也会补报，避免断线期间新建并完成的任务永久丢失提醒。新版后台通知连接需要更新服务端和安卓 App；旧客户端继续使用原有接口，新客户端连接旧服务端时保留 REST 补偿同步。
+
+## 服务端终端任务通知（App）
+
+原微信 / 飞书机器人通知之外的 App 通道，覆盖非原生会话（PC / Web 终端）里 Claude / Pi 的完成事件与待决策事件。服务端在 `claude-hook-terminal-event` 的 `completed` / `failed` 与 `claude-hook-decision` 产生时写入内存事件流；`send_bot_notification` 收到桌面端完成通知时也按同一事件 ID 发布，供 App 去重。
+
+| 路径 | 请求 / 响应 |
+| --- | --- |
+| `GET /api/notifications/decisions` | 当前仍在等待的决策快照 |
+| `POST /api/notifications/decisions/{id}/answer` | `{ "answers": { "问题原文": "回答" } }`，全部回答后回填原 Claude / Pi 决策 |
+| `/ws/notifications?token=...` | 首帧 `{ "type":"snapshot", "decisions":[...] }`；随后 `{ "type":"event", "event":{...} }` 与每 10 秒 `{ "type":"heartbeat" }` |
+
+事件字段为 `id`、`kind`（`decision` / `completed` / `failed` / `resolved`）、`terminalId`、`terminalName`、`provider`、`title`、`summary`、`decisionId`、`questions`、`expiresAt`、`occurredAt`。`questions` 与 `ClaudeHookQuestion` 一致，包含 `question`、`header`、`options`、`multiSelect`；多选答案用逗号连接。`resolved` 事件只携带 `decisionId`，App 收到后撤销通知与待办。
+
+服务端只保留内存中的待决策快照（进程重启后由 Hook 状态自动结束并发布 `resolved`），完成事件不做离线补发；App 断线重连先接收快照，再用 `GET /api/notifications/decisions` 周期性补偿。旧服务端没有该接口时，安卓端暂停该通道且不影响 `/ws/ai` 的原生 AI 通知。
