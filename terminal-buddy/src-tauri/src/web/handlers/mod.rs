@@ -1,3 +1,4 @@
+pub mod app_notification_handler;
 pub mod auth_handler;
 pub mod bot_handler;
 pub mod claude_history_handler;

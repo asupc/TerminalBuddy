@@ -13,8 +13,8 @@ use crate::commands::{send_bot_notification, TerminalService};
 use crate::services::ai_chat_claude_hooks::{self as native_hooks, NativeHookEvent};
 use crate::models::{BotDecisionOption, BotNotificationRequest};
 use crate::services::{
-    card_decision_id, BotSettingsService, ClaudeHookDecisionEvent, ClaudeHookQuestion,
-    ClaudeHookResolution, ClaudeHookService, ClaudeHookTerminalEvent,
+    card_decision_id, AppNotificationService, BotSettingsService, ClaudeHookDecisionEvent,
+    ClaudeHookQuestion, ClaudeHookResolution, ClaudeHookService, ClaudeHookTerminalEvent,
 };
 
 #[derive(Debug, Deserialize)]
@@ -164,7 +164,8 @@ fn emit_terminal_event(
         task_title,
         summary,
     };
-    let _ = app.emit("claude-hook-terminal-event", event);
+    let _ = app.emit("claude-hook-terminal-event", event.clone());
+    AppNotificationService::publish_terminal_result(&event, terminal_name(app, terminal_id));
 }
 
 fn settle_decision(
@@ -177,6 +178,11 @@ fn settle_decision(
         let mut payload = json!({"decisionId":decision_id,"terminalId":terminal_id,"occurredAt":next_hook_timestamp()});
         if let Some(resolution) = resolution { payload["resolution"] = json!(resolution); }
         let _ = app.emit(event, payload);
+        AppNotificationService::publish_resolved(
+            terminal_id,
+            terminal_name(app, terminal_id),
+            decision_id,
+        );
     }
 }
 
@@ -296,7 +302,10 @@ pub(crate) async fn claude_hook(
             ClaudeHookService::expire_decision(&decision_id);
             return (StatusCode::GONE, "Claude 会话已结束").into_response();
         }
-    } else { let _ = app.emit("claude-hook-decision", &event); }
+    } else {
+        let _ = app.emit("claude-hook-decision", &event);
+        AppNotificationService::publish_decision(&event, terminal_name(&app, terminal_id));
+    }
 
     // 业务 TTL（decisionTtlMinutes）决定决策在 pending 表的存活期；
     // 单次 HTTP 连接的挂起时间另设上限，24 小时 TTL 不会把连接挂 24 小时。

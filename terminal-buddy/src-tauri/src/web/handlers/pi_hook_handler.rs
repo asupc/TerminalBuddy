@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::runtime::Emitter;
 use crate::services::{
-    ClaudeHookDecisionEvent, ClaudeHookOption, ClaudeHookQuestion, ClaudeHookResolution,
-    ClaudeHookService, ClaudeHookTerminalEvent,
+    AppNotificationService, ClaudeHookDecisionEvent, ClaudeHookOption, ClaudeHookQuestion,
+    ClaudeHookResolution, ClaudeHookService, ClaudeHookTerminalEvent,
 };
 
 #[derive(Debug, Deserialize)]
@@ -101,7 +101,11 @@ fn emit_event(app: &crate::runtime::AppHandle, terminal_id: &str, request: &PiHo
         task_title,
         summary,
     };
-    let _ = app.emit("claude-hook-terminal-event", event);
+    let _ = app.emit("claude-hook-terminal-event", event.clone());
+    AppNotificationService::publish_terminal_result(
+        &event,
+        crate::services::app_notification_service::terminal_name(app, terminal_id),
+    );
 }
 
 fn approval_question(request: &PiHookRequest) -> ClaudeHookQuestion {
@@ -153,6 +157,10 @@ async fn tool_approval(
         provider: Some("pi".to_string()),
     };
     let _ = app.emit("claude-hook-decision", &event);
+    AppNotificationService::publish_decision(
+        &event,
+        crate::services::app_notification_service::terminal_name(app, terminal_id),
+    );
     // 审批超时默认放行，避免把 Pi 卡死（与计划中的安全约束一致）。
     let wait = std::time::Duration::from_secs((ttl_minutes as u64) * 60)
         .min(ClaudeHookService::http_wait_cap())
@@ -169,6 +177,11 @@ async fn tool_approval(
         Ok(Ok(ClaudeHookResolution::ContinueInTerminal)) => None,
         _ => None,
     };
+    AppNotificationService::publish_resolved(
+        terminal_id,
+        crate::services::app_notification_service::terminal_name(app, terminal_id),
+        &decision_id,
+    );
     if let Some(resolution) = resolution {
         let _ = app.emit("claude-hook-decision-resolved", json!({
             "decisionId": decision_id,

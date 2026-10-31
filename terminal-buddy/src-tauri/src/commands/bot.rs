@@ -6,7 +6,7 @@ use crate::models::{
 use crate::services::bot_channel::{bot_client, dispatch_channel};
 use crate::services::{
     begin_scan, get_bot_long_connection_statuses, poll_scan, sync_bot_long_connections,
-    BotBindingService, BotSettingsService, ScanBeginResult, ScanPollResult,
+    AppNotificationService, BotBindingService, BotSettingsService, ScanBeginResult, ScanPollResult,
 };
 use chrono::{Duration, Utc};
 use serde_json::json;
@@ -117,6 +117,16 @@ fn build_decision_binding(
 pub async fn send_bot_notification(
     request: BotNotificationRequest,
 ) -> Result<Vec<BotDeliveryReport>, String> {
+    // 机器人通知与 App 通知同源：完成事件先进入 App 通道，再按配置投递微信 / 飞书。
+    if request.kind == "completed" {
+        AppNotificationService::publish_bot_completion(
+            &request.event_id,
+            &request.terminal_id,
+            &request.terminal_name,
+            &request.title,
+            &request.summary,
+        );
+    }
     let settings = BotSettingsService::get_runtime()?;
     if !settings.enabled {
         return Ok(Vec::new());

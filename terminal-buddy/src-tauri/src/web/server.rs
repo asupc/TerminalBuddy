@@ -108,6 +108,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/desktop/upload", post(handlers::desktop_handler::upload).layer(DefaultBodyLimit::max(32 * 1024 * 1024)))
         .route("/api/desktop/file", get(handlers::desktop_handler::file))
         .route("/ws/events", get(handlers::desktop_handler::events))
+        // App 服务端任务通知：终端完成 / 失败实时推送，决策支持快照与回答。
+        .route("/api/notifications/decisions", get(handlers::app_notification_handler::list))
+        .route(
+            "/api/notifications/decisions/{id}/answer",
+            post(handlers::app_notification_handler::answer),
+        )
+        .route("/ws/notifications", get(handlers::app_notification_handler::socket))
         .route("/api/health", get(|| async { "正常" }))
         // 机器人平台回调使用各自签名的 Token，不走 Web API JWT
         .route(
