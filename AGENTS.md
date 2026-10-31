@@ -27,7 +27,7 @@ cd src-tauri && cargo check  # Rust 编译检查
 cd src-tauri && cargo test --lib   # Rust 单元测试（25 个文件、约 164 个用例）
 ```
 
-仓库根目录 `scripts/` 下的快捷脚本：`scripts/dev.bat` 直接启动 `tauri dev`（不再预构建任何 Web 前端）；`scripts/build-windows-exe.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/windows-build/Dockerfile`，cargo-xwin 交叉编译）一键产出 Windows 单文件 exe：源码只读挂载（`terminal-buddy/web` 退役目录随拷贝排除），构建与缓存在容器/命名卷内完成，宿主机不安装工具链，仅输出到仓库根目录 `dist/`（含 `.sha256`），不生成安装包 —— 需要 NSIS 安装包请在 Windows 上使用 `terminal-buddy/build.bat`。`scripts/build-android.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/android-build/Dockerfile`，JDK 17 + Android SDK 36）构建 Android Release APK 并用 apksigner 校验签名：源码只读挂载，Gradle 缓存在命名卷 `terminal-buddy-android-cache` 内，产物输出到仓库根目录 `dist/`（含 `.sha256`）；Windows 上直装设备用 `scripts/build-android.bat`。
+仓库根目录 `scripts/` 下的快捷脚本：`scripts/dev.bat` 直接启动 `tauri dev`（不再预构建任何 Web 前端）；`scripts/build-windows-exe.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/windows-build/Dockerfile`，cargo-xwin 交叉编译）一键产出 Windows 单文件 exe：源码只读挂载（`terminal-buddy/web` 退役目录随拷贝排除），构建与缓存在容器/命名卷内完成，宿主机不安装工具链，仅输出到仓库根目录 `dist/`（含 `.sha256`），不生成安装包 —— 需要 NSIS 安装包请在 Windows 上使用 `terminal-buddy/build.bat`。`scripts/build-android.sh` 在 Linux 上通过一次性 Docker 容器（`scripts/android-build/Dockerfile`，JDK 17 + Android SDK 36）构建 Android Release APK 并用 apksigner 校验签名：源码只读挂载，Gradle 缓存在命名卷 `terminal-buddy-android-cache` 内，产物输出到仓库根目录 `dist/`（含 `.sha256`）；Windows 上直装设备用 `scripts/build-android.bat`。安卓端内置简版 / 完整版两种界面模式（`AppUiMode`，默认简版），在「我的 → 界面模式」切换，不需要分别构建。
 
 仓库没有 lint 和格式化工具。TypeScript strict 模式开启了 `noUnusedLocals` 和 `noUnusedParameters`，未使用的绑定会让 `tsc` 失败。测试方面只有 Rust 单元测试（`cargo test --lib`）和独立的 `node scripts/test-*.mjs` 脚本，前端没有测试套件。
 
