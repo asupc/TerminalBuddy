@@ -60,7 +60,11 @@ internal fun AiSimpleHome(
         terminalVm.bindAccount()
         if (ui.authenticated) terminalVm.refresh()
     }
-    val recent = remember(ui.sessions) { ui.sessions.sortedByDescending { it.updatedAt } }
+    // 冷启动先用首页缓存的最近日任务占位，完整列表同步后再平铺全部会话。
+    val recent = remember(ui.sessions, ui.recentSessions) {
+        (if (ui.sessions.isEmpty()) ui.recentSessions else ui.sessions)
+            .sortedByDescending { it.updatedAt }
+    }
     // 切换项目 / 助手或重新进入历史 Tab 时，按当前选择重新拉取 CLI 历史。
     LaunchedEffect(tab, ui.projectPath, ui.launchProvider?.agent, ui.connectionRevision) {
         if (tab == SimpleHomeTab.History) vm.loadHistoryForSelection()
