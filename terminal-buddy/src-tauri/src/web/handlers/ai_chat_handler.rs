@@ -89,7 +89,7 @@ pub async fn send(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input)
         service::send(&id, &claims.0.sub, input).map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
-/// 「立即发送」排队消息：中断当前回复并优先处理（可指定移到队首的消息）。
+/// 把指定排队消息立即插话到当前 CLI 进程（worker 已退出时按队首启动新回合）。
 pub async fn flush(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<FlushAiQueue>) -> Result<Json<AiSession>, ApiError> {
     tokio::task::spawn_blocking(move || {
         let session = service::get(&id, &claims.0.sub).map_err(service_error)?;

@@ -97,12 +97,13 @@ pub struct CreateAiSession {
 pub struct SendAiMessage {
     pub text: String,
     pub request_id: String,
-    /// 立即发送：入队后中断当前回复，停止后优先处理这条消息（默认排队等待回复结束）。
+    /// 原生插话：直接把消息交给运行中的 CLI 进程，由它选择合适节点接收；
+    /// 默认排队，等当前回合任务全部完成后由服务端写入同一个 CLI 进程。
     #[serde(default)]
-    pub immediate: bool,
+    pub steer: bool,
 }
 
-/// 「立即发送」排队消息：可选把指定消息移到队首，再中断当前回复立即处理。
+/// 把指定排队消息立即插话到当前回合（worker 已退出时按选中消息启动新回合）。
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FlushAiQueue {
