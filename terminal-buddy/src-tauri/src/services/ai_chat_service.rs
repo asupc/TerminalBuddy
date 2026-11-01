@@ -899,6 +899,10 @@ impl ClaudeBackgroundTasks {
         message(cell, &format!("{turn}-background-{id}"), "tool", &format!("{status}\n{detail}"), false);
     }
 }
+/// 回合未结算时允许的最长无输出时间：与 CLI 默认 API 超时（600 秒）对齐，超过即判定任务停滞
+/// （模型接口挂起、CLI 无限重试等），主动结束回合并保留聊天记录。等待用户决策不算停滞。
+/// Claude / Codex / Pi 三家循环共用。
+const AGENT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: mpsc::Receiver<Control>,
     output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, hooks: &NativeClaudeHooks) -> Result<WorkerExit> {
     let mut checkpoint = Instant::now();
@@ -910,6 +914,8 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
     // 每条写入 stdin 的用户消息都会产生一个 result；归零才表示当前回合任务全部结束。
     let mut pending_results = 1u64;
     let mut output_closed = false;
+    // 最近一次活动（CLI 输出或用户操作）时间，用于识别模型接口挂起导致的回合停滞。
+    let mut last_event = Instant::now();
     loop {
         while let Ok(event) = hooks.receiver.try_recv() {
             update(cell, |data| match event {
@@ -941,6 +947,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                     let session_id = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.thread_id.clone().unwrap_or_default();
                     write_claude_user(stdin, &session_id, &text)?;
                     pending_results = pending_results.saturating_add(1);
+                    last_event = Instant::now();
                 }
                 Control::Approval(answer) => {
                     if let Some(request) = pending.remove(&answer.approval_id) {
@@ -950,6 +957,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                             data.approvals.retain(|a| a.id != answer.approval_id);
                             if data.approvals.is_empty() { data.status = "running".into(); }
                         });
+                        last_event = Instant::now();
                     }
                 }
             }
@@ -972,6 +980,13 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
         // 回合任务全部结束后保持进程与 stdin 存活，把队列直接写入同一个 CLI 进程，不再 --resume。
         let waiting_for_hook = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.approvals.iter()
             .any(|item| item.method == approval::CLAUDE_HOOK_METHOD);
+        // 回合未结算且长时间无任何输出（模型接口挂起、CLI 静默重试）时主动判停，
+        // 否则 status 永远停在 running，App 端会一直显示「思考中」。等待用户决策不算停滞。
+        if !output_closed && pending_results > 0 && pending.is_empty() && !waiting_for_hook
+            && last_event.elapsed() > AGENT_STALL_TIMEOUT {
+            return Err(format!("Claude 已超过 {} 分钟没有任何输出，任务可能已停止；聊天记录已保留，可重新发送消息继续",
+                AGENT_STALL_TIMEOUT.as_secs() / 60));
+        }
         if pending_results == 0 && tasks.tasks.is_empty() && pending.is_empty() && !waiting_for_hook {
             let became_idle = cell.data.lock().map(|mut data| {
                 if data.status == "idle" { false } else {
@@ -985,9 +1000,13 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                     pending_results = 1;
                 }
             }
+        } else if pending_results == 0 && pending.is_empty() && !waiting_for_hook {
+            // 回合已结算但后台任务仍在执行：转入 background 而不是停在 running，
+            // App 端按「后台任务执行中」展示，任务清空后由上方分支转 idle。
+            update(cell, |data| { if data.status == "running" { data.status = "background".into(); } });
         }
         let value = match output.recv_timeout(Duration::from_millis(100)) {
-            Ok(value) => value?,
+            Ok(value) => { last_event = Instant::now(); value? }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => { output_closed = true; drop(input.take()); continue; }
         };
@@ -1251,6 +1270,8 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
     let mut agent_queries: HashMap<u64, String> = HashMap::new();
     let mut agent_checkpoint = Instant::now();
     let mut settle_at: Option<Instant> = None;
+    // 最近一次活动（app-server 输出或用户操作）时间，用于识别模型接口挂起导致的回合停滞。
+    let mut last_event = Instant::now();
     if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
     loop {
         while let Ok(control) = controls.try_recv() {
@@ -1276,12 +1297,14 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
                         queued_prompt = Some(text);
                         state.turn_id = None;
                     }
+                    last_event = Instant::now();
                 }
                 Control::Approval(answer) => {
                     if let Some((id, method)) = pending.remove(&answer.approval_id) {
                         let result = approval::codex_response(&method, &answer);
                         write_json(stdin, json!({"id":id,"result":result}))?;
                         update(cell, |data| { data.approvals.retain(|a| a.id != answer.approval_id); });
+                        last_event = Instant::now();
                     }
                 }
             }
@@ -1325,7 +1348,16 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
             agent_checkpoint = Instant::now();
         }
         codex_status(cell, &state, &background, request_id.as_deref(), resume_request.is_some() || turn_request.is_some() || settle_at.is_some());
+        // 回合未结算且长时间无任何输出（模型接口挂起、app-server 静默）时主动判停，
+        // 否则 status 永远停在 running，App 端会一直显示「思考中」。等待用户决策不算停滞；
+        // 回合已结算、仅后台命令在执行的场景显示为 background，也不在此列。
+        if (resume_request.is_some() || turn_request.is_some() || settle_at.is_some() || !state.finished)
+            && pending.is_empty() && last_event.elapsed() > AGENT_STALL_TIMEOUT {
+            return Err(format!("Codex 已超过 {} 分钟没有任何输出，任务可能已停止；聊天记录已保留，可重新发送消息继续",
+                AGENT_STALL_TIMEOUT.as_secs() / 60));
+        }
         let Some(value) = next_output(&output, &errors)? else { continue; };
+        last_event = Instant::now();
         if let Some(id) = value["id"].as_u64().filter(|_| value.get("method").is_none()) {
             if let Some(agent_id) = agent_queries.remove(&id) {
                 if value.get("error").is_none() {
@@ -1513,6 +1545,8 @@ fn run_pi(cell: &Cell, session: &AiSession, prompt: &str, stdin: ChildStdin, con
     let mut checkpoint = Instant::now();
     let mut last_persisted = session.revision;
     let mut retired = false;
+    // 最近一次活动（Pi RPC 输出或用户操作）时间，用于识别模型接口挂起导致的回合停滞。
+    let mut last_event = Instant::now();
     // Pi 会话文件与摘要绑定到 Pi 会话 ID（即 AiSession ID），首回合即登记。
     if session.thread_id.is_none() { update(cell, |data| data.thread_id = Some(session.id.clone())); persist(cell)?; }
     pi_request(input.as_mut().ok_or("Pi 输入通道不可用")?, &mut next_id, "prompt", json!({"message":prompt}))?;
@@ -1540,6 +1574,7 @@ fn run_pi(cell: &Cell, session: &AiSession, prompt: &str, stdin: ChildStdin, con
                         pi_request(stdin, &mut next_id, "prompt", json!({"message":text}))?;
                     }
                     state.running = true;
+                    last_event = Instant::now();
                 }
                 Control::Approval(answer) => {
                     if let Some(approval) = pending.remove(&answer.approval_id) {
@@ -1550,6 +1585,7 @@ fn run_pi(cell: &Cell, session: &AiSession, prompt: &str, stdin: ChildStdin, con
                             if data.approvals.is_empty() && data.status == "approval"
                                 && (state.running || state.settling) { data.status = "running".into(); }
                         });
+                        last_event = Instant::now();
                     }
                 }
             }
@@ -1560,6 +1596,13 @@ fn run_pi(cell: &Cell, session: &AiSession, prompt: &str, stdin: ChildStdin, con
             checkpoint = Instant::now();
         }
         pi_status(cell, &state);
+        // 回合未结算且长时间无任何输出（模型接口挂起、RPC 静默）时主动判停，
+        // 否则 status 永远停在 running，App 端会一直显示「思考中」。等待用户决策不算停滞。
+        if !retired && (state.running || state.settling) && pending.is_empty()
+            && last_event.elapsed() > AGENT_STALL_TIMEOUT {
+            return Err(format!("Pi 已超过 {} 分钟没有任何输出，任务可能已停止；聊天记录已保留，可重新发送消息继续",
+                AGENT_STALL_TIMEOUT.as_secs() / 60));
+        }
         // 结算完成后持续检查，而非只在统计响应里取一次，避免收尾期间入队的消息滞留。
         if !retired && !state.running && !state.settling {
             if let Some(next) = take_pending_if_idle(cell)? {
@@ -1571,7 +1614,7 @@ fn run_pi(cell: &Cell, session: &AiSession, prompt: &str, stdin: ChildStdin, con
             }
         }
         let value = match next_output(&output, &errors) {
-            Ok(Some(value)) => value,
+            Ok(Some(value)) => { last_event = Instant::now(); value }
             Ok(None) => continue,
             Err(message) => { if retired { return Ok(WorkerExit::Retired); } return Err(message); }
         };
