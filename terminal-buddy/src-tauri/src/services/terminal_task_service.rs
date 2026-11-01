@@ -321,8 +321,31 @@ pub fn note_terminal_input(terminal_id: &str, data: &str) {
     }
 }
 
-pub fn record_agent_session(terminal_id: &str, provider: &str, session_id: &str, session_file: Option<&str>) {    let mut all = terminals().lock().unwrap_or_else(|e| e.into_inner());
+/// 原子换绑规则（终端 Agent 会话接力 §4.7）：当前无绑定或绑定相同 → 允许；
+/// 已绑定到另一个会话时，只有明确的 SessionStart 事件允许换绑。
+/// 其余事件（含 SessionEnd、迟到的旧会话事件）不得改写当前绑定，也不得写入阶段。
+fn rebind_allowed(tracked: &TrackedTerminal, provider: &str, session_id: &str, session_start: bool) -> bool {
+    match &tracked.binding {
+        None => true,
+        Some((bound_provider, bound_id)) if bound_provider == provider && bound_id == session_id => true,
+        Some(_) => session_start,
+    }
+}
+
+/// 上报式绑定登记：Pi 扩展 / Codex 日志等来源。`session_start` 为 true 表示
+/// 这是明确的 SessionStart 事件（允许跨会话换绑）。
+pub fn record_agent_session(
+    terminal_id: &str,
+    provider: &str,
+    session_id: &str,
+    session_file: Option<&str>,
+    session_start: bool,
+) {
+    let mut all = terminals().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(tracked) = all.get_mut(terminal_id) {
+        if !rebind_allowed(tracked, provider, session_id, session_start) {
+            return;
+        }
         bind(tracked, provider, session_id);
         if let Some(file) = session_file.filter(|file| !file.trim().is_empty()) {
             let path = PathBuf::from(file);
@@ -333,15 +356,64 @@ pub fn record_agent_session(terminal_id: &str, provider: &str, session_id: &str,
     }
 }
 
-pub fn record_claude_session(terminal_id: &str, session_id: &str, prompt: Option<&str>) {
+/// Claude Hook 绑定登记。`session_start` 语义同 [`record_agent_session`]：
+/// 非 SessionStart 事件不越过已有不同绑定，prompt 也不落到别人的会话上。
+pub fn record_claude_session(
+    terminal_id: &str,
+    session_id: &str,
+    prompt: Option<&str>,
+    session_start: bool,
+) {
     let mut all = terminals().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(tracked) = all.get_mut(terminal_id) {
+        if !rebind_allowed(tracked, "claude", session_id, session_start) {
+            return;
+        }
         bind(tracked, "claude", session_id);
         if tracked.prompt.is_none() {
             tracked.prompt = prompt.and_then(compact_title);
             if tracked.prompt.is_some() { tracked.revision = tracked.revision.wrapping_add(1); }
         }
     }
+}
+
+/// 当前绑定快照 (provider, sessionId)，供 relay 阶段表与回复闸门比对身份。
+pub fn current_binding(terminal_id: &str) -> Option<(String, String)> {
+    terminals()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(terminal_id)?
+        .binding
+        .clone()
+}
+
+/// 定位当前绑定的转录文件：`tracked.transcript` 仍存在时优先，否则按 provider
+/// 根目录递归查找。tracked 锁内只复制必要数据，目录 I/O 在锁外完成。
+pub struct TranscriptLocation {
+    pub provider: String,
+    pub session_id: String,
+    pub path: PathBuf,
+    pub root: PathBuf,
+}
+
+pub fn locate_transcript(terminal_id: &str) -> Option<TranscriptLocation> {
+    let snapshot = {
+        let all = terminals().lock().unwrap_or_else(|e| e.into_inner());
+        let tracked = all.get(terminal_id)?;
+        let (provider, session_id) = tracked.binding.clone()?;
+        let root = match provider.as_str() {
+            "claude" => tracked.claude_root.clone(),
+            "pi" => tracked.pi_root.clone(),
+            _ => tracked.codex_root.clone(),
+        };
+        (provider, session_id, tracked.transcript.clone(), root)
+    };
+    let (provider, session_id, transcript, root) = snapshot;
+    if let Some(path) = transcript.as_ref().filter(|path| path.is_file()) {
+        return Some(TranscriptLocation { provider, session_id, path: path.clone(), root });
+    }
+    let path = find_transcript(&root, &provider, &session_id)?;
+    Some(TranscriptLocation { provider, session_id, path, root })
 }
 
 pub fn forget_terminal(terminal_id: &str) -> Option<PathBuf> {

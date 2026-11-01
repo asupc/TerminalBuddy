@@ -8,7 +8,7 @@
 use super::TerminalOwner;
 
 /// 发起终端操作的一侧。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TerminalActor {
     /// 桌面应用（Tauri 前端 / Tauri command）
     Pc,

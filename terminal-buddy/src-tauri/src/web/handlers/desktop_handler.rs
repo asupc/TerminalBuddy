@@ -41,6 +41,15 @@ fn scoped_file(path: &str) -> Result<(), ApiError> {
     super::ensure_project_scope(path).map(|_| ())
 }
 
+/// 终端访问失败按变体映射：不存在 404、无权限 403（§4.8）。
+/// 之前一律 403，客户端无法用 404 修剪已关闭终端。
+fn access_map_error(error: crate::models::TerminalAccessError) -> ApiError {
+    match error {
+        crate::models::TerminalAccessError::NotFound => ApiError::NotFound(error.to_string()),
+        crate::models::TerminalAccessError::Denied { .. } => ApiError::Forbidden(error.to_string()),
+    }
+}
+
 fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle) -> Result<(), ApiError> {
     for id in [args.get("id"), args.get("profile").and_then(|v| v.get("id")), args.get("workspace").and_then(|v| v.get("id"))].into_iter().flatten().filter_map(Value::as_str) {
         if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')) {
@@ -55,7 +64,14 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
     }
     if let Some(id) = args.get("terminalId").and_then(Value::as_str) {
         app.state::<TerminalService>().authorize(id, TerminalActor::Web, TerminalAction::View)
-            .map_err(|e| ApiError::Forbidden(e.to_string()))?;
+            .map_err(access_map_error)?;
+    }
+    // Agent 回复会写入 PTY：在通用 View 检查之上提级到 Input（业务层仍会重新鉴权）。
+    if command == "terminal_agent_reply" {
+        if let Some(id) = args.get("terminalId").and_then(Value::as_str) {
+            app.state::<TerminalService>().authorize(id, TerminalActor::Web, TerminalAction::Input)
+                .map_err(access_map_error)?;
+        }
     }
     // SSH 路径属于远端主机，不能拿服务器文件范围来比较。
     let path_keys: &[&str] = if command.starts_with("remote_") { &["localPath", "localDir"] } else {
@@ -73,7 +89,7 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
             // 不参与权限判定；仍存活的终端继续严格鉴权。
             if service.terminal_owner(&id).is_some() {
                 service.authorize(&id, TerminalActor::Web, TerminalAction::View)
-                    .map_err(|e| ApiError::Forbidden(e.to_string()))?;
+                    .map_err(access_map_error)?;
             }
         }
     }

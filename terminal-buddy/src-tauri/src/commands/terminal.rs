@@ -621,6 +621,9 @@ fn release_terminal_resources(
     // hook token + pending decision + 待确认通知卡片，本身幂等。
     ClaudeHookService::unregister_terminal(terminal_id);
     let task_log_dir = crate::services::terminal_task_service::forget_terminal(terminal_id);
+    // 终端 Agent 会话接力：真正 teardown 才结束（发 terminal_closed、清镜像/租约/阶段）。
+    // phase=ended 不走这里——PTY 仍活着，只读镜像保留。
+    crate::services::terminal_agent_relay::on_terminal_closed(Some(app), terminal_id);
     // 模型终端的临时 --settings 文件与映射条目，幂等（无映射时为 no-op）。
     crate::services::llm_provider_service::cleanup_temp_settings_for_terminal(terminal_id);
     // SSH 终端才有 session，其余为 no-op。

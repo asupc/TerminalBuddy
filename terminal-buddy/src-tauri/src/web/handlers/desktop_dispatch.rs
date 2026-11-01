@@ -183,9 +183,44 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle) -> Result<Valu
         "fetch_deepseek_usage" => data(crate::commands::ai_usage::fetch_deepseek_usage(argument(&args, "apiKey")?).await),
         "fetch_minimax_usage" => data(crate::commands::ai_usage::fetch_minimax_usage(argument(&args, "apiKey")?).await),
         "fetch_qianfan_usage" => data(crate::commands::ai_usage::fetch_qianfan_usage(argument(&args, "cookie")?).await),
-        "answer_claude_hook_decision" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::web::handlers::claude_hook_handler::answer_claude_hook_decision(argument(&args, "decisionId")?, argument(&args, "answers")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
-        "continue_claude_hook_in_terminal" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::web::handlers::claude_hook_handler::continue_claude_hook_in_terminal(argument(&args, "decisionId")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
-        "get_pending_claude_hook_decisions" => crate::runtime::async_runtime::spawn_blocking(move || data(crate::web::handlers::claude_hook_handler::get_pending_claude_hook_decisions())).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        "answer_claude_hook_decision" => crate::runtime::async_runtime::spawn_blocking({ let app = app.clone(); move || result(crate::web::handlers::claude_hook_handler::answer_decision_for_web(&app, &argument::<String>(&args, "decisionId")?, argument(&args, "answers")?)) }).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        "continue_claude_hook_in_terminal" => crate::runtime::async_runtime::spawn_blocking({ let app = app.clone(); move || result(crate::web::handlers::claude_hook_handler::continue_decision_for_web(&app, &argument::<String>(&args, "decisionId")?)) }).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        "get_pending_claude_hook_decisions" => crate::runtime::async_runtime::spawn_blocking({ let app = app.clone(); move || data(crate::web::handlers::claude_hook_handler::pending_decisions_for_web(&app)) }).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        // 终端 Agent 会话接力：浏览器以 Web 身份调用共享 use case（与桌面 Pc 入口
+        // 分离，权限随身份判定）。禁止把 Pc 命令函数原样暴露给浏览器。
+        "terminal_agent_list" => data(crate::services::terminal_agent_relay::sessions_for(&app, crate::models::TerminalActor::Web).await),
+        "terminal_agent_messages" => {
+            let request: crate::commands::terminal_agent::AgentMessagesArgs = serde_json::from_value(args.clone()).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            crate::services::terminal_agent_relay::page_for(&app, crate::models::TerminalActor::Web, &request.terminal_id, request.after_seq, request.revision, request.limit)
+                .await
+                .map_err(ApiError::from)
+                .and_then(data)
+        }
+        "terminal_agent_reply" => {
+            let request: crate::commands::terminal_agent::AgentReplyArgs = serde_json::from_value(args.clone()).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            crate::services::terminal_agent_relay::reply(&app, crate::models::TerminalActor::Web, &request.terminal_id, &request.text, &request.request_id)
+                .await
+                .map_err(ApiError::from)
+                .and_then(data)
+        }
+        "terminal_agent_subscribe" => {
+            let terminal_id: String = argument(&args, "terminalId")?;
+            let (outcome, _receiver) = crate::services::terminal_agent_relay::subscribe(&app, crate::models::TerminalActor::Web, &terminal_id, false)
+                .await
+                .map_err(ApiError::from)?;
+            data(outcome)
+        }
+        "terminal_agent_unsubscribe" => {
+            let request: crate::commands::terminal_agent::AgentUnsubscribeArgs = serde_json::from_value(args.clone()).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            crate::services::terminal_agent_relay::unsubscribe(&request.terminal_id, &request.subscription_id);
+            Ok(Value::Null)
+        }
+        "terminal_agent_heartbeat" => {
+            let request: crate::commands::terminal_agent::AgentHeartbeatArgs = serde_json::from_value(args.clone()).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            data(crate::services::terminal_agent_relay::HeartbeatOutcome {
+                alive: crate::services::terminal_agent_relay::heartbeat(crate::models::TerminalActor::Web, &request.subscriptions),
+            })
+        }
         "send_claude_hook_decision_notification" => result(crate::web::handlers::claude_hook_handler::send_claude_hook_decision_notification(app.clone(), argument(&args, "decisionId")?).await),
         _ => Err(ApiError::BadRequest(format!("网页端暂不支持此操作：{}", command))),
     }

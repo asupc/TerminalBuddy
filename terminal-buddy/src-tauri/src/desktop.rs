@@ -445,6 +445,13 @@ pub fn run() {
             claim_web_session_restore,
             release_web_session_restore,
             get_terminal_task_summaries,
+            // 终端 Agent 会话接力（桌面 Pc 身份；浏览器走 desktop_dispatch 的 Web 分支）
+            terminal_agent_list,
+            terminal_agent_messages,
+            terminal_agent_reply,
+            terminal_agent_subscribe,
+            terminal_agent_unsubscribe,
+            terminal_agent_heartbeat,
             save_show_task_summary,
             save_agent_commands,
             save_pi_tool_approval_enabled,

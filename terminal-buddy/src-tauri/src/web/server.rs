@@ -158,6 +158,18 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::terminal_handler::list).post(handlers::terminal_handler::start),
         )
         .route("/api/terminals/{id}", delete(handlers::terminal_handler::close))
+        // 终端 Agent 会话接力：列表 / 消息页 / 回复 / 镜像 WS（Android 专用，
+        // React 网页版走 desktop_dispatch 的命令分支）
+        .route("/api/terminal-agents", get(handlers::terminal_agent_handler::list))
+        .route(
+            "/api/terminal-agents/{id}/messages",
+            get(handlers::terminal_agent_handler::messages),
+        )
+        .route(
+            "/api/terminal-agents/{id}/reply",
+            post(handlers::terminal_agent_handler::reply),
+        )
+        .route("/ws/terminal-agents/{id}", get(handlers::terminal_agent_handler::socket))
         // Claude 历史会话（与 PC 端共享 SQLite 索引与 ~/.claude/projects 转录）
         .route(
             "/api/claude-history",

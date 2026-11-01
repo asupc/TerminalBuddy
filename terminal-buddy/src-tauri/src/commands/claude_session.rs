@@ -175,7 +175,9 @@ pub fn refresh_claude_session_registry(app: &AppHandle) -> Result<(), String> {
     crate::services::claude_session_registry_service::merge_agents(bindings, now_ms())
 }
 
-fn terminal_processes(ids: &[String], service: &TerminalService) -> Vec<(String, u32)> {
+/// relay 必须复用这条不受 showTaskSummary 开关控制的进程快照路径：
+/// 只把已经过调用方鉴权的 terminalId 传进来（scan 缓存传的是服务端自有实例表）。
+pub(crate) fn terminal_processes(ids: &[String], service: &TerminalService) -> Vec<(String, u32)> {
     let instances = service.lock_instances();
     ids.iter().filter_map(|id| instances.get(id).and_then(|instance| instance.process_id()).map(|pid| (id.clone(), pid))).collect()
 }

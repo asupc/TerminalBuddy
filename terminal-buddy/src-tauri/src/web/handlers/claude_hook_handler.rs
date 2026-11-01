@@ -146,17 +146,19 @@ fn emit_terminal_event(
     request: &ClaudeHookRequest,
     phase: &str,
 ) {
+    let session_start = request.hook_event_name == "SessionStart";
     crate::services::terminal_task_service::record_claude_session(
-        terminal_id, &request.session_id, request.prompt.as_deref(),
+        terminal_id, &request.session_id, request.prompt.as_deref(), session_start,
     );
     let (task_title, summary) = task_content(terminal_id, request);
+    let occurred_at = next_hook_timestamp();
     let event = ClaudeHookTerminalEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
         terminal_id: terminal_id.to_string(),
         session_id: request.session_id.clone(),
         event_name: request.hook_event_name.clone(),
         phase: phase.to_string(),
-        occurred_at: next_hook_timestamp(),
+        occurred_at,
         provider: Some("claude".to_string()),
         notification_type: request.notification_type.clone(),
         title: request.title.clone(),
@@ -164,6 +166,11 @@ fn emit_terminal_event(
         task_title,
         summary,
     };
+    // relay 阶段表：键含 sessionId，且只有与当前绑定完全匹配才写入
+    // （旧会话的迟到 SessionEnd 不会污染换绑后的新会话）。
+    crate::services::terminal_agent_relay::note_phase(
+        terminal_id, "claude", &request.session_id, phase, occurred_at,
+    );
     let _ = app.emit("claude-hook-terminal-event", event.clone());
     AppNotificationService::publish_terminal_result(&event, terminal_name(app, terminal_id));
 }
@@ -353,6 +360,51 @@ pub fn answer_claude_hook_decision(
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn continue_claude_hook_in_terminal(decision_id: String) -> Result<(), String> {
     ClaudeHookService::continue_in_terminal(&decision_id)
+}
+
+// ── 浏览器侧决策权限修正（终端 Agent 接力同里程碑交付，§5.5） ──
+// 此前浏览器调用这三个命令可枚举并回答 PC 终端的待决策；现在按 Web View/Input
+// 逐终端授权过滤。Pc 原生命令行为不变。
+
+/// 浏览器：只返回 Web 当前可查看的待决策（按 View 过滤目标终端）。
+pub(crate) fn pending_decisions_for_web(app: &crate::runtime::AppHandle) -> Vec<ClaudeHookDecisionEvent> {
+    let service = app.state::<crate::commands::TerminalService>();
+    get_pending_claude_hook_decisions()
+        .into_iter()
+        .filter(|decision| {
+            service
+                .authorize(&decision.terminal_id, crate::models::TerminalActor::Web, crate::models::TerminalAction::View)
+                .is_ok()
+        })
+        .collect()
+}
+
+/// 回答 / 返回终端都要求对该决策所在终端有 Input 权限；
+/// 决策已不存在时交给底层返回「已失效」，不在此处猜结果。
+fn ensure_web_decision_input(app: &crate::runtime::AppHandle, decision_id: &str) -> Result<(), String> {
+    let Some(decision) = ClaudeHookService::list_pending_decisions()
+        .into_iter()
+        .find(|decision| decision.decision_id == decision_id)
+    else {
+        return Ok(());
+    };
+    app.state::<crate::commands::TerminalService>()
+        .authorize(&decision.terminal_id, crate::models::TerminalActor::Web, crate::models::TerminalAction::Input)
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn answer_decision_for_web(
+    app: &crate::runtime::AppHandle,
+    decision_id: &str,
+    answers: HashMap<String, String>,
+) -> Result<(), String> {
+    ensure_web_decision_input(app, decision_id)?;
+    answer_claude_hook_decision(decision_id.to_string(), answers)
+}
+
+pub(crate) fn continue_decision_for_web(app: &crate::runtime::AppHandle, decision_id: &str) -> Result<(), String> {
+    ensure_web_decision_input(app, decision_id)?;
+    continue_claude_hook_in_terminal(decision_id.to_string())
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]

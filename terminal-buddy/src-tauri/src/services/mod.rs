@@ -44,6 +44,7 @@ pub mod ssh_session_service;
 pub mod ssh_transfer;
 pub mod template_service;
 pub mod terminal_task_service;
+pub mod terminal_agent_relay;
 mod terminal_task_process;
 pub mod update_service;
 #[cfg(feature = "desktop")]

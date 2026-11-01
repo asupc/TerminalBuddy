@@ -31,14 +31,16 @@ pub struct SessionSearchHit {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionReplayTool {
     pub name: String,
     pub summary: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 镜像同步按完整字段（seq/role/text/timestamp/tools/toolName）比较，
+/// 因此派生 PartialEq（见 terminal_agent_relay::diff_content）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionReplayMessage {
     pub seq: i64,

@@ -87,13 +87,14 @@ fn emit_event(app: &crate::runtime::AppHandle, terminal_id: &str, request: &PiHo
         "StopFailure" => compact(request.reason.as_deref(), 220),
         _ => None,
     };
+    let occurred_at = next_timestamp();
     let event = ClaudeHookTerminalEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
         terminal_id: terminal_id.to_string(),
         session_id: request.session_id.clone(),
         event_name: request.event.clone(),
         phase: phase.to_string(),
-        occurred_at: next_timestamp(),
+        occurred_at,
         provider: Some("pi".to_string()),
         notification_type: None,
         title: None,
@@ -101,6 +102,8 @@ fn emit_event(app: &crate::runtime::AppHandle, terminal_id: &str, request: &PiHo
         task_title,
         summary,
     };
+    // relay 阶段表：Pi 以扩展明确的 SessionStart 事件允许换绑；阶段键含 sessionId。
+    crate::services::terminal_agent_relay::note_phase(terminal_id, "pi", &request.session_id, phase, occurred_at);
     let _ = app.emit("claude-hook-terminal-event", event.clone());
     AppNotificationService::publish_terminal_result(
         &event,
@@ -131,6 +134,14 @@ async fn tool_approval(
     terminal_id: &str,
     request: &PiHookRequest,
 ) -> Response {
+    // 审批开始即进入 attention（relay 阶段表与决策卡片独立表示）。
+    crate::services::terminal_agent_relay::note_phase(
+        terminal_id,
+        "pi",
+        &request.session_id,
+        "attention",
+        next_timestamp(),
+    );
     let question = approval_question(request);
     let decision_id = format!("pi:{}:{}", request.session_id, uuid::Uuid::new_v4());
     let occurred_at = next_timestamp();
@@ -205,6 +216,14 @@ async fn tool_approval(
         // 超时或转回终端：默认放行，保持 Pi 原生行为。
         _ => true,
     };
+    // 审批完成 / 超时 / 返回终端后回到 running；已结束或已换绑则不覆盖。
+    crate::services::terminal_agent_relay::note_phase_unless_ended(
+        terminal_id,
+        "pi",
+        &request.session_id,
+        "running",
+        next_timestamp(),
+    );
     Json(json!({ "allow": allow })).into_response()
 }
 
@@ -224,6 +243,8 @@ pub(crate) async fn pi_hook(
         "pi",
         &request.session_id,
         request.session_file.as_deref(),
+        // 普通 ToolCall / Input 不越过已有不同绑定；仅 SessionStart 可换绑。
+        request.event == "SessionStart",
     );
     if let Some(cwd) = request.cwd.as_deref() {
         let _ = crate::services::claude_session_registry_service::record(
