@@ -246,10 +246,15 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
                 catch (e: ApiException) { if (e.code != 404) throw e }
                 if (epoch != generation || mutable.value.selected?.id != selected.id) return@launch
                 disconnect()
+                visible = false
+                renderer = null
+                // 终端已不存在，直接退回列表页；留在页面上只会看到一片已结束的画面。
                 mutable.update { it.copy(
-                    connected = false, ended = true, status = "终端已关闭", terminalError = null,
+                    selected = null, connected = false, ended = false, status = "等待连接",
+                    terminalError = null,
                     terminals = it.terminals.filterNot { terminal -> terminal.id == selected.id },
                 ) }
+                refreshCatalog(clearError = false)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (epoch == generation) mutable.update { it.copy(terminalError = e.userMessage()) }

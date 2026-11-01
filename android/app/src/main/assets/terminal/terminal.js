@@ -46,10 +46,10 @@
     const container = document.getElementById('terminal');
     const terminal = new Terminal({
       fontSize: 13, fontFamily: 'monospace', scrollback: 3000, cursorBlink: true,
+      // 手机端用触摸滚动，隐藏 xterm 自绘滚动条，内容区才能铺满整个宽度。
+      scrollbar: { showScrollbar: false },
       theme: { background: '#101418', foreground: '#e6edf3', cursor: '#e6edf3' },
     });
-    const fit = new FitAddon.FitAddon();
-    terminal.loadAddon(fit);
     terminal.open(container);
     const removeMouseGuard = installMouseGuard(terminal);
     let lastSize = '';
@@ -65,11 +65,30 @@
       if (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0 &&
           (terminal.cols !== cols || terminal.rows !== rows)) terminal.resize(cols, rows);
     }
+    // 不依赖 addon-fit：它固定为滚动条预留 14px，而这里已经隐藏滚动条，
+    // 直接按容器实际尺寸与字符格宽算列数，才能铺满整屏不留右侧空白。
+    function proposeSize() {
+      const core = terminal._core;
+      const dims = core && core._renderService && core._renderService.dimensions;
+      if (!dims || !dims.css.cell.width || !dims.css.cell.height) return null;
+      const element = terminal.element;
+      if (!element) return null;
+      const style = window.getComputedStyle(element);
+      const padding = n => parseFloat(style.getPropertyValue(n)) || 0;
+      const rect = container.getBoundingClientRect();
+      const width = Math.max(0, rect.width - padding('padding-left') - padding('padding-right'));
+      const height = Math.max(0, rect.height - padding('padding-top') - padding('padding-bottom'));
+      if (width < 1 || height < 1) return null;
+      return {
+        cols: Math.floor(width / dims.css.cell.width),
+        rows: Math.floor(height / dims.css.cell.height),
+      };
+    }
     function measure() {
       if (disposed) return;
       const rect = container.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return;
-      const size = fit.proposeDimensions();
+      const size = proposeSize();
       if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
       const cols = Math.max(2, Math.min(500, size.cols));
       const rows = Math.max(1, Math.min(500, size.rows));

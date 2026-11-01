@@ -180,14 +180,14 @@ private class LocalTerminalView(context: Context, private val vm: ServerTerminal
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) { fail() }
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
                 // 图标等非必要请求不能使已经正常显示的终端失效。
-                if (request.isForMainFrame || request.url.lastPathSegment in setOf("compat.js", "terminal.js", "xterm.js", "fit.js", "xterm.css")) fail()
+                if (request.isForMainFrame || request.url.lastPathSegment in setOf("compat.js", "terminal.js", "xterm.js", "xterm.css")) fail()
             }
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
                 val uri = request.url
                 val name = uri.path?.removePrefix("/terminal/")
                 val mime = when (name) {
                     "index.html" -> "text/html"
-                    "compat.js", "terminal.js", "xterm.js", "fit.js" -> "application/javascript"
+                    "compat.js", "terminal.js", "xterm.js" -> "application/javascript"
                     "xterm.css" -> "text/css"
                     else -> null
                 }
