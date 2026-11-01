@@ -35,7 +35,10 @@ import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.ServerTerminalUiState
 import com.terminalbuddy.android.ServerTerminalViewModel
+import com.terminalbuddy.android.TerminalAgentUiState
+import com.terminalbuddy.android.TerminalAgentViewModel
 import com.terminalbuddy.android.data.AiSession
+import com.terminalbuddy.android.data.TerminalAgentSession
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.Instant
@@ -52,6 +55,8 @@ internal fun AiSessionsScreen(
     delete: (AiSession) -> Unit, deleteAll: () -> Unit, recentRequest: Int,
     unreadRequest: Int, unreadRequestHandled: (Int) -> Unit,
     terminalUi: ServerTerminalUiState, terminalVm: ServerTerminalViewModel,
+    agentUi: TerminalAgentUiState, agentVm: TerminalAgentViewModel,
+    openAgent: (TerminalAgentSession) -> Unit,
 ) {
     key(ui.activeAccountId) {
         val pager = rememberPagerState { 3 }
@@ -66,9 +71,15 @@ internal fun AiSessionsScreen(
         val currentTerminalUi = if (terminalVm.isCurrentAccount() && terminalUi.connection == terminalVm.state.value.connection) {
             terminalUi
         } else ServerTerminalUiState()
+        val currentAgentUi = if (agentVm.isCurrentAccount() && agentUi.connection == agentVm.state.value.connection) {
+            agentUi
+        } else TerminalAgentUiState()
         LaunchedEffect(ui.activeAccountId, ui.connectionRevision, pager.currentPage) {
             terminalVm.bindAccount()
+            agentVm.bindAccount()
             if (!terminalVm.state.value.loaded || pager.currentPage == 2) terminalVm.refresh()
+            // Agent 列表：进入终端 Tab、账号切换时都会重新拉取；普通终端失败不影响这里。
+            if (!agentVm.state.value.listLoaded || pager.currentPage == 2) agentVm.refresh()
         }
         Column(Modifier.fillMaxSize()) {
             AiSessionTabs(
@@ -90,7 +101,7 @@ internal fun AiSessionsScreen(
                         unreadRequest = if (pager.settledPage == 0) unreadRequest else 0,
                         unreadRequestHandled = unreadRequestHandled)
                     1 -> AiServerSessionsScreen(ui, vm)
-                    2 -> AiTerminalSessionsScreen(currentTerminalUi, terminalVm)
+                    2 -> AiTerminalSessionsScreen(currentTerminalUi, terminalVm, currentAgentUi, agentVm, openAgent)
                 }
             }
         }

@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.terminalbuddy.android.ServerTerminalViewModel
+import com.terminalbuddy.android.TerminalAgentViewModel
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.data.AiHistorySession
@@ -41,10 +42,16 @@ private enum class AiPage { Home, Profile, Accounts, Connection, ServiceInfo, Ap
 fun AiScreen(
     ui: AiUiState, vm: AiViewModel, simplified: Boolean = false,
     onSimplifiedChange: (Boolean) -> Unit = {},
+    openDecision: (String) -> Unit = {},
 ) {
     val terminalVm: ServerTerminalViewModel = viewModel()
     val terminalUi by terminalVm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(ui.authenticated, ui.activeAccountId, ui.connectionRevision) { terminalVm.bindAccount() }
+    val agentVm: TerminalAgentViewModel = viewModel()
+    val agentUi by agentVm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(ui.authenticated, ui.activeAccountId, ui.connectionRevision) {
+        terminalVm.bindAccount()
+        agentVm.bindAccount()
+    }
     var page by rememberSaveable { mutableStateOf(AiPage.Home) }
     var tab by rememberSaveable { mutableStateOf(AiHomeTab.QuickStart) }
     var recentSessionsRequest by rememberSaveable { mutableIntStateOf(0) }
@@ -58,6 +65,8 @@ fun AiScreen(
     var confirmDeleteAll by remember(ui.activeAccountId) { mutableStateOf(false) }
     var notificationSettings by rememberSaveable { mutableStateOf(false) }
     var sendModeSheet by rememberSaveable { mutableStateOf(false) }
+    /** 终端 Agent 会话宿主的选中态：优先于普通终端分支；返回时由宿主按页签清理。 */
+    var selectedAgentTerminalId by rememberSaveable { mutableStateOf<String?>(null) }
     val deletableCount = ui.sessions.count { !it.running }
     val openConnection: (String?, Boolean, Boolean) -> Unit = { id, adding, fromAccounts ->
         loginAccountId = id
@@ -71,10 +80,49 @@ fun AiScreen(
         vm.cancelAuthentication()
         page = if (page == AiPage.Connection) connectionReturnPage else AiPage.Home
     }
+    /** 退出 Agent 会话宿主：清 Agent 选中态并刷新列表；终端页签曾打开时一并退出终端查看。 */
+    val leaveAgentSession: () -> Unit = {
+        if (terminalUi.selected != null) terminalVm.leaveTerminal()
+        agentVm.leaveSession()
+        agentVm.refresh()
+        selectedAgentTerminalId = null
+    }
+    // 进程或页面重建后按选中的 terminalId 重新打开会话；列表刷新后目标消失则退出宿主。
+    // 拉取失败不自动重试（避免 listLoading 变化反复重启本 effect 形成忙循环），交给错误卡手动重试。
+    LaunchedEffect(selectedAgentTerminalId, agentUi.listLoaded, agentUi.listLoading, agentUi.sessions, agentUi.connection) {
+        val id = selectedAgentTerminalId ?: return@LaunchedEffect
+        if (agentUi.selected?.terminalId == id) return@LaunchedEffect
+        val session = agentUi.sessions.find { it.terminalId == id }
+        when {
+            session != null -> agentVm.openSession(session)
+            agentUi.listLoading -> Unit
+            agentUi.listLoaded -> selectedAgentTerminalId = null
+            agentUi.listError == null -> agentVm.refresh()
+        }
+    }
+    // Agent 宿主选中态是 UI 级状态，bindAccount 清不到：真正切换账号时同步清空。
+    // 首次组合与进程恢复（账号相同）不触发；lastAccountId 跨进程保留避免误清。
+    var lastAgentAccountId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(ui.activeAccountId) {
+        val previous = lastAgentAccountId
+        lastAgentAccountId = ui.activeAccountId
+        if (previous != null && ui.activeAccountId != null && previous != ui.activeAccountId &&
+            selectedAgentTerminalId != null
+        ) {
+            if (terminalUi.selected != null) terminalVm.leaveTerminal()
+            agentVm.leaveSession()
+            selectedAgentTerminalId = null
+        }
+    }
     // 切换界面模式时回到首页，避免旧页面状态落在一个已经不存在的 Tab 上。
     val changeMode: (Boolean) -> Unit = { simple ->
         page = AiPage.Home
         tab = AiHomeTab.QuickStart
+        if (selectedAgentTerminalId != null) {
+            if (terminalUi.selected != null) terminalVm.leaveTerminal()
+            agentVm.leaveSession()
+            selectedAgentTerminalId = null
+        }
         onSimplifiedChange(simple)
     }
     BackHandler(page != AiPage.Home || ui.authenticating || (!simplified && tab != AiHomeTab.QuickStart)) {
@@ -131,6 +179,15 @@ fun AiScreen(
                     simplified = true, onSimplifiedChange = changeMode)
             }
         }
+    } else if (ui.authenticated && agentVm.isCurrentAccount() && selectedAgentTerminalId != null) {
+        // Agent 会话宿主优先于普通终端分支；对话页返回只清 Agent 选中态，终端页签返回先离开终端查看。
+        TerminalAgentSessionScreen(
+            agentUi = agentUi, agentVm = agentVm,
+            terminalUi = terminalUi, terminalVm = terminalVm,
+            onBack = leaveAgentSession,
+            onBackFromTerminal = leaveAgentSession,
+            openDecision = openDecision,
+        )
     } else if (ui.authenticated && terminalVm.isCurrentAccount() && terminalUi.selected != null) {
         ServerTerminalScreen(terminalUi, terminalVm)
     } else if (simplified) {
@@ -160,7 +217,12 @@ fun AiScreen(
                                 unreadRequestHandled = { request ->
                                     if (unreadSessionRequest == request) unreadSessionRequest = 0
                                 },
-                                terminalUi = terminalUi, terminalVm = terminalVm)
+                                terminalUi = terminalUi, terminalVm = terminalVm,
+                                agentUi = agentUi, agentVm = agentVm,
+                                openAgent = { session ->
+                                    selectedAgentTerminalId = session.terminalId
+                                    agentVm.openSession(session)
+                                })
                             AiHomeTab.Profile -> AiProfileScreen(ui,
                                 notifications = { notificationSettings = true },
                                 sendMode = { sendModeSheet = true }, accounts = openAccounts,

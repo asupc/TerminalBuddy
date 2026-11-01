@@ -18,16 +18,25 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.terminalbuddy.android.ServerTerminalUiState
 import com.terminalbuddy.android.ServerTerminalViewModel
+import com.terminalbuddy.android.TerminalAgentUiState
+import com.terminalbuddy.android.TerminalAgentViewModel
 import com.terminalbuddy.android.data.AiProject
 import com.terminalbuddy.android.data.ServerProfile
 import com.terminalbuddy.android.data.ServerTerminal
+import com.terminalbuddy.android.data.TerminalAgentSession
 
 /**
  * 服务端终端板块：上半是已打开的终端，下半按项目折叠列出可启动的配置。
  * 打开、启动、刷新与配置管理沿用同一个账号绑定的 ViewModel，不另行维护状态。
+ * 「Agent 会话」区来自独立的 `/api/terminal-agents` 数据源：普通终端列表会过滤
+ * owner != web，不能用它推导 Agent 列表；两个列表各自 loading / error。
  */
 @Composable
-internal fun AiTerminalSessionsScreen(ui: ServerTerminalUiState, vm: ServerTerminalViewModel) {
+internal fun AiTerminalSessionsScreen(
+    ui: ServerTerminalUiState, vm: ServerTerminalViewModel,
+    agentUi: TerminalAgentUiState, agentVm: TerminalAgentViewModel,
+    openAgent: (TerminalAgentSession) -> Unit,
+) {
     val busy = ui.launchingId != null
     // 外层按账号做了 key()，这里只需要记住本账号下展开的项目。
     var expandedProject by rememberSaveable { mutableStateOf<String?>(null) }
@@ -77,7 +86,46 @@ internal fun AiTerminalSessionsScreen(ui: ServerTerminalUiState, vm: ServerTermi
             }
         }
         items(ui.terminals, key = { "terminal:${it.id}" }) { terminal ->
-            AiOpenTerminalCard(terminal, ui.profiles.find { it.id == terminal.profileId }, !busy) { vm.open(terminal) }
+            val agent = agentUi.sessions.find { it.terminalId == terminal.id }
+            AiOpenTerminalCard(
+                terminal, ui.profiles.find { it.id == terminal.profileId }, !busy,
+                agent = agent,
+                openTerminal = { vm.open(terminal) },
+                openAgent = { agent?.let(openAgent) },
+            )
+        }
+
+        // ===== Agent 会话（独立数据源，含 PC 终端上正在运行的会话）=====
+        agentUi.listError?.let { error -> item(key = "agent-error") {
+            Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Agent 会话同步失败", style = MaterialTheme.typography.titleSmall)
+                    Text(error, style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
+                    TextButton(agentVm::refresh, enabled = !agentUi.listLoading && !busy, contentPadding = PaddingValues(0.dp)) {
+                        Text("重新加载")
+                    }
+                }
+            }
+        } }
+        if (agentUi.listLoading && agentUi.sessions.isEmpty()) item(key = "agent-loading") {
+            Text(
+                "正在同步终端 Agent 会话…", Modifier.padding(vertical = 6.dp),
+                style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+            )
+        }
+        if (agentUi.sessions.isNotEmpty()) {
+            item(key = "agent-label") {
+                AiListLabel("Agent 会话", Modifier.padding(top = 8.dp), trailing = "${agentUi.sessions.size} 个")
+            }
+            items(agentUi.sessions, key = { "agent:${it.terminalId}" }) { agent ->
+                AiAgentSessionCard(agent, !busy) { openAgent(agent) }
+            }
+            item(key = "agent-hint") {
+                Text(
+                    "电脑终端里正在运行的 Claude / Codex / Pi 会话：查看实时镜像，Claude 与 Pi 可回一句或处理待决策。",
+                    style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                )
+            }
         }
 
         // ===== 项目配置 =====
@@ -135,15 +183,18 @@ internal fun AiTerminalSessionsScreen(ui: ServerTerminalUiState, vm: ServerTermi
     }
 }
 
-/** 已打开的终端：一行标题 + 一行类型/目录，点开进入终端画面。 */
+/** 已打开的终端：一行标题 + 一行类型/目录，点开进入终端画面；有 Agent 绑定时追加快捷入口。 */
 @Composable
-private fun AiOpenTerminalCard(terminal: ServerTerminal, profile: ServerProfile?, enabled: Boolean, open: () -> Unit) {
+private fun AiOpenTerminalCard(
+    terminal: ServerTerminal, profile: ServerProfile?, enabled: Boolean,
+    agent: TerminalAgentSession?, openTerminal: () -> Unit, openAgent: () -> Unit,
+) {
     val type = terminal.terminalType.ifBlank { profile?.terminalType.orEmpty() }
     val typeName = terminalTypeLabel(type)
     val directory = terminal.directory?.takeIf(String::isNotBlank)
         ?: profile?.startupPath?.takeIf(String::isNotBlank)
     Surface(
-        onClick = open, enabled = enabled, color = TbColors.Surface,
+        onClick = openTerminal, enabled = enabled, color = TbColors.Surface,
         shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, TbColors.Border),
     ) {
         Row(
@@ -169,8 +220,68 @@ private fun AiOpenTerminalCard(terminal: ServerTerminal, profile: ServerProfile?
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text("已打开", style = MaterialTheme.typography.labelSmall, color = TbColors.Accent)
-            Icon(Icons.Outlined.ChevronRight, "进入终端", Modifier.size(18.dp), tint = TbColors.TextMuted)
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                if (agent != null) Surface(
+                    onClick = openAgent, enabled = enabled,
+                    color = TbColors.Accent.copy(alpha = .12f), shape = RoundedCornerShape(8.dp),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        AiAgentLogo(agent.provider, Modifier.size(13.dp), tint = TbColors.Accent)
+                        Text("Agent 会话", style = MaterialTheme.typography.labelSmall, color = TbColors.Accent)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("已打开", style = MaterialTheme.typography.labelSmall, color = TbColors.Accent)
+                    Icon(Icons.Outlined.ChevronRight, "进入终端", Modifier.size(18.dp), tint = TbColors.TextMuted)
+                }
+            }
+        }
+    }
+}
+
+/** 终端 Agent 会话卡：provider 徽标 + 标题 + 阶段，有待决策时带角标。 */
+@Composable
+private fun AiAgentSessionCard(session: TerminalAgentSession, enabled: Boolean, open: () -> Unit) {
+    Surface(
+        onClick = open, enabled = enabled, color = TbColors.Surface,
+        shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, TbColors.Border),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            AiAgentBadge(session.provider, size = 34.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        session.displayTitle, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                    )
+                    AgentPhaseTag(session)
+                }
+                Text(
+                    listOfNotNull(
+                        terminalTypeLabel(session.terminalType),
+                        session.model?.takeIf(String::isNotBlank),
+                        session.directory?.takeIf(String::isNotBlank),
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (session.pendingDecisionCount > 0) {
+                BadgedBox(badge = {
+                    Badge(containerColor = TbColors.Accent, contentColor = TbColors.AccentInk) {
+                        Text(if (session.pendingDecisionCount > 99) "99+" else session.pendingDecisionCount.toString())
+                    }
+                }) {
+                    Icon(Icons.Outlined.PendingActions, "有待决策", Modifier.size(19.dp), tint = TbColors.Accent)
+                }
+            }
+            Icon(Icons.Outlined.ChevronRight, "查看 Agent 会话", Modifier.size(18.dp), tint = TbColors.TextMuted)
         }
     }
 }

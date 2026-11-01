@@ -51,4 +51,10 @@ object ServerAddress {
             .addQueryParameter("token", token).addQueryParameter("replay", "1")
             .addQueryParameter("takeover", "1").addQueryParameter("viewport", "1").build()
 
+    /** 终端 Agent 镜像通道：`/ws/terminal-agents/{id}?token=...`（token 走 query，与终端 WS 一致）。 */
+    fun terminalAgentSocket(server: String, terminalId: String, token: String): HttpUrl =
+        normalize(server).toHttpUrlOrNull()!!.newBuilder()
+            .addPathSegment("ws").addPathSegment("terminal-agents").addPathSegment(terminalId)
+            .addQueryParameter("token", token).build()
+
 }

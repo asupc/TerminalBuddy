@@ -145,6 +145,15 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
 
     fun open(terminal: ServerTerminal) {
         if (terminal.owner != "web") return
+        openView(terminal)
+    }
+
+    /**
+     * 终端 Agent 会话接力的查看入口：Agent 列表来自 `/api/terminal-agents`，
+     * 已按调用者可见性过滤，因此这里不再按 owner 限制；普通「打开终端」仍走 [open]。
+     */
+    fun openView(terminal: ServerTerminal) {
+        if (mutable.value.selected?.id == terminal.id) return
         disconnect()
         clearFrames()
         renderer = null

@@ -53,10 +53,42 @@ internal fun ServerTerminalScreen(ui: ServerTerminalUiState, vm: ServerTerminalV
     val terminal = ui.selected ?: return
     val context = LocalContext.current
     val host = remember(ui.connection, terminal.id) { LocalTerminalView(context, vm) }
-    var command by rememberSaveable(terminal.id) { mutableStateOf("") }
     var confirmClose by remember(terminal.id) { mutableStateOf(false) }
     val textMode = !ui.rendererReady || ui.renderingError != null
-    var followLogs by remember(terminal.id) { mutableStateOf(true) }
+    BackHandler(onBack = vm::leaveTerminal)
+    Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
+        AiSubpageHeader(terminal.profileName, vm::leaveTerminal) {
+            IconButton({ if (textMode) host.copyText(ui.outputLog) else host.copySelection() }) {
+                Icon(Icons.Outlined.ContentCopy, if (textMode) "复制文本日志" else "复制选中的终端内容")
+            }
+            IconButton({ confirmClose = true }, enabled = !ui.ended && !ui.closing) {
+                Icon(Icons.Outlined.Close, "关闭服务端终端", tint = TbColors.Danger)
+            }
+        }
+        ServerTerminalContent(ui, vm, host)
+    }
+    if (confirmClose) AlertDialog(
+        onDismissRequest = { confirmClose = false }, title = { Text("关闭服务端终端") },
+        text = { Text("关闭「${terminal.profileName}」？仍在该终端内运行的命令可能被中断。返回页面会保留终端。") },
+        confirmButton = { TextButton({ confirmClose = false; vm.closeTerminal() }) { Text("关闭终端", color = TbColors.Danger) } },
+        dismissButton = { TextButton({ confirmClose = false }) { Text("取消") } },
+    )
+}
+
+/**
+ * 不含头栏的终端内容区（渲染视图 + 快捷键行 + 输入行）。
+ * 终端 Agent 会话页的「终端」页签复用同一内容，避免双顶栏；头栏与关闭按钮由调用方按场景提供。
+ */
+@Composable
+internal fun ServerTerminalContent(
+    ui: ServerTerminalUiState,
+    vm: ServerTerminalViewModel,
+    host: LocalTerminalView,
+    modifier: Modifier = Modifier,
+) {
+    var command by rememberSaveable(ui.selected?.id.orEmpty()) { mutableStateOf("") }
+    val textMode = !ui.rendererReady || ui.renderingError != null
+    var followLogs by remember(ui.selected?.id.orEmpty()) { mutableStateOf(true) }
     val logScroll = rememberScrollState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(logScroll) {
@@ -72,22 +104,13 @@ internal fun ServerTerminalScreen(ui: ServerTerminalUiState, vm: ServerTerminalV
         }
     }
     val send = { if (ui.connected && !ui.closing) { vm.input(command + "\r"); command = "" } }
-    BackHandler(onBack = vm::leaveTerminal)
     DisposableEffect(host) { onDispose { host.dispose() } }
     LifecycleStartEffect(host) {
         host.view.onResume()
         vm.setVisible(true)
         onStopOrDispose { vm.setVisible(false); host.view.onPause() }
     }
-    Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
-        AiSubpageHeader(terminal.profileName, vm::leaveTerminal) {
-            IconButton({ if (textMode) host.copyText(ui.outputLog) else host.copySelection() }) {
-                Icon(Icons.Outlined.ContentCopy, if (textMode) "复制文本日志" else "复制选中的终端内容")
-            }
-            IconButton({ confirmClose = true }, enabled = !ui.ended && !ui.closing) {
-                Icon(Icons.Outlined.Close, "关闭服务端终端", tint = TbColors.Danger)
-            }
-        }
+    Column(modifier) {
         Box(Modifier.fillMaxWidth().weight(1f)) {
             AndroidView(factory = { host.view }, modifier = Modifier.matchParentSize())
             if (textMode) Surface(Modifier.matchParentSize(), color = TbColors.Canvas) {
@@ -120,12 +143,6 @@ internal fun ServerTerminalScreen(ui: ServerTerminalUiState, vm: ServerTerminalV
             TextButton(send, enabled = ui.connected && !ui.closing) { Text("发送") }
         }
     }
-    if (confirmClose) AlertDialog(
-        onDismissRequest = { confirmClose = false }, title = { Text("关闭服务端终端") },
-        text = { Text("关闭「${terminal.profileName}」？仍在该终端内运行的命令可能被中断。返回页面会保留终端。") },
-        confirmButton = { TextButton({ confirmClose = false; vm.closeTerminal() }) { Text("关闭终端", color = TbColors.Danger) } },
-        dismissButton = { TextButton({ confirmClose = false }) { Text("取消") } },
-    )
 }
 
 /** 仅提供本地渲染桥接，不向 JavaScript 暴露服务器地址或令牌。 */
@@ -144,7 +161,7 @@ internal class TerminalJavascriptBridge(
 }
 
 @SuppressLint("SetJavaScriptEnabled")
-private class LocalTerminalView(context: Context, private val vm: ServerTerminalViewModel) {
+internal class LocalTerminalView(context: Context, private val vm: ServerTerminalViewModel) {
     val view = WebView(context)
     private var disposed = false
     private var ready = false

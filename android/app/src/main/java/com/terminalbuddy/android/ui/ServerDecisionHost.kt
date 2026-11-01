@@ -20,26 +20,34 @@ import com.terminalbuddy.android.data.ServerDecisionOption
 import com.terminalbuddy.android.data.ServerDecisionQuestion
 import com.terminalbuddy.android.notifications.ServerDecisionNotice
 import com.terminalbuddy.android.notifications.ServerNotificationTarget
+import kotlinx.coroutines.delay
 
 /**
- * 服务端任务通知的 App 内入口：有待决策时显示悬浮按钮，点击通知可直接打开决策面板。
- * 面板浮在任意一级页面之上，不依赖 AI 会话或当前选中的终端。
+ * 服务端任务通知的 App 内入口（全局唯一 Host）：有待决策时显示悬浮按钮，
+ * 点击通知或终端 Agent 对话页的「待决策」按钮可受控打开决策面板。
+ * 面板浮在任意一级页面之上，不依赖 AI 会话或当前选中的终端；
+ * 对话页不另行实例化本 Host，避免双悬浮按钮 / 双面板。
  */
 @Composable
 internal fun ServerDecisionHost(
     vm: ServerDecisionViewModel,
     openRequest: ServerNotificationTarget?,
     onRequestConsumed: () -> Unit,
+    activeAccountId: String? = null,
 ) {
     val decisions by vm.decisions.collectAsStateWithLifecycle()
     val answering by vm.answering.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     var open by rememberSaveable { mutableStateOf(false) }
     var focusedDecision by remember { mutableStateOf<String?>(null) }
+    // 经请求打开的面板记录账号归属；切换账号立即关闭旧账号面板。
+    var panelAccount by remember { mutableStateOf<String?>(null) }
+    var handledNotice by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(openRequest) {
         if (openRequest != null) {
             // 完成通知只把 App 带到前台；只有决策通知才自动展开面板。
             focusedDecision = openRequest.decisionId
+            panelAccount = openRequest.accountId ?: activeAccountId
             onRequestConsumed()
         }
     }
@@ -48,6 +56,26 @@ internal fun ServerDecisionHost(
         if (decisions.any { it.decisionId == target }) {
             open = true
             focusedDecision = null
+        } else {
+            // 决策列表尚不含目标：给通知流一小段到达时间（冷启动决策可能还没同步到），
+            // 超时只提示未能打开，不断言已被处理，也不永久等待。
+            delay(2500)
+            if (focusedDecision == target && decisions.none { it.decisionId == target }) {
+                handledNotice = "未能打开该决策，可能已被处理"
+                focusedDecision = null
+            }
+        }
+    }
+    LaunchedEffect(activeAccountId, open) {
+        if (open && panelAccount != null && activeAccountId != null && panelAccount != activeAccountId) {
+            open = false
+            panelAccount = null
+        }
+    }
+    LaunchedEffect(handledNotice) {
+        if (handledNotice != null) {
+            delay(4000)
+            handledNotice = null
         }
     }
     Box(Modifier.fillMaxSize()) {
@@ -62,12 +90,23 @@ internal fun ServerDecisionHost(
                     }
                 }) {
                     FloatingActionButton(
-                        onClick = { open = true },
+                        onClick = { open = true; panelAccount = activeAccountId },
                         containerColor = TbColors.Accent, contentColor = TbColors.AccentInk,
                     ) {
                         Icon(Icons.Outlined.PendingActions, "服务端待决策")
                     }
                 }
+            }
+        }
+        handledNotice?.let { notice ->
+            Surface(
+                Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 12.dp),
+                color = TbColors.SurfaceRaised, shape = RoundedCornerShape(12.dp),
+            ) {
+                Text(
+                    notice, Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall, color = TbColors.Text,
+                )
             }
         }
     }

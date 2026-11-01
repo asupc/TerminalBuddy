@@ -32,6 +32,8 @@ fun Throwable.isConnectionFailure(): Boolean = this is java.io.IOException && th
 
 fun Throwable.userMessage(): String = when (this) {
     is ApiException -> message
+    // 终端 Agent 的结构化异常已带服务端中文提示（含 decisionId / Retry-After 语义），不能落入通用 IOException 文案。
+    is TerminalAgentException -> message
     is java.net.SocketTimeoutException -> "请求超时，请稍后重试"
     is java.io.IOException -> ServerUnreachableMessage
     is IllegalArgumentException -> message ?: "输入内容不正确"

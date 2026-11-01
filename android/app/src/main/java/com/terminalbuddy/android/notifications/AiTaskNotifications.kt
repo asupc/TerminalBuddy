@@ -40,8 +40,9 @@ import java.util.concurrent.TimeUnit
 /** 通知只携带账号 ID 和会话 ID，凭据始终从本机加密存储读取。 */
 data class AiNotificationTarget(val accountId: String, val sessionId: String)
 
-/** 点击服务端任务通知后打开 App；decisionId 为空表示普通完成通知。 */
-data class ServerNotificationTarget(val decisionId: String?)
+/** 点击服务端任务通知后打开 App；decisionId 为空表示普通完成通知。
+ *  accountId 标记决策所属账号：终端 Agent 对话页发起的受控打开请求也会带，账号切换时用于关闭旧面板。 */
+data class ServerNotificationTarget(val decisionId: String?, val accountId: String? = null)
 
 /** App 内待处理的服务端终端决策，与系统通知共用同一份内存状态。 */
 data class ServerDecisionNotice(

@@ -40,6 +40,9 @@ fun TerminalBuddyRoot(
 ) {
     val aiUi by aiVm.state.collectAsStateWithLifecycle()
     val holder = rememberSaveableStateHolder()
+    // 终端 Agent 对话页发起的受控决策请求：与通知点击共用根节点唯一的 ServerDecisionHost，
+    // 对话页不实例化第二个 Host，点击也不伪装成 Activity 通知模型。
+    var agentDecisionRequest by remember { mutableStateOf<ServerNotificationTarget?>(null) }
     LaunchedEffect(notificationTarget) {
         notificationTarget?.let {
             aiVm.openNotification(it)
@@ -68,7 +71,12 @@ fun TerminalBuddyRoot(
                             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
                     ) {
                         holder.SaveableStateProvider("ai-home") {
-                            AiScreen(aiUi, aiVm, simplified = simplified, onSimplifiedChange = onSimplifiedChange)
+                            AiScreen(
+                                aiUi, aiVm, simplified = simplified, onSimplifiedChange = onSimplifiedChange,
+                                openDecision = { decisionId ->
+                                    agentDecisionRequest = ServerNotificationTarget(decisionId, aiUi.activeAccountId)
+                                },
+                            )
                         }
                     }
                 } else {
@@ -79,8 +87,12 @@ fun TerminalBuddyRoot(
             }
             ServerDecisionHost(
                 vm = serverDecisionVm,
-                openRequest = serverNotificationTarget,
-                onRequestConsumed = onServerNotificationConsumed,
+                openRequest = serverNotificationTarget ?: agentDecisionRequest,
+                onRequestConsumed = {
+                    agentDecisionRequest = null
+                    onServerNotificationConsumed()
+                },
+                activeAccountId = aiUi.activeAccountId,
             )
         }
     }
