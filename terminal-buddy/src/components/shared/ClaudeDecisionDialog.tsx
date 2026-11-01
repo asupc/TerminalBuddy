@@ -21,7 +21,17 @@ function nextWrappedIndex(current: number, direction: -1 | 1, count: number): nu
   return (current + direction + count) % count;
 }
 
-export function ClaudeDecisionDialog() {
+export interface ClaudeDecisionDialogProps {
+  /**
+   * 受控聚焦请求（终端 Agent 面板等外部入口传入）：
+   * 目标在队列中则置顶聚焦；已处理 / 不存在则回调 onFocused 并提示，不永久等待。
+   */
+  focusDecisionId?: string;
+  /** 聚焦请求被消费（无论成败）后回调，调用方应清空请求，避免重复触发。 */
+  onFocused?: () => void;
+}
+
+export function ClaudeDecisionDialog({ focusDecisionId, onFocused }: ClaudeDecisionDialogProps) {
   const [queue, setQueue] = useState<ClaudeHookDecisionEvent[]>([]);
   const [selections, setSelections] = useState<Selections>({});
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
@@ -33,6 +43,12 @@ export function ClaudeDecisionDialog() {
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const sessions = useAppStore(state => state.sessions);
+  // 队列与已决集合的同步镜像：外部聚焦请求需要同步判断，不能依赖异步 state 闭包。
+  const queueRef = useRef<ClaudeHookDecisionEvent[]>([]);
+  const settledRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
   const decision = queue[0];
   const terminalName = decision
     ? sessions.find(session => session.id === decision.terminalId)?.profileName
@@ -43,7 +59,7 @@ export function ClaudeDecisionDialog() {
   useEffect(() => {
     let cancelled = false;
     let cleanups: Array<() => void> = [];
-    const settledDecisionIds = new Set<string>();
+    const settledDecisionIds = settledRef.current;
     const addDecision = (payload: ClaudeHookDecisionEvent) => {
       if (settledDecisionIds.has(payload.decisionId)) return;
       setQueue(previous => previous.some(item => item.decisionId === payload.decisionId)
@@ -113,6 +129,29 @@ export function ClaudeDecisionDialog() {
     setSubmitting(false);
     setReturning(false);
   }, [decision?.decisionId]);
+
+  // 外部聚焦请求（终端 Agent 面板的待决策按钮）：目标存在则置顶并聚焦；
+  // 已处理 / 不存在则提示并立即回调关闭请求，不永久等待。
+  useEffect(() => {
+    if (!focusDecisionId) return;
+    const current = queueRef.current;
+    if (current.some(item => item.decisionId === focusDecisionId)) {
+      setQueue(previous => {
+        const target = previous.find(item => item.decisionId === focusDecisionId);
+        if (!target) return previous;
+        return [target, ...previous.filter(item => item.decisionId !== focusDecisionId)];
+      });
+      // 置顶后 decision 变化，问题重置与首个选项的 autoFocus 由上方 effect 接管聚焦。
+    } else if (settledRef.current.has(focusDecisionId)) {
+      useAppStore.getState().showToast('该决策已在别处处理', 'info');
+    } else {
+      // 队列里还没有：决策事件可能仍在事件桥路上，不能断言已处理。
+      useAppStore.getState().showToast('决策尚未同步，请稍后重试', 'info');
+    }
+    onFocused?.();
+    // 仅依赖 focusDecisionId：请求本身即一次性指令，onFocused 每个请求只回调一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusDecisionId]);
 
   const complete = useMemo(() => {
     if (!decision || decision.questions.length === 0) return false;

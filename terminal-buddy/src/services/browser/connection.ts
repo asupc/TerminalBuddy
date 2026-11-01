@@ -1,4 +1,36 @@
 type EventCallback = (event: { event: string; id: number; payload: unknown }) => void;
+
+/**
+ * invoke / REST 的结构化错误：响应体 { error, message, decisionId?, replyBlockedReason? }
+ * 透传为 Error 子类，429 的 Retry-After 头并入 retryAfter。
+ * 桌面 Tauri 构建 reject 的是同形状的纯对象（code 字段名一致），前端可用同名谓词统一识别。
+ */
+export class InvokeError extends Error {
+  readonly code: string;
+  readonly decisionId?: string;
+  readonly retryAfter?: number;
+  readonly replyBlockedReason?: string;
+
+  constructor(options: {
+    code: string;
+    message: string;
+    decisionId?: string;
+    retryAfter?: number;
+    replyBlockedReason?: string;
+  }) {
+    super(options.message);
+    this.name = 'InvokeError';
+    this.code = options.code;
+    if (options.decisionId !== undefined) this.decisionId = options.decisionId;
+    if (options.retryAfter !== undefined) this.retryAfter = options.retryAfter;
+    if (options.replyBlockedReason !== undefined) this.replyBlockedReason = options.replyBlockedReason;
+  }
+}
+
+export function isInvokeError(error: unknown): error is InvokeError {
+  return error instanceof InvokeError;
+}
+
 const callbacks = new Map<string, Set<EventCallback>>();
 // 登录态存 localStorage 而非 sessionStorage：sessionStorage 的生命周期止于标签页/窗口，
 // 关掉浏览器 token 就没了，用户每次重新打开都要登录——即使后端 JWT 还有 30 天有效期。
@@ -55,8 +87,25 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, headers });
   if (response.status === 401) { logout(); throw new Error('登录已过期，请重新登录'); }
   if (!response.ok) {
-    const error = await response.json().catch(() => null) as { message?: string } | null;
-    throw new Error(error?.message ?? `请求失败：${response.status}`);
+    // 响应体 { error, message, decisionId?, replyBlockedReason? } 透传为结构化 Error：
+    // 终端 Agent 回复闸门的 decisionId、限流的 Retry-After 不能在 shim 侧被压扁成纯文本。
+    const error = await response.json().catch(() => null) as {
+      error?: string;
+      message?: string;
+      decisionId?: string;
+      replyBlockedReason?: string;
+    } | null;
+    const retryAfterHeader = response.headers.get('retry-after');
+    const retryAfter = retryAfterHeader !== null && Number.isFinite(Number(retryAfterHeader))
+      ? Math.ceil(Number(retryAfterHeader))
+      : undefined;
+    throw new InvokeError({
+      code: error?.error ?? `http_${response.status}`,
+      message: error?.message ?? `请求失败：${response.status}`,
+      ...(error?.decisionId !== undefined ? { decisionId: error.decisionId } : {}),
+      ...(retryAfter !== undefined ? { retryAfter } : {}),
+      ...(error?.replyBlockedReason !== undefined ? { replyBlockedReason: error.replyBlockedReason } : {}),
+    });
   }
   return response.json() as Promise<T>;
 }
@@ -91,6 +140,17 @@ function connectEvents(): void {
     eventSocket = null;
     if (token && callbacks.size) retry = setTimeout(connectEvents, 1500);
   };
+}
+
+/**
+ * 事件桥轻量 ping：向 /ws/events 发送 {"type":"ping"} 文本帧。
+ * 服务端把任何客户端帧都当 activity（30 秒无消息即断开），不解析业务语义、
+ * 不改动终端 WS 协议。事件桥未建立 / 非打开态时静默跳过（桌面构建恒为 no-op）。
+ */
+export function pingEventBridge(): void {
+  if (eventSocket && eventSocket.readyState === WebSocket.OPEN) {
+    eventSocket.send('{"type":"ping"}');
+  }
 }
 
 export async function listen<T>(event: string, callback: (event: { event: string; id: number; payload: T }) => void): Promise<() => void> {
