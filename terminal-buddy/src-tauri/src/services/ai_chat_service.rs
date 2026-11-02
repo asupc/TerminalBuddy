@@ -195,6 +195,19 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
             touch(&mut data);
             if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
         }
+        // 空闲会话重进时刷新预填：上次恢复后转录可能又有新输出（电脑端或 Web 端续写过），
+        // 直接复用旧 messages 会让客户端看到落后于历史索引的旧数据。预填仍取自索引，
+        // 客户端点按恢复前会先触发一次 rescan；刷新失败不阻断恢复，沿用旧消息。
+        if reused_prefill_needs_refresh(data.status.as_str(), control.is_some()) {
+            if let Ok(fresh) = prefill_history_messages(provider, resume_id, first.total.max(0) as usize) {
+                if prefill_differs(&data.messages, &fresh) {
+                    let before = data.clone();
+                    data.messages = fresh;
+                    // 只落盘消息，不动 updated_at / revision / 标题，避免最近列表重排与在途实时流被打扰。
+                    if persist_data(&cell, &data).is_err() { *data = before; }
+                }
+            }
+        }
         return Ok(data.clone());
     }
     // Pi 的 RPC 会话 ID 即 AiSession ID（进程按该 ID 落盘并复用同一会话文件）。
@@ -230,6 +243,18 @@ fn find_by_thread(owner: &str, provider: &str, thread_id: &str) -> Option<AiSess
         if let Ok(data) = serde_json::from_slice::<AiSession>(&bytes) { return Some(data); }
     }
     None
+}
+
+/// 复用已恢复的历史会话时是否刷新预填：有进程在跑（control 存在）或状态属于执行中一律不动消息。
+fn reused_prefill_needs_refresh(status: &str, has_control: bool) -> bool {
+    !has_control && !matches!(status, "running" | "approval" | "background" | "stopping")
+}
+
+/// 预填差异判定：条数或任一条 id/role/text/created_at 变化即视为有新内容（AiMessage 未实现 PartialEq）。
+fn prefill_differs(old: &[AiMessage], fresh: &[AiMessage]) -> bool {
+    old.len() != fresh.len() || old.iter().zip(fresh).any(|(a, b)| {
+        a.id != b.id || a.role != b.role || a.text != b.text || a.created_at != b.created_at
+    })
 }
 
 /// 预填历史消息：按 seq 保留最近若干条，角色收敛到客户端支持的三种。
@@ -1750,6 +1775,33 @@ mod tests {
         let input: ResumeCodexHistory = serde_json::from_value(json!({"providerId": "default:codex"})).unwrap();
         assert_eq!(input.provider_id.as_deref(), Some("default:codex"));
         assert!(input.model.is_none());
+    }
+
+    #[test]
+    fn reused_prefill_refresh_skips_running_sessions() {
+        // 有进程或执行中状态一律不刷新，避免覆盖实时写入的消息。
+        for status in ["running", "approval", "background", "stopping"] {
+            assert!(!reused_prefill_needs_refresh(status, false), "{} 不应刷新", status);
+        }
+        assert!(!reused_prefill_needs_refresh("idle", true));
+        // 空闲与异常终态可以刷新：没有进程会再写旧消息。
+        assert!(reused_prefill_needs_refresh("idle", false));
+        assert!(reused_prefill_needs_refresh("error", false));
+        assert!(reused_prefill_needs_refresh("interrupted", false));
+    }
+
+    #[test]
+    fn prefill_differs_detects_append_and_rewrite() {
+        let message = |id: &str, text: &str, at: i64| AiMessage {
+            id: id.into(), role: "user".into(), text: text.into(), created_at: at,
+        };
+        let old = vec![message("history-0", "第一问", 1)];
+        // 条数相同、内容相同 → 不替换，避免无意义的落盘。
+        assert!(!prefill_differs(&old, &[message("history-0", "第一问", 1)]));
+        // 尾部追加（电脑端续写了新回合）→ 替换。
+        assert!(prefill_differs(&old, &[message("history-0", "第一问", 1), message("history-1", "回答", 2)]));
+        // 条数不变但正文变化（索引重解析）→ 替换。
+        assert!(prefill_differs(&old, &[message("history-0", "新的回答", 1)]));
     }
 
     fn cell() -> Cell {
