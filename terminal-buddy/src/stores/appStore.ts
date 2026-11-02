@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import type { StoreApi } from "zustand";
 import type { Profile, TerminalSession, TabGroup, ExtraParamPreset, RemoteFileEntry, ServerStats, TransferItem, SessionHistoryProvider, AgentSessionBinding } from "../types";
 import { readClientData, writeClientData } from "../services/tauri";
 import { createProfilesSlice } from "./slices/profilesSlice";
@@ -272,13 +271,6 @@ export interface AppState {
 	toggleFileTree: () => void;
 	toggleHistoryPanel: () => void;
 
-	// 终端 Agent 会话接力面板（非持久化：会话内状态，不落 localStorage / 后端，
-	// 也不参与 config/historyPanelVisible 的自动展开逻辑）
-	agentsPanelVisible: boolean;
-	setAgentsPanelVisible: (visible: boolean) => void;
-	selectedAgentTerminalId: string | null;
-	setSelectedAgentTerminalId: (terminalId: string | null) => void;
-
 	// Config panel search
 	configSearchQuery: string;
 	setConfigSearchQuery: (query: string) => void;
@@ -458,16 +450,6 @@ export interface AppState {
 	refreshPiModels: (force?: boolean) => Promise<void>;
 }
 
-// 终端 Agent 面板 slice：仅非持久化的面板 / 选中会话状态。
-function createAgentsPanelSlice(set: StoreApi<AppState>["setState"]): Partial<AppState> {
-	return {
-		agentsPanelVisible: false,
-		setAgentsPanelVisible: (visible) => set({ agentsPanelVisible: visible }),
-		selectedAgentTerminalId: null,
-		setSelectedAgentTerminalId: (terminalId) => set({ selectedAgentTerminalId: terminalId }),
-	};
-}
-
 // 各 slice 只声明自己管辖的字段（Partial<AppState>），
 // spread 组合后即为完整 AppState；断言仅用于恢复全量类型。
 export const useAppStore = create<AppState>((set, get) => ({
@@ -478,7 +460,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 	...createTransfersSlice(set),
 	...createWindowSlice(set),
 	...createClaudeLaunchSlice(set),
-	...createAgentsPanelSlice(set),
 }) as AppState);
 
 // Listen for app-settings-changed events and increment version to trigger re-renders

@@ -7,7 +7,6 @@ import { ConfigNav } from "./components/profile-config/ConfigNav";
 import { TerminalPanel } from "./components/terminal/TerminalPanel";
 import { FileNav } from "./components/file-explorer/FileNav";
 import { HistoryPanel } from "./components/claude-history/HistoryPanel";
-import { TerminalAgentPanel } from "./components/terminal-agent/TerminalAgentPanel";
 import { TabNav } from "./components/shell/TabNav";
 import { ActivityBar, type SidebarPanel } from "./components/shell/ActivityBar";
 import { effectiveProfilePath } from './utils/projectPath';
@@ -67,8 +66,6 @@ function App() {
   const configPanelVisible = useAppStore(s => s.configPanelVisible);
   const fileTreeVisible = useAppStore(s => s.fileTreeVisible);
   const historyPanelVisible = useAppStore(s => s.historyPanelVisible);
-  const agentsPanelVisible = useAppStore(s => s.agentsPanelVisible);
-  const setAgentsPanelVisible = useAppStore(s => s.setAgentsPanelVisible);
   const toggleConfigPanel = useAppStore(s => s.toggleConfigPanel);
   const toggleFileTree = useAppStore(s => s.toggleFileTree);
   const toggleHistoryPanel = useAppStore(s => s.toggleHistoryPanel);
@@ -85,19 +82,9 @@ function App() {
   const [enableTabNav, setEnableTabNav] = useState(true);
   const [uiStyle, setUiStyle] = useState(() => getAppSettings().uiStyle);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>('config');
-  // 侧栏风格下面板互斥：历史 / Claude / Agent 面板首次点开才挂载（挂载后常驻，保留编辑态）。
-  // 历史面板一挂载就会扫 ~/.claude 与历史索引库，不该压在启动路径上；Agent 面板
-  // 虽只有一个列表请求，仍沿用同一模式，保持行为一致。
-  const [everOpened, setEverOpened] = useState({ history: false, agents: false });
-  // 终端 Agent 面板的决策聚焦请求：转发给根 ClaudeDecisionDialog 的受控 props，
-  // 目标处理后由 onFocused 清空请求。
-  const [agentFocusDecisionId, setAgentFocusDecisionId] = useState<string | null>(null);
-  const handleAgentFocusDecision = useCallback((decisionId: string) => {
-    setAgentFocusDecisionId(decisionId);
-  }, []);
-  const handleAgentFocusConsumed = useCallback(() => {
-    setAgentFocusDecisionId(null);
-  }, []);
+  // 侧栏风格下面板互斥：历史 / Claude 面板首次点开才挂载（挂载后常驻，保留编辑态）。
+  // 两者一挂载就会扫 ~/.claude 与历史索引库，不该压在启动路径上。
+  const [everOpened, setEverOpened] = useState({ history: false });
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(() => {
     const v = localStorage.getItem('appUpdate.lastCheckedAt');
@@ -668,10 +655,8 @@ function App() {
   }, []);
 
   const handleSidebarPanel = useCallback((panel: SidebarPanel) => {
-    if (panel === 'history' || panel === 'agents') {
-      setEverOpened(prev => (prev[panel]
-        ? prev
-        : panel === 'history' ? { ...prev, history: true } : { ...prev, agents: true }));
+    if (panel === 'history') {
+      setEverOpened(prev => (prev[panel] ? prev : { ...prev, [panel]: true }));
     }
     if (panel === 'config' || panel === 'tabs') {
       useAppStore.getState().setLastClickRegion(panel === 'config' ? 'config' : 'tab');
@@ -710,11 +695,9 @@ function App() {
         configPanelVisible={configPanelVisible}
         fileTreeVisible={fileTreeVisible}
         historyPanelVisible={historyPanelVisible}
-        agentsPanelVisible={agentsPanelVisible}
         onToggleConfigPanel={toggleConfigPanel}
         onToggleFileTree={toggleFileTree}
         onToggleHistoryPanel={toggleHistoryPanel}
-        onToggleAgentsPanel={() => setAgentsPanelVisible(!agentsPanelVisible)}
         updateInfo={updateInfo}
         onUpdateDismiss={() => setUpdateInfo(null)}
         onPromoteToUpdate={handlePromoteToUpdate}
@@ -750,16 +733,6 @@ function App() {
               isSidebarMode={uiStyle === 'sidebar'}
               isActive={windowMode !== 'panels-hidden'
                 && (uiStyle === 'sidebar' ? sidebarPanel === 'history' : historyPanelVisible)}
-            />
-          )}
-        </div>
-        <div className={`nav-panel-slot nav-panel-agents${sidebarPanel === 'agents' ? ' active' : ''}`}>
-          {(uiStyle !== 'sidebar' || everOpened.agents) && (
-            <TerminalAgentPanel
-              isSidebarMode={uiStyle === 'sidebar'}
-              isActive={windowMode !== 'panels-hidden'
-                && (uiStyle === 'sidebar' ? sidebarPanel === 'agents' : agentsPanelVisible)}
-              onFocusDecision={handleAgentFocusDecision}
             />
           )}
         </div>
@@ -808,10 +781,7 @@ function App() {
           confirmText="退出"
         />
       )}
-      <ClaudeDecisionDialog
-        focusDecisionId={agentFocusDecisionId ?? undefined}
-        onFocused={handleAgentFocusConsumed}
-      />
+      <ClaudeDecisionDialog />
       <Toast />
       <GlobalDialogHost />
     </div>

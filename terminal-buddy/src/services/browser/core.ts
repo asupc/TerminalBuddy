@@ -1,10 +1,4 @@
-import { emitLocal, getToken, InvokeError, isInvokeError, logout, request, serverPlatform, windowsBuildNumber, socketUrl, uploadFiles } from './connection';
-
-// 结构化 invoke 错误（code / message / decisionId? / retryAfter? / replyBlockedReason?）：
-// request() 现在把非 2xx 响应体透传为 InvokeError 而非仅 message 字符串，
-// 这里从 core（@tauri-apps/api/core 的浏览器别名）一并导出，消费方无需感知 connection.ts。
-export { InvokeError, isInvokeError };
-
+import { emitLocal, getToken, logout, request, serverPlatform, windowsBuildNumber, socketUrl, uploadFiles } from './connection';
 
 interface TerminalConnection {
   socket: WebSocket;

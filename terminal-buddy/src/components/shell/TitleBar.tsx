@@ -3,7 +3,6 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   BarChart3,
   Bell,
-  BotMessageSquare,
   Check,
   Columns2,
   Flower2,
@@ -65,11 +64,9 @@ interface TitleBarProps {
   configPanelVisible: boolean;
   fileTreeVisible: boolean;
   historyPanelVisible: boolean;
-  agentsPanelVisible: boolean;
   onToggleConfigPanel: () => void;
   onToggleFileTree: () => void;
   onToggleHistoryPanel: () => void;
-  onToggleAgentsPanel: () => void;
   updateInfo: UpdateInfo | null;
   onUpdateDismiss: () => void;
   onPromoteToUpdate: (info: UpdateInfo) => void;
@@ -98,11 +95,9 @@ export const TitleBar: FC<TitleBarProps> = ({
   configPanelVisible,
   fileTreeVisible,
   historyPanelVisible,
-  agentsPanelVisible,
   onToggleConfigPanel,
   onToggleFileTree,
   onToggleHistoryPanel,
-  onToggleAgentsPanel,
   updateInfo,
   onUpdateDismiss,
   onPromoteToUpdate,
@@ -335,15 +330,6 @@ export const TitleBar: FC<TitleBarProps> = ({
                 aria-pressed={historyPanelVisible}
               >
                 <History aria-hidden="true" />
-              </button>
-              <button
-                className={`titlebar-nav-btn ${agentsPanelVisible ? 'active' : ''}`}
-                onClick={onToggleAgentsPanel}
-                title={agentsPanelVisible ? '隐藏终端 Agent 会话' : '显示终端 Agent 会话'}
-                aria-label={agentsPanelVisible ? '隐藏终端 Agent 会话' : '显示终端 Agent 会话'}
-                aria-pressed={agentsPanelVisible}
-              >
-                <BotMessageSquare aria-hidden="true" />
               </button>
             </>
           )}
