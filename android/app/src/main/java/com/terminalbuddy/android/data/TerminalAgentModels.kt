@@ -54,6 +54,17 @@ data class TerminalAgentSession(
         }
 }
 
+/**
+ * 历史会话与实时 Agent 列表的匹配：provider + sessionId 相同且尚未结束（phase != ended）
+ * 视为「正在电脑/服务端终端里运行」，点击应走接力接管而不是恢复历史（避免另起进程分叉与旧索引数据）。
+ * ended 表示 agent 已退出、终端回到 shell，继续会话应走现有「恢复历史」路径。
+ */
+fun findLiveAgentSession(
+    agent: String, sessionId: String, sessions: List<TerminalAgentSession>,
+): TerminalAgentSession? = sessions.firstOrNull {
+    it.provider == agent && it.sessionId == sessionId && it.phase != "ended"
+}
+
 /** 消息页：首屏快照与限界增量共用同一响应，客户端先看 resetRequired / revision 再处理消息。 */
 @Serializable
 data class TerminalAgentPage(

@@ -612,6 +612,9 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(working = true, error = null) }
         actionJob = viewModelScope.launch {
             try {
+                // 点按恢复前先刷新历史索引，预填才能带上电脑端最近输出的回合（best-effort，失败沿用现有索引）。
+                val scanFailure = runCatching { repository.rescanHistory(agent) }.exceptionOrNull()
+                if (scanFailure is CancellationException) throw scanFailure
                 val session = if (agent == "codex")
                     repository.resumeCodexHistory(item.sessionId, target.provider, target.model)
                 else repository.create(project, target.provider, target.model.id, item.sessionId)
@@ -710,6 +713,9 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(working = true, error = null) }
         viewModelScope.launch {
             try {
+                // 点按恢复前先刷新历史索引，预填才能带上电脑端最近输出的回合（best-effort，失败沿用现有索引）。
+                val scanFailure = runCatching { repository.rescanHistory(entry.agent) }.exceptionOrNull()
+                if (scanFailure is CancellationException) throw scanFailure
                 val session = repository.create(project, target.provider, target.model.id, entry.session.sessionId)
                 mutable.update { it.copy(working = false) }
                 // 列表由账号级通知流自行刷新；这里直接进入恢复出的会话。

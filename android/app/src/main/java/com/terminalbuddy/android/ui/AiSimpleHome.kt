@@ -27,40 +27,60 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleStartEffect
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.R
 import com.terminalbuddy.android.ServerTerminalUiState
 import com.terminalbuddy.android.ServerTerminalViewModel
+import com.terminalbuddy.android.TerminalAgentUiState
+import com.terminalbuddy.android.TerminalAgentViewModel
 import com.terminalbuddy.android.data.AiHistorySession
 import com.terminalbuddy.android.data.AiSession
 import com.terminalbuddy.android.data.ServerProfile
+import com.terminalbuddy.android.data.TerminalAgentSession
+import com.terminalbuddy.android.data.findLiveAgentSession
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 private enum class SimpleHomeTab(val title: String) {
-    Recent("最近任务"), History("历史会话"),
+    Recent("最近任务"), History("历史会话"), Server("服务端会话"),
 }
 
 /**
  * 简版核心页：只保留快速开始。
- * 顶部品牌与「我的」入口，中间是压缩后的新会话配置，下方用 Tab 切换最近任务和历史会话。
+ * 顶部品牌与「我的」入口，中间是压缩后的新会话配置，下方用 Tab 切换最近任务、历史会话和服务端会话。
  * 最近任务全部平铺，不再提供「查看全部」；历史会话按当前工作项目汇总全部已启用助手，
- * 不跟随快速开始里的助手选择。
+ * 不跟随快速开始里的助手选择；服务端会话列出电脑/服务端终端里正在运行的 Agent 会话，点击直接接管。
  */
 @Composable
 internal fun AiSimpleHome(
     ui: AiUiState, vm: AiViewModel,
     terminalUi: ServerTerminalUiState, terminalVm: ServerTerminalViewModel,
+    agentUi: TerminalAgentUiState, agentVm: TerminalAgentViewModel,
+    openAgent: (TerminalAgentSession) -> Unit,
     profile: () -> Unit, delete: (AiSession) -> Unit,
 ) {
     var tab by rememberSaveable(ui.activeAccountId) { mutableStateOf(SimpleHomeTab.Recent) }
-    // 项目配置来自服务端，进入简版首页时同步一次，后续账号切换自动重新绑定。
+    // 项目配置与实时 Agent 会话来自服务端，进入简版首页时同步一次，后续账号切换自动重新绑定。
     LaunchedEffect(ui.activeAccountId, ui.connectionRevision) {
         terminalVm.bindAccount()
-        if (ui.authenticated) terminalVm.refresh()
+        agentVm.bindAccount()
+        if (ui.authenticated) {
+            terminalVm.refresh()
+            agentVm.refresh()
+        }
     }
+    // 回前台时刷新实时会话：电脑端可能在 App 退后台期间持续输出，历史会话的「电脑运行中」匹配也依赖这份列表。
+    LifecycleStartEffect(ui.activeAccountId) {
+        if (ui.authenticated) agentVm.refresh()
+        onStopOrDispose { }
+    }
+    // 账号守护：非当前账号的残留状态按空数据处理，与完整版会话页同一模式。
+    val currentAgentUi = if (agentVm.isCurrentAccount() && agentUi.connection == agentVm.state.value.connection) {
+        agentUi
+    } else TerminalAgentUiState()
     // 冷启动先用首页缓存的最近日任务占位，完整列表同步后再平铺全部会话。
     val recent = remember(ui.sessions, ui.recentSessions) {
         (if (ui.sessions.isEmpty()) ui.recentSessions else ui.sessions)
@@ -70,6 +90,8 @@ internal fun AiSimpleHome(
     val historyAgents = ui.availableAgents.filter(ui::agentInstalled)
     LaunchedEffect(tab, ui.projectPath, ui.connectionRevision, historyAgents) {
         if (tab == SimpleHomeTab.History) vm.loadHistoryForSelection()
+        // 历史 Tab 需要 Agent 列表做「电脑运行中」匹配，服务端 Tab 本身就是这份列表的展示。
+        if (tab == SimpleHomeTab.History || tab == SimpleHomeTab.Server) agentVm.refresh()
     }
     Column(Modifier.fillMaxSize()) {
         AiSimpleHeader(ui.reconnecting, profile)
@@ -89,6 +111,7 @@ internal fun AiSimpleHome(
                     historyCount = ui.historySessions.size.takeIf {
                         ui.historyProjectPath == ui.projectPath && ui.historyAgents == historyAgents
                     },
+                    serverCount = currentAgentUi.sessions.size.takeIf { currentAgentUi.listLoaded },
                     select = { tab = it },
                 )
             }
@@ -127,12 +150,48 @@ internal fun AiSimpleHome(
                         }
                         else -> {
                             items(ui.historySessions, key = { "history-${it.session.sessionId}" }) { entry ->
-                                SimpleHistoryRow(entry.agent, entry.session, !ui.working) {
-                                    vm.resumeHistory(entry)
+                                // 正在电脑/服务端终端里运行的会话直接接管（实时镜像，不另起进程），其余保持恢复历史。
+                                val live = findLiveAgentSession(entry.agent, entry.session.sessionId, currentAgentUi.sessions)
+                                SimpleHistoryRow(entry.agent, entry.session, live, live == null && !ui.working) {
+                                    if (live != null) openAgent(live) else vm.resumeHistory(entry)
                                 }
                             }
                             item(key = "history-foot") {
                                 Text("共 ${ui.historySessions.size} 段历史会话 · 仅显示当前项目",
+                                    Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TbColors.TextMuted, textAlign = TextAlign.Center)
+                            }
+                        }
+                    }
+                }
+                SimpleHomeTab.Server -> {
+                    currentAgentUi.listError?.let { error -> item(key = "server-error") {
+                        Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(16.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("服务端会话同步失败", style = MaterialTheme.typography.titleSmall)
+                                Text(error, style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
+                                TextButton(agentVm::refresh, enabled = !currentAgentUi.listLoading,
+                                    contentPadding = PaddingValues(0.dp)) { Text("重新加载") }
+                            }
+                        }
+                    } }
+                    when {
+                        currentAgentUi.sessions.isEmpty() && currentAgentUi.listError == null &&
+                            !currentAgentUi.listLoaded -> item(key = "server-loading") {
+                            SimpleLoading("正在同步服务端会话…")
+                        }
+                        currentAgentUi.sessions.isEmpty() && currentAgentUi.listLoaded -> item(key = "server-empty") {
+                            AiEmptyState(Icons.Outlined.Monitor, "没有正在运行的服务端会话",
+                                "在电脑端或服务端启动 Claude、Codex、Pi 会话后，这里会实时显示，可直接接管继续。" +
+                                    "若始终不显示，请检查电脑端 Web API 设置中的会话共享已开启。")
+                        }
+                        currentAgentUi.sessions.isNotEmpty() -> {
+                            items(currentAgentUi.sessions, key = { "server-${it.terminalId}" }) { session ->
+                                SimpleAgentSessionRow(session) { openAgent(session) }
+                            }
+                            item(key = "server-foot") {
+                                Text("电脑终端里正在运行的会话：实时镜像最新输出，Claude 可回一句或处理待决策，Codex 暂只读。",
                                     Modifier.fillMaxWidth().padding(top = 4.dp),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = TbColors.TextMuted, textAlign = TextAlign.Center)
@@ -319,10 +378,11 @@ private fun SimpleProjectCommands(
     }
 }
 
-/** 最近任务 / 历史会话的两段式切换，数量只作辅助信息。 */
+/** 最近任务 / 历史会话 / 服务端会话的三段式切换，数量只作辅助信息。 */
 @Composable
 private fun SimpleTabs(
-    selected: SimpleHomeTab, recentCount: Int?, historyCount: Int?, select: (SimpleHomeTab) -> Unit,
+    selected: SimpleHomeTab, recentCount: Int?, historyCount: Int?, serverCount: Int?,
+    select: (SimpleHomeTab) -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth().selectableGroup()
@@ -331,7 +391,11 @@ private fun SimpleTabs(
     ) {
         SimpleHomeTab.entries.forEach { tab ->
             val active = selected == tab
-            val count = if (tab == SimpleHomeTab.Recent) recentCount else historyCount
+            val count = when (tab) {
+                SimpleHomeTab.Recent -> recentCount
+                SimpleHomeTab.History -> historyCount
+                SimpleHomeTab.Server -> serverCount
+            }
             Surface(
                 modifier = Modifier.weight(1f).selectable(active, role = Role.Tab, onClick = { select(tab) }),
                 color = if (active) TbColors.Surface else Color.Transparent,
@@ -355,12 +419,17 @@ private fun SimpleTabs(
     }
 }
 
-/** 历史会话行：与最近任务保持同样的两层信息，点击直接恢复为可发送的原生会话。 */
+/**
+ * 历史会话行：与最近任务保持同样的两层信息；live 非空表示该会话正在电脑/服务端终端里运行，
+ * 标记「电脑运行中」且点击直接接管（不另起进程），其余点击恢复为可发送的原生会话。
+ */
 @Composable
-private fun SimpleHistoryRow(agent: String, session: AiHistorySession, enabled: Boolean, open: () -> Unit) {
+private fun SimpleHistoryRow(
+    agent: String, session: AiHistorySession, live: TerminalAgentSession?, enabled: Boolean, open: () -> Unit,
+) {
     Column(Modifier.fillMaxWidth()) {
         Surface(
-            onClick = open, enabled = enabled, color = Color.Transparent,
+            onClick = open, enabled = live != null || enabled, color = Color.Transparent,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
@@ -370,8 +439,11 @@ private fun SimpleHistoryRow(agent: String, session: AiHistorySession, enabled: 
             ) {
                 AiAgentBadge(agent, size = 25.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(session.displayTitle, style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(session.displayTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (live != null) SimpleLiveTag()
+                    }
                     Text(
                         buildList {
                             if (session.messageCount > 0) add("${session.messageCount} 条消息")
@@ -382,10 +454,90 @@ private fun SimpleHistoryRow(agent: String, session: AiHistorySession, enabled: 
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Icon(Icons.Outlined.Replay, "恢复历史会话", Modifier.size(17.dp), tint = TbColors.TextMuted)
+                if (live != null) Icon(Icons.Outlined.Monitor, "电脑运行中，点击接管", Modifier.size(17.dp), tint = TbColors.Accent)
+                else Icon(Icons.Outlined.Replay, "恢复历史会话", Modifier.size(17.dp), tint = TbColors.TextMuted)
             }
         }
         AiDivider(Modifier.padding(start = 43.dp))
+    }
+}
+
+/** 服务端会话行：正在终端里运行的 Agent 会话，点击直接接管为接力会话（实时镜像 + 受限回复）。 */
+@Composable
+private fun SimpleAgentSessionRow(session: TerminalAgentSession, open: () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Surface(onClick = open, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                AiAgentBadge(session.provider, size = 25.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(session.displayTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        SimplePhaseTag(session.phase, session.phaseLabel)
+                    }
+                    Text(
+                        buildList {
+                            session.model?.takeIf(String::isNotBlank)?.let(::add)
+                            session.directory?.takeIf(String::isNotBlank)?.let { dir ->
+                                dir.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
+                                    .takeIf(String::isNotBlank)?.let(::add)
+                            }
+                            session.lastActivityAt?.takeIf { it > 0 }?.let { activityTime(it) }?.let(::add)
+                        }.joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (session.pendingDecisionCount > 0) {
+                    BadgedBox(badge = {
+                        Badge(containerColor = TbColors.Accent, contentColor = TbColors.AccentInk) {
+                            Text(if (session.pendingDecisionCount > 99) "99+" else session.pendingDecisionCount.toString())
+                        }
+                    }) { Icon(Icons.Outlined.PendingActions, "有待决策", Modifier.size(17.dp), tint = TbColors.Accent) }
+                }
+                Icon(Icons.Outlined.ChevronRight, "接管会话", Modifier.size(17.dp), tint = TbColors.TextMuted)
+            }
+        }
+        AiDivider(Modifier.padding(start = 43.dp))
+    }
+}
+
+/** 「电脑运行中」标记：历史会话行与服务端会话行共用。 */
+@Composable
+private fun SimpleLiveTag() {
+    Surface(color = TbColors.Accent.copy(alpha = .14f), shape = RoundedCornerShape(4.dp)) {
+        Text("电脑运行中", Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
+            color = TbColors.Accent, maxLines = 1)
+    }
+}
+
+/** 阶段小标签：等待确认用强调色提醒，其余弱化展示。 */
+@Composable
+private fun SimplePhaseTag(phase: String, label: String) {
+    val attention = phase == "attention"
+    Surface(
+        color = if (attention) TbColors.Accent.copy(alpha = .14f) else TbColors.SurfaceHover,
+        shape = RoundedCornerShape(4.dp),
+    ) {
+        Text(label, Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
+            color = if (attention) TbColors.Accent else TbColors.TextSoft, maxLines = 1)
+    }
+}
+
+/** 最近活动的相对时间：与最近任务列表的展示口径一致。 */
+private fun activityTime(timestamp: Long): String {
+    val minutes = ((System.currentTimeMillis() - timestamp).coerceAtLeast(0)) / 60_000
+    return when {
+        minutes == 0L -> "刚刚"
+        minutes < 60 -> "${minutes} 分钟前"
+        minutes < 24 * 60 -> "${minutes / 60} 小时前"
+        else -> SimpleDateFormat("MM-dd", Locale.CHINA).format(Date(timestamp))
     }
 }
 

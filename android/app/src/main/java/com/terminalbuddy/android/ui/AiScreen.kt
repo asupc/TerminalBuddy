@@ -187,6 +187,11 @@ fun AiScreen(
     } else if (simplified) {
         Column(Modifier.fillMaxSize().imePadding()) {
             AiSimpleHome(ui, vm, terminalUi, terminalVm,
+                agentUi = agentUi, agentVm = agentVm,
+                openAgent = { session ->
+                    selectedAgentTerminalId = session.terminalId
+                    agentVm.openSession(session)
+                },
                 profile = { page = AiPage.Profile }, delete = { deleting = it })
         }
     } else {
