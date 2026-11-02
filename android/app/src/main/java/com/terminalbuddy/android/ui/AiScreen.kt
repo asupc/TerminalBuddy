@@ -14,7 +14,6 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
@@ -28,12 +27,7 @@ import com.terminalbuddy.android.ServerTerminalViewModel
 import com.terminalbuddy.android.TerminalAgentViewModel
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
-import com.terminalbuddy.android.data.AiHistorySession
 import com.terminalbuddy.android.data.AiSession
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 private enum class AiPage { Home, Profile, Accounts, Connection, ServiceInfo, AppUpdate }
 
@@ -263,119 +257,6 @@ fun AiScreen(
 }
 
 internal data class AiChoice(val id: String, val title: String, val subtitle: String = "", val agent: String? = null)
-
-/** 历史区最多直接渲染的条数：CLI 转录可能有几百条，超出部分提示到服务端查看。 */
-private const val HISTORY_SECTION_LIMIT = 50
-
-/** 历史会话区：默认收起，展开后列出当前项目 + Agent 的 CLI 转录历史，点击恢复继续对话。 */
-@Composable
-internal fun AiHistorySection(ui: AiUiState, toggle: () -> Unit, resume: (AiHistorySession) -> Unit) {
-    val agent = ui.launchProvider?.agent ?: return
-    val agentLabel = when (agent) {
-        "codex" -> "Codex"
-        "pi" -> "Pi"
-        else -> "Claude Code"
-    }
-    Column {
-        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Surface(onClick = toggle, color = TbColors.SurfaceHover, shape = RoundedCornerShape(10.dp)) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(Icons.Outlined.History, null, Modifier.size(18.dp), tint = TbColors.TextMuted)
-                    Text(
-                        "历史会话（$agentLabel）", Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    if (ui.historyLoading) {
-                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = TbColors.TextMuted)
-                    } else if (ui.historySessions.isNotEmpty()) {
-                        Text("${ui.historySessions.size} 条", style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
-                    }
-                    Icon(
-                        Icons.Outlined.ExpandMore, if (ui.historyExpanded) "收起历史会话" else "展开历史会话",
-                        Modifier.size(20.dp).rotate(if (ui.historyExpanded) 180f else 0f), tint = TbColors.TextMuted,
-                    )
-                }
-            }
-            if (ui.historyExpanded) {
-                when {
-                    ui.historyLoading && ui.historySessions.isEmpty() -> Text(
-                        "正在同步${agentLabel}历史会话…",
-                        Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                    )
-                    ui.historySessions.isEmpty() -> Text(
-                        "该项目暂无${agentLabel}历史会话。在电脑端用该 Agent 对话后会出现在这里。",
-                        Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                    )
-                    else -> Column(Modifier.padding(top = 4.dp)) {
-                        ui.historySessions.take(HISTORY_SECTION_LIMIT).forEachIndexed { index, item ->
-                            if (index > 0) AiDivider(Modifier.padding(start = 52.dp))
-                            Surface(
-                                onClick = { resume(item) }, enabled = !ui.working,
-                                color = TbColors.Surface, shape = RoundedCornerShape(10.dp),
-                            ) {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(start = 2.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    AiAgentBadge(agent)
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                        Text(
-                                            item.displayTitle, style = MaterialTheme.typography.titleSmall,
-                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Text(
-                                            buildString {
-                                                if (item.messageCount > 0) append("${item.messageCount} 条消息")
-                                                item.model?.takeIf(String::isNotBlank)?.let { model ->
-                                                    if (isNotEmpty()) append(" · ")
-                                                    append(model)
-                                                }
-                                                val time = formatHistoryTime(item.updatedAt)
-                                                if (time.isNotEmpty()) {
-                                                    if (isNotEmpty()) append(" · ")
-                                                    append(time)
-                                                }
-                                            },
-                                            style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                    if (ui.working) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = TbColors.TextMuted)
-                                    else Icon(Icons.Outlined.Replay, "恢复对话", Modifier.size(18.dp), tint = TbColors.TextMuted)
-                                }
-                            }
-                        }
-                        if (ui.historySessions.size > HISTORY_SECTION_LIMIT) {
-                            Text(
-                                "仅显示最近 $HISTORY_SECTION_LIMIT 条，共 ${ui.historySessions.size} 条",
-                                Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                                style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun formatHistoryTime(timestamp: Long): String {
-    if (timestamp <= 0) return ""
-    val now = Calendar.getInstance()
-    val time = Calendar.getInstance().apply { timeInMillis = timestamp }
-    return when {
-        now.get(Calendar.YEAR) == time.get(Calendar.YEAR) && now.get(Calendar.DAY_OF_YEAR) == time.get(Calendar.DAY_OF_YEAR) ->
-            SimpleDateFormat("今天 HH:mm", Locale.getDefault()).format(Date(timestamp))
-        now.get(Calendar.YEAR) == time.get(Calendar.YEAR) ->
-            SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
-        else -> SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(timestamp))
-    }
-}
 
 /** 连续发送方式：排队等当前回合任务全部完成后写入同一个 CLI 进程，原生插话则直接交给运行中的进程。 */
 @Composable

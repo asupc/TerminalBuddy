@@ -46,7 +46,8 @@ private enum class SimpleHomeTab(val title: String) {
 /**
  * 简版核心页：只保留快速开始。
  * 顶部品牌与「我的」入口，中间是压缩后的新会话配置，下方用 Tab 切换最近任务和历史会话。
- * 最近任务全部平铺，不再提供「查看全部」；历史会话跟随当前工作项目的选择过滤。
+ * 最近任务全部平铺，不再提供「查看全部」；历史会话按当前工作项目汇总全部已启用助手，
+ * 不跟随快速开始里的助手选择。
  */
 @Composable
 internal fun AiSimpleHome(
@@ -65,8 +66,9 @@ internal fun AiSimpleHome(
         (if (ui.sessions.isEmpty()) ui.recentSessions else ui.sessions)
             .sortedByDescending { it.updatedAt }
     }
-    // 切换项目 / 助手或重新进入历史 Tab 时，按当前选择重新拉取 CLI 历史。
-    LaunchedEffect(tab, ui.projectPath, ui.launchProvider?.agent, ui.connectionRevision) {
+    // 历史范围只取决于项目与该项目可用的助手，切换助手不会重新拉取或过滤历史。
+    val historyAgents = ui.availableAgents.filter(ui::agentInstalled)
+    LaunchedEffect(tab, ui.projectPath, ui.connectionRevision, historyAgents) {
         if (tab == SimpleHomeTab.History) vm.loadHistoryForSelection()
     }
     Column(Modifier.fillMaxSize()) {
@@ -85,7 +87,7 @@ internal fun AiSimpleHome(
                     selected = tab,
                     recentCount = recent.size.takeIf { ui.homeLoaded },
                     historyCount = ui.historySessions.size.takeIf {
-                        ui.historyProjectPath == ui.projectPath && ui.historyAgent == ui.launchProvider?.agent
+                        ui.historyProjectPath == ui.projectPath && ui.historyAgents == historyAgents
                     },
                     select = { tab = it },
                 )
@@ -105,29 +107,28 @@ internal fun AiSimpleHome(
                 }
                 SimpleHomeTab.History -> {
                     val project = ui.launchProject
-                    val agent = ui.launchProvider?.agent
-                    val historyReady = agent != null && ui.historyProjectPath == project?.path &&
-                        ui.historyAgent == agent && !ui.historyLoading
+                    val historyReady = ui.historyProjectPath == project?.path &&
+                        ui.historyAgents == historyAgents && !ui.historyLoading
                     when {
                         project == null -> item(key = "history-no-project") {
                             AiEmptyState(Icons.Outlined.FolderOpen, "还没有选择工作项目",
                                 "先在上方选择一个项目，历史会话会按项目自动筛选。")
                         }
-                        agent == null -> item(key = "history-no-agent") {
+                        historyAgents.isEmpty() -> item(key = "history-no-agent") {
                             AiEmptyState(Icons.Outlined.SmartToy, "当前项目还没有可用助手",
                                 "请先在服务端为该项目启用助手并配置模型。")
                         }
                         !historyReady && ui.historySessions.isEmpty() -> item(key = "history-loading") {
-                            SimpleLoading("正在读取 ${agentTitle(agent)} 历史会话…")
+                            SimpleLoading("正在读取历史会话…")
                         }
                         ui.historySessions.isEmpty() -> item(key = "history-empty") {
                             AiEmptyState(Icons.Outlined.History, "该项目暂无历史会话",
-                                "在电脑或服务端用 ${agentTitle(agent)} 对话后，会出现在这里。")
+                                "在电脑或服务端用该项目启用的助手对话后，会出现在这里。")
                         }
                         else -> {
-                            items(ui.historySessions, key = { "history-${it.sessionId}" }) { session ->
-                                SimpleHistoryRow(agent.orEmpty(), session, !ui.working) {
-                                    vm.resumeHistory(session)
+                            items(ui.historySessions, key = { "history-${it.session.sessionId}" }) { entry ->
+                                SimpleHistoryRow(entry.agent, entry.session, !ui.working) {
+                                    vm.resumeHistory(entry)
                                 }
                             }
                             item(key = "history-foot") {

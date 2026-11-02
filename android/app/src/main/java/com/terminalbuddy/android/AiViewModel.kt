@@ -20,6 +20,9 @@ data class AiLaunchModel(val provider: AiProvider, val model: AiModel) {
     val key get() = "${provider.id.length}:${provider.id}${model.id}"
 }
 
+/** 简版历史 Tab 的条目：历史记录来自哪个助手，与快速开始当前选中的助手无关。 */
+data class AiHistoryEntry(val agent: String, val session: AiHistorySession)
+
 /**
  * AI 页面状态。登录、项目 / Agent / 模型选择和当前会话各自独立，
  * 首页同步不会覆盖正在进行的对话；关闭 App 后重新打开回到选择首页。
@@ -43,11 +46,11 @@ data class AiUiState(
     val accounts: List<AiAccount> = emptyList(), val activeAccountId: String? = null,
     val switchingAccountId: String? = null,
     val notificationLoginAccountId: String? = null,
-    /** 历史会话区默认收起，展开后按当前项目 + Agent 拉取 CLI 转录历史。 */
-    val historyExpanded: Boolean = false,
-    val historySessions: List<AiHistorySession> = emptyList(),
+    /** 简版首页历史 Tab 的查询范围：当前项目汇总全部已启用助手，与快速开始的助手选择无关。 */
+    val historySessions: List<AiHistoryEntry> = emptyList(),
     val historyLoading: Boolean = false,
-    val historyAgent: String? = null,
+    /** 已查询的助手列表；与当前项目可用的助手一致时列表才算就绪。 */
+    val historyAgents: List<String> = emptyList(),
     val historyProjectPath: String = "",
     /** 连续发送方式：false 等当前回合任务完成后排队续发，true 直接交给运行中的 CLI 进程插话。 */
     val sendSteer: Boolean = false,
@@ -212,6 +215,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         serverHistoryJobs.clear()
         mutable.update { state -> state.copy(
             historyLoading = false,
+            historyAgents = emptyList(), historyProjectPath = "", historySessions = emptyList(),
             history = state.history.copy(loading = false, loadingReplay = false),
             serverHistory = state.serverHistory.mapValues { (_, history) -> history.copy(loading = false) },
         ) }
@@ -514,7 +518,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     fun selectProject(path: String) {
         mutable.update { reconcile(it.copy(projectPath = path)) }
         saveSelection()
-        reloadHistoryIfExpanded()
     }
 
     fun selectAgent(agent: String) {
@@ -534,7 +537,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             reconcile(ui.copy(providerId = provider.id, modelId = if (savedProvider != null) savedModelId else ""))
         }
         saveSelection()
-        reloadHistoryIfExpanded()
     }
 
     /** 各项目可以独立展开，缓存不会混入其他助手，也不会改写快速开始的选择。 */
@@ -626,63 +628,71 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 展开 / 收起历史会话区；展开时按当前项目 + Agent 拉取，切换选择后自动重载。 */
-    fun toggleHistory() {
-        val ui = mutable.value
-        if (ui.historyExpanded) {
-            cliHistoryJob?.cancel()
-            mutable.update { it.copy(historyExpanded = false, historySessions = emptyList(), historyLoading = false) }
-        } else {
-            mutable.update { it.copy(historyExpanded = true) }
-            loadHistory()
-        }
-    }
-
-    private fun reloadHistoryIfExpanded() {
-        if (mutable.value.historyExpanded) loadHistory()
-    }
-
-    /** 简版首页的历史 Tab 直接复用当前项目 + Agent 的 CLI 历史，不依赖旧首页的展开状态。 */
+    /** 简版首页的历史 Tab：汇总当前项目全部已启用助手的 CLI 历史，不受快速开始的助手选择影响。 */
     fun loadHistoryForSelection() {
         val ui = mutable.value
         if (!ui.authenticated || ui.authenticating) return
-        val agent = ui.launchProvider?.agent ?: return
-        val project = ui.launchProject ?: return
-        val sameTarget = ui.historyExpanded && ui.historyAgent == agent &&
-            ui.historyProjectPath == project.path
-        if (sameTarget && (ui.historyLoading || ui.historySessions.isNotEmpty() || cliHistoryJob?.isActive == true)) return
-        if (!ui.historyExpanded) mutable.update { it.copy(historyExpanded = true) }
-        loadHistory()
+        val project = ui.launchProject
+        val agents = historyAgents(ui)
+        if (project == null || agents.isEmpty()) {
+            cliHistoryJob?.cancel(); cliHistoryJob = null
+            if (ui.historySessions.isNotEmpty() || ui.historyLoading) mutable.update {
+                it.copy(historySessions = emptyList(), historyLoading = false, historyAgents = emptyList(),
+                    historyProjectPath = "")
+            }
+            return
+        }
+        // 重新进入历史 Tab 时重新读取，确保刚完成的对话能出现在列表里；同一目标只在读取进行中时跳过。
+        if (ui.historyAgents == agents && ui.historyProjectPath == project.path &&
+            (ui.historyLoading || cliHistoryJob?.isActive == true)) return
+        loadHistory(project, agents)
     }
 
-    /** 增量索引失败不阻断列表（可能只是后台补齐未完成），列表失败才提示。 */
-    private fun loadHistory() {
-        val ui = mutable.value
-        val agent = ui.launchProvider?.agent ?: return
-        val project = ui.launchProject ?: return
+    /** 历史范围 = 当前项目启用的助手 ∩ 服务端已安装的助手；未安装的助手查不到转录。 */
+    private fun historyAgents(ui: AiUiState) = ui.availableAgents.filter(ui::agentInstalled)
+
+    /** 按项目并行读取各助手历史；单个助手不可用（如旧服务端不支持）不阻断其他助手。 */
+    private fun loadHistory(project: AiProject, agents: List<String>) {
         cliHistoryJob?.cancel()
         cliHistoryJob = viewModelScope.launch {
-            val switched = mutable.value.historyAgent != agent || mutable.value.historyProjectPath != project.path
+            val switched = mutable.value.historyAgents != agents || mutable.value.historyProjectPath != project.path
             mutable.update {
                 it.copy(
-                    historyLoading = true, historyAgent = agent, historyProjectPath = project.path,
-                    // 切换项目或 Agent 时先清空旧列表，避免短暂显示其他项目的“历史会话”。
+                    historyLoading = true, historyAgents = agents, historyProjectPath = project.path,
+                    // 切换项目或助手集合时先清空旧列表，避免短暂显示其他项目的“历史会话”。
                     historySessions = if (switched) emptyList() else it.historySessions,
                 )
             }
             try {
-                runCatching { repository.rescanHistory(agent) }
-                val sessions = repository.history(agent, project.path)
+                val results = coroutineScope {
+                    agents.map { agent ->
+                        async {
+                            agent to runCatching {
+                                repository.rescanHistory(agent)
+                                repository.history(agent, project.path)
+                            }
+                        }
+                    }.awaitAll()
+                }
+                val failures = results.mapNotNull { (_, result) -> result.exceptionOrNull() }
+                // 全部助手都失败才向用户报错；部分失败按空结果处理，仍展示其他助手的历史。
+                if (failures.size == agents.size) throw failures.first()
+                failures.firstOrNull { it is ApiException && it.code == 401 }?.let { throw it }
+                val entries = results.flatMap { (agent, result) ->
+                    result.getOrNull().orEmpty().map { AiHistoryEntry(agent, it) }
+                }.distinctBy { it.session.sessionId }
+                    .sortedByDescending { it.session.updatedAt }
                 mutable.update { state ->
-                    // 请求期间用户可能已切换项目或 Agent，过期结果直接丢弃。
-                    if (!state.historyExpanded || state.historyAgent != agent || state.historyProjectPath != project.path) state
-                    else state.copy(historySessions = sessions, historyLoading = false)
+                    // 请求期间用户可能已切换项目或助手集合，过期结果直接丢弃。
+                    if (state.historyAgents != agents || state.historyProjectPath != project.path) state
+                    else state.copy(historySessions = entries, historyLoading = false)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                if (e is ApiException && e.code == 401) failure(e)
                 mutable.update { state ->
-                    if (!state.historyExpanded || state.historyAgent != agent || state.historyProjectPath != project.path) state
+                    if (state.historyAgents != agents || state.historyProjectPath != project.path) state
                     else state.copy(historyLoading = false, error = e.userMessage())
                 }
             }
@@ -690,18 +700,17 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 恢复 CLI 历史会话为可继续对话的原生会话：服务端绑定历史线程并预填最近消息。 */
-    fun resumeHistory(item: AiHistorySession) {
+    fun resumeHistory(entry: AiHistoryEntry) {
         val ui = mutable.value
         val project = ui.launchProject ?: return
-        val provider = ui.launchProvider ?: return
-        if (ui.working || ui.authenticating) return
-        val model = ui.launchModel?.id.orEmpty()
+        if (ui.working || ui.authenticating || !ui.authenticated) return
+        val target = resumeTarget(ui, project, entry.agent, entry.session.model) ?: return
         cliHistoryJob?.cancel()
         refreshJob?.cancel(); selectJob?.cancel(); cancelSend(); stopRealtime()
         mutable.update { it.copy(working = true, error = null) }
         viewModelScope.launch {
             try {
-                val session = repository.create(project, provider, model, item.sessionId)
+                val session = repository.create(project, target.provider, target.model.id, entry.session.sessionId)
                 mutable.update { it.copy(working = false) }
                 // 列表由账号级通知流自行刷新；这里直接进入恢复出的会话。
                 open(session.id)
@@ -712,6 +721,16 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 failure(e)
             }
         }
+    }
+
+    /** 历史会话恢复的目标配置：优先沿用历史模型（同名模型优先默认供应商），缺失时回退该助手的默认配置。 */
+    private fun resumeTarget(ui: AiUiState, project: AiProject, agent: String, historyModel: String?): AiLaunchModel? {
+        val models = ui.projectModels(project, agent)
+        val matches = historyModel?.trim()?.takeIf(String::isNotBlank)?.let { model ->
+            models.filter { it.model.id.equals(model, ignoreCase = true) }
+        }.orEmpty()
+        return matches.firstOrNull { it.provider.isDefault } ?: matches.firstOrNull()
+            ?: models.firstOrNull { it.provider.isDefault } ?: models.firstOrNull()
     }
 
     fun selectModel(key: String) {
