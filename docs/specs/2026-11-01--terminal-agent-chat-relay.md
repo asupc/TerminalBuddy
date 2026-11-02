@@ -1,5 +1,7 @@
 # 终端 Agent 会话接力（App 聊天气泡查看 + 受限回复）
 
+> **⚠️ 2026-11-02 范围收缩**：本功能原始目的是「桌面端的会话在 Android App 上接力」，桌面端/网页版不应再提供该面板。据此已移除：React 面板（terminal-agent 组件、ActivityBar/TitleBar 入口、租约心跳与事件桥保活）、6 个 `terminal_agent_*` Tauri 命令及 `desktop_dispatch` 浏览器分支、relay 内的 `terminal-agent-update` 事件通道（`subscription_ids` 帧、事件租约与 `heartbeat`）。**保留**：relay 核心的 REST（`/api/terminal-agents*`）与 WS（`/ws/terminal-agents/{id}`）通道、安卓端全部实现，以及随本功能一并落地的浏览器决策权限安全修正（`*_for_web` 系列）。下文 §4.10、§5.5、§6 中关于网页版面板 / Tauri 命令层 / 事件通道的描述已不适用，仅作历史设计记录保留。
+
 日期：2026-11-01。状态：**复审通过，可作为 P0 实施依据**。本次复审纠正了原评审遗漏的运行时身份、游标、会话发现开关、事件桥保活及 Android 入口问题；实施以本版正文为准，旧行号只作定位参考，若源码已漂移以符号名为准。本文是设计审批，不代表代码已实现或构建/真机验证已通过。
 
 相关文档：[原生 AI 会话 API](../原生AI会话API.md)、[Pi Agent 实施计划](../Pi%20Agent%20实施计划.md)、[完整使用与配置指南](../完整使用与配置指南.md) §17。
