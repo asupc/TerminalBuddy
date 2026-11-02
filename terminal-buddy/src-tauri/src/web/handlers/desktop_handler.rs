@@ -66,13 +66,6 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
         app.state::<TerminalService>().authorize(id, TerminalActor::Web, TerminalAction::View)
             .map_err(access_map_error)?;
     }
-    // Agent 回复会写入 PTY：在通用 View 检查之上提级到 Input（业务层仍会重新鉴权）。
-    if command == "terminal_agent_reply" {
-        if let Some(id) = args.get("terminalId").and_then(Value::as_str) {
-            app.state::<TerminalService>().authorize(id, TerminalActor::Web, TerminalAction::Input)
-                .map_err(access_map_error)?;
-        }
-    }
     // SSH 路径属于远端主机，不能拿服务器文件范围来比较。
     let path_keys: &[&str] = if command.starts_with("remote_") { &["localPath", "localDir"] } else {
         &["path", "startupPath", "projectDir", "filePath", "newPath"]

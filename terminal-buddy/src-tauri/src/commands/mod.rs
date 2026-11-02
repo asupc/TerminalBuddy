@@ -33,7 +33,6 @@ pub mod session_restore;
 pub mod settings;
 pub mod templates;
 pub mod terminal;
-pub mod terminal_agent;
 pub mod update;
 pub mod web;
 #[cfg(feature = "desktop")]
@@ -73,7 +72,6 @@ pub use session_restore::*;
 pub use settings::*;
 pub use templates::*;
 pub use terminal::*;
-pub use terminal_agent::*;
 pub use update::*;
 pub use web::*;
 #[cfg(feature = "desktop")]
