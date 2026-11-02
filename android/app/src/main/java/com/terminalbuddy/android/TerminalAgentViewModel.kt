@@ -409,10 +409,11 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     }
 
     /** 仅在同一会话、同一镜像代次内判定送达：换代（rotated / unavailable / 不可用恢复）后旧消息不作依据，
-     *  历史中已有的同文旧消息（seq 不大于发送时游标）也不算，文本按 trim 后全文相等比较。 */
+     *  历史中已有的同文旧消息（seq 不大于发送时游标）也不算，文本按 trim 后全文相等比较。
+     *  确认送达即移除本地气泡 —— replay 里已有这条消息，保留会与镜像气泡重复显示。 */
     private fun matchPendingReply() {
         val pending = mutable.value.pendingReply ?: return
-        if (pending.status != TerminalReplyStatus.Typed) return
+        if (pending.status == TerminalReplyStatus.Delivered) return
         val session = mutable.value.selected ?: return
         if (session.sessionId != pending.sessionId || session.revision != pending.revision) return
         val needle = pending.text.trim()
@@ -422,7 +423,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         }
         if (delivered) {
             confirmJob?.cancel(); confirmJob = null
-            mutable.update { it.copy(pendingReply = pending.copy(status = TerminalReplyStatus.Delivered)) }
+            mutable.update { it.copy(pendingReply = null) }
         }
     }
 

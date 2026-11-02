@@ -59,7 +59,8 @@ internal fun TerminalAgentChatScreen(
         }
         if (ui.messages.isNotEmpty()) loadedOnce = true
     }
-    Column(Modifier.fillMaxSize()) {
+    // edge-to-edge 下 adjustResize 不生效，输入法避让必须用 imePadding（与终端页签一致）。
+    Column(Modifier.fillMaxSize().imePadding()) {
         AgentStatusStrip(ui, vm)
         ui.messagesError?.let { error ->
             Row(
