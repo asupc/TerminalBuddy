@@ -5,7 +5,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -22,7 +21,6 @@ import androidx.compose.ui.unit.dp
 import com.terminalbuddy.android.ServerTerminalUiState
 import com.terminalbuddy.android.ServerTerminalViewModel
 import com.terminalbuddy.android.data.ServerProfile
-import com.terminalbuddy.android.data.ServerTerminal
 
 @Composable
 internal fun ServerProjectProfilesDialog(ui: ServerTerminalUiState, vm: ServerTerminalViewModel) {
@@ -91,20 +89,12 @@ internal fun ServerProjectProfilesDialog(ui: ServerTerminalUiState, vm: ServerTe
                                 }
                                 profiles.forEach { profile ->
                                     key(profile.id) {
-                                        ServerProfileRow(profile, ui.launchingId, ui.loading && !ui.loaded,
-                                            ui.terminals.filter { it.profileId == profile.id }, vm::launch, vm::open)
+                                        ServerProfileRow(profile, ui.launchingId, ui.loading && !ui.loaded, vm::launch)
                                     }
                                 }
                             }
                         }
                     }
-                }
-            }
-            val orphaned = ui.terminals.filter { terminal -> ui.profiles.none { it.id == terminal.profileId } }
-            if (orphaned.isNotEmpty()) {
-                item { Text("其他已打开的终端", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall) }
-                items(orphaned, key = { "terminal:${it.id}" }) { terminal ->
-                    ContinueTerminal(terminal, !busy) { vm.open(terminal) }
                 }
             }
         }
@@ -113,8 +103,7 @@ internal fun ServerProjectProfilesDialog(ui: ServerTerminalUiState, vm: ServerTe
 
 @Composable
 private fun ServerProfileRow(
-    profile: ServerProfile, launchingId: String?, loading: Boolean, terminals: List<ServerTerminal>,
-    launch: (ServerProfile) -> Unit, open: (ServerTerminal) -> Unit,
+    profile: ServerProfile, launchingId: String?, loading: Boolean, launch: (ServerProfile) -> Unit,
 ) {
     val launching = launchingId == profile.id
     Column(Modifier.fillMaxWidth().padding(start = 16.dp)) {
@@ -136,17 +125,6 @@ private fun ServerProfileRow(
                     tint = if (profile.canLaunch) TbColors.Accent else TbColors.TextMuted)
             }
         }
-        terminals.forEach { terminal -> ContinueTerminal(terminal, launchingId == null) { open(terminal) } }
         AiDivider()
-    }
-}
-
-@Composable
-private fun ContinueTerminal(terminal: ServerTerminal, enabled: Boolean, open: () -> Unit) {
-    TextButton(open, enabled = enabled) {
-        Icon(Icons.Outlined.OpenInNew, null, Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text("继续查看 · ${terminal.profileName} · ${terminal.id.take(8)}",
-            style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
