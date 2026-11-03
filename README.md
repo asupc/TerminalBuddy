@@ -38,10 +38,9 @@
   - [7. AI 多模型 Token 用量与额度监控](#7-ai-多模型-token-用量与额度监控)
   - [8. Web 远程管理与手机扫码免密连接](#8-web-远程管理与手机扫码免密连接)
   - [9. 全局设置中心与 16 色 ANSI 调色板定制](#9-全局设置中心与-16-色-ansi-调色板定制)
-- [10. Agent CLI 管理与大模型供应商配置](#10-agent-cli-管理与大模型供应商配置)
+- [10. 大模型供应商配置](#10-大模型供应商配置)
 - [11. 原生 AI 会话与安卓客户端](#11-原生-ai-会话与安卓客户端)
 - [12. Codex 会话历史、任务摘要与断线恢复](#12-codex-会话历史任务摘要与断线恢复)
-- [13. Pi Agent 支持](#13-pi-agent-支持)
 - [五、常用快捷键速查表](#五常用快捷键速查表)
 - [六、技术架构与分层](#六技术架构与分层)
 - [七、系统要求与安装使用](#七系统要求与安装使用)
@@ -392,10 +391,8 @@ TerminalBuddy 内置了轻量级开发工作台，查看配置文件与修改源
 
 ---
 
-### 10. Agent CLI 管理与大模型供应商配置
-v1.8.0 将原「容器环境」升级为完整的 Agent 管理与模型配置中心：
+### 10. 大模型供应商配置
 
-- **Agent CLI 统一管理**：自动检测 Claude Code / Codex CLI / Pi 的安装状态与可执行路径（覆盖 npm shim 与 winget / Volta / pnpm / scoop 等安装目录），支持应用内一键安装 / 更新、版本显示与逐项检查更新，后台执行互斥防并发；
 - **大模型供应商管理**：集中维护多家 API 供应商（增删改查、API Key 加密落盘），每个模型可配置上下文窗口与推理档位（effort：low / medium / high / xhigh / max）；Claude / Codex 双分页编辑，切页不丢编辑状态，Provider 支持拖拽排序与可自由输入的模型组合框；
 - **指定模型启动**：连接与项目右键菜单新增 Claude 模型子菜单，指定模型启动并继承原命令参数，恢复历史会话同样支持指定模型；标签与侧栏以描边「模型 chip」展示所用模型；
 - **Claude 默认配置面板**：`~/.claude/settings.json` 图形化读写、深合并写回并自动保留最近 10 份快照备份；
@@ -403,29 +400,18 @@ v1.8.0 将原「容器环境」升级为完整的 Agent 管理与模型配置中
 
 ---
 ### 11. 原生 AI 会话与安卓客户端
-除在终端中使用 Claude Code / Codex / Pi 外，服务端还内置原生 AI 会话能力，并配套全新的安卓原生客户端：
+除在终端中使用 Claude Code / Codex 外，服务端还内置原生 AI 会话能力，并配套全新的安卓原生客户端：
 
-- **原生 AI 会话**：会话保存在服务端 `AiSessions/*.json`，可选择供应商与模型（仅列出项目已启用的 Agent，继承服务端权限配置）；支持流式回复、中断、Codex 操作确认卡片、Pi 扩展确认与断线重连补偿，接口详见 [docs/原生AI会话API.md](docs/原生AI会话API.md)；
+- **原生 AI 会话**：会话保存在服务端 `AiSessions/*.json`，可选择供应商与模型（仅列出项目已启用的 Agent，继承服务端权限配置）；支持流式回复、中断、Codex 操作确认卡片与断线重连补偿，接口详见 [docs/原生AI会话API.md](docs/原生AI会话API.md)；
 - **安卓原生客户端**（`android/`，Kotlin + Jetpack Compose）：账号密码登录后即可选择项目、供应商与模型开始对话；流式逐字显示、工具执行日志折叠展示、跟随滚动与「回到最新」、浅色 / 深色主题切换；登录令牌经 Android Keystore 加密存储，会话保存在服务端，App 退到后台任务继续执行；
 - **连续发送方式（App）**：安卓客户端支持「排队发送」（默认）与「原生插话」两种方式（首页菜单「发送方式」）——回复期间发送的消息默认在服务端排队（App 被杀也不丢失），等当前回合任务（含后台任务）全部完成后由服务端写入同一个 CLI 进程继续，不重启进程也不需要恢复历史；原生插话则把消息直接交给运行中的 CLI 进程，由它选择合适节点接收，不中断当前任务；排队列表中每条可点发送箭头单独插话；
-- **历史会话恢复（App）**：安卓客户端新增「历史会话」折叠区——展开即按当前项目 + Agent 列出电脑端 CLI 的转录历史（Claude / Codex / Pi 共用同一索引，展开前自动增量扫描），点击任意一条即在服务端创建绑定原会话线程的原生会话并预填最近消息：Claude 走 `claude --resume`、Codex 走 `thread/resume`、Pi 复用同一会话文件，继续对话即无缝续接；同一历史线程重复恢复自动复用已有会话；
+- **历史会话恢复（App）**：安卓客户端新增「历史会话」折叠区——展开即按当前项目 + Agent 列出电脑端 CLI 的转录历史（Claude / Codex 共用同一索引，展开前自动增量扫描），点击任意一条即在服务端创建绑定原会话线程的原生会话并预填最近消息：Claude 走 `claude --resume`、Codex 走 `thread/resume`，继续对话即无缝续接；同一历史线程重复恢复自动复用已有会话；
 
 ---
 ### 12. Codex 会话历史、任务摘要与断线恢复
 - **Codex 会话历史**：扫描索引 `CODEX_HOME` 下的 rollout 会话文件（自动去重备份副本），与 Claude 历史共享同一面板，支持列表 / 全文搜索 / 重命名 / 置顶 / 删除 / 导出与回放；历史会话可按项目目录匹配 Profile，在新终端以 `codex resume` 续接；
 - **任务摘要标签**：终端启动时自动记录终端与 Claude / Codex 会话的绑定关系，从会话转录生成任务标题；桌面标题栏、会话树与 Web 页签均显示摘要（外观设置可开关）；
 - **会话可靠恢复**：后台定时落盘运行中 Claude 会话的 session ID，容器重启后按已保存页签自动重建终端并续接会话，配合一次性租约机制防止多个浏览器客户端并发重复恢复。
-
----
-### 13. Pi Agent 支持
-
-- **安装与启动**：Agent 管理新增 Pi 卡片，支持检测、一键安装/更新与基础启动命令（默认 `pi --approve`）。Pi 需要 Node.js ≥ 22.19；Docker 镜像已内置 Node 24，Windows 还需安装 Git Bash。首次使用请在终端运行 `pi` 并通过 `/login` 完成登录；
-- **会话历史**：自动扫描 `~/.pi/agent/sessions`（支持 `PI_CODING_AGENT_SESSION_DIR` 与 `settings.sessionDir`），按 Pi 树形 JSONL 的活动分支索引，与 Claude / Codex 历史共用面板，支持搜索、回放、重命名、收藏、归档、删除与 Markdown/JSONL 导出；历史标签仅在检测到 Pi 已安装时显示；
-- **精确绑定与恢复**：TerminalBuddy 启动 Pi 时注入扩展并由其上报会话绑定（新启动不注入 `--session-id`，仅恢复会话时带 `--session`），容器重启后按 `pi --session` 恢复页签（Codex 页签同样支持 `codex resume` 恢复）；Pi 扩展可精确上报手动启动的会话；
-- **模型菜单与状态**：项目/历史右键可按 Pi 的 provider/model/thinking 启动或恢复，标签显示模型 chip；解析 OSC 7501 与扩展事件，显示 working / blocked / done / error 状态灯，并支持桌面与机器人通知；
-- **供应商管理**：设置页「模型供应商」新增 Pi 分页，管理兼容端点（baseUrl、API 协议、密钥、模型、思考级别映射），保存后自动同步到 Pi 的 `models.json`，多 provider 并存、保存即生效；密钥支持明文 / `$环境变量` / `!命令` 三种形态，已用 `/login` 登录的凭证不受影响；
-- **扩展与工具确认**：Pi 扩展随启动自动注入，也可在 Agent 管理全局安装；工具确认默认关闭，开启后 `bash/edit/write` 执行前会请求允许或拒绝（超时自动放行，保持 Pi 原生行为）；
-- **原生 AI 会话**：手机/安卓端可直接选择 Pi 供应商与模型发起原生对话——服务端以 `pi --mode rpc` 常驻驱动（会话 ID 复用 TerminalBuddy 会话 ID，按项目目录归档），流式回复、工具日志、Token 用量（回合结束按 Pi 全会话统计权威结算）与 Pi 扩展确认卡均已接入；Pi 无内建权限参数，原生会话保持 Pi 原生行为。
 
 ---
 ## 五、常用快捷键速查表
@@ -515,9 +501,9 @@ npm run tauri build
 除 Windows 安装包外，还提供服务器 / NAS 部署与跨平台构建方式：
 
 - **Docker 服务器部署**：在电脑或手机浏览器中使用与桌面同款的功能，详见 [DEPLOY_README.md](DEPLOY_README.md) 与 [docs/Docker与完整网页界面.md](docs/Docker与完整网页界面.md)；
-- **飞牛 fnOS 一键部署**：执行 `./scripts/deploy-fnos.sh` 将 TerminalBuddy 部署到飞牛 NAS，默认在飞牛上编译镜像（部署机无需安装 Docker / Node / Rust），内置写入探测、健康检查与失败自动回退；
-- **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./scripts/build-windows-exe.sh`，借助一次性 Docker 容器完成交叉编译，产出 `dist/` 下的单文件 exe 与 `.sha256` 校验，宿主机无需安装任何工具链；
-- **Android 客户端构建**：Linux 上在仓库根目录执行 `./scripts/build-android.sh`，借助一次性 Docker 容器完成 Release 打包与 apksigner 签名校验，产出 `dist/` 下的 APK 与 `.sha256`，宿主机无需安装任何工具链；本机已具备 JDK 17+ 与 Android SDK 时也可 `cd android && ./gradlew :app:assembleDebug`（详见 [android/README.md](android/README.md)），Windows 直装设备用 `scripts/build-android.bat`。
+- **飞牛 fnOS 一键部署**：执行 `./xcj/deploy-fnos.sh` 将 TerminalBuddy 部署到飞牛 NAS，默认在飞牛上编译镜像（部署机无需安装 Docker / Node / Rust），内置写入探测、健康检查与失败自动回退；
+- **Linux 交叉编译 Windows 单文件 exe**：仓库根目录执行 `./xcj/build-windows-exe.sh`，借助一次性 Docker 容器完成交叉编译，产出 `dist/` 下的单文件 exe 与 `.sha256` 校验，宿主机无需安装任何工具链；
+- **Android 客户端构建**：Linux 上在仓库根目录执行 `./xcj/build-android.sh`，借助一次性 Docker 容器完成 Release 打包与 apksigner 签名校验，产出 `dist/` 下的 APK 与 `.sha256`，宿主机无需安装任何工具链；本机已具备 JDK 17+ 与 Android SDK 时也可 `cd android && ./gradlew :app:assembleDebug`（详见 [android/README.md](android/README.md)），Windows 直装设备用 `scripts/build-android.bat`。
 
 ---
 ## 八、安全与隐私设计

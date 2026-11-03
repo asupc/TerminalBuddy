@@ -33,7 +33,7 @@ RUN --mount=type=cache,id=terminal-buddy-cargo-registry,target=/usr/local/cargo/
 
 FROM node:24-bookworm-slim
 # procps 提供 Codex 后台服务依赖的 ps 命令，随运行镜像预装。
-# Node 24 满足 Pi Agent 的 Node >= 22.19 要求；npm 全局前缀指向用户可写的 ~/.local。
+# Node 运行时供 Claude Code / Codex CLI 在容器内运行；npm 全局前缀指向用户可写的 ~/.local。
 # /root 仅开放路径穿越，供 /root/... 工作区在容器内按宿主机同路径挂载。
 RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates curl git openssh-client libssl3 libssh2-1 tini procps && rm -rf /var/lib/apt/lists/* \
     && (userdel -r node 2>/dev/null || true) && (groupdel node 2>/dev/null || true) \

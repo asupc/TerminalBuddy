@@ -10,10 +10,9 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `scripts/deploy-centos.sh` | **发起端（→ CentOS）**：拉代码 → 免密认证 → 打包上传 → 目标机执行 → 自检。可在任意装了 ssh/scp/tar/curl 的机器上跑 |
-| `scripts/deploy-fnos.sh` | **发起端（→ 飞牛 fnOS）**：打包源码 → 上传 → 飞牛上构建镜像并重建容器 → 自检 |
-| `scripts/update.sh` | **飞牛本地更新**：先 `git pull` 再用脚本所在仓库的源码构建镜像，由独立容器切换服务，失败自动恢复原容器与数据 |
-| `scripts/update-fnos-container.sh` | `scripts/update.sh` 的独立更新执行体：克隆原部署配置、备份数据、切换与故障恢复 |
+| `xcj/deploy-centos.sh` | **发起端（→ CentOS）**：拉代码 → 免密认证 → 打包上传 → 目标机执行 → 自检。可在任意装了 ssh/scp/tar/curl 的机器上跑 |
+| `xcj/deploy-fnos.sh` | **发起端（→ 飞牛 fnOS）**：本机构建镜像并上传 → 飞牛载入镜像并重建容器 → 自检 |
+| `xcj/update.sh` | **统一更新入口**：一条命令更新本机 systemd 服务与飞牛 Docker 容器；本机构建产物指纹一致且进程已加载时跳过重启，否则备份、原子替换、重启、健康检查、失败自动回滚 |
 | `scripts/deploy-centos-remote.sh` | CentOS 目标端执行体（上传后以 root 运行）：解压、生成 compose、基础镜像兜底、构建/载入镜像、重建容器、健康检查 |
 | `scripts/deploy-fnos-remote.sh` | 飞牛目标端执行体（上传后以 sudo 运行）：目录属主、生成 compose、构建/载入镜像、重建容器 |
 
@@ -22,11 +21,11 @@
 在项目根目录执行（任意 Linux 机器均可作为发起端，本机不需要装 docker / Node / Rust）：
 
 ```bash
-./scripts/deploy-centos.sh                  # 完整流程：git pull + 目标机构建 + 部署 + 自检
-./scripts/deploy-centos.sh --no-build       # 跳过构建，用目标机现有镜像快速重建容器
-./scripts/deploy-centos.sh --no-pull        # 不拉取代码，直接用当前工作区
-./scripts/deploy-centos.sh --build-local    # 改在本机构建镜像后上传（需本机 docker 且同架构）
-./scripts/deploy-centos.sh --host 192.168.3.202 --ssh-port 22
+./xcj/deploy-centos.sh                  # 完整流程：git pull + 目标机构建 + 部署 + 自检
+./xcj/deploy-centos.sh --no-build       # 跳过构建，用目标机现有镜像快速重建容器
+./xcj/deploy-centos.sh --no-pull        # 不拉取代码，直接用当前工作区
+./xcj/deploy-centos.sh --build-local    # 改在本机构建镜像后上传（需本机 docker 且同架构）
+./xcj/deploy-centos.sh --host 192.168.3.202 --ssh-port 22
 ```
 
 首次运行会生成部署密钥 `~/.ssh/terminal_buddy_centos_deploy` 并自动安装到目标机，
@@ -48,7 +47,7 @@ sudo bash deploy-centos-remote.sh \
 
 ## 可配置项（环境变量）
 
-发起端 `scripts/deploy-centos.sh` 用 `TB_CENTOS_*` 前缀：
+发起端 `xcj/deploy-centos.sh` 用 `TB_CENTOS_*` 前缀：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -79,7 +78,7 @@ sudo bash deploy-centos-remote.sh \
 示例：
 
 ```bash
-TB_CENTOS_PORT=9620 TB_CENTOS_BIND_ADDRESS=127.0.0.1 ./scripts/deploy-centos.sh
+TB_CENTOS_PORT=9620 TB_CENTOS_BIND_ADDRESS=127.0.0.1 ./xcj/deploy-centos.sh
 ```
 
 ## 服务器侧信息
@@ -95,29 +94,34 @@ TB_CENTOS_PORT=9620 TB_CENTOS_BIND_ADDRESS=127.0.0.1 ./scripts/deploy-centos.sh
 | 局域网地址 | http://192.168.3.202:9610/ |
 | 公网地址 | http://123.57.172.104:9610/ （飞牛 frpc 转发） |
 
-## 一键部署到飞牛 fnOS（scripts/deploy-fnos.sh）
+## 一键部署到飞牛 fnOS（xcj/deploy-fnos.sh）
 
 把 TerminalBuddy 部署到飞牛 NAS（192.168.3.77），与 CentOS 实例并存、互不影响。
 飞牛默认禁止 root 登录，脚本用普通管理员账号 + `sudo` 完成，**不需要**在飞牛上装 Node.js / Rust。
 
 ```bash
-./scripts/deploy-fnos.sh                 # 全流程：拉代码 → 打包源码 → 上传 → 飞牛上构建镜像 → 重建容器 → 自检
-./scripts/deploy-fnos.sh --no-build      # 跳过构建，用飞牛上现有镜像重建容器
-./scripts/deploy-fnos.sh --no-pull       # 不拉取本机代码，直接用当前工作区
-./scripts/deploy-fnos.sh --build-local   # 改在本机构建镜像后上传（需本机 docker）
+./xcj/deploy-fnos.sh                 # 全流程：拉代码 → 本机 docker 构建镜像 → 上传 → 飞牛载入 → 重建容器 → 自检
+./xcj/deploy-fnos.sh --no-build      # 跳过构建，用飞牛上现有镜像重建容器
+./xcj/deploy-fnos.sh --no-pull       # 不拉取本机代码，直接用当前工作区
+./xcj/deploy-fnos.sh --build-on-nas  # 改为上传源码包、在飞牛上构建镜像（本机可不装 docker）
 ```
 
 sudo 密码来源（按优先级）：环境变量 `TB_FNOS_PASSWORD` → 凭据文件（`--config`，默认
 `~/.codex/private/fnos/config.json`）→ 交互式隐藏输入。密码只经 stdin 交给远端 `sudo -S`，
 不写入命令行参数或日志。首次运行会自动生成部署密钥并安装公钥到飞牛，之后全程免密。
 
-**默认在飞牛上编译**：部署机不需要安装 docker / Node / Rust，任意能 ssh 的机器都能发包，
-源码包约 16MB，比搬运 158MB 镜像包省事。i3-N305（8 核 / 7.8G 内存）首次构建约 20-40 分钟；
-之后源码指纹未变时**直接跳过构建**复用镜像，日常改配置或重建容器几乎瞬时完成。
-基础镜像走「本地命中 → 离线备份 → 备用镜像源」三级兜底，构建所需的 npm / crates 源
-在飞牛上实测可达。需要复用本机 Docker 层缓存时用 `--build-local`（本机需装 docker）。
+**默认在本机编译**（2026-11 起）：开发机装有 docker 且算力远强于飞牛 i3-N305，本机
+`docker build` 复用 BuildKit 层缓存，源码未变时几乎瞬时完成；镜像与飞牛上现有镜像 ID
+一致时**跳过导出与上传**，有变化时约 158MB 镜像包走局域网上传一次。飞牛侧只做
+`docker load` 与重建容器，不编译，也无需 Node / Rust。
 
-默认配置（写在 `scripts/deploy-fnos.sh` 顶部，可用环境变量覆盖）：
+需要改回「上传源码、在飞牛上编译」时用 `--build-on-nas`（部署机可不装 docker，任意能
+ssh 的机器都能发包，源码包约 16MB；i3-N305 首次构建约 20-40 分钟，之后源码指纹未变时
+直接跳过构建复用镜像；基础镜像走「本地命中 → 离线备份 → 备用镜像源」三级兜底，
+构建所需的 npm / crates 源在飞牛上实测可达）。默认行为也可用环境变量
+`TB_FNOS_BUILD_LOCAL=0` 切换。
+
+默认配置（写在 `xcj/deploy-fnos.sh` 顶部，可用环境变量覆盖）：
 
 | 项 | 默认值 |
 |---|---|
@@ -144,74 +148,40 @@ sudo 密码来源（按优先级）：环境变量 `TB_FNOS_PASSWORD` → 凭据
 - **基础镜像兜底**（在飞牛上构建时使用）：本地命中 → 离线备份
   （`<应用目录>/base-images/`）→ 备用镜像源，避免飞牛镜像加速源故障时构建第一步就失败。
 
-### 在飞牛上用当前源码更新自己（scripts/update.sh）
+### 统一更新（xcj/update.sh）
 
-脚本位于仓库的 `scripts/` 下，源码根目录默认取脚本所在仓库的根目录（含 `Dockerfile` 和
-`terminal-buddy/` 的那一层），因此在任意目录执行都可以，不必先 `cd` 到源码根目录。
-既可在飞牛 SSH 终端中运行，也可在 TerminalBuddy 自己的网页终端中运行：
+在本机（Debian 开发机）上执行的统一更新入口，一条命令同时更新两处：
 
-```bash
-bash /vol1/1000/docker/terminal-buddy/workspace/terminal-buddy/scripts/update.sh
-bash scripts/update.sh                       # 在仓库内任意位置执行：先 git pull 并用最新源码构建更新，切换时网页终端会断开
-bash scripts/update.sh --no-pull             # 跳过 git pull，直接用当前源码构建
-bash scripts/update.sh --exit-on-success     # 兼容旧参数，成功后默认结束脚本
-bash scripts/update.sh --detach              # 启动独立切换任务后返回
-bash scripts/update.sh --keep-rollback       # 成功后保留旧容器与快照，暂缓自动清理
-bash scripts/update.sh --container terminal-buddy --health-timeout 300
-```
-
-脚本开头会在源码目录执行 `git pull --ff-only`，随后打印最新一条提交记录（提交号、
-作者、时间、标题），再继续原有的校验与构建流程；pull 失败则直接退出，不切换服务。
-若本次 pull 修改了 `scripts/update.sh` 自身，脚本会带着原参数自动用新版本重新执行。
-
-源码也可位于原部署的 `/vol1/1000/docker/terminal-buddy/src`，或通过
-`--source-dir /实际源码目录` 指定。宿主机账号没有 Docker 权限时使用 `sudo bash scripts/update.sh`。
-支持 `TB_FNOS_CONTAINER`、`TB_FNOS_IMAGE`、`TB_UPDATE_HEALTH_TIMEOUT`、
-`TB_UPDATE_KEEP_ROLLBACK`、`TB_UPDATE_CLEANUP_DELAY` 和 `TB_UPDATE_PULL=0`（等同 `--no-pull`）环境变量，
-完整选项见 `bash scripts/update.sh --help`。
-
-镜像构建完成、候选容器准备就绪后，终端会逐秒提示「10、9、8…1 秒后开始部署，
-网页终端将会断开连接」。旧容器停止时原网页终端进程会终止；独立更新容器会继续
-完成部署或失败回退，不再显示自更新监视面板、轮询日志或强制重建终端连接。
-服务恢复后请手动刷新网页继续使用。
-
-在宿主机或飞牛 SSH 终端中运行时，可持续查看切换日志；更新完成后脚本直接结束，
-返回原命令行。`--exit-on-success` 仅保留为兼容旧调用的参数。
-构建和切换日志仍保存在持久目录 `/data/.terminal-buddy-update/update.log`，供手动排查。
-
-更新沿用现有容器的端口、环境变量、网络、工作目录、Docker socket 附加组和绑定挂载，
-不会重新生成 Compose 或覆盖 `.env`。适用于 `scripts/deploy-fnos.sh` 创建的绑定挂载部署；
-自动删除容器、命名卷、静态 IP、嵌套数据挂载等无法安全原样恢复的配置会在切换前拒绝。
-
-恢复流程：
-
-1. 检查当前源码和原服务；使用独立标签构建镜像，构建失败时旧服务继续运行。
-2. 由固定名称 `terminal-buddy-updater` 的独立容器执行后续操作，防止并发更新。
-   网页终端断开不影响切换；更新任务意外退出或 Docker 重启后会继续恢复未完成的切换。
-3. 先创建停止状态的候选容器，再停旧服务，将完整 `/data` 和 `/home/terminalbuddy`
-   备份到更新容器中，包含 SQLite、登录密钥、CLI 安装和配置。停机时间包含快照耗时，
-   请为两份目录的快照预留磁盘空间；项目工作区不参与快照恢复。
-4. 保留并重命名旧容器，启动新版，通过 Docker 健康检查、连续 HTTP 检查、目录写入和
-   Docker socket 检查后才发布正式镜像标签。
-5. 切换失败时先移除新版，恢复启动前的数据快照，再恢复原容器名称、重启策略并启动，
-   确认旧服务健康。回退暂时失败时，独立任务会自动重试，恢复材料持续保留。
-6. 默认成功后由临时 AutoRemove 清理容器等待 10 秒，再删除旧容器、更新容器和
-   临时镜像标签；`--keep-rollback` 或 `TB_UPDATE_KEEP_ROLLBACK=1` 可保留这些材料，
-   `TB_UPDATE_CLEANUP_DELAY` 可调整清理前的保留秒数。
+- **local**：本机 systemd 服务（`/opt/terminal-buddy`，服务 `terminal-buddy`）——
+  本机构建网页前端与 server 二进制，与已部署产物比对指纹；一致且运行中进程已加载
+  当前文件时跳过重启，否则备份旧二进制（`terminal-buddy-server.bak`）与 web 目录
+  （`web.old`）、原子替换、`systemctl restart`、健康检查（`/api/health`），失败自动回滚。
+- **fnos**：飞牛 Docker 容器——直接复用 `xcj/deploy-fnos.sh`（本机构建镜像 →
+  上传，镜像一致时跳过 → 飞牛载入镜像 → 重建容器 → 健康检查），参数原样透传。
 
 ```bash
-docker logs -f terminal-buddy-updater   # 重连后查看更新或回退结果
-docker cp terminal-buddy-updater:/tmp/terminal-buddy-update/ ./terminal-buddy-update-backup
+bash xcj/update.sh                       # 默认 all：先本机验证健康，再部署飞牛
+bash xcj/update.sh local                 # 只更新本机 systemd 服务
+bash xcj/update.sh fnos                  # 只更新飞牛 Docker 容器（docker/nas 为别名）
+bash xcj/update.sh --no-pull             # 跳过开头的 git pull --ff-only
+bash xcj/update.sh --keep-rollback       # 本机成功后保留 .bak 与 web.old 回滚材料
+bash xcj/update.sh fnos --host 192.168.3.77 --listen-port 9600   # 透传 deploy-fnos.sh 参数
 ```
 
-默认成功更新会在短暂延迟后自动删除 `terminal-buddy-backup-<本次编号>`、
-`terminal-buddy-updater` 以及本次更新的临时镜像标签，不留下成功更新的容器残留。
-如果使用 `--keep-rollback`，旧容器保持停止且禁用自动重启；旧镜像和快照保留，
-再次更新时上一更新容器也会按要求保留或清理。
-失败或回退材料不会在成功前删除；需要排查时，快照目录中的 `result` 为
-`updated`、`rolled-back` 或 `rollback-failed`，`original-container.json` 保存更新前的
-完整容器配置。这些文件包含用户数据和配置，应与正式数据采用相同的保管方式。
-此脚本用于更新已有健康服务，首次部署仍使用 `scripts/deploy-fnos.sh`。
+要点：
+
+- 脚本开头执行 `git pull --ff-only` 并打印最新提交；若 pull 修改了脚本自身，会带着
+  原参数自动用新版本重新执行。
+- **在 TerminalBuddy 网页终端里执行时**，本机重启会断开当前会话（预期行为）：脚本
+  检测到自身位于 `terminal-buddy-server` 进程树内时，把「重启 + 健康检查 + 回滚
+  （+ 后续飞牛部署）」交给脱离会话的后台任务继续执行，日志持久化在
+  `/opt/terminal-buddy/data/.terminal-buddy-update/`，断线不影响更新结果。
+- 构建与文件替换以源码属主身份执行（root 运行时自动降权，避免产物属主漂移）；
+  `systemctl restart` 需要 root，普通用户会经 sudo 交互输密码。
+- 环境变量：`TB_LOCAL_INSTALL_DIR` / `TB_LOCAL_SERVICE` / `TB_LOCAL_PORT` /
+  `TB_LOCAL_HEALTH_TIMEOUT` / `TB_UPDATE_PULL` / `TB_UPDATE_KEEP_ROLLBACK`，
+  以及 `TB_FNOS_*`（透传给 deploy-fnos.sh）。完整选项见 `bash xcj/update.sh --help`。
+- 本机目标只做更新不做首次部署；飞牛首次部署仍使用 `xcj/deploy-fnos.sh`。
 
 ### 首次登录
 
@@ -287,12 +257,13 @@ docker restart terminal-buddy                  # 重启后浏览器无需重新�
 **1. 基础镜像拉取失败**
 CentOS 7 直连 Docker Hub 通常超时。脚本已内置加速源，可用 `TB_IMAGE_MIRROR` 换源：
 `docker.1ms.run/library`、`hub.rat.dev/library`、`dockerpull.org` 等。
-飞牛侧（`scripts/deploy-fnos.sh` 默认即在飞牛上构建）同样内置四个备用源，并支持
-`<应用目录>/base-images/` 离线备份，镜像源全线故障时仍可恢复。
+飞牛侧用 `--build-on-nas` 在飞牛上构建时同样内置四个备用源，并支持
+`<应用目录>/base-images/` 离线备份，镜像源全线故障时仍可恢复；默认在本机构建时
+基础镜像直接走本机 docker 的已有缓存与常规拉取。
 
 **2. 健康检查不通过**
 脚本会自动打印最近 40 行日志。默认原因是数据目录属主不是容器内 uid 1000，
-`scripts/deploy-centos.sh` 已自动 `chown -R 1000:1000`；若手动改过目录需重新执行脚本。
+`xcj/deploy-centos.sh` 已自动 `chown -R 1000:1000`；若手动改过目录需重新执行脚本。
 
 **3. 127.0.0.1 访问返回 000**
 端口只绑在服务器 IP（`TB_CENTOS_BIND_ADDRESS=192.168.3.202`）时属正常现象，用局域网地址访问即可。
@@ -301,9 +272,9 @@ CentOS 7 直连 Docker Hub 通常超时。脚本已内置加速源，可用 `TB_
 目标端脚本会先检查并给出占用进程；用 `TB_CENTOS_PORT` 换端口，同时记得同步修改飞牛 `frpc.ini`。
 
 **5. 后续如何升级代码**
-CentOS：在任意机器的工作区执行 `./scripts/deploy-centos.sh`（默认先 `git pull --ff-only`，
+CentOS：在任意机器的工作区执行 `./xcj/deploy-centos.sh`（默认先 `git pull --ff-only`，
 再打包上传到目标机构建部署）。
-飞牛：执行 `./scripts/deploy-fnos.sh` 即可，脚本会自动重建镜像并只在镜像真正变化时
+飞牛：执行 `./xcj/deploy-fnos.sh` 即可，脚本会自动重建镜像并只在镜像真正变化时
 更新飞牛上的镜像与容器（未变化时飞牛侧服务零中断）。
 
 **6. 飞牛部署报「目录对容器内 uid 1000 不可写」**
@@ -315,7 +286,7 @@ sudo /usr/trim/bin/trimacl -m a:u:1000:rwxpdDaAeEc:sfd /vol1/1000/docker/termina
 ```
 
 **7. 飞牛的镜像 / 容器被系统清理**
-飞牛会回收未被容器占用的镜像。重新执行 `./scripts/deploy-fnos.sh` 即可恢复；
+飞牛会回收未被容器占用的镜像。重新执行 `./xcj/deploy-fnos.sh` 即可恢复；
 由于本机保留构建缓存，重新导出镜像只是一分钟左右的事。
 
 ## 在网页终端和 Claude 中部署宿主机 Docker 容器
@@ -330,7 +301,7 @@ TerminalBuddy 仍以 uid 1000 运行，通过附加用户组访问 socket。
 本次升级需要完整重建镜像，不能使用 `--no-build`：
 
 ```bash
-./scripts/deploy-centos.sh --no-pull
+./xcj/deploy-centos.sh --no-pull
 ```
 
 目标端脚本会自动检查目标机 socket、读取其 GID，生成挂载和附加用户组，
@@ -387,9 +358,7 @@ Docker 网页版顶部的“容器环境”按钮位于检查更新按钮旁。�
 同一浏览器、网页地址和账号只自动展示一次；之后可以随时点击按钮手动打开。
 桌面版和直接运行在宿主机上的独立 Web 服务不显示此入口。
 
-当前检测 Claude Code、Codex CLI 和 Pi：显示是否安装及版本，没有安装时可点击“一键安装”。
-Claude / Codex 使用各工具的官方安装器，Pi 使用 npm 安装到用户可写前缀，均在后台执行；
-关闭弹框不会中断，重复请求不会创建多个安装进程，失败后可查看原因并重试。Pi 需要 Node.js ≥ 22.19，
+CLI 工具（Claude Code / Codex）请按官方文档自行安装（如 npm 全局安装）；应用内不再提供安装与更新管理。
 运行镜像已预装 Node 24；Windows 桌面端还需 Git Bash。
 
 镜像在构建时预装提供 `ps` 命令的 `procps` 依赖，重新构建镜像或创建容器后仍然可用，无需手动安装。
@@ -429,8 +398,8 @@ AES-GCM 加密存储，网页不会读取回完整 API 密钥；编辑密钥留�
 写入 settings.json 时保留 hooks、权限等无关设置，清理旧地址、凭据和模型映射，
 通过临时文件原子替换；数据库提交失败时回退文件。接口要求网页登录认证，非 Docker 版禁用。
 
-镜像预装 Node.js 24（满足 Pi 的 Node ≥ 22.19 要求），但不预装 Codex CLI、Claude CLI 或 Pi；
-可在网页“Agent 管理”中一键安装，其他命令行工具可按需扩展 Dockerfile。
+镜像预装 Node.js 24 运行时（供 Claude Code / Codex CLI 在容器内运行），但不预装这两个 CLI；
+可在容器内用 npm 自行安装，其他命令行工具可按需扩展 Dockerfile。
 
 ## Codex 启动提示找不到 ps
 
@@ -438,12 +407,12 @@ AES-GCM 加密存储，网页不会读取回完整 API 密钥；编辑密钥留�
 
 暂时不更新镜像时，可在网页顶部打开“容器环境”，找到“procps（ps 命令）”卡片并点击“一键安装”。后台安装完成后会自动重新检测，确认“已经可用”后，在原终端重新运行 `codex`，无需重启服务。
 
-使用 `scripts/deploy-centos.sh` 更新功能时，默认只构建当前目录的源码，不会自动拉取最新代码。请先更新实际部署分支，再完整部署：
+使用 `xcj/deploy-centos.sh` 更新功能时，默认只构建当前目录的源码，不会自动拉取最新代码。请先更新实际部署分支，再完整部署：
 
 ```bash
 git branch --show-current
 git pull --ff-only
-./scripts/deploy-centos.sh
+./xcj/deploy-centos.sh
 ```
 
 更新时必须重新构建镜像并重建容器，才能使用镜像内置的 `procps`；`--no-build` 只复用现有镜像，不会加入新依赖。使用仓库默认 Compose 配置时，可执行 `docker compose up -d --build`。
