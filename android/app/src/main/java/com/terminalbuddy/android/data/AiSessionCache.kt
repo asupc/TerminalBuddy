@@ -5,6 +5,10 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import java.util.LinkedHashMap
@@ -12,7 +16,9 @@ import java.util.concurrent.Executors
 
 /** AI 正文的内存 + SQLite 缓存；只接收服务端完整快照，不保存本地发送占位消息。 */
 class AiSessionCache(context: Context, private val store: SessionStore) {
-    data class Scope internal constructor(val server: String, val username: String, internal val version: Long)
+    data class Scope internal constructor(
+        val server: String, val username: String, internal val version: Long, internal val accountVersion: Long,
+    )
     private data class Key(val server: String, val username: String, val id: String)
     private data class Snapshot(val scope: Scope, val session: AiSession)
 
@@ -28,8 +34,21 @@ class AiSessionCache(context: Context, private val store: SessionStore) {
     private val removed = mutableSetOf<Key>()
     private var flushJob: Job? = null
     private var version = 0L
+    private val accountVersions = mutableMapOf<Pair<String, String>, Long>()
+    private val changes = MutableSharedFlow<Snapshot>(extraBufferCapacity = 32, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
-    @Synchronized fun scope(): Scope? = if (store.loggedIn) Scope(store.server, store.username, version) else null
+    @Synchronized fun scope(): Scope? = if (store.loggedIn) scope(store.server, store.username) else null
+
+    /** 后台调用方先核对账号连接，再取得该账号独立的缓存范围。 */
+    @Synchronized internal fun scope(connection: AiConnection): Scope = scope(connection.server, connection.username)
+
+    private fun scope(server: String, username: String) =
+        Scope(server, username, version, accountVersions[server to username] ?: 0L)
+
+    /** 仅发布完整正文快照；后台接收的新结果可以直接更新当前页面。 */
+    fun observe(scope: Scope, id: String) = changes
+        .filter { it.scope == scope && it.session.id == id && canUse(scope, keyOf(scope, id)) }
+        .map { it.session }
 
     /** 同一次运行中再次进入会话时同步取内存，不在主线程访问数据库。 */
     @Synchronized fun peek(scope: Scope, id: String): AiSession? =
@@ -66,17 +85,19 @@ class AiSessionCache(context: Context, private val store: SessionStore) {
         }
     }
 
-    /** 内存立即更新；流式回复每半秒合并落盘，避免每个 token 都写入整段历史。 */
+    /** 内存立即更新；流式回复每半秒合并落盘，完成结果立即安排写入。 */
     @Synchronized fun save(scope: Scope, session: AiSession) {
         val key = keyOf(scope, session.id)
         if (!canUse(scope, key) || session.id.startsWith("local-")) return
         val previous = memory[key]
-        if (previous != null && previous.revision > session.revision) return
+        if (previous == session || (previous != null && previous.revision > session.revision)) return
         putBounded(memory, key, session)
+        changes.tryEmit(Snapshot(scope, session))
         pending[key] = Snapshot(scope, session)
-        if (flushJob?.isActive == true) return
+        if (flushJob?.isActive == true && session.running) return
+        flushJob?.cancel()
         flushJob = writer.launch {
-            delay(500)
+            if (session.running) delay(500)
             val snapshots = synchronized(this@AiSessionCache) {
                 pending.values.toList().also { pending.clear(); flushJob = null }
             }
@@ -101,14 +122,23 @@ class AiSessionCache(context: Context, private val store: SessionStore) {
 
     /** 切换账号时使旧读写失效，保留各账号独立的磁盘缓存。 */
     @Synchronized fun invalidate() {
+        // 已接收的正文仍写回原账号，不能因切换账号丢掉最后半秒的结果。
+        val snapshots = pending.values.filter {
+            it.scope.accountVersion == (accountVersions[it.scope.server to it.scope.username] ?: 0L)
+        }
         version++
         memory.clear(); pending.clear(); removed.clear()
         flushJob?.cancel(); flushJob = null
-        writer.launch { written.clear() }
+        writer.launch {
+            snapshots.forEach { runCatching { persist(it.scope, it.session) } }
+            written.clear()
+        }
     }
 
     /** 删除或退出账号时只清理该账号，其他账号的缓存继续保留。 */
     @Synchronized fun removeAccount(server: String, username: String) {
+        val account = server to username
+        accountVersions[account] = (accountVersions[account] ?: 0L) + 1
         if (store.server == server && store.username == username) invalidate()
         memory.keys.removeAll { it.server == server && it.username == username }
         pending.keys.removeAll { it.server == server && it.username == username }
@@ -157,8 +187,8 @@ class AiSessionCache(context: Context, private val store: SessionStore) {
         putBounded(written, key, session)
     }
 
-    @Synchronized private fun isCurrent(scope: Scope) = scope.version == version && store.loggedIn
-        && scope.server == store.server && scope.username == store.username
+    @Synchronized private fun isCurrent(scope: Scope) = scope.version == version
+        && scope.accountVersion == (accountVersions[scope.server to scope.username] ?: 0L)
 
     @Synchronized private fun canUse(scope: Scope, key: Key) = isCurrent(scope) && key !in removed
 

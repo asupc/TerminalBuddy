@@ -252,6 +252,11 @@ class AiRepository(context: Context) {
             put("providerId", target.id)
             if (model.id.isNotBlank()) put("model", model.id)
         }))
+    /** 后台正文补偿固定使用任务所属账号，且不占用页面请求队列。 */
+    internal suspend fun backgroundSession(id: String, connection: AiConnection): AiSession =
+        ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions", id),
+            server = connection.server, token = connection.token, client = notificationHttp))
+
     suspend fun session(id: String): AiSession = ApiJson.decodeFromJsonElement(request("GET", listOf("ai", "sessions", id)))
 
     suspend fun create(project: AiProject, provider: AiProvider, model: String, resumeSessionId: String? = null): AiSession =
@@ -419,10 +424,12 @@ class AiRepository(context: Context) {
         awaitClose { socket.cancel() }
     }.buffer(Channel.CONFLATED)
 
-    private fun observe(id: String, connection: AiConnection) = callbackFlow<AiSession> {
+    internal fun observeBackground(id: String, connection: AiConnection) = observe(id, connection, notificationRealtime)
+
+    private fun observe(id: String, connection: AiConnection, client: OkHttpClient = realtime) = callbackFlow<AiSession> {
         val url = ServerAddress.aiSocket(connection.server, id, connection.token)
         var latest: AiSession? = null
-        val socket = realtime.newWebSocket(
+        val socket = client.newWebSocket(
             Request.Builder().url(url).header("User-Agent", USER_AGENT).build(),
             object : WebSocketListener() {
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -448,8 +455,11 @@ class AiRepository(context: Context) {
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     response?.close()
                     close(
-                        if (response?.code == 401) ApiException(401, "AI 服务登录已过期，请重新登录")
-                        else IOException("AI 实时连接断开", t)
+                        when (response?.code) {
+                            401 -> ApiException(401, "AI 服务登录已过期，请重新登录")
+                            404 -> ApiException(404, "该任务已删除或当前账号无法访问")
+                            else -> IOException("AI 实时连接断开", t)
+                        }
                     )
                 }
 

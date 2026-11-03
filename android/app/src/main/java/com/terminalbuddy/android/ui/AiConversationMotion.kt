@@ -31,9 +31,9 @@ internal class AiAnimatedMessage(message: AiMessage, animate: Boolean) {
     var entered by mutableStateOf(!animate)
     val isRevealing get() = text.length < targetText.length
 
-    fun update(message: AiMessage) {
+    fun update(message: AiMessage, animate: Boolean) {
         // 服务端替换整段文本或缩短回复时必须立即对齐，不能装作还在增长。
-        if (role != "assistant" || !message.text.startsWith(text)) text = message.text
+        if (!animate || role != "assistant" || !message.text.startsWith(text)) text = message.text
         targetText = message.text
     }
 
@@ -71,10 +71,10 @@ internal class AiConversationMotion {
     var initialized by mutableStateOf(false)
         private set
 
-    fun update(incoming: List<AiMessage>) {
+    fun update(incoming: List<AiMessage>, animate: Boolean = true) {
         val previous = messages.associateBy { it.id }
         val next = incoming.map { message ->
-            previous[message.id]?.also { it.update(message) } ?: AiAnimatedMessage(message, animate = initialized)
+            previous[message.id]?.also { it.update(message, animate) } ?: AiAnimatedMessage(message, animate = initialized && animate)
         }
         if (next != messages) {
             messages.clear()
@@ -121,8 +121,9 @@ internal fun rememberAiConversationMotion(session: AiSession, loading: Boolean):
     val motion = remember(session.id) {
         AiConversationMotion().also { if (!loading) it.update(messages) }
     }
-    LaunchedEffect(motion, messages, loading) {
-        if (!loading) motion.update(messages)
+    LaunchedEffect(motion, messages, loading, session.running) {
+        // 完成结果及恢复到的整段回复直接对齐全文，不重播打字效果。
+        if (!loading) motion.update(messages, animate = session.running)
     }
     LaunchedEffect(motion) {
         snapshotFlow { motion.messages.any { it.isRevealing } }.collect { pending ->

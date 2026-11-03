@@ -14,6 +14,8 @@ import androidx.core.content.ContextCompat
 import com.terminalbuddy.android.TerminalBuddyApplication
 import com.terminalbuddy.android.data.AiConnection
 import com.terminalbuddy.android.data.AiRepository
+import com.terminalbuddy.android.data.AiSession
+import com.terminalbuddy.android.data.AiSessionBodySync
 import com.terminalbuddy.android.data.ApiException
 import com.terminalbuddy.android.data.ServerNotificationFrame
 import kotlinx.coroutines.*
@@ -40,6 +42,7 @@ internal class AiTaskMonitor(
     private data class Subscription(val accountId: String, val connection: AiConnection, val kind: SubscriptionKind)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val bodies = AiSessionBodySync(repository, scope)
     private val refresh = Channel<Unit>(Channel.CONFLATED)
     private val subscriptions = mutableMapOf<Subscription, Job>()
     private val connected = mutableSetOf<Subscription>()
@@ -100,6 +103,7 @@ internal class AiTaskMonitor(
     }
 
     private fun resetConnections() {
+        bodies.reset()
         subscriptions.values.toList().forEach { it.cancel() }
         subscriptions.clear()
         connected.clear()
@@ -110,6 +114,7 @@ internal class AiTaskMonitor(
 
     /** 服务每五秒检查一次，接收停滞或协程意外退出后无需打开 Activity 即可恢复。 */
     fun update() {
+        bodies.updateAccounts()
         val accounts = notifications.monitoredAccounts()
         if (accounts.isEmpty()) {
             polling?.cancel()
@@ -191,6 +196,10 @@ internal class AiTaskMonitor(
     }
 
     fun refreshNow() { refresh.trySend(Unit) }
+
+    fun syncSessionBodies(accountId: String, sessions: List<AiSession>) {
+        if (running) bodies.observe(accountId, sessions)
+    }
 
     private suspend fun subscribe(subscription: Subscription) {
         var retries = 0

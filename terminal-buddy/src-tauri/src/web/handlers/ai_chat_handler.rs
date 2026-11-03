@@ -78,8 +78,9 @@ pub async fn resume_codex_history(claims: ClaimsFromRequest, Path(id): Path<Stri
         service::resume_codex_history(&claims.0.sub, &id, project_path, input, history).map(Json).map_err(service_error)
     }).await.map_err(|e| ApiError::Internal(e.to_string()))?
 }
+// 正文直接返回内存快照；标题由列表与回合收尾刷新，不阻塞恢复对话和实时首帧。
 pub async fn get(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
-    blocking(move || service::get_with_summary(&id, &claims.0.sub)).await
+    blocking(move || service::get(&id, &claims.0.sub)).await
 }
 pub async fn send(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<SendAiMessage>) -> Result<Json<AiSession>, ApiError> {
     tokio::task::spawn_blocking(move || {
@@ -124,7 +125,7 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
     let token = params.get("token").cloned().ok_or_else(|| ApiError::Unauthorized("请先登录".into()))?;
     let claims = verify_token(&token, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期，请重新登录".into()))?;
     let owner = claims.sub;
-    let initial = { let id = id.clone(); let owner = owner.clone(); blocking(move || service::get_with_summary(&id, &owner)).await?.0 };
+    let initial = { let id = id.clone(); let owner = owner.clone(); blocking(move || service::get(&id, &owner)).await?.0 };
     Ok(ws.max_message_size(usize::MAX).max_frame_size(usize::MAX).on_upgrade(move |socket| async move {
         let (mut sender, mut receiver) = socket.split();
         let send_updates = async {
@@ -141,7 +142,7 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
                     if sender.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
                     heartbeat = tokio::time::Instant::now();
                 }
-                let current = { let id = id.clone(); let owner = owner.clone(); tokio::task::spawn_blocking(move || service::get_with_summary(&id, &owner)).await };
+                let current = { let id = id.clone(); let owner = owner.clone(); tokio::task::spawn_blocking(move || service::get(&id, &owner)).await };
                 let Ok(Ok(session)) = current else { break; };
                 if session.revision == revision { continue; }
                 revision = session.revision;

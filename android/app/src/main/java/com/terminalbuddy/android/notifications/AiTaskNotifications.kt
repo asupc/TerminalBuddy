@@ -268,6 +268,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         if ((completeList || accountSnapshot) && initializedAccounts.add(accountId)) changed = true
         if (changed) persist()
         ensureMonitoring()
+        monitor.syncSessionBodies(accountId, sessions)
     }
 
     fun forgetSession(accountId: String, id: String) {

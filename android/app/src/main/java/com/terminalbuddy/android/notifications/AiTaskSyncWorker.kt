@@ -54,6 +54,7 @@ internal suspend fun syncTaskNotifications(application: TerminalBuddyApplication
                             if (e is ApiException && e.code == 401 && repository.accounts.connection(id) == connection) {
                                 if (repository.accounts.activeId == id) repository.store.clear()
                                 repository.accounts.invalidate(id)
+                                repository.sessionCache.removeAccount(connection.server, connection.username)
                                 notifications.removeAccount(id)
                                 true
                             } else false

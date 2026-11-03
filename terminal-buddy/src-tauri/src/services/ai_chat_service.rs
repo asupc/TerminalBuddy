@@ -90,13 +90,6 @@ pub fn get(id: &str, owner: &str) -> Result<AiSession> {
     let snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
     Ok(snapshot)
 }
-/// 列表、详情与 WebSocket 共用摘要刷新；会话内缓存限制磁盘检查频率。
-pub fn get_with_summary(id: &str, owner: &str) -> Result<AiSession> {
-    let cell = load(id, owner)?;
-    refresh_title(&cell, false);
-    let snapshot = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.clone();
-    Ok(snapshot)
-}
 pub fn list(owner: &str) -> Result<Vec<AiSession>> {
     let mut sessions = Vec::new();
     for entry in fs::read_dir(directory()?).map_err(|e| e.to_string())?.flatten() {
@@ -914,6 +907,7 @@ const AGENT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: mpsc::Receiver<Control>,
     output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, hooks: &NativeClaudeHooks) -> Result<WorkerExit> {
     let mut checkpoint = Instant::now();
+    let mut persisted_revision = 0;
     let mut turn = Uuid::new_v4().to_string();
     let mut state = ClaudeOutputState::default();
     let mut tasks = ClaudeBackgroundTasks::default();
@@ -970,7 +964,15 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                 }
             }
         }
-        if checkpoint.elapsed() > Duration::from_secs(5) { persist(cell)?; checkpoint = Instant::now(); }
+        // 正文持续入内存，每秒合并一次原子落盘；空闲且没有变化时不重复写历史。
+        if checkpoint.elapsed() >= Duration::from_secs(1) {
+            let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+            if data.revision != persisted_revision {
+                persist_data(cell, &data)?;
+                persisted_revision = data.revision;
+            }
+            checkpoint = Instant::now();
+        }
         if output_closed {
             if let Some(status) = process.0.try_wait().map_err(|e| format!("读取 Claude 进程状态失败：{e}"))? {
                 let details = errors.lock().map(|e| e.clone()).unwrap_or_default();
@@ -996,12 +998,17 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                 AGENT_STALL_TIMEOUT.as_secs() / 60));
         }
         if pending_results == 0 && tasks.tasks.is_empty() && pending.is_empty() && !waiting_for_hook {
-            let became_idle = cell.data.lock().map(|mut data| {
+            let became_idle = {
+                let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
                 if data.status == "idle" { false } else {
-                    data.status = "idle".into(); touch(&mut data); data.result_revision = data.revision; true
+                    data.status = "idle".into(); touch(&mut data); data.result_revision = data.revision;
+                    // 完成状态与最终正文一起落盘，通知连接读到 idle 时结果已经保存。
+                    persist_data(cell, &data)?;
+                    persisted_revision = data.revision;
+                    true
                 }
-            }).unwrap_or(false);
-            if became_idle { persist(cell)?; }
+            };
+            if became_idle { refresh_title(cell, true); }
             if let Some(stdin) = input.as_mut() {
                 if take_pending_for_claude(cell, stdin)?.is_some() {
                     turn = Uuid::new_v4().to_string();
@@ -1057,7 +1064,7 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
             pending_results = pending_results.saturating_sub(1);
             // result 表示这一段回复及用量已结算；后台唤醒产生的新 result 也会走到这里。
             update(cell, |data| usage::finish_turn(data));
-            refresh_title(cell, true);
+            persist(cell)?;
         }
     }
 }

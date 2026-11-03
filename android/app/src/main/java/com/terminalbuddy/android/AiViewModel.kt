@@ -102,6 +102,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private var cliHistoryJob: Job? = null
     private val serverHistoryJobs = mutableMapOf<AiServerHistoryKey, Job>()
     private var streamJob: Job? = null
+    private var cacheJob: Job? = null
     private var pollingJob: Job? = null
     private var selectJob: Job? = null
     private var sendJob: Job? = null
@@ -867,33 +868,17 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 draft = drafts[id].orEmpty(), sending = false, working = false, error = null,
             )
         }
-        selectJob = viewModelScope.launch {
-            if (cached == null && cacheScope != null) launch restoreCache@{
+        selectJob = viewModelScope.launch restoreCache@{
+            if (cached == null && cacheScope != null) {
                 val stored = repository.sessionCache.read(cacheScope, id) ?: return@restoreCache
                 if (epoch == generation) mutable.update { current ->
                     // 网络若先返回，则不再用磁盘快照覆盖；读缓存不推进已读版本。
                     if (current.selected === initial) current.copy(selected = stored, loadingSession = false) else current
                 }
             }
-            try {
-                val session = repository.session(id)
-                if (epoch != generation) return@launch
-                receive(session)
-                startRealtime()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                if (epoch == generation) {
-                    if (e is ApiException && e.code == 404) {
-                        closeSession()
-                        mutable.update { it.copy(error = "该任务已删除或当前账号无法访问") }
-                    } else {
-                        mutable.update { it.copy(loadingSession = false) }
-                        failure(e)
-                    }
-                }
-            }
         }
+        // 实时首帧、REST 补偿和磁盘恢复并行，不再等待完整 GET 才建立连接。
+        startRealtime(reconnecting = true)
     }
 
     fun closeSession() {
@@ -1182,9 +1167,9 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private fun receive(session: AiSession) {
         val selected = mutable.value.selected ?: return
         if (selected.id != session.id || session.revision < selected.revision) return
-        repository.accounts.activeId?.let { taskNotifications.observe(it, listOf(session)) }
         // 只缓存服务端原始快照，本地尚未确认的消息仍由 outgoing 单独管理。
         repository.sessionCache.scope()?.let { repository.sessionCache.save(it, session) }
+        repository.accounts.activeId?.let { taskNotifications.observe(it, listOf(session)) }
         if (pending?.id == session.id) pending = null
         val message = outgoing?.takeIf { it.sessionId == session.id }
         // 入队也算发送确认；按请求标识匹配，连续发送相同正文仍是独立消息。
@@ -1261,6 +1246,17 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val id = mutable.value.selected?.id ?: return
         if (!visible || !store.loggedIn || mutable.value.authenticating || streamJob?.isActive == true) return
         val epoch = generation
+        val cache = repository.sessionCache
+        cache.scope()?.let { cacheScope ->
+            // 从后台恢复时先用已经持续同步的正文，网络连接随后静默追上。
+            cache.peek(cacheScope, id)?.let(::receive)
+            cacheJob?.cancel()
+            cacheJob = viewModelScope.launch {
+                cache.observe(cacheScope, id).collect { snapshot ->
+                    if (epoch == generation) receive(snapshot)
+                }
+            }
+        }
         if (reconnecting) mutable.update { it.copy(reconnecting = true) }
         streamJob = viewModelScope.launch {
             var retries = 0
@@ -1277,6 +1273,11 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     throw e
                 } catch (e: Throwable) {
                     if (epoch != generation) return@launch
+                    if (e is ApiException && e.code == 404) {
+                        closeSession()
+                        mutable.update { it.copy(error = "该任务已删除或当前账号无法访问") }
+                        return@launch
+                    }
                     if (e is ApiException && e.code == 401) {
                         failure(e)
                         return@launch
@@ -1306,13 +1307,20 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
-                    if (epoch == generation) failure(e)
+                    if (epoch != generation) return@launch
+                    if (e is ApiException && e.code == 404) {
+                        closeSession()
+                        mutable.update { it.copy(error = "该任务已删除或当前账号无法访问") }
+                        return@launch
+                    }
+                    failure(e)
                 }
             }
         }
     }
 
     private fun stopRealtime() {
+        cacheJob?.cancel(); cacheJob = null
         streamJob?.cancel(); streamJob = null
         pollingJob?.cancel(); pollingJob = null
         mutable.update { it.copy(connected = false, reconnecting = false) }
