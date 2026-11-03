@@ -8,7 +8,8 @@
 #   ./xcj/build-windows-exe.sh               产出 Windows 单文件 exe
 #   ./xcj/build-windows-exe.sh --clean-cache 清空交叉编译缓存（xwin SDK 与 Windows 目标产物）
 #
-# 产物：dist/TerminalBuddy_<版本>_x64.exe 及同名 .sha256（仓库根 dist/）
+# 产物：先落到仓库根 dist/，构建成功后自动移动到 /mnt/fnos/code/
+#       （TerminalBuddy_<版本>_x64.exe 及同名 .sha256；目标目录不可用时保留在 dist/）
 # 说明：只生成单个 exe，不生成 NSIS 安装包；安装包需在 Windows 上执行
 #       terminal-buddy/build.bat。
 
@@ -17,6 +18,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$REPO_ROOT/terminal-buddy"
 OUTPUT_DIR="$REPO_ROOT/dist"
+DEPLOY_DIR="${DEPLOY_DIR:-/mnt/fnos/code}"
 XWIN_CACHE_DIR="${XWIN_CACHE_DIR:-$HOME/.cache/terminal-buddy/xwin}"
 CLEAN_CACHE=0
 
@@ -29,6 +31,7 @@ usage() {
 
 环境变量：
   XWIN_CACHE_DIR  Windows SDK 缓存目录，默认 ~/.cache/terminal-buddy/xwin
+  DEPLOY_DIR      构建产物移动目标目录，默认 /mnt/fnos/code
 EOF
 }
 
@@ -147,5 +150,19 @@ TARGET="$OUTPUT_DIR/TerminalBuddy_${VERSION}_x64.exe"
 cp -f "$BUILT" "$TARGET"
 HASH="$(sha256sum "$BUILT" | cut -d' ' -f1)"
 printf '%s  %s\n' "$HASH" "$(basename "$TARGET")" > "$TARGET.sha256"
-ls -lh "$TARGET"
+
+# 构建成功后把 exe（连同 .sha256）移动到 /mnt/fnos/code；
+# 目标目录不可用时保留在 dist/，避免构建成果丢失
+if [ -d "$DEPLOY_DIR" ] || mkdir -p "$DEPLOY_DIR" 2>/dev/null; then
+    if mv -f "$TARGET" "$TARGET.sha256" "$DEPLOY_DIR/"; then
+        echo "==> 已移动产物到 $DEPLOY_DIR"
+        ls -lh "$DEPLOY_DIR/$(basename "$TARGET")" "$DEPLOY_DIR/$(basename "$TARGET").sha256"
+    else
+        echo "警告：移动到 $DEPLOY_DIR 失败，产物保留在 $OUTPUT_DIR" >&2
+        ls -lh "$TARGET"
+    fi
+else
+    echo "警告：目录 $DEPLOY_DIR 不存在且无法创建，产物保留在 $OUTPUT_DIR" >&2
+    ls -lh "$TARGET"
+fi
 echo "==> 构建完成"

@@ -12,7 +12,9 @@
 #   systemctl restart → /api/health 健康检查，失败自动回滚旧版本并再次重启。
 #   若脚本正运行在 TerminalBuddy 自己的网页终端里（terminal-buddy-server 进程树内），
 #   重启会断开当前会话（预期行为）：此时「重启 + 健康检查 + 回滚（+ 后续飞牛部署）」
-#   自动交给脱离会话的后台任务继续执行，日志持久化，断线不影响更新结果。
+#   自动交给后台任务继续执行，日志持久化，断线不影响更新结果。后台任务经 systemd-run
+#   启动在独立 transient unit 中——systemd 重启按 cgroup 成员杀进程，setsid/nohup
+#   只脱离终端会话、离不开服务的 cgroup，会被重启连带杀死（旧实现即因此只剩一行日志）。
 #
 # 飞牛（fnos）流程：
 #   直接复用 xcj/deploy-fnos.sh：本机 docker build 镜像（BuildKit 缓存复用）→
@@ -57,6 +59,7 @@ usage() {
   all     两者都更新（默认；先本机构建并验证健康，再部署飞牛）
 
   --no-pull            跳过开头的 git pull --ff-only，直接使用当前工作区
+  --source-dir DIR     显式指定源码仓库根目录（默认取脚本所在仓库的根目录）
   --keep-rollback      本机更新成功后保留 terminal-buddy-server.bak 与 web.old 回滚材料
   --health-timeout N   本机重启后健康检查最长等待秒数，默认 120
   -h, --help           显示帮助
@@ -90,6 +93,7 @@ while [ "$#" -gt 0 ]; do
       TARGET=fnos
       log "已将目标 ${1} 视为 fnos" ;;
     --no-pull) DO_PULL=0 ;;
+    --source-dir) REPO_ARG="${2:?--source-dir 需要路径}"; shift ;;
     --keep-rollback) KEEP_ROLLBACK=1 ;;
     --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout 需要秒数}"; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -103,6 +107,11 @@ done
 [[ "${DO_PULL}" =~ ^[01]$ ]] || fail "TB_UPDATE_PULL 需为 0 或 1"
 if [ "${TARGET}" = local ] && [ "${#PASSTHROUGH[@]}" -gt 0 ]; then
   log "提示：目标为 local，以下参数将被忽略：${PASSTHROUGH[*]}"
+fi
+# --source-dir 显式覆盖源码仓库根目录（默认取脚本所在仓库的根目录）。
+if [ -n "${REPO_ARG:-}" ]; then
+  REPO_DIR="$(cd -- "${REPO_ARG}" 2>/dev/null && pwd -P)" \
+    || fail "--source-dir 路径无效：${REPO_ARG}"
 fi
 
 # 源码属主：root 运行时构建与文件替换都降权到该用户，避免产物属主漂移到 root，
@@ -270,7 +279,8 @@ restart_and_verify_local() {
 }
 
 # ---------- 本机：重启 + 健康检查（后台交接路径，网页终端场景） ----------
-# 生成脱离会话的后台任务：root 身份（经 sudo 提升）setsid 启动，重启终端断开后仍继续。
+# 生成独立 cgroup 的后台任务：root 身份经 systemd-run 启动 transient unit，
+# 与服务的 cgroup 完全隔离，服务重启、终端断开后仍继续执行。
 # 任务负责「重启 → 健康检查 → 回滚 → 清理 →（可选）继续飞牛部署」，全部日志写入数据目录。
 spawn_background_worker() {
   HELPER_SCRIPT="${LOG_DIR}/worker-${RUN_ID}.sh"
@@ -279,7 +289,14 @@ spawn_background_worker() {
   # 飞牛凭据用绝对路径嵌入：后台任务以 root 运行，HOME 与原用户不同。
   RUN_FNOS=0
   [ "${TARGET}" != local ] && RUN_FNOS=1
-  HELPER_PASSTHROUGH="$(printf '%q ' ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"})"
+  # 注意：PASSTHROUGH 为空数组时 printf '%q ' 仍会处理一次格式串，%q 产出空串的
+  # 引号形式 ''，经 worker 里 eval 二次解释后凭空产生一个空字符串参数，导致
+  # deploy-fnos.sh 报「未知参数：」——空数组时必须显式置空，不能依赖 printf。
+  if [ "${#PASSTHROUGH[@]}" -gt 0 ]; then
+    HELPER_PASSTHROUGH="$(printf '%q ' "${PASSTHROUGH[@]}")"
+  else
+    HELPER_PASSTHROUGH=''
+  fi
   {
     printf '#!/usr/bin/env bash\n'
     printf 'HELPER_LOG=%q\n' "${HELPER_LOG}"
@@ -358,15 +375,22 @@ WORKER
   } > "${HELPER_SCRIPT}"
   chmod 0755 "${HELPER_SCRIPT}"
 
+  # 必须用 systemd-run 把任务放进独立的 transient unit：systemd 重启服务时按 cgroup
+  # 成员杀进程，而本任务正是从服务的 cgroup 里 spawn 出来的——setsid/nohup 只脱离
+  # 终端会话、离不开 cgroup，会被重启连带杀死。systemd-run 产生的 unit 挂在
+  # system.slice 下，与 terminal-buddy.service 的 cgroup 完全隔离，可安然度过重启。
+  local unit="tb-update-${RUN_ID}"
   if [ "$(id -u)" -eq 0 ]; then
-    setsid nohup bash "${HELPER_SCRIPT}" </dev/null >/dev/null 2>&1 &
+    systemd-run --unit="${unit}" --collect bash "${HELPER_SCRIPT}" \
+      || fail "systemd-run 启动后台更新任务失败（unit ${unit}）"
   else
-    # sudo 在当前终端上完成密码验证，随后由 root shell 里 setsid 出的后台任务独立运行。
-    sudo bash -c "setsid nohup bash $(printf '%q' "${HELPER_SCRIPT}") </dev/null >/dev/null 2>&1 &" \
+    # sudo 在当前终端上完成密码验证，随后由 systemd 在独立 unit 中以 root 运行任务。
+    sudo systemd-run --unit="${unit}" --collect bash "${HELPER_SCRIPT}" \
       || fail "无法以 root 启动后台更新任务：请输入 sudo 密码，或改用 sudo bash xcj/update.sh 重新运行"
   fi
 
   log "已交接给后台更新任务（当前会话位于 TerminalBuddy 服务进程树内，重启后连接会断开——预期行为）"
+  log "后台任务 unit：${unit}（journalctl -u ${unit} -e 可看实时输出）"
   log "后台日志：${HELPER_LOG}"
   log "重连后查看结果：tail -n 80 ${HELPER_LOG}"
 }
