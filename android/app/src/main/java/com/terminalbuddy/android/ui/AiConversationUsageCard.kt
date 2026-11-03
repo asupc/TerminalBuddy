@@ -64,11 +64,22 @@ import kotlin.math.roundToInt
     )
     val usage = session.usage
     val contextUsage = usage?.context
+    // 文字沿用原有的已知值记忆：刷新缺失时保留上一次，新会话预置的 0 仍显示 0K。
     val used = rememberKnownUsageValue(session.id,
         contextUsage?.takeUnless { it.updating }?.usedTokens?.takeIf { it >= 0 })
     val capacity = rememberKnownUsageValue(session.id, contextUsage?.windowTokens?.takeIf { it > 0 })
-    val ratio = if (used != null && capacity != null) used.toDouble() / capacity else null
-    val percent = ratio?.let { (it * 100).roundToInt().toString() } ?: "—"
+    val rawRatio = if (used != null && capacity != null && capacity > 0) used.toDouble() / capacity else null
+    // -1 表示本会话还没拿到过有效比例；Float 可被 rememberSaveable 直接保存。
+    val knownRatio = rememberSaveable(session.id) { mutableStateOf(-1f) }
+    // 没拿到值、刷新中或比例为 0 时都不推进进度条，沿用上一次有效比例，
+    // 否则进度条会被打回零点再随下一份快照回弹，看起来一直在动。
+    val ratio = retainContextProgress(knownRatio.value.takeIf { it >= 0f }?.toDouble(), rawRatio)
+    SideEffect { ratio?.let { if (it.toFloat() != knownRatio.value) knownRatio.value = it.toFloat() } }
+    val percent = when {
+        ratio != null -> (ratio * 100).roundToInt().toString()
+        rawRatio != null -> "0"
+        else -> "—"
+    }
     val context = if (contextUsage?.updating == true && used == null) "更新中(${formatAiTokensK(used)}/${formatAiTokensK(capacity)})"
         else "$percent%(${formatAiTokensK(used)}/${formatAiTokensK(capacity)})"
     val tokens = usage?.lastTurn ?: usage?.sessionTotal
@@ -182,6 +193,7 @@ private fun Modifier.aiUsageReveal(expansion: State<Float>): Modifier = clipToBo
 }
 
 @Composable private fun AiContextProgress(ratio: Float?, description: String, modifier: Modifier = Modifier) {
+    // 调用方已经保证 ratio 只在拿到有效值时才变化，这里不做额外归零处理。
     val progress = animateFloatAsState(targetValue = ratio?.coerceIn(0f, 1f) ?: 0f, animationSpec = tween(240), label = "上下文占比")
     // TbColors 是 Composable 读取，需在进入非 Composable 的 draw 块之前取值。
     val low = TbColors.Accent
@@ -219,6 +231,15 @@ private fun Modifier.aiUsageReveal(expansion: State<Float>): Modifier = clipToBo
     var previous by rememberSaveable(sessionId) { mutableStateOf(value) }
     SideEffect { if (value != null) previous = value }
     return value ?: previous
+}
+
+/**
+ * 进度条的取值规则：只有大于 0 且有限的新比例才替换上一次已显示的进度；
+ * 缺失、刷新中或 0 值一律沿用旧值，首次仍无有效值时返回 null（不画进度）。
+ */
+internal fun retainContextProgress(previous: Double?, incoming: Double?): Double? {
+    if (incoming == null || !incoming.isFinite() || incoming <= 0.0) return previous
+    return incoming
 }
 
 /** 统一使用十进制 K；小于 1K 时保留到单个 Token，避免非零用量被显示为零。 */
