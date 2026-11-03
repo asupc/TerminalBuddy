@@ -127,7 +127,7 @@ pub fn get_claude_sessions_for_terminals(
     Ok(sessions)
 }
 
-/// 批量获取多个终端的统一 Agent 会话绑定（Claude / Codex / Pi）。
+/// 批量获取多个终端的统一 Agent 会话绑定（Claude / Codex）。
 /// 存活终端优先用当前绑定；容器重启后已结束的 terminal ID 回退到持久化登记表。
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_agent_sessions_for_terminals(
@@ -142,7 +142,7 @@ pub fn get_agent_sessions_for_terminals(
         .collect();
     let missing: Vec<String> = terminal_ids
         .into_iter()
-        // 存活终端只信任当前绑定，避免用户退出 Pi/Codex 回到 shell 后又被旧登记表误恢复。
+        // 存活终端只信任当前绑定，避免用户退出 Codex 回到 shell 后又被旧登记表误恢复。
         .filter(|id| !live.contains(id) && !sessions.contains_key(id))
         .collect();
     if !missing.is_empty() {
@@ -170,7 +170,7 @@ pub fn refresh_claude_session_registry(app: &AppHandle) -> Result<(), String> {
     let roots = terminal_pids.iter().map(|(id, _)| (id.clone(), root.clone())).collect();
     let discovered = discover_claude_sessions(&terminal_pids, &roots);
     crate::services::claude_session_registry_service::merge(discovered, now_ms())?;
-    // Pi/Codex 的绑定来自启动注入、Hook 与扩展上报，统一写入登记表。
+    // Codex 的绑定来自启动注入与日志上报，统一写入登记表。
     let bindings = crate::services::terminal_task_service::session_bindings();
     crate::services::claude_session_registry_service::merge_agents(bindings, now_ms())
 }

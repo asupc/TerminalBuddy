@@ -1,5 +1,5 @@
 use crate::models::{
-    validate_profile_connection_fields, AgentCommands, AppSettings, CloseBehavior,
+    validate_profile_connection_fields, AppSettings, CloseBehavior,
     LaunchWindowMode, Profile, TerminalLoadingMode,
 };
 use crate::services::{
@@ -120,25 +120,6 @@ fn read_autostart_registry() -> bool {
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_show_task_summary(enabled: bool) -> Result<(), String> {
     SettingsService::mutate_settings(|settings| settings.show_task_summary = enabled)
-}
-
-/// 保存 Agent 管理中配置的基础启动命令；空串表示回退内置默认。
-/// 第三个参数可选：旧客户端只传 claude/codex 时 Pi 命令保持为空。
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub fn save_agent_commands(claude: String, codex: String, pi: Option<String>) -> Result<(), String> {
-    SettingsService::mutate_settings(|settings| {
-        settings.agent_commands = AgentCommands {
-            claude: claude.trim().to_string(),
-            codex: codex.trim().to_string(),
-            pi: pi.unwrap_or_default().trim().to_string(),
-        };
-    })
-}
-
-/// Pi 工具确认开关：默认关闭，开启后扩展会在 bash/edit/write 执行前请求允许。
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub fn save_pi_tool_approval_enabled(enabled: bool) -> Result<(), String> {
-    SettingsService::mutate_settings(|settings| settings.pi_tool_approval_enabled = enabled)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]

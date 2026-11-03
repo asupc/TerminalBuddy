@@ -8,16 +8,21 @@ pub mod fs_handler;
 pub mod git_handler;
 pub mod history_handler;
 pub mod llm_provider_handler;
-pub mod pi_hook_handler;
 pub mod preset_handler;
 pub mod profile_handler;
 pub mod terminal_handler;
 pub mod terminal_agent_handler;
 pub mod desktop_handler;
-pub mod container_environment;
 pub mod claude_provider_handler;
 
 use crate::web::error::ApiError;
+
+pub fn is_docker_runtime() -> bool {
+    !cfg!(feature = "desktop")
+        && cfg!(target_os = "linux")
+        && (std::env::var("TERMINAL_BUDDY_DEPLOYMENT").as_deref() == Ok("docker")
+            || std::path::Path::new("/.dockerenv").is_file())
+}
 
 /// Web 端文件树 / Git 的访问白名单：只允许已登记项目目录（含子目录）。
 /// 终端本身就有 shell 能力，但文件浏览接口仍收窄到项目范围，避免全盘暴露。

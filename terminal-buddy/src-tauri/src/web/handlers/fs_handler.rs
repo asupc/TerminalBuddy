@@ -51,7 +51,7 @@ fn browse_roots() -> Result<Vec<ServerDirectory>, ApiError> {
         .into_iter()
         .map(|project| ServerDirectory { name: project.name, path: project.path })
         .collect();
-    Ok(directory_browser_service::browse_roots(projects, super::container_environment::is_docker_runtime()))
+    Ok(directory_browser_service::browse_roots(projects, super::is_docker_runtime()))
 }
 
 /// 项目选择器入口：配置目录、工作区、Docker 挂载目录及已登记项目。

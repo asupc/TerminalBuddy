@@ -1,6 +1,6 @@
 //! 手机首页使用的供应商目录，以及原生会话的供应商启动配置。
 use crate::models::ai_chat::{AiCatalog, AiModelOption, AiProviderOption};
-use super::{atomic_file::atomic_write_private, claude_provider_service, codex_provider_service, llm_provider_service, pi_provider_service};
+use super::{atomic_file::atomic_write_private, claude_provider_service, codex_provider_service, llm_provider_service};
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf};
 
@@ -25,22 +25,8 @@ pub fn catalog() -> Result<AiCatalog> {
             }).collect(),
         });
     }
-    let pi = pi_provider_service::get_provider_state()?;
-    for provider in pi.providers {
-        let mut models = provider.models.iter().map(|model| AiModelOption {
-            label: model.id.clone(), id: model.id.clone(), effort: model.default_thinking.clone().unwrap_or_default(),
-        }).collect::<Vec<_>>();
-        if models.is_empty() && !provider.model.is_empty() {
-            models.push(AiModelOption { id: provider.model.clone(), label: provider.model.clone(), effort: String::new() });
-        }
-        providers.push(AiProviderOption {
-            id: format!("pi:{}", provider.id), agent: "pi".into(), name: provider.name,
-            is_default: pi.active_provider_id.as_deref() == Some(provider.id.as_str()),
-            models,
-        });
-    }
     providers.sort_by_key(|provider| !provider.is_default);
-    for agent in ["claude", "codex", "pi"] {
+    for agent in ["claude", "codex"] {
         providers.push(AiProviderOption { id: format!("default:{agent}"), agent: agent.into(), name: "服务端默认配置".into(),
             is_default: false, models: vec![AiModelOption { id: String::new(), label: "服务端默认模型".into(), effort: String::new() }] });
     }
@@ -93,22 +79,6 @@ pub fn prepare(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> R
     if source == "codex" && agent == "codex" {
         let args = codex_provider_service::native_session_args(id, model.unwrap_or_default())?;
         let context_window = args.iter().find_map(|arg| arg.strip_prefix("model_context_window=")?.parse::<u64>().ok()).filter(|n| *n > 0);
-        return Ok(NativeLaunch { args, context_window, settings: None });
-    }
-    // Pi 供应商卡片在保存时已同步进 Pi 的 models.json，直接按 provider/model 启动即可。
-    if source == "pi" && agent == "pi" {
-        let state = pi_provider_service::get_provider_state()?;
-        let provider = state.providers.into_iter().find(|provider| provider.id == id)
-            .ok_or("所选 Pi 供应商已不存在，请刷新后重新选择")?;
-        let selected = model.unwrap_or_default();
-        let configured = provider.models.iter().find(|entry| entry.id == selected)
-            .or_else(|| provider.models.iter().find(|entry| entry.id == provider.model))
-            .ok_or("所选模型已被移除或停用，请刷新后重新选择")?;
-        let mut args = vec!["--provider".into(), provider.pi_provider_id.clone(), "--model".into(), configured.id.clone()];
-        if let Some(level) = configured.default_thinking.as_deref().filter(|level| !level.is_empty()) {
-            args.extend(["--thinking".into(), level.into()]);
-        }
-        let context_window = (configured.context_window > 0).then(|| u64::from(configured.context_window));
         return Ok(NativeLaunch { args, context_window, settings: None });
     }
     let mut settings = match (source, agent) {

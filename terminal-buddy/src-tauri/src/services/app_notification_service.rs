@@ -204,7 +204,6 @@ fn pending() -> &'static Mutex<HashMap<String, AppNotificationEvent>> {
 
 fn agent_name(provider: Option<&str>) -> &'static str {
     match provider {
-        Some("pi") => "Pi",
         Some("codex") => "Codex",
         _ => "Claude Code",
     }

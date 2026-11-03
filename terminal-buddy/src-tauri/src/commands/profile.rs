@@ -57,7 +57,7 @@ pub struct Project {
     /// 旧版项目的启动命令：仅用于兼容读取旧 projects.json，保存时空值不落盘。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub startup_command: String,
-    /// 项目右键菜单可启动的 Agent（Claude Code / Codex / Pi），默认全部启用。
+    /// 项目右键菜单可启动的 Agent（Claude Code / Codex），默认全部启用。
     #[serde(default)]
     pub enabled_agents: EnabledAgents,
 }
@@ -73,14 +73,12 @@ pub struct EnabledAgents {
     pub claude: bool,
     #[serde(default = "default_true")]
     pub codex: bool,
-    #[serde(default = "default_true")]
-    pub pi: bool,
 }
 
 /// 与 serde 缺省保持一致：未配置的旧项目全部 Agent 都启用。
 impl Default for EnabledAgents {
     fn default() -> Self {
-        Self { claude: true, codex: true, pi: true }
+        Self { claude: true, codex: true }
     }
 }
 
@@ -143,14 +141,13 @@ mod tests {
         let projects: Vec<Project> = serde_json::from_str(legacy).unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].startup_command, "claude");
-        assert_eq!(projects[0].enabled_agents, EnabledAgents { claude: true, codex: true, pi: true });
+        assert_eq!(projects[0].enabled_agents, EnabledAgents { claude: true, codex: true });
 
         // enabledAgents 部分字段缺失时，缺的字段按启用处理。
         let partial = r#"[{"name":"demo","path":"/demo","enabledAgents":{"claude":false}}]"#;
         let projects: Vec<Project> = serde_json::from_str(partial).unwrap();
         assert!(!projects[0].enabled_agents.claude);
         assert!(projects[0].enabled_agents.codex);
-        assert!(projects[0].enabled_agents.pi);
     }
 
     #[test]
@@ -159,13 +156,12 @@ mod tests {
             name: "demo".into(),
             path: "/demo".into(),
             startup_command: String::new(),
-            enabled_agents: EnabledAgents { claude: false, codex: true, pi: false },
+            enabled_agents: EnabledAgents { claude: false, codex: true },
         };
         let json = serde_json::to_value(&project).unwrap();
         assert!(json.get("startupCommand").is_none());
         assert_eq!(json["enabledAgents"]["claude"], false);
         assert_eq!(json["enabledAgents"]["codex"], true);
-        assert_eq!(json["enabledAgents"]["pi"], false);
         // round-trip 保持一致。
         let restored: Project = serde_json::from_value(json).unwrap();
         assert_eq!(restored.enabled_agents, project.enabled_agents);

@@ -26,7 +26,6 @@ fn ensure_agent_project(path: &str, agent: &str) -> Result<String, ApiError> {
     let enabled = project.is_some_and(|(_, project)| match agent {
         "claude" => project.enabled_agents.claude,
         "codex" => project.enabled_agents.codex,
-        "pi" => project.enabled_agents.pi,
         _ => false,
     });
     if !enabled { return Err(ApiError::Forbidden("该项目未启用所选 Agent，请先在服务端配置并刷新工作台".into())); }

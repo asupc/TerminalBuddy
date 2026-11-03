@@ -35,7 +35,7 @@ pub async fn list(_claims: ClaimsFromRequest) -> Json<Vec<AppNotificationEvent>>
     Json(AppNotificationService::pending_decisions())
 }
 
-/// 回答 Claude / Pi 终端决策。答案按原始问题文本索引，全部回答后回填 CLI。
+/// 回答 Claude 终端决策。答案按原始问题文本索引，全部回答后回填 CLI。
 pub async fn answer(
     _claims: ClaimsFromRequest,
     Path(decision_id): Path<String>,

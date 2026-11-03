@@ -1,5 +1,4 @@
 pub mod ai_usage;
-pub mod agent_cli;
 pub mod bot;
 pub mod claude_assets;
 pub mod claude_config;
@@ -22,10 +21,6 @@ pub mod llm_provider;
 pub mod mstsc;
 #[cfg(feature = "desktop")]
 pub mod notification;
-pub mod pi_extension;
-pub mod pi_history;
-pub mod pi_model;
-pub mod pi_provider;
 pub mod profile;
 pub mod remote_file;
 pub mod server_monitor;
@@ -39,7 +34,6 @@ pub mod web;
 pub mod window;
 pub mod workspace;
 pub use ai_usage::*;
-pub use agent_cli::*;
 pub use bot::*;
 pub use claude_assets::*;
 pub use claude_config::*;
@@ -61,10 +55,6 @@ pub use llm_provider::*;
 pub use mstsc::*;
 #[cfg(feature = "desktop")]
 pub use notification::*;
-pub use pi_extension::*;
-pub use pi_history::*;
-pub use pi_model::*;
-pub use pi_provider::*;
 pub use profile::*;
 pub use remote_file::*;
 pub use server_monitor::*;

@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
 use crate::services::{ClaudeHookService, CLAUDE_HOOK_PORT};
-use crate::web::handlers::{claude_hook_handler, pi_hook_handler};
+use crate::web::handlers::claude_hook_handler;
 
 pub fn bind() -> Result<std::net::TcpListener, String> {
     let address = SocketAddr::from(([127, 0, 0, 1], CLAUDE_HOOK_PORT));
@@ -25,7 +25,6 @@ pub fn bind() -> Result<std::net::TcpListener, String> {
 pub async fn run(app: crate::runtime::AppHandle, listener: std::net::TcpListener) {
     let router = Router::new()
         .route("/api/claude/hooks", post(claude_hook_handler::claude_hook))
-        .route("/api/pi/hooks", post(pi_hook_handler::pi_hook))
         .with_state(app);
     let listener = match TcpListener::from_std(listener) {
         Ok(listener) => listener,

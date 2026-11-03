@@ -1,4 +1,4 @@
-//! 终端 Agent 会话接力（relay）：把桌面/服务端终端里正在运行的 Claude / Codex / Pi
+//! 终端 Agent 会话接力（relay）：把桌面/服务端终端里正在运行的 Claude / Codex
 //! 会话镜像成只读聊天气泡，并提供受限的单行回复注入。
 //!
 //! 设计依据：docs/specs/2026-11-01--terminal-agent-chat-relay.md。要点：
@@ -6,7 +6,7 @@
 //! - 发现链固定为：可见终端 → PID → `terminal_task_service::summaries`（补写 transcript）
 //!   → `session_bindings()`，顺序不能反，且不受 `showTaskSummary` 开关控制；
 //! - 镜像同步不假定解析器 seq 稳定：完整消息比较 + revision 代次，任何旧消息变化、
-//!   Codex 去重重排、Pi 换枝都发完整尾页（rotated），不做原地 patch；
+//!   Codex 去重重排都发完整尾页（rotated），不做原地 patch；
 //! - 回复七闸门 + 每终端串行临界区 + requestId 幂等，PTY 写失败结果未知、不自动重试；
 //! - 订阅是带身份与唯一 subscriptionId 的租约，watcher 全终端唯一，零租约 30 秒后停止。
 
@@ -457,7 +457,6 @@ pub(crate) struct MirrorBaseline {
     pub messages: Vec<SessionReplayMessage>,
     pub total: i64,
     pub truncated: bool,
-    pub branch_identity: Option<String>,
 }
 
 /// 与旧基线比较的结果。
@@ -468,25 +467,20 @@ pub(crate) enum ContentDiff {
     Append,
     /// 同 revision 整页刷新（截断窗口滑动）。
     Mirror,
-    /// 旧消息变化 / 重排 / 换枝：revision + 1 全量重建。
+    /// 旧消息变化 / 重排：revision + 1 全量重建。
     Rotated,
 }
 
 /// 完整消息比较 + 追加判定（§4.3）。
-/// 任何旧 seq 的完整内容变化、同 seq 重复、旧消息消失、total 变小、Codex 去重重排、
-/// Pi 活动分支叶节点变化都判 Rotated；已截断的基线不再做 append（窗口会滑动）。
+/// 任何旧 seq 的完整内容变化、同 seq 重复、旧消息消失、total 变小、Codex 去重重排
+/// 都判 Rotated；已截断的基线不再做 append（窗口会滑动）。
 pub(crate) fn diff_content(
     old: &MirrorBaseline,
     new_messages: &[SessionReplayMessage],
     new_total: i64,
     new_truncated: bool,
-    new_branch: &Option<String>,
 ) -> ContentDiff {
-    // Pi 换枝：活动叶节点变化即 rotated，即使可见正文恰好相同。
-    if old.branch_identity.is_some() && new_branch.is_some() && old.branch_identity != *new_branch {
-        return ContentDiff::Rotated;
-    }
-    // total 变小（Codex 去重把 event 收编、Pi 剪枝等）一定 rotated。
+    // total 变小（Codex 去重把 event 收编等）一定 rotated。
     if new_total < old.total {
         return ContentDiff::Rotated;
     }
@@ -630,7 +624,7 @@ impl PhaseTable {
         self.prune();
     }
 
-    /// Pi 审批结束等场景：已 ended（或换绑后键不匹配）则不覆盖。
+    /// 审批结束等场景：已 ended（或换绑后键不匹配）则不覆盖。
     pub fn note_unless_ended(&mut self, key: &PhaseKey, phase: &str, occurred_at: i64) {
         if self.entries.get(key).is_some_and(|existing| existing.phase == "ended") {
             return;
@@ -772,7 +766,6 @@ struct MirrorEntry {
     messages: Vec<SessionReplayMessage>,
     total: i64,
     truncated: bool,
-    branch_identity: Option<String>,
     file_stamp: Option<(SystemTime, u64)>,
     last_access: Instant,
 }
@@ -783,7 +776,6 @@ impl MirrorEntry {
             messages: self.messages.clone(),
             total: self.total,
             truncated: self.truncated,
-            branch_identity: self.branch_identity.clone(),
         }
     }
 
@@ -922,25 +914,11 @@ fn read_transcript_stable(path: &std::path::Path) -> TranscriptRead {
     TranscriptRead::Unstable
 }
 
-/// Pi 活动分支叶节点：文件中最后一个带非空 id 的 entry（与解析器 active_branch 的
-/// 叶节点选择一致）。换枝时即使可见正文恰好相同也要 rotated。
-fn pi_branch_identity(content: &str) -> Option<String> {
-    for line in content.lines().rev() {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else { continue };
-        if let Some(id) = value.get("id").and_then(|item| item.as_str()).filter(|id| !id.trim().is_empty()) {
-            return Some(id.to_string());
-        }
-    }
-    None
-}
-
 /// 解析并按阈值裁剪：返回（保留消息、截断前总数、是否裁剪、分支身份）。
-fn parse_and_retain(provider: &str, content: &str) -> (Vec<SessionReplayMessage>, i64, bool, Option<String>) {
-    let branch = if provider == "pi" { pi_branch_identity(content) } else { None };
+fn parse_and_retain(provider: &str, content: &str) -> (Vec<SessionReplayMessage>, i64, bool) {
     let mut messages = match provider {
         "claude" => super::claude_history_service::parse_replay_messages(content),
-        "codex" => super::codex_transcript::parse(content).messages,
-        _ => super::pi_transcript::parse(content).messages,
+        _ => super::codex_transcript::parse(content).messages,
     };
     let total = messages.len() as i64;
     let oversize = content.len() > TRUNCATE_PARSE_BYTES || messages.len() > MAX_PARSE_MESSAGES;
@@ -950,7 +928,7 @@ fn parse_and_retain(provider: &str, content: &str) -> (Vec<SessionReplayMessage>
         messages.drain(..keep);
         truncated = true;
     }
-    (messages, total, truncated, branch)
+    (messages, total, truncated)
 }
 
 fn locate_negative_fresh(terminal_id: &str) -> bool {
@@ -994,7 +972,7 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
     let Some(record) = scan.bindings.get(terminal_id).cloned() else {
         return PollContent::None;
     };
-    if !matches!(record.provider.as_str(), "claude" | "codex" | "pi") {
+    if !matches!(record.provider.as_str(), "claude" | "codex") {
         return PollContent::None;
     }
     let existing = lock_state().mirrors.get(terminal_id).cloned();
@@ -1015,7 +993,7 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
         };
         return match read_transcript_stable(&location.path) {
             TranscriptRead::Ok { content, stamp } => {
-                let (messages, total, truncated, branch) = parse_and_retain(&record.provider, &content);
+                let (messages, total, truncated) = parse_and_retain(&record.provider, &content);
                 let revision = existing.as_ref().map_or(1, |entry| entry.revision.wrapping_add(1));
                 let entry = MirrorEntry {
                     provider: record.provider.clone(),
@@ -1027,7 +1005,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     messages: messages.clone(),
                     total,
                     truncated,
-                    branch_identity: branch,
                     file_stamp: Some(stamp),
                     last_access: Instant::now(),
                 };
@@ -1076,7 +1053,7 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
         TranscriptRead::Unreadable => commit_unavailable(terminal_id, &record, Some(&entry), "transcript_unreadable"),
         TranscriptRead::Unstable => PollContent::None,
         TranscriptRead::Ok { content, stamp } => {
-            let (messages, total, truncated, branch) = parse_and_retain(&record.provider, &content);
+            let (messages, total, truncated) = parse_and_retain(&record.provider, &content);
             let baseline = entry.baseline();
             // 从不可用恢复：revision + 1 全量快照。
             if !entry.available {
@@ -1088,13 +1065,12 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                 next.messages = messages;
                 next.total = total;
                 next.truncated = truncated;
-                next.branch_identity = branch;
                 next.last_access = Instant::now();
                 next.revision = next.revision.wrapping_add(1);
                 let core = TailCore::tail(&next.baseline(), next.revision, RETAIN_TAIL);
                 return commit_entry(terminal_id, next, PollContent::Page { kind: "mirror", core }, None);
             }
-            match diff_content(&baseline, &messages, total, truncated, &branch) {
+            match diff_content(&baseline, &messages, total, truncated) {
                 ContentDiff::Unchanged => {
                     // 内容未变但文件戳变了（touch/重写同内容）：只更新戳，避免每 tick 重读。
                     let mut next = entry.clone();
@@ -1108,7 +1084,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     next.messages = messages;
                     next.total = total;
                     next.truncated = truncated;
-                    next.branch_identity = branch;
                     next.file_stamp = Some(stamp);
                     next.path = Some(path);
                     next.last_access = Instant::now();
@@ -1132,7 +1107,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     next.messages = messages;
                     next.total = total;
                     next.truncated = truncated;
-                    next.branch_identity = branch;
                     next.file_stamp = Some(stamp);
                     next.path = Some(path);
                     next.last_access = Instant::now();
@@ -1144,7 +1118,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     next.messages = messages;
                     next.total = total;
                     next.truncated = truncated;
-                    next.branch_identity = branch;
                     next.file_stamp = Some(stamp);
                     next.path = Some(path);
                     next.last_access = Instant::now();
@@ -1210,7 +1183,6 @@ fn commit_unavailable(
         messages: Vec::new(),
         total: 0,
         truncated: false,
-        branch_identity: None,
         file_stamp: None,
         last_access: Instant::now(),
     };
@@ -1258,7 +1230,7 @@ fn build_session_meta(
     actor: TerminalActor,
 ) -> Option<(TerminalAgentSession, Option<MirrorEntry>)> {
     let record = scan.bindings.get(&info.id)?;
-    if !matches!(record.provider.as_str(), "claude" | "codex" | "pi") {
+    if !matches!(record.provider.as_str(), "claude" | "codex") {
         return None;
     }
     let summary = scan.summaries.get(&info.id);
@@ -1440,7 +1412,7 @@ pub async fn subscribe(
         let has_agent = scan
             .bindings
             .get(terminal_id)
-            .is_some_and(|record| matches!(record.provider.as_str(), "claude" | "codex" | "pi"));
+            .is_some_and(|record| matches!(record.provider.as_str(), "claude" | "codex"));
         if !has_agent {
             return Err(RelayError::NotFound("该终端没有正在运行的 Agent".to_string()));
         }
@@ -1552,7 +1524,7 @@ pub async fn reply(
         let binding = scan
             .bindings
             .get(&terminal_id_owned)
-            .filter(|record| matches!(record.provider.as_str(), "claude" | "codex" | "pi"))
+            .filter(|record| matches!(record.provider.as_str(), "claude" | "codex"))
             .map(|record| (record.provider.clone(), record.session_id.clone()));
         let (phase, phase_at) = binding
             .as_ref()
@@ -1677,7 +1649,7 @@ pub fn note_phase(terminal_id: &str, provider: &str, session_id: &str, phase: &s
     );
 }
 
-/// Pi 审批结束等场景：会话已 ended（或已换绑）时不把 running 写回去。
+/// 审批结束等场景：会话已 ended（或已换绑）时不把 running 写回去。
 pub fn note_phase_unless_ended(terminal_id: &str, provider: &str, session_id: &str, phase: &str, occurred_at: i64) {
     match terminal_task_service::current_binding(terminal_id) {
         Some((bound_provider, bound_session)) if bound_provider == provider && bound_session == session_id => {}
@@ -2073,7 +2045,7 @@ mod tests {
 
     fn baseline(messages: Vec<SessionReplayMessage>) -> MirrorBaseline {
         let total = messages.len() as i64;
-        MirrorBaseline { messages, total, truncated: false, branch_identity: None }
+        MirrorBaseline { messages, total, truncated: false }
     }
 
     // ── 半行 JSONL：只读到最后换行 ──
@@ -2136,8 +2108,8 @@ mod tests {
         let new_messages = super::super::claude_history_service::parse_replay_messages(&new_content);
         assert_eq!(new_messages.len(), 3);
         // 纯尾部新增：append；cursor 是最后 seq（3），不是 total（3 恰好相等，改用含空洞断言）。
-        assert_eq!(diff_content(&old, &new_messages, new_messages.len() as i64, false, &None), ContentDiff::Append);
-        let core = TailCore::incremental(&MirrorBaseline { messages: new_messages.clone(), total: 3, truncated: false, branch_identity: None }, 1, -1, 200);
+        assert_eq!(diff_content(&old, &new_messages, new_messages.len() as i64, false), ContentDiff::Append);
+        let core = TailCore::incremental(&MirrorBaseline { messages: new_messages.clone(), total: 3, truncated: false }, 1, -1, 200);
         assert_eq!(core.cursor, 3);
         assert_eq!(core.messages.len(), 3);
         assert!(!core.has_more);
@@ -2162,34 +2134,8 @@ mod tests {
         assert_eq!(new_messages[0].role, "assistant", "canonical 被排到末尾：可见顺序已重排");
         let old = baseline(old_messages);
         assert_eq!(
-            diff_content(&old, &new_messages, new_messages.len() as i64, false, &None),
+            diff_content(&old, &new_messages, new_messages.len() as i64, false),
             ContentDiff::Rotated
-        );
-    }
-
-    // ── Pi 换枝：活动叶节点变化即 rotated，即使可见正文恰好相同 ──
-
-    #[test]
-    fn pi_branch_switch_rotates_even_with_identical_visible_text() {
-        let leaf_line_a = json!({"type":"session_info","id":"leaf-a","parentId":null,"name":"任务"});
-        let identity = pi_branch_identity(&format!("{leaf_line_a}\n"));
-        assert_eq!(identity.as_deref(), Some("leaf-a"));
-        let old = MirrorBaseline {
-            messages: vec![message(0, "user", "相同正文")],
-            total: 1,
-            truncated: false,
-            branch_identity: Some("leaf-a".to_string()),
-        };
-        let new_messages = vec![message(0, "user", "相同正文")];
-        // 正文完全一致，但叶节点换成了 leaf-b → rotated。
-        assert_eq!(
-            diff_content(&old, &new_messages, 1, false, &Some("leaf-b".to_string())),
-            ContentDiff::Rotated
-        );
-        // 叶节点一致且正文一致 → 不变。
-        assert_eq!(
-            diff_content(&old, &new_messages, 1, false, &Some("leaf-a".to_string())),
-            ContentDiff::Unchanged
         );
     }
 
@@ -2213,7 +2159,7 @@ mod tests {
             tools: vec![SessionReplayTool { name: "Bash".to_string(), summary: "ls".to_string() }],
             tool_name: None,
         }];
-        assert_eq!(diff_content(&old, &changed_timestamp, 1, false, &None), ContentDiff::Rotated);
+        assert_eq!(diff_content(&old, &changed_timestamp, 1, false), ContentDiff::Rotated);
         let changed_tools = vec![SessionReplayMessage {
             seq: 0,
             role: "assistant".to_string(),
@@ -2222,7 +2168,7 @@ mod tests {
             tools: vec![SessionReplayTool { name: "Bash".to_string(), summary: "pwd".to_string() }],
             tool_name: None,
         }];
-        assert_eq!(diff_content(&old, &changed_tools, 1, false, &None), ContentDiff::Rotated);
+        assert_eq!(diff_content(&old, &changed_tools, 1, false), ContentDiff::Rotated);
         let changed_tool_name = vec![SessionReplayMessage {
             seq: 0,
             role: "tool".to_string(),
@@ -2231,9 +2177,9 @@ mod tests {
             tools: Vec::new(),
             tool_name: Some("Read".to_string()),
         }];
-        assert_eq!(diff_content(&old, &changed_tool_name, 1, false, &None), ContentDiff::Rotated);
+        assert_eq!(diff_content(&old, &changed_tool_name, 1, false), ContentDiff::Rotated);
         // total 变小 → rotated。
-        assert_eq!(diff_content(&old, &[], 0, false, &None), ContentDiff::Rotated);
+        assert_eq!(diff_content(&old, &[], 0, false), ContentDiff::Rotated);
     }
 
     // ── 分页与截断 ──
@@ -2241,7 +2187,7 @@ mod tests {
     #[test]
     fn incremental_pages_take_earliest_limit_and_can_catch_up() {
         let messages: Vec<SessionReplayMessage> = (0..10).map(|seq| message(seq, "user", &format!("m{seq}"))).collect();
-        let view = MirrorBaseline { messages: messages.clone(), total: 10, truncated: false, branch_identity: None };
+        let view = MirrorBaseline { messages: messages.clone(), total: 10, truncated: false };
         let page1 = TailCore::incremental(&view, 1, -1, 3);
         assert_eq!(page1.messages.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![0, 1, 2]);
         assert!(page1.has_more);
@@ -2262,15 +2208,15 @@ mod tests {
     fn truncated_window_beyond_request_cursor_requires_reset() {
         let mut messages: Vec<SessionReplayMessage> = (0..600).map(|seq| message(seq, "user", "m")).collect();
         messages.drain(..100); // 只保留 100..599（模拟截断窗口）
-        let view = MirrorBaseline { messages, total: 600, truncated: true, branch_identity: None };
+        let view = MirrorBaseline { messages, total: 600, truncated: true };
         assert!(incremental_requires_reset(&view, 1, 50, Some(1)), "游标在窗口之前必须 reset");
         assert!(!incremental_requires_reset(&view, 1, 150, Some(1)));
         // 截断基线的变化永远是整页 mirror，不伪造 append。
         let same = view.messages.clone();
-        assert_eq!(diff_content(&view, &same, 600, true, &None), ContentDiff::Unchanged);
+        assert_eq!(diff_content(&view, &same, 600, true), ContentDiff::Unchanged);
         let mut slid = view.messages.clone();
         slid.push(message(600, "user", "m"));
-        assert_eq!(diff_content(&view, &slid, 601, true, &None), ContentDiff::Mirror);
+        assert_eq!(diff_content(&view, &slid, 601, true), ContentDiff::Mirror);
     }
 
     #[test]
@@ -2280,7 +2226,7 @@ mod tests {
             .map(|index| json!({"type":"event_msg","payload":{"type":"user_message","message": format!("m{index}")}}).to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        let (messages, total, truncated, _) = parse_and_retain("codex", &content);
+        let (messages, total, truncated) = parse_and_retain("codex", &content);
         assert_eq!(total, 5200);
         assert_eq!(messages.len(), RETAIN_TAIL);
         assert!(truncated);
@@ -2443,21 +2389,21 @@ mod tests {
         let terminal_id = format!("relay-phase-{}", uuid::Uuid::new_v4());
         let session = "01900000-0000-7000-8000-0000000000aa";
         seed_tracked(&terminal_id);
-        super::super::terminal_task_service::record_agent_session(&terminal_id, "pi", session, None, true);
-        note_phase(&terminal_id, "pi", session, "running", 100);
+        super::super::terminal_task_service::record_agent_session(&terminal_id, "codex", session, None, true);
+        note_phase(&terminal_id, "codex", session, "running", 100);
         // 旧会话延迟 SessionEnd：绑定已换，不得写新会话阶段。
         let old_session = "01900000-0000-7000-8000-0000000000bb";
-        note_phase(&terminal_id, "pi", old_session, "ended", 200);
-        let mut phases = lock_state();
-        let current = phases.phases.current(&terminal_id, "pi", session);
+        note_phase(&terminal_id, "codex", old_session, "ended", 200);
+        let phases = lock_state();
+        let current = phases.phases.current(&terminal_id, "codex", session);
         drop(phases);
         assert_eq!(current.as_ref().map(|(phase, _)| phase.as_str()), Some("running"));
         // ended 粘滞：审批完成不得把 ended 覆盖成 running。
-        note_phase(&terminal_id, "pi", session, "ended", 300);
-        note_phase_unless_ended(&terminal_id, "pi", session, "running", 400);
+        note_phase(&terminal_id, "codex", session, "ended", 300);
+        note_phase_unless_ended(&terminal_id, "codex", session, "running", 400);
         let phases = lock_state();
         assert_eq!(
-            phases.phases.current(&terminal_id, "pi", session).as_ref().map(|(phase, _)| phase.as_str()),
+            phases.phases.current(&terminal_id, "codex", session).as_ref().map(|(phase, _)| phase.as_str()),
             Some("ended")
         );
         drop(phases);

@@ -1,7 +1,7 @@
 //! Agent 会话持久化登记表：`terminalId -> { provider, sessionId, sessionFile, cwd }`。
 //!
 //! 容器重启后旧 PTY 与 terminalId 已消失，浏览器恢复页签时只能按旧 terminalId
-//! 回查这张表，才能重新拼出 `claude --resume` / `codex resume` / `pi --session`。
+//! 回查这张表，才能重新拼出 `claude --resume` / `codex resume`。
 //! 登记表由服务端后台任务与 Hook/扩展上报共同维护；旧 `claude_session_registry.json`
 //! 会在首次读取时迁移为 v2 结构，旧文件保留一个版本周期不删除。
 
@@ -89,7 +89,7 @@ pub fn is_valid_session_id(id: &str) -> bool {
 }
 
 fn valid_provider(provider: &str) -> bool {
-    matches!(provider, "claude" | "codex" | "pi")
+    matches!(provider, "claude" | "codex")
 }
 
 fn read_legacy() -> RegistryFile {
@@ -279,9 +279,9 @@ mod tests {
             let terminal = terminal_id();
             let first = session_id();
             let second = session_id();
-            record(&terminal, "pi", &first, Some("/tmp/a.jsonl".into()), Some("/work".into()), 1_000).unwrap();
+            record(&terminal, "codex", &first, Some("/tmp/a.jsonl".into()), Some("/work".into()), 1_000).unwrap();
             let saved = lookup_agents(&[terminal.clone()], 2_000).remove(&terminal).unwrap();
-            assert_eq!(saved.provider, "pi");
+            assert_eq!(saved.provider, "codex");
             assert_eq!(saved.session_id, first);
             assert_eq!(saved.session_file.as_deref(), Some("/tmp/a.jsonl"));
 
@@ -317,17 +317,17 @@ mod tests {
                 version: 2,
                 sessions: HashMap::from([
                     (old_terminal.clone(), AgentSessionRecord {
-                        provider: "pi".into(), session_id: old_session, session_file: None, cwd: None, updated_at: 1_000,
+                        provider: "codex".into(), session_id: old_session, session_file: None, cwd: None, updated_at: 1_000,
                     }),
                     (fresh_terminal.clone(), AgentSessionRecord {
-                        provider: "pi".into(), session_id: fresh_session.clone(), session_file: None, cwd: None, updated_at: now - 1_000,
+                        provider: "codex".into(), session_id: fresh_session.clone(), session_file: None, cwd: None, updated_at: now - 1_000,
                     }),
                 ]),
             };
             fs::write(registry_path().unwrap(), serde_json::to_vec(&file).unwrap()).unwrap();
             assert!(!lookup_agents(&[old_terminal.clone()], now).contains_key(&old_terminal));
             assert_eq!(lookup_agents(&[fresh_terminal.clone()], now).get(&fresh_terminal).unwrap().session_id, fresh_session);
-            record(&terminal_id(), "pi", &session_id(), None, None, now).unwrap();
+            record(&terminal_id(), "codex", &session_id(), None, None, now).unwrap();
             assert!(!load().contains_key(&old_terminal));
         });
     }
@@ -354,7 +354,7 @@ mod tests {
             let terminal = terminal_id();
             record(&terminal, "unknown", &session_id(), None, None, 1_000).unwrap();
             assert!(load().is_empty());
-            record(&terminal, "pi", "bad id", None, None, 1_000).unwrap();
+            record(&terminal, "codex", "bad id", None, None, 1_000).unwrap();
             assert!(load().is_empty());
         });
     }

@@ -22,13 +22,10 @@ pub(super) fn result<T: Serialize>(value: Result<T, String>) -> Result<Value, Ap
 }
 
 pub async fn runtime_info() -> Json<Value> {
-    // agentCommands 供 Web 前端把 Agent 基础启动命令用于模型启动与历史恢复，免拉全量设置。
-    let agent_commands = crate::services::SettingsService::get_settings().agent_commands;
     Json(json!({"platform": std::env::consts::OS, "mode": if cfg!(feature = "desktop") { "desktop" } else { "server" },
         "defaultTerminalType": crate::commands::terminal::default_terminal_type(), "fullInterface": true,
         "windowsBuildNumber": crate::services::platform_service::windows_build_number(),
-        "isDocker": super::container_environment::is_docker_runtime(),
-        "agentCommands": {"claude": agent_commands.claude, "codex": agent_commands.codex, "pi": agent_commands.pi}}))
+        "isDocker": super::is_docker_runtime()}))
 }
 
 fn scoped_file(path: &str) -> Result<(), ApiError> {
@@ -128,7 +125,7 @@ pub async fn invoke(State(state): State<AppState>, _claims: ClaimsFromRequest, h
     let client_kind = client_kind_from_headers(&headers);
     check_arguments(&command, &args, &state.app_handle)?;
     let git_mutation = matches!(command.as_str(), "git_pull" | "git_push_with_options" | "git_checkout_branch" | "git_commit_paths");
-    let long_operation = git_mutation || matches!(command.as_str(), "probe_claude_mcp" | "claude_history_rescan" | "codex_history_rescan" | "pi_history_rescan");
+    let long_operation = git_mutation || matches!(command.as_str(), "probe_claude_mcp" | "claude_history_rescan" | "codex_history_rescan");
     if long_operation {
         let lease = if git_mutation {
             let path = args.get("path").or_else(|| args.get("options").and_then(|v| v.get("path"))).and_then(Value::as_str)

@@ -1,7 +1,15 @@
 use axum::{extract::Path, http::{header, HeaderValue}, response::{IntoResponse, Response}, Json};
 use crate::services::claude_provider_service::{self, ProviderAction, ProviderError, ProviderInput};
 use crate::web::{auth::ClaimsFromRequest, error::ApiError};
-use super::container_environment::ensure_docker;
+
+/// 旧版 Docker 容器 Claude 供应商链路（SQLite 存储）仍为容器专属功能。
+fn ensure_docker() -> Result<(), ApiError> {
+    if super::is_docker_runtime() {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden("该功能仅适用于 Docker 版本".into()))
+    }
+}
 
 async fn run(action: ProviderAction) -> Result<Response, ApiError> {
     ensure_docker()?;

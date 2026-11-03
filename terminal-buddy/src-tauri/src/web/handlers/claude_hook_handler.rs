@@ -425,7 +425,7 @@ pub async fn send_claude_hook_decision_notification(
     let questions = lease.questions;
     let generation = lease.generation;
     let name = terminal_name(&app, &terminal_id);
-    let agent_name = if decision_id.starts_with("pi:") { "Pi" } else { "Claude Code" };
+    let agent_name = "Claude Code";
     for (question_index, question) in questions.iter().enumerate() {
         if !ClaudeHookService::notification_is_current(&decision_id, generation) {
             ClaudeHookService::cancel_notification_cards(&decision_id, questions.len());

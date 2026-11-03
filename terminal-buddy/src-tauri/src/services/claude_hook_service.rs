@@ -45,7 +45,7 @@ pub struct ClaudeHookDecisionEvent {
     pub questions: Vec<ClaudeHookQuestion>,
     pub expires_at: i64,
     pub occurred_at: i64,
-    /// "claude" | "pi"；旧事件缺省按 Claude 处理。
+    /// 旧事件缺省按 Claude 处理。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
 }
@@ -82,7 +82,7 @@ pub struct ClaudeHookTerminalEvent {
     pub event_name: String,
     pub phase: String,
     pub occurred_at: i64,
-    /// "claude" | "pi"；旧事件缺省按 Claude 处理。
+    /// 旧事件缺省按 Claude 处理。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -339,7 +339,7 @@ impl ClaudeHookService {
                 questions: decision.questions.clone(),
                 expires_at: decision.expires_at,
                 occurred_at: decision.occurred_at,
-                provider: Some(if decision_id.starts_with("pi:") { "pi".to_string() } else { "claude".to_string() }),
+                provider: Some("claude".to_string()),
             })
             .collect::<Vec<_>>();
         decisions.sort_by_key(|decision| decision.occurred_at);

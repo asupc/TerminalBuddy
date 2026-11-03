@@ -1,6 +1,5 @@
 //! 将服务端 Agent 基础命令中的权限选项应用到原生 AI 会话。
 //! 只提取权限参数，不执行基础命令中的 shell 片段，也不覆盖所选模型和结构化 I/O。
-use super::SettingsService;
 use serde_json::{json, Value};
 
 type Result<T> = std::result::Result<T, String>;
@@ -65,13 +64,7 @@ impl NativePermissions {
 }
 
 pub(crate) fn for_agent(agent: &str) -> Result<NativePermissions> {
-    // Pi 无内建权限参数；原生会话保持 Pi 原生行为，工具审查经扩展交互桥呈现。
-    if agent == "pi" { return Ok(NativePermissions::default()); }
-    let settings = SettingsService::get_settings();
-    let (configured, fallback) = if agent == "claude" {
-        (settings.agent_commands.claude, DEFAULT_CLAUDE_COMMAND)
-    } else { (settings.agent_commands.codex, DEFAULT_CODEX_COMMAND) };
-    let command = if configured.trim().is_empty() { fallback } else { configured.trim() };
+    let command = if agent == "claude" { DEFAULT_CLAUDE_COMMAND } else { DEFAULT_CODEX_COMMAND };
     let tokens = shell_words::split(command).map_err(|_| "Agent 基础启动命令的引号不匹配，请修正后重试")?;
     let mut permissions = NativePermissions::default();
     let mut index = 0;

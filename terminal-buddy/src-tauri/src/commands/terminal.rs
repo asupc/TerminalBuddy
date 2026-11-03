@@ -792,25 +792,7 @@ fn build_terminal_env(terminal_id: &str, extra_env: Option<&[(String, String)]>)
         "TERMINAL_BUDDY_HOOK_PORT".to_string(),
         ClaudeHookService::server_port().to_string(),
     ));
-    // Pi 终端协议：强制发送 OSC 7501 状态、启用 OSC 52 剪贴板与 truecolor，
-    // 关闭 xterm.js 不支持的图片协议，避免 Web 端出现乱码。
-    for (key, value) in [
-        ("PI_PROGRAM_STATUS", "1"),
-        ("PI_CLIPBOARD_OSC52", "1"),
-        ("PI_TRUE_COLOR", "1"),
-        ("PI_HYPERLINKS", "1"),
-        ("PI_IMAGE_PROTOCOL", "none"),
-    ] {
-        if !env_vars.iter().any(|(name, _)| name.eq_ignore_ascii_case(key)) {
-            env_vars.push((key.to_string(), value.to_string()));
-        }
-    }
-    if SettingsService::get_settings().pi_tool_approval_enabled
-        && !env_vars.iter().any(|(name, _)| name.eq_ignore_ascii_case("TERMINAL_BUDDY_PI_TOOL_APPROVAL"))
-    {
-        env_vars.push(("TERMINAL_BUDDY_PI_TOOL_APPROVAL".to_string(), "1".to_string()));
-    }
-    // 把 npm 全局前缀（Pi 安装位置）放进终端 PATH：桌面端进程不一定继承安装后的 PATH。
+    // 把 npm 全局前缀（claude/codex 等 CLI 安装位置）放进终端 PATH：桌面端进程不一定继承安装后的 PATH。
     let mut extra_paths: Vec<PathBuf> = Vec::new();
     if let Some(home) = dirs::home_dir() {
         extra_paths.push(home.join(".local/bin"));
@@ -1510,7 +1492,6 @@ impl TerminalService {
             .backend
             .write_input(data.as_bytes())?;
         drop(instances);
-        crate::services::terminal_task_service::note_terminal_input(id, data);
         Ok(())
     }
 

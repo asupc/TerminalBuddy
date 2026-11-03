@@ -113,7 +113,7 @@ pub fn list(owner: &str) -> Result<Vec<AiSession>> {
     Ok(sessions)
 }
 fn new_session(owner: &str, input: CreateAiSession) -> Result<AiSession> {
-    if !matches!(input.provider.as_str(), "claude" | "codex" | "pi") { return Err("请选择 Claude、Codex 或 Pi".into()); }
+    if !matches!(input.provider.as_str(), "claude" | "codex") { return Err("请选择 Claude 或 Codex".into()); }
     if input.model.as_ref().is_some_and(|v| !v.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/[]@+".contains(c))) { return Err("模型名称无效".into()); }
     if let Some(resume_id) = input.resume_session_id.clone().filter(|id| !id.trim().is_empty()) {
         return resume_from_history(owner, input, &resume_id);
@@ -143,8 +143,7 @@ pub fn list_history(agent: &str, include_archived: bool, project_dir: Option<&st
     match agent {
         "claude" => super::claude_history_service::list_sessions(include_archived, project_dir),
         "codex" => super::codex_history_service::list_sessions(include_archived, project_dir),
-        "pi" => super::pi_history_service::list_sessions(include_archived, project_dir),
-        _ => Err("未知 Agent，请选择 Claude、Codex 或 Pi".into()),
+        _ => Err("未知 Agent，请选择 Claude 或 Codex".into()),
     }
 }
 
@@ -153,8 +152,7 @@ pub fn rescan_history(app: &crate::runtime::AppHandle, agent: &str) -> Result<cr
     match agent {
         "claude" => super::claude_history_service::scan_and_index(app),
         "codex" => super::codex_history_service::scan_and_index(app),
-        "pi" => super::pi_history_service::scan_and_index(app),
-        _ => Err("未知 Agent，请选择 Claude、Codex 或 Pi".into()),
+        _ => Err("未知 Agent，请选择 Claude 或 Codex".into()),
     }
 }
 
@@ -163,13 +161,12 @@ pub fn replay_page(agent: &str, session_id: &str, offset: usize, limit: usize) -
     match agent {
         "claude" => super::claude_history_service::get_replay(session_id, offset, limit),
         "codex" => super::codex_history_service::get_replay(session_id, offset, limit),
-        "pi" => super::pi_history_service::get_replay(session_id, offset, limit),
-        _ => Err("未知 Agent，请选择 Claude、Codex 或 Pi".into()),
+        _ => Err("未知 Agent，请选择 Claude 或 Codex".into()),
     }
 }
 
 /// 从 CLI 历史会话恢复为原生 AI 会话：绑定历史线程并预填最近消息，之后的发送
-/// 走各 Agent 已有的续接通道（Claude `--resume`、Codex `thread/resume`、Pi 复用会话文件）。
+/// 走各 Agent 已有的续接通道（Claude `--resume`、Codex `thread/resume`）。
 fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> Result<AiSession> {
     let provider = input.provider.as_str();
     // 第一页只取元数据：标题、项目目录与消息总数均来自历史索引。
@@ -210,12 +207,8 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
         }
         return Ok(data.clone());
     }
-    // Pi 的 RPC 会话 ID 即 AiSession ID（进程按该 ID 落盘并复用同一会话文件）。
-    let id = if provider == "pi" { resume_id.to_string() } else { Uuid::new_v4().to_string() };
+    let id = Uuid::new_v4().to_string();
     let path = directory()?.join(format!("{id}.json"));
-    if provider == "pi" && path.is_file() {
-        return Err("该 Pi 历史会话正被其他账号使用，无法恢复".into());
-    }
     let title = if first.title.trim().is_empty() { "恢复的对话".to_string() } else { first.title };
     let messages = prefill_history_messages(provider, resume_id, first.total.max(0) as usize)?;
     let data = AiSession { id: id.clone(), title, provider: provider.to_string(),
@@ -640,7 +633,7 @@ impl Drop for Process {
 }
 fn cli_command(provider: &str) -> Command {
     let configured = std::env::var_os(match provider {
-        "claude" => "TERMINAL_BUDDY_CLAUDE_BIN", "codex" => "TERMINAL_BUDDY_CODEX_BIN", _ => "TERMINAL_BUDDY_PI_BIN",
+        "claude" => "TERMINAL_BUDDY_CLAUDE_BIN", _ => "TERMINAL_BUDDY_CODEX_BIN",
     });
     let mut path = configured.map(PathBuf::from).unwrap_or_else(|| PathBuf::from(provider));
     if path.components().count() == 1 {
@@ -707,14 +700,6 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
             "--permission-prompt-tool", "stdio"]);
         if let Some(id) = &session.thread_id { command.arg("--resume").arg(id); }
         if let Some(model) = &session.model { command.arg("--model").arg(model); }
-    } else if session.provider == "pi" {
-        // 注入 TerminalBuddy 扩展：无环境变量时完全 no-op，工具审批开关经环境变量开启。
-        if let Ok(path) = super::pi_extension_service::ensure_extension() {
-            command.arg("--extension").arg(path);
-        }
-        // RPC 会话 ID 直接复用 AiSession ID：Pi 按该 ID 落盘并复用同一会话文件，
-        // 会话目录随 current_dir 归档，历史索引与标题摘要据此绑定。
-        command.args(["--mode", "rpc", "--session-id"]).arg(&session.id);
     } else {
         // 新旧对话均优先使用普通模式的标准提问工具；动态工具仅作补充。
         command.args(&permissions.codex_args).args(["-c", "features.default_mode_request_user_input=true"]).arg("app-server");
@@ -749,8 +734,6 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
     if session.provider == "claude" {
         write_claude_user(&mut stdin, session.thread_id.as_deref().unwrap_or(""), prompt)?;
         run_claude(cell, &mut process, stdin, controls, output, errors, hooks.as_ref().ok_or("Claude 决策 Hook 未初始化")?)
-    } else if session.provider == "pi" {
-        run_pi(cell, &session, prompt, stdin, controls, output, errors)
     } else {
         write_json(&mut stdin, json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"terminal_buddy_native","version":"1.0.0"},"capabilities":{"experimentalApi":true}}}))?;
         run_codex(cell, &session, prompt, &permissions, &mut stdin, controls, output, errors)
@@ -926,7 +909,7 @@ impl ClaudeBackgroundTasks {
 }
 /// 回合未结算时允许的最长无输出时间：与 CLI 默认 API 超时（600 秒）对齐，超过即判定任务停滞
 /// （模型接口挂起、CLI 无限重试等），主动结束回合并保留聊天记录。等待用户决策不算停滞。
-/// Claude / Codex / Pi 三家循环共用。
+/// Claude / Codex 两家循环共用。
 const AGENT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: mpsc::Receiver<Control>,
     output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>, hooks: &NativeClaudeHooks) -> Result<WorkerExit> {
@@ -1474,216 +1457,6 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
 }
 
 /// 应用退出时同时收尾原生 AI 任务，防止留下无主 CLI 子进程。
-// ── Pi RPC 原生会话 ──────────────────────────────────────────────────────
-
-/// Pi 命令是 `{id, type: <命令>, ...参数}` 的平铺结构。
-fn pi_request(stdin: &mut impl Write, next_id: &mut u64, command: &str, mut params: Value) -> Result<u64> {
-    let id = *next_id;
-    *next_id += 1;
-    let mut value = json!({"id":id, "type":command});
-    if let Some(fields) = params.as_object_mut() { for (key, item) in fields { value[key] = item.take(); } }
-    write_json(stdin, value)?;
-    Ok(id)
-}
-
-#[derive(Default)]
-struct PiOutputState {
-    request_id: Option<String>,
-    message_number: u64,
-    current_key: String,
-    /// 最近一次 prompt 正在执行（含重试、压缩恢复），直到 `agent_settled`。
-    running: bool,
-    /// `agent_settled` 已到，等待 `get_session_stats` 做权威结算。
-    settling: bool,
-    usage: usage::PiUsageTracker,
-}
-
-fn apply_pi_event(cell: &Cell, turn: &str, state: &mut PiOutputState, value: &Value) {
-    match value["type"].as_str().unwrap_or("") {
-        "message_start" if value["message"]["role"] == "assistant" => {
-            state.message_number += 1;
-            state.current_key = format!("{turn}-text-{}", state.message_number);
-        }
-        "message_update" => {
-            let event = &value["assistantMessageEvent"];
-            if event["type"] == "text_delta" {
-                let key = state.current_key.clone();
-                message(cell, &key, "assistant", event["delta"].as_str().unwrap_or(""), true);
-            }
-            let index = state.message_number;
-            update_usage(cell, |data| state.usage.observe(data, index, &value["usage"]));
-        }
-        "message_end" => {
-            let assistant = &value["message"];
-            if assistant["role"] == "assistant" && !state.current_key.is_empty() {
-                // 权威正文按内容块顺序拼接 text；工具卡片由 tool_execution 事件呈现。
-                let text = assistant["content"].as_array().map(|blocks| blocks.iter()
-                    .filter(|block| block["type"] == "text")
-                    .map(|block| block["text"].as_str().unwrap_or("")).collect::<String>()).unwrap_or_default();
-                let key = state.current_key.clone();
-                message(cell, &key, "assistant", &text, false);
-                let index = state.message_number;
-                update_usage(cell, |data| state.usage.observe(data, index, &assistant["usage"]));
-                if assistant["stopReason"] == "error" {
-                    let detail = assistant["errorMessage"].as_str().unwrap_or("模型请求失败");
-                    message(cell, &format!("{turn}-error-{index}"), "assistant", &format!("⚠ {detail}"), false);
-                }
-            }
-        }
-        "tool_execution_start" => {
-            let id = value["toolCallId"].as_str().unwrap_or_default();
-            message(cell, &format!("{turn}-tool-{id}"), "tool",
-                &format!("{}\n{}", value["toolName"].as_str().unwrap_or("工具调用"), value["args"]), false);
-        }
-        "tool_execution_end" => {
-            let id = value["toolCallId"].as_str().unwrap_or_default();
-            let body = value["result"]["content"].as_array().map(|blocks| blocks.iter()
-                .filter_map(|block| block["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default();
-            let title = if value["isError"] == true { "工具执行失败" } else { "工具执行完成" };
-            message(cell, &format!("{turn}-tool-{id}"), "tool", &format!("{title}\n{body}"), false);
-        }
-        "compaction_start" => update_usage(cell, |data| { usage::invalidate_context(data); true }),
-        _ => {}
-    }
-}
-
-fn pi_status(cell: &Cell, state: &PiOutputState) {
-    if let Ok(mut data) = cell.data.lock() {
-        // API 已交接新输入或正在中断时，旧回合不能覆盖新状态。
-        if active_request_id(&data) != state.request_id.as_deref() || data.status == "stopping" { return; }
-        let status = if !data.approvals.is_empty() { "approval" } else if state.running || state.settling { "running" } else { "idle" };
-        if data.status != status {
-            data.status = status.into(); touch(&mut data);
-            if status == "idle" { data.result_revision = data.revision; }
-        }
-    }
-}
-
-fn run_pi(cell: &Cell, session: &AiSession, prompt: &str, stdin: ChildStdin, controls: mpsc::Receiver<Control>,
-    output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<WorkerExit> {
-    let mut input = Some(stdin);
-    let mut next_id = 2;
-    let mut turn = Uuid::new_v4().to_string();
-    let mut state = PiOutputState { request_id: active_request_id(session).map(str::to_string), ..Default::default() };
-    let mut stats_request: Option<u64> = None;
-    let mut pending: HashMap<String, AiApproval> = HashMap::new();
-    let mut checkpoint = Instant::now();
-    let mut last_persisted = session.revision;
-    let mut retired = false;
-    // 最近一次活动（Pi RPC 输出或用户操作）时间，用于识别模型接口挂起导致的回合停滞。
-    let mut last_event = Instant::now();
-    // Pi 会话文件与摘要绑定到 Pi 会话 ID（即 AiSession ID），首回合即登记。
-    if session.thread_id.is_none() { update(cell, |data| data.thread_id = Some(session.id.clone())); persist(cell)?; }
-    pi_request(input.as_mut().ok_or("Pi 输入通道不可用")?, &mut next_id, "prompt", json!({"message":prompt}))?;
-    state.running = true;
-    loop {
-        while let Ok(control) = controls.try_recv() {
-            match control {
-                // 先请求中断再由外层清理进程树；Pi 会话文件已持久，上下文不丢失。
-                Control::Stop => {
-                    if let Some(stdin) = input.as_mut() { let _ = pi_request(stdin, &mut next_id, "abort", json!({})); }
-                    return Err("已中断".into());
-                }
-                Control::Retire => { drop(input.take()); retired = true; }
-                Control::Message { text, request_id } => {
-                    let stdin = input.as_mut().ok_or("Pi 进程已退出，请再次发送消息")?;
-                    if state.running {
-                        // 原生插话走 Pi RPC 的 steer，保留当前消息的流式上下文与用量。
-                        state.request_id = Some(request_id);
-                        pi_request(stdin, &mut next_id, "steer", json!({"message":text}))?;
-                    } else {
-                        turn = Uuid::new_v4().to_string();
-                        state = PiOutputState { request_id: Some(request_id), ..Default::default() };
-                        if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
-                        stats_request = None;
-                        pi_request(stdin, &mut next_id, "prompt", json!({"message":text}))?;
-                    }
-                    state.running = true;
-                    last_event = Instant::now();
-                }
-                Control::Approval(answer) => {
-                    if let Some(approval) = pending.remove(&answer.approval_id) {
-                        let stdin = input.as_mut().ok_or("Pi 输入通道已关闭，请重新发送消息")?;
-                        write_json(stdin, approval::pi_extension_response(&approval, &answer)?)?;
-                        update(cell, |data| {
-                            data.approvals.retain(|item| item.id != answer.approval_id);
-                            if data.approvals.is_empty() && data.status == "approval"
-                                && (state.running || state.settling) { data.status = "running".into(); }
-                        });
-                        last_event = Instant::now();
-                    }
-                }
-            }
-        }
-        if checkpoint.elapsed() > Duration::from_secs(5) {
-            let revision = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.revision;
-            if revision != last_persisted { persist(cell)?; last_persisted = revision; }
-            checkpoint = Instant::now();
-        }
-        pi_status(cell, &state);
-        // 回合未结算且长时间无任何输出（模型接口挂起、RPC 静默）时主动判停，
-        // 否则 status 永远停在 running，App 端会一直显示「思考中」。等待用户决策不算停滞。
-        if !retired && (state.running || state.settling) && pending.is_empty()
-            && last_event.elapsed() > AGENT_STALL_TIMEOUT {
-            return Err(format!("Pi 已超过 {} 分钟没有任何输出，任务可能已停止；聊天记录已保留，可重新发送消息继续",
-                AGENT_STALL_TIMEOUT.as_secs() / 60));
-        }
-        // 结算完成后持续检查，而非只在统计响应里取一次，避免收尾期间入队的消息滞留。
-        if !retired && !state.running && !state.settling {
-            if let Some(next) = take_pending_if_idle(cell)? {
-                turn = Uuid::new_v4().to_string();
-                state = PiOutputState { request_id: Some(next.request_id), ..Default::default() };
-                if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
-                pi_request(input.as_mut().ok_or("Pi 输入通道已关闭")?, &mut next_id, "prompt", json!({"message":next.text}))?;
-                state.running = true;
-            }
-        }
-        let value = match next_output(&output, &errors) {
-            Ok(Some(value)) => { last_event = Instant::now(); value }
-            Ok(None) => continue,
-            Err(message) => { if retired { return Ok(WorkerExit::Retired); } return Err(message); }
-        };
-        if value["type"] == "response" {
-            let command = value["command"].as_str().unwrap_or("");
-            if matches!(command, "prompt" | "steer") {
-                if value["success"] != true { return Err(value["error"].as_str().unwrap_or("Pi 拒绝了本次消息").into()); }
-                // 扩展命令被即时处理，不会产生 agent_settled，直接进入结算；插话不改动当前回合。
-                if command == "prompt" && value["data"]["disposition"] == "handled" {
-                    let stdin = input.as_mut().ok_or("Pi 输入通道已关闭")?;
-                    stats_request = Some(pi_request(stdin, &mut next_id, "get_session_stats", json!({}))?);
-                    state.running = false; state.settling = true;
-                }
-            } else if value["id"].as_u64().is_some_and(|id| stats_request == Some(id)) {
-                stats_request = None;
-                let stats = value["data"].clone();
-                if let Ok(mut data) = cell.data.lock() {
-                    state.usage.settled(&mut data, &stats);
-                    usage::finish_turn(&mut data);
-                    touch(&mut data);
-                }
-                refresh_title(cell, true);
-                persist(cell)?;
-                state.settling = false;
-            }
-            continue;
-        }
-        if value["type"] == "extension_ui_request" {
-            if let Some(approval) = approval::pi_extension_approval(&value) {
-                pending.insert(approval.id.clone(), approval.clone());
-                update(cell, |data| { data.status = "approval".into(); data.approvals.push(approval); });
-            }
-            continue;
-        }
-        if value["type"] == "agent_settled" {
-            let stdin = input.as_mut().ok_or("Pi 输入通道已关闭")?;
-            stats_request = Some(pi_request(stdin, &mut next_id, "get_session_stats", json!({}))?);
-            state.running = false; state.settling = true;
-            continue;
-        }
-        apply_pi_event(cell, &turn, &mut state, &value);
-    }
-}
-
 pub fn shutdown_all() {
     let cells = registry().lock().map(|items| items.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
     for cell in cells {
@@ -2138,86 +1911,5 @@ mod tests {
         assert!(messages.is_empty());
     }
 
-    #[test]
-    fn pi_events_stream_and_finalize_assistant_text() {
-        let cell = cell();
-        let mut state = PiOutputState::default();
-        let events = [
-            json!({"type":"message_start","message":{"role":"assistant"}}),
-            json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"你"},"usage":{"input":10,"output":1}}),
-            json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"好"},"usage":{"input":10,"output":2}}),
-            json!({"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"略"},{"type":"text","text":"你好，世界"}],"usage":{"input":10,"output":3,"cacheRead":2}}}),
-        ];
-        for event in &events { apply_pi_event(&cell, "turn", &mut state, event); }
-        let data = cell.data.into_inner().unwrap();
-        assert_eq!(data.messages.len(), 1);
-        assert_eq!(data.messages[0].role, "assistant");
-        assert_eq!(data.messages[0].text, "你好，世界");
-        let usage = data.usage.unwrap();
-        let turn = usage.last_turn.unwrap();
-        assert_eq!(turn.state, "provisional");
-        assert_eq!(turn.tokens.input_tokens, Some(12));
-        assert_eq!(turn.tokens.output_tokens, Some(3));
-        assert_eq!(turn.tokens.cache_read_input_tokens, Some(2));
-    }
-
-    #[test]
-    fn pi_tool_events_replace_the_same_card() {
-        let cell = cell();
-        let mut state = PiOutputState::default();
-        let events = [
-            json!({"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{"command":"ls"}}),
-            json!({"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"file"}]}}),
-            json!({"type":"tool_execution_start","toolCallId":"c2","toolName":"edit","args":{"path":"a.rs"}}),
-            json!({"type":"tool_execution_end","toolCallId":"c2","toolName":"edit","isError":true,"result":{"content":[{"type":"text","text":"拒绝"}]}}),
-        ];
-        for event in &events { apply_pi_event(&cell, "turn", &mut state, event); }
-        let data = cell.data.into_inner().unwrap();
-        assert_eq!(data.messages.len(), 2);
-        assert_eq!(data.messages[0].text, "工具执行完成\nfile");
-        assert_eq!(data.messages[1].text, "工具执行失败\n拒绝");
-    }
-
-    #[test]
-    fn pi_usage_settles_with_authoritative_stats() {
-        let cell = cell();
-        {
-            let mut data = cell.data.lock().unwrap();
-            data.usage = Some(usage::initial());
-            let mut tracker = usage::PiUsageTracker::default();
-            tracker.start(&mut data);
-            tracker.observe(&mut data, 1, &json!({"input":100,"output":5}));
-            tracker.settled(&mut data, &json!({
-                "tokens":{"input":500,"output":50,"cacheRead":40},
-                "contextUsage":{"tokens":600,"contextWindow":200000},
-            }));
-        }
-        let data = cell.data.into_inner().unwrap();
-        let usage = data.usage.unwrap();
-        assert_eq!(usage.session_total.tokens.input_tokens, Some(540));
-        assert_eq!(usage.session_total.tokens.output_tokens, Some(50));
-        let turn = usage.last_turn.unwrap();
-        assert_eq!(turn.state, "final");
-        assert_eq!(turn.tokens.input_tokens, Some(540));
-        assert_eq!(usage.context.used_tokens, Some(600));
-        assert_eq!(usage.context.window_tokens, Some(200000));
-        assert_eq!(usage.context.window_source.as_deref(), Some("cli"));
-    }
-
-    #[test]
-    fn pi_status_waits_for_stats_before_idle() {
-        let cell = cell();
-        let mut state = PiOutputState { running: true, ..Default::default() };
-        pi_status(&cell, &state);
-        assert_eq!(cell.data.lock().unwrap().status, "running");
-        state = PiOutputState { settling: true, ..Default::default() };
-        pi_status(&cell, &state);
-        assert_eq!(cell.data.lock().unwrap().status, "running");
-        state = PiOutputState::default();
-        pi_status(&cell, &state);
-        let data = cell.data.lock().unwrap();
-        assert_eq!(data.status, "idle");
-        assert_eq!(data.result_revision, data.revision);
-    }
 
 }
