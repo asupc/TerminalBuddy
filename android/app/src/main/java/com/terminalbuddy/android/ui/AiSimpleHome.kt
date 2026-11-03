@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
@@ -45,14 +46,15 @@ import java.util.Date
 import java.util.Locale
 
 private enum class SimpleHomeTab(val title: String) {
-    Recent("最近任务"), History("历史会话"), Server("服务端会话"),
+    Recent("最近会话"), History("历史会话"),
 }
 
 /**
  * 简版核心页：只保留快速开始。
- * 顶部品牌与「我的」入口，中间是压缩后的新会话配置，下方用 Tab 切换最近任务、历史会话和服务端会话。
- * 最近任务全部平铺，不再提供「查看全部」；历史会话按当前工作项目汇总全部已启用助手，
- * 不跟随快速开始里的助手选择；服务端会话列出电脑/服务端终端里正在运行的 Agent 会话，点击直接接管。
+ * 顶部品牌与「我的」入口，中间是压缩后的新会话配置，下方用 Tab 切换最近会话和历史会话。
+ * 最近会话把服务端正在运行的 Agent 会话（实时镜像，点击直接接管）与 App 发起的会话合并展示，
+ * 按「服务端正在运行 / App 发起」分组平铺；历史会话按当前工作项目汇总全部已启用助手，
+ * 不跟随快速开始里的助手选择。
  */
 @Composable
 internal fun AiSimpleHome(
@@ -90,8 +92,8 @@ internal fun AiSimpleHome(
     val historyAgents = ui.availableAgents
     LaunchedEffect(tab, ui.projectPath, ui.connectionRevision, historyAgents) {
         if (tab == SimpleHomeTab.History) vm.loadHistoryForSelection()
-        // 历史 Tab 需要 Agent 列表做「电脑运行中」匹配，服务端 Tab 本身就是这份列表的展示。
-        if (tab == SimpleHomeTab.History || tab == SimpleHomeTab.Server) agentVm.refresh()
+        // 两个 Tab 都依赖实时 Agent 列表：最近会话展示「服务端正在运行」分组，历史会话做「电脑运行中」匹配。
+        agentVm.refresh()
     }
     Column(Modifier.fillMaxSize()) {
         AiSimpleHeader(ui.reconnecting, profile)
@@ -107,24 +109,61 @@ internal fun AiSimpleHome(
             item(key = "tabs") {
                 SimpleTabs(
                     selected = tab,
-                    recentCount = recent.size.takeIf { ui.homeLoaded },
+                    // 最近会话的计数是「服务端正在运行 + App 发起」的合计，两边都同步完成后才展示。
+                    recentCount = if (ui.homeLoaded && currentAgentUi.listLoaded)
+                        recent.size + currentAgentUi.sessions.size else null,
                     historyCount = ui.historySessions.size.takeIf {
                         ui.historyProjectPath == ui.projectPath && ui.historyAgents == historyAgents
                     },
-                    serverCount = currentAgentUi.sessions.size.takeIf { currentAgentUi.listLoaded },
                     select = { tab = it },
                 )
             }
             when (tab) {
                 SimpleHomeTab.Recent -> {
-                    if (ui.initialLoading && recent.isEmpty()) item(key = "recent-loading") {
-                        SimpleLoading("正在同步最近任务…")
-                    } else if (recent.isEmpty()) item(key = "recent-empty") {
-                        AiEmptyState(Icons.Outlined.ChatBubbleOutline, "第一段对话，从这里开始",
-                            "选择项目与模型，开启你的新想法。")
-                    } else {
+                    // 服务端会话同步失败时给出行内重试入口，不影响下方 App 会话分组的展示。
+                    currentAgentUi.listError?.let { error -> item(key = "server-error") {
+                        Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(16.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("服务端会话同步失败", style = MaterialTheme.typography.titleSmall)
+                                Text(error, style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
+                                TextButton(agentVm::refresh, enabled = !currentAgentUi.listLoading,
+                                    contentPadding = PaddingValues(0.dp)) { Text("重新加载") }
+                            }
+                        }
+                    } }
+                    val serverSessions = currentAgentUi.sessions
+                    if (serverSessions.isNotEmpty()) {
+                        item(key = "server-head") {
+                            SimpleSectionLabel(Icons.Outlined.Monitor, "服务端正在运行", serverSessions.size)
+                        }
+                        items(serverSessions, key = { "server-${it.terminalId}" }) { session ->
+                            SimpleAgentSessionRow(session) { openAgent(session) }
+                        }
+                        item(key = "server-foot") {
+                            Text("实时镜像电脑终端输出，Claude 可回一句或处理待决策，Codex 暂只读。",
+                                Modifier.fillMaxWidth().padding(top = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TbColors.TextMuted)
+                        }
+                    }
+                    if (recent.isNotEmpty()) {
+                        item(key = "recent-head") {
+                            SimpleSectionLabel(Icons.Outlined.ChatBubbleOutline, "App 发起的会话", recent.size)
+                        }
                         items(recent, key = { "recent-${it.id}" }) { session ->
                             AiRecentSessionRow(ui, session, { vm.open(session.id) }, { delete(session) })
+                        }
+                    }
+                    when {
+                        // 两组都还没有内容时给出加载/空态；任一分组有数据就直接平铺，不再插入提示。
+                        ui.initialLoading -> if (serverSessions.isEmpty() && recent.isEmpty())
+                            item(key = "recent-loading") { SimpleLoading("正在同步最近任务…") }
+                        currentAgentUi.listError == null && !currentAgentUi.listLoaded ->
+                            if (serverSessions.isEmpty() && recent.isEmpty())
+                                item(key = "server-loading") { SimpleLoading("正在同步服务端会话…") }
+                        serverSessions.isEmpty() && recent.isEmpty() -> item(key = "recent-empty") {
+                            AiEmptyState(Icons.Outlined.ChatBubbleOutline, "第一段对话，从这里开始",
+                                "选择项目与模型，开启你的新想法。")
                         }
                     }
                 }
@@ -158,40 +197,6 @@ internal fun AiSimpleHome(
                             }
                             item(key = "history-foot") {
                                 Text("共 ${ui.historySessions.size} 段历史会话 · 仅显示当前项目",
-                                    Modifier.fillMaxWidth().padding(top = 4.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = TbColors.TextMuted, textAlign = TextAlign.Center)
-                            }
-                        }
-                    }
-                }
-                SimpleHomeTab.Server -> {
-                    currentAgentUi.listError?.let { error -> item(key = "server-error") {
-                        Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(16.dp)) {
-                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("服务端会话同步失败", style = MaterialTheme.typography.titleSmall)
-                                Text(error, style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
-                                TextButton(agentVm::refresh, enabled = !currentAgentUi.listLoading,
-                                    contentPadding = PaddingValues(0.dp)) { Text("重新加载") }
-                            }
-                        }
-                    } }
-                    when {
-                        currentAgentUi.sessions.isEmpty() && currentAgentUi.listError == null &&
-                            !currentAgentUi.listLoaded -> item(key = "server-loading") {
-                            SimpleLoading("正在同步服务端会话…")
-                        }
-                        currentAgentUi.sessions.isEmpty() && currentAgentUi.listLoaded -> item(key = "server-empty") {
-                            AiEmptyState(Icons.Outlined.Monitor, "没有正在运行的服务端会话",
-                                "在电脑端或服务端启动 Claude、Codex 会话后，这里会实时显示，可直接接管继续。" +
-                                    "若始终不显示，请检查电脑端 Web API 设置中的会话共享已开启。")
-                        }
-                        currentAgentUi.sessions.isNotEmpty() -> {
-                            items(currentAgentUi.sessions, key = { "server-${it.terminalId}" }) { session ->
-                                SimpleAgentSessionRow(session) { openAgent(session) }
-                            }
-                            item(key = "server-foot") {
-                                Text("电脑终端里正在运行的会话：实时镜像最新输出，Claude 可回一句或处理待决策，Codex 暂只读。",
                                     Modifier.fillMaxWidth().padding(top = 4.dp),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = TbColors.TextMuted, textAlign = TextAlign.Center)
@@ -378,10 +383,10 @@ private fun SimpleProjectCommands(
     }
 }
 
-/** 最近任务 / 历史会话 / 服务端会话的三段式切换，数量只作辅助信息。 */
+/** 最近会话 / 历史会话的两段式切换，数量只作辅助信息。 */
 @Composable
 private fun SimpleTabs(
-    selected: SimpleHomeTab, recentCount: Int?, historyCount: Int?, serverCount: Int?,
+    selected: SimpleHomeTab, recentCount: Int?, historyCount: Int?,
     select: (SimpleHomeTab) -> Unit,
 ) {
     Row(
@@ -394,7 +399,6 @@ private fun SimpleTabs(
             val count = when (tab) {
                 SimpleHomeTab.Recent -> recentCount
                 SimpleHomeTab.History -> historyCount
-                SimpleHomeTab.Server -> serverCount
             }
             Surface(
                 modifier = Modifier.weight(1f).selectable(active, role = Role.Tab, onClick = { select(tab) }),
@@ -416,6 +420,24 @@ private fun SimpleTabs(
                 }
             }
         }
+    }
+}
+
+/**
+ * 最近会话的小节标题：合并列表按「服务端正在运行 / App 发起」分组，
+ * 样式与「项目配置」小节一致，数量只作辅助信息。
+ */
+@Composable
+private fun SimpleSectionLabel(icon: ImageVector, text: String, count: Int) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(icon, null, Modifier.size(13.dp), tint = TbColors.TextMuted)
+        Text(text, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
+        Spacer(Modifier.weight(1f))
+        Text("$count 项", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
     }
 }
 
