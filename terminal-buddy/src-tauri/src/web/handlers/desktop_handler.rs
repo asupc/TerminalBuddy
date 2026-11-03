@@ -22,10 +22,13 @@ pub(super) fn result<T: Serialize>(value: Result<T, String>) -> Result<Value, Ap
 }
 
 pub async fn runtime_info() -> Json<Value> {
+    // agentCommands 供 Web 前端把 Agent 基础启动命令用于模型启动与历史恢复，免拉全量设置。
+    let agent_commands = crate::services::SettingsService::get_settings().agent_commands;
     Json(json!({"platform": std::env::consts::OS, "mode": if cfg!(feature = "desktop") { "desktop" } else { "server" },
         "defaultTerminalType": crate::commands::terminal::default_terminal_type(), "fullInterface": true,
         "windowsBuildNumber": crate::services::platform_service::windows_build_number(),
-        "isDocker": super::is_docker_runtime()}))
+        "isDocker": super::is_docker_runtime(),
+        "agentCommands": {"claude": agent_commands.claude, "codex": agent_commands.codex}}))
 }
 
 fn scoped_file(path: &str) -> Result<(), ApiError> {

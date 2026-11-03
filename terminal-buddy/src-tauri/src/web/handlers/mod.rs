@@ -13,6 +13,7 @@ pub mod profile_handler;
 pub mod terminal_handler;
 pub mod terminal_agent_handler;
 pub mod desktop_handler;
+pub mod container_environment;
 pub mod claude_provider_handler;
 
 use crate::web::error::ApiError;

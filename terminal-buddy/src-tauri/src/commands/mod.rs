@@ -1,4 +1,5 @@
 pub mod ai_usage;
+pub mod agent_cli;
 pub mod bot;
 pub mod claude_assets;
 pub mod claude_config;
@@ -34,6 +35,7 @@ pub mod web;
 pub mod window;
 pub mod workspace;
 pub use ai_usage::*;
+pub use agent_cli::*;
 pub use bot::*;
 pub use claude_assets::*;
 pub use claude_config::*;

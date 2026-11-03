@@ -63,6 +63,24 @@ fn default_single_instance() -> bool {
     true
 }
 
+/// Agent 版本检查与安装下载源；国内镜像通过 npm 分发官方发布的包。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentDownloadSource {
+    #[default]
+    Npmmirror,
+    Official,
+}
+
+impl AgentDownloadSource {
+    pub fn registry(self) -> &'static str {
+        match self {
+            Self::Npmmirror => "https://registry.npmmirror.com",
+            Self::Official => "https://registry.npmjs.org",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -112,6 +130,29 @@ pub struct AppSettings {
     /// 开启接管时备份的旧委托值；仅在 None 时写入，保证开→关→开→关回到最初值。
     #[serde(default)]
     pub default_terminal_backup: Option<DefaultTerminalBackup>,
+    /// Agent 管理中配置的 Agent 基础启动命令；空串 = 使用内置默认命令。
+    #[serde(default)]
+    pub agent_commands: AgentCommands,
+    #[serde(default)]
+    pub agent_download_source: AgentDownloadSource,
+}
+
+/// Agent（Claude Code / Codex）的基础启动命令，供项目模型启动与历史恢复继承参数。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCommands {
+    /// Claude Code 基础命令，默认 `claude --dangerously-skip-permissions`。
+    #[serde(default)]
+    pub claude: String,
+    /// Codex 基础命令，默认 `codex --dangerously-bypass-approvals-and-sandbox`。
+    #[serde(default)]
+    pub codex: String,
+}
+
+impl Default for AgentCommands {
+    fn default() -> Self {
+        Self { claude: String::new(), codex: String::new() }
+    }
 }
 
 impl Default for AppSettings {
@@ -139,6 +180,8 @@ impl Default for AppSettings {
             claude_hook_config_dir: None,
             default_terminal_enabled: false,
             default_terminal_backup: None,
+            agent_commands: AgentCommands::default(),
+            agent_download_source: AgentDownloadSource::default(),
         }
     }
 }

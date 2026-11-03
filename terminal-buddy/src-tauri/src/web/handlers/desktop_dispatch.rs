@@ -77,6 +77,8 @@ pub async fn dispatch(command: &str, args: Value, app: AppHandle) -> Result<Valu
         "probe_claude_mcp" => result(crate::commands::claude_mcp::probe_claude_mcp(argument(&args, "timeoutSecs")?).await),
         "get_terminal_task_summaries" => result(crate::commands::claude_session::get_terminal_task_summaries(argument(&args, "terminalIds")?, app.state::<crate::commands::TerminalService>()).await),
         "save_show_task_summary" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::settings::save_show_task_summary(argument(&args, "enabled")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        "save_agent_commands" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::settings::save_agent_commands(argument(&args, "claude")?, argument(&args, "codex")?))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
+        "save_agent_download_source" => result(crate::commands::agent_cli::save_agent_download_source(argument(&args, "source")?).await),
         "get_claude_sessions_for_terminals" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::claude_session::get_claude_sessions_for_terminals(argument(&args, "terminalIds")?, app.state::<crate::commands::TerminalService>()))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "get_agent_sessions_for_terminals" => crate::runtime::async_runtime::spawn_blocking(move || result(crate::commands::claude_session::get_agent_sessions_for_terminals(argument(&args, "terminalIds")?, app.state::<crate::commands::TerminalService>()))).await.map_err(|e| ApiError::Internal(e.to_string()))?,
         "claim_web_session_restore" => data(crate::commands::session_restore::claim_web_session_restore()),

@@ -1,3 +1,4 @@
+pub mod agent_cli_service;
 pub mod app_notification_service;
 pub mod atomic_file;
 pub mod bot_binding_service;
@@ -16,6 +17,7 @@ pub mod claude_provider_service;
 pub mod claude_settings_service;
 pub mod claude_session_registry_service;
 pub mod client_data_service;
+pub mod cli_update_service;
 pub mod codex_catalog;
 pub mod codex_history_service;
 mod codex_transcript;
