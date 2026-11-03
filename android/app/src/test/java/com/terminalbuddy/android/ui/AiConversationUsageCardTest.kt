@@ -63,4 +63,20 @@ class AiConversationUsageCardTest {
     fun `输入输出等字段仍允许零值覆盖`() {
         assertEquals(0L, acceptKnownUsage(120L, 0L))
     }
+
+    @Test
+    fun `容量缺失时沿用上一次已知容量`() {
+        // 上下文压缩或快照缺统计会把 windowTokens 置空，此时仍是 950000，不应显示 —K。
+        assertNull(acceptKnownUsage(950_000L, null, rejectZeroAfterPositive = true))
+    }
+
+    @Test
+    fun `容量为零时沿用上一次已知容量`() {
+        assertNull(acceptKnownUsage(950_000L, 0L, rejectZeroAfterPositive = true))
+    }
+
+    @Test
+    fun `已知容量后的更大容量正常替换`() {
+        assertEquals(1_000_000L, acceptKnownUsage(950_000L, 1_000_000L, rejectZeroAfterPositive = true))
+    }
 }

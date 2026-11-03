@@ -69,7 +69,9 @@ import kotlin.math.roundToInt
     val used = rememberKnownUsageValue(session.id,
         contextUsage?.takeUnless { it.updating }?.usedTokens?.takeIf { it >= 0 },
         rejectZeroAfterPositive = true)
-    val capacity = rememberKnownUsageValue(session.id, contextUsage?.windowTokens?.takeIf { it > 0 })
+    // 容量同理：只认大于 0 的值，0 与缺失都沿用上一次已知容量，
+    // 否则总上下文大小会短暂变成 —K，看起来像是统计丢了。
+    val capacity = rememberKnownUsageValue(session.id, contextUsage?.windowTokens)
     val rawRatio = if (used != null && used > 0 && capacity != null && capacity > 0)
         used.toDouble() / capacity else null
     // -1 表示本会话还没拿到过有效比例；Float 可被 rememberSaveable 直接保存。
@@ -78,8 +80,13 @@ import kotlin.math.roundToInt
     // 否则进度条会被打回零点再随下一份快照回弹，看起来一直在动。
     val ratio = retainContextProgress(knownRatio.value.takeIf { it >= 0f }?.toDouble(), rawRatio)
     SideEffect { ratio?.let { if (it.toFloat() != knownRatio.value) knownRatio.value = it.toFloat() } }
+    // 从未拿到过有效比例时不画进度条，只保留「上下文 已用/容量」文字，
+    // 不显示一根永远为空、看起来像没数据的灰条。
+    val showProgress = ratio != null
+    // 容量未知时占用率也是未知，不能把「算不出比例」写成 0%。
     val percent = when {
         ratio != null -> (ratio * 100).roundToInt().toString()
+        capacity == null || capacity <= 0 -> "—"
         used != null -> "0"
         else -> "—"
     }
@@ -137,11 +144,12 @@ import kotlin.math.roundToInt
                                 AiContextLabel()
                                 AiContextValue(context)
                             }
-                            AiContextProgress(ratio?.toFloat(), context, Modifier.fillMaxWidth())
+                            if (showProgress) AiContextProgress(ratio?.toFloat(), context, Modifier.fillMaxWidth())
                         } else {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 AiContextLabel()
-                                AiContextProgress(ratio?.toFloat(), context, Modifier.weight(1f))
+                                if (showProgress) AiContextProgress(ratio?.toFloat(), context, Modifier.weight(1f))
+                                else Spacer(Modifier.weight(1f))
                                 AiContextValue(context)
                             }
                         }
