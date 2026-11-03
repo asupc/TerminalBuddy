@@ -70,22 +70,6 @@ class AiModelsTest {
     }
 
     @Test
-    fun `agent environment statuses decode and map to installed agents`() {
-        val environment = decode<AiAgentEnvironment>(
-            """
-            {"claude":{"status":"installed","version":"1.0.30"},
-             "codex":{"status":"notInstalled","version":null,"message":null},
-             "pi":{"status":"updating","version":null,"update":null,"updatedVersion":null}}
-            """.trimIndent()
-        )
-        assertTrue(environment.installed("claude"))
-        assertFalse(environment.installed("codex"))
-        // 与桌面端一致：安装中 / 更新中同样视作可用。
-        assertTrue(environment.installed("pi"))
-        assertFalse(environment.installed("unknown"))
-    }
-
-    @Test
     fun `model effort labels normalize case and new levels`() {
         assertEquals("极高", AiModel(id = "m", effort = " Ultra ").effortLabel)
         assertEquals("关闭", AiModel(id = "m", effort = "none").effortLabel)

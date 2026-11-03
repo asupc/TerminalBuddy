@@ -8,7 +8,7 @@ import org.junit.Test
 class AiProjectHistoryTest {
     @Test
     fun `project models retain provider identity and exclude disabled agents`() {
-        val project = AiProject("项目", "C:\\work", AiAgents(claude = false, codex = true, pi = false))
+        val project = AiProject("项目", "C:\\work", AiAgents(claude = false, codex = true))
         val state = AiUiState(projects = listOf(project), projectPath = project.path, providers = listOf(
             AiProvider("claude", "claude", "Claude", models = listOf(AiModel("same"))),
             AiProvider("codex-a", "codex", "供应商 A", models = listOf(AiModel("same"))),
@@ -18,24 +18,7 @@ class AiProjectHistoryTest {
         assertEquals(listOf("codex-a", "codex-b"), models.map { it.provider.id })
         assertNotEquals(models[0].key, models[1].key)
         assertEquals(listOf("codex"), state.availableAgents)
-        assertTrue(state.projectModels(project, "pi").isEmpty())
-    }
-
-    @Test
-    fun `installed agents filter by environment and fall back to all when unknown`() {
-        // 检测失败或旧服务端无接口时按全部已安装处理，避免助手整体消失。
-        val unknown = AiUiState()
-        assertNull(unknown.installedAgents)
-        assertTrue(unknown.agentInstalled("claude"))
-        assertTrue(unknown.agentInstalled("pi"))
-        val detected = unknown.copy(agentEnvironment = AiAgentEnvironment(
-            claude = AiAgentCliStatus("installed"), codex = AiAgentCliStatus("notInstalled"),
-        ))
-        // 未返回的助手按未安装处理，与桌面端可用判定一致。
-        assertEquals(listOf("claude"), detected.installedAgents)
-        assertTrue(detected.agentInstalled("claude"))
-        assertFalse(detected.agentInstalled("codex"))
-        assertFalse(detected.agentInstalled("pi"))
+        assertTrue(state.projectModels(project, "claude").isEmpty())
     }
 
     @Test

@@ -8,24 +8,24 @@ import org.junit.Test
 class AiConversationUsageCardTest {
     @Test
     fun `首次有效比例直接采用`() {
-        assertEquals(0.25, retainContextProgress(null, 0.25), 0.0)
+        assertEquals(0.25, retainContextProgress(null, 0.25)!!, 0.0)
     }
 
     @Test
     fun `缺失统计沿用上一次进度`() {
-        assertEquals(0.25, retainContextProgress(0.25, null), 0.0)
+        assertEquals(0.25, retainContextProgress(0.25, null)!!, 0.0)
     }
 
     @Test
     fun `零值不覆盖已有进度`() {
-        assertEquals(0.25, retainContextProgress(0.25, 0.0), 0.0)
+        assertEquals(0.25, retainContextProgress(0.25, 0.0)!!, 0.0)
     }
 
     @Test
     fun `负数与非法值不覆盖已有进度`() {
-        assertEquals(0.25, retainContextProgress(0.25, -0.1), 0.0)
-        assertEquals(0.25, retainContextProgress(0.25, Double.NaN), 0.0)
-        assertEquals(0.25, retainContextProgress(0.25, Double.POSITIVE_INFINITY), 0.0)
+        assertEquals(0.25, retainContextProgress(0.25, -0.1)!!, 0.0)
+        assertEquals(0.25, retainContextProgress(0.25, Double.NaN)!!, 0.0)
+        assertEquals(0.25, retainContextProgress(0.25, Double.POSITIVE_INFINITY)!!, 0.0)
     }
 
     @Test
@@ -36,7 +36,7 @@ class AiConversationUsageCardTest {
 
     @Test
     fun `新值增长后替换旧进度`() {
-        assertEquals(0.4, retainContextProgress(0.25, 0.4), 0.0)
+        assertEquals(0.4, retainContextProgress(0.25, 0.4)!!, 0.0)
     }
 
     @Test
