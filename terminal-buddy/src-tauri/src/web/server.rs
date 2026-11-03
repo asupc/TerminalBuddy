@@ -89,6 +89,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/ws/ai", get(handlers::ai_chat_handler::notifications_socket))
         .route("/ws/ai/{id}", get(handlers::ai_chat_handler::socket))
         .layer(DefaultBodyLimit::disable());
+    // 浏览器文件下载：大文件 / 大目录 ZIP 的响应头准备可能超过普通 API 的
+    // 30 秒请求超时，且流式响应体不应受该超时约束；与 AI 路由一样在超时层之后合并。
+    let download_router = Router::new()
+        .route("/api/desktop/download", get(handlers::desktop_handler::download))
+        .layer(DefaultBodyLimit::disable());
     let router = Router::new()
         // 认证
         .route("/api/auth/login", post(handlers::auth_handler::login))
@@ -309,6 +314,7 @@ pub fn build_router(state: AppState) -> Router {
             REQUEST_TIMEOUT,
         ))
         .merge(ai_router)
+        .merge(download_router)
         .with_state(state)
         // CORS 放最外层让 408 等错误响应也带跨域头，便于开发期排查。
         .layer(cors)

@@ -38,6 +38,8 @@ serde_json = "1"
 semver = "1"
 toml_edit = "0.25"
 tokio = { version = "1", features = ["rt-multi-thread", "io-util", "macros", "sync", "time", "net", "signal", "fs"] }
+# 浏览器端文件下载：把 tokio 文件句柄转成响应体流，避免整文件读进内存。
+tokio-util = { version = "0.7", features = ["io"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"

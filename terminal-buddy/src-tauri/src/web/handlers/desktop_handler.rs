@@ -1,8 +1,8 @@
 //! 完整桌面界面的网页适配层；始终以 Web 身份访问终端。
-use axum::{extract::{Multipart, Path, Query, State, ws::{WebSocketUpgrade, Message}}, response::{IntoResponse, Response}, Json};
+use axum::{body::Body, extract::{Multipart, Path, Query, State, ws::{WebSocketUpgrade, Message}}, http::{header, HeaderValue}, response::{IntoResponse, Response}, Json};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
-use futures_util::SinkExt;
+use futures_util::{SinkExt, Stream};
 use std::{collections::{HashMap, HashSet}, path::PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use crate::{commands::{TerminalService, TerminalCloseReason}, models::{TerminalActor, TerminalAction, TerminalClientKind, TerminalCreator, TerminalOwner}, runtime::{Emitter, EventBus, Manager}, services::PathService, web::{auth::{ClaimsFromRequest, verify_token}, client_kind::client_kind_from_headers, error::ApiError, server::AppState}};
@@ -246,6 +246,138 @@ pub async fn file(State(state): State<AppState>, Query(query): Query<HashMap<Str
     Ok(([("content-type", mime), ("x-content-type-options", "nosniff")], bytes).into_response())
 }
 
+/// 浏览器端下载：文件直接流式输出，目录先打包成 ZIP 再流式输出。
+///
+/// 路由注册在请求超时层之外，大文件 / 大目录下载不会因为 REQUEST_TIMEOUT 被中断。
+/// 鉴权与 `/api/desktop/file` 一致：浏览器直接导航无法带 Authorization 头，
+/// 因此沿用查询串里的 JWT。目录 ZIP 使用与响应同生命周期的临时文件，连接结束即清理。
+pub async fn download(State(state): State<AppState>, Query(query): Query<HashMap<String,String>>) -> Result<Response, ApiError> {
+    verify_token(query.get("token").ok_or_else(|| ApiError::Unauthorized("请先登录".to_string()))?, &state.jwt_secret)
+        .map_err(|_| ApiError::Unauthorized("登录已过期".to_string()))?;
+    let path = query.get("path").ok_or_else(|| ApiError::BadRequest("缺少路径".to_string()))?;
+    scoped_file(path)?;
+    let source = PathBuf::from(path);
+    let metadata = tokio::fs::metadata(&source).await
+        .map_err(|e| ApiError::BadRequest(format!("无法读取文件：{}", e)))?;
+    let name = source.file_name().and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("无法确定下载文件名".to_string()))?
+        .to_string();
+    if metadata.is_dir() {
+        let temp_dir = PathService::require_data_dir().map_err(ApiError::Internal)?
+            .join("ClientData").join("web-downloads");
+        tokio::fs::create_dir_all(&temp_dir).await.map_err(|e| ApiError::Internal(e.to_string()))?;
+        let temp_path = temp_dir.join(format!("{}.zip", uuid::Uuid::new_v4()));
+        let source_for_zip = source.clone();
+        let target = temp_path.clone();
+        let root_name = name.clone();
+        tokio::task::spawn_blocking(move || build_directory_zip(&source_for_zip, &target, &root_name))
+            .await.map_err(|e| ApiError::Internal(e.to_string()))?
+            .map_err(|e| ApiError::Internal(format!("打包文件夹失败：{}", e)))?;
+        return respond_with_file(temp_path.clone(), format!("{}.zip", name), "application/zip", Some(temp_path)).await;
+    }
+    if !metadata.is_file() {
+        return Err(ApiError::BadRequest("仅支持下载普通文件或文件夹".to_string()));
+    }
+    respond_with_file(source, name, "application/octet-stream", None).await
+}
+
+/// 下载响应的 `Content-Disposition`。`filename*` 按 RFC 5987 编码 UTF-8 文件名，
+/// `filename` 只保留 ASCII 兜底值（旧浏览器不支持 `filename*` 时仍能拿到合理名称）。
+fn content_disposition(name: &str) -> String {
+    let fallback: String = name.chars().map(|ch| {
+        if ch.is_ascii() && !ch.is_ascii_control() && !matches!(ch, '"' | '\\') { ch } else { '_' }
+    }).collect();
+    format!("attachment; filename=\"{}\"; filename*=UTF-8''{}", fallback, urlencoding::encode(name))
+}
+
+/// 临时 ZIP 文件的生命周期守卫：响应体（含流）被丢弃时删除文件。
+struct TempFileCleanup(PathBuf);
+
+impl Drop for TempFileCleanup {
+    fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+}
+
+/// 带清理守卫的流式响应体。
+struct DownloadStream {
+    inner: tokio_util::io::ReaderStream<tokio::fs::File>,
+    _cleanup: Option<TempFileCleanup>,
+}
+
+impl Stream for DownloadStream {
+    type Item = <tokio_util::io::ReaderStream<tokio::fs::File> as Stream>::Item;
+
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        std::pin::Pin::new(&mut self.inner).poll_next(cx)
+    }
+}
+
+async fn respond_with_file(path: PathBuf, download_name: String, content_type: &'static str, cleanup: Option<PathBuf>) -> Result<Response, ApiError> {
+    // 守卫先于打开文件构造：即使下面提前返回，临时 ZIP 也会在作用域结束时删除。
+    let cleanup = cleanup.map(TempFileCleanup);
+    let file = tokio::fs::File::open(&path).await
+        .map_err(|e| ApiError::BadRequest(format!("无法打开文件：{}", e)))?;
+    let size = file.metadata().await.map(|meta| meta.len()).unwrap_or(0);
+    let mut response = Response::new(Body::from_stream(DownloadStream {
+        inner: tokio_util::io::ReaderStream::new(file),
+        _cleanup: cleanup,
+    }));
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
+    headers.insert(header::CONTENT_DISPOSITION, HeaderValue::from_str(&content_disposition(&download_name))
+        .map_err(|e| ApiError::Internal(e.to_string()))?);
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    Ok(response)
+}
+
+/// 把目录打包成 ZIP 临时文件。跳过符号链接，避免通过链接把项目目录之外的文件打进去。
+fn build_directory_zip(source: &std::path::Path, target: &std::path::Path, root_name: &str) -> Result<(), String> {
+    let file = std::fs::File::create(target).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let file_options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+    let dir_options = file_options.unix_permissions(0o755);
+    let root = root_name.replace(['/', '\\'], "_");
+    let root = if root.is_empty() { "download".to_string() } else { root };
+    zip.add_directory(format!("{}/", root), dir_options).map_err(|e| e.to_string())?;
+    append_zip_directory(&mut zip, source, std::path::Path::new(&root), file_options, dir_options)?;
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn append_zip_directory(
+    zip: &mut zip::ZipWriter<std::fs::File>,
+    directory: &std::path::Path,
+    prefix: &std::path::Path,
+    file_options: zip::write::SimpleFileOptions,
+    dir_options: zip::write::SimpleFileOptions,
+) -> Result<(), String> {
+    let entries = std::fs::read_dir(directory)
+        .map_err(|e| format!("读取目录 {} 失败：{}", directory.display(), e))?;
+    for entry in entries {
+        let entry = match entry { Ok(entry) => entry, Err(_) => continue };
+        // DirEntry::file_type 不跟随符号链接，链接本身直接跳过。
+        let file_type = match entry.file_type() { Ok(file_type) => file_type, Err(_) => continue };
+        if file_type.is_symlink() { continue; }
+        let path = entry.path();
+        let relative = prefix.join(entry.file_name());
+        // ZIP 规范固定用 `/` 作为分隔符。
+        let entry_name = relative.to_string_lossy().replace('\\', "/");
+        if file_type.is_dir() {
+            zip.add_directory(format!("{}/", entry_name), dir_options).map_err(|e| e.to_string())?;
+            append_zip_directory(zip, &path, &relative, file_options, dir_options)?;
+        } else if file_type.is_file() {
+            let mut input = match std::fs::File::open(&path) { Ok(input) => input, Err(_) => continue };
+            zip.start_file(entry_name, file_options).map_err(|e| e.to_string())?;
+            std::io::copy(&mut input, zip).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn events(ws: WebSocketUpgrade, State(state): State<AppState>, Query(query): Query<HashMap<String,String>>) -> Result<Response, ApiError> {
     let claims = verify_token(query.get("token").ok_or_else(|| ApiError::Unauthorized("请先登录".to_string()))?, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期".to_string()))?;
     let slot = crate::web::ws::WsConnectionSlot::acquire().ok_or_else(|| ApiError::Conflict("连接数已达上限，请关闭闲置网页".to_string()))?;
@@ -291,4 +423,43 @@ pub async fn events(ws: WebSocketUpgrade, State(state): State<AppState>, Query(q
         }
         let _ = socket.close().await;
     }).into_response())
+}
+
+#[cfg(test)]
+mod download_tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn content_disposition_keeps_ascii_fallback_and_encodes_utf8() {
+        let value = content_disposition("日志 2026.log");
+        assert!(value.starts_with("attachment; filename=\"__ 2026.log\""));
+        assert!(value.contains("filename*=UTF-8''"));
+        // 百分号编码后的中文文件名不应包含原始非 ASCII 字符。
+        assert!(value.is_ascii());
+    }
+
+    #[test]
+    fn directory_zip_contains_nested_files() {
+        let root = std::env::temp_dir().join(format!("tb-download-test-{}", uuid::Uuid::new_v4()));
+        let source = root.join("项目");
+        std::fs::create_dir_all(source.join("sub")).unwrap();
+        std::fs::write(source.join("a.txt"), b"hello").unwrap();
+        std::fs::write(source.join("sub/b.txt"), b"world").unwrap();
+        let target = root.join("out.zip");
+        build_directory_zip(&source, &target, "项目").unwrap();
+
+        let file = std::fs::File::open(&target).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().to_string())
+            .collect();
+        assert!(names.contains(&"项目/a.txt".to_string()));
+        assert!(names.contains(&"项目/sub/b.txt".to_string()));
+        let mut content = String::new();
+        archive.by_name("项目/a.txt").unwrap().read_to_string(&mut content).unwrap();
+        assert_eq!(content, "hello");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
