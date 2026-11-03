@@ -17,9 +17,8 @@ import { getAllSuggestions, getTerminalSuggestions } from '../../data/commandTem
 import { bootLog } from '../../utils/bootLog';
 import { useAppStore } from '../../stores/appStore';
 import { isLightBackground, normalizeAnsiForLightBackground, type TerminalColors } from '../../utils/terminalTheme';
-import { installPiWheelFallback, installTerminalMouseGuard } from '../../utils/terminalMouse';
+import { installTerminalMouseGuard } from '../../utils/terminalMouse';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../../services/claudeNotification';
-import { parsePiOscStatus } from '../../utils/terminalOsc';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
 import { PasteImageDialog } from '../claude-images/PasteImageDialog';
@@ -137,7 +136,7 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
     if (readOnlyRef.current || !text) return false;
     if (text.includes('\n') || text.includes('\r')) {
       // 粘贴行尾必须写 CR：ConPTY 会把输入流里的 LF 当成带 Ctrl 修饰的 Enter，
-      // 在开启 kitty 键盘协议的 TUI（如 pi）里被编码成 CSI 13;5u（Ctrl+Enter=提交），
+      // 在开启 kitty 键盘协议的 TUI 里被编码成 CSI 13;5u（Ctrl+Enter=提交），
       // 导致粘贴内容被逐行提交、或 CSI-u 序列被字面插进消息文本。
       const sanitized = text.replace(/\r?\n/g, '\r');
       onOutputRef.current(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
@@ -461,21 +460,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         const xtVersionHandler = terminal.parser.registerCsiHandler({ prefix: '>', final: 'q' }, () => true);
         cleanupFns.push(() => xtVersionHandler.dispose());
       }
-      // Pi OSC 7501：无扩展时也能显示 working/blocked/done/error 状态。
-      // 与扩展事件共用同一活动状态机，时间戳保证后到的事件胜出。
-      const piStatusHandler = terminal.parser.registerOscHandler(7501, data => {
-        const status = parsePiOscStatus(data);
-        if (!status) return false;
-        useAppStore.getState().applyClaudeHookActivity(
-          terminalId,
-          status.phase,
-          Date.now(),
-          { summary: status.message },
-          'pi',
-        );
-        return true;
-      });
-      cleanupFns.push(() => piStatusHandler.dispose());
       if (usesVsCodeTerminal) {
         const da1Handler = terminal.parser.registerCsiHandler({ final: 'c' }, params => {
           if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
@@ -508,13 +492,6 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
       const tOpen = performance.now();
       terminal.open(terminalRef.current!);
       cleanupFns.push(installTerminalMouseGuard(terminal));
-      // pi 在 Windows ConPTY 下会在 raw mode 之前写鼠标模式，序列被吞掉后 xterm
-      // 会把滚轮当 ↑/↓ 发给 pi，表现为翻输入框历史而不是滚对话。这里补发滚轮报文。
-      cleanupFns.push(installPiWheelFallback(
-        terminal,
-        (data) => onOutputRef.current(terminalId, data),
-        () => readOnlyRef.current
-      ));
       void bootLog(`initTerminal[${terminalId}]: terminal.open() took ${(performance.now() - tOpen).toFixed(0)}ms`);
 
       // dispose 后 xterm 会永久回退到 CPU canvas 渲染器（字形抗锯齿变化、滚动卡顿，

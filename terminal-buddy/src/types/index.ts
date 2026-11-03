@@ -1,8 +1,8 @@
-export type SessionHistoryProvider = 'claude' | 'codex' | 'pi';
+export type SessionHistoryProvider = 'claude' | 'codex';
 
 /** 终端与 AI 会话的统一绑定：避免为每个 Agent 增加一个 xxxSessionId 字段。 */
 export interface AgentSessionBinding {
-  provider: 'claude' | 'codex' | 'pi';
+  provider: 'claude' | 'codex';
   sessionId: string;
   sessionFile?: string;
   cwd?: string;
@@ -20,7 +20,6 @@ export type ExtraParamMode = 'append' | 'independent';
 export interface EnabledAgents {
   claude: boolean;
   codex: boolean;
-  pi: boolean;
 }
 
 export interface Project {
@@ -34,17 +33,15 @@ export function projectEnabledAgents(project: Project | undefined | null): Requi
   return {
     claude: project?.enabledAgents?.claude ?? true,
     codex: project?.enabledAgents?.codex ?? true,
-    pi: project?.enabledAgents?.pi ?? true,
   };
 }
 
 /** 项目右键菜单展示的模型区顺序：按启用的 Agent 推导，未启用不展示。 */
-export function projectModelSources(project: Project | undefined | null): Array<'claude' | 'codex' | 'pi'> {
+export function projectModelSources(project: Project | undefined | null): Array<'claude' | 'codex'> {
   const agents = projectEnabledAgents(project);
-  const sources: Array<'claude' | 'codex' | 'pi'> = [];
+  const sources: Array<'claude' | 'codex'> = [];
   if (agents.claude) sources.push('claude');
   if (agents.codex) sources.push('codex');
-  if (agents.pi) sources.push('pi');
   return sources;
 }
 

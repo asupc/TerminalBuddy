@@ -240,13 +240,6 @@ function App() {
           singleInstance: backend.singleInstance,
           claudeHookConfigDir: backend.claudeHookConfigDir ?? settings.claudeHookConfigDir,
         };
-        // Agent 基础启动命令（后端为数据源；浏览器模式在 WebEntry 里经 /api/runtime 提前写入）
-        const commands = backend.agentCommands ?? { claude: '', codex: '', pi: '' };
-        useAppStore.getState().setAgentCommands({
-          claude: commands.claude ?? '',
-          codex: commands.codex ?? '',
-          pi: commands.pi ?? '',
-        });
         saveAppSettings(synced);
         setEnableTabNav(synced.enableTabNavigation);
         useAppStore.setState({
@@ -320,7 +313,7 @@ function App() {
         claudeSessionIds: { ...state.claudeSessionIds, ...claudeIds },
       }));
     }
-    // 统一 Agent 绑定（含 Codex/Pi）一并落盘，容器重启后按 provider 拼恢复命令。
+    // 统一 Agent 绑定（含 Codex）一并落盘，容器重启后按 provider 拼恢复命令。
     try {
       const ids = sessions.filter(session => session.sessionType !== 'editor').map(session => session.id);
       const bindings = await getAgentSessionsForTerminals(ids);

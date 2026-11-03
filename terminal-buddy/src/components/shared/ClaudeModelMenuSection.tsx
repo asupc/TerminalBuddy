@@ -11,15 +11,15 @@ const SUB_CLOSE_DELAY = 120;
 
 interface ClaudeModelMenuSectionProps {
   /** 启动与历史恢复菜单的数据源。 */
-  source?: 'claude' | 'codex' | 'pi';
+  source?: 'claude' | 'codex';
   /** 一级菜单项容器类名（两种右键菜单样式不同，调用方传入） */
   itemClassName: string;
   /** 分隔线类名 */
   separatorClassName: string;
   /** 模型区标题：'Claude 模型'（启动）/ '指定模型恢复'（历史） */
   title: string;
-  /** 点击模型：(providerId, modelId, thinking?)；thinking 仅 Pi 使用 */
-  onPickModel: (providerId: string, modelId: string, thinking?: string) => void;
+  /** 点击模型 */
+  onPickModel: (providerId: string, modelId: string) => void;
   /** 点击引导项：跳转供应商页 */
   onGotoProviders: () => void;
 }
@@ -43,24 +43,14 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
   const claudeTargets = useAppStore(s => s.claudeLaunchTargets);
   const claudeLoaded = useAppStore(s => s.claudeLaunchTargetsLoaded);
   const codexState = useAppStore(s => s.codexProviderState);
-  const piProviders = useAppStore(s => s.piModelProviders);
-  const piLoaded = useAppStore(s => s.piModelsLoaded);
   const targets = useMemo<LlmLaunchTarget[]>(() => {
     if (source === 'claude') return claudeTargets;
-    if (source === 'pi') {
-      return piProviders.map(provider => ({
-        providerId: provider.provider,
-        providerName: provider.provider,
-        isDefault: provider.isDefault ?? false,
-        models: provider.models.map(model => ({ id: model.id, effort: model.defaultThinking ?? '默认', contextWindow: 0, thinking: model.defaultThinking })),
-      }));
-    }
     return (codexState?.providers ?? []).map(provider => ({
       providerId: provider.id, providerName: provider.name, isDefault: codexState?.activeProviderId === provider.id,
       models: (provider.models ?? [provider.model]).map(id => ({ id, effort: (provider.modelReasoningEfforts[id] ?? 'max') || '默认', contextWindow: provider.contextWindow })),
     }));
-  }, [source, claudeTargets, codexState, piProviders]);
-  const loaded = source === 'claude' ? claudeLoaded : source === 'pi' ? piLoaded : codexState !== null;
+  }, [source, claudeTargets, codexState]);
+  const loaded = source === 'claude' ? claudeLoaded : codexState !== null;
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [subPos, setSubPos] = useState<{ left: number; top: number } | null>(null);
   const anchorRef = useRef<DOMRect | null>(null);
@@ -196,7 +186,7 @@ export const ClaudeModelMenuSection: FC<ClaudeModelMenuSectionProps> = ({
 function ModelItems({ target, itemClassName, onPickModel }: {
   target: LlmLaunchTarget;
   itemClassName: string;
-  onPickModel: (providerId: string, modelId: string, thinking?: string) => void;
+  onPickModel: (providerId: string, modelId: string) => void;
 }) {
   if (target.models.length === 0) {
     return <div className={`${itemClassName} claude-model-menu-disabled`}>该供应商暂无可用模型</div>;
@@ -208,7 +198,7 @@ function ModelItems({ target, itemClassName, onPickModel }: {
           key={model.id}
           className={itemClassName}
           title={`${model.id}（${model.effort}）`}
-          onClick={e => { e.stopPropagation(); onPickModel(target.providerId, model.id, model.thinking); }}
+          onClick={e => { e.stopPropagation(); onPickModel(target.providerId, model.id); }}
         >
           <span className="claude-model-menu-play">▶</span>
           <span className="claude-model-menu-label mono">{model.id}</span>

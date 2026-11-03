@@ -116,7 +116,7 @@ export type ImeAnchorCell = {
 };
 
 export function isHorizontalRuleLine(text: string): boolean {
-  // pi 等 TUI 在输入区内容滚动后会把指示嵌进边框（如 ── ↑ 12 more ──），
+  // 部分 TUI 在输入区内容滚动后会把指示嵌进边框（如 ── ↑ 12 more ──），
   // 先剥掉指示再判定，否则上下边框识别不到，IME 锚点会退回上一次的位置。
   const trimmed = text.trim().replace(/[↑↓]\s*\d+\s*more/gu, '').trim();
   if (trimmed.length < 20) return false;
@@ -308,7 +308,7 @@ export function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null
     }
   }
 
-  // pi 等全屏 TUI 的输入框只有上下两条全宽横线（没有 > 提示符），但它会把
+  // 全屏 TUI 的输入框只有上下两条全宽横线（没有 > 提示符），但它会把
   // 真实光标（即使 ?25l 隐藏了视觉光标）定位到文字插入点。光标落在最底部
   // 两条横线之间时直接用它作锚点，否则只能退回输入区首行左侧，中文候选窗
   // 会在多行输入或滚动时明显偏移。
@@ -388,7 +388,7 @@ export function findBottomPromptAnchor(terminal: Terminal): ImeAnchorCell | null
 
   if (horizontalRules.length >= 2) {
     // 输入框在屏幕底部附近，取最下面一对横线；取第一对会把 IME 锚点
-    // 错放到历史区上方的分隔线（如 pi 首次启动的更新日志边框）。
+    // 错放到历史区上方的分隔线（如 TUI 首次启动的更新日志边框）。
     const topRule = horizontalRules[horizontalRules.length - 2];
     const bottomRule = horizontalRules[horizontalRules.length - 1];
     const inputTopY = Math.min(topRule + 1, terminal.rows - 1);

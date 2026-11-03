@@ -171,7 +171,7 @@ export const ReplayPage: FC<ClaudeReplayTabProps> = ({ tab, onClose }) => {
             className={`claude-replay-msg role-${message.role}${tab.focusSeq === message.seq ? ' focused' : ''}`}
           >
             <div className="claude-replay-msg-head">
-              <span className="claude-replay-role">● {message.role === 'assistant' ? (provider === 'codex' ? 'Codex' : provider === 'pi' ? 'Pi' : 'Claude') : ROLE_LABEL[message.role] ?? message.role}</span>
+              <span className="claude-replay-role">● {message.role === 'assistant' ? (provider === 'codex' ? 'Codex' : 'Claude') : ROLE_LABEL[message.role] ?? message.role}</span>
               {formatTime(message.timestamp) && <span className="claude-replay-time">{formatTime(message.timestamp)}</span>}
               {message.toolName && <span className="claude-replay-toolname">{message.toolName}</span>}
             </div>

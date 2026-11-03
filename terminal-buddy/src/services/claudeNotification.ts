@@ -29,7 +29,7 @@ interface CompletionNotificationDetails {
   phase: 'completed' | 'failed';
   taskTitle?: string;
   summary?: string;
-  provider?: 'claude' | 'codex' | 'pi';
+  provider?: 'claude' | 'codex';
 }
 
 const pendingCompletionNotifications = new Map<string, PendingNotification>();
@@ -127,7 +127,7 @@ async function showCompletionNotification(
   if (!name) return;
   const isBeingViewed = terminalIsBeingViewed(terminalId, appInForeground);
   const failed = phase === 'failed';
-  const agentName = details.provider === 'pi' ? 'Pi' : details.provider === 'codex' ? 'Codex' : 'Claude Code';
+  const agentName = details.provider === 'codex' ? 'Codex' : 'Claude Code';
   const taskTitle = details.taskTitle?.trim();
   const title = taskTitle
     ? `${failed ? '任务失败' : '任务完成'}：${taskTitle}`
@@ -246,15 +246,7 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
   if (event.phase === 'ended') {
     if (!store.endClaudeHookSession(event.terminalId, event.occurredAt)) return;
     if (event.sessionId) {
-    if (event.provider === 'pi') {
-      store.setAgentSessionBinding(event.terminalId, {
-        provider: 'pi',
-        sessionId: event.sessionId,
-        cwd: store.sessionDirectories[event.terminalId],
-      });
-    } else {
-      store.setClaudeSessionId(event.terminalId, event.sessionId);
-    }
+    store.setClaudeSessionId(event.terminalId, event.sessionId);
   }
     cancelAttentionForTerminal(event.terminalId);
     cancelClaudeActivityExpiry(event.terminalId);
@@ -265,17 +257,9 @@ function applyTerminalEvent(event: ClaudeHookTerminalEvent): void {
     taskTitle: event.taskTitle,
     summary: event.summary ?? event.message,
   };
-  if (!store.applyClaudeHookActivity(event.terminalId, event.phase, event.occurredAt, details, event.provider)) return;
+  if (!store.applyClaudeHookActivity(event.terminalId, event.phase, event.occurredAt, details)) return;
   if (event.sessionId) {
-    if (event.provider === 'pi') {
-      store.setAgentSessionBinding(event.terminalId, {
-        provider: 'pi',
-        sessionId: event.sessionId,
-        cwd: store.sessionDirectories[event.terminalId],
-      });
-    } else {
-      store.setClaudeSessionId(event.terminalId, event.sessionId);
-    }
+    store.setClaudeSessionId(event.terminalId, event.sessionId);
   }
   if (event.phase === 'running') {
     cancelPendingClaudeCompletion(event.terminalId);
@@ -318,7 +302,7 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
       const store = useAppStore.getState();
       if (!store.applyClaudeHookActivity(decision.terminalId, 'attention', decision.occurredAt, {
         summary: decision.questions[0]?.question,
-      }, decision.provider)) return;
+      })) return;
       cancelPendingClaudeCompletion(decision.terminalId);
       cancelClaudeActivityExpiry(decision.terminalId);
       scheduleStructuredDecision(decision);
@@ -378,7 +362,6 @@ export async function initializeClaudeNotificationActions(): Promise<() => void>
         'attention',
         decision.occurredAt,
         undefined,
-        decision.provider,
       )) return;
       scheduleStructuredDecision(decision);
       cancelClaudeActivityExpiry(decision.terminalId);

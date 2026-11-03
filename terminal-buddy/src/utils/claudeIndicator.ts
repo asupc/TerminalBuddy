@@ -44,8 +44,8 @@ const LIGHT_TITLE: Record<IndicatorLight, string> = {
   failed: '错误停止（点击清除）',
 };
 
-export function getIndicatorTitle(light: IndicatorLight, provider?: 'claude' | 'codex' | 'pi'): string {
-  const name = provider === 'pi' ? 'Pi' : provider === 'codex' ? 'Codex' : 'Claude';
+export function getIndicatorTitle(light: IndicatorLight, provider?: 'claude' | 'codex'): string {
+  const name = provider === 'codex' ? 'Codex' : 'Claude';
   const title = LIGHT_TITLE[light];
   if (!title) return title;
   return title

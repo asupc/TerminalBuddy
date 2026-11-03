@@ -2,22 +2,19 @@ import { FC } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { LlmProvidersSegment } from '../claude-panel/segments/LlmProvidersSegment';
 import { CodexProvidersSettings } from './CodexProvidersSettings';
-import { PiProvidersSettings } from './PiProvidersSettings';
 import './LlmProvidersSettings.css';
 
-type ProviderTabId = 'claude' | 'codex' | 'pi';
+type ProviderTabId = 'claude' | 'codex';
 
 const PROVIDER_TABS: ReadonlyArray<{ id: ProviderTabId; label: string }> = [
   { id: 'claude', label: 'Claude' },
   { id: 'codex', label: 'Codex' },
-  { id: 'pi', label: 'Pi' },
 ];
 
 /**
- * 设置页「模型供应商」：Claude / Codex / Pi 三个分页，各自维护自己的供应商数据。
- * Claude 页复用 `LlmProvidersSegment`（与 Claude 面板同一份）；Codex 页管理通用 API 供应商；
- * Pi 页管理 Pi 的 models.json 兼容端点。
- * 三个 panel 都常驻挂载，切换分页不丢编辑状态。
+ * 设置页「模型供应商」：Claude / Codex 两个分页，各自维护自己的供应商数据。
+ * Claude 页复用 `LlmProvidersSegment`（与 Claude 面板同一份）；Codex 页管理通用 API 供应商。
+ * 两个 panel 都常驻挂载，切换分页不丢编辑状态。
  */
 export const LlmProvidersSettings: FC = () => {
   const tab = useAppStore(s => s.providerSettingsTab);
@@ -60,16 +57,6 @@ export const LlmProvidersSettings: FC = () => {
         hidden={tab !== 'codex'}
       >
         <CodexProvidersSettings active={tab === 'codex'} />
-      </div>
-
-      <div
-        id="llm-provider-panel-pi"
-        className="llm-providers-panel"
-        role="tabpanel"
-        aria-labelledby="llm-provider-tab-pi"
-        hidden={tab !== 'pi'}
-      >
-        <PiProvidersSettings active={tab === 'pi'} />
       </div>
     </div>
   );

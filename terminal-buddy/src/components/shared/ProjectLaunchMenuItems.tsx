@@ -3,7 +3,6 @@ import { useAppStore } from '../../stores/appStore';
 import { openProjectAgentTerminal, openTerminalInDir } from '../../utils/openTerminalInDir';
 import { matchingProjectPresets } from '../../utils/startupPresets';
 import { projectModelSources, type Project } from '../../types';
-import { useAgentAvailability } from '../../hooks/useAgentAvailability';
 import { ClaudeModelMenuSection } from './ClaudeModelMenuSection';
 
 interface ProjectLaunchMenuItemsProps {
@@ -14,7 +13,7 @@ interface ProjectLaunchMenuItemsProps {
 }
 
 /**
- * 项目右键菜单的「启动」区：命令行 / 启动参数预设 / Claude·Codex·Pi 模型。
+ * 项目右键菜单的「启动」区：命令行 / 启动参数预设 / Claude·Codex 模型。
  * 「项目与命令」面板的项目右键和会话标签栏「新建配置终端」的项目悬停菜单共用，
  * 保证两处的启动行为与菜单内容始终同步。
  */
@@ -23,25 +22,15 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
   const profiles = useAppStore(s => s.profiles);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
-  const refreshPiModels = useAppStore(s => s.refreshPiModels);
-  // 环境检测结果：未安装的 Agent 不出现在项目右键菜单里（检测返回前视为可用）。
-  const agentAvailability = useAgentAvailability();
 
   // 模型菜单数据源：首次打开时加载，之后用缓存（与 HistoryPanel 一致）。
   useEffect(() => {
     const state = useAppStore.getState();
     if (!state.claudeLaunchTargetsLoaded) void refreshClaudeLaunchTargets();
     if (!state.codexProviderState) void refreshCodexLaunchTargets();
-    if (!state.piModelsLoaded) void refreshPiModels();
-  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshPiModels]);
+  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
 
-  useEffect(() => {
-    const onChange = () => { void refreshPiModels(true); };
-    window.addEventListener('agent-cli-status-changed', onChange);
-    return () => window.removeEventListener('agent-cli-status-changed', onChange);
-  }, [refreshPiModels]);
-
-  const gotoProvidersSettings = (source: 'claude' | 'codex' | 'pi') => {
+  const gotoProvidersSettings = (source: 'claude' | 'codex') => {
     useAppStore.getState().setProviderSettingsTab(source);
     useAppStore.getState().openSettingsDialog('llm-providers');
     onLaunched();
@@ -65,28 +54,26 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
         }}>
           命令行<span
             className="config-nav-preset-chip"
-            style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined}
+            style={preset.tagColor ? { backgroundColor: preset.tagColor } : undefined }
           >
             {preset.name}
           </span>
         </div>
       ))}
-      {projectModelSources(project)
-        .filter(source => agentAvailability?.[source] ?? true)
-        .map(source => (
-          <ClaudeModelMenuSection
-            key={source}
-            source={source}
-            itemClassName="context-menu-item"
-            separatorClassName="context-menu-separator"
-            title={source === 'claude' ? 'Claude 模型' : source === 'codex' ? 'Codex 模型' : 'Pi 模型'}
-            onPickModel={(providerId, modelId, thinking) => {
-              onLaunched();
-              void openProjectAgentTerminal(project, source, providerId, modelId, thinking);
-            }}
-            onGotoProviders={() => gotoProvidersSettings(source)}
-          />
-        ))}
+      {projectModelSources(project).map(source => (
+        <ClaudeModelMenuSection
+          key={source}
+          source={source}
+          itemClassName="context-menu-item"
+          separatorClassName="context-menu-separator"
+          title={source === 'claude' ? 'Claude 模型' : 'Codex 模型'}
+          onPickModel={(providerId, modelId) => {
+            onLaunched();
+            void openProjectAgentTerminal(project, source, providerId, modelId);
+          }}
+          onGotoProviders={() => gotoProvidersSettings(source)}
+        />
+      ))}
     </>
   );
 };

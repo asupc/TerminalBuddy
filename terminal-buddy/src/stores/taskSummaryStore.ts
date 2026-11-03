@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 
 export interface TerminalTaskSummary {
-  provider: 'claude' | 'codex' | 'pi';
+  provider: 'claude' | 'codex';
   sessionId: string;
   summary: string;
   model?: string;

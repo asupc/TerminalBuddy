@@ -427,7 +427,7 @@ export const createSessionsSlice = (
 				},
 			};
 		}),
-	applyClaudeHookActivity: (sessionId, phase, updatedAt, details, provider) => {
+	applyClaudeHookActivity: (sessionId, phase, updatedAt, details) => {
 		let applied = false;
 		set((state) => {
 			const current = state.terminalActivities[sessionId];
@@ -437,8 +437,8 @@ export const createSessionsSlice = (
 				terminalActivities: {
 					...state.terminalActivities,
 					[sessionId]: {
-						runtimeKind: provider === "pi" ? "pi" : "claude",
-						provider: provider ?? current?.provider ?? "claude",
+						runtimeKind: "claude",
+						provider: current?.provider ?? "claude",
 						source: "hook",
 						phase,
 						updatedAt,

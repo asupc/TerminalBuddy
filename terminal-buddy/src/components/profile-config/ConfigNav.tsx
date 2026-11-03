@@ -6,9 +6,7 @@ import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
-import { buildPiRefCommand, inheritablePiArgs, isPiCommand } from '../../utils/piLaunch';
-import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
-import { currentClaudeCommand, currentPiCommand } from '../../utils/agentCommands';
+import { DEFAULT_CLAUDE_COMMAND, inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
 import type { EnabledAgents, ExtraParamMode, Profile } from '../../types';
 import { projectEnabledAgents } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
@@ -63,7 +61,6 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const openSettingsDialog = useAppStore(s => s.openSettingsDialog);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
-  const refreshPiModels = useAppStore(s => s.refreshPiModels);
   const [width, setWidth] = useState(250);
   const widthRef = useRef(250);
   const [isResizing, setIsResizing] = useState(false);
@@ -75,14 +72,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   useEffect(() => {
     void refreshClaudeLaunchTargets();
     void refreshCodexLaunchTargets();
-    void refreshPiModels();
-  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets, refreshPiModels]);
-
-  useEffect(() => {
-    const onChange = () => { void refreshPiModels(true); };
-    window.addEventListener('agent-cli-status-changed', onChange);
-    return () => window.removeEventListener('agent-cli-status-changed', onChange);
-  }, [refreshPiModels]);
+  }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
 
   // 启动时从后端恢复宽度
   useEffect(() => {
@@ -125,7 +115,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
   const [editingProject, setEditingProject] = useState<Project | null | undefined>();
   const [projectName, setProjectName] = useState('');
   const [projectPath, setProjectPath] = useState('');
-  const [projectAgents, setProjectAgents] = useState<Required<EnabledAgents>>({ claude: true, codex: true, pi: true });
+  const [projectAgents, setProjectAgents] = useState<Required<EnabledAgents>>({ claude: true, codex: true });
   const [projectError, setProjectError] = useState('');
 
   // Build project nodes and their profiles
@@ -343,7 +333,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
    * 原 claude 命令的参数（如 --dangerously-skip-permissions）继承到引用命令后。 */
   const startProfileWithModel = (profile: Profile, providerId: string, modelId: string) => {
     closeContextMenu();
-    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, currentClaudeCommand())), undefined, undefined, undefined, undefined, 'independent');
+    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, DEFAULT_CLAUDE_COMMAND)), undefined, undefined, undefined, undefined, 'independent');
   };
 
   const startProfileWithCodexModel = (profile: Profile, providerId: string, modelId: string) => {
@@ -351,26 +341,20 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
     onStartTerminal(profile, buildCodexRefCommand(providerId, modelId, profile.startupCommands), undefined, undefined, undefined, undefined, 'independent');
   };
 
-  const startProfileWithPiModel = (profile: Profile, providerId: string, modelId: string, thinking?: string) => {
-    closeContextMenu();
-    onStartTerminal(profile, buildPiRefCommand(providerId, modelId, thinking, inheritablePiArgs(profile.startupCommands, currentPiCommand())), undefined, undefined, undefined, undefined, 'independent');
-  };
-
-  const gotoProvidersSettings = (source: 'claude' | 'codex' | 'pi' = 'claude') => {
+  const gotoProvidersSettings = (source: 'claude' | 'codex' = 'claude') => {
     useAppStore.getState().setProviderSettingsTab(source);
     closeContextMenu();
     openSettingsDialog('llm-providers');
   };
 
   // 连接配置按启动命令内容推导模型区：当前工具的供应商排在前面，其他工具用于直接切换启动。
-  const commandModelSources = (commands: string[]): Array<'claude' | 'codex' | 'pi'> =>
-    commands.some(isClaudeCommand) ? ['claude', 'codex', 'pi']
-      : commands.some(isCodexCommand) ? ['codex', 'claude', 'pi']
-        : commands.some(isPiCommand) ? ['pi', 'claude', 'codex'] : [];
+  const commandModelSources = (commands: string[]): Array<'claude' | 'codex'> =>
+    commands.some(isClaudeCommand) ? ['claude', 'codex']
+      : commands.some(isCodexCommand) ? ['codex', 'claude'] : [];
 
   const modelMenuSections = (
-    sources: Array<'claude' | 'codex' | 'pi'>,
-    onPickModel: (source: 'claude' | 'codex' | 'pi', providerId: string, modelId: string, thinking?: string) => void,
+    sources: Array<'claude' | 'codex'>,
+    onPickModel: (source: 'claude' | 'codex', providerId: string, modelId: string) => void,
   ) => {
     return sources.map(source => (
       <ClaudeModelMenuSection
@@ -378,8 +362,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
         source={source}
         itemClassName="context-menu-item"
         separatorClassName="context-menu-separator"
-        title={source === 'claude' ? 'Claude 模型' : source === 'codex' ? 'Codex 模型' : 'Pi 模型'}
-        onPickModel={(providerId, modelId, thinking) => onPickModel(source, providerId, modelId, thinking)}
+        title={source === 'claude' ? 'Claude 模型' : 'Codex 模型'}
+        onPickModel={(providerId, modelId) => onPickModel(source, providerId, modelId)}
         onGotoProviders={() => gotoProvidersSettings(source)}
       />
     ));
@@ -587,10 +571,9 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
             // 仅本地 shell 类型显示模型区：后端 ssh/docker/k8s 分支会丢弃引用；
             // Claude / Codex 引用命令会整体替换 startup_commands。
             if (!target || !isModelRefLocalType(target.terminalType)) return null;
-            return modelMenuSections(commandModelSources(target.startupCommands), (source, providerId, modelId, thinking) => {
+            return modelMenuSections(commandModelSources(target.startupCommands), (source, providerId, modelId) => {
               if (source === 'claude') startProfileWithModel(target, providerId, modelId);
-              else if (source === 'codex') startProfileWithCodexModel(target, providerId, modelId);
-              else startProfileWithPiModel(target, providerId, modelId, thinking);
+              else startProfileWithCodexModel(target, providerId, modelId);
             });
           })()}
           <div className="context-menu-item" onClick={() => {
@@ -736,12 +719,8 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                   <input type="checkbox" checked={projectAgents.codex} onChange={event => setProjectAgents(value => ({ ...value, codex: event.target.checked }))} />
                   Codex
                 </label>
-                <label className="project-edit-agent-toggle">
-                  <input type="checkbox" checked={projectAgents.pi} onChange={event => setProjectAgents(value => ({ ...value, pi: event.target.checked }))} />
-                  Pi
-                </label>
               </div>
-              <small>右键项目时可按启用的 Agent 展开供应商与模型启动；基础命令在设置 → Agent 管理中配置。</small>
+              <small>右键项目时可按启用的 Agent 展开供应商与模型启动。</small>
             </div>
             {projectError && <div className="error" role="alert">{projectError}</div>}
           </form>

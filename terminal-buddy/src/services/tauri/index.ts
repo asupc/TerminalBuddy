@@ -1,14 +1,11 @@
 // 后端桥接服务按域拆分后的统一出口。
 // 消费方既有的 `import ... from '../services/tauri'` 路径全部解析到这里。
 export * from './bot';
-export * from './agentCli';
 export * from './claudeAssets';
 export * from './claudeConfig';
 export * from './claudeEnhance';
 export * from './claudeHistory';
 export * from './codexHistory';
-export * from './piHistory';
-export * from './piProviders';
 export * from './claudeHook';
 export * from './claudeMcp';
 export * from './clientData';

@@ -36,9 +36,9 @@ export function ClaudeDecisionDialog() {
   const decision = queue[0];
   const terminalName = decision
     ? sessions.find(session => session.id === decision.terminalId)?.profileName
-      || (decision.provider === 'pi' ? 'Pi' : 'Claude Code')
+      || 'Claude Code'
     : '';
-  const agentName = decision?.provider === 'pi' ? 'Pi' : 'Claude';
+  const agentName = 'Claude';
 
   useEffect(() => {
     let cancelled = false;

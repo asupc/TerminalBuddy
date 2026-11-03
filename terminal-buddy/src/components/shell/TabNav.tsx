@@ -629,7 +629,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
                   }
                 }}
                 onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
-                title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'pi' ? 'Pi' : 'Claude Code'} · ${tab.title}`}>
+                title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}>
                 <span className="tab-nav-name">{tab.title}</span>
                 <button type="button" className="tree-item-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}
                   title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>

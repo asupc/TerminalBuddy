@@ -5,7 +5,8 @@ import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../store
 import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
-import { parseAnyModelRef } from '../../utils/piLaunch';
+import { parseClaudeRef } from '../../utils/claudeLaunch';
+import { parseCodexRef } from '../../utils/codexLaunch';
 import { isDockerClient } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
 import './TerminalTabBar.css';
@@ -294,7 +295,8 @@ export const TerminalTabBar: FC = () => {
                 </span>
               )}
               {session.sessionType !== 'editor' && (() => {
-                const modelRef = parseAnyModelRef(session.extraParams ?? '');
+                const params = session.extraParams ?? '';
+                const modelRef = parseCodexRef(params) ?? parseClaudeRef(params);
                 return modelRef ? (
                   <span className="terminal-tab-model-chip" title="供应商模型">{modelRef.modelId}</span>
                 ) : null;
@@ -355,7 +357,7 @@ export const TerminalTabBar: FC = () => {
             }
           }}
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-          title={`${tab.provider === 'codex' ? 'Codex' : tab.provider === 'pi' ? 'Pi' : 'Claude Code'} · ${tab.title}`}>
+          title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}>
           <History className="terminal-tab-history-icon" aria-hidden="true" />
           <span className="terminal-tab-name">{tab.title}</span>
           <button className="terminal-tab-close" onClick={event => { event.stopPropagation(); closeClaudeReplayTab(tab.sessionId, tab.provider); }}

@@ -13,14 +13,12 @@ import { loadSavedTabs, saveTabsToStorage, useAppStore } from '../stores/appStor
 import { flushPendingSaveTabsIfAny } from '../stores/slices/sessionsSlice';
 import { getAppSettings, isAppSettingsInitialized } from '../utils/settings';
 import { containsClaudeRef, isClaudeCommand } from '../utils/claudeLaunch';
-import { buildCodexResumeCommand } from '../utils/codexLaunch';
-import { buildPiResumeCommand } from '../utils/piLaunch';
-import { currentCodexCommand, currentPiCommand } from '../utils/agentCommands';
+import { buildCodexResumeCommand, DEFAULT_CODEX_COMMAND } from '../utils/codexLaunch';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { AgentSessionBinding, TerminalSession } from '../types';
 import { isBrowserClient, clientTerminalOwner, defaultShellType } from './platform';
-import { stripCodexResumeArgs, stripPiSessionArgs, stripResumeArgs } from '../utils/commandParams';
+import { stripCodexResumeArgs, stripResumeArgs } from '../utils/commandParams';
 
 const RESTORE_TERMINAL_CONCURRENCY = 2;
 
@@ -85,8 +83,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
   // 旧数据可能把 --resume / --session / `resume` 直接存进 extraParams（例如从历史
   // 会话恢复出来的页签）。先剥除再按 provider 重建，避免重复叠加或拼坏原命令。
   const claudeStripped = stripResumeArgs(rawParams);
-  const piStripped = stripPiSessionArgs(claudeStripped.params);
-  const codexStripped = stripCodexResumeArgs(piStripped.params);
+  const codexStripped = stripCodexResumeArgs(claudeStripped.params);
   const baseParams = tab.extraParamMode === 'independent'
     ? codexStripped.params.trim()
     : codexStripped.params.replace(/\s+/g, ' ').trim();
@@ -95,9 +92,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
       ? { provider: 'claude', sessionId: tab.claudeSessionId || claudeStripped.resumeId!, cwd: tab.directory }
       : codexStripped.sessionId
         ? { provider: 'codex', sessionId: codexStripped.sessionId, cwd: tab.directory }
-        : piStripped.session
-          ? { provider: 'pi', sessionId: piStripped.session, sessionFile: piStripped.session, cwd: tab.directory }
-          : undefined);
+        : undefined);
   const autoResume = binding ? getAppSettings().autoResumeClaudeSession : false;
   const profile = tab.profileId ? store.profiles.find(item => item.id === tab.profileId) : undefined;
   let launchParams = baseParams;
@@ -108,9 +103,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
       const resumeParam = `--resume ${binding.sessionId}`;
       launchParams = launchParams ? `${launchParams} ${resumeParam}` : resumeParam;
     } else {
-      const command = binding.provider === 'codex'
-        ? buildCodexResumeCommand(binding.sessionId, profile?.startupCommands ?? (baseParams || currentCodexCommand()))
-        : buildPiResumeCommand(binding.sessionId, profile?.startupCommands ?? (baseParams || currentPiCommand()));
+      const command = buildCodexResumeCommand(binding.sessionId, profile?.startupCommands ?? (baseParams || DEFAULT_CODEX_COMMAND));
       if (tab.profileId) {
         launchParams = command;
         launchMode = 'independent';

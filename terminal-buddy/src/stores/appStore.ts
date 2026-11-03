@@ -8,7 +8,7 @@ import { createTabsSlice } from "./slices/tabsSlice";
 import { createTransfersSlice } from "./slices/transfersSlice";
 import { createWindowSlice } from "./slices/windowSlice";
 import { createClaudeLaunchSlice } from "./slices/claudeLaunchSlice";
-import type { CodexProviderState, LlmLaunchTarget, PiModelProvider } from "../services/tauri";
+import type { CodexProviderState, LlmLaunchTarget } from "../services/tauri";
 
 interface SavedTab {
 	profileId: string;
@@ -54,7 +54,7 @@ export { sessionReplayTabKey } from '../utils/sessionHistory';
 
 export type WorkspaceSpecialTab = "git-history" | "claude-replay" | null;
 
-export type TerminalRuntimeKind = "shell" | "claude" | "pi";
+export type TerminalRuntimeKind = "shell" | "claude";
 export type TerminalActivityPhase = "idle" | "running" | "attention" | "completed" | "failed";
 
 export interface TerminalActivityDetails {
@@ -65,7 +65,7 @@ export interface TerminalActivityDetails {
 export interface TerminalActivityState {
 	runtimeKind: TerminalRuntimeKind;
 	/** 产生事件的 Agent；旧 Claude 事件没有 provider 时按 claude 处理。 */
-	provider?: "claude" | "codex" | "pi";
+	provider?: "claude" | "codex";
 	source: "legacy" | "hook";
 	phase: TerminalActivityPhase;
 	updatedAt: number;
@@ -168,7 +168,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 			const session = value as Record<string, unknown>;
 			const provider = session.provider;
 			const sessionId = session.sessionId;
-			if ((provider !== "claude" && provider !== "codex" && provider !== "pi") || typeof sessionId !== "string" || !sessionId) return undefined;
+			if ((provider !== "claude" && provider !== "codex") || typeof sessionId !== "string" || !sessionId) return undefined;
 			return {
 				provider,
 				sessionId,
@@ -355,7 +355,7 @@ export interface AppState {
 	terminalWebTakeovers: Record<string, boolean>;
 	setTerminalWebTakeover: (sessionId: string, active: boolean) => void;
 	setTerminalFallbackWorking: (sessionId: string, working: boolean) => void;
-	applyClaudeHookActivity: (sessionId: string, phase: TerminalActivityPhase, updatedAt: number, details?: TerminalActivityDetails, provider?: "claude" | "pi") => boolean;
+	applyClaudeHookActivity: (sessionId: string, phase: TerminalActivityPhase, updatedAt: number, details?: TerminalActivityDetails) => boolean;
 	endClaudeHookSession: (sessionId: string, updatedAt: number) => boolean;
 	expireClaudeHookActivity: (sessionId: string, expectedUpdatedAt: number) => void;
 	handleTerminalInputActivity: (sessionId: string) => void;
@@ -432,22 +432,15 @@ export interface AppState {
 	clearCompletedTransfersByProfile: (profileId: string) => void;
 
 	// Claude 模型启动：右键菜单数据源（挂载 + 供应商变更时刷新，右键打开时用缓存）
-	/** Agent 管理的基础启动命令（空串 = 内置默认），供项目模型启动与历史恢复继承参数。 */
-	agentCommands: { claude: string; codex: string; pi: string };
-	setAgentCommands: (commands: { claude: string; codex: string; pi: string }) => void;
 	codexProviderState: CodexProviderState | null;
 	refreshCodexLaunchTargets: () => Promise<void>;
 	setCodexProviderState: (state: CodexProviderState) => void;
-	providerSettingsTab: "claude" | "codex" | "pi";
-	setProviderSettingsTab: (tab: "claude" | "codex" | "pi") => void;
+	providerSettingsTab: "claude" | "codex";
+	setProviderSettingsTab: (tab: "claude" | "codex") => void;
 	claudeLaunchTargets: LlmLaunchTarget[];
 	claudeLaunchTargetsLoaded: boolean;
 	refreshClaudeLaunchTargets: () => Promise<void>;
 	setClaudeLaunchTargets: (targets: LlmLaunchTarget[]) => void;
-	// Pi 模型目录（来自 pi --list-models）
-	piModelProviders: PiModelProvider[];
-	piModelsLoaded: boolean;
-	refreshPiModels: (force?: boolean) => Promise<void>;
 }
 
 // 各 slice 只声明自己管辖的字段（Partial<AppState>），

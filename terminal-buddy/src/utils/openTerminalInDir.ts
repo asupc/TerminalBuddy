@@ -3,10 +3,8 @@ import { buildClaudeRefCommand, startBlankTerminal } from '../services/tauri';
 import type { Project } from '../types';
 import { defaultShellType } from '../services/platform';
 import { projectForDirectory } from './projectPath';
-import { inheritableClaudeArgs } from './claudeLaunch';
-import { buildCodexRefCommand } from './codexLaunch';
-import { buildPiRefCommand, inheritablePiArgs } from './piLaunch';
-import { currentClaudeCommand, currentCodexCommand, currentPiCommand } from './agentCommands';
+import { DEFAULT_CLAUDE_COMMAND, inheritableClaudeArgs } from './claudeLaunch';
+import { buildCodexRefCommand, DEFAULT_CODEX_COMMAND } from './codexLaunch';
 
 /**
  * 打开一个 PowerShell 终端标签到指定目录，行为等同“文件与 Git”面板右键菜单中的“在当前目录打开命令窗口”。
@@ -74,24 +72,21 @@ export async function openProjectTerminal(project: Project): Promise<void> {
 }
 
 /** 项目 Agent 模型启动（「项目与命令」右键与会话标签栏悬停菜单共用）：
- * 按 Agent 组装引用命令注入项目终端，Agent 管理的基础命令参数一并继承；
+ * 按 Agent 组装引用命令注入项目终端，内置默认命令的参数一并继承；
  * 失败时按 Agent 名称提示。 */
 export async function openProjectAgentTerminal(
   project: Project,
-  source: 'claude' | 'codex' | 'pi',
+  source: 'claude' | 'codex',
   providerId: string,
   modelId: string,
-  thinking?: string,
 ): Promise<void> {
   const command = source === 'claude'
-    ? buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(undefined, currentClaudeCommand()))
-    : source === 'codex'
-      ? buildCodexRefCommand(providerId, modelId, currentCodexCommand())
-      : buildPiRefCommand(providerId, modelId, thinking, inheritablePiArgs(undefined, currentPiCommand()));
+    ? buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(undefined, DEFAULT_CLAUDE_COMMAND))
+    : buildCodexRefCommand(providerId, modelId, DEFAULT_CODEX_COMMAND);
   try {
     await openTerminalInDir(project.path, { command, name: project.name, groupName: project.name });
   } catch (error) {
-    const label = source === 'claude' ? '模型' : source === 'codex' ? 'Codex 模型' : 'Pi 模型';
+    const label = source === 'claude' ? '模型' : 'Codex 模型';
     useAppStore.getState().showToast(`${label}启动失败：${String(error)}`, 'error');
   }
 }
