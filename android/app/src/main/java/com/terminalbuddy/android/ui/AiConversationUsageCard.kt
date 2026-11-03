@@ -64,11 +64,32 @@ import kotlin.math.roundToInt
     )
     val usage = session.usage
     val contextUsage = usage?.context
+    // 已用量记忆：刷新缺失时保留上一次；拿到过正值之后，0 不再覆盖，
+    // 避免回合切换 / 上下文压缩期间显示从 250K 掉成 0K 再跳回去。
     val used = rememberKnownUsageValue(session.id,
-        contextUsage?.takeUnless { it.updating }?.usedTokens?.takeIf { it >= 0 })
-    val capacity = rememberKnownUsageValue(session.id, contextUsage?.windowTokens?.takeIf { it > 0 })
-    val ratio = if (used != null && capacity != null) used.toDouble() / capacity else null
-    val percent = ratio?.let { (it * 100).roundToInt().toString() } ?: "—"
+        contextUsage?.takeUnless { it.updating }?.usedTokens?.takeIf { it >= 0 },
+        rejectZeroAfterPositive = true)
+    // 容量同理：只认大于 0 的值，0 与缺失都沿用上一次已知容量，
+    // 否则总上下文大小会短暂变成 —K，看起来像是统计丢了。
+    val capacity = rememberKnownUsageValue(session.id, contextUsage?.windowTokens)
+    val rawRatio = if (used != null && used > 0 && capacity != null && capacity > 0)
+        used.toDouble() / capacity else null
+    // -1 表示本会话还没拿到过有效比例；Float 可被 rememberSaveable 直接保存。
+    val knownRatio = rememberSaveable(session.id) { mutableStateOf(-1f) }
+    // 没拿到值、刷新中或比例为 0 时都不推进进度条，沿用上一次有效比例，
+    // 否则进度条会被打回零点再随下一份快照回弹，看起来一直在动。
+    val ratio = retainContextProgress(knownRatio.value.takeIf { it >= 0f }?.toDouble(), rawRatio)
+    SideEffect { ratio?.let { if (it.toFloat() != knownRatio.value) knownRatio.value = it.toFloat() } }
+    // 从未拿到过有效比例时不画进度条，只保留「上下文 已用/容量」文字，
+    // 不显示一根永远为空、看起来像没数据的灰条。
+    val showProgress = ratio != null
+    // 容量未知时占用率也是未知，不能把「算不出比例」写成 0%。
+    val percent = when {
+        ratio != null -> (ratio * 100).roundToInt().toString()
+        capacity == null || capacity <= 0 -> "—"
+        used != null -> "0"
+        else -> "—"
+    }
     val context = if (contextUsage?.updating == true && used == null) "更新中(${formatAiTokensK(used)}/${formatAiTokensK(capacity)})"
         else "$percent%(${formatAiTokensK(used)}/${formatAiTokensK(capacity)})"
     val tokens = usage?.lastTurn ?: usage?.sessionTotal
@@ -123,11 +144,12 @@ import kotlin.math.roundToInt
                                 AiContextLabel()
                                 AiContextValue(context)
                             }
-                            AiContextProgress(ratio?.toFloat(), context, Modifier.fillMaxWidth())
+                            if (showProgress) AiContextProgress(ratio?.toFloat(), context, Modifier.fillMaxWidth())
                         } else {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 AiContextLabel()
-                                AiContextProgress(ratio?.toFloat(), context, Modifier.weight(1f))
+                                if (showProgress) AiContextProgress(ratio?.toFloat(), context, Modifier.weight(1f))
+                                else Spacer(Modifier.weight(1f))
                                 AiContextValue(context)
                             }
                         }
@@ -182,6 +204,7 @@ private fun Modifier.aiUsageReveal(expansion: State<Float>): Modifier = clipToBo
 }
 
 @Composable private fun AiContextProgress(ratio: Float?, description: String, modifier: Modifier = Modifier) {
+    // 调用方已经保证 ratio 只在拿到有效值时才变化，这里不做额外归零处理。
     val progress = animateFloatAsState(targetValue = ratio?.coerceIn(0f, 1f) ?: 0f, animationSpec = tween(240), label = "上下文占比")
     // TbColors 是 Composable 读取，需在进入非 Composable 的 draw 块之前取值。
     val low = TbColors.Accent
@@ -214,11 +237,34 @@ private fun Modifier.aiUsageReveal(expansion: State<Float>): Modifier = clipToBo
     }
 }
 
-/** 按会话记住已知用量；刷新缺失时保持显示，新值到达后直接替换。 */
-@Composable private fun rememberKnownUsageValue(sessionId: String, value: Long?): Long? {
+/**
+ * 按会话记住已知用量；刷新缺失时保持显示，新值到达后直接替换。
+ * `rejectZeroAfterPositive` 用于上下文已用量：一旦拿到过正值，之后的 0 视为统计缺失，
+ * 不再覆盖已知值，否则已用会显示成 `0K`，等下一份快照才跳回真实数值。
+ */
+@Composable private fun rememberKnownUsageValue(
+    sessionId: String, value: Long?, rejectZeroAfterPositive: Boolean = false,
+): Long? {
     var previous by rememberSaveable(sessionId) { mutableStateOf(value) }
-    SideEffect { if (value != null) previous = value }
-    return value ?: previous
+    val accepted = acceptKnownUsage(previous, value, rejectZeroAfterPositive)
+    SideEffect { if (accepted != null) previous = accepted }
+    return accepted ?: previous
+}
+
+/** 返回本帧应当展示的用量：缺失返回 null 表示沿用上一次；reject 模式下 0 不算有效新值。 */
+internal fun acceptKnownUsage(previous: Long?, value: Long?, rejectZeroAfterPositive: Boolean = false): Long? {
+    if (value == null) return null
+    if (rejectZeroAfterPositive && value <= 0L && (previous ?: 0L) > 0L) return null
+    return value
+}
+
+/**
+ * 进度条的取值规则：只有大于 0 且有限的新比例才替换上一次已显示的进度；
+ * 缺失、刷新中或 0 值一律沿用旧值，首次仍无有效值时返回 null（不画进度）。
+ */
+internal fun retainContextProgress(previous: Double?, incoming: Double?): Double? {
+    if (incoming == null || !incoming.isFinite() || incoming <= 0.0) return previous
+    return incoming
 }
 
 /** 统一使用十进制 K；小于 1K 时保留到单个 Token，避免非零用量被显示为零。 */
