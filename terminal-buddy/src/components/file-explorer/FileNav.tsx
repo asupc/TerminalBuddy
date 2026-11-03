@@ -9,6 +9,7 @@ import { openTerminalInDir } from '../../utils/openTerminalInDir';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { showAlert } from '../../services/dialog';
+import { canDownloadToBrowser, downloadToBrowser } from '../../services/fileDownload';
 import { supportsSystemExplorerOpen } from '../../services/platform';
 import { GitOperationsHost, type GitContextAction, type GitOperationsHostHandle } from '../git/GitOperationsHost';
 import { getGitOperation, subscribeGitOperations } from '../../services/gitOperationState';
@@ -452,6 +453,12 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
     setCtxMenu(null);
   }, [gitTargetDirectory]);
 
+  // 浏览器端（Linux 服务端 / Docker 部署）把服务器文件或目录下载到本机。
+  const startBrowserDownload = useCallback((path: string) => {
+    setCtxMenu(null);
+    downloadToBrowser(path);
+  }, []);
+
   const handleDeleteItem = useCallback(() => {
     setConfirmDelete(ctxMenu?.path || null);
     setCtxMenu(null);
@@ -777,6 +784,11 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
                   在文件资源管理器中显示
                 </div>
               )}
+              {canDownloadToBrowser() && (
+                <div className="context-menu-item" onClick={() => startBrowserDownload(ctxMenu.dir!)}>
+                  下载文件夹（ZIP）
+                </div>
+              )}
               {ctxMenu.root && (
                 <>
                   <div className="context-menu-separator" />
@@ -790,6 +802,11 @@ export const FileNav: FC<FileNavProps> = ({ isSidebarMode }) => {
           {ctxMenu.path && (
             <>
               <div className="context-menu-separator" />
+              {canDownloadToBrowser() && (
+                <div className="context-menu-item" onClick={() => startBrowserDownload(ctxMenu.path!)}>
+                  {ctxMenu.isDir ? '下载文件夹（ZIP）' : '下载'}
+                </div>
+              )}
               {supportsSystemExplorerOpen() && (
                 <div className="context-menu-item" onClick={handleShowInExplorer}>
                   在文件资源管理器中显示
