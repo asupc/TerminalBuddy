@@ -1,336 +1,258 @@
 #!/usr/bin/env bash
-# TerminalBuddy 一键部署到飞牛 fnOS
+# TerminalBuddy 一键部署到飞牛 fnOS（与 quantum/scripts/deploy-prod.sh 同口径）
 #
-# 飞牛默认禁止 root 登录（PermitRootLogin no），因此使用普通管理员账号 + sudo 部署。
-# 默认流程：本机 docker build 镜像（BuildKit 层缓存复用）→ 与远端镜像 ID 比对，一致则
-# 跳过传输 → 有变化时导出并 scp 上传 → 远端 sudo 执行 scripts/deploy-fnos-remote.sh
-# （docker load → 重建容器 → 健康检查）。飞牛侧不编译，也无需 Node / Rust。
+# 模式：git pull → 本机 docker build 镜像（BuildKit 层缓存）→ 与远端镜像 ID 比对，
+#   一致则跳过传输 → docker save | gzip 导出回滚 tar（本机留档）→ scp 推送飞牛 →
+#   远端 docker load → docker compose up -d → 远端健康检查 → 两端清理。
+#   飞牛侧的 docker-compose.yml 是权威（挂载/网络/端口/资源限制都在那边维护），
+#   本脚本不生成、不修改它；镜像 tag 固定 terminal-buddy:server，load 覆盖后
+#   compose 检测到镜像 ID 变化自动重建容器。
 #
-# 之所以默认在本机编译：开发机（x86_64，装有 docker）算力与层缓存都远强于飞牛
-# i3-N305（首次构建约 20-40 分钟）；镜像未变化时零传输，有变化时约 158MB 镜像包走
-# 局域网上传一次即可。改回「上传源码、在飞牛上编译」用 --build-on-nas（部署机可不装
-# docker，任意能 ssh 的机器都能发包，源码包约 16MB；飞牛侧源码未变时按指纹跳过构建，
-# 基础镜像走「本地命中 → 离线备份 → 备用镜像源」三级兜底）。
+# SSH：走 ~/.ssh/config 别名（默认 fnos：HostName 192.168.1.71 / User huangmaoqiu /
+#   IdentityFile ~/.ssh/id_ed25519），BatchMode 非交互——免密未配置会在预检失败并给
+#   指引；全程无 sudo、无密码传递。
 #
-# 用法：
-#   ./xcj/deploy-fnos.sh                       # 全流程（拉代码 → 本机构建镜像并上传）
-#   ./xcj/deploy-fnos.sh --no-build            # 跳过构建，用飞牛上现有镜像重建容器
-#   ./xcj/deploy-fnos.sh --no-pull             # 不拉取本机代码，直接用当前工作区
-#   ./xcj/deploy-fnos.sh --build-on-nas        # 改为上传源码、在飞牛上构建镜像
-#   ./xcj/deploy-fnos.sh --host 192.168.3.77 --listen-port 9600
+# 用法（在仓库根或任意目录执行均可）：
+#   ./xcj/deploy-fnos.sh                # 拉代码 → 构建 → 上传 → 重建 → 健康检查 → 清理
+#   ./xcj/deploy-fnos.sh --no-build     # 跳过构建，用飞牛现有镜像重建容器
+#   ./xcj/deploy-fnos.sh --no-pull      # 不拉取代码，直接用当前工作区构建
+#   ./xcj/deploy-fnos.sh --load <tar>   # 从既有 tar 包部署（回滚 / 免构建）
 #
-# sudo 密码来源（按优先级）：
-#   1. 环境变量 TB_FNOS_PASSWORD
-#   2. 凭据文件（--config，默认 ~/.codex/private/fnos/config.json，需含 host/username/password）
-#   3. 交互式输入（隐藏回显）
-# 密码只经 stdin 交给远端 sudo -S，不写入命令行参数或日志。
-
+# 回滚：./xcj/deploy-fnos.sh --load <TARDIR>/terminal-buddy_<旧时间戳>.tar.gz
+#   （本机 TARDIR 保留最近 KEEP_TAR 个 tar 包；被覆盖的旧镜像在飞牛以 dangling 形式
+#   留底，需要时 docker tag <旧ID> terminal-buddy:server 后 up -d 即可）
+#
+# 首次部署（飞牛上还没有 compose 的新机器）：先在飞牛侧准备 APP_DIR、data/home 目录
+#   与 docker-compose.yml（参考 DEPLOY_README.md 与 scripts/deploy-fnos-remote.sh 的
+#   compose 模板），之后日常更新都走本脚本。
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail
 
 # ==================== 可覆盖配置 ====================
-FNOS_HOST="${TB_FNOS_HOST:-192.168.3.77}"
-FNOS_USER="${TB_FNOS_USER:-397383523}"
-FNOS_PORT="${TB_FNOS_SSH_PORT:-22}"
-APP_DIR="${TB_FNOS_APP_DIR:-/vol1/1000/docker/terminal-buddy}"
-HOST_PORT="${TB_FNOS_PORT:-9600}"
-CONTAINER="${TB_FNOS_CONTAINER:-terminal-buddy}"
+FNOS_SSH="${TB_FNOS_SSH:-fnos}"                                   # 飞牛 SSH 目标（~/.ssh/config 别名）
 IMAGE="${TB_FNOS_IMAGE:-terminal-buddy:server}"
-CONFIG_FILE="${TB_FNOS_CONFIG:-$HOME/.codex/private/fnos/config.json}"
-SSH_KEY="${TB_FNOS_SSH_KEY:-$HOME/.ssh/terminal_buddy_fnos_deploy}"
+CONTAINER="${TB_FNOS_CONTAINER:-terminal-buddy}"
+APP_DIR="${TB_FNOS_APP_DIR:-/vol2/1000/docker/terminal-buddy}"
+REMOTE_COMPOSE_FILE="${TB_FNOS_COMPOSE_FILE:-${APP_DIR}/docker-compose.yml}"
+HOST_PORT="${TB_FNOS_PORT:-9600}"                                 # 仅健康检查用，实际端口以远端 compose 为准
 PULL_LATEST="${TB_FNOS_PULL:-1}"
-BUILD_LOCAL="${TB_FNOS_BUILD_LOCAL:-1}"
+KEEP_TAR=3                                                        # 本机回滚 tar 保留个数
 # =====================================================
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DATA_DIR="${APP_DIR}/data"
-HOME_DIR="${APP_DIR}/home"
-WORKSPACE_DIR="${APP_DIR}/workspace"
-
-SRC_TARBALL="/tmp/terminal-buddy-src.tar.gz"
-IMAGE_TARBALL="/tmp/terminal-buddy-image.tar.gz"
-REMOTE_SH="/tmp/terminal-buddy-fnos-deploy.sh"
-KNOWN_HOSTS="/tmp/terminal_buddy_fnos_known_hosts"
-ASKPASS_HELPER=""
-STAGE_DIR=""
+REPO_DIR="$(cd -- "$(dirname "$0")/.." && pwd -P)"
+TARDIR="${TB_FNOS_TARDIR:-${REPO_DIR}/.runtime-data/fnos-tars}"   # 本机回滚 tar 目录（.runtime-data 不入库）
+REMOTE_TARBALL="/tmp/terminal-buddy-image.tar.gz"
 
 log()  { printf '\033[36m[%s] %s\033[0m\n' "$(date '+%H:%M:%S')" "$*"; }
 warn() { printf '\033[33m[%s] %s\033[0m\n' "$(date '+%H:%M:%S')" "$*" >&2; }
 fail() { printf '\033[31m[ERROR] %s\033[0m\n' "$*" >&2; exit 1; }
 
-cleanup() {
-  # 密码辅助脚本与镜像暂存目录不入库、不残留。
-  [ -n "${ASKPASS_HELPER}" ] && rm -f "${ASKPASS_HELPER}" 2>/dev/null || true
-  [ -n "${STAGE_DIR}" ] && rm -rf "${STAGE_DIR}" 2>/dev/null || true
-  return 0
+usage() {
+  cat <<'HELP'
+用法：bash xcj/deploy-fnos.sh [选项]（可在任意目录执行）
+
+  --no-pull           跳过开头的 git pull --ff-only，直接使用当前工作区
+  --no-build          跳过本机构建，用飞牛上的现有镜像重建容器
+  --load <tar包>      从既有 tar 包部署（回滚 / 免构建），不构建、不清理 tar
+  -h, --help          显示帮助
+
+环境变量：TB_FNOS_SSH（SSH 别名，默认 fnos）/ TB_FNOS_APP_DIR / TB_FNOS_COMPOSE_FILE /
+TB_FNOS_PORT（健康检查端口）/ TB_FNOS_IMAGE / TB_FNOS_CONTAINER / TB_FNOS_TARDIR /
+TB_FNOS_PULL。
+
+SSH 免密：本脚本走 ~/.ssh/config 别名 fnos（192.168.1.71 / huangmaoqiu / id_ed25519），
+BatchMode 非交互。首次配置：ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 &&
+ssh-copy-id <user>@<host>（或直接编辑 ~/.ssh/config 添加 Host fnos 条目）。
+HELP
 }
-trap cleanup EXIT
 
 DO_BUILD=1
-NO_BASE_IMAGE_BACKUP=0
+MODE=build
+LOAD_TAR=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --no-build)         DO_BUILD=0 ;;
-    --no-pull)          PULL_LATEST=0 ;;
-    --pull)             PULL_LATEST=1 ;;
-    --build-local)      BUILD_LOCAL=1 ;;
-    --build-on-nas)     BUILD_LOCAL=0 ;;
-    --no-base-image-backup) NO_BASE_IMAGE_BACKUP=1 ;;
-    --host)             FNOS_HOST="${2:?--host 需要一个地址}"; shift ;;
-    --listen-port)      HOST_PORT="${2:?--listen-port 需要一个端口}"; shift ;;
-    --config)           CONFIG_FILE="${2:?--config 需要一个文件路径}"; shift ;;
-    -h|--help)          sed -n '2,30p' "$0"; exit 0 ;;
-    *) fail "未知参数：$1（可用：--no-build / --no-pull / --build-local / --build-on-nas / --no-base-image-backup / --host / --listen-port / --config / --help）" ;;
+    --no-build)      DO_BUILD=0 ;;
+    --no-pull)       PULL_LATEST=0 ;;
+    --load)          MODE=load; LOAD_TAR="${2:?--load 需要一个 tar 包路径}"; shift ;;
+    -h|--help)       usage; exit 0 ;;
+    *) fail "未知参数：$1（可用：--no-build / --no-pull / --load <tar包> / --help）" ;;
   esac
   shift
 done
-
-# ---------- 0. 本机依赖检查 ----------
-# 默认在本机构建镜像，需要 docker；--build-on-nas 时本机只打包上传源码，不要求 docker。
-if [ "${BUILD_LOCAL}" = "1" ]; then
-  command -v docker >/dev/null 2>&1 || fail "默认在本机构建镜像，但未检测到 docker；安装后再试，或用 --build-on-nas 改在飞牛上构建"
+if [ "${MODE}" = load ]; then
+  [ -r "${LOAD_TAR}" ] || fail "tar 包不存在或不可读：${LOAD_TAR}"
 fi
-command -v ssh    >/dev/null 2>&1 || fail "未检测到 ssh"
-command -v scp    >/dev/null 2>&1 || fail "未检测到 scp"
-command -v tar    >/dev/null 2>&1 || fail "未检测到 tar"
-command -v curl   >/dev/null 2>&1 || fail "未检测到 curl"
-[ -f "${REPO_DIR}/Dockerfile" ] || fail "缺少 ${REPO_DIR}/Dockerfile"
-[ -f "${REPO_DIR}/scripts/deploy-fnos-remote.sh" ] || fail "缺少 scripts/deploy-fnos-remote.sh"
-[ -d "${REPO_DIR}/terminal-buddy/src-tauri" ] || fail "缺少 terminal-buddy/src-tauri，源码不完整"
+
+# SSH 统一封装：BatchMode 禁交互（无免密立即失败）；accept-new 首连自动收录指纹。
+# 传远端的命令一律走 `rsh bash -s -- <参数> <<'EOF'` 形态，避免 ssh 拼参数丢引号。
+SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
+rsh() { ssh "${SSH_OPTS[@]}" "$FNOS_SSH" "$@"; }
+
+# 远端 compose up（幂等）：镜像 ID 变化时自动重建容器，并核对容器确实跑在目标镜像上。
+compose_up() {
+  rsh bash -s -- "${APP_DIR}" "${REMOTE_COMPOSE_FILE}" "${CONTAINER}" "${IMAGE}" <<'EOF'
+set -eu
+cd "$1"
+docker compose -f "$2" up -d --remove-orphans 2>&1 | tail -n 5
+running="$(docker inspect "$3" --format '{{.State.Running}}' 2>/dev/null || true)"
+[ "${running}" = "true" ] || { echo "!! 容器 $3 未在运行" >&2; exit 1; }
+img="$(docker inspect "$3" --format '{{.Image}}')"
+want="$(docker image inspect "$4" --format '{{.Id}}')"
+[ "${img}" = "${want}" ] || { echo "!! 容器实际镜像与 $4 不一致" >&2; exit 1; }
+EOF
+}
+
+# 远端健康检查：轮询容器映射端口上的 /api/health（最多约 90s），失败时附最近日志。
+health_check() {
+  local step
+  if [ "${MODE}" = load ]; then step=4; else step=6; fi
+  echo "==> [${step}/${STEPS}] 健康检查（远端 127.0.0.1:${HOST_PORT}）"
+  rsh bash -s -- "${HOST_PORT}" "${CONTAINER}" <<'EOF'
+set -u
+code=""
+for _ in $(seq 1 30); do
+  sleep 3
+  code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:$1/api/health" 2>/dev/null || true)
+  [ "$code" = "200" ] && break
+done
+if [ "$code" != "200" ]; then
+  echo "!! 健康检查失败（HTTP ${code:-无响应}），最近日志：" >&2
+  docker logs "$2" --tail 20 >&2 || true
+  exit 1
+fi
+echo "    ✓ /api/health -> 200"
+EOF
+}
+
+finish() {
+  echo
+  log "部署完成：$1"
+  [ -n "${FNOS_IP:-}" ] && echo "  访问地址 : http://${FNOS_IP}:${HOST_PORT}/"
+  echo "  应用目录 : ${APP_DIR}（compose 为权威：${REMOTE_COMPOSE_FILE}）"
+  [ -n "${TAR:-}" ] && echo "  本机 tar : ${TAR}"
+  echo "  回到旧版 : bash xcj/deploy-fnos.sh --load ${TARDIR}/terminal-buddy_<旧时间戳>.tar.gz"
+  echo "  查看日志 : ssh ${FNOS_SSH} 'docker logs -f --tail 100 ${CONTAINER}'"
+}
+
+STEPS=6
+[ "${MODE}" = load ] && STEPS=4
+
+# ---------- 0. 预检 ----------
+echo "==> [0/${STEPS}] 预检：本机 docker / SSH 免密 / 远端 compose 与容器状态"
+if [ "${DO_BUILD}" = 1 ] && [ "${MODE}" = build ]; then
+  docker info >/dev/null 2>&1 || {
+    echo "!! 本机 docker 不可用（当前用户 $(id -un) 是否在 docker 组？）。一次性配置：" >&2
+    echo "   sudo usermod -aG docker $(id -un)   # 执行后重新登录生效" >&2
+    exit 1; }
+fi
+if ! msg=$(rsh 'docker info >/dev/null 2>&1' 2>&1); then
+  fail "SSH 免密登录 ${FNOS_SSH} 失败或远端 docker 不可用：${msg}
+   首次配置：ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 && ssh-copy-id <user>@<host>（或编辑 ~/.ssh/config）"
+fi
+rsh bash -s -- "${REMOTE_COMPOSE_FILE}" "${CONTAINER}" <<'EOF'
+set -e
+[ -f "$1" ] || { echo "!! 远端缺 compose 文件: $1（首次部署见 DEPLOY_README.md）" >&2; exit 1; }
+docker compose version >/dev/null 2>&1 || { echo "!! 远端 docker compose 子命令不可用" >&2; exit 1; }
+echo "    飞牛侧当前容器状态："
+docker ps -a --filter "name=^/$2\$" --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+EOF
+PREV_ID="$(rsh "docker image inspect '${IMAGE}' --format '{{.Id}}' 2>/dev/null || true")"
+if [ -n "${PREV_ID}" ]; then
+  log "当前远端镜像：${IMAGE} ${PREV_ID:7:12}"
+else
+  log "远端还没有镜像 ${IMAGE}（首次部署或镜像被清理）"
+fi
+FNOS_IP="$(ssh -G "${FNOS_SSH}" 2>/dev/null | awk '/^hostname /{print $2; exit}')" || true
 
 # ---------- 1. 拉取本机最新代码 ----------
-if [ "${PULL_LATEST}" = "1" ]; then
-  if [ -d "${REPO_DIR}/.git" ]; then
-    command -v git >/dev/null 2>&1 || fail "未检测到 git，无法拉取代码；或用 --no-pull 跳过"
-    log "拉取本机最新代码：git pull --ff-only"
-    if ! git -C "${REPO_DIR}" pull --ff-only; then
-      fail "拉取失败（本机可能有未提交改动与远端冲突）。处理后再试，或用 --no-pull 直接用当前工作区。"
+if [ "${MODE}" = build ]; then
+  if [ "${PULL_LATEST}" = "1" ]; then
+    if [ -d "${REPO_DIR}/.git" ]; then
+      command -v git >/dev/null 2>&1 || fail "未检测到 git，无法拉取代码；或用 --no-pull 跳过"
+      log "拉取本机最新代码：git pull --ff-only"
+      git -C "${REPO_DIR}" pull --ff-only \
+        || fail "拉取失败（本机可能有未提交改动与远端冲突）。处理后再试，或用 --no-pull 直接用当前工作区。"
+    else
+      warn "${REPO_DIR} 不是 git 仓库，跳过拉取"
     fi
   else
-    warn "${REPO_DIR} 不是 git 仓库，跳过拉取"
+    log "已跳过代码拉取（--no-pull）"
   fi
-else
-  log "已跳过代码拉取（--no-pull）"
+  git -C "${REPO_DIR}" diff --quiet 2>/dev/null \
+    || echo "    注意：工作区有未提交改动，将一并构建进本次镜像（工作区全量构建）"
 fi
 
-# ---------- 2. 免密登录：需要时安装公钥 ----------
-ssh_probe() {
-  ssh -i "${SSH_KEY}" -o BatchMode=yes -o StrictHostKeyChecking=no \
-      -o UserKnownHostsFile="${KNOWN_HOSTS}" -o ConnectTimeout=8 \
-      -p "${FNOS_PORT}" "${FNOS_USER}@${FNOS_HOST}" 'echo ok' >/dev/null 2>&1
-}
+TAG="$(date +%Y%m%d-%H%M)"
 
-read_password() {
-  if [ -n "${TB_FNOS_PASSWORD:-}" ]; then
-    printf '%s' "${TB_FNOS_PASSWORD}"; return 0
-  fi
-  if [ -f "${CONFIG_FILE}" ]; then
-    # 不依赖 jq：凭据文件是扁平的 {"host":..,"username":..,"password":..}。
-    local pw host user
-    pw="$(sed -n 's/.*"password"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${CONFIG_FILE}" | head -n 1)"
-    host="$(sed -n 's/.*"host"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${CONFIG_FILE}" | head -n 1)"
-    user="$(sed -n 's/.*"\(username\|user\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' "${CONFIG_FILE}" | head -n 1)"
-    if [ -n "${pw}" ] && { [ -z "${host}" ] || [ "${host}" = "${FNOS_HOST}" ]; } \
-       && { [ -z "${user}" ] || [ "${user}" = "${FNOS_USER}" ]; }; then
-      printf '%s' "${pw}"; return 0
-    fi
-  fi
-  local pw
-  read -r -s -p "请输入 ${FNOS_USER}@${FNOS_HOST} 的 SSH 密码（仅本次使用，不保存）：" pw </dev/tty
-  echo >/dev/tty
-  printf '%s' "${pw}"
-}
-
-install_public_key() {
-  local password pubkey
-  password="$(read_password)"
-  [ -n "${password}" ] || fail "未取得 SSH 密码，无法安装公钥"
-
-  if [ ! -f "${SSH_KEY}" ]; then
-    log "生成本机部署密钥 ${SSH_KEY}"
-    mkdir -p "$(dirname "${SSH_KEY}")"
-    ssh-keygen -t ed25519 -N '' -C terminal-buddy-fnos-deploy -f "${SSH_KEY}" >/dev/null
-    chmod 600 "${SSH_KEY}"
-  fi
-  pubkey="$(cat "${SSH_KEY}.pub")"
-
-  # ssh 不会从非终端读取密码，用 SSH_ASKPASS 交给它。辅助脚本只在部署期间存在。
-  ASKPASS_HELPER="$(mktemp /tmp/tb-fnos-askpass.XXXXXX)"
-  chmod 700 "${ASKPASS_HELPER}"
-  printf '#!/bin/sh\nprintf "%%s\\n" %q\n' "${password}" > "${ASKPASS_HELPER}"
-  chmod 700 "${ASKPASS_HELPER}"
-
-  log "安装公钥到 ${FNOS_USER}@${FNOS_HOST} 的 ~/.ssh/authorized_keys（需要认证一次）"
-  local quoted
-  printf -v quoted '%q' "${pubkey}"
-  if ! SSH_ASKPASS="${ASKPASS_HELPER}" SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
-       ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile="${KNOWN_HOSTS}" \
-           -o ConnectTimeout=15 -o PreferredAuthentications=password -o PubkeyAuthentication=no \
-           -o NumberOfPasswordPrompts=1 -p "${FNOS_PORT}" "${FNOS_USER}@${FNOS_HOST}" \
-           "umask 077; mkdir -p ~/.ssh && chmod 700 ~/.ssh; touch ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; grep -qF -- ${quoted} ~/.ssh/authorized_keys || printf '%s\n' ${quoted} >> ~/.ssh/authorized_keys" \
-       >/dev/null 2>&1; then
-    rm -f "${ASKPASS_HELPER}"; ASKPASS_HELPER=""
-    fail "安装公钥失败：请确认 ${FNOS_USER}@${FNOS_HOST} 的密码正确、且该账号可用密码登录"
-  fi
-  rm -f "${ASKPASS_HELPER}"; ASKPASS_HELPER=""
-  ssh_probe || fail "公钥安装后仍无法免密登录，请检查远端 ~/.ssh 权限"
-  log "  ✓ 免密登录已就绪"
-}
-
-if [ ! -f "${SSH_KEY}" ] || ! ssh_probe; then
-  install_public_key
-else
-  log "免密认证通过（${FNOS_USER}@${FNOS_HOST}）"
-fi
-
-# ---------- 3. 构建镜像 ----------
-if [ "${DO_BUILD}" = "0" ]; then
-  log "跳过构建，复用飞牛上的现有镜像 ${IMAGE}"
-elif [ "${BUILD_LOCAL}" = "1" ]; then
-  log "本机构建镜像 ${IMAGE}（复用 Docker 层缓存，源码未变时几乎瞬时完成）"
+# ---------- 2. 本机构建镜像 ----------
+if [ "${MODE}" = build ] && [ "${DO_BUILD}" = "1" ]; then
+  echo "==> [2/${STEPS}] 本机构建镜像 ${IMAGE}（工作区全量构建，复用层缓存）"
   BEFORE_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}' 2>/dev/null || true)"
   if ! docker build -f "${REPO_DIR}/Dockerfile" -t "${IMAGE}" "${REPO_DIR}" 2>&1 | tail -n 15; then
-    fail "本机构建失败。可用 --build-on-nas 改在飞牛上构建，或用 --no-build 复用现有镜像"
+    fail "本机构建失败。可用 --no-build 复用现有镜像，或排查 Dockerfile / 源码错误"
   fi
-  AFTER_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}')"
-  if [ -n "${BEFORE_ID}" ] && [ "${BEFORE_ID}" = "${AFTER_ID}" ]; then
-    log "  镜像未变化（全部命中缓存）：${AFTER_ID:7:12}"
+  LOCAL_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}')"
+  if [ -n "${BEFORE_ID}" ] && [ "${BEFORE_ID}" = "${LOCAL_ID}" ]; then
+    log "  本机镜像未变化（全部命中缓存）：${LOCAL_ID:7:12}"
   else
-    log "  镜像已更新：${AFTER_ID:7:12}"
+    log "  本机镜像已更新：${LOCAL_ID:7:12}"
   fi
-else
-  log "跳过本机构建（--build-on-nas）：上传源码包，镜像在飞牛上编译（首次约 20-40 分钟，之后按源码指纹跳过）"
-fi
-
-# ---------- 4. 打包源码与镜像 ----------
-log "打包源码（排除 .git / node_modules / target / 构建产物）"
-rm -f "${SRC_TARBALL}"
-tar -czf "${SRC_TARBALL}" \
-  --exclude='./.git' --exclude='./.codegraph' --exclude='./.claude' \
-  --exclude='./node_modules' --exclude='*/node_modules' \
-  --exclude='./target' --exclude='*/target' \
-  --exclude='./dist' --exclude='*/dist' --exclude='./dist-web' --exclude='*/dist-web' \
-  --exclude='./terminal-buddy/web' \
-  --exclude='./server-data' --exclude='*/server-data' \
-  --exclude='./workspace' --exclude='./docs' --exclude='./design' \
-  --exclude='./terminal-buddy/src-tauri/resources' \
-  --exclude='./terminal-buddy/plugins' \
-  -C "${REPO_DIR}" .
-log "  源码包：$(du -h "${SRC_TARBALL}" | cut -f1)"
-
-UPLOAD_IMAGE=0
-if [ "${BUILD_LOCAL}" = "1" ] && [ "${DO_BUILD}" = "1" ]; then
-  LOCAL_IMAGE_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}')"
-  REMOTE_IMAGE_ID="$(ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile="${KNOWN_HOSTS}" \
-      -o LogLevel=ERROR -p "${FNOS_PORT}" "${FNOS_USER}@${FNOS_HOST}" \
-      "docker image inspect '${IMAGE}' --format '{{.Id}}' 2>/dev/null || true")"
-  if [ -n "${REMOTE_IMAGE_ID}" ] && [ "${REMOTE_IMAGE_ID}" = "${LOCAL_IMAGE_ID}" ]; then
-    log "飞牛上已有相同镜像（${LOCAL_IMAGE_ID:7:12}），跳过导出与上传（约省 158MB 传输）"
-  else
-    UPLOAD_IMAGE=1
-    STAGE_DIR="$(mktemp -d /tmp/tb-fnos-image.XXXXXX)"
-    log "导出镜像（docker save | gzip，约 1 分钟）"
-    docker save "${IMAGE}" | gzip -1 > "${STAGE_DIR}/image.tar.gz"
-    IMAGE_TARBALL="${STAGE_DIR}/image.tar.gz"
-    log "  镜像包：$(du -h "${IMAGE_TARBALL}" | cut -f1)"
+  # 远端已是同款镜像：跳过导出与传输（约省 160MB 局域网传输），仅幂等对齐容器。
+  if [ -n "${PREV_ID}" ] && [ "${PREV_ID}" = "${LOCAL_ID}" ]; then
+    echo "==> [3/${STEPS}] 飞牛上已是相同镜像，跳过导出与上传"
+    compose_up
+    health_check
+    finish "镜像未变化（${IMAGE} ${LOCAL_ID:7:12}），容器已按 compose 对齐"
+    exit 0
   fi
+elif [ "${MODE}" = build ]; then
+  log "跳过本机构建（--no-build），使用本机现有镜像 ${IMAGE}"
+  LOCAL_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}' 2>/dev/null)" \
+    || fail "本机也没有镜像 ${IMAGE}：先去掉 --no-build 构建一次"
 fi
 
-# ---------- 5. 上传到飞牛 ----------
-SCP_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile="${KNOWN_HOSTS}"
-          -o LogLevel=ERROR -P "${FNOS_PORT}")
-
-log "上传源码包与远端脚本到 ${FNOS_HOST}:/tmp"
-scp "${SCP_OPTS[@]}" "${SRC_TARBALL}" "${FNOS_USER}@${FNOS_HOST}:/tmp/terminal-buddy-src.tar.gz" \
-  || fail "上传失败，请检查网络与磁盘空间"
-scp "${SCP_OPTS[@]}" "${REPO_DIR}/scripts/deploy-fnos-remote.sh" \
-  "${FNOS_USER}@${FNOS_HOST}:${REMOTE_SH}" || fail "上传远端脚本失败"
-
-if [ "${UPLOAD_IMAGE}" = "1" ]; then
-  log "上传镜像包（$(du -h "${IMAGE_TARBALL}" | cut -f1)）"
-  scp "${SCP_OPTS[@]}" "${IMAGE_TARBALL}" "${FNOS_USER}@${FNOS_HOST}:/tmp/terminal-buddy-image.tar.gz" \
-    || fail "镜像上传失败，请检查网络与磁盘空间"
-fi
-
-# ---------- 6. 远端 sudo 执行 ----------
-SUDO_PASSWORD="$(read_password)"
-[ -n "${SUDO_PASSWORD}" ] || fail "未取得 sudo 密码"
-
-REMOTE_ARGS="${APP_DIR} ${DATA_DIR} ${HOME_DIR} ${WORKSPACE_DIR} ${HOST_PORT} ${CONTAINER} ${IMAGE} ${FNOS_USER}"
-REMOTE_FLAGS=""
-# BUILD_LOCAL=0（--build-on-nas）：让远端真正编译，传 --build-on-nas 走
-# 「在飞牛上本地构建」分支（远端那个标志名保持不变，语义即「在飞牛上构建」）。
-[ "${BUILD_LOCAL}" = "0" ] && [ "${DO_BUILD}" = "1" ] && REMOTE_FLAGS="${REMOTE_FLAGS} --build-on-nas"
-[ "${NO_BASE_IMAGE_BACKUP}" = "1" ] && REMOTE_FLAGS="${REMOTE_FLAGS} --no-base-image-backup"
-# 是否要求远端跳过构建：
-#   --no-build     -> 跳过，直接用远端现有镜像
-#   本机构建（默认 / --build-local）-> 本机已构建并上传镜像包，远端只需载入
-#   --build-on-nas -> 远端需要编译
-if [ "${DO_BUILD}" = "0" ] || [ "${BUILD_LOCAL}" = "1" ]; then
-  REMOTE_SKIP_BUILD=1
+# ---------- 3. 导出回滚 tar ----------
+if [ "${MODE}" = build ]; then
+  echo "==> [3/${STEPS}] 导出镜像 tar 到本机 ${TARDIR}（回滚留档）"
+  mkdir -p "${TARDIR}"
+  TAR="${TARDIR}/terminal-buddy_${TAG}.tar.gz"
+  docker save "${IMAGE}" | gzip -1 > "${TAR}"
+  gzip -t "${TAR}"                   # 校验落盘完整（磁盘写满/中断在此暴露）
+  echo "    镜像包：$(du -h "${TAR}" | cut -f1)  ->  ${TAR}"
 else
-  REMOTE_SKIP_BUILD=0
-fi
-# 远端可复用的条件：本次确实上传/确认了镜像。
-#   本机构建（默认 / --build-local）-> 本机已构建，远端镜像即所需镜像，无需再编译
-#   --build-on-nas -> 远端必须真正编译，不能标记为 current
-if [ "${BUILD_LOCAL}" = "1" ] && [ "${DO_BUILD}" = "1" ]; then
-  REMOTE_IMAGE_CURRENT=1
-else
-  REMOTE_IMAGE_CURRENT=0
+  TAR="${LOAD_TAR}"
+  echo "==> [1/${STEPS}] 使用既有 tar 包：${TAR}"
 fi
 
-# 远端脚本按「镜像包文件是否存在」决定是否 docker load，因此这里必须显式给出路径：
-# 只有本次真的上传了镜像包才指向它，否则指向一个不存在的路径，避免 /tmp 里上次
-# 残留的旧镜像包被误当成新镜像载入（默认在飞牛构建时尤其致命）。
-if [ "${UPLOAD_IMAGE:-0}" = "1" ]; then
-  REMOTE_IMAGE_TARBALL="/tmp/terminal-buddy-image.tar.gz"
-else
-  REMOTE_IMAGE_TARBALL="/tmp/terminal-buddy-image.absent"
+# ---------- 4. 推送飞牛并 docker load ----------
+echo "==> [4/${STEPS}] 推送飞牛并 docker load"
+scp -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+    "${TAR}" "${FNOS_SSH}:${REMOTE_TARBALL}" || fail "镜像上传失败，请检查网络与飞牛磁盘空间"
+rsh bash -s -- "${REMOTE_TARBALL}" "${IMAGE}" <<'EOF'
+set -e
+gzip -t "$1"                          # 校验传输完整（scp 中断/磁盘写满在此暴露）
+out=$(docker load -i "$1"); echo "$out" >&2
+# tr -d '\r'：docker load 的进度输出可能带 CR，避免污染解析出的镜像名
+img=$(echo "$out" | tr -d '\r' | sed -n 's/^Loaded image: //p' | tail -n1)
+[ -n "$img" ] || { echo "!! tar 包内未解析出镜像名（是否为本脚本导出的包？）" >&2; exit 1; }
+# $2 是完整 repo:tag，要求 tar 内镜像与之完全一致（其他 tag 也拒绝，防误部署）
+if [ "$img" != "$2" ]; then
+  echo "!! tar 包里是 $img，不是 $2，拒绝部署" >&2; exit 1
 fi
+rm -f "$1"
+EOF
 
-REMOTE_CMD="sed -i 's/\r\$//' ${REMOTE_SH}; \
-TB_SKIP_BUILD=${REMOTE_SKIP_BUILD} TB_IMAGE_CURRENT=${REMOTE_IMAGE_CURRENT} \
-TB_IMAGE_TARBALL=${REMOTE_IMAGE_TARBALL} \
-sudo -E -S -p '' bash ${REMOTE_SH} ${REMOTE_ARGS}${REMOTE_FLAGS}"
+# ---------- 5. 重建容器（远端 compose 为权威） ----------
+echo "==> [5/${STEPS}] 重建容器（远端 compose）"
+compose_up
 
-log "在飞牛上执行远端部署脚本"
-if ! printf '%s\n' "${SUDO_PASSWORD}" | ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no \
-     -o UserKnownHostsFile="${KNOWN_HOSTS}" -o LogLevel=ERROR -p "${FNOS_PORT}" \
-     "${FNOS_USER}@${FNOS_HOST}" "${REMOTE_CMD}"; then
-  fail "远端部署失败，详见上方输出。排查：ssh ${FNOS_USER}@${FNOS_HOST} 'docker logs --tail 100 ${CONTAINER}'"
+# ---------- 6. 健康检查 + 清理 ----------
+health_check
+if [ "${MODE}" = build ]; then
+  echo "==> [6/${STEPS}] 清理旧 tar（本机保留最近 ${KEEP_TAR} 个）"
+  ls -t "${TARDIR}"/terminal-buddy_*.tar.gz 2>/dev/null | tail -n +$((KEEP_TAR + 1)) | xargs -r rm -f \
+    || echo "!! 本机旧 tar 包清理失败（不影响本次部署）" >&2
 fi
-
-# ---------- 7. 部署后自检 ----------
-BASE_URL="http://${FNOS_HOST}:${HOST_PORT}"
-log "部署后自检 ${BASE_URL}"
-
-HEALTH="$(curl -s -m 8 "${BASE_URL}/api/health" || true)"
-[ "${HEALTH}" = "正常" ] || fail "健康检查返回异常：${HEALTH:-（无响应）}"
-log "  ✓ /api/health -> ${HEALTH}"
-
-AUTH_STATUS="$(curl -s -m 8 "${BASE_URL}/api/auth/status" || true)"
-log "  ✓ /api/auth/status -> ${AUTH_STATUS}"
-case "${AUTH_STATUS}" in
-  *'"setupRequired":true'*) log "  · 尚未初始化，首次打开网页时创建管理员密码" ;;
-esac
-
-RUNTIME="$(curl -s -m 8 "${BASE_URL}/api/runtime" || true)"
-log "  ✓ /api/runtime -> ${RUNTIME}"
-
-CODE="$(curl -s -m 8 -o /dev/null -w '%{http_code}' "${BASE_URL}/api/terminals" || echo 000)"
-[ "${CODE}" = "401" ] || warn "未带 token 访问 /api/terminals 返回 ${CODE}（预期 401，鉴权可能未生效）"
-
-ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile="${KNOWN_HOSTS}" \
-    -o LogLevel=ERROR -p "${FNOS_PORT}" "${FNOS_USER}@${FNOS_HOST}" \
-    "docker ps --filter name=${CONTAINER} --format '{{.Names}} | {{.Status}} | {{.Ports}}'"
-
-echo
-log "部署完成"
-echo "  访问地址 : ${BASE_URL}/"
-echo "  登录账号 : admin（首次打开网页时设置密码，至少 8 位）"
-echo "  应用目录 : ${APP_DIR}"
-echo "  数据目录 : ${DATA_DIR}      -> 容器 /data（含 jwt.key / server.key，备份必须包含）"
-echo "  用户目录 : ${HOME_DIR}      -> 容器 /home/terminalbuddy（Claude CLI 装在这里）"
-echo "  工作区   : ${WORKSPACE_DIR} -> 容器内同路径"
-echo "  查看日志 : ssh ${FNOS_USER}@${FNOS_HOST} 'docker logs -f --tail 100 ${CONTAINER}'"
-echo "  重新部署 : ./xcj/deploy-fnos.sh --no-build     # 跳过构建，仅重建容器"
+PREV_SHORT="无"
+[ -n "${PREV_ID}" ] && PREV_SHORT="${PREV_ID:7:12}"
+finish "${IMAGE} 已上线（原镜像 ${PREV_SHORT}）"

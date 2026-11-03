@@ -18,9 +18,9 @@
 #
 # 飞牛（fnos）流程：
 #   直接复用 xcj/deploy-fnos.sh：本机 docker build 镜像（BuildKit 缓存复用）→
-#   与远端镜像 ID 比对，一致则跳过上传 → 飞牛载入镜像 → 重建容器 → 健康检查。
-#   --host / --listen-port / --no-build / --build-on-nas 等参数原样透传，
-#   SSH 密钥与 sudo 凭据见该脚本头部说明。
+#   与远端镜像 ID 比对，一致则跳过上传 → 飞牛 docker load → 远端 compose 重建容器 →
+#   健康检查。SSH 走 ~/.ssh/config 别名 fnos（免密，BatchMode），--no-build /
+#   --no-pull 等参数原样透传，详见该脚本头部说明。
 #
 # 权限说明：
 #   构建与文件替换以源码属主身份执行（root 运行时自动降权，避免产物属主漂移）；
@@ -64,8 +64,8 @@ usage() {
   --health-timeout N   本机重启后健康检查最长等待秒数，默认 120
   -h, --help           显示帮助
 
-  其余参数原样透传给 deploy-fnos.sh：--host / --listen-port / --no-build /
-  --build-on-nas / --config 等（仅目标包含 fnos 时使用）。
+  其余参数原样透传给 deploy-fnos.sh：--no-build / --no-pull / --load <tar> 等
+  （仅目标包含 fnos 时使用）。
 
 流程：git pull → 本机构建（网页前端 + server 二进制）→ 产物指纹一致则跳过重启；
 有变化时备份并原子替换 → systemctl restart → 健康检查（/api/health），失败自动回滚。
@@ -309,8 +309,6 @@ spawn_background_worker() {
     printf 'SRC_OWNER=%q\n' "${SRC_OWNER}"
     printf 'RUN_FNOS=%q\n' "${RUN_FNOS}"
     printf 'HELPER_PASSTHROUGH=%q\n' "${HELPER_PASSTHROUGH}"
-    printf 'TB_FNOS_SSH_KEY=%q\n' "${TB_FNOS_SSH_KEY:-${HOME}/.ssh/terminal_buddy_fnos_deploy}"
-    printf 'TB_FNOS_CONFIG=%q\n' "${TB_FNOS_CONFIG:-${HOME}/.codex/private/fnos/config.json}"
     cat <<'WORKER'
 # 由 update.sh 生成的后台更新任务：脱离会话执行「重启 → 健康检查 → 回滚 → 飞牛部署」。
 set -euo pipefail
@@ -344,9 +342,8 @@ if wait_health; then
     wlog "按 --keep-rollback 保留回滚材料"
   fi
   if [ "${RUN_FNOS}" = "1" ]; then
-    wlog "继续飞牛 fnOS 部署（凭据不足会在此失败，届时在交互终端重跑 bash xcj/update.sh fnos）"
-    export TB_FNOS_SSH_KEY TB_FNOS_CONFIG
-    if eval "bash '${REPO_DIR}/xcj/deploy-fnos.sh' --no-pull ${HELPER_PASSTHROUGH}"; then
+    wlog "继续飞牛 fnOS 部署（以源码属主身份执行：SSH 走其 ~/.ssh/config 的 fnos 别名）"
+    if eval "own bash '${REPO_DIR}/xcj/deploy-fnos.sh' --no-pull ${HELPER_PASSTHROUGH}"; then
       wlog "飞牛部署完成"
     else
       wlog "飞牛部署失败（本机更新已完成），可重跑：bash xcj/update.sh fnos"
@@ -445,11 +442,10 @@ update_fnos() {
   for c in ssh scp tar curl; do
     command -v "${c}" >/dev/null 2>&1 || fail "未检测到 ${c}（飞牛部署需要）"
   done
-  # 凭据路径按当前用户解析为绝对路径后再导出，兼容各种运行身份。
-  export TB_FNOS_SSH_KEY="${TB_FNOS_SSH_KEY:-${HOME}/.ssh/terminal_buddy_fnos_deploy}"
-  export TB_FNOS_CONFIG="${TB_FNOS_CONFIG:-${HOME}/.codex/private/fnos/config.json}"
-  log "开始飞牛 fnOS 更新（复用 deploy-fnos.sh；源码指纹一致时远端跳过构建）"
-  bash "${REPO_DIR}/xcj/deploy-fnos.sh" --no-pull ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"} \
+  # 以源码属主身份执行：deploy-fnos.sh 的 SSH 走该用户 ~/.ssh/config 的 fnos 别名，
+  # docker 构建也以该用户跑（root 没有对应 ssh 配置与 docker 组成员关系）。
+  log "开始飞牛 fnOS 更新（复用 deploy-fnos.sh：本机构建 → 推送镜像 → compose 重建）"
+  as_owner bash "${REPO_DIR}/xcj/deploy-fnos.sh" --no-pull ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"} \
     || fail "飞牛部署失败，详见上方 deploy-fnos.sh 输出"
 }
 
