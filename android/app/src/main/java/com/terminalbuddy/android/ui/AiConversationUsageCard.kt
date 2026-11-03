@@ -64,11 +64,14 @@ import kotlin.math.roundToInt
     )
     val usage = session.usage
     val contextUsage = usage?.context
-    // 文字沿用原有的已知值记忆：刷新缺失时保留上一次，新会话预置的 0 仍显示 0K。
+    // 已用量记忆：刷新缺失时保留上一次；拿到过正值之后，0 不再覆盖，
+    // 避免回合切换 / 上下文压缩期间显示从 250K 掉成 0K 再跳回去。
     val used = rememberKnownUsageValue(session.id,
-        contextUsage?.takeUnless { it.updating }?.usedTokens?.takeIf { it >= 0 })
+        contextUsage?.takeUnless { it.updating }?.usedTokens?.takeIf { it >= 0 },
+        rejectZeroAfterPositive = true)
     val capacity = rememberKnownUsageValue(session.id, contextUsage?.windowTokens?.takeIf { it > 0 })
-    val rawRatio = if (used != null && capacity != null && capacity > 0) used.toDouble() / capacity else null
+    val rawRatio = if (used != null && used > 0 && capacity != null && capacity > 0)
+        used.toDouble() / capacity else null
     // -1 表示本会话还没拿到过有效比例；Float 可被 rememberSaveable 直接保存。
     val knownRatio = rememberSaveable(session.id) { mutableStateOf(-1f) }
     // 没拿到值、刷新中或比例为 0 时都不推进进度条，沿用上一次有效比例，
@@ -77,7 +80,7 @@ import kotlin.math.roundToInt
     SideEffect { ratio?.let { if (it.toFloat() != knownRatio.value) knownRatio.value = it.toFloat() } }
     val percent = when {
         ratio != null -> (ratio * 100).roundToInt().toString()
-        rawRatio != null -> "0"
+        used != null -> "0"
         else -> "—"
     }
     val context = if (contextUsage?.updating == true && used == null) "更新中(${formatAiTokensK(used)}/${formatAiTokensK(capacity)})"
@@ -226,11 +229,25 @@ private fun Modifier.aiUsageReveal(expansion: State<Float>): Modifier = clipToBo
     }
 }
 
-/** 按会话记住已知用量；刷新缺失时保持显示，新值到达后直接替换。 */
-@Composable private fun rememberKnownUsageValue(sessionId: String, value: Long?): Long? {
+/**
+ * 按会话记住已知用量；刷新缺失时保持显示，新值到达后直接替换。
+ * `rejectZeroAfterPositive` 用于上下文已用量：一旦拿到过正值，之后的 0 视为统计缺失，
+ * 不再覆盖已知值，否则已用会显示成 `0K`，等下一份快照才跳回真实数值。
+ */
+@Composable private fun rememberKnownUsageValue(
+    sessionId: String, value: Long?, rejectZeroAfterPositive: Boolean = false,
+): Long? {
     var previous by rememberSaveable(sessionId) { mutableStateOf(value) }
-    SideEffect { if (value != null) previous = value }
-    return value ?: previous
+    val accepted = acceptKnownUsage(previous, value, rejectZeroAfterPositive)
+    SideEffect { if (accepted != null) previous = accepted }
+    return accepted ?: previous
+}
+
+/** 返回本帧应当展示的用量：缺失返回 null 表示沿用上一次；reject 模式下 0 不算有效新值。 */
+internal fun acceptKnownUsage(previous: Long?, value: Long?, rejectZeroAfterPositive: Boolean = false): Long? {
+    if (value == null) return null
+    if (rejectZeroAfterPositive && value <= 0L && (previous ?: 0L) > 0L) return null
+    return value
 }
 
 /**
