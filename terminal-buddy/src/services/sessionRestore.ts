@@ -13,7 +13,8 @@ import { loadSavedTabs, saveTabsToStorage, useAppStore } from '../stores/appStor
 import { flushPendingSaveTabsIfAny } from '../stores/slices/sessionsSlice';
 import { getAppSettings, isAppSettingsInitialized } from '../utils/settings';
 import { containsClaudeRef, isClaudeCommand } from '../utils/claudeLaunch';
-import { buildCodexResumeCommand, DEFAULT_CODEX_COMMAND } from '../utils/codexLaunch';
+import { buildCodexResumeCommand } from '../utils/codexLaunch';
+import { currentCodexCommand } from '../utils/agentCommands';
 import { showAlert } from './dialog';
 import { PRESET_THEMES } from '../types';
 import type { AgentSessionBinding, TerminalSession } from '../types';
@@ -103,7 +104,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
       const resumeParam = `--resume ${binding.sessionId}`;
       launchParams = launchParams ? `${launchParams} ${resumeParam}` : resumeParam;
     } else {
-      const command = buildCodexResumeCommand(binding.sessionId, profile?.startupCommands ?? (baseParams || DEFAULT_CODEX_COMMAND));
+      const command = buildCodexResumeCommand(binding.sessionId, profile?.startupCommands ?? (baseParams || currentCodexCommand()));
       if (tab.profileId) {
         launchParams = command;
         launchMode = 'independent';

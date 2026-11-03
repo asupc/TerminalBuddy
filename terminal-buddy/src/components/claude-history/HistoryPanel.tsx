@@ -43,6 +43,7 @@ import {
 } from './resumeClaudeSession';
 import type { ExtraParamPreset, Project, SessionHistoryProvider } from '../../types';
 import { sessionHistory } from '../../services/sessionHistory';
+import { getAgentCliEnvironment } from '../../services/agentCli';
 import { resumedCodexSessionId } from '../../utils/codexLaunch';
 import './HistoryPanel.css';
 
@@ -126,16 +127,43 @@ const MenuItem: FC<MenuItemProps> = ({ icon: Icon, label, hint, danger, preset, 
 );
 
 /** Claude Code / Codex 会话面板：列表、检索、回放与恢复共用同一套交互。 */
-const HISTORY_PROVIDERS: SessionHistoryProvider[] = ['claude', 'codex'];
-
 export const HistoryPanel: FC<HistoryPanelProps> = props => {
   const [provider, setProvider] = useState<SessionHistoryProvider>('claude');
+  const [codexAvailable, setCodexAvailable] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const apply = (environment: { codex?: { status: string } }) => {
+      if (cancelled) return;
+      setCodexAvailable(
+        environment.codex?.status === 'installed'
+        || environment.codex?.status === 'updating'
+        || environment.codex?.status === 'installing',
+      );
+    };
+    void getAgentCliEnvironment().then(apply).catch(() => {});
+    const onChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ codex?: { status: string } }>).detail;
+      if (detail) apply(detail);
+    };
+    window.addEventListener('agent-cli-status-changed', onChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('agent-cli-status-changed', onChange);
+    };
+  }, []);
+  const providers = useMemo<SessionHistoryProvider[]>(() => [
+    'claude',
+    ...(codexAvailable ? ['codex' as const] : []),
+  ], [codexAvailable]);
+  useEffect(() => {
+    if (!providers.includes(provider)) setProvider('claude');
+  }, [providers, provider]);
   return (
     <HistoryPanelContent
       key={provider}
       {...props}
       provider={provider}
-      providers={HISTORY_PROVIDERS}
+      providers={providers}
       onProviderChange={setProvider}
     />
   );

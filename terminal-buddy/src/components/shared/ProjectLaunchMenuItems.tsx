@@ -3,6 +3,7 @@ import { useAppStore } from '../../stores/appStore';
 import { openProjectAgentTerminal, openTerminalInDir } from '../../utils/openTerminalInDir';
 import { matchingProjectPresets } from '../../utils/startupPresets';
 import { projectModelSources, type Project } from '../../types';
+import { useAgentAvailability } from '../../hooks/useAgentAvailability';
 import { ClaudeModelMenuSection } from './ClaudeModelMenuSection';
 
 interface ProjectLaunchMenuItemsProps {
@@ -22,6 +23,8 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
   const profiles = useAppStore(s => s.profiles);
   const refreshClaudeLaunchTargets = useAppStore(s => s.refreshClaudeLaunchTargets);
   const refreshCodexLaunchTargets = useAppStore(s => s.refreshCodexLaunchTargets);
+  // 环境检测结果：未安装的 Agent 不出现在项目右键菜单里（检测返回前视为可用）。
+  const agentAvailability = useAgentAvailability();
 
   // 模型菜单数据源：首次打开时加载，之后用缓存（与 HistoryPanel 一致）。
   useEffect(() => {
@@ -60,7 +63,9 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
           </span>
         </div>
       ))}
-      {projectModelSources(project).map(source => (
+      {projectModelSources(project)
+        .filter(source => agentAvailability?.[source] ?? true)
+        .map(source => (
         <ClaudeModelMenuSection
           key={source}
           source={source}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import App from '../../App';
 import { getToken, setToken, setServerPlatform, setWindowsBuildNumber, setDockerRuntime, setServerUsername } from '../../services/browser/connection';
+import { useAppStore } from '../../stores/appStore';
 import './WebEntry.css';
 
 export default function WebEntry() {
@@ -36,11 +37,16 @@ export default function WebEntry() {
     const runtimeRequest = fetch('/api/runtime').then(async response => {
       if (!response.ok) throw new Error('无法连接服务端，请先启动独立 Web 服务');
       if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('当前后端版本不支持完整网页界面，请启动此分支的独立服务端');
-      const runtime = await response.json() as { platform: string; fullInterface?: boolean; windowsBuildNumber?: number | null; isDocker?: boolean };
+      const runtime = await response.json() as { platform: string; fullInterface?: boolean; windowsBuildNumber?: number | null; isDocker?: boolean; agentCommands?: { claude: string; codex: string } };
       if (!runtime.fullInterface) throw new Error('服务端版本不支持完整网页界面，请启动此分支的服务端');
       setServerPlatform(runtime.platform);
       setWindowsBuildNumber(runtime.windowsBuildNumber ?? null);
       setDockerRuntime(runtime.isDocker === true);
+      // Agent 基础启动命令经 /api/runtime 带出，浏览器模式免拉全量设置。
+      if (runtime.agentCommands) useAppStore.getState().setAgentCommands({
+        claude: runtime.agentCommands.claude ?? '',
+        codex: runtime.agentCommands.codex ?? '',
+      });
     });
     const statusRequest = fetch('/api/auth/status').then(async response => {
       if (!response.ok) throw new Error('无法读取管理员初始化状态');

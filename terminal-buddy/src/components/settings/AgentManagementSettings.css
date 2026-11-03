@@ -1,0 +1,380 @@
+.container-environment-settings {
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.container-environment-list {
+  margin-bottom: 0;
+}
+
+.container-environment-toolbar {
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 14px;
+}
+
+
+.container-environment-tool {
+  padding: 12px 14px;
+}
+
+.container-environment-tool + .container-environment-tool {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.container-environment-tool-header {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.container-environment-tool-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+.container-environment-tool-details {
+  min-width: 0;
+}
+
+.container-environment-tool-name {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.container-environment-tool-name strong {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.container-environment-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 2px;
+}
+
+.container-environment-version {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.container-environment-version code {
+  color: var(--text-primary);
+  font-size: inherit;
+}
+
+.container-environment-update {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.container-environment-update svg {
+  flex-shrink: 0;
+}
+
+.container-environment-update.available,
+.container-environment-update.checking {
+  color: var(--accent);
+}
+
+.container-environment-update.upToDate,
+.container-environment-update.ahead {
+  color: var(--success);
+}
+
+.container-environment-controls {
+  display: flex;
+  width: 220px;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+
+.container-environment-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 88px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.container-environment-status svg {
+  flex-shrink: 0;
+}
+
+.container-environment-status.installed {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.container-environment-status.failed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.container-environment-status.installing,
+.container-environment-status.updating {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.container-environment-hint {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.container-environment-hint code {
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.container-environment-footer {
+  margin-top: 10px;
+}
+
+.container-environment-error {
+  max-height: 140px;
+  overflow: auto;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.container-environment-check-error {
+  margin: 10px 14px 0;
+}
+
+.container-environment-install-error {
+  margin: 8px 0 0 44px;
+}
+
+.container-environment-action {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 88px;
+  height: var(--control-height-sm);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.container-environment-action:hover:not(:disabled) {
+  background: var(--list-hover-bg);
+}
+
+.container-environment-action.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.container-environment-action.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.container-environment-action:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.container-environment-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.container-environment-spin {
+  animation: container-environment-spin 1s linear infinite;
+}
+
+@keyframes container-environment-spin {
+  to { transform: rotate(360deg); }
+}
+
+@container (max-width: 560px) {
+  .container-environment-tool-header {
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 8px 12px;
+  }
+
+  .container-environment-controls {
+    grid-column: 2;
+    width: auto;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .container-environment-spin { animation: none; }
+}
+
+/* ===== 基础启动命令：跟随各自的命令行工具卡片 ===== */
+.agent-management-settings { display: flex; flex-direction: column; gap: 14px; }
+.agent-command-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-subtle);
+}
+.agent-command-label { flex-shrink: 0; white-space: nowrap; color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.agent-command-editor { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.agent-command-editor input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-height-md);
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.agent-command-editor input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.agent-command-editor input:disabled { opacity: 0.6; }
+.agent-command-saved { color: var(--success, #56d364); font-size: 12.5px; }
+
+@container (max-width: 560px) {
+  .agent-command-editor { flex-wrap: wrap; }
+  .agent-command-label { flex-basis: 100%; }
+  .agent-command-editor input { flex-basis: 100%; }
+}
+
+/* ===== Agent 管理页：每个工具独立成卡、品牌标与内联版本 ===== */
+.agent-cli-list .container-environment-tool {
+  margin: 0 12px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+
+.agent-cli-list .container-environment-tool:first-of-type {
+  margin-top: 12px;
+}
+
+/* 覆盖通用列表的细线分隔：卡片自身有完整边框。 */
+.agent-cli-list .container-environment-tool + .container-environment-tool {
+  border-top: 1px solid var(--border);
+}
+
+.agent-cli-list .container-environment-hint {
+  margin: 2px 0 0;
+}
+
+.agent-cli-list .container-environment-hint:empty {
+  display: none;
+}
+
+.agent-cli-version {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: nowrap;
+}
+
+.agent-cli-version-muted {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+/* 品牌标底衬：Claude 星芒内嵌官方原色，仅配淡色底衬；Codex 六瓣结用 currentColor 染 OpenAI 绿。 */
+.agent-cli-list .agent-cli-claude .container-environment-tool-icon {
+  background: color-mix(in srgb, #d97757 12%, transparent);
+}
+
+.agent-cli-list .agent-cli-codex .container-environment-tool-icon {
+  color: #10a37f;
+  background: color-mix(in srgb, #10a37f 12%, transparent);
+}
+
+.agent-cli-list .container-environment-tool-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.agent-download-settings {
+  padding: 14px;
+}
+
+.agent-download-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.agent-download-source-row select {
+  max-width: 100%;
+  min-height: var(--control-height-sm);
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.agent-download-source-row select:disabled {
+  opacity: .55;
+}
+
+.agent-download-source-row select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

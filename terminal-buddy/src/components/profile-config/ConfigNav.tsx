@@ -6,7 +6,8 @@ import { matchingStartupPresets } from '../../utils/startupPresets';
 import { fitContextMenuToViewport } from '../../utils/contextMenu';
 import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import { buildCodexRefCommand, isCodexCommand } from '../../utils/codexLaunch';
-import { DEFAULT_CLAUDE_COMMAND, inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
+import { inheritableClaudeArgs, isClaudeCommand, isModelRefLocalType } from '../../utils/claudeLaunch';
+import { currentClaudeCommand } from '../../utils/agentCommands';
 import type { EnabledAgents, ExtraParamMode, Profile } from '../../types';
 import { projectEnabledAgents } from '../../types';
 import { TreeView, type TreeItem } from '../file-explorer/TreeView';
@@ -333,7 +334,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
    * 原 claude 命令的参数（如 --dangerously-skip-permissions）继承到引用命令后。 */
   const startProfileWithModel = (profile: Profile, providerId: string, modelId: string) => {
     closeContextMenu();
-    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, DEFAULT_CLAUDE_COMMAND)), undefined, undefined, undefined, undefined, 'independent');
+    onStartTerminal(profile, buildClaudeRefCommand(providerId, modelId, inheritableClaudeArgs(profile.startupCommands, currentClaudeCommand())), undefined, undefined, undefined, undefined, 'independent');
   };
 
   const startProfileWithCodexModel = (profile: Profile, providerId: string, modelId: string) => {
@@ -720,7 +721,7 @@ export const ConfigNav: FC<ConfigPanelProps> = ({
                   Codex
                 </label>
               </div>
-              <small>右键项目时可按启用的 Agent 展开供应商与模型启动。</small>
+              <small>右键项目时可按启用的 Agent 展开供应商与模型启动；基础命令在设置 → Agent 管理中配置。</small>
             </div>
             {projectError && <div className="error" role="alert">{projectError}</div>}
           </form>

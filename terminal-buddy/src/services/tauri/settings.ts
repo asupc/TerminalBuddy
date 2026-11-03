@@ -8,6 +8,17 @@ export interface VsCodeTerminalSupport {
   nodeVersion: string | null;
 }
 
+/** Agent 管理中的基础启动命令；空串表示使用内置默认。 */
+export interface AgentCommands {
+  claude: string;
+  codex: string;
+}
+
+export type AgentDownloadSource = 'npmmirror' | 'official';
+
+export const saveAgentDownloadSource = (source: AgentDownloadSource) =>
+  invoke<void>('save_agent_download_source', { source });
+
 export async function getBackendAppSettings(): Promise<{
   closeBehavior: 'exit' | 'tray';
   launchWindowMode: 'windowed' | 'maximized';
@@ -20,8 +31,14 @@ export async function getBackendAppSettings(): Promise<{
   showTaskSummary: boolean;
   singleInstance: boolean;
   claudeHookConfigDir: string | null;
+  agentCommands: AgentCommands;
+  agentDownloadSource?: AgentDownloadSource;
 }> {
   return invoke('get_app_settings');
+}
+
+export async function saveAgentCommands(claude: string, codex: string): Promise<void> {
+  return invoke('save_agent_commands', { claude, codex });
 }
 
 export async function saveCloseBehavior(behavior: 'exit' | 'tray'): Promise<void> {

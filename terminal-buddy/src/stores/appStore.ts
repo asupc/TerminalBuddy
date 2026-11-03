@@ -432,6 +432,9 @@ export interface AppState {
 	clearCompletedTransfersByProfile: (profileId: string) => void;
 
 	// Claude 模型启动：右键菜单数据源（挂载 + 供应商变更时刷新，右键打开时用缓存）
+	/** Agent 管理的基础启动命令（空串 = 内置默认），供项目模型启动与历史恢复继承参数。 */
+	agentCommands: { claude: string; codex: string };
+	setAgentCommands: (commands: { claude: string; codex: string }) => void;
 	codexProviderState: CodexProviderState | null;
 	refreshCodexLaunchTargets: () => Promise<void>;
 	setCodexProviderState: (state: CodexProviderState) => void;

@@ -240,6 +240,12 @@ function App() {
           singleInstance: backend.singleInstance,
           claudeHookConfigDir: backend.claudeHookConfigDir ?? settings.claudeHookConfigDir,
         };
+        // Agent 基础启动命令（后端为数据源；浏览器模式在 WebEntry 里经 /api/runtime 提前写入）
+        const commands = backend.agentCommands ?? { claude: '', codex: '' };
+        useAppStore.getState().setAgentCommands({
+          claude: commands.claude ?? '',
+          codex: commands.codex ?? '',
+        });
         saveAppSettings(synced);
         setEnableTabNav(synced.enableTabNavigation);
         useAppStore.setState({
