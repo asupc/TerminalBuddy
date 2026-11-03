@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TerminalBuddy · 飞牛 fnOS 远端部署脚本
 #
-# 由 scripts/deploy-fnos.sh 上传到 /tmp 后以 root 执行（飞牛默认禁止 root 登录，
+# 由 xcj/deploy-fnos.sh 上传到 /tmp 后以 root 执行（飞牛默认禁止 root 登录，
 # 因此由普通管理员账号通过 sudo 调用）。职责：
 #   1. 校验 Docker / Compose / socket
 #   2. 准备应用目录与属主，并以容器内 uid 实测写入权限（飞牛 /vol1 走 TrimACL）
@@ -12,7 +12,7 @@
 # 用法：
 #   sudo bash deploy-fnos-remote.sh APP_DIR DATA_DIR HOME_DIR WORKSPACE_DIR HOST_PORT CONTAINER IMAGE DEPLOY_USER [--build-on-nas] [--no-base-image-backup]
 #
-# 环境变量（由 sudo 透传，见 scripts/deploy-fnos.sh 的 sudo -E）：
+# 环境变量（由 sudo 透传，见 xcj/deploy-fnos.sh 的 sudo -E）：
 #   TB_SKIP_BUILD=1      跳过构建/载入，直接用现有镜像重建容器
 #   TB_IMAGE_TARBALL     镜像包路径，默认 /tmp/terminal-buddy-image.tar.gz
 

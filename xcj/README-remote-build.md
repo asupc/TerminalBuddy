@@ -16,14 +16,14 @@
 ## 日常使用
 
 ```bash
-./scripts/remote-build.sh win        # 远程构建 Windows 单文件 exe，产物回传 dist/
-./scripts/remote-build.sh android    # 远程构建 Android Release APK，产物回传 dist/
-./scripts/remote-build.sh sync       # 只同步源码不构建
-./scripts/remote-build.sh win --rebuild   # 参数透传给底层构建脚本
+./xcj/remote-build.sh win        # 远程构建 Windows 单文件 exe，产物回传 dist/
+./xcj/remote-build.sh android    # 远程构建 Android Release APK，产物回传 dist/
+./xcj/remote-build.sh sync       # 只同步源码不构建
+./xcj/remote-build.sh win --rebuild   # 参数透传给底层构建脚本
 ```
 
 流程：tar-over-ssh 全量同步源码（排除 node_modules / target 等大目录，仅 ~13MB）
-→ 远程执行 `scripts/build-windows-exe.sh` / `scripts/build-android.sh`（原样复用，
+→ 远程执行 `xcj/build-windows-exe.sh` / `xcj/build-android.sh`（原样复用，
 无任何修改）→ 产物 tar 回传本仓库 `dist/`。
 
 增量编译缓存在 Debian 的 Docker 命名卷中（`terminal-buddy-win-cache` /

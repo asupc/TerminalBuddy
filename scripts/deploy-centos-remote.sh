@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TerminalBuddy · CentOS 目标机部署脚本
 #
-# 由 scripts/deploy-centos.sh 上传到 /tmp 后以 root 执行（CentOS 允许 root 直连，无需 sudo）。
+# 由 xcj/deploy-centos.sh 上传到 /tmp 后以 root 执行（CentOS 允许 root 直连，无需 sudo）。
 # 职责：
 #   1. 校验 Docker / Compose / socket
 #   2. 解压源码到 APP_DIR/src
@@ -15,7 +15,7 @@
 # 用法：
 #   sudo bash deploy-centos-remote.sh APP_DIR DATA_DIR HOME_DIR WORKSPACE_DIR HOST_PORT BIND_ADDRESS CONTAINER IMAGE USERNAME DOCKER_SOCKET
 #
-# 环境变量（由 scripts/deploy-centos.sh 透传）：
+# 环境变量（由 xcj/deploy-centos.sh 透传）：
 #   TB_SKIP_BUILD=1       跳过构建，直接用现有镜像重建容器
 #   TB_IMAGE_TARBALL      镜像包路径，默认 /tmp/terminal-buddy-image.tar.gz
 #   TB_IMAGE_CURRENT=1    调用方已确认目标机镜像与本次构建结果一致，无需再编译

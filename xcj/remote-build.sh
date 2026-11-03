@@ -10,13 +10,13 @@
 #
 # 依赖：
 #   - ~/.ssh/config 中的 debian99 别名（IdentityFile 指向部署密钥）
-#   - 构建主机上已 import 构建镜像并准备缓存卷（详见 scripts/README-remote-build.md）
+#   - 构建主机上已 import 构建镜像并准备缓存卷（详见 xcj/README-remote-build.md）
 #
 # 用法：
-#   ./scripts/remote-build.sh win              远程构建 Windows 单文件 exe
-#   ./scripts/remote-build.sh android          远程构建 Android Release APK
-#   ./scripts/remote-build.sh win --rebuild    其余参数透传给远端构建脚本
-#   ./scripts/remote-build.sh sync             只同步源码，不构建
+#   ./xcj/remote-build.sh win              远程构建 Windows 单文件 exe
+#   ./xcj/remote-build.sh android          远程构建 Android Release APK
+#   ./xcj/remote-build.sh win --rebuild    其余参数透传给远端构建脚本
+#   ./xcj/remote-build.sh sync             只同步源码，不构建
 #
 # 环境变量：
 #   TERMINAL_BUDDY_REMOTE_HOST  远程主机 SSH 别名，默认 debian99
@@ -30,7 +30,7 @@ REMOTE_DIR='${HOME}/tb-build'
 
 usage() {
     cat <<'EOF'
-用法：./scripts/remote-build.sh <win|android|sync> [透传参数]
+用法：./xcj/remote-build.sh <win|android|sync> [透传参数]
 
   win        远程构建 Windows 单文件 exe（产物回传 dist/）
   android    远程构建 Android Release APK（产物回传 dist/）
@@ -38,9 +38,9 @@ usage() {
   -h, --help 显示本帮助
 
 示例：
-  ./scripts/remote-build.sh win
-  ./scripts/remote-build.sh win --rebuild
-  ./scripts/remote-build.sh android
+  ./xcj/remote-build.sh win
+  ./xcj/remote-build.sh win --rebuild
+  ./xcj/remote-build.sh android
 
 环境变量：
   TERMINAL_BUDDY_REMOTE_HOST  远程主机 SSH 别名，默认 debian99
@@ -76,7 +76,7 @@ fi
 
 echo "==> [1/3] 同步源码到 $REMOTE_HOST:$REMOTE_DIR"
 ssh_remote "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR"
-# 排除表与 scripts/build-windows-exe.sh 保持一致（大目录与退役目录不上传）
+# 排除表与 xcj/build-windows-exe.sh 保持一致（大目录与退役目录不上传）
 tar -C "$REPO_ROOT" -cf - \
     --exclude='terminal-buddy/node_modules' \
     --exclude='terminal-buddy/web' \
@@ -104,8 +104,8 @@ fi
 # ---------- [2/3] 远程构建 ----------
 
 case "$TARGET" in
-    win)     BUILD_SCRIPT="scripts/build-windows-exe.sh" ;;
-    android) BUILD_SCRIPT="scripts/build-android.sh" ;;
+    win)     BUILD_SCRIPT="xcj/build-windows-exe.sh" ;;
+    android) BUILD_SCRIPT="xcj/build-android.sh" ;;
 esac
 
 echo "==> [2/3] 在 $REMOTE_HOST 上执行 $BUILD_SCRIPT（增量缓存位于远程命名卷）"

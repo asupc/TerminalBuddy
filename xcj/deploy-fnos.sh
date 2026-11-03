@@ -2,21 +2,22 @@
 # TerminalBuddy 一键部署到飞牛 fnOS
 #
 # 飞牛默认禁止 root 登录（PermitRootLogin no），因此使用普通管理员账号 + sudo 部署。
-# 默认流程：打包源码 → scp 上传 → 远端 sudo 执行 scripts/deploy-fnos-remote.sh
-# （在飞牛上构建镜像 + 重建容器 + 健康检查）。本机不需要安装 docker。
+# 默认流程：本机 docker build 镜像（BuildKit 层缓存复用）→ 与远端镜像 ID 比对，一致则
+# 跳过传输 → 有变化时导出并 scp 上传 → 远端 sudo 执行 scripts/deploy-fnos-remote.sh
+# （docker load → 重建容器 → 健康检查）。飞牛侧不编译，也无需 Node / Rust。
 #
-# 之所以默认在飞牛上编译：部署机不必装 docker / Node / Rust，任意能 ssh 的机器都能发包；
-# 源码包约 16MB，比搬运 158MB 镜像包更省事。i3-N305（8 核）首次构建约 20-40 分钟，
-# 之后源码未变时按指纹跳过构建，直接复用镜像。基础镜像走「本地命中 → 离线备份 →
-# 备用镜像源」三级兜底，构建所需的 npm / crates 源在飞牛上实测可达。
-# 需要在本机构建并上传镜像时用 --build-local（要求本机有 docker）。
+# 之所以默认在本机编译：开发机（x86_64，装有 docker）算力与层缓存都远强于飞牛
+# i3-N305（首次构建约 20-40 分钟）；镜像未变化时零传输，有变化时约 158MB 镜像包走
+# 局域网上传一次即可。改回「上传源码、在飞牛上编译」用 --build-on-nas（部署机可不装
+# docker，任意能 ssh 的机器都能发包，源码包约 16MB；飞牛侧源码未变时按指纹跳过构建，
+# 基础镜像走「本地命中 → 离线备份 → 备用镜像源」三级兜底）。
 #
 # 用法：
-#   ./scripts/deploy-fnos.sh                       # 全流程（拉代码 → 在飞牛上构建镜像）
-#   ./scripts/deploy-fnos.sh --no-build            # 跳过构建，用飞牛上现有镜像重建容器
-#   ./scripts/deploy-fnos.sh --no-pull             # 不拉取本机代码，直接用当前工作区
-#   ./scripts/deploy-fnos.sh --build-local         # 改在本机构建镜像后上传（需本机 docker）
-#   ./scripts/deploy-fnos.sh --host 192.168.3.77 --listen-port 9600
+#   ./xcj/deploy-fnos.sh                       # 全流程（拉代码 → 本机构建镜像并上传）
+#   ./xcj/deploy-fnos.sh --no-build            # 跳过构建，用飞牛上现有镜像重建容器
+#   ./xcj/deploy-fnos.sh --no-pull             # 不拉取本机代码，直接用当前工作区
+#   ./xcj/deploy-fnos.sh --build-on-nas        # 改为上传源码、在飞牛上构建镜像
+#   ./xcj/deploy-fnos.sh --host 192.168.3.77 --listen-port 9600
 #
 # sudo 密码来源（按优先级）：
 #   1. 环境变量 TB_FNOS_PASSWORD
@@ -37,6 +38,7 @@ IMAGE="${TB_FNOS_IMAGE:-terminal-buddy:server}"
 CONFIG_FILE="${TB_FNOS_CONFIG:-$HOME/.codex/private/fnos/config.json}"
 SSH_KEY="${TB_FNOS_SSH_KEY:-$HOME/.ssh/terminal_buddy_fnos_deploy}"
 PULL_LATEST="${TB_FNOS_PULL:-1}"
+BUILD_LOCAL="${TB_FNOS_BUILD_LOCAL:-1}"
 # =====================================================
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -64,7 +66,6 @@ cleanup() {
 trap cleanup EXIT
 
 DO_BUILD=1
-BUILD_LOCAL=0
 NO_BASE_IMAGE_BACKUP=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -72,21 +73,21 @@ while [ "$#" -gt 0 ]; do
     --no-pull)          PULL_LATEST=0 ;;
     --pull)             PULL_LATEST=1 ;;
     --build-local)      BUILD_LOCAL=1 ;;
-    --build-on-nas)     warn "--build-on-nas 已无必要：现在默认就在飞牛上构建，按默认流程继续" ;;
+    --build-on-nas)     BUILD_LOCAL=0 ;;
     --no-base-image-backup) NO_BASE_IMAGE_BACKUP=1 ;;
     --host)             FNOS_HOST="${2:?--host 需要一个地址}"; shift ;;
     --listen-port)      HOST_PORT="${2:?--listen-port 需要一个端口}"; shift ;;
     --config)           CONFIG_FILE="${2:?--config 需要一个文件路径}"; shift ;;
     -h|--help)          sed -n '2,30p' "$0"; exit 0 ;;
-    *) fail "未知参数：$1（可用：--no-build / --no-pull / --build-local / --no-base-image-backup / --host / --listen-port / --config / --help）" ;;
+    *) fail "未知参数：$1（可用：--no-build / --no-pull / --build-local / --build-on-nas / --no-base-image-backup / --host / --listen-port / --config / --help）" ;;
   esac
   shift
 done
 
 # ---------- 0. 本机依赖检查 ----------
-# 默认在飞牛上构建，本机只负责打包与上传，因此不要求本机装 docker。
+# 默认在本机构建镜像，需要 docker；--build-on-nas 时本机只打包上传源码，不要求 docker。
 if [ "${BUILD_LOCAL}" = "1" ]; then
-  command -v docker >/dev/null 2>&1 || fail "--build-local 需要本机 docker，但未检测到；去掉该参数即在飞牛上构建"
+  command -v docker >/dev/null 2>&1 || fail "默认在本机构建镜像，但未检测到 docker；安装后再试，或用 --build-on-nas 改在飞牛上构建"
 fi
 command -v ssh    >/dev/null 2>&1 || fail "未检测到 ssh"
 command -v scp    >/dev/null 2>&1 || fail "未检测到 scp"
@@ -188,7 +189,7 @@ elif [ "${BUILD_LOCAL}" = "1" ]; then
   log "本机构建镜像 ${IMAGE}（复用 Docker 层缓存，源码未变时几乎瞬时完成）"
   BEFORE_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}' 2>/dev/null || true)"
   if ! docker build -f "${REPO_DIR}/Dockerfile" -t "${IMAGE}" "${REPO_DIR}" 2>&1 | tail -n 15; then
-    fail "本机构建失败。可去掉 --build-local 改为在飞牛上构建，或用 --no-build 复用现有镜像"
+    fail "本机构建失败。可用 --build-on-nas 改在飞牛上构建，或用 --no-build 复用现有镜像"
   fi
   AFTER_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}')"
   if [ -n "${BEFORE_ID}" ] && [ "${BEFORE_ID}" = "${AFTER_ID}" ]; then
@@ -197,7 +198,7 @@ elif [ "${BUILD_LOCAL}" = "1" ]; then
     log "  镜像已更新：${AFTER_ID:7:12}"
   fi
 else
-  log "跳过本机构建：镜像将在飞牛上编译（首次约 20-40 分钟，之后按源码指纹跳过）"
+  log "跳过本机构建（--build-on-nas）：上传源码包，镜像在飞牛上编译（首次约 20-40 分钟，之后按源码指纹跳过）"
 fi
 
 # ---------- 4. 打包源码与镜像 ----------
@@ -256,22 +257,22 @@ SUDO_PASSWORD="$(read_password)"
 
 REMOTE_ARGS="${APP_DIR} ${DATA_DIR} ${HOME_DIR} ${WORKSPACE_DIR} ${HOST_PORT} ${CONTAINER} ${IMAGE} ${FNOS_USER}"
 REMOTE_FLAGS=""
-# 默认（BUILD_LOCAL=0）：让远端真正编译，传 --build-on-nas 走「在飞牛上本地构建」分支
-# （远端那个标志名保持不变，语义即「在飞牛上构建」）。
+# BUILD_LOCAL=0（--build-on-nas）：让远端真正编译，传 --build-on-nas 走
+# 「在飞牛上本地构建」分支（远端那个标志名保持不变，语义即「在飞牛上构建」）。
 [ "${BUILD_LOCAL}" = "0" ] && [ "${DO_BUILD}" = "1" ] && REMOTE_FLAGS="${REMOTE_FLAGS} --build-on-nas"
 [ "${NO_BASE_IMAGE_BACKUP}" = "1" ] && REMOTE_FLAGS="${REMOTE_FLAGS} --no-base-image-backup"
 # 是否要求远端跳过构建：
 #   --no-build     -> 跳过，直接用远端现有镜像
-#   --build-local  -> 本机已构建并上传镜像包，远端只需载入
-#   默认           -> 远端需要编译
+#   本机构建（默认 / --build-local）-> 本机已构建并上传镜像包，远端只需载入
+#   --build-on-nas -> 远端需要编译
 if [ "${DO_BUILD}" = "0" ] || [ "${BUILD_LOCAL}" = "1" ]; then
   REMOTE_SKIP_BUILD=1
 else
   REMOTE_SKIP_BUILD=0
 fi
 # 远端可复用的条件：本次确实上传/确认了镜像。
-#   --build-local  -> 本机已构建，远端镜像即所需镜像，无需再编译
-#   默认在飞牛构建 -> 远端必须真正编译，不能标记为 current
+#   本机构建（默认 / --build-local）-> 本机已构建，远端镜像即所需镜像，无需再编译
+#   --build-on-nas -> 远端必须真正编译，不能标记为 current
 if [ "${BUILD_LOCAL}" = "1" ] && [ "${DO_BUILD}" = "1" ]; then
   REMOTE_IMAGE_CURRENT=1
 else
@@ -332,4 +333,4 @@ echo "  数据目录 : ${DATA_DIR}      -> 容器 /data（含 jwt.key / server.k
 echo "  用户目录 : ${HOME_DIR}      -> 容器 /home/terminalbuddy（Claude CLI 装在这里）"
 echo "  工作区   : ${WORKSPACE_DIR} -> 容器内同路径"
 echo "  查看日志 : ssh ${FNOS_USER}@${FNOS_HOST} 'docker logs -f --tail 100 ${CONTAINER}'"
-echo "  重新部署 : ./scripts/deploy-fnos.sh --no-build     # 跳过构建，仅重建容器"
+echo "  重新部署 : ./xcj/deploy-fnos.sh --no-build     # 跳过构建，仅重建容器"

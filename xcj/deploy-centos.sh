@@ -13,11 +13,11 @@
 #   5. 本机做 HTTP 自检并打印访问信息
 #
 # 用法：
-#   ./scripts/deploy-centos.sh                    # 全流程（在目标机上构建镜像）
-#   ./scripts/deploy-centos.sh --no-build         # 跳过构建，用目标机现有镜像重建容器
-#   ./scripts/deploy-centos.sh --no-pull          # 不拉取本机代码，直接用当前工作区
-#   ./scripts/deploy-centos.sh --build-local      # 改在本机构建镜像后上传（需本机 docker 且同架构）
-#   ./scripts/deploy-centos.sh --host 192.168.3.202 --ssh-port 22
+#   ./xcj/deploy-centos.sh                    # 全流程（在目标机上构建镜像）
+#   ./xcj/deploy-centos.sh --no-build         # 跳过构建，用目标机现有镜像重建容器
+#   ./xcj/deploy-centos.sh --no-pull          # 不拉取本机代码，直接用当前工作区
+#   ./xcj/deploy-centos.sh --build-local      # 改在本机构建镜像后上传（需本机 docker 且同架构）
+#   ./xcj/deploy-centos.sh --host 192.168.3.202 --ssh-port 22
 #
 # 免密登录：首次运行会生成部署密钥并自动装到目标机（需要一次密码认证），之后全程免密。
 # 密码来源（按优先级）：
@@ -344,4 +344,4 @@ echo "  数据目录 : ${DATA_DIR}      -> 容器 /data（含 jwt.key / server.k
 echo "  用户目录 : ${HOME_DIR}      -> 容器 /home/terminalbuddy（Claude CLI 装在这里）"
 echo "  工作区   : ${WORKSPACE_DIR} -> 容器内同路径"
 echo "  查看日志 : ssh ${CENTOS_USER}@${CENTOS_HOST} 'docker logs -f --tail 100 ${CONTAINER}'"
-echo "  重新部署 : ./scripts/deploy-centos.sh --no-build     # 跳过构建，仅重建容器"
+echo "  重新部署 : ./xcj/deploy-centos.sh --no-build     # 跳过构建，仅重建容器"
