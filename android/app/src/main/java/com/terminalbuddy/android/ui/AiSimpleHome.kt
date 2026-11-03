@@ -87,7 +87,7 @@ internal fun AiSimpleHome(
             .sortedByDescending { it.updatedAt }
     }
     // 历史范围只取决于项目与该项目可用的助手，切换助手不会重新拉取或过滤历史。
-    val historyAgents = ui.availableAgents.filter(ui::agentInstalled)
+    val historyAgents = ui.availableAgents
     LaunchedEffect(tab, ui.projectPath, ui.connectionRevision, historyAgents) {
         if (tab == SimpleHomeTab.History) vm.loadHistoryForSelection()
         // 历史 Tab 需要 Agent 列表做「电脑运行中」匹配，服务端 Tab 本身就是这份列表的展示。
@@ -183,7 +183,7 @@ internal fun AiSimpleHome(
                         }
                         currentAgentUi.sessions.isEmpty() && currentAgentUi.listLoaded -> item(key = "server-empty") {
                             AiEmptyState(Icons.Outlined.Monitor, "没有正在运行的服务端会话",
-                                "在电脑端或服务端启动 Claude、Codex、Pi 会话后，这里会实时显示，可直接接管继续。" +
+                                "在电脑端或服务端启动 Claude、Codex 会话后，这里会实时显示，可直接接管继续。" +
                                     "若始终不显示，请检查电脑端 Web API 设置中的会话共享已开启。")
                         }
                         currentAgentUi.sessions.isNotEmpty() -> {
@@ -237,7 +237,7 @@ private fun SimpleComposer(
     terminalUi: ServerTerminalUiState, terminalVm: ServerTerminalViewModel,
 ) {
     val agents = if (ui.initialLoading) listOf("claude", "codex")
-        else ui.availableAgents.filter(ui::agentInstalled)
+        else ui.availableAgents
     val enabled = !ui.initialLoading && !ui.working && !ui.authenticating
     val project = ui.launchProject
     val projectProfiles = remember(terminalUi.profiles, project?.name, project?.path) {

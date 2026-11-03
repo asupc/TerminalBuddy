@@ -200,7 +200,7 @@ cd android
 ./gradlew :app:assembleRelease      # Release（未配签名时为 unsigned）
 ```
 
-无需本机安装 JDK 与 Android SDK 的方式：在仓库根目录执行 `./scripts/build-android.sh`，通过一次性 Docker 容器产出 `dist/TerminalBuddy_<版本>_android.apk`（Release 已签名）。简版与完整版是同一 APK 内的运行模式，不需要分别构建。
+无需本机安装 JDK 与 Android SDK 的方式：在仓库根目录执行 `./xcj/build-android.sh`，通过一次性 Docker 容器产出 `dist/TerminalBuddy_<版本>_android.apk`（Release 已签名）。简版与完整版是同一 APK 内的运行模式，不需要分别构建。
 
 在 Android Studio 中直接打开 `android/` 目录即可。
 

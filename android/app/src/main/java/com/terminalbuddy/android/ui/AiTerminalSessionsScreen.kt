@@ -122,7 +122,7 @@ internal fun AiTerminalSessionsScreen(
             }
             item(key = "agent-hint") {
                 Text(
-                    "电脑终端里正在运行的 Claude / Codex / Pi 会话：查看实时镜像，Claude 与 Pi 可回一句或处理待决策。",
+                    "电脑终端里正在运行的 Claude / Codex 会话：查看实时镜像，Claude 可回一句或处理待决策。",
                     style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
                 )
             }

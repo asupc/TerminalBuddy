@@ -33,7 +33,7 @@ data class AiUiState(
     val sessions: List<AiSession> = emptyList(), val projects: List<AiProject> = emptyList(),
     /** 首页最近任务独立恢复，避免将两条展示缓存当成完整会话列表。 */
     val recentSessions: List<AiSession> = emptyList(),
-    val providers: List<AiProvider> = emptyList(), val agentEnvironment: AiAgentEnvironment? = null,
+    val providers: List<AiProvider> = emptyList(),
     val projectPath: String = "", val providerId: String = "", val modelId: String = "",
     val selected: AiSession? = null, val draft: String = "", val sending: Boolean = false,
     val connected: Boolean = false, val working: Boolean = false, val error: String? = null,
@@ -66,12 +66,7 @@ data class AiUiState(
         .filter { agent == null || it.agent == agent }
         .flatMap { provider -> provider.models.map { AiLaunchModel(provider, it) } }
     val availableProviders get() = launchProject?.let(::projectProviders).orEmpty()
-    val availableAgents get() = listOf("claude", "codex", "pi").filter { agent -> availableProviders.any { it.agent == agent } }
-    /** 服务端 Agent 管理中已安装（含安装中 / 更新中）的 Agent；null 表示未知，按全部已安装处理。 */
-    val installedAgents get() = agentEnvironment?.let { environment ->
-        listOf("claude", "codex", "pi").filter(environment::installed)
-    }
-    fun agentInstalled(agent: String) = installedAgents?.contains(agent) != false
+    val availableAgents get() = listOf("claude", "codex").filter { agent -> availableProviders.any { it.agent == agent } }
     val launchProvider get() = availableProviders.find { it.id == providerId }
     /** 汇总当前 Agent 的全部模型，启动时仍使用模型所属的供应商。 */
     val availableModels get() = availableProviders.filter { it.agent == launchProvider?.agent }.flatMap { provider ->
@@ -339,7 +334,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             recentSessions = recent, unviewedIds = unviewed,
             projects = cached?.projects.orEmpty(),
             providers = cached?.providers.orEmpty(),
-            agentEnvironment = cached?.agentEnvironment,
             projectPath = repository.selectedProject,
             providerId = repository.selectedProvider,
             modelId = repository.selectedModel,
@@ -402,14 +396,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 while (isActive && epoch == generation) {
                     try {
-                        var environment: AiAgentEnvironment? = null
                         val (sessions, projects, catalog) = coroutineScope {
                             val sessions = async { repository.sessions() }
                             val projects = async { repository.projects() }
                             val catalog = async { repository.catalog() }
-                            // Agent 安装检测较慢且旧服务端可能没有该接口，失败只回退为全部可用，不阻断首页同步。
-                            val detected = async { runCatching { repository.agentEnvironment() } }
-                            environment = detected.await().getOrNull()
                             Triple(sessions.await(), projects.await(), catalog.await())
                         }
                         if (epoch != generation) return@launch
@@ -418,7 +408,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                             reconcile(
                                 it.copy(
                                     sessions = sessions, projects = projects, providers = catalog.providers,
-                                    agentEnvironment = environment,
                                     loading = false, homeLoaded = true, reconnecting = false, error = null,
                                     unviewedIds = unviewed,
                                 )
@@ -497,8 +486,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private fun reconcile(ui: AiUiState): AiUiState {
         val project = ui.launchProject ?: ui.projects.firstOrNull()
         val projectUi = ui.copy(projectPath = project?.path.orEmpty())
-        // 未安装的 Agent 不参与默认选择，避免自动选中快速开始里已隐藏的助手。
-        val choices = projectUi.availableProviders.filter { projectUi.agentInstalled(it.agent) }
+        val choices = projectUi.availableProviders
         val provider = choices.find { it.id == ui.providerId }
             ?: choices.firstOrNull { it.isDefault && it.models.isNotEmpty() }
             ?: choices.firstOrNull { it.models.isNotEmpty() }
@@ -511,7 +499,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val ui = mutable.value
         repository.saveSelection(
             ui.projectPath, ui.providerId, ui.modelId, ui.launchProvider?.agent,
-            quickStart = if (ui.homeLoaded) AiQuickStartCache(ui.projects, ui.providers, ui.agentEnvironment) else null,
+            quickStart = if (ui.homeLoaded) AiQuickStartCache(ui.projects, ui.providers) else null,
         )
     }
 
@@ -563,7 +551,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadServerHistory(agent: String, projectPath: String) {
         val ui = mutable.value
-        if (!store.loggedIn || ui.authenticating || agent !in listOf("claude", "codex", "pi") ||
+        if (!store.loggedIn || ui.authenticating || agent !in listOf("claude", "codex") ||
             ui.projects.none { it.path == projectPath }) return
         val key = AiServerHistoryKey(agent, projectPath)
         if (serverHistoryJobs[key]?.isActive == true) return
@@ -599,7 +587,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     /** 按历史模型及其供应商直接续接，独立于快速开始的选择。 */
     fun resumeServerHistory(agent: String, project: AiProject, item: AiHistorySession) {
         val ui = mutable.value
-        if (ui.working || ui.authenticating || !ui.authenticated || agent !in listOf("claude", "codex", "pi")) return
+        if (ui.working || ui.authenticating || !ui.authenticated || agent !in listOf("claude", "codex")) return
         val models = ui.projectModels(project, agent)
         val historyModels = item.model?.trim()?.takeIf(String::isNotBlank)?.let { model ->
             models.filter { it.model.id.equals(model, ignoreCase = true) }
@@ -651,8 +639,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         loadHistory(project, agents)
     }
 
-    /** 历史范围 = 当前项目启用的助手 ∩ 服务端已安装的助手；未安装的助手查不到转录。 */
-    private fun historyAgents(ui: AiUiState) = ui.availableAgents.filter(ui::agentInstalled)
+    /** 历史范围 = 当前项目启用的助手。 */
+    private fun historyAgents(ui: AiUiState) = ui.availableAgents
 
     /** 按项目并行读取各助手历史；单个助手不可用（如旧服务端不支持）不阻断其他助手。 */
     private fun loadHistory(project: AiProject, agents: List<String>) {

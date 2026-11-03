@@ -51,7 +51,6 @@ data class AiSession(
     }
     val providerLabel get() = when (provider) {
         "codex" -> "Codex"
-        "pi" -> "Pi"
         else -> "Claude"
     }
     val modelLabel get() = model?.takeIf(String::isNotBlank) ?: "服务端默认模型"
@@ -60,47 +59,23 @@ data class AiSession(
 
 /** `/api/projects` 返回的已登记项目，enabledAgents 决定首页可选哪些 Agent。 */
 @Serializable
-data class AiAgents(val claude: Boolean = true, val codex: Boolean = true, val pi: Boolean = true) {
+data class AiAgents(val claude: Boolean = true, val codex: Boolean = true) {
     fun enabled(agent: String): Boolean = when (agent) {
         "claude" -> claude
         "codex" -> codex
-        "pi" -> pi
         else -> false
     }
-    val names get() = listOf("claude", "codex", "pi").filter(::enabled)
+    val names get() = listOf("claude", "codex").filter(::enabled)
 }
 
 @Serializable
 data class AiProject(val name: String, val path: String, val enabledAgents: AiAgents = AiAgents())
-
-/** `/api/container/environment` 的单助手安装状态，status 与服务端「Agent 管理」一致。 */
-@Serializable
-data class AiAgentCliStatus(val status: String = "")
-
-/** 服务端「Agent 管理」检测的 CLI 安装状态，未安装的助手不在快速开始中展示。 */
-@Serializable
-data class AiAgentEnvironment(
-    val claude: AiAgentCliStatus? = null,
-    val codex: AiAgentCliStatus? = null,
-    val pi: AiAgentCliStatus? = null,
-) {
-    /** 与桌面端可用判定一致：安装中 / 更新中同样视作可用。 */
-    fun installed(agent: String): Boolean = when (agent) {
-        "claude" -> available(claude)
-        "codex" -> available(codex)
-        "pi" -> available(pi)
-        else -> false
-    }
-    private fun available(status: AiAgentCliStatus?) =
-        status?.status == "installed" || status?.status == "installing" || status?.status == "updating"
-}
 
 /** 快速开始的展示快照；与项目、供应商和模型选择一起按账号写入 SharedPreferences。 */
 @Serializable
 data class AiQuickStartCache(
     val projects: List<AiProject>,
     val providers: List<AiProvider>,
-    val agentEnvironment: AiAgentEnvironment? = null,
 )
 
 @Serializable
@@ -113,7 +88,6 @@ data class AiProvider(
 ) {
     val agentLabel get() = when (agent) {
         "codex" -> "Codex"
-        "pi" -> "Pi"
         else -> "Claude"
     }
     val label get() = "$agentLabel · $name"

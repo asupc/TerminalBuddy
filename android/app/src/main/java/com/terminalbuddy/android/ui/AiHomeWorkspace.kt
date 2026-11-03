@@ -51,7 +51,7 @@ internal fun AiHomeWorkspace(ui: AiUiState, vm: AiViewModel, sessions: () -> Uni
     }
 }
 
-internal fun agentTitle(agent: String) = when (agent) { "codex" -> "Codex"; "pi" -> "Pi"; else -> "Claude Code" }
+internal fun agentTitle(agent: String) = when (agent) { "codex" -> "Codex"; else -> "Claude Code" }
 
 internal fun modelChoices(models: List<AiLaunchModel>) = models.map { target ->
     val details = buildList {
@@ -66,7 +66,7 @@ internal fun modelChoices(models: List<AiLaunchModel>) = models.map { target ->
 private fun AiQuickStart(ui: AiUiState, vm: AiViewModel, more: () -> Unit) {
     // 同步期间以常见助手占位；完成后只保留项目已启用且服务端 Agent 管理中已安装的助手。
     val agents = if (ui.initialLoading) listOf("claude", "codex")
-        else ui.availableAgents.filter(ui::agentInstalled)
+        else ui.availableAgents
     val enabled = !ui.initialLoading && !ui.working && !ui.authenticating
     AiCard(shape = RoundedCornerShape(24.dp)) {
         // 整卡按 3/4 高度压缩：内边距、行距、行高与控件最小高度同步等比缩小。
