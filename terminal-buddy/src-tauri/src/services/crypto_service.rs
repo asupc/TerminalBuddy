@@ -78,21 +78,23 @@ pub fn dpapi_decrypt(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Encrypt a string to a Base64-encoded DPAPI blob.
+/// Encrypt a string to a Base64-encoded DPAPI blob（Windows 桌面端），
+/// 其他平台回落到服务端的 AES-GCM 本地密钥实现。
 pub fn encrypt_string(plaintext: &str) -> Result<String, String> {
-    #[cfg(not(feature = "desktop"))]
-    { return server_crypto::encrypt(plaintext); }
-    #[cfg(feature = "desktop")]
+    #[cfg(all(feature = "desktop", windows))]
     {
     let encrypted = dpapi_encrypt(plaintext.as_bytes())?;
     Ok(BASE64_STANDARD.encode(encrypted))
     }
+    #[cfg(not(all(feature = "desktop", windows)))]
+    { server_crypto::encrypt(plaintext) }
 }
 
-/// 落盘密钥字段的通用封装：桌面端 `dpapi:<base64>`，服务端 `aesgcm:v1:<base64>`。
+/// 落盘密钥字段的通用封装：Windows 桌面端 `dpapi:<base64>`，
+/// 其他平台（服务端 / 非 Windows 桌面端）`aesgcm:v1:<base64>`。
 /// 空明文落为空密文（`marker` + 空串），调用方用空表示"未设置"。
 pub fn encrypt_secret_field(plaintext: &str) -> Result<String, String> {
-    let marker = if cfg!(feature = "desktop") { "dpapi:" } else { "aesgcm:" };
+    let marker = if cfg!(all(feature = "desktop", windows)) { "dpapi:" } else { "aesgcm:" };
     Ok(format!("{}{}", marker, encrypt_string(plaintext)?))
 }
 
@@ -108,11 +110,10 @@ pub fn decrypt_secret_field(value: &str) -> Result<String, String> {
     }
 }
 
-/// Decrypt a Base64-encoded DPAPI blob back to a string.
+/// Decrypt a Base64-encoded DPAPI blob back to a string（Windows 桌面端），
+/// 其他平台回落到服务端的 AES-GCM 本地密钥实现。
 pub fn decrypt_string(encoded: &str) -> Result<String, String> {
-    #[cfg(not(feature = "desktop"))]
-    { return server_crypto::decrypt(encoded); }
-    #[cfg(feature = "desktop")]
+    #[cfg(all(feature = "desktop", windows))]
     {
     if encoded.is_empty() {
         return Ok(String::new());
@@ -122,9 +123,11 @@ pub fn decrypt_string(encoded: &str) -> Result<String, String> {
         .map_err(|e| format!("Base64 decode failed: {}", e))?)?;
     String::from_utf8(decrypted).map_err(|e| format!("UTF-8 decode failed: {}", e))
     }
+    #[cfg(not(all(feature = "desktop", windows)))]
+    { server_crypto::decrypt(encoded) }
 }
 
-#[cfg(not(feature = "desktop"))]
+#[cfg(not(all(feature = "desktop", windows)))]
 mod server_crypto {
     use super::*;
     use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};

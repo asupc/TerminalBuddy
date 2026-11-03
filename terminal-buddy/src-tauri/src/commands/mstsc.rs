@@ -1,19 +1,26 @@
 //! mstsc 远程桌面子系统：进程跟踪 + Windows 凭据管理器写入 + 启动。
 //! 与 PTY 终端生命周期无耦合，仅由 profile 配置驱动。
 
+#[cfg(windows)]
 use crate::services::ProfileService;
+#[cfg(windows)]
 use std::collections::HashMap;
+#[cfg(windows)]
 use std::sync::Mutex;
+#[cfg(windows)]
 use std::sync::OnceLock;
 
 // 跟踪已启动的 mstsc 进程 PID，key = profile_id
+#[cfg(windows)]
 static MSTSC_PROCESSES: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
 
+#[cfg(windows)]
 fn mstsc_processes() -> &'static Mutex<HashMap<String, u32>> {
     MSTSC_PROCESSES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// 检查进程是否仍在运行
+#[cfg(windows)]
 fn is_process_running(pid: u32) -> bool {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
@@ -34,6 +41,7 @@ fn is_process_running(pid: u32) -> bool {
 }
 
 /// 将指定 PID 的窗口提到前台
+#[cfg(windows)]
 fn bring_window_to_front(pid: u32) -> bool {
     use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -71,6 +79,7 @@ fn bring_window_to_front(pid: u32) -> bool {
 }
 
 /// 直接写入 Windows 凭据管理器，避免每次连接都启动并等待 cmdkey.exe。
+#[cfg(windows)]
 fn store_mstsc_credential(host: &str, user: &str, password: &str) -> windows::core::Result<()> {
     use windows::core::PWSTR;
     use windows::Win32::Security::Credentials::{
@@ -96,6 +105,7 @@ fn store_mstsc_credential(host: &str, user: &str, password: &str) -> windows::co
     unsafe { CredWriteW(&credential, 0) }
 }
 
+#[cfg(windows)]
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn start_mstsc(profile_id: String) -> Result<(), String> {
     let profile =
@@ -164,4 +174,11 @@ pub fn start_mstsc(profile_id: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// 非 Windows 桌面端没有 mstsc.exe 与凭据管理器：保留同名命令并返回明确错误。
+#[cfg(not(windows))]
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn start_mstsc(_profile_id: String) -> Result<(), String> {
+    Err("远程桌面连接（mstsc）仅支持 Windows 桌面端".to_string())
 }

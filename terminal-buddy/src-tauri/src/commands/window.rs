@@ -1,6 +1,7 @@
 ﻿use crate::runtime::{AppHandle, Manager, WebviewWindow};
 
 /// Direct ntdll call — pure in-memory, no process spawn, takes microseconds.
+#[cfg(windows)]
 #[allow(non_snake_case)]
 #[repr(C)]
 struct OSVERSIONINFOW {
@@ -12,11 +13,13 @@ struct OSVERSIONINFOW {
     szCSDVersion: [u16; 128],
 }
 
+#[cfg(windows)]
 #[link(name = "ntdll")]
 extern "system" {
     fn RtlGetVersion(info: *mut OSVERSIONINFOW) -> i32;
 }
 
+#[cfg(windows)]
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_windows_build_number() -> Result<u32, String> {
     unsafe {
@@ -29,6 +32,13 @@ pub fn get_windows_build_number() -> Result<u32, String> {
             Err(format!("RtlGetVersion failed with status {}", status))
         }
     }
+}
+
+/// 非 Windows 平台没有 ntdll 与 RtlGetVersion：保留同名命令并返回明确错误。
+#[cfg(not(windows))]
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn get_windows_build_number() -> Result<u32, String> {
+    Err("Windows 版本号仅支持 Windows 桌面端".to_string())
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]

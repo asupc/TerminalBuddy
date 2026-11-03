@@ -26,7 +26,11 @@ pub mod directory_browser_service;
 pub mod default_terminal_protocol;
 #[cfg(feature = "desktop")]
 pub mod default_terminal_service;
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", windows))]
+#[path = "handoff_server.rs"]
+pub mod handoff_server;
+#[cfg(all(feature = "desktop", not(windows)))]
+#[path = "handoff_server_stub.rs"]
 pub mod handoff_server;
 pub mod llm_provider_service;
 pub mod path_service;

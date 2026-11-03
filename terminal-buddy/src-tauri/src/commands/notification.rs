@@ -1,7 +1,12 @@
-use crate::runtime::{AppHandle, Emitter, Manager};
+use crate::runtime::AppHandle;
+#[cfg(windows)]
+use crate::runtime::{Emitter, Manager};
+#[cfg(windows)]
 use tauri_winrt_notification::{Duration, Sound, Toast};
+#[cfg(windows)]
 use windows_registry::CURRENT_USER;
 
+#[cfg(windows)]
 fn ensure_portable_app_id(app_id: &str) -> Result<(), String> {
     let key = CURRENT_USER
         .create(format!(r"SOFTWARE\Classes\AppUserModelId\{}", app_id))
@@ -13,6 +18,7 @@ fn ensure_portable_app_id(app_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn notification_content(
     terminal_name: &str,
     notification_kind: &str,
@@ -45,6 +51,7 @@ fn notification_content(
     Ok((title, format!("{}：{}", name, summary)))
 }
 
+#[cfg(windows)]
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn show_claude_code_notification(
     app: AppHandle,
@@ -86,6 +93,20 @@ pub fn show_claude_code_notification(
         })
         .show()
         .map_err(|error| format!("发送 Claude Code 通知失败: {}", error))
+}
+
+/// 非 Windows 桌面端不提供系统通知：保留同名命令，调用时返回明确错误。
+#[cfg(not(windows))]
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn show_claude_code_notification(
+    _app: AppHandle,
+    _terminal_id: String,
+    _terminal_name: String,
+    _notification_kind: String,
+    _custom_title: Option<String>,
+    _custom_summary: Option<String>,
+) -> Result<(), String> {
+    Err("系统通知仅支持 Windows 桌面端".to_string())
 }
 
 #[cfg(test)]

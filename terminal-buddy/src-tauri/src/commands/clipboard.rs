@@ -1,12 +1,18 @@
+#[cfg(windows)]
 use clipboard_win::raw;
+#[cfg(windows)]
 use crate::services::PathService;
+#[cfg(windows)]
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use windows::Win32::System::DataExchange::{
     CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
 };
 
+#[cfg(windows)]
 const CF_DIB: u32 = 8;
 
+#[cfg(windows)]
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
     raw::open().map_err(|e| format!("Failed to open clipboard: {}", e))?;
@@ -24,6 +30,7 @@ pub fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
 }
 
 /// Read clipboard image data (e.g. from PrintScreen) and save as PNG to temp dir.
+#[cfg(windows)]
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn read_clipboard_image_as_file() -> Result<String, String> {
     let temp_dir = std::env::temp_dir().join("TerminalBuddy");
@@ -36,6 +43,7 @@ pub fn read_clipboard_image_as_file() -> Result<String, String> {
 
 /// 剪贴板图片存入数据目录（Claude 图片引用辅助）：
 /// `@<path>` 引用要求 Claude 之后仍能读到该文件，TEMP 会被系统清理，故落到 dataPath。
+#[cfg(windows)]
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_clipboard_image_to_claude_cache() -> Result<String, String> {
     let dir = PathService::require_data_dir()?
@@ -46,6 +54,7 @@ pub fn save_clipboard_image_to_claude_cache() -> Result<String, String> {
 }
 
 /// 读取剪贴板 CF_DIB 位图并保存为 PNG 到指定目录。
+#[cfg(windows)]
 fn save_clipboard_dib_as_png(dest_dir: &Path, filename: &str) -> Result<String, String> {
     unsafe {
         if IsClipboardFormatAvailable(CF_DIB).is_err() {
@@ -162,4 +171,26 @@ fn save_clipboard_dib_as_png(dest_dir: &Path, filename: &str) -> Result<String, 
         let _ = CloseClipboard();
         result
     }
+}
+
+// ── 非 Windows 占位实现 ──────────────────────────────────────────────────────
+// 剪贴板读取依赖 Windows 剪贴板 API 与 CF_DIB 位图格式；其他平台保留同名命令，
+// 保证 Tauri 命令注册表在编译期一致，调用时返回明确错误。
+
+#[cfg(not(windows))]
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
+    Err("读取剪贴板文件仅支持 Windows 桌面端".to_string())
+}
+
+#[cfg(not(windows))]
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn read_clipboard_image_as_file() -> Result<String, String> {
+    Err("读取剪贴板图片仅支持 Windows 桌面端".to_string())
+}
+
+#[cfg(not(windows))]
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn save_clipboard_image_to_claude_cache() -> Result<String, String> {
+    Err("保存剪贴板图片仅支持 Windows 桌面端".to_string())
 }

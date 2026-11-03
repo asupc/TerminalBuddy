@@ -86,7 +86,7 @@ pub fn list_directory(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", windows))]
 pub fn open_path(path: String) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr;
@@ -147,7 +147,7 @@ pub fn open_path(path: String) -> Result<(), String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", windows))]
 pub fn open_in_explorer(path: String) -> Result<(), String> {
     // Launch explorer.exe directly via ShellExecuteW. We deliberately do NOT use
     // std::process::Command here: Rust's Command applies CRT argument escaping,
@@ -236,6 +236,33 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// ── 非 Windows 桌面端：用 xdg-open 打开文件/目录 ─────────────────────────────
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(all(feature = "desktop", not(windows)))]
+pub fn open_path(path: String) -> Result<(), String> {
+    std::process::Command::new("xdg-open")
+        .arg(&path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open: {}", e))
+}
+
+#[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(all(feature = "desktop", not(windows)))]
+pub fn open_in_explorer(path: String) -> Result<(), String> {
+    // 非 Windows 没有 Explorer 的 /select 语义，退化为打开目标所在目录。
+    let target = std::path::Path::new(&path)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new(&path));
+    std::process::Command::new("xdg-open")
+        .arg(target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open directory: {}", e))
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]

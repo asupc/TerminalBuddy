@@ -3,12 +3,17 @@
 //! 全部写 HKCU（无需管理员）：`HKCU\Console\%%Startup` 的委托值 + 我们的
 //! LocalServer32 COM 类注册。开关关闭时按备份恢复旧值。
 
+#[cfg(windows)]
 use super::default_terminal_protocol as proto;
+#[cfg(windows)]
 use crate::models::settings::DefaultTerminalBackup;
+#[cfg(windows)]
 use crate::services::SettingsService;
 use serde::Serialize;
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 
+#[cfg(windows)]
 fn to_wide(s: &str) -> Vec<u16> {
     std::ffi::OsStr::new(s)
         .encode_wide()
@@ -33,6 +38,7 @@ pub struct DefaultTerminalStatus {
 }
 
 /// 读取 `HKCU\<path>` 下的 REG_SZ 值；不存在返回 Ok(None)。
+#[cfg(windows)]
 fn read_sz(path: &str, name: &str) -> Result<Option<String>, String> {
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::System::Registry::*;
@@ -90,6 +96,7 @@ fn read_sz(path: &str, name: &str) -> Result<Option<String>, String> {
 }
 
 /// 写入 `HKCU\<path>` 下的 REG_SZ 值（键不存在则创建）。
+#[cfg(windows)]
 fn write_sz(path: &str, name: &str, value: &str) -> Result<(), String> {
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::System::Registry::*;
@@ -130,6 +137,7 @@ fn write_sz(path: &str, name: &str, value: &str) -> Result<(), String> {
 }
 
 /// 删除 `HKCU\<path>` 下的值；不存在视为成功。
+#[cfg(windows)]
 fn delete_sz(path: &str, name: &str) -> Result<(), String> {
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::System::Registry::*;
@@ -158,12 +166,14 @@ fn delete_sz(path: &str, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn read_delegation_values() -> Result<(Option<String>, Option<String>), String> {
     let console = read_sz(proto::KEY_DELEGATION_STARTUP, proto::VALUE_DELEGATION_CONSOLE)?;
     let terminal = read_sz(proto::KEY_DELEGATION_STARTUP, proto::VALUE_DELEGATION_TERMINAL)?;
     Ok((console, terminal))
 }
 
+#[cfg(windows)]
 fn write_delegation_value(name: &str, value: Option<&str>) -> Result<(), String> {
     match value {
         Some(value) => write_sz(proto::KEY_DELEGATION_STARTUP, name, value),
@@ -172,6 +182,7 @@ fn write_delegation_value(name: &str, value: Option<&str>) -> Result<(), String>
 }
 
 /// 注册 LocalServer32（幂等覆盖写，升级换路径后自动纠正）。
+#[cfg(windows)]
 pub fn ensure_local_server_registered() -> Result<(), String> {
     let exe_path =
         std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
@@ -189,6 +200,7 @@ pub fn ensure_local_server_registered() -> Result<(), String> {
     write_sz(&clsid_path, "", "TerminalBuddy Default Terminal Handoff")
 }
 
+#[cfg(windows)]
 pub fn is_local_server_registered() -> bool {
     let path = format!(
         r"Software\Classes\CLSID\{}\LocalServer32",
@@ -198,6 +210,7 @@ pub fn is_local_server_registered() -> bool {
 }
 
 /// 读取当前状态（以注册表为权威来源）。
+#[cfg(windows)]
 pub fn get_status(com_registered: bool) -> DefaultTerminalStatus {
     let state = match read_delegation_values() {
         Ok((_, terminal)) => proto::derive_state(terminal.as_deref(), proto::CLSID_TERMINAL_BUDDY_HANDOFF),
@@ -214,6 +227,7 @@ pub fn get_status(com_registered: bool) -> DefaultTerminalStatus {
 
 /// 开关接管。开启：备份旧值（仅备份为空时）→ 注册 LocalServer32 → 写委托值；
 /// 关闭：按备份恢复（None → 删值）。
+#[cfg(windows)]
 pub fn set_enabled(enabled: bool) -> Result<DefaultTerminalStatus, String> {
     if enabled {
         // 幂等：backup 只在为空时记录，保证开→关→开→关回到最初值。
@@ -261,4 +275,34 @@ pub fn set_enabled(enabled: bool) -> Result<DefaultTerminalStatus, String> {
         SettingsService::mutate_settings(|s| s.default_terminal_enabled = false)?;
     }
     Ok(get_status(super::handoff_server::is_com_registered()))
+}
+
+// ── 非 Windows 占位实现 ──────────────────────────────────────────────────────
+// 默认终端接管依赖 Windows 注册表与 COM 类注册，其他平台保持同名接口，
+// 保证调用方与 Tauri 命令注册在编译期一致。
+
+#[cfg(not(windows))]
+pub fn ensure_local_server_registered() -> Result<(), String> {
+    Err("默认终端接管仅支持 Windows 桌面端".to_string())
+}
+
+#[cfg(not(windows))]
+pub fn is_local_server_registered() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn get_status(com_registered: bool) -> DefaultTerminalStatus {
+    DefaultTerminalStatus {
+        enabled: false,
+        state: "notConfigured".to_string(),
+        description: "当前平台不支持默认终端接管".to_string(),
+        com_registered,
+        local_server_registered: false,
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_enabled(_enabled: bool) -> Result<DefaultTerminalStatus, String> {
+    Err("默认终端接管仅支持 Windows 桌面端".to_string())
 }

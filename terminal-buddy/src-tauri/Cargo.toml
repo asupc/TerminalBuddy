@@ -8,7 +8,7 @@ default-run = "terminal-buddy"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:tauri-plugin-global-shortcut", "dep:tauri-plugin-single-instance", "dep:tauri-winrt-notification", "dep:clipboard-win", "dep:windows-registry", "dep:webview2-com"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:tauri-plugin-global-shortcut", "dep:tauri-plugin-single-instance", "dep:tauri-winrt-notification", "dep:clipboard-win", "dep:windows-registry", "dep:webview2-com", "dep:aes-gcm"]
 server = ["dep:aes-gcm"]
 
 [[bin]]
