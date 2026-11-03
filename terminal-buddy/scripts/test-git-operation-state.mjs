@@ -294,7 +294,10 @@ const tests = [
       '../../services/gitOperationState': operations, '../../services/gitStatusCache': cache,
       '../git/GitOperationsHost': { GitOperationsHost: fakeHost }, './RemoteFileTree': {}, '../shared/Dialog': {},
       './ConfiguredFileRoot': { ConfiguredFileRoot: fakeRoot },
-      './file-utils': load('src/components/file-explorer/file-utils.ts'),
+      '../../services/platform': { supportsSystemExplorerOpen: () => false },
+      './file-utils': load('src/components/file-explorer/file-utils.ts', {
+        '../../services/platform': { serverUsesWindowsPaths: () => false },
+      }),
     }).FileNav;
     const commit = tree => {
       const host = find(tree, item => item.type === fakeHost);

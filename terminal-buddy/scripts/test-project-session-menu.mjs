@@ -40,6 +40,7 @@ function load(file, mocks = {}) {
     if (name.endsWith('utils/commandParams')) return commandParams;
     if (name.endsWith('utils/sessionHistory')) return sessionHistory;
     if (name.endsWith('utils/claudeLaunch')) return claudeLaunch;
+    if (name.endsWith('utils/codexLaunch')) return codexLaunch;
     // 不同文件引用 slice 的相对前缀不同（./slices/… 与 ../stores/slices/…），
     // 统一按后缀兜底；store 的 create 被 mock 后 slice 工厂不会被真正调用。
     if (/(^|\/)slices\/\w+Slice$/.test(name)) return {};
@@ -63,13 +64,20 @@ function load(file, mocks = {}) {
   return module.exports;
 }
 // 纯工具模块可直接真加载：剥 --resume 参数、判断 claude 命令等无运行时依赖。
-const commandParams = load('src/utils/commandParams.ts');
-const sessionHistory = load('src/utils/sessionHistory.ts');
 const claudeLaunch = load('src/utils/claudeLaunch.ts');
+const codexLaunch = load('src/utils/codexLaunch.ts', { './claudeLaunch': claudeLaunch });
+const commandParams = load('src/utils/commandParams.ts');
 const startupPresets = load('src/utils/startupPresets.ts');
+const sessionHistory = load('src/utils/sessionHistory.ts', {
+  './tauri': tauri, '../types': load('src/types/index.ts'),
+  '../components/claude-history/resumeClaudeSession': { pickClaudeProfile: () => undefined, resumeClaudeSession: async () => {} },
+  '../components/claude-history/resumeCodexSession': { pickCodexProfile: () => undefined, resumeCodexSession: async () => {} },
+});
 const openTerminal = load('src/utils/openTerminalInDir.ts', {
   '../stores/appStore': { useAppStore: store }, '../services/tauri': tauri, './startupPresets': startupPresets,
   '../services/platform': { defaultShellType: () => 'powershell' },
+  './projectPath': load('src/utils/projectPath.ts', { '../services/platform': { serverUsesWindowsPaths: () => false } }),
+  './claudeLaunch': claudeLaunch, './codexLaunch': codexLaunch,
 });
 const { TabContextMenu } = load('src/components/shell/TabContextMenu.tsx', {
   '../../stores/appStore': { useAppStore: store },
@@ -95,7 +103,7 @@ function reset() {
   calls = [];
   failStart = false;
   state = {
-    projects: [], extraParamPresets: [], sessions: [], sessionDirectories: {}, claudeSessionIds: {},
+    projects: [], extraParamPresets: [], sessions: [], sessionDirectories: {}, claudeSessionIds: {}, agentSessionBindings: {},
     splitMode: 'off', splitSlots: [], activeSessionId: null, toasts: [],
     addSession: session => state.sessions.push(session),
     setSessionDirectory: (id, directory) => { state.sessionDirectories[id] = directory; },

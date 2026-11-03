@@ -65,15 +65,17 @@ const resume = load('src/components/claude-history/resumeCodexSession.ts', {
 });
 state = {
   projects: [], sessions: [], profiles: [profile('other', '/other', 'codex'), profile('claude', '/work', 'claude'), profile('remote', '/work', 'codex', 'ssh')],
-  setSessionDirectory: (...args) => { directory = args; }, addSession() {}, resolveStartingSession() {},
+  setSessionDirectory: (...args) => { directory = args; }, addSession() {}, resolveStartingSession() {}, setAgentSessionBinding() {},
 };
 assert.equal(resume.pickCodexProfile(state.profiles, '/work/app'), undefined);
 await resume.resumeCodexSession({ sessionId: id, title: '测试会话', projectDir: '/work/app' });
 assert.equal(starts[0][0], 'blank');
 assert.equal(starts[0][1], 'bash');
 assert.equal(starts[0][4], '/work/app');
-assert.equal(starts[0][6], `codex resume ${id}`);
-assert.equal(launched.extraParams, `codex resume ${id}`);
+// 无匹配 profile 时用内置默认命令（跳过审批与沙箱）恢复会话。
+const defaultResume = `codex --dangerously-bypass-approvals-and-sandbox resume ${id}`;
+assert.equal(starts[0][6], defaultResume);
+assert.equal(launched.extraParams, defaultResume);
 assert.equal(launched.extraParamMode, 'independent');
 assert.deepEqual(directory, ['new-terminal', '/work/app']);
 state.profiles.push(profile('parent', '/work', 'codex --sandbox read-only'), profile('closest', '/work/app', 'codex --model old --sandbox workspace-write'));
