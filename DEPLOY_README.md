@@ -96,57 +96,55 @@ TB_CENTOS_PORT=9620 TB_CENTOS_BIND_ADDRESS=127.0.0.1 ./xcj/deploy-centos.sh
 
 ## 一键部署到飞牛 fnOS（xcj/deploy-fnos.sh）
 
-把 TerminalBuddy 部署到飞牛 NAS（192.168.3.77），与 CentOS 实例并存、互不影响。
-飞牛默认禁止 root 登录，脚本用普通管理员账号 + `sudo` 完成，**不需要**在飞牛上装 Node.js / Rust。
+把 TerminalBuddy 部署到飞牛 NAS（192.168.1.71），与 CentOS 实例并存、互不影响。
+与 `quantum/scripts/deploy-prod.sh` 同口径：**远端 compose 文件为权威**，本脚本只做
+「本机构建镜像 → 导出回滚 tar → 推送飞牛 load → compose 重建 → 健康检查 → 清理」，
+不生成、不修改飞牛侧的 `docker-compose.yml`，全程无 sudo、无密码传递。
 
 ```bash
-./xcj/deploy-fnos.sh                 # 全流程：拉代码 → 本机 docker 构建镜像 → 上传 → 飞牛载入 → 重建容器 → 自检
+./xcj/deploy-fnos.sh                 # 全流程：拉代码 → 本机 docker 构建镜像 → 导出 tar → 上传 → 飞牛 load → compose 重建 → 健康检查
 ./xcj/deploy-fnos.sh --no-build      # 跳过构建，用飞牛上现有镜像重建容器
 ./xcj/deploy-fnos.sh --no-pull       # 不拉取本机代码，直接用当前工作区
-./xcj/deploy-fnos.sh --build-on-nas  # 改为上传源码包、在飞牛上构建镜像（本机可不装 docker）
+./xcj/deploy-fnos.sh --load <tar>    # 从既有 tar 包部署（回滚 / 免构建）
 ```
 
-sudo 密码来源（按优先级）：环境变量 `TB_FNOS_PASSWORD` → 凭据文件（`--config`，默认
-`~/.codex/private/fnos/config.json`）→ 交互式隐藏输入。密码只经 stdin 交给远端 `sudo -S`，
-不写入命令行参数或日志。首次运行会自动生成部署密钥并安装公钥到飞牛，之后全程免密。
+**SSH 免密**：走 `~/.ssh/config` 别名 `fnos`（HostName 192.168.1.71 / User huangmaoqiu /
+IdentityFile `~/.ssh/id_ed25519`），BatchMode 非交互，免密未配置时预检直接失败并给出
+`ssh-copy-id` 指引。后台任务（update.sh 网页终端场景）会自动降权到源码属主执行，
+以使用其 ssh 配置与 docker 组权限。
 
 **默认在本机编译**（2026-11 起）：开发机装有 docker 且算力远强于飞牛 i3-N305，本机
 `docker build` 复用 BuildKit 层缓存，源码未变时几乎瞬时完成；镜像与飞牛上现有镜像 ID
-一致时**跳过导出与上传**，有变化时约 158MB 镜像包走局域网上传一次。飞牛侧只做
-`docker load` 与重建容器，不编译，也无需 Node / Rust。
+一致时**跳过导出与上传**，有变化时约 160MB 镜像包走局域网上传一次。飞牛侧只做
+`docker load` 与 `docker compose up -d`，不编译，也无需 Node / Rust。
 
-需要改回「上传源码、在飞牛上编译」时用 `--build-on-nas`（部署机可不装 docker，任意能
-ssh 的机器都能发包，源码包约 16MB；i3-N305 首次构建约 20-40 分钟，之后源码指纹未变时
-直接跳过构建复用镜像；基础镜像走「本地命中 → 离线备份 → 备用镜像源」三级兜底，
-构建所需的 npm / crates 源在飞牛上实测可达）。默认行为也可用环境变量
-`TB_FNOS_BUILD_LOCAL=0` 切换。
+**回滚**：每次部署的镜像 tar 留档在本机 `TARDIR`（默认 `.runtime-data/fnos-tars/`，
+保留最近 3 个），回滚用 `--load` 重新载入旧包即可；被覆盖的旧镜像在飞牛以 dangling
+形式留底，必要时可 `docker tag <旧ID> terminal-buddy:server` 手工恢复。
 
 默认配置（写在 `xcj/deploy-fnos.sh` 顶部，可用环境变量覆盖）：
 
 | 项 | 默认值 |
 |---|---|
-| 目标主机 | `192.168.3.77:22` |
-| 部署账号 | `397383523`（普通管理员，使用 sudo） |
-| 应用目录 | `/vol1/1000/docker/terminal-buddy` |
-| 数据目录 | `/vol1/1000/docker/terminal-buddy/data` → 容器 `/data` |
-| 用户目录 | `/vol1/1000/docker/terminal-buddy/home` → 容器 `/home/terminalbuddy` |
-| 工作区 | `/vol1/1000/docker/terminal-buddy/workspace`（容器内同路径） |
-| 监听端口 | `9600`（容器内同为 9600） |
-| 访问地址 | http://192.168.3.77:9600/ |
+| SSH 目标 | `fnos`（~/.ssh/config 别名 → 192.168.1.71 / huangmaoqiu） |
+| 镜像 | `terminal-buddy:server`（固定 tag，load 覆盖后 compose 自动重建） |
+| 应用目录 | `/vol2/1000/docker/terminal-buddy`（compose 为权威） |
+| compose | `/vol2/1000/docker/terminal-buddy/docker-compose.yml` |
+| 数据目录 | `/vol2/1000/docker/terminal-buddy/data` → 容器 `/data` |
+| 用户目录 | `/vol2/1000/docker/terminal-buddy/home` → 容器 `/home/terminalbuddy` |
+| 访问地址 | http://192.168.1.71:9600/ |
 
 飞牛适配要点：
 
-- **无 root 登录**：全部特权操作通过 `sudo` 执行，部署脚本以 root 运行后再降权到容器 uid 1000。
-- **TrimACL**：飞牛 `/vol1` 以自家 TrimACL 判定权限，`setfacl` 无效。脚本以 `chown 1000:1000`
-  为主，并在部署时用容器内 uid 1000 **实际写入探测** data / home / workspace 三个目录，
-  失败即中止并给出 `trimacl -m a:u:1000:...` 的补救命令。
-- **工作区同路径挂载**：容器内路径与宿主机一致，网页终端里 `docker compose` 的相对目录
-  挂载（`.:/app`、`./data`）才能落到正确的宿主机路径。
-- **项目名固定**：源码位于 `src/` 子目录，`.env` 中写入 `COMPOSE_PROJECT_NAME=terminal-buddy`，
-  避免项目名变成 `src` 与既有容器/网络脱节。
-- **Docker socket**：飞牛该 socket 的 GID 为 994，脚本自动读取并写入 `group_add`。
-- **基础镜像兜底**（在飞牛上构建时使用）：本地命中 → 离线备份
-  （`<应用目录>/base-images/`）→ 备用镜像源，避免飞牛镜像加速源故障时构建第一步就失败。
+- **compose 为权威**：挂载（`/vol2/1000/docker`、`/vol2/1000/code`、DockerImages 只读）、
+  外部网络 `docker_network`、端口映射等都在飞牛侧 `docker-compose.yml` 里维护，
+  脚本部署不会动它。
+- **Docker socket**：飞牛该 socket 的 GID 为 994，compose 中以 `group_add` 加入。
+- **TrimACL**（仅首次部署 relevant）：飞牛 `/vol2` 以自家 TrimACL 判定权限，
+  `setfacl` 无效；首次部署目录属主按 `chown 1000:1000` 处理（见
+  `scripts/deploy-fnos-remote.sh`）。
+- **首次部署**：飞牛上还没有 compose 时，先手工准备应用目录与 `docker-compose.yml`
+  （可参考 `scripts/deploy-fnos-remote.sh` 内的 compose 模板），之后日常更新都走本脚本。
 
 ### 统一更新（xcj/update.sh）
 
@@ -165,7 +163,7 @@ bash xcj/update.sh local                 # 只更新本机 systemd 服务
 bash xcj/update.sh fnos                  # 只更新飞牛 Docker 容器（docker/nas 为别名）
 bash xcj/update.sh --no-pull             # 跳过开头的 git pull --ff-only
 bash xcj/update.sh --keep-rollback       # 本机成功后保留 .bak 与 web.old 回滚材料
-bash xcj/update.sh fnos --host 192.168.3.77 --listen-port 9600   # 透传 deploy-fnos.sh 参数
+bash xcj/update.sh fnos --no-build   # 透传 deploy-fnos.sh 参数（--no-build / --no-pull 等）
 ```
 
 要点：
@@ -185,7 +183,7 @@ bash xcj/update.sh fnos --host 192.168.3.77 --listen-port 9600   # 透传 deploy
 
 ### 首次登录
 
-部署完成后打开 http://192.168.3.77:9600/ ，页面会要求**创建管理员密码**（至少 8 个字符），
+部署完成后打开 http://192.168.1.71:9600/ ，页面会要求**创建管理员密码**（至少 8 个字符），
 账号为 `admin`。数据目录此时是全新的，与 CentOS 实例完全隔离。
 
 也可以预先准备密码：在飞牛上的 compose 中配置 `TERMINAL_BUDDY_PASSWORD_FILE: /run/secrets/...`
@@ -202,7 +200,7 @@ bash xcj/update.sh fnos --host 192.168.3.77 --listen-port 9600   # 透传 deploy
 | compose | `/vol1/1000/docker/terminal-buddy/src/compose.fnos.yaml` |
 | 部署状态 | `/vol1/1000/docker/terminal-buddy/.deploy-state` |
 | 重启策略 | `unless-stopped` |
-| 访问地址 | http://192.168.3.77:9600/ |
+| 访问地址 | http://192.168.1.71:9600/ |
 
 常用运维（在飞牛或经 ssh）：
 
@@ -217,7 +215,7 @@ docker compose -f /vol1/1000/docker/terminal-buddy/src/compose.fnos.yaml down   
 容器挂载了宿主机的 `/var/run/docker.sock`，因此**网页终端及其中的 Claude 可以管理飞牛上的
 全部容器、镜像、卷和网络**，权限等价于宿主 root。该实例当前只监听局域网 `0.0.0.0:9600`，
 **不要**直接映射到公网；确需公网访问请配置带 HTTPS 的反向代理并设置强管理员口令。
-若只想发布单个端口到公网，可在飞牛的 frpc 配置中新增一条指向 `192.168.3.77:9600` 的映射。
+若只想发布单个端口到公网，可在飞牛的 frpc 配置中新增一条指向 `192.168.1.71:9600` 的映射。
 
 ## 飞牛 frpc 配置
 

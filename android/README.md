@@ -172,14 +172,14 @@ Ai 二级对话页在原有输入框上方显示独立悬浮卡片，采用薄�
 | 网络 | 填写地址 |
 | --- | --- |
 | 外网 | `http://taihe.678120.cn:8086` |
-| 同一局域网 | `http://192.168.3.77:8000` |
+| 同一局域网 | `http://192.168.1.71:8000` |
 
 公网通过现有 `frpc-caiji` 容器（服务端 `taihe.678120.cn:8000`）映射到远程打包主服务。宿主机配置 `/vol1/1000/docker/frpc-caiji/frpc.ini` 中新增以下段落，使用 frpc 的 `reload` 热加载：
 
 ```ini
 [terminalbuddy-android-update]
 type = tcp
-local_ip = 192.168.3.77
+local_ip = 192.168.1.71
 local_port = 8000
 remote_port = 8086
 ```
