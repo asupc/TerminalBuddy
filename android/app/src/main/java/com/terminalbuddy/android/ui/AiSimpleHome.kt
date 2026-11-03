@@ -235,7 +235,7 @@ private fun AiSimpleHeader(reconnecting: Boolean, profile: () -> Unit) {
     }
 }
 
-/** 新会话配置卡：压缩纵向留白，Agent 只显示图标，不重复文字名称。 */
+/** 新会话配置卡：压缩纵向留白，Agent 只显示图标，不重复文字名称；仅一个助手时不再提供选择。 */
 @Composable
 private fun SimpleComposer(
     ui: AiUiState, vm: AiViewModel,
@@ -243,6 +243,8 @@ private fun SimpleComposer(
 ) {
     val agents = if (ui.initialLoading) listOf("claude", "codex")
         else ui.availableAgents
+    // 同步完成后只剩一个助手时无需选择：隐藏助手行，标志直接并入开始按钮。
+    val singleAgent = !ui.initialLoading && agents.size == 1
     val enabled = !ui.initialLoading && !ui.working && !ui.authenticating
     val project = ui.launchProject
     val projectProfiles = remember(terminalUi.profiles, project?.name, project?.path) {
@@ -266,7 +268,7 @@ private fun SimpleComposer(
             if (project != null && projectProfiles.isNotEmpty()) {
                 SimpleProjectCommands(projectProfiles, terminalUi, terminalVm)
             }
-            if (agents.isNotEmpty()) {
+            if (agents.isNotEmpty() && !singleAgent) {
                 SimpleAgentPicker(agents, ui.launchProvider?.agent.orEmpty(), enabled && !ui.initialLoading,
                     ui.availableAgents, vm::selectAgent)
             }
@@ -289,6 +291,8 @@ private fun SimpleComposer(
                 modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
                 if (ui.working) CircularProgressIndicator(Modifier.size(14.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
+                else if (singleAgent) AiAgentLogo(agents.first(), Modifier.size(16.dp), agentTitle(agents.first()),
+                    tint = LocalContentColor.current)
                 else Icon(Icons.Outlined.Add, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(if (ui.working) "正在创建…" else "开始对话", Modifier.weight(1f),

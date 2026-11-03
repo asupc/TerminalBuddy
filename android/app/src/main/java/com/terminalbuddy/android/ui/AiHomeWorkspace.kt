@@ -67,6 +67,8 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel, more: () -> Unit) {
     // 同步期间以常见助手占位；完成后只保留项目已启用且服务端 Agent 管理中已安装的助手。
     val agents = if (ui.initialLoading) listOf("claude", "codex")
         else ui.availableAgents
+    // 只剩一个助手时不再提供选择，标志直接并入开始按钮。
+    val singleAgent = !ui.initialLoading && agents.size == 1
     val enabled = !ui.initialLoading && !ui.working && !ui.authenticating
     AiCard(shape = RoundedCornerShape(24.dp)) {
         // 整卡按 3/4 高度压缩：内边距、行距、行高与控件最小高度同步等比缩小。
@@ -79,7 +81,7 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel, more: () -> Unit) {
             AiChoiceField("工作项目", Icons.Outlined.FolderOpen, ui.projectPath, "选择一个项目",
                 ui.projects.map { AiChoice(it.path, it.name, it.path) }, enabled, vm::selectProject,
                 compact = true, inlineLabel = true)
-            if (agents.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (agents.isNotEmpty() && !singleAgent) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("选择助手", style = MaterialTheme.typography.labelMedium.copy(lineHeight = 13.sp), color = TbColors.TextMuted)
                 AiAgentTabs(agents, ui.launchProvider?.agent.orEmpty(), vm::selectAgent,
                     enabledAgents = if (enabled) ui.availableAgents else emptyList(), stacked = true)
@@ -102,6 +104,8 @@ private fun AiQuickStart(ui: AiUiState, vm: AiViewModel, more: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
                 contentPadding = PaddingValues(horizontal = 15.dp, vertical = 12.dp)) {
                 if (ui.working) CircularProgressIndicator(Modifier.size(14.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
+                else if (singleAgent) AiAgentLogo(agents.first(), Modifier.size(16.dp), agentTitle(agents.first()),
+                    tint = LocalContentColor.current)
                 else Icon(Icons.Outlined.Add, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(if (ui.working) "正在创建…" else "开始对话", Modifier.weight(1f),
