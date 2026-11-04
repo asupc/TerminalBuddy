@@ -104,6 +104,7 @@ pub struct TerminalAgentSession {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// attention / running / idle / completed / failed / ended / unknown
+    /// （unknown 仅作为兜底：阶段表无记录时按镜像推断为 running / idle）
     pub phase: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phase_at: Option<i64>,
@@ -409,14 +410,18 @@ pub(crate) fn valid_request_id(request_id: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
 }
 
-/// 「agent 仍在」判定（§4.6 第 7 条存活表）。P0 保守：unknown 一律禁止。
+/// 「agent 仍在」判定（§4.6 第 7 条存活表）。
+/// unknown 及未来新增值一律放行：会话出现在列表里即表示发现链（进程扫描）确认了
+/// agent 进程仍在该终端里运行——无 Hook 上报（Codex / 手动启动 / 服务重启后）
+/// 不再作为禁回理由。idle 的 24 小时闲置判定只在 Hook 上报过真实时间戳时生效；
+/// 推断路径（无时间戳）视为此刻存活。
 pub(crate) fn phase_allows_reply(phase: &str, phase_at: Option<i64>, now_ms: i64) -> Result<(), String> {
     match phase {
         "running" => Ok(()),
         // attention 由第 3 条闸门单独区分原因，这里兜底拒绝。
         "attention" => Err("Agent 正在等待确认，请先处理待决策问题或打开终端".to_string()),
         "idle" | "completed" | "failed" => {
-            let at = phase_at.unwrap_or(0);
+            let Some(at) = phase_at else { return Ok(()) };
             if now_ms.saturating_sub(at) <= IDLE_PHASE_MAX_AGE_MS {
                 Ok(())
             } else {
@@ -424,8 +429,24 @@ pub(crate) fn phase_allows_reply(phase: &str, phase_at: Option<i64>, now_ms: i64
             }
         }
         "ended" => Err("会话已结束，输入会落入 shell；如需继续请使用历史会话恢复".to_string()),
-        _ => Err("无法确认 Agent 是否仍在终端前台运行（Codex 或服务重启后为只读），已禁止回复".to_string()),
+        _ => Ok(()),
     }
+}
+
+/// 阶段表无记录时按镜像尾条推断阶段（「绑定存在即进程存活」的同步状态）：
+/// 最后一条是用户消息 → running（Agent 正在处理），否则 → idle（等待输入）。
+/// phaseAt 取尾条时间戳，缺失时用转录文件 mtime；两者皆无为 None（视为存活）。
+/// 推断值不写入阶段表：每次构建元数据时基于最新镜像重算，Hook 恢复上报后自动被真实值取代。
+fn inferred_phase(entry: Option<&MirrorEntry>) -> (String, Option<i64>) {
+    let Some(entry) = entry.filter(|entry| entry.available) else {
+        return ("idle".to_string(), None);
+    };
+    let last = entry.messages.last();
+    let phase = if last.is_some_and(|message| message.role == "user") { "running" } else { "idle" };
+    let at = last
+        .and_then(|message| message.timestamp)
+        .or_else(|| entry.file_stamp.map(|(mtime, _)| mtime.duration_since(UNIX_EPOCH).ok().map(|value| value.as_millis() as i64)).flatten());
+    (phase.to_string(), at)
 }
 
 /// 列表页的 canReply（§4.2 第 6 条）：复用第 1/2/3/7 条闸门，不检查文本、requestId 与频率。
@@ -1241,7 +1262,7 @@ fn build_session_meta(
             .phases
             .current(&info.id, &record.provider, &record.session_id)
             .map(|(phase, at)| (phase, Some(at)))
-            .unwrap_or(("unknown".to_string(), None));
+            .unwrap_or_else(|| inferred_phase(entry.as_ref()));
         (entry, phase, phase_at)
     };
     let pending = pending_decision_ids(&info.id);
@@ -1532,7 +1553,16 @@ pub async fn reply(
                 lock_state().phases.current(&terminal_id_owned, provider, session_id)
             })
             .map(|(phase, at)| (phase, Some(at)))
-            .unwrap_or(("unknown".to_string(), None));
+            .unwrap_or_else(|| {
+                // 阶段表无记录（Codex / 手动启动 / 服务重启后）按镜像推断；
+                // 镜像身份与绑定不一致（换绑未刷新）时不采信旧镜像。
+                let current = lock_state();
+                let entry = current
+                    .mirrors
+                    .get(&terminal_id_owned)
+                    .filter(|entry| binding.as_ref().is_some_and(|identity| &entry.identity() == identity));
+                inferred_phase(entry)
+            });
         (
             binding,
             pending_decision_ids(&terminal_id_owned),
@@ -2235,6 +2265,42 @@ mod tests {
 
     // ── 回复闸门（第 2–7 条逐条覆盖；拒绝时 writer 一次都不调用） ──
 
+    /// 阶段表无记录时的镜像推断：尾条是用户消息 → running；其余 → idle；
+    /// phaseAt 用尾条时间戳，无消息或镜像不可用 → idle + None。
+    #[test]
+    fn inferred_phase_follows_last_mirror_message() {
+        let entry = |messages: Vec<SessionReplayMessage>| MirrorEntry {
+            provider: "claude".to_string(),
+            session_id: "s".to_string(),
+            path: None,
+            revision: 1,
+            available: true,
+            reason: None,
+            messages,
+            total: 0,
+            truncated: false,
+            file_stamp: None,
+            last_access: Instant::now(),
+        };
+        let (phase, at) = inferred_phase(None);
+        assert_eq!((phase.as_str(), at), ("idle", None));
+        let (phase, at) = inferred_phase(Some(&entry(vec![])));
+        assert_eq!((phase.as_str(), at), ("idle", None));
+        let mut last_user = message(1, "assistant", "答");
+        last_user.timestamp = Some(111);
+        let mut tail = message(2, "user", "问");
+        tail.timestamp = Some(222);
+        let (phase, at) = inferred_phase(Some(&entry(vec![last_user.clone(), tail.clone()])));
+        assert_eq!((phase.as_str(), at), ("running", Some(222)));
+        let (phase, at) = inferred_phase(Some(&entry(vec![tail.clone(), last_user])));
+        assert_eq!((phase.as_str(), at), ("idle", Some(111)));
+        // 镜像不可用（transcript 读不到）时仍给出可回复的 idle，不阻断。
+        let mut unavailable = entry(vec![tail]);
+        unavailable.available = false;
+        let (phase, _) = inferred_phase(Some(&unavailable));
+        assert_eq!(phase, "idle");
+    }
+
     fn gate_context<'a>(
         binding: Option<&'a (String, String)>,
         pending: &'a [String],
@@ -2288,9 +2354,16 @@ mod tests {
         // 第 5 条：控制字符。
         let outcome = evaluate_reply_gates(gate_context(Some(&binding), &no_pending, "running", "好的\x03"), &ledger, None);
         assert!(matches!(outcome, GateOutcome::Rejected(RelayError::BadRequest(_))));
-        // 第 7 条：unknown（Codex P0 只读）。
+        // 第 7 条：unknown 放行（绑定存在即进程存活，无 Hook 不再禁回）。
         let outcome = evaluate_reply_gates(gate_context(Some(&binding), &no_pending, "unknown", "正常回复"), &ledger, None);
-        assert!(matches!(outcome, GateOutcome::Rejected(ref error) if error.reply_blocked_reason().is_some()));
+        assert!(matches!(outcome, GateOutcome::Write));
+        // 第 7 条：推断路径 idle 无时间戳（phaseAt 缺失）同样放行。
+        let outcome = evaluate_reply_gates(
+            ReplyGateContext { phase_at: None, ..gate_context(Some(&binding), &no_pending, "idle", "正常回复") },
+            &ledger,
+            None,
+        );
+        assert!(matches!(outcome, GateOutcome::Write));
         // 第 7 条：ended。
         let outcome = evaluate_reply_gates(gate_context(Some(&binding), &no_pending, "ended", "正常回复"), &ledger, None);
         assert!(matches!(outcome, GateOutcome::Rejected(_)));
