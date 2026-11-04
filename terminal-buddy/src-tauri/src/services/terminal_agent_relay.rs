@@ -2583,6 +2583,51 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    /// hook 链路不直传 transcript 路径（record_claude_session 只设 binding），
+    /// 首次 poll 找不到文件进入 unavailable 后，transcript 在 claude_root 下出现时
+    /// 必须能靠 find_transcript 递归定位并恢复镜像（App「开始对话」后立即打开会话页的路径）。
+    #[test]
+    fn unavailable_recovers_when_transcript_appears_under_root() {
+        let terminal_id = format!("relay-find-{}", uuid::Uuid::new_v4());
+        let claude_line = |text: &str| {
+            json!({"type":"user","message":{"content": text}}).to_string()
+        };
+        // 临时 CLAUDE_CONFIG_DIR 根：tracked.claude_root 指向它，避免触碰真实 HOME。
+        let base = std::env::temp_dir().join(format!("tb-relay-find-{}", uuid::Uuid::new_v4()));
+        let config_dir = base.join("claude");
+        fs::create_dir_all(&config_dir).unwrap();
+        let session = format!("01900000-0000-7000-8000-{:012x}", uuid::Uuid::new_v4().as_u128() & 0xffff_ffff_ffff);
+        super::super::terminal_task_service::prepare_launch(
+            &terminal_id, "bash", None,
+            &[("CLAUDE_CONFIG_DIR".to_string(), config_dir.to_string_lossy().into_owned())],
+            Vec::new(),
+        );
+        // 模拟 hook 上报：只登记绑定，不传 transcript 路径。
+        super::super::terminal_task_service::record_agent_session(&terminal_id, "claude", &session, None, true);
+        let scan = scan_with_binding(&terminal_id, "claude", &session);
+        // transcript 尚未创建（Agent 空闲）：unavailable。
+        match poll_mirror(&terminal_id, &scan) {
+            PollContent::Unavailable { reason } => assert_eq!(reason, "transcript_unreadable"),
+            other => panic!("无 transcript 应 unavailable：{other:?}"),
+        }
+        // transcript 出现在 claude_root/projects/<项目目录>/ 下；等 locate 负缓存（2s TTL）过期。
+        let project_dir = config_dir.join("projects").join("-tmp-demo");
+        fs::create_dir_all(&project_dir).unwrap();
+        let path = project_dir.join(format!("{session}.jsonl"));
+        fs::write(&path, format!("{}\n", claude_line("恢复路径的第一问"))).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2_100));
+        match poll_mirror(&terminal_id, &scan) {
+            PollContent::Page { kind, core } => {
+                assert_eq!(kind, "mirror", "transcript 出现后必须靠递归查找恢复");
+                assert_eq!(core.revision, 2, "从不可用恢复 revision+1");
+            }
+            other => panic!("恢复应 mirror：{other:?}"),
+        }
+        lock_state().remove_terminal(&terminal_id);
+        super::super::terminal_task_service::forget_terminal(&terminal_id);
+        fs::remove_dir_all(&base).ok();
+    }
+
     #[test]
     fn poll_mirror_rebind_to_new_session_rotates() {
         let terminal_id = format!("relay-rebind-{}", uuid::Uuid::new_v4());

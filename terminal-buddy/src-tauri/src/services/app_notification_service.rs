@@ -134,6 +134,24 @@ impl AppNotificationService {
         });
     }
 
+    /// 终端列表变化（创建 / 关闭）：不产生通知栏提醒，仅作为 App 列表页的
+    /// 实时刷新信号——手机端「最近会话」据此与电脑端保持同步，无需退出重进。
+    pub fn publish_terminals_changed(terminal_id: &str, terminal_name: String, created: bool) {
+        publish(AppNotificationEvent {
+            id: format!("terminals:{}", uuid::Uuid::new_v4()),
+            kind: "terminals_changed".to_string(),
+            terminal_id: terminal_id.to_string(),
+            terminal_name,
+            provider: None,
+            title: if created { "终端已创建".to_string() } else { "终端已关闭".to_string() },
+            summary: String::new(),
+            decision_id: None,
+            questions: Vec::new(),
+            expires_at: None,
+            occurred_at: chrono::Utc::now().timestamp_millis(),
+        });
+    }
+
     /// 桌面端把终端结束事件转成机器人通知时也会调用；eventId 与终端事件相同，
     /// App 按事件 ID 去重，因此与源端发布重复时不会提醒两次。
     pub fn publish_bot_completion(

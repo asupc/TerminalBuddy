@@ -673,6 +673,12 @@ pub fn teardown_terminal(app: &AppHandle, terminal_id: &str, reason: TerminalClo
     // 桌面端 removeSession 幂等，但这里也只会收到一次。
     let _ = app.emit("terminal-closed", terminal_id);
     service.notify_sessions_changed();
+    // 广播给 App 通知通道：手机端「最近会话」据此实时移除已关闭的 Agent 会话。
+    crate::services::AppNotificationService::publish_terminals_changed(
+        terminal_id,
+        instance.display_name.clone(),
+        false,
+    );
     true
 }
 
@@ -905,6 +911,12 @@ fn finalize_terminal_creation(
     log_debug(&format!("[{}] DONE, id={}", debug_prefix, terminal_id));
     crate::boot_log(format!("[{}] DONE", boot_prefix));
     service.notify_sessions_changed();
+    // 广播给 App 通知通道：手机端「开始对话」创建的服务端终端能立刻出现在最近会话列表。
+    let display_name = lock_instances_map(&service.instances)
+        .get(terminal_id)
+        .map(|instance| instance.display_name.clone())
+        .unwrap_or_else(|| "服务端终端".to_string());
+    crate::services::AppNotificationService::publish_terminals_changed(terminal_id, display_name, true);
 }
 
 /// 按终端类型构造启动命令；ssh/docker/k8s 需要 profile 连接参数。
