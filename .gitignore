@@ -19,3 +19,7 @@ target
 /terminal-buddy/server-data/
 /terminal-buddy/dist-web/
 /dist/
+# 部署打包产物（xcj 脚本生成）
+/.runtime-data/
+# 安卓构建脚本自增版本号时的临时备份
+*.tb-build-bak
