@@ -1,6 +1,6 @@
 # 简版首页「进行中」Tab 合并与手机/电脑 Agent 会话统一（调研）
 
-日期：2026-11-02。状态：**调研完成，可实施性成立，待拍板后实施**。本文是实施前调研，不代表代码已实现。
+日期：2026-11-02。状态：**调研完成，可实施性成立；2026-11-04 已按方案 C 在简版落地**（见 §7）。
 
 相关文档：[终端 Agent 会话接力](2026-11-01--terminal-agent-chat-relay.md)、[原生 AI 会话 API](../原生AI会话API.md)。
 
@@ -75,3 +75,10 @@
 - 改动集中在安卓端 Kotlin：`AiSimpleHome.kt`（Tab 与列表）、`AiViewModel`/`ServerTerminalViewModel`/repository（发起路径）、行组件与计数 badge；无服务端必改项、无 PC 端改动。
 - 不动：历史 Tab 逻辑、relay 协议、原生会话 API、完整版界面。
 - 验证：容器内 `compileDebugKotlin` + `testDebugUnitTest`（参照 `scripts/build-android.sh` 的容器模式），真机验证「开始对话 → 终端创建 → relay 接管 → PC 端接力」全链路。
+
+## 7. 实施记录（2026-11-04）
+
+- **新会话走终端**：简版「开始对话」改为 `GET /api/runtime` 取 Agent 基础命令 → `POST /api/terminals`（空 `profileId` + `startupPath` + `startupCommand` + `displayName` / `startupGroup`）创建真实终端。模型通过服务端引用命令展开：Claude `__TB_CLAUDE_REF__:<providerId>:<modelId>`、Codex `__TB_CODEX_REF__:<providerId>:<modelId>`，并继承 Agent 管理配置里的权限参数；`default:*` 与暂不支持引用启动的供应商回退基础命令。
+- **最近会话不再区分来源**：移除「服务端正在运行 / App 发起的会话」分组，终端 Agent 会话与存量原生会话按最近活动时间统一平铺；实时列表失败只影响实时部分，存量会话仍可打开。
+- **启动与接管**：终端创建成功后按 `terminalId` 轮询 `/api/terminal-agents`，发现绑定后进入接力页；45 秒仍未发现则退回该终端画面并提示手动刷新，不重复创建终端。
+- **兼容范围**：完整版 AI 页仍保留原生会话体系（与 §4 决策一致）；本次只改简版入口与最近会话列表。
