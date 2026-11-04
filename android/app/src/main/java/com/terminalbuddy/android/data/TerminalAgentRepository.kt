@@ -65,6 +65,14 @@ internal class TerminalAgentRepository {
         }),
     )
 
+    /**
+     * 关闭承载该 Agent 会话的服务端终端（DELETE /api/terminals/{id}），
+     * 终端内的 Agent 进程随之结束。404 视为已关闭，不作为失败。
+     */
+    suspend fun closeTerminal(connection: AiConnection, terminalId: String) {
+        request(connection, "DELETE", listOf("terminals", terminalId))
+    }
+
     fun connect(connection: AiConnection, terminalId: String, listener: WebSocketListener): WebSocket {
         val url = ServerAddress.terminalAgentSocket(connection.server, terminalId, connection.token)
         return realtime.newWebSocket(Request.Builder().url(url).header("User-Agent", USER_AGENT).build(), listener)

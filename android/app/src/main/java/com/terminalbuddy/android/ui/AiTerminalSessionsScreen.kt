@@ -2,6 +2,7 @@ package com.terminalbuddy.android.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -40,6 +41,8 @@ internal fun AiTerminalSessionsScreen(
     val busy = ui.launchingId != null
     // 外层按账号做了 key()，这里只需要记住本账号下展开的项目。
     var expandedProject by rememberSaveable { mutableStateOf<String?>(null) }
+    // 长按 Agent 会话 → 确认后关闭承载该会话的服务端终端（Agent 随之结束）。
+    var closeTarget by remember { mutableStateOf<TerminalAgentSession?>(null) }
     val projects = remember(ui.projects, ui.profiles) {
         // 目录同时覆盖项目接口与配置分组：有些配置的 group 不在项目列表里，也要能启动。
         val names = LinkedHashSet<String>()
@@ -113,16 +116,35 @@ internal fun AiTerminalSessionsScreen(
                 style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
             )
         }
+        agentUi.closeError?.let { error -> item(key = "agent-close-error") {
+            Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(12.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = TbColors.Danger, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    )
+                    TextButton(agentVm::clearCloseError) { Text("知道了") }
+                }
+            }
+        } }
         if (agentUi.sessions.isNotEmpty()) {
             item(key = "agent-label") {
                 AiListLabel("Agent 会话", Modifier.padding(top = 8.dp), trailing = "${agentUi.sessions.size} 个")
             }
             items(agentUi.sessions, key = { "agent:${it.terminalId}" }) { agent ->
-                AiAgentSessionCard(agent, !busy) { openAgent(agent) }
+                AiAgentSessionCard(
+                    agent, !busy,
+                    closing = agentUi.closingTerminalId == agent.terminalId,
+                    open = { openAgent(agent) },
+                    requestClose = { closeTarget = agent },
+                )
             }
             item(key = "agent-hint") {
                 Text(
-                    "电脑终端里正在运行的 Claude / Codex 会话：查看实时镜像，Claude 可回一句或处理待决策。",
+                    "服务端终端里正在运行的 Claude / Codex 会话：查看实时镜像，可回一句或处理待决策；长按可关闭。",
                     style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
                 )
             }
@@ -181,6 +203,21 @@ internal fun AiTerminalSessionsScreen(
             )
         }
     }
+    val target = closeTarget
+    if (target != null) AlertDialog(
+        onDismissRequest = { closeTarget = null },
+        title = { Text("关闭服务端 Agent") },
+        text = {
+            Text("关闭「${target.displayTitle}」所在的服务端终端？终端里的 Agent 会话会随之结束，未保存的工作将丢失。")
+        },
+        confirmButton = {
+            TextButton({
+                closeTarget = null
+                agentVm.closeSession(target)
+            }) { Text("关闭", color = TbColors.Danger) }
+        },
+        dismissButton = { TextButton({ closeTarget = null }) { Text("取消") } },
+    )
 }
 
 /** 已打开的终端：一行标题 + 一行类型/目录，点开进入终端画面；有 Agent 绑定时追加快捷入口。 */
@@ -242,15 +279,21 @@ private fun AiOpenTerminalCard(
     }
 }
 
-/** 终端 Agent 会话卡：provider 徽标 + 标题 + 阶段，有待决策时带角标。 */
+/** 终端 Agent 会话卡：provider 徽标 + 标题 + 阶段，有待决策时带角标；长按关闭服务端 Agent。 */
 @Composable
-private fun AiAgentSessionCard(session: TerminalAgentSession, enabled: Boolean, open: () -> Unit) {
+private fun AiAgentSessionCard(
+    session: TerminalAgentSession, enabled: Boolean,
+    closing: Boolean, open: () -> Unit, requestClose: () -> Unit,
+) {
     Surface(
-        onClick = open, enabled = enabled, color = TbColors.Surface,
+        color = TbColors.Surface,
         shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, TbColors.Border),
     ) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 11.dp),
+            Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                .combinedClickable(enabled = enabled, onClick = open,
+                    onLongClickLabel = "关闭服务端 Agent", onLongClick = requestClose)
+                .padding(horizontal = 12.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             AiAgentBadge(session.provider, size = 34.dp)
@@ -272,7 +315,9 @@ private fun AiAgentSessionCard(session: TerminalAgentSession, enabled: Boolean, 
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (session.pendingDecisionCount > 0) {
+            if (closing) {
+                CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp, color = TbColors.TextMuted)
+            } else if (session.pendingDecisionCount > 0) {
                 BadgedBox(badge = {
                     Badge(containerColor = TbColors.Accent, contentColor = TbColors.AccentInk) {
                         Text(if (session.pendingDecisionCount > 99) "99+" else session.pendingDecisionCount.toString())
@@ -280,8 +325,9 @@ private fun AiAgentSessionCard(session: TerminalAgentSession, enabled: Boolean, 
                 }) {
                     Icon(Icons.Outlined.PendingActions, "有待决策", Modifier.size(19.dp), tint = TbColors.Accent)
                 }
+            } else {
+                Icon(Icons.Outlined.ChevronRight, "查看 Agent 会话", Modifier.size(18.dp), tint = TbColors.TextMuted)
             }
-            Icon(Icons.Outlined.ChevronRight, "查看 Agent 会话", Modifier.size(18.dp), tint = TbColors.TextMuted)
         }
     }
 }

@@ -39,6 +39,26 @@ internal class ServerTerminalRepository {
             put("cols", 0)
         }))
 
+    /** Agent 基础启动命令：手机「开始对话」按所选助手在服务端开一个真实终端。 */
+    suspend fun runtimeInfo(connection: AiConnection): AgentRuntimeInfo =
+        ApiJson.decodeFromJsonElement(request(connection, "GET", listOf("runtime")))
+
+    /**
+     * 创建空白终端并注入 Agent 启动命令（空 profileId 走 `create_blank_terminal`）。
+     * 终端归属 Web、创建来源按 User-Agent 记为 Mobile；电脑端终端列表立即可见。
+     */
+    suspend fun startAgent(
+        connection: AiConnection, startupCommand: String, projectPath: String, projectName: String,
+    ): ServerTerminal = ApiJson.decodeFromJsonElement(request(connection, "POST", listOf("terminals"), jsonBody {
+        put("profileId", "")
+        put("rows", 0)
+        put("cols", 0)
+        put("startupPath", projectPath)
+        put("startupCommand", startupCommand)
+        put("displayName", projectName)
+        put("startupGroup", projectName)
+    }))
+
     suspend fun close(connection: AiConnection, id: String) {
         request(connection, "DELETE", listOf("terminals", id))
     }

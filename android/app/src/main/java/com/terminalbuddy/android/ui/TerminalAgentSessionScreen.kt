@@ -38,6 +38,8 @@ internal fun TerminalAgentSessionScreen(
     agentVm: TerminalAgentViewModel,
     terminalUi: ServerTerminalUiState,
     terminalVm: ServerTerminalViewModel,
+    /** 新终端已创建、Agent 绑定尚未被发现：显示启动态而不是空会话。 */
+    starting: Boolean = false,
     onBack: () -> Unit,
     onBackFromTerminal: () -> Unit,
     openDecision: (String) -> Unit,
@@ -106,7 +108,14 @@ internal fun TerminalAgentSessionScreen(
                     )
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = TbColors.Accent)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = TbColors.Accent)
+                            if (starting) Text(
+                                "正在启动 Agent…", style = MaterialTheme.typography.bodySmall,
+                                color = TbColors.TextMuted,
+                            )
+                        }
                     }
                 }
             }

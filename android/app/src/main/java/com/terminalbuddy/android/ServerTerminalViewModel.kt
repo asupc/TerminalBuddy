@@ -20,7 +20,10 @@ internal data class ServerTerminalUiState(
     val dialogOpen: Boolean = false, val loading: Boolean = false, val loaded: Boolean = false,
     val projects: List<AiProject> = emptyList(), val profiles: List<ServerProfile> = emptyList(),
     val terminals: List<ServerTerminal> = emptyList(), val error: String? = null,
-    val launchingId: String? = null, val selected: ServerTerminal? = null,
+    val launchingId: String? = null,
+    // 简版「开始对话」：按所选 Agent 创建服务端终端，与项目配置启动共用 actionJob 但状态独立。
+    val launchingAgent: Boolean = false, val agentLaunchError: String? = null,
+    val selected: ServerTerminal? = null,
     val connected: Boolean = false, val status: String = "等待连接",
     val terminalError: String? = null, val ended: Boolean = false, val closing: Boolean = false,
     val outputLog: String = "", val renderingError: String? = null, val rendererReady: Boolean = false,
@@ -140,6 +143,59 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
             } finally {
                 if (epoch == generation) mutable.update { it.copy(launchingId = null) }
             }
+        }
+    }
+
+    /**
+     * 简版「开始对话」：按所选 Agent / 供应商 / 模型在服务端开一个真实终端并注入启动命令。
+     * 创建成功只返回终端本身；转录与 Agent 绑定由服务端发现链补齐，调用方按 terminalId
+     * 等待 `/api/terminal-agents` 出现后进入接力页（不在这里假设立即可见）。
+     */
+    fun launchAgent(
+        agent: String, providerId: String, modelId: String, projectPath: String, projectName: String,
+        onLaunched: (ServerTerminal) -> Unit,
+    ) {
+        val connection = mutable.value.connection ?: run {
+            mutable.update { it.copy(agentLaunchError = "正在同步账号，请稍后再试") }
+            return
+        }
+        if (actionJob?.isActive == true || mutable.value.launchingAgent) return
+        val epoch = generation
+        mutable.update { it.copy(launchingAgent = true, agentLaunchError = null) }
+        actionJob = viewModelScope.launch {
+            try {
+                val runtime = repository.runtimeInfo(connection)
+                val command = AgentLaunchCommand.build(agent, providerId, modelId, runtime.agentCommands.of(agent))
+                val terminal = repository.startAgent(connection, command, projectPath, projectName)
+                if (epoch != generation) return@launch
+                mutable.update { state ->
+                    state.copy(terminals = state.terminals.filterNot { item -> item.id == terminal.id } + terminal)
+                }
+                onLaunched(terminal)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (epoch == generation) {
+                    // POST 不自动重试：连接中断时命令可能已经在服务端执行，提示用户先刷新确认。
+                    val message = if (e.isConnectionFailure())
+                        "未收到启动结果，Agent 可能已经在服务端启动。请刷新最近会话后再试，避免重复开终端。"
+                    else e.userMessage()
+                    mutable.update { it.copy(agentLaunchError = message) }
+                }
+            } finally {
+                if (epoch == generation) mutable.update { it.copy(launchingAgent = false) }
+            }
+        }
+    }
+
+    fun clearAgentLaunchError() {
+        mutable.update { it.copy(agentLaunchError = null) }
+    }
+
+    /** Agent 启动比终端创建慢：超时后停止轮询并给出可重试提示，不改动已创建的终端。 */
+    fun reportAgentLaunchTimeout() {
+        mutable.update {
+            it.copy(agentLaunchError = "终端已创建，但 Agent 暂未出现在会话列表。稍后刷新「最近会话」，或在终端页签查看启动过程。")
         }
     }
 

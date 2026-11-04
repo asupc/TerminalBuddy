@@ -2,6 +2,7 @@ package com.terminalbuddy.android.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,7 +22,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
@@ -50,11 +50,30 @@ private enum class SimpleHomeTab(val title: String) {
 }
 
 /**
+ * 最近会话的统一条目：终端 Agent 会话与改造前创建的存量原生会话混排，
+ * 只按最近活动时间排序，不再按「App / 服务端」来源分组。
+ */
+private sealed interface RecentEntry {
+    val key: String
+    val sortAt: Long
+
+    data class Live(val session: TerminalAgentSession) : RecentEntry {
+        override val key get() = "live-${session.terminalId}"
+        override val sortAt get() = session.lastActivityAt ?: session.phaseAt ?: 0L
+    }
+
+    data class Native(val session: AiSession) : RecentEntry {
+        override val key get() = "native-${session.id}"
+        override val sortAt get() = session.updatedAt
+    }
+}
+
+/**
  * 简版核心页：只保留快速开始。
  * 顶部品牌与「我的」入口，中间是压缩后的新会话配置，下方用 Tab 切换最近会话和历史会话。
- * 最近会话把服务端正在运行的 Agent 会话（实时镜像，点击直接接管）与 App 发起的会话合并展示，
- * 按「服务端正在运行 / App 发起」分组平铺；历史会话按当前工作项目汇总全部已启用助手，
- * 不跟随快速开始里的助手选择。
+ * 「开始对话」在服务端创建真实终端，手机打开的 Agent 与电脑终端完全同一会话；
+ * 最近会话统一平铺终端 Agent 会话与存量原生会话，不再按来源分组。
+ * 历史会话按当前工作项目汇总全部已启用助手，不跟随快速开始里的助手选择。
  */
 @Composable
 internal fun AiSimpleHome(
@@ -62,9 +81,12 @@ internal fun AiSimpleHome(
     terminalUi: ServerTerminalUiState, terminalVm: ServerTerminalViewModel,
     agentUi: TerminalAgentUiState, agentVm: TerminalAgentViewModel,
     openAgent: (TerminalAgentSession) -> Unit,
+    startAgent: (agent: String, providerId: String, modelId: String, projectPath: String, projectName: String) -> Unit,
     profile: () -> Unit, delete: (AiSession) -> Unit,
 ) {
     var tab by rememberSaveable(ui.activeAccountId) { mutableStateOf(SimpleHomeTab.Recent) }
+    // 长按服务端会话 → 确认后关闭承载该会话的服务端终端（Agent 随之结束）。
+    var closeTarget by remember { mutableStateOf<TerminalAgentSession?>(null) }
     // 项目配置与实时 Agent 会话来自服务端，进入简版首页时同步一次，后续账号切换自动重新绑定。
     LaunchedEffect(ui.activeAccountId, ui.connectionRevision) {
         terminalVm.bindAccount()
@@ -88,11 +110,16 @@ internal fun AiSimpleHome(
         (if (ui.sessions.isEmpty()) ui.recentSessions else ui.sessions)
             .sortedByDescending { it.updatedAt }
     }
+    // 终端 Agent 会话与存量原生会话混排，只按最近活动时间排序，不区分来源。
+    val recentEntries = remember(currentAgentUi.sessions, recent) {
+        (currentAgentUi.sessions.map { RecentEntry.Live(it) } + recent.map { RecentEntry.Native(it) })
+            .sortedByDescending { it.sortAt }
+    }
     // 历史范围只取决于项目与该项目可用的助手，切换助手不会重新拉取或过滤历史。
     val historyAgents = ui.availableAgents
     LaunchedEffect(tab, ui.projectPath, ui.connectionRevision, historyAgents) {
         if (tab == SimpleHomeTab.History) vm.loadHistoryForSelection()
-        // 两个 Tab 都依赖实时 Agent 列表：最近会话展示「服务端正在运行」分组，历史会话做「电脑运行中」匹配。
+        // 两个 Tab 都依赖实时 Agent 列表：最近会话平铺终端会话，历史会话做「电脑运行中」匹配。
         agentVm.refresh()
     }
     Column(Modifier.fillMaxSize()) {
@@ -104,14 +131,21 @@ internal fun AiSimpleHome(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item(key = "composer") {
-                SimpleComposer(ui, vm, terminalUi, terminalVm)
+                SimpleComposer(ui, vm, terminalUi, terminalVm, onStart = {
+                    val project = ui.launchProject
+                    val provider = ui.launchProvider
+                    val model = ui.launchModel
+                    if (project != null && provider != null && model != null && ui.canCreate) {
+                        startAgent(provider.agent, provider.id, model.id, project.path, project.name)
+                    }
+                })
             }
             item(key = "tabs") {
                 SimpleTabs(
                     selected = tab,
-                    // 最近会话的计数是「服务端正在运行 + App 发起」的合计，两边都同步完成后才展示。
+                    // 会话列表与实时 Agent 列表都同步完成后才展示计数。
                     recentCount = if (ui.homeLoaded && currentAgentUi.listLoaded)
-                        recent.size + currentAgentUi.sessions.size else null,
+                        recentEntries.size else null,
                     historyCount = ui.historySessions.size.takeIf {
                         ui.historyProjectPath == ui.projectPath && ui.historyAgents == historyAgents
                     },
@@ -120,48 +154,60 @@ internal fun AiSimpleHome(
             }
             when (tab) {
                 SimpleHomeTab.Recent -> {
-                    // 服务端会话同步失败时给出行内重试入口，不影响下方 App 会话分组的展示。
-                    currentAgentUi.listError?.let { error -> item(key = "server-error") {
+                    // 实时会话同步失败时给出行内重试入口，不影响下方存量会话的展示。
+                    currentAgentUi.listError?.let { error -> item(key = "agent-error") {
                         Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(16.dp)) {
                             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("服务端会话同步失败", style = MaterialTheme.typography.titleSmall)
+                                Text("会话同步失败", style = MaterialTheme.typography.titleSmall)
                                 Text(error, style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
                                 TextButton(agentVm::refresh, enabled = !currentAgentUi.listLoading,
                                     contentPadding = PaddingValues(0.dp)) { Text("重新加载") }
                             }
                         }
                     } }
-                    val serverSessions = currentAgentUi.sessions
-                    if (serverSessions.isNotEmpty()) {
-                        item(key = "server-head") {
-                            SimpleSectionLabel(Icons.Outlined.Monitor, "服务端正在运行", serverSessions.size)
+                    currentAgentUi.closeError?.let { error -> item(key = "agent-close-error") {
+                        Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(12.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                                    color = TbColors.Danger, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                )
+                                TextButton(agentVm::clearCloseError) { Text("知道了") }
+                            }
                         }
-                        items(serverSessions, key = { "server-${it.terminalId}" }) { session ->
-                            SimpleAgentSessionRow(session) { openAgent(session) }
+                    } }
+                    if (recentEntries.isNotEmpty()) {
+                        items(recentEntries, key = { it.key }) { entry ->
+                            when (entry) {
+                                is RecentEntry.Live -> SimpleAgentSessionRow(
+                                    entry.session,
+                                    closing = currentAgentUi.closingTerminalId == entry.session.terminalId,
+                                    open = { openAgent(entry.session) },
+                                    requestClose = { closeTarget = entry.session },
+                                )
+                                is RecentEntry.Native -> AiRecentSessionRow(
+                                    ui, entry.session, { vm.open(entry.session.id) }, { delete(entry.session) },
+                                )
+                            }
                         }
-                        item(key = "server-foot") {
-                            Text("实时镜像电脑终端输出，Claude 可回一句或处理待决策，Codex 暂只读。",
+                        item(key = "recent-foot") {
+                            Text("会话实时同步手机与电脑，点击继续；长按终端 Agent 可关闭。",
                                 Modifier.fillMaxWidth().padding(top = 4.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TbColors.TextMuted)
                         }
                     }
-                    if (recent.isNotEmpty()) {
-                        item(key = "recent-head") {
-                            SimpleSectionLabel(Icons.Outlined.ChatBubbleOutline, "App 发起的会话", recent.size)
-                        }
-                        items(recent, key = { "recent-${it.id}" }) { session ->
-                            AiRecentSessionRow(ui, session, { vm.open(session.id) }, { delete(session) })
-                        }
-                    }
                     when {
-                        // 两组都还没有内容时给出加载/空态；任一分组有数据就直接平铺，不再插入提示。
-                        ui.initialLoading -> if (serverSessions.isEmpty() && recent.isEmpty())
-                            item(key = "recent-loading") { SimpleLoading("正在同步最近任务…") }
+                        // 列表为空时按加载进度显示提示；任一侧有数据就直接平铺。
+                        ui.initialLoading -> if (recentEntries.isEmpty())
+                            item(key = "recent-loading") { SimpleLoading("正在同步最近会话…") }
                         currentAgentUi.listError == null && !currentAgentUi.listLoaded ->
-                            if (serverSessions.isEmpty() && recent.isEmpty())
-                                item(key = "server-loading") { SimpleLoading("正在同步服务端会话…") }
-                        serverSessions.isEmpty() && recent.isEmpty() -> item(key = "recent-empty") {
+                            if (recentEntries.isEmpty())
+                                item(key = "agent-loading") { SimpleLoading("正在同步会话…") }
+                        recentEntries.isEmpty() -> item(key = "recent-empty") {
                             AiEmptyState(Icons.Outlined.ChatBubbleOutline, "第一段对话，从这里开始",
                                 "选择项目与模型，开启你的新想法。")
                         }
@@ -207,6 +253,21 @@ internal fun AiSimpleHome(
             }
         }
     }
+    val target = closeTarget
+    if (target != null) AlertDialog(
+        onDismissRequest = { closeTarget = null },
+        title = { Text("关闭服务端 Agent") },
+        text = {
+            Text("关闭「${target.displayTitle}」所在的服务端终端？终端里的 Agent 会话会随之结束，未保存的工作将丢失。")
+        },
+        confirmButton = {
+            TextButton({
+                closeTarget = null
+                agentVm.closeSession(target)
+            }) { Text("关闭", color = TbColors.Danger) }
+        },
+        dismissButton = { TextButton({ closeTarget = null }) { Text("取消") } },
+    )
 }
 
 /** 品牌 + 页面名，右侧只保留「我的」入口。 */
@@ -240,12 +301,14 @@ private fun AiSimpleHeader(reconnecting: Boolean, profile: () -> Unit) {
 private fun SimpleComposer(
     ui: AiUiState, vm: AiViewModel,
     terminalUi: ServerTerminalUiState, terminalVm: ServerTerminalViewModel,
+    onStart: () -> Unit,
 ) {
     val agents = if (ui.initialLoading) listOf("claude", "codex")
         else ui.availableAgents
     // 同步完成后只剩一个助手时无需选择：隐藏助手行，标志直接并入开始按钮。
     val singleAgent = !ui.initialLoading && agents.size == 1
-    val enabled = !ui.initialLoading && !ui.working && !ui.authenticating
+    val launching = terminalUi.launchingAgent
+    val enabled = !ui.initialLoading && !ui.working && !ui.authenticating && !launching
     val project = ui.launchProject
     val projectProfiles = remember(terminalUi.profiles, project?.name, project?.path) {
         if (project == null) emptyList()
@@ -286,16 +349,25 @@ private fun SimpleComposer(
                 Text(it, style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
                     color = TbColors.TextMuted)
             }
-            Button(vm::create, enabled = ui.canCreate, shape = RoundedCornerShape(12.dp),
+            terminalUi.agentLaunchError?.let { error ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
+                        color = TbColors.Danger)
+                    TextButton(terminalVm::clearAgentLaunchError, contentPadding = PaddingValues(0.dp)) {
+                        Text("知道了", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            Button(onStart, enabled = ui.canCreate && !launching, shape = RoundedCornerShape(12.dp),
                 colors = primaryButtonColors(), border = primaryControlBorder(),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
-                if (ui.working) CircularProgressIndicator(Modifier.size(14.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
+                if (ui.working || launching) CircularProgressIndicator(Modifier.size(14.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
                 else if (singleAgent) AiAgentLogo(agents.first(), Modifier.size(16.dp), agentTitle(agents.first()),
                     tint = LocalContentColor.current)
                 else Icon(Icons.Outlined.Add, null, Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text(if (ui.working) "正在创建…" else "开始对话", Modifier.weight(1f),
+                Text(if (ui.working || launching) "正在启动…" else "开始对话", Modifier.weight(1f),
                     style = MaterialTheme.typography.labelLarge.copy(lineHeight = 15.sp))
                 Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(15.dp))
             }
@@ -428,24 +500,6 @@ private fun SimpleTabs(
 }
 
 /**
- * 最近会话的小节标题：合并列表按「服务端正在运行 / App 发起」分组，
- * 样式与「项目配置」小节一致，数量只作辅助信息。
- */
-@Composable
-private fun SimpleSectionLabel(icon: ImageVector, text: String, count: Int) {
-    Row(
-        Modifier.fillMaxWidth().padding(top = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Icon(icon, null, Modifier.size(13.dp), tint = TbColors.TextMuted)
-        Text(text, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
-        Spacer(Modifier.weight(1f))
-        Text("$count 项", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
-    }
-}
-
-/**
  * 历史会话行：与最近任务保持同样的两层信息；live 非空表示该会话正在电脑/服务端终端里运行，
  * 标记「电脑运行中」且点击直接接管（不另起进程），其余点击恢复为可发送的原生会话。
  */
@@ -488,43 +542,51 @@ private fun SimpleHistoryRow(
     }
 }
 
-/** 服务端会话行：正在终端里运行的 Agent 会话，点击直接接管为接力会话（实时镜像 + 受限回复）。 */
+/** 服务端会话行：点击接管为接力会话（实时镜像 + 受限回复），长按关闭服务端 Agent。 */
 @Composable
-private fun SimpleAgentSessionRow(session: TerminalAgentSession, open: () -> Unit) {
+private fun SimpleAgentSessionRow(
+    session: TerminalAgentSession,
+    closing: Boolean,
+    open: () -> Unit,
+    requestClose: () -> Unit,
+) {
     Column(Modifier.fillMaxWidth()) {
-        Surface(onClick = open, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                AiAgentBadge(session.provider, size = 25.dp)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(session.displayTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        SimplePhaseTag(session.phase, session.phaseLabel)
-                    }
-                    Text(
-                        buildList {
-                            session.model?.takeIf(String::isNotBlank)?.let(::add)
-                            session.directory?.takeIf(String::isNotBlank)?.let { dir ->
-                                dir.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
-                                    .takeIf(String::isNotBlank)?.let(::add)
-                            }
-                            session.lastActivityAt?.takeIf { it > 0 }?.let { activityTime(it) }?.let(::add)
-                        }.joinToString(" · "),
-                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
+        Row(
+            Modifier.fillMaxWidth()
+                .combinedClickable(onClick = open, onLongClickLabel = "关闭服务端 Agent", onLongClick = requestClose)
+                .padding(horizontal = 8.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            AiAgentBadge(session.provider, size = 25.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(session.displayTitle, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    SimplePhaseTag(session.phase, session.phaseLabel)
                 }
-                if (session.pendingDecisionCount > 0) {
-                    BadgedBox(badge = {
-                        Badge(containerColor = TbColors.Accent, contentColor = TbColors.AccentInk) {
-                            Text(if (session.pendingDecisionCount > 99) "99+" else session.pendingDecisionCount.toString())
+                Text(
+                    buildList {
+                        session.model?.takeIf(String::isNotBlank)?.let(::add)
+                        session.directory?.takeIf(String::isNotBlank)?.let { dir ->
+                            dir.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
+                                .takeIf(String::isNotBlank)?.let(::add)
                         }
-                    }) { Icon(Icons.Outlined.PendingActions, "有待决策", Modifier.size(17.dp), tint = TbColors.Accent) }
-                }
+                        session.lastActivityAt?.takeIf { it > 0 }?.let { activityTime(it) }?.let(::add)
+                    }.joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (closing) {
+                CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = TbColors.TextMuted)
+            } else if (session.pendingDecisionCount > 0) {
+                BadgedBox(badge = {
+                    Badge(containerColor = TbColors.Accent, contentColor = TbColors.AccentInk) {
+                        Text(if (session.pendingDecisionCount > 99) "99+" else session.pendingDecisionCount.toString())
+                    }
+                }) { Icon(Icons.Outlined.PendingActions, "有待决策", Modifier.size(17.dp), tint = TbColors.Accent) }
+            } else {
                 Icon(Icons.Outlined.ChevronRight, "接管会话", Modifier.size(17.dp), tint = TbColors.TextMuted)
             }
         }

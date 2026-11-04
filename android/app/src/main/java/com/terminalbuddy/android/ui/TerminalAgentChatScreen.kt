@@ -370,9 +370,9 @@ private fun AgentComposer(
                     )
                 }
             }
-            if (session.provider == "codex") {
+            if (session.provider == "codex" && session.canReply) {
                 Text(
-                    "Codex · 暂不支持在此确认与回复",
+                    "Codex · 回复将作为一行输入写入终端，确认操作请在终端处理",
                     style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
                 )
             } else if (!session.canReply) {

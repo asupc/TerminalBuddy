@@ -41,7 +41,7 @@ data class TerminalAgentSession(
             ?: profileName.takeIf(String::isNotBlank)
             ?: "终端会话"
 
-    /** 阶段的界面文案；无 Hook 时后端给 unknown，不编造执行中。 */
+    /** 阶段的界面文案；无 Hook 上报时服务端按镜像尾条推断 running / idle，unknown 仅作兜底。 */
     val phaseLabel: String
         get() = when (phase) {
             "attention" -> "等待确认"
@@ -50,7 +50,7 @@ data class TerminalAgentSession(
             "completed" -> "已完成"
             "failed" -> "执行失败"
             "ended" -> "已结束"
-            else -> "状态未知"
+            else -> "运行中"
         }
 }
 

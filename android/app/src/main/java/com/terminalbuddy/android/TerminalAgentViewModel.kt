@@ -66,6 +66,9 @@ internal data class TerminalAgentUiState(
     val sending: Boolean = false,
     val pendingReply: PendingTerminalReply? = null,
     val sendError: String? = null,
+    // 列表长按关闭服务端 Agent（终端）
+    val closingTerminalId: String? = null,
+    val closeError: String? = null,
 )
 
 internal class TerminalAgentViewModel(application: Application) : AndroidViewModel(application) {
@@ -81,10 +84,10 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     private var replyJob: Job? = null
     private var confirmJob: Job? = null
     private var retryJob: Job? = null
+    private var closeJob: Job? = null
     private var socket: WebSocket? = null
     private var visible = false
     private var attempts = 0
-
     fun isCurrentAccount(): Boolean = store.loggedIn && mutable.value.connection ==
         AiConnection(store.server, store.username, store.token)
 
@@ -97,6 +100,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         pageJob?.cancel(); pageJob = null
         replyJob?.cancel(); replyJob = null
         confirmJob?.cancel(); confirmJob = null
+        closeJob?.cancel(); closeJob = null
         disconnect()
         visible = false
         mutable.value = TerminalAgentUiState(connection = connection)
@@ -429,6 +433,48 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
 
     override fun onCleared() {
         listJob?.cancel(); pageJob?.cancel(); replyJob?.cancel(); confirmJob?.cancel()
+        closeJob?.cancel()
         disconnect()
+    }
+
+    // ─────────────── 列表长按：关闭服务端 Agent ───────────────
+
+    fun clearCloseError() {
+        mutable.update { it.copy(closeError = null) }
+    }
+
+    /**
+     * 关闭承载该会话的服务端终端（Agent 进程随之结束）。
+     * 404 视为已关闭；关闭的是当前打开的会话时先退出该会话页，再刷新列表。
+     */
+    fun closeSession(session: TerminalAgentSession) {
+        val connection = mutable.value.connection ?: return
+        if (closeJob?.isActive == true) return
+        val epoch = generation
+        mutable.update { it.copy(closingTerminalId = session.terminalId, closeError = null) }
+        closeJob = viewModelScope.launch {
+            try {
+                try {
+                    repository.closeTerminal(connection, session.terminalId)
+                } catch (e: TerminalAgentException) {
+                    if (e.code != 404) throw e
+                }
+                if (epoch != generation) return@launch
+                if (mutable.value.selected?.terminalId == session.terminalId) leaveSession()
+                mutable.update { state ->
+                    state.copy(
+                        sessions = state.sessions.filterNot { it.terminalId == session.terminalId },
+                        closingTerminalId = null,
+                    )
+                }
+                refresh()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (epoch == generation) {
+                    mutable.update { it.copy(closingTerminalId = null, closeError = e.userMessage()) }
+                }
+            }
+        }
     }
 }
