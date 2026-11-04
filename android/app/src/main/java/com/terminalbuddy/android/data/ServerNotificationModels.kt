@@ -17,6 +17,18 @@ data class ServerNotificationEvent(
     val isResult get() = kind == "completed" || kind == "failed"
 }
 
+/** App 内留存的服务端任务结果（完成 / 失败），点击通知后据此打开结果详情对话框。 */
+@Serializable
+data class ServerResultNotice(
+    val accountId: String, val eventId: String,
+    val terminalId: String = "", val terminalName: String = "",
+    val provider: String? = null, val kind: String,
+    val title: String = "", val summary: String = "",
+    val occurredAt: Long = 0, val observedAt: Long = System.currentTimeMillis(),
+) {
+    val failed get() = kind == "failed"
+}
+
 @Serializable
 data class ServerDecisionQuestion(
     val question: String, val header: String = "",

@@ -47,6 +47,11 @@ fun AiScreen(
         terminalVm.bindAccount()
         agentVm.bindAccount()
     }
+    // 终端创建 / 关闭的实时联动：Agent 列表由 VM 自刷，这里同步刷新普通终端列表，
+    // 电脑端关闭会话后手机端列表无需退出重进即可更新。
+    LaunchedEffect(agentVm) {
+        agentVm.terminalListChanged.collect { terminalVm.refresh() }
+    }
     var page by rememberSaveable { mutableStateOf(AiPage.Home) }
     var tab by rememberSaveable { mutableStateOf(AiHomeTab.QuickStart) }
     var recentSessionsRequest by rememberSaveable { mutableIntStateOf(0) }

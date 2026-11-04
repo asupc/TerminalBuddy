@@ -74,7 +74,9 @@ fun TerminalBuddyRoot(
                             AiScreen(
                                 aiUi, aiVm, simplified = simplified, onSimplifiedChange = onSimplifiedChange,
                                 openDecision = { decisionId ->
-                                    agentDecisionRequest = ServerNotificationTarget(decisionId, aiUi.activeAccountId)
+                                    agentDecisionRequest = ServerNotificationTarget(
+                                        decisionId = decisionId, accountId = aiUi.activeAccountId,
+                                    )
                                 },
                             )
                         }

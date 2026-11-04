@@ -121,7 +121,8 @@ internal fun TerminalAgentChatScreen(
                         val (color, spinning) = when (pending.status) {
                             TerminalReplyStatus.Typed -> TbColors.TextMuted to false
                             TerminalReplyStatus.Delivered -> TbColors.Accent to false
-                            TerminalReplyStatus.Unconfirmed -> TbColors.Danger to false
+                            // REST 已接受即写入成功，超时只代表 Agent 尚未处理，不是错误警示。
+                            TerminalReplyStatus.Unconfirmed -> TbColors.TextMuted to false
                         }
                         AgentPendingRow(pending.text, pending.statusLabel, color, spinning)
                     }

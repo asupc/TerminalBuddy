@@ -7,8 +7,12 @@ import com.terminalbuddy.android.data.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -16,7 +20,9 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
-/** 回复写入后的本地确认状态：已输入 → 镜像出现匹配 user 消息即已送达；超时只提示，不自动重发。 */
+/** 回复写入后的本地确认状态：已写入 PTY → 镜像出现匹配 user 消息即已送达。
+ *  REST 被接受就意味着 PTY 写入成功；超时只说明 Agent 还没处理（排队 / 长任务），
+ *  不存在「未生效」——写失败以请求错误返回，根本不会产生本地气泡。 */
 enum class TerminalReplyStatus { Typed, Delivered, Unconfirmed }
 
 /** 等待镜像确认的本地回复；sessionId/revision/sentAfterSeq 共同排除历史与换代后的同文旧消息。 */
@@ -31,9 +37,9 @@ internal data class PendingTerminalReply(
 ) {
     val statusLabel: String
         get() = when (status) {
-            TerminalReplyStatus.Typed -> "已输入到终端"
+            TerminalReplyStatus.Typed -> "已发送到终端"
             TerminalReplyStatus.Delivered -> "已送达"
-            TerminalReplyStatus.Unconfirmed -> "可能未生效，请打开终端确认"
+            TerminalReplyStatus.Unconfirmed -> "已发送，等待 Agent 处理"
         }
 }
 
@@ -72,7 +78,8 @@ internal data class TerminalAgentUiState(
 )
 
 internal class TerminalAgentViewModel(application: Application) : AndroidViewModel(application) {
-    private val store = (application as TerminalBuddyApplication).aiRepository.store
+    private val aiRepository = (application as TerminalBuddyApplication).aiRepository
+    private val store = aiRepository.store
     private val repository = TerminalAgentRepository()
     private val mutable = MutableStateFlow(TerminalAgentUiState())
     val state = mutable.asStateFlow()
@@ -91,6 +98,46 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     fun isCurrentAccount(): Boolean = store.loggedIn && mutable.value.connection ==
         AiConnection(store.server, store.username, store.token)
 
+    // ─────────────── 列表实时同步：/ws/notifications 的 terminals_changed ───────────────
+
+    /** 终端创建 / 关闭的联动信号：Agent 列表在 VM 内自刷，普通终端列表由首页订阅此流刷新。 */
+    private val terminalListChangedFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    val terminalListChanged: SharedFlow<Unit> = terminalListChangedFlow.asSharedFlow()
+    private var notifyJob: Job? = null
+    /** 在途 refresh 期间又收到变化时补刷一次，避免防重入吞掉最后一次列表变化。 */
+    private var refreshAgain = false
+
+    /** 订阅服务端终端列表变化事件；断线按 1s→2s→4s→8s 退避重连，旧服务端（404）静默降级。 */
+    private fun startListSync() {
+        notifyJob?.cancel(); notifyJob = null
+        val connection = mutable.value.connection ?: return
+        val epoch = generation
+        notifyJob = viewModelScope.launch {
+            var retries = 0
+            while (isActive && epoch == generation) {
+                val observed = runCatching {
+                    aiRepository.observeServerNotifications(connection).collect { frame ->
+                        // 账号已切换：忽略旧连接的后续帧（bindAccount 会取消本协程）。
+                        if (epoch != generation) return@collect
+                        if (frame is ServerNotificationFrame.Event &&
+                            frame.event.kind == "terminals_changed"
+                        ) {
+                            retries = 0
+                            refresh()
+                            terminalListChangedFlow.tryEmit(Unit)
+                        }
+                    }
+                }
+                if (!isActive || epoch != generation) break
+                // 正常关闭（cancel / 账号切换）不重连；异常才退避重试。
+                if (observed.isFailure) {
+                    delay(1_000L shl retries.coerceAtMost(3))
+                    retries = (retries + 1).coerceAtMost(3)
+                }
+            }
+        }
+    }
+
     /** 账号切换：作废全部在途回调，关闭镜像连接并清空选中会话、消息、代次与草稿。 */
     fun bindAccount() {
         val connection = if (store.loggedIn) AiConnection(store.server, store.username, store.token) else null
@@ -101,15 +148,22 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         replyJob?.cancel(); replyJob = null
         confirmJob?.cancel(); confirmJob = null
         closeJob?.cancel(); closeJob = null
+        notifyJob?.cancel(); notifyJob = null
         disconnect()
         visible = false
+        refreshAgain = false
         mutable.value = TerminalAgentUiState(connection = connection)
+        startListSync()
     }
 
-    /** 拉取 Agent 会话列表；与普通终端列表各自 loading / error，互不影响。 */
+    /** 拉取 Agent 会话列表；与普通终端列表各自 loading / error，互不影响。
+     *  在途时再次调用只标记补刷（finally 里兑现），通知事件连发不会漏掉最后一次变化。 */
     fun refresh() {
         val connection = mutable.value.connection ?: return
-        if (listJob?.isActive == true) return
+        if (listJob?.isActive == true) {
+            refreshAgain = true
+            return
+        }
         val epoch = generation
         listJob = viewModelScope.launch {
             mutable.update { it.copy(listLoading = true, listError = null) }
@@ -129,6 +183,11 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
             } finally {
                 if (listJob === coroutineContext.job && epoch == generation) {
                     mutable.update { it.copy(listLoading = false) }
+                    // 在途期间又来过刷新请求（列表变化事件）：补刷一次拿到最终状态。
+                    if (refreshAgain) {
+                        refreshAgain = false
+                        refresh()
+                    }
                 }
             }
         }
@@ -218,6 +277,13 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         // 每次发送都生成新的 requestId（幂等键），失败重试也由用户重新发起。
         val requestId = java.util.UUID.randomUUID().toString().replace("-", "")
         val epoch = generation
+        // 匹配锚点必须在发起请求前采样：REST 往返期间 append 帧可能先到（移动网络下
+        // 常见），届时 revision/cursor 已推进到包含本条消息；用响应后的值会把刚发出的
+        // 消息排除在「seq > sentAfterSeq」匹配窗口外，导致本地气泡永远无法确认，
+        // 表现为同一句话显示两条且误报「可能未生效」。
+        val anchorSessionId = session.sessionId
+        val anchorRevision = state.revision
+        val anchorSeq = state.cursor
         mutable.update { it.copy(draft = "", sending = true, sendError = null) }
         replyJob = viewModelScope.launch {
             try {
@@ -229,12 +295,14 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
                         pendingReply = PendingTerminalReply(
                             text = text, requestId = requestId,
                             sentAt = System.currentTimeMillis(),
-                            sessionId = session.sessionId,
-                            revision = it.revision,
-                            sentAfterSeq = it.cursor,
+                            sessionId = anchorSessionId,
+                            revision = anchorRevision,
+                            sentAfterSeq = anchorSeq,
                         ),
                     )
                 }
+                // append 帧可能已先于响应到达（消息已在镜像里）：立即尝试确认一次。
+                matchPendingReply()
                 scheduleConfirmTimeout()
             } catch (e: CancellationException) {
                 throw e
@@ -433,7 +501,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
 
     override fun onCleared() {
         listJob?.cancel(); pageJob?.cancel(); replyJob?.cancel(); confirmJob?.cancel()
-        closeJob?.cancel()
+        closeJob?.cancel(); notifyJob?.cancel()
         disconnect()
     }
 

@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -74,7 +75,9 @@ private sealed interface RecentEntry {
  * 「开始对话」在服务端创建真实终端，手机打开的 Agent 与电脑终端完全同一会话；
  * 最近会话统一平铺终端 Agent 会话与存量原生会话，不再按来源分组。
  * 历史会话按当前工作项目汇总全部已启用助手，不跟随快速开始里的助手选择。
+ * 支持下拉刷新：手动补齐服务端会话、终端与 Agent 列表（实时推送之外的自救入口）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AiSimpleHome(
     ui: AiUiState, vm: AiViewModel,
@@ -125,6 +128,21 @@ internal fun AiSimpleHome(
     Column(Modifier.fillMaxSize()) {
         AiSimpleHeader(ui.reconnecting, profile)
         ui.error?.let { AiError(it, vm::clearError) }
+        // 下拉刷新：三路列表一起补拉；转圈只跟随 Agent 列表的 loading（主数据源）。
+        var pullRefreshing by remember { mutableStateOf(false) }
+        LaunchedEffect(currentAgentUi.listLoading) {
+            if (!currentAgentUi.listLoading) pullRefreshing = false
+        }
+        PullToRefreshBox(
+            modifier = Modifier.fillMaxSize(),
+            isRefreshing = pullRefreshing,
+            onRefresh = {
+                pullRefreshing = true
+                vm.refresh()
+                terminalVm.refresh()
+                agentVm.refresh()
+            },
+        ) {
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 28.dp),
@@ -251,6 +269,7 @@ internal fun AiSimpleHome(
                     }
                 }
             }
+        }
         }
     }
     val target = closeTarget

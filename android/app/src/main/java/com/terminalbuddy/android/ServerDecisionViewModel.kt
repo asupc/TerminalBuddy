@@ -3,6 +3,7 @@ package com.terminalbuddy.android
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.terminalbuddy.android.data.ServerResultNotice
 import com.terminalbuddy.android.data.userMessage
 import com.terminalbuddy.android.notifications.ServerDecisionNotice
 import kotlinx.coroutines.CancellationException
@@ -18,6 +19,8 @@ class ServerDecisionViewModel(application: Application) : AndroidViewModel(appli
     private val notifications = (application as TerminalBuddyApplication).taskNotifications
 
     val decisions: StateFlow<List<ServerDecisionNotice>> = notifications.serverDecisions
+    /** 最近的服务端任务结果，点击完成通知后打开详情对话框。 */
+    val results: StateFlow<List<ServerResultNotice>> = notifications.serverResults
     private val mutableAnswering = MutableStateFlow<Set<String>>(emptySet())
     val answering: StateFlow<Set<String>> = mutableAnswering.asStateFlow()
     private val mutableError = MutableStateFlow<String?>(null)

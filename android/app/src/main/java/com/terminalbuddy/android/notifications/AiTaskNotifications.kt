@@ -40,9 +40,11 @@ import java.util.concurrent.TimeUnit
 /** 通知只携带账号 ID 和会话 ID，凭据始终从本机加密存储读取。 */
 data class AiNotificationTarget(val accountId: String, val sessionId: String)
 
-/** 点击服务端任务通知后打开 App；decisionId 为空表示普通完成通知。
- *  accountId 标记决策所属账号：终端 Agent 对话页发起的受控打开请求也会带，账号切换时用于关闭旧面板。 */
-data class ServerNotificationTarget(val decisionId: String?, val accountId: String? = null)
+/** 点击服务端任务通知后打开 App：decisionId 打开决策面板，resultId 打开任务结果详情。
+ *  accountId 标记通知所属账号：终端 Agent 对话页发起的受控打开请求也会带，账号切换时用于关闭旧面板。 */
+data class ServerNotificationTarget(
+    val decisionId: String? = null, val resultId: String? = null, val accountId: String? = null,
+)
 
 /** App 内待处理的服务端终端决策，与系统通知共用同一份内存状态。 */
 data class ServerDecisionNotice(
@@ -89,6 +91,9 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     internal val vivoGuideChecked: StateFlow<Boolean> = mutableVivoGuideChecked.asStateFlow()
     private val mutableServerDecisions = MutableStateFlow<List<ServerDecisionNotice>>(emptyList())
     internal val serverDecisions: StateFlow<List<ServerDecisionNotice>> = mutableServerDecisions.asStateFlow()
+    // 最近的任务结果留在本机（内存 + 磁盘），点击完成通知后即使进程重启也能打开详情。
+    private val mutableServerResults = MutableStateFlow(restoreServerResults())
+    internal val serverResults: StateFlow<List<ServerResultNotice>> = mutableServerResults.asStateFlow()
     private val seenServerNotifications = LinkedHashSet<String>()
     private var backgroundStartedAt: Long? = null
     private var serviceStartWatchdog: Job? = null
@@ -334,6 +339,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             }
             event.isResult -> {
                 if (!seenServerNotifications.add("result:${event.id}")) return
+                rememberServerResult(accountId, event)
                 showServerResultNotification(event)
                 trimSeenServerNotifications()
             }
@@ -368,6 +374,29 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             } else break
         }
     }
+
+    /** 留存最近的任务结果：同一事件只保留最新一条，超出数量或时限的旧记录自动淘汰。 */
+    private fun rememberServerResult(accountId: String, event: ServerNotificationEvent) {
+        val notice = ServerResultNotice(
+            accountId = accountId, eventId = event.id,
+            terminalId = event.terminalId, terminalName = event.terminalName,
+            provider = event.provider, kind = event.kind,
+            title = event.title, summary = event.summary,
+            occurredAt = event.occurredAt,
+        )
+        mutableServerResults.update { current ->
+            (current.filterNot { it.eventId == notice.eventId } + notice).takeLast(MAX_SERVER_RESULTS)
+        }
+        preferences.edit()
+            .putString(KEY_SERVER_RESULTS, ApiJson.encodeToString(mutableServerResults.value)).apply()
+    }
+
+    private fun restoreServerResults(): List<ServerResultNotice> =
+        runCatching {
+            ApiJson.decodeFromString<List<ServerResultNotice>>(preferences.getString(KEY_SERVER_RESULTS, "[]").orEmpty())
+        }.getOrDefault(emptyList())
+            .filter { it.observedAt > System.currentTimeMillis() - SERVER_RESULT_TTL_MILLIS }
+            .takeLast(MAX_SERVER_RESULTS)
 
     private fun showServerDecisionNotification(notice: ServerDecisionNotice) {
         if (!notificationsEnabled(context) ||
@@ -410,7 +439,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setOnlyAlertOnce(false)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setContentIntent(serverNotificationIntent(null, event.id.hashCode()))
+            .setContentIntent(serverNotificationIntent(resultId = event.id, requestCode = event.id.hashCode()))
             .setAutoCancel(true).build()
         runCatching { manager.notify("server-result:${event.id}", SERVER_EVENT_ID, notification) }
             .onSuccess { recordDiagnostic("服务端任务结束通知已交给系统，终端=${event.terminalName}") }
@@ -423,12 +452,15 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         else -> null
     }
 
-    private fun serverNotificationIntent(decisionId: String?, requestCode: Int): PendingIntent =
+    private fun serverNotificationIntent(
+        decisionId: String? = null, requestCode: Int, resultId: String? = null,
+    ): PendingIntent =
         PendingIntent.getActivity(
             context, requestCode,
             Intent(context, MainActivity::class.java).apply {
                 action = OPEN_SERVER_NOTIFICATIONS
                 if (decisionId != null) putExtra(SERVER_DECISION_ID, decisionId)
+                if (resultId != null) putExtra(SERVER_RESULT_ID, resultId)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
@@ -629,6 +661,10 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         private const val ACCOUNT_ID = "notification_account_id"
         private const val SESSION_ID = "notification_session_id"
         private const val SERVER_DECISION_ID = "notification_server_decision_id"
+        private const val SERVER_RESULT_ID = "notification_server_result_id"
+        private const val KEY_SERVER_RESULTS = "server_results"
+        private const val MAX_SERVER_RESULTS = 20
+        private const val SERVER_RESULT_TTL_MILLIS = 48 * 60 * 60 * 1000L
         private const val EVENT_ID = 1
         private const val SERVER_EVENT_ID = 1002
         internal const val MONITOR_ID = 1001
@@ -644,13 +680,15 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             return if (!account.isNullOrBlank() && !session.isNullOrBlank()) AiNotificationTarget(account, session) else null
         }
 
-        /** 点击服务端任务通知后返回 decisionId；普通完成通知返回空 decisionId。 */
+        /** 点击服务端任务通知后返回 decisionId / resultId，指示要打开的对话框。 */
         fun consumeServerTarget(intent: Intent): ServerNotificationTarget? {
             if (intent.action != OPEN_SERVER_NOTIFICATIONS) return null
             val decisionId = intent.getStringExtra(SERVER_DECISION_ID)
+            val resultId = intent.getStringExtra(SERVER_RESULT_ID)
             intent.action = null
             intent.removeExtra(SERVER_DECISION_ID)
-            return ServerNotificationTarget(decisionId)
+            intent.removeExtra(SERVER_RESULT_ID)
+            return ServerNotificationTarget(decisionId, resultId)
         }
 
         fun notificationsEnabled(context: Context): Boolean =

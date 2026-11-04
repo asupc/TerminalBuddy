@@ -1,8 +1,10 @@
 package com.terminalbuddy.android.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -11,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -18,13 +21,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.terminalbuddy.android.ServerDecisionViewModel
 import com.terminalbuddy.android.data.ServerDecisionOption
 import com.terminalbuddy.android.data.ServerDecisionQuestion
+import com.terminalbuddy.android.data.ServerResultNotice
 import com.terminalbuddy.android.notifications.ServerDecisionNotice
 import com.terminalbuddy.android.notifications.ServerNotificationTarget
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 服务端任务通知的 App 内入口（全局唯一 Host）：有待决策时显示悬浮按钮，
- * 点击通知或终端 Agent 对话页的「待决策」按钮可受控打开决策面板。
+ * 点击决策通知或终端 Agent 对话页的「待决策」按钮可受控打开决策面板；
+ * 点击完成 / 失败通知打开任务结果详情对话框。
  * 面板浮在任意一级页面之上，不依赖 AI 会话或当前选中的终端；
  * 对话页不另行实例化本 Host，避免双悬浮按钮 / 双面板。
  */
@@ -40,21 +48,29 @@ internal fun ServerDecisionHost(
     val error by vm.error.collectAsStateWithLifecycle()
     var open by rememberSaveable { mutableStateOf(false) }
     var focusedDecision by remember { mutableStateOf<String?>(null) }
+    var openResult by remember { mutableStateOf<ServerResultNotice?>(null) }
+    // 面板打开后要滚动定位的决策，滚动完成即清空。
+    var pendingScrollDecision by remember { mutableStateOf<String?>(null) }
     // 经请求打开的面板记录账号归属；切换账号立即关闭旧账号面板。
     var panelAccount by remember { mutableStateOf<String?>(null) }
     var handledNotice by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(openRequest) {
-        if (openRequest != null) {
-            // 完成通知只把 App 带到前台；只有决策通知才自动展开面板。
-            focusedDecision = openRequest.decisionId
-            panelAccount = openRequest.accountId ?: activeAccountId
-            onRequestConsumed()
+        val request = openRequest ?: return@LaunchedEffect
+        panelAccount = request.accountId ?: activeAccountId
+        // 决策通知展开决策面板；完成 / 失败通知打开结果详情对话框。
+        if (request.decisionId != null) focusedDecision = request.decisionId
+        if (request.resultId != null) {
+            // 结果详情在本机留存、随进程同步恢复，找不到即记录已被淘汰，无需等待。
+            openResult = vm.results.value.firstOrNull { it.eventId == request.resultId }
+            if (openResult == null) handledNotice = "未能打开该任务结果，记录可能已过期"
         }
+        onRequestConsumed()
     }
     LaunchedEffect(focusedDecision, decisions) {
         val target = focusedDecision ?: return@LaunchedEffect
         if (decisions.any { it.decisionId == target }) {
             open = true
+            pendingScrollDecision = target
             focusedDecision = null
         } else {
             // 决策列表尚不含目标：给通知流一小段到达时间（冷启动决策可能还没同步到），
@@ -115,7 +131,12 @@ internal fun ServerDecisionHost(
             decisions = decisions, answering = answering, error = error,
             clearError = vm::clearError, dismiss = { open = false },
             answer = vm::answer,
+            focusDecisionId = pendingScrollDecision,
+            onFocused = { pendingScrollDecision = null },
         )
+    }
+    openResult?.let { result ->
+        ServerResultDialog(notice = result, dismiss = { openResult = null })
     }
 }
 
@@ -125,15 +146,25 @@ private fun ServerDecisionSheet(
     answering: Set<String>, error: String?, clearError: () -> Unit,
     dismiss: () -> Unit,
     answer: (ServerDecisionNotice, Map<String, String>) -> Unit,
+    focusDecisionId: String? = null, onFocused: () -> Unit = {},
 ) {
     AiSheet("服务端决策", dismiss, heightFraction = .88f) {
+        val listState = rememberLazyListState()
         error?.let { AiError(it, clearError) }
         if (decisions.isEmpty()) {
             AiEmptyState(Icons.Outlined.TaskAlt, "暂无待处理的决策",
                 "服务端终端或 AI 任务需要你选择、回答或授权时会显示在这里。")
         } else {
+            // 点击通知打开面板时定位到对应决策，多条待决策也能直达目标。
+            LaunchedEffect(focusDecisionId, decisions) {
+                val target = focusDecisionId ?: return@LaunchedEffect
+                val index = decisions.indexOfFirst { it.decisionId == target }
+                if (index >= 0) listState.scrollToItem(index)
+                onFocused()
+            }
             LazyColumn(
                 Modifier.fillMaxWidth().weight(1f),
+                state = listState,
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -148,6 +179,49 @@ private fun ServerDecisionSheet(
         }
     }
 }
+
+/** 任务结果详情对话框：展示完成 / 失败通知的完整标题与摘要，摘要较长时可滚动阅读。 */
+@Composable
+private fun ServerResultDialog(notice: ServerResultNotice, dismiss: () -> Unit) {
+    AiSheet("任务结果", dismiss) {
+        LazyColumn(
+            Modifier.fillMaxWidth().weight(1f),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            item {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+                        Icon(
+                            if (notice.failed) Icons.Outlined.ErrorOutline else Icons.Outlined.CheckCircle,
+                            if (notice.failed) "任务失败" else "任务完成",
+                            Modifier.size(30.dp),
+                            tint = if (notice.failed) TbColors.Danger else TbColors.Accent,
+                        )
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                notice.title.ifBlank { if (notice.failed) "任务执行失败" else "任务已完成" },
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(resultMetaLine(notice), style = MaterialTheme.typography.labelSmall,
+                                color = TbColors.TextMuted)
+                        }
+                    }
+                    AiDivider()
+                    Text(
+                        notice.summary.ifBlank { "服务端未返回任务摘要" },
+                        style = MaterialTheme.typography.bodyMedium, color = TbColors.TextSoft,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun resultMetaLine(notice: ServerResultNotice): String = listOfNotNull(
+    providerLabel(notice.provider),
+    notice.terminalName.ifBlank { null },
+    if (notice.occurredAt > 0) SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(notice.occurredAt)) else null,
+).joinToString(" · ")
 
 @Composable
 private fun ServerDecisionCard(
@@ -175,8 +249,29 @@ private fun ServerDecisionCard(
                 if (answering) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
             }
             if (notice.summary.isNotBlank()) {
-                Text(notice.summary, style = MaterialTheme.typography.bodySmall,
-                    color = TbColors.TextSoft, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                // 摘要默认折叠为三行；完整内容是做出正确决策的依据，超长时可展开阅读。
+                var summaryExpanded by remember(notice.decisionId) { mutableStateOf(false) }
+                var summaryOverflowed by remember(notice.decisionId) { mutableStateOf(false) }
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        notice.summary, style = MaterialTheme.typography.bodySmall,
+                        color = TbColors.TextSoft,
+                        maxLines = if (summaryExpanded) Int.MAX_VALUE else 3,
+                        overflow = TextOverflow.Ellipsis,
+                        onTextLayout = { result ->
+                            if (!summaryExpanded) summaryOverflowed = result.hasVisualOverflow
+                        },
+                    )
+                    if (summaryOverflowed || summaryExpanded) {
+                        Text(
+                            if (summaryExpanded) "收起" else "展开全部",
+                            Modifier.clip(RoundedCornerShape(6.dp))
+                                .clickable { summaryExpanded = !summaryExpanded }
+                                .padding(vertical = 2.dp),
+                            style = MaterialTheme.typography.labelMedium, color = TbColors.Accent,
+                        )
+                    }
+                }
             }
             notice.questions.forEach { question ->
                 ServerQuestionBlock(
