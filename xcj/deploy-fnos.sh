@@ -187,9 +187,16 @@ TAG="$(date +%Y%m%d-%H%M)"
 # ---------- 2. 本机构建镜像 ----------
 if [ "${MODE}" = build ] && [ "${DO_BUILD}" = "1" ]; then
   echo "==> [2/${STEPS}] 本机构建镜像 ${IMAGE}（工作区全量构建，复用层缓存）"
+  # 构建输出必须实时可见：此前 `| tail -n 15` 会把全部输出缓冲到构建结束才吐最后 15 行，
+  # Rust 层失效时全量编译要 10-20 分钟，期间界面零输出，看起来就像卡死（曾因此被误判为挂起）。
+  # 改为 --progress=plain + tee：屏幕实时滚动，完整日志留档 .runtime-data（不入库）。
+  BUILD_LOG="${TARDIR}/build-${TAG}.log"
+  mkdir -p "${TARDIR}"
+  echo "    构建中：缓存全命中约 1 分钟，Rust 层失效则需 10-20 分钟，请勿关闭终端"
+  echo "    完整构建日志：${BUILD_LOG}"
   BEFORE_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}' 2>/dev/null || true)"
-  if ! docker build -f "${REPO_DIR}/Dockerfile" -t "${IMAGE}" "${REPO_DIR}" 2>&1 | tail -n 15; then
-    fail "本机构建失败。可用 --no-build 复用现有镜像，或排查 Dockerfile / 源码错误"
+  if ! docker build --progress=plain -f "${REPO_DIR}/Dockerfile" -t "${IMAGE}" "${REPO_DIR}" 2>&1 | tee "${BUILD_LOG}"; then
+    fail "本机构建失败（完整日志 ${BUILD_LOG}）。可用 --no-build 复用现有镜像，或排查 Dockerfile / 源码错误"
   fi
   LOCAL_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}')"
   if [ -n "${BEFORE_ID}" ] && [ "${BEFORE_ID}" = "${LOCAL_ID}" ]; then
