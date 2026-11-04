@@ -87,6 +87,8 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     private var generation = 0
     private var streamGeneration = 0
     private var listJob: Job? = null
+    private var listRetryJob: Job? = null
+    private var listRetries = 0
     private var pageJob: Job? = null
     private var replyJob: Job? = null
     private var confirmJob: Job? = null
@@ -144,6 +146,8 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         if (mutable.value.connection == connection) return
         generation++
         listJob?.cancel(); listJob = null
+        listRetryJob?.cancel(); listRetryJob = null
+        listRetries = 0
         pageJob?.cancel(); pageJob = null
         replyJob?.cancel(); replyJob = null
         confirmJob?.cancel(); confirmJob = null
@@ -157,7 +161,8 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     }
 
     /** 拉取 Agent 会话列表；与普通终端列表各自 loading / error，互不影响。
-     *  在途时再次调用只标记补刷（finally 里兑现），通知事件连发不会漏掉最后一次变化。 */
+     *  在途时再次调用只标记补刷（finally 里兑现），通知事件连发不会漏掉最后一次变化。
+     *  网络类失败不提示，按 1s→2s→4s→8s 退避自动重试；确定性失败（404 等）才落到 listError。 */
     fun refresh() {
         val connection = mutable.value.connection ?: return
         if (listJob?.isActive == true) {
@@ -170,15 +175,23 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
             try {
                 val sessions = repository.sessions(connection)
                 if (epoch != generation) return@launch
+                listRetryJob?.cancel(); listRetryJob = null
+                listRetries = 0
                 mutable.update { state ->
                     state.copy(sessions = sessions, listLoaded = true)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (epoch == generation) mutable.update {
-                    it.copy(listError = if (e is TerminalAgentException && e.code == 404)
-                        "服务端暂不支持终端 Agent 会话，请更新 TerminalBuddy 服务端" else e.userMessage())
+                if (epoch == generation) {
+                    if (e.isRetryableListFailure()) {
+                        scheduleListRetry(epoch)
+                    } else {
+                        mutable.update {
+                            it.copy(listError = if (e is TerminalAgentException && e.code == 404)
+                                "服务端暂不支持终端 Agent 会话，请更新 TerminalBuddy 服务端" else e.userMessage())
+                        }
+                    }
                 }
             } finally {
                 if (listJob === coroutineContext.job && epoch == generation) {
@@ -192,6 +205,21 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
             }
         }
     }
+
+    /** 会话列表同步失败后的静默退避重试：代次变化（账号切换 / 页面销毁）即停。 */
+    private fun scheduleListRetry(epoch: Int) {
+        if (epoch != generation) return
+        listRetryJob?.cancel()
+        listRetryJob = viewModelScope.launch {
+            delay(1_000L shl listRetries.coerceIn(0, 3))
+            listRetryJob = null
+            listRetries = (listRetries + 1).coerceAtMost(3)
+            if (epoch == generation) refresh()
+        }
+    }
+
+    private fun Throwable.isRetryableListFailure(): Boolean = isConnectionFailure() ||
+        this is TerminalAgentException && (code == 408 || code == 429 || code in 500..599)
 
     fun openSession(session: TerminalAgentSession) {
         if (mutable.value.selected?.terminalId == session.terminalId) return
@@ -480,14 +508,15 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         matchPendingReply()
     }
 
-    /** 仅在同一会话、同一镜像代次内判定送达：换代（rotated / unavailable / 不可用恢复）后旧消息不作依据，
-     *  历史中已有的同文旧消息（seq 不大于发送时游标）也不算，文本按 trim 后全文相等比较。
-     *  确认送达即移除本地气泡 —— replay 里已有这条消息，保留会与镜像气泡重复显示。 */
+    /** 仅在同一会话内判定送达：换代（sessionId 变化）后旧消息不作依据；同会话内 revision 只许前进 ——
+     *  REST 往返期间镜像可能 rotated（revision + 1），严格相等会让本地气泡永远无法确认，
+     *  与镜像里的同一条 user 消息重复显示。历史中已有的同文旧消息（seq 不大于发送时游标）也不算，
+     *  文本按 trim 后全文相等比较。确认送达即移除本地气泡 —— replay 里已有这条消息，保留会重复显示。 */
     private fun matchPendingReply() {
         val pending = mutable.value.pendingReply ?: return
         if (pending.status == TerminalReplyStatus.Delivered) return
         val session = mutable.value.selected ?: return
-        if (session.sessionId != pending.sessionId || session.revision != pending.revision) return
+        if (session.sessionId != pending.sessionId || session.revision < pending.revision) return
         val needle = pending.text.trim()
         if (needle.isEmpty()) return
         val delivered = mutable.value.messages.any { message ->
@@ -500,7 +529,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     }
 
     override fun onCleared() {
-        listJob?.cancel(); pageJob?.cancel(); replyJob?.cancel(); confirmJob?.cancel()
+        listJob?.cancel(); listRetryJob?.cancel(); pageJob?.cancel(); replyJob?.cancel(); confirmJob?.cancel()
         closeJob?.cancel(); notifyJob?.cancel()
         disconnect()
     }

@@ -407,10 +407,6 @@ private fun AgentComposer(
                         tint = if (enabled && ui.draft.isNotBlank()) TbColors.Accent else TbColors.TextMuted)
                 }
             }
-            Text(
-                "仅支持一句纯文本，会作为按键写入终端；斜杠命令、多行与控制字符不可用。",
-                style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
-            )
         }
     }
 }

@@ -120,7 +120,9 @@
           } else if (message.type === 'output') {
             await write(message.data);
           } else if (message.type === 'viewport') {
-            resize(message.cols, message.rows);
+            // 远端（PC 等）resize 的网格是别人的屏幕尺寸，手机端永远按本地容器
+            // 重新测量；直接采用会把终端改成超宽网格，右侧内容被裁出屏幕。
+            measure();
           }
         }).catch(() => AndroidTerminal.error());
       },

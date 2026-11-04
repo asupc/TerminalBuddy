@@ -404,9 +404,10 @@ internal class ServerTerminalViewModel(application: Application) : AndroidViewMo
     private fun receive(message: JsonObject) {
         when (message.text("type")) {
             "viewport" -> {
+                // 只记录输出网格（供 replay 帧按原网格回放），不转发渲染器：
+                // 远端（PC）的尺寸不是手机屏幕的尺寸，手机端始终按本地容器测量。
                 outputCols = message.number("cols")?.toInt()?.coerceIn(1, 500) ?: cols
                 outputRows = message.number("rows")?.toInt()?.coerceIn(1, 500) ?: rows
-                renderer?.invoke(message)
             }
             "replay" -> {
                 attempts = 0

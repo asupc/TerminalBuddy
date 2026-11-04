@@ -172,17 +172,7 @@ internal fun AiSimpleHome(
             }
             when (tab) {
                 SimpleHomeTab.Recent -> {
-                    // 实时会话同步失败时给出行内重试入口，不影响下方存量会话的展示。
-                    currentAgentUi.listError?.let { error -> item(key = "agent-error") {
-                        Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(16.dp)) {
-                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("会话同步失败", style = MaterialTheme.typography.titleSmall)
-                                Text(error, style = MaterialTheme.typography.bodySmall, color = TbColors.Danger)
-                                TextButton(agentVm::refresh, enabled = !currentAgentUi.listLoading,
-                                    contentPadding = PaddingValues(0.dp)) { Text("重新加载") }
-                            }
-                        }
-                    } }
+                    // 实时会话同步失败不提示：VM 内已按退避自动重试，这里最多保留下方存量会话展示。
                     currentAgentUi.closeError?.let { error -> item(key = "agent-close-error") {
                         Surface(color = TbColors.Danger.copy(alpha = .08f), shape = RoundedCornerShape(12.dp)) {
                             Row(
