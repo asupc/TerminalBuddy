@@ -39,6 +39,7 @@ fun TerminalBuddyRoot(
     serverDecisionVm: ServerDecisionViewModel = viewModel(),
 ) {
     val aiUi by aiVm.state.collectAsStateWithLifecycle()
+    val serverNotificationReady by aiVm.serverNotificationReady.collectAsStateWithLifecycle()
     val holder = rememberSaveableStateHolder()
     // 终端 Agent 对话页发起的受控决策请求：与通知点击共用根节点唯一的 ServerDecisionHost，
     // 对话页不实例化第二个 Host，点击也不伪装成 Activity 通知模型。
@@ -47,6 +48,13 @@ fun TerminalBuddyRoot(
         notificationTarget?.let {
             aiVm.openNotification(it)
             onNotificationConsumed()
+        }
+    }
+    // 服务端通知可能属于其他已登录账号：先由 ViewModel 完成账号切换，再交给 ServerDecisionHost。
+    LaunchedEffect(serverNotificationTarget) {
+        serverNotificationTarget?.let {
+            aiVm.openServerNotification(it)
+            onServerNotificationConsumed()
         }
     }
     // 页面实时流跟随前台生命周期；后台通知由独立任务监听服务维护。
@@ -89,9 +97,10 @@ fun TerminalBuddyRoot(
             }
             ServerDecisionHost(
                 vm = serverDecisionVm,
-                openRequest = serverNotificationTarget ?: agentDecisionRequest,
+                openRequest = serverNotificationReady ?: agentDecisionRequest,
                 onRequestConsumed = {
                     agentDecisionRequest = null
+                    aiVm.consumeServerNotification()
                     onServerNotificationConsumed()
                 },
                 activeAccountId = aiUi.activeAccountId,

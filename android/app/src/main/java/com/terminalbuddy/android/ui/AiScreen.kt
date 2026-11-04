@@ -237,7 +237,7 @@ fun AiScreen(
                     agentVm.openSession(session)
                 },
                 startAgent = startAgent,
-                profile = { page = AiPage.Profile }, delete = { deleting = it })
+                profile = { page = AiPage.Profile }, accounts = openAccounts, delete = { deleting = it })
         }
     } else {
         val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0

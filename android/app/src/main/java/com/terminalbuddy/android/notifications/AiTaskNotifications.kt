@@ -414,7 +414,10 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setOnlyAlertOnce(false)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setContentIntent(serverNotificationIntent(notice.decisionId, notice.decisionId.hashCode()))
+            .setContentIntent(serverNotificationIntent(
+                accountId = notice.accountId, decisionId = notice.decisionId,
+                requestCode = notice.decisionId.hashCode(),
+            ))
             .setAutoCancel(true).build()
         runCatching { manager.notify(serverDecisionTag(notice.decisionId), SERVER_EVENT_ID, notification) }
             .onSuccess { recordDiagnostic("服务端决策通知已交给系统，终端=${notice.terminalName}") }
@@ -439,6 +442,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setOnlyAlertOnce(false)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            // 结果详情只在本机阅读，不改变当前服务端；点击后直接打开详情。
             .setContentIntent(serverNotificationIntent(resultId = event.id, requestCode = event.id.hashCode()))
             .setAutoCancel(true).build()
         runCatching { manager.notify("server-result:${event.id}", SERVER_EVENT_ID, notification) }
@@ -453,12 +457,14 @@ class AiTaskNotifications(private val context: Context, private val repository: 
     }
 
     private fun serverNotificationIntent(
-        decisionId: String? = null, requestCode: Int, resultId: String? = null,
+        accountId: String? = null, decisionId: String? = null, requestCode: Int, resultId: String? = null,
     ): PendingIntent =
         PendingIntent.getActivity(
             context, requestCode,
             Intent(context, MainActivity::class.java).apply {
                 action = OPEN_SERVER_NOTIFICATIONS
+                // 带上账号归属，点击通知后可自动切换到决策 / 结果所属的服务端。
+                if (accountId != null) putExtra(SERVER_ACCOUNT_ID, accountId)
                 if (decisionId != null) putExtra(SERVER_DECISION_ID, decisionId)
                 if (resultId != null) putExtra(SERVER_RESULT_ID, resultId)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -660,6 +666,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         private const val OPEN_SERVER_NOTIFICATIONS = "com.terminalbuddy.android.OPEN_SERVER_NOTIFICATIONS"
         private const val ACCOUNT_ID = "notification_account_id"
         private const val SESSION_ID = "notification_session_id"
+        private const val SERVER_ACCOUNT_ID = "notification_server_account_id"
         private const val SERVER_DECISION_ID = "notification_server_decision_id"
         private const val SERVER_RESULT_ID = "notification_server_result_id"
         private const val KEY_SERVER_RESULTS = "server_results"
@@ -680,15 +687,17 @@ class AiTaskNotifications(private val context: Context, private val repository: 
             return if (!account.isNullOrBlank() && !session.isNullOrBlank()) AiNotificationTarget(account, session) else null
         }
 
-        /** 点击服务端任务通知后返回 decisionId / resultId，指示要打开的对话框。 */
+        /** 点击服务端任务通知后返回账号与 decisionId / resultId，指示要切换的服务端与打开的对话框。 */
         fun consumeServerTarget(intent: Intent): ServerNotificationTarget? {
             if (intent.action != OPEN_SERVER_NOTIFICATIONS) return null
+            val accountId = intent.getStringExtra(SERVER_ACCOUNT_ID)
             val decisionId = intent.getStringExtra(SERVER_DECISION_ID)
             val resultId = intent.getStringExtra(SERVER_RESULT_ID)
             intent.action = null
+            intent.removeExtra(SERVER_ACCOUNT_ID)
             intent.removeExtra(SERVER_DECISION_ID)
             intent.removeExtra(SERVER_RESULT_ID)
-            return ServerNotificationTarget(decisionId, resultId)
+            return ServerNotificationTarget(decisionId, resultId, accountId)
         }
 
         fun notificationsEnabled(context: Context): Boolean =

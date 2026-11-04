@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.terminalbuddy.android.data.*
 import com.terminalbuddy.android.notifications.AiNotificationTarget
+import com.terminalbuddy.android.notifications.ServerNotificationTarget
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
@@ -95,6 +96,12 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     private var notificationTarget: AiNotificationTarget? = null
     private var notificationSwitchAttempted: String? = null
+    /** 服务端任务通知点击后的待处理导航：切换账号成功后再交给 ServerDecisionHost 打开。 */
+    private var serverNotificationTarget: ServerNotificationTarget? = null
+    private var serverNotificationSwitchAttempted: String? = null
+    private val mutableServerNotificationReady = MutableStateFlow<ServerNotificationTarget?>(null)
+    /** 账号已就绪、可以打开决策 / 结果对话框的通知请求；消费后清空。 */
+    val serverNotificationReady = mutableServerNotificationReady.asStateFlow()
     private var visible = false
     private var generation = 0
     private var authJob: Job? = null
@@ -163,6 +170,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             state.map { Triple(it.authenticating, it.working, it.activeAccountId) }.distinctUntilChanged().collect {
                 resumeNotificationNavigation()
+                resumeServerNotificationNavigation()
             }
         }
     }
@@ -171,6 +179,58 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         notificationTarget = target
         notificationSwitchAttempted = null
         resumeNotificationNavigation()
+    }
+
+    /** 点击服务端任务通知：先把当前账号切到通知所属服务端，再打开对应对话框。 */
+    fun openServerNotification(target: ServerNotificationTarget) {
+        serverNotificationTarget = target
+        serverNotificationSwitchAttempted = null
+        resumeServerNotificationNavigation()
+    }
+
+    /** ServerDecisionHost 已消费打开请求（或已过期），清空待处理通知。 */
+    fun consumeServerNotification() {
+        mutableServerNotificationReady.value = null
+    }
+
+    /**
+     * 服务端通知导航：账号可用时切换过去，未登录时引导重新登录；
+     * 切换完成由 state 变化再次触发，成功后把目标交给界面打开对话框。
+     */
+    private fun resumeServerNotificationNavigation() {
+        val target = serverNotificationTarget ?: return
+        val accountId = target.accountId
+        if (accountId == null) {
+            serverNotificationTarget = null
+            mutableServerNotificationReady.value = target
+            return
+        }
+        val ui = mutable.value
+        if (ui.authenticating || ui.working) return
+        val account = repository.accounts.accounts.find { it.id == accountId }
+        when {
+            account == null -> {
+                serverNotificationTarget = null
+                mutable.update { it.copy(error = "该通知所属账号已移除，请重新添加账号") }
+            }
+            !account.loggedIn -> {
+                if (ui.selected != null) closeSession()
+                serverNotificationTarget = null
+                mutable.update {
+                    it.copy(notificationLoginAccountId = accountId, error = "请重新登录该通知所属账号后继续")
+                }
+            }
+            repository.accounts.activeId == accountId -> {
+                serverNotificationTarget = null
+                mutableServerNotificationReady.value = target
+            }
+            serverNotificationSwitchAttempted != accountId -> {
+                serverNotificationSwitchAttempted = accountId
+                switchAccount(accountId)
+            }
+            // 已尝试切换但仍未激活（切换失败）：不保留陈旧通知，错误由切换流程提示。
+            else -> serverNotificationTarget = null
+        }
     }
 
     /** 通知导航等待已有操作完成，并在需要时恢复原账号；不会使用当前账号请求别人的任务。 */

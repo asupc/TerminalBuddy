@@ -85,9 +85,11 @@ internal fun AiSimpleHome(
     agentUi: TerminalAgentUiState, agentVm: TerminalAgentViewModel,
     openAgent: (TerminalAgentSession) -> Unit,
     startAgent: (agent: String, providerId: String, modelId: String, projectPath: String, projectName: String) -> Unit,
-    profile: () -> Unit, delete: (AiSession) -> Unit,
+    profile: () -> Unit, accounts: () -> Unit, delete: (AiSession) -> Unit,
 ) {
     var tab by rememberSaveable(ui.activeAccountId) { mutableStateOf(SimpleHomeTab.Recent) }
+    // 顶部「切换服务端」弹层；切换成功后由 state 驱动各页面重新绑定账号。
+    var switchingServer by remember { mutableStateOf(false) }
     // 长按服务端会话 → 确认后关闭承载该会话的服务端终端（Agent 随之结束）。
     var closeTarget by remember { mutableStateOf<TerminalAgentSession?>(null) }
     // 项目配置与实时 Agent 会话来自服务端，进入简版首页时同步一次，后续账号切换自动重新绑定。
@@ -126,7 +128,7 @@ internal fun AiSimpleHome(
         agentVm.refresh()
     }
     Column(Modifier.fillMaxSize()) {
-        AiSimpleHeader(ui.reconnecting, profile)
+        AiSimpleHeader(ui, profile) { switchingServer = true }
         ui.error?.let { AiError(it, vm::clearError) }
         // 下拉刷新：三路列表一起补拉；转圈只跟随 Agent 列表的 loading（主数据源）。
         var pullRefreshing by remember { mutableStateOf(false) }
@@ -263,6 +265,78 @@ internal fun AiSimpleHome(
         }
     }
     val target = closeTarget
+    if (switchingServer) {
+        AiSheet("切换服务端", { switchingServer = false }) {
+            LazyColumn(
+                Modifier.fillMaxWidth().weight(1f, fill = false),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(key = "server-hint") {
+                    Text(
+                        "每个已登录的服务端都会同时接收任务通知；切换只改变当前操作的服务端。",
+                        Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+                    )
+                }
+                items(ui.accounts, key = { it.id }) { account ->
+                    val current = account.id == ui.activeAccountId
+                    val switching = account.id == ui.switchingAccountId
+                    Surface(
+                        onClick = {
+                            if (current) switchingServer = false
+                            else if (!account.loggedIn) { switchingServer = false; accounts() }
+                            else { vm.switchAccount(account.id); switchingServer = false }
+                        },
+                        enabled = !ui.authenticating,
+                        color = if (current) TbColors.Accent.copy(alpha = .12f) else TbColors.SurfaceHover,
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                Icons.Outlined.Cloud, null, Modifier.size(22.dp),
+                                tint = if (current) TbColors.Accent else TbColors.TextMuted,
+                            )
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(account.username, style = MaterialTheme.typography.titleSmall,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(account.server, style = MaterialTheme.typography.bodySmall,
+                                    color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(when {
+                                    current -> "当前服务端"
+                                    switching -> "正在切换…"
+                                    !account.loggedIn -> "需要重新登录"
+                                    else -> "已登录 · 点击切换"
+                                }, style = MaterialTheme.typography.labelSmall,
+                                    color = if (!account.loggedIn) TbColors.Danger else TbColors.Accent)
+                            }
+                            when {
+                                switching -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                current -> Icon(Icons.Outlined.CheckCircle, "当前服务端",
+                                    Modifier.size(20.dp), tint = TbColors.Accent)
+                                !account.loggedIn -> TextButton(
+                                    { switchingServer = false; accounts() },
+                                    contentPadding = PaddingValues(horizontal = 8.dp),
+                                ) { Text("登录") }
+                                else -> Icon(Icons.Outlined.SwapHoriz, "切换到此服务端",
+                                    Modifier.size(20.dp), tint = TbColors.TextMuted)
+                            }
+                        }
+                    }
+                }
+                item(key = "manage-accounts") {
+                    TextButton(
+                        onClick = { switchingServer = false; accounts() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("管理账号 / 添加服务端") }
+                }
+            }
+        }
+    }
     if (target != null) AlertDialog(
         onDismissRequest = { closeTarget = null },
         title = { Text("关闭服务端 Agent") },
@@ -279,9 +353,9 @@ internal fun AiSimpleHome(
     )
 }
 
-/** 品牌 + 页面名，右侧只保留「我的」入口。 */
+/** 品牌 + 页面名，右侧依次为切换服务端与「我的」入口。 */
 @Composable
-private fun AiSimpleHeader(reconnecting: Boolean, profile: () -> Unit) {
+private fun AiSimpleHeader(ui: AiUiState, profile: () -> Unit, switchServer: () -> Unit) {
     Box(Modifier.fillMaxWidth().statusBarsPadding(), contentAlignment = Alignment.TopCenter) {
         Row(
             Modifier.widthIn(max = 680.dp).fillMaxWidth()
@@ -297,7 +371,15 @@ private fun AiSimpleHeader(reconnecting: Boolean, profile: () -> Unit) {
                 Text("Terminal Buddy", style = MaterialTheme.typography.titleMedium)
                 Text("快速开始", style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted)
             }
-            AiReconnectingIndicator(reconnecting)
+            AiReconnectingIndicator(ui.reconnecting)
+            // 多服务端切换入口：放在「我的」左侧，不跳转页面即可切换当前服务端。
+            IconButton(switchServer, enabled = !ui.authenticating) {
+                if (ui.switchingAccountId != null) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Outlined.SwapHoriz, "切换服务端", Modifier.size(23.dp), tint = TbColors.TextSoft)
+                }
+            }
             IconButton(profile) {
                 Icon(Icons.Outlined.PersonOutline, "我的", Modifier.size(23.dp), tint = TbColors.TextSoft)
             }
