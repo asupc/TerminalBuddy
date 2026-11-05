@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -69,6 +70,20 @@ internal fun TerminalAgentChatScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
     ) {
         AgentStatusStrip(ui, vm)
+        ui.startError?.let { error ->
+            Row(
+                Modifier.fillMaxWidth().background(TbColors.Accent.copy(alpha = .08f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                    maxLines = 3, overflow = TextOverflow.Ellipsis,
+                )
+                TextButton(openTerminal) { Text("看终端") }
+                TextButton(vm::clearStartError) { Text("知道了") }
+            }
+        }
         ui.messagesError?.let { error ->
             Row(
                 Modifier.fillMaxWidth().background(TbColors.Danger.copy(alpha = .08f))
@@ -95,6 +110,34 @@ internal fun TerminalAgentChatScreen(
                 Text(ui.closedReason ?: "镜像连接已结束", style = MaterialTheme.typography.bodyMedium,
                     color = TbColors.TextMuted, textAlign = TextAlign.Center)
                 TextButton({ vm.refreshSession() }, enabled = !ui.loadingMessages) { Text("刷新重试") }
+            }
+        } else if (ui.starting) {
+            // 启动态：终端已建好、Agent 绑定还没出现。不显示「镜像不可用」，
+            // 而是说明可以直接输入（内容进队列，就绪后自动发送）。
+            Column(
+                Modifier.fillMaxWidth().weight(1f).padding(horizontal = 24.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = TbColors.Accent)
+                Text(
+                    "正在启动 Agent，可以直接输入需求；就绪后会自动发送。",
+                    style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
+                    textAlign = TextAlign.Center,
+                )
+                TextButton(openTerminal) { Text("查看终端启动过程") }
+                if (ui.queuedReplies.isNotEmpty()) {
+                    Column(
+                        Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        ui.queuedReplies.forEachIndexed { index, text ->
+                            AgentPendingRow(
+                                text, if (index == 0) "Agent 启动后自动发送" else "排队中",
+                                TbColors.TextMuted, false,
+                            )
+                        }
+                    }
+                }
             }
         } else if (!session.mirror.available) {
             Column(
@@ -130,6 +173,7 @@ internal fun TerminalAgentChatScreen(
                 ui.pendingReply?.let { pending ->
                     item(key = "pending-reply") {
                         val (color, spinning) = when (pending.status) {
+                            TerminalReplyStatus.Queued -> TbColors.TextMuted to false
                             TerminalReplyStatus.Typed -> TbColors.TextMuted to false
                             TerminalReplyStatus.Delivered -> TbColors.Accent to false
                             // REST 已接受即写入成功，超时只代表 Agent 尚未处理，不是错误警示。
@@ -138,10 +182,24 @@ internal fun TerminalAgentChatScreen(
                         AgentPendingRow(pending.text, pending.statusLabel, color, spinning)
                     }
                 }
-                if (!ui.loadingMessages && ui.messages.isEmpty() && ui.pendingReply == null && !ui.sending) {
+                // 队列中尚未发出的输入：启动态等待 Agent 就绪，就绪后逐条自动发出。
+                itemsIndexed(ui.queuedReplies, key = { index, _ -> "queued-$index" }) { index, text ->
+                    AgentPendingRow(
+                        text,
+                        when {
+                            index == 0 && ui.starting -> "Agent 启动后自动发送"
+                            index == 0 -> "即将发送"
+                            else -> "排队中"
+                        },
+                        TbColors.TextMuted, false,
+                    )
+                }
+                if (!ui.loadingMessages && ui.messages.isEmpty() && ui.pendingReply == null &&
+                    ui.queuedReplies.isEmpty() && !ui.sending
+                ) {
                     item(key = "empty") {
                         Text(
-                            "会话还没有可展示的消息；终端里产生的新内容会按条出现在这里。",
+                            "会话已就绪，还没有消息；发送第一条消息后，对话会按条显示在这里。",
                             Modifier.fillMaxWidth().padding(vertical = 16.dp),
                             style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted,
                             textAlign = TextAlign.Center,
@@ -163,12 +221,22 @@ private fun AgentStatusStrip(ui: TerminalAgentUiState, vm: TerminalAgentViewMode
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         if (session != null) {
-            AgentPhaseTag(session)
+            if (ui.starting) {
+                // 启动态没有服务端元数据，阶段标签按「正在启动」显示，不误导为「运行中」。
+                Surface(color = TbColors.Accent.copy(alpha = .16f), shape = RoundedCornerShape(5.dp)) {
+                    Text(
+                        "正在启动", Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall, color = TbColors.Accent, maxLines = 1,
+                    )
+                }
+            } else {
+                AgentPhaseTag(session)
+            }
             session.model?.takeIf(String::isNotBlank)?.let { model ->
                 Text(model, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(relativeActivity(session.lastActivityAt), style = MaterialTheme.typography.labelSmall,
+            if (!ui.starting) Text(relativeActivity(session.lastActivityAt), style = MaterialTheme.typography.labelSmall,
                 color = TbColors.TextMuted, maxLines = 1)
         }
         Spacer(Modifier.weight(1f))
@@ -176,7 +244,7 @@ private fun AgentStatusStrip(ui: TerminalAgentUiState, vm: TerminalAgentViewMode
             AiConnectionSpinner(TbColors.Accent, Modifier.size(13.dp))
             Text("重连中", style = MaterialTheme.typography.labelSmall, color = TbColors.Accent)
         }
-        IconButton({ vm.refreshSession() }, enabled = session != null && !ui.loadingMessages) {
+        IconButton({ vm.refreshSession() }, enabled = session != null && !ui.loadingMessages && !ui.starting) {
             Icon(Icons.Outlined.Refresh, "刷新会话内容", Modifier.size(19.dp), tint = TbColors.TextMuted)
         }
     }
@@ -447,7 +515,12 @@ private fun AgentComposer(
                     )
                 }
             }
-            if (session.provider == "codex" && session.canReply) {
+            if (ui.starting) {
+                Text(
+                    "Agent 正在启动，输入会排队，就绪后自动发送",
+                    style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
+                )
+            } else if (session.provider == "codex" && session.canReply) {
                 Text(
                     "Codex · 回复将写入终端，确认操作请在终端处理",
                     style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
@@ -462,12 +535,22 @@ private fun AgentComposer(
                     TextButton(openTerminal) { Text("打开终端") }
                 }
             }
-            val enabled = session.canReply && !ui.sending && !ui.closed
+            // 启动态与在途发送同样允许输入：新内容进待发队列，按顺序发出。
+            val enabled = (ui.starting || session.canReply) && !ui.closed
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 OutlinedTextField(
                     ui.draft, vm::draft, Modifier.weight(1f),
-                    placeholder = { Text(if (session.canReply) "回复内容，回车换行，点右侧发送" else "当前不可回复", style = MaterialTheme.typography.bodyMedium) },
+                    placeholder = {
+                        Text(
+                            when {
+                                ui.starting -> "Agent 正在启动，可先输入需求"
+                                session.canReply -> "回复内容，回车换行，点右侧发送"
+                                else -> "当前不可回复"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    },
                     minLines = 1, maxLines = 4, enabled = enabled,
                     textStyle = MaterialTheme.typography.bodyMedium,
                     // 回车默认插入换行（多行草稿），发送统一走右侧按钮。

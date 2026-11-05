@@ -92,21 +92,29 @@ fun AiScreen(
         pendingAgentTerminalId = null
     }
     /**
-     * 简版「开始对话」：在服务端开真实终端并按 terminalId 等待 Agent 会话出现。
-     * 先进入 Agent 宿主显示启动态，发现后自动切换到接力页；超时则退回该终端画面。
+     * 简版「开始对话」：在服务端开真实终端后**立即**进入会话页，不等 Agent 启动完成。
+     * 用户在启动态就能输入需求（进待发队列），绑定被发现后自动切到实时镜像并发出队列。
      */
     val startAgent: (String, String, String, String, String) -> Unit = { agent, providerId, modelId, projectPath, projectName ->
         terminalVm.launchAgent(agent, providerId, modelId, projectPath, projectName) { terminal ->
             pendingAgentTerminalId = terminal.id
             pendingAgentStartedAt = System.currentTimeMillis()
             selectedAgentTerminalId = terminal.id
+            agentVm.openStartingSession(
+                terminalId = terminal.id,
+                provider = agent,
+                displayName = projectName.ifBlank { terminal.profileName },
+                directory = projectPath.ifBlank { terminal.directory },
+                terminalType = terminal.terminalType,
+            )
         }
     }
     // 进程或页面重建后按选中的 terminalId 重新打开会话；列表刷新后目标消失则退出宿主。
-    // 新创建的终端要等 Agent 启动、转录生成与发现链完成，期间按 1 秒节奏刷新，超时退回终端画面。
-    LaunchedEffect(selectedAgentTerminalId, pendingAgentTerminalId, agentUi.listLoaded, agentUi.listLoading, agentUi.sessions, agentUi.connection) {
+    // 启动态下按 1 秒节奏刷新列表等绑定出现；超时不再退出页面，而是保留会话页并提示
+    // （用户已输入的内容留在队列里，可继续在终端页查看启动过程）。
+    LaunchedEffect(selectedAgentTerminalId, pendingAgentTerminalId, agentUi.starting, agentUi.listLoaded, agentUi.listLoading, agentUi.sessions, agentUi.connection) {
         val id = selectedAgentTerminalId ?: return@LaunchedEffect
-        if (agentUi.selected?.terminalId == id) {
+        if (agentUi.selected?.terminalId == id && !agentUi.starting) {
             pendingAgentTerminalId = null
             return@LaunchedEffect
         }
@@ -117,17 +125,22 @@ fun AiScreen(
                 agentVm.openSession(session)
             }
             agentUi.listLoading -> Unit
-            pendingAgentTerminalId == id -> {
+            pendingAgentTerminalId == id || agentUi.starting -> {
                 if (System.currentTimeMillis() - pendingAgentStartedAt >= 45_000L) {
                     pendingAgentTerminalId = null
-                    selectedAgentTerminalId = null
-                    terminalVm.reportAgentLaunchTimeout()
-                    // 终端已经建好，只是 Agent 尚未被发现；直接打开终端让用户看到启动过程与报错。
-                    terminalVm.state.value.terminals.find { it.id == id }?.let(terminalVm::openView)
-                } else {
-                    delay(1_000)
-                    agentVm.refresh()
+                    if (agentUi.starting) {
+                        // 启动很慢不是失败：保留会话页与已输入内容，继续每秒刷新，
+                        // 绑定一旦出现就自动接管并发出队列。
+                        agentVm.reportStartError("Agent 启动较慢，可继续输入（就绪后自动发送），或切到终端页查看启动过程。")
+                    } else {
+                        selectedAgentTerminalId = null
+                        terminalVm.reportAgentLaunchTimeout()
+                        terminalVm.state.value.terminals.find { it.id == id }?.let(terminalVm::openView)
+                        return@LaunchedEffect
+                    }
                 }
+                delay(1_000)
+                agentVm.refresh()
             }
             // 拉取失败不自动重试（避免 listLoading 变化反复重启本 effect 形成忙循环），交给错误卡手动重试。
             agentUi.listLoaded -> selectedAgentTerminalId = null
@@ -220,7 +233,6 @@ fun AiScreen(
         TerminalAgentSessionScreen(
             agentUi = agentUi, agentVm = agentVm,
             terminalUi = terminalUi, terminalVm = terminalVm,
-            starting = pendingAgentTerminalId == selectedAgentTerminalId,
             onBack = leaveAgentSession,
             onBackFromTerminal = leaveAgentSession,
             openDecision = openDecision,
