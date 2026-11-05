@@ -36,6 +36,7 @@ PORT="${TB_LOCAL_PORT:-9600}"
 HEALTH_TIMEOUT="${TB_LOCAL_HEALTH_TIMEOUT:-120}"
 DO_PULL="${TB_UPDATE_PULL:-1}"
 KEEP_ROLLBACK="${TB_UPDATE_KEEP_ROLLBACK:-0}"
+FORCE=0
 # =====================================================
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -43,6 +44,8 @@ REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 LOG_DIR="${INSTALL_DIR}/data/.terminal-buddy-update"
 BIN="${INSTALL_DIR}/terminal-buddy-server"
 WEB="${INSTALL_DIR}/web"
+# 上次成功部署时的源码指纹与产物哈希，用于判断「已是最新」而提前退出。
+STAMP_FILE="${LOG_DIR}/deployed-local.state"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 fail() {
@@ -59,6 +62,7 @@ usage() {
   all     两者都更新（默认；先本机构建并验证健康，再部署飞牛）
 
   --no-pull            跳过开头的 git pull --ff-only，直接使用当前工作区
+  --force              忽略「已是最新」的快速判定，强制重新构建并部署
   --source-dir DIR     显式指定源码仓库根目录（默认取脚本所在仓库的根目录）
   --keep-rollback      本机更新成功后保留 terminal-buddy-server.bak 与 web.old 回滚材料
   --health-timeout N   本机重启后健康检查最长等待秒数，默认 120
@@ -67,13 +71,14 @@ usage() {
   其余参数原样透传给 deploy-fnos.sh：--no-build / --no-pull / --load <tar> 等
   （仅目标包含 fnos 时使用）。
 
-流程：git pull → 本机构建（网页前端 + server 二进制）→ 产物指纹一致则跳过重启；
+流程：git pull → 「已是最新」快速判定（源码指纹 + 产物哈希 + 运行进程一致则直接退出）
+→ 本机构建（网页前端 + server 二进制）→ 产物指纹一致则跳过重启；
 有变化时备份并原子替换 → systemctl restart → 健康检查（/api/health），失败自动回滚。
 在 TerminalBuddy 网页终端内执行时，重启会断开当前会话（预期）：剩余步骤自动转入
 脱离会话的后台任务，日志保存在 /opt/terminal-buddy/data/.terminal-buddy-update/。
 
 环境变量：TB_LOCAL_INSTALL_DIR / TB_LOCAL_SERVICE / TB_LOCAL_PORT /
-TB_LOCAL_HEALTH_TIMEOUT / TB_UPDATE_PULL / TB_UPDATE_KEEP_ROLLBACK，
+TB_LOCAL_HEALTH_TIMEOUT / TB_UPDATE_PULL / TB_UPDATE_KEEP_ROLLBACK / TB_UPDATE_FORCE，
 以及 TB_FNOS_*（host / user / ssh-port 等，透传给 deploy-fnos.sh）。
 HELP
 }
@@ -93,6 +98,7 @@ while [ "$#" -gt 0 ]; do
       TARGET=fnos
       log "已将目标 ${1} 视为 fnos" ;;
     --no-pull) DO_PULL=0 ;;
+    --force) FORCE=1 ;;
     --source-dir) REPO_ARG="${2:?--source-dir 需要路径}"; shift ;;
     --keep-rollback) KEEP_ROLLBACK=1 ;;
     --health-timeout) HEALTH_TIMEOUT="${2:?--health-timeout 需要秒数}"; shift ;;
@@ -105,6 +111,7 @@ done
 [[ "${HEALTH_TIMEOUT}" =~ ^[1-9][0-9]{0,4}$ ]] || fail "健康检查超时需为 1～99999 的整数"
 [[ "${KEEP_ROLLBACK}" =~ ^[01]$ ]] || fail "TB_UPDATE_KEEP_ROLLBACK 需为 0 或 1"
 [[ "${DO_PULL}" =~ ^[01]$ ]] || fail "TB_UPDATE_PULL 需为 0 或 1"
+[[ "${FORCE}" =~ ^[01]$ ]] || fail "TB_UPDATE_FORCE 需为 0 或 1"
 if [ "${TARGET}" = local ] && [ "${#PASSTHROUGH[@]}" -gt 0 ]; then
   log "提示：目标为 local，以下参数将被忽略：${PASSTHROUGH[*]}"
 fi
@@ -157,6 +164,77 @@ in_terminal_buddy_tree() {
 dir_hash() {
   ( cd -- "$1" && find . -type f -print0 | LC_ALL=C sort -z \
       | xargs -0 sha256sum | sha256sum | cut -d' ' -f1 )
+}
+
+# ---------- 「已是最新」判定 ----------
+# 源码指纹 = HEAD + 工作区改动（含未提交内容）+ 未跟踪文件内容。
+# 只比 HEAD 会漏掉未提交改动：HEAD 不变但源码变了，必须重建。
+# 只覆盖 terminal-buddy/：本地 server 构建只消费这个目录，android/ 等改动不该触发重建。
+source_fingerprint() {
+  local head diff_h untracked_h
+  head="$(git -C "${REPO_DIR}" rev-parse HEAD 2>/dev/null)" \
+    || { printf '%s' "NOGIT"; return 0; }
+  diff_h="$(git -C "${REPO_DIR}" diff --binary HEAD -- terminal-buddy/ 2>/dev/null \
+    | sha256sum | cut -d' ' -f1)"
+  # 未跟踪文件按「内容 + 相对路径」参与指纹；-r 保证空列表时不给 sha256sum 喂标准输入。
+  untracked_h="$( cd -- "${REPO_DIR}" \
+    && git ls-files --others --exclude-standard -z -- terminal-buddy/ 2>/dev/null \
+    | xargs -0 -r sha256sum 2>/dev/null | LC_ALL=C sort | sha256sum | cut -d' ' -f1 )"
+  printf '%s:%s:%s' "${head}" "${diff_h}" "${untracked_h}"
+}
+
+# 读取 state 文件的单个键。用 sed 解析而非 source，避免数据目录被改写时执行任意代码。
+stamp_get() {
+  sed -n "s/^$1=//p" "${STAMP_FILE}" 2>/dev/null | head -n1
+}
+
+write_deploy_stamp() {
+  local fp="$1" bin_sha="$2" web_sha="$3"
+  as_owner sh -c 'cat > "$1"' _ "${STAMP_FILE}" <<STAMP
+# 由 xcj/update.sh 自动生成，请勿手工编辑。
+FINGERPRINT=${fp}
+BIN_SHA=${bin_sha}
+WEB_SHA=${web_sha}
+DEPLOYED_AT=$(date '+%F %T')
+STAMP
+}
+
+# 全部命中才算「已是最新」：源码没变、部署产物没被替换过、运行进程加载的就是该产物。
+# 任一条不满足都照常走完整流程（宁可多构建一次，也不能漏部署）。
+already_up_to_date() {
+  local want_git=1
+  if [ "${FORCE}" = 1 ]; then
+    log "已指定 --force，跳过「已是最新」判定"
+    return 1
+  fi
+  if ! git -C "${REPO_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
+    log "源码目录不是 git 仓库，无法取源码指纹，本次照常构建"
+    return 1
+  fi
+  if [ ! -f "${STAMP_FILE}" ]; then
+    log "未找到上次部署记录（${STAMP_FILE}），本次照常构建"
+    return 1
+  fi
+  [ -x "${BIN}" ] && [ -d "${WEB}" ] || { log "部署产物缺失，本次照常构建"; return 1; }
+
+  local cur_fp saved_fp cur_bin cur_web
+  cur_fp="$(source_fingerprint)"
+  saved_fp="$(stamp_get FINGERPRINT)"
+  if [ "${cur_fp}" != "${saved_fp}" ]; then
+    log "源码自上次部署后有变化（或首次运行新版判定），需要重新构建"
+    return 1
+  fi
+  cur_bin="$(sha256sum -- "${BIN}" | cut -d' ' -f1)"
+  [ "${cur_bin}" = "$(stamp_get BIN_SHA)" ] \
+    || { log "已部署二进制与上次记录不一致（可能被手工替换），本次照常构建"; return 1; }
+  cur_web="$(dir_hash "${WEB}")"
+  [ "${cur_web}" = "$(stamp_get WEB_SHA)" ] \
+    || { log "已部署 web 与上次记录不一致（可能被手工替换），本次照常构建"; return 1; }
+  if ! running_process_matches_file; then
+    log "部署文件未变但运行中进程尚未加载（上次更新后未重启），本次仅重启生效"
+    return 1
+  fi
+  return 0
 }
 
 wait_health() {
@@ -252,6 +330,16 @@ rollback_local_files() {
   fi
 }
 
+# 健康检查通过后才写指纹记录：失败的部署不能标记为「已最新」，
+# 否则下次会误判跳过重建。PENDING_* 由 update_local 在重启前导出。
+write_local_stamp_from_pending() {
+  if [ -n "${PENDING_FP:-}" ]; then
+    write_deploy_stamp "${PENDING_FP}" "${PENDING_BIN_SHA:-}" "${PENDING_WEB_SHA:-}" \
+      && log "已记录本次部署指纹（下次相同源码会直接跳过）" \
+      || log "警告：写入部署指纹失败（${STAMP_FILE}），不影响本次更新结果"
+  fi
+}
+
 # ---------- 本机：重启 + 健康检查（同步路径，SSH / 物理终端场景） ----------
 restart_and_verify_local() {
   log "重启服务：systemctl restart ${SERVICE}（普通用户需输入 sudo 密码）"
@@ -259,6 +347,7 @@ restart_and_verify_local() {
     || fail "无法重启 ${SERVICE}（需要 root）：新版本文件已部署但尚未生效，请执行 sudo systemctl restart ${SERVICE}，或用 sudo 重新运行本脚本"
   if wait_health; then
     log "本机更新完成：新版本健康检查通过（${BIN}）"
+    write_local_stamp_from_pending
     if [ "${KEEP_ROLLBACK}" = 0 ]; then
       as_owner rm -f "${BIN}.bak"
       as_owner rm -rf "${WEB}.old"
@@ -309,6 +398,10 @@ spawn_background_worker() {
     printf 'SRC_OWNER=%q\n' "${SRC_OWNER}"
     printf 'RUN_FNOS=%q\n' "${RUN_FNOS}"
     printf 'HELPER_PASSTHROUGH=%q\n' "${HELPER_PASSTHROUGH}"
+    printf 'STAMP_FILE=%q\n' "${STAMP_FILE}"
+    printf 'PENDING_FP=%q\n' "${PENDING_FP:-}"
+    printf 'PENDING_BIN_SHA=%q\n' "${PENDING_BIN_SHA:-}"
+    printf 'PENDING_WEB_SHA=%q\n' "${PENDING_WEB_SHA:-}"
     cat <<'WORKER'
 # 由 update.sh 生成的后台更新任务：脱离会话执行「重启 → 健康检查 → 回滚 → 飞牛部署」。
 set -euo pipefail
@@ -334,6 +427,21 @@ wlog "后台更新任务启动：重启 ${SERVICE} 并等待健康检查（超�
 systemctl restart "${SERVICE}"
 if wait_health; then
   wlog "健康检查通过：本机新版本已生效"
+  # 只有健康检查通过的部署才写指纹，否则下次误判「已是最新」而跳过重建。
+  if [ -n "${PENDING_FP}" ]; then
+    if own sh -c 'cat > "$1"' _ "${STAMP_FILE}" <<STAMP
+# 由 xcj/update.sh 自动生成，请勿手工编辑。
+FINGERPRINT=${PENDING_FP}
+BIN_SHA=${PENDING_BIN_SHA}
+WEB_SHA=${PENDING_WEB_SHA}
+DEPLOYED_AT=$(date '+%F %T')
+STAMP
+    then
+      wlog "已记录本次部署指纹（下次相同源码会直接跳过）"
+    else
+      wlog "警告：写入部署指纹失败（${STAMP_FILE}），不影响本次更新结果"
+    fi
+  fi
   if [ "${KEEP_ROLLBACK}" = "0" ]; then
     own rm -f "${INSTALL_DIR}/terminal-buddy-server.bak"
     own rm -rf "${INSTALL_DIR}/web.old"
@@ -406,6 +514,13 @@ running_process_matches_file() {
 update_local() {
   [ -d "${INSTALL_DIR}" ] || fail "本机部署目录不存在：${INSTALL_DIR}（本脚本只做更新，不做首次部署）"
   as_owner mkdir -p "${LOG_DIR}"
+
+  # 构建之前先判：已是最新就直接退出，省掉 npm + cargo 的全量构建时间。
+  if already_up_to_date; then
+    log "已是最新版本，无需更新：源码、部署产物与运行进程均已一致（强制重建请加 --force）"
+    return 0
+  fi
+
   build_local
 
   # 与已部署产物比对指纹：二进制与 web 均未变化、且运行中进程已加载当前文件时才跳过重启。
@@ -418,6 +533,9 @@ update_local() {
   fi
   if [ "${files_changed}" = 0 ] && running_process_matches_file; then
     log "本机产物与当前部署一致（二进制与 web 指纹均未变化），跳过重启"
+    # 指纹记录可能因上次运行中断而缺失，这里补齐，让下次能走快速退出。
+    write_deploy_stamp "$(source_fingerprint)" \
+      "$(sha256sum -- "${BIN}" | cut -d' ' -f1)" "$(dir_hash "${WEB}")"
     return 0
   fi
 
@@ -427,6 +545,12 @@ update_local() {
   else
     log "部署文件与上次构建一致，但运行中进程尚未加载（上次更新后未重启），本次仅重启生效"
   fi
+
+  # 先记下源码指纹：即使随后健康检查失败，也要在重启成功后才有资格写，
+  # 因此交给重启路径处理（同步路径在健康检查通过后写，后台路径由 worker 写）。
+  export PENDING_FP="$(source_fingerprint)"
+  export PENDING_BIN_SHA="$(sha256sum -- "${BIN}" | cut -d' ' -f1)"
+  export PENDING_WEB_SHA="$(dir_hash "${WEB}")"
 
   if in_terminal_buddy_tree; then
     RUN_ID="$(date -u '+%Y%m%d%H%M%S')-$$"
