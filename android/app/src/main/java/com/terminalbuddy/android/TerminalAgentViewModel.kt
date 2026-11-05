@@ -288,13 +288,15 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         val state = mutable.value
         val session = state.selected ?: return
         if (state.sending || replyJob?.isActive == true || !session.canReply) return
-        val text = state.draft.trim()
+        // 换行是合法的多行输入；统一成 LF 后再交给服务端，避免 CRLF 被当成回车提交。
+        val text = state.draft.trim().replace("\r\n", "\n").replace('\r', '\n')
         if (text.isEmpty()) return
-        // 本地预检与服务端文本规则一致（≤2000 个 Unicode 字符、不以 / ! @ # 开头、无控制字符），省一次往返。
+        // 本地预检与服务端文本规则一致（≤2000 个 Unicode 字符、不以 / ! @ # 开头、
+        // 除换行外不含控制字符），省一次往返。
         val invalid = when {
             text.codePointCount(0, text.length) > 2000 -> "回复最多 2000 个字符，请精简后再发送"
             text.first() in "/!@#" -> "回复不能以 / ! @ # 开头，斜杠命令请在电脑端执行"
-            text.any(Char::isISOControl) -> "回复不能包含控制字符"
+            text.any { it != '\n' && it.isISOControl() } -> "回复不能包含换行以外的控制字符"
             else -> null
         }
         if (invalid != null) {

@@ -1,5 +1,8 @@
 package com.terminalbuddy.android.ui
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -8,7 +11,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -22,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -38,7 +41,7 @@ import com.terminalbuddy.android.data.TerminalAgentSession
 
 /**
  * 终端 Agent 会话的对话页：只读镜像以气泡展示（replay 消息不做逐字动画），
- * 受限回复单行输入；有待决策时引导到唯一的决策 Host。不显示 token 用量。
+ * 连续的思考/执行步骤折叠成一个块；受限回复支持多行（回车换行）；有待决策时引导到唯一的决策 Host。
  */
 @Composable
 internal fun TerminalAgentChatScreen(
@@ -59,8 +62,12 @@ internal fun TerminalAgentChatScreen(
         }
         if (ui.messages.isNotEmpty()) loadedOnce = true
     }
-    // edge-to-edge 下 adjustResize 不生效，输入法避让必须用 imePadding（与终端页签一致）。
-    Column(Modifier.fillMaxSize().imePadding()) {
+    // edge-to-edge 下 adjustResize 不生效：底部同时避让系统导航栏与软键盘（取两者最大值），
+    // 输入框不会在键盘弹起时被遮住，键盘收起后也不会压到手势导航条。
+    Column(
+        Modifier.fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+    ) {
         AgentStatusStrip(ui, vm)
         ui.messagesError?.let { error ->
             Row(
@@ -100,6 +107,7 @@ internal fun TerminalAgentChatScreen(
                 OutlinedButton(openTerminal) { Text("打开终端") }
             }
         } else {
+            val entries = remember(ui.messages) { groupAgentChatEntries(ui.messages) }
             LazyColumn(
                 Modifier.fillMaxWidth().weight(1f), state = listState,
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
@@ -110,8 +118,11 @@ internal fun TerminalAgentChatScreen(
                         CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = TbColors.Accent)
                     }
                 }
-                items(ui.messages, key = { "agent-msg-${it.seq}" }) { message ->
-                    AgentReplayMessage(session, message)
+                items(entries, key = { it.key }) { entry ->
+                    when (entry) {
+                        is AgentChatEntry.Message -> AgentReplayMessage(session, entry.message)
+                        is AgentChatEntry.Process -> AgentProcessGroup(entry.steps)
+                    }
                 }
                 if (ui.sending) item(key = "sending") {
                     AgentPendingRow(text = "", label = "正在发送…", color = TbColors.TextMuted, spinning = true)
@@ -266,6 +277,71 @@ private fun AgentReplayMessage(session: TerminalAgentSession, message: AiHistory
     }
 }
 
+/** 连续的思考/执行步骤合并成一个折叠块：默认只露出最新一步，展开后按原始顺序查看全部。 */
+@Composable
+private fun AgentProcessGroup(steps: List<AiHistoryMessage>) {
+    // 只以首条 seq 作 key：同一步骤组追加新记录时保持展开状态。
+    var expanded by rememberSaveable(steps.first().seq) { mutableStateOf(false) }
+    val latest = steps.last()
+    val summary = remember(latest) { processStepSummary(latest) }
+    Column(
+        Modifier.fillMaxWidth().animateContentSize(tween(160, easing = LinearOutSlowInEasing)),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().clickable { expanded = !expanded }
+                .semantics { stateDescription = if (expanded) "已展开思考过程" else "已折叠思考过程" }
+                .heightIn(min = 40.dp).padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(Icons.Outlined.Terminal, null, Modifier.size(14.dp), tint = TbColors.TextMuted)
+            Text("思考过程", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
+            Text(
+                steps.size.toString(), Modifier.background(TbColors.CanvasSoft, RoundedCornerShape(5.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                summary, Modifier.weight(1f, fill = false),
+                style = MaterialTheme.typography.labelSmall, color = TbColors.TextSoft,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Icon(
+                if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null,
+                Modifier.size(14.dp), tint = TbColors.TextMuted,
+            )
+        }
+        if (expanded) {
+            Column(Modifier.fillMaxWidth()) {
+                steps.forEach { step ->
+                    key(step.seq) {
+                        if (step.role == "assistant") AgentToolCallLine(step.tools)
+                        else AgentToolRecord(step)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 思考过程展开后的助手工具调用行：工具名 · 入参摘要。 */
+@Composable
+private fun AgentToolCallLine(tools: List<AiHistoryTool>) {
+    Column(Modifier.fillMaxWidth().padding(start = 36.dp)) {
+        tools.forEach { tool ->
+            SelectionContainer {
+                Text(
+                    listOf(tool.name, tool.summary).filter(String::isNotBlank).joinToString(" · "),
+                    Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+                    color = TbColors.TextSoft, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
 /** assistant 消息附带的工具调用列表：默认只露最新一条摘要，点击展开全部。 */
 @Composable
 private fun AgentToolCalls(sessionKey: String, seq: Long, tools: List<AiHistoryTool>) {
@@ -373,7 +449,7 @@ private fun AgentComposer(
             }
             if (session.provider == "codex" && session.canReply) {
                 Text(
-                    "Codex · 回复将作为一行输入写入终端，确认操作请在终端处理",
+                    "Codex · 回复将写入终端，确认操作请在终端处理",
                     style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted,
                 )
             } else if (!session.canReply) {
@@ -391,11 +467,11 @@ private fun AgentComposer(
                 horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 OutlinedTextField(
                     ui.draft, vm::draft, Modifier.weight(1f),
-                    placeholder = { Text(if (session.canReply) "回复一句，将写入终端" else "当前不可回复", style = MaterialTheme.typography.bodyMedium) },
-                    singleLine = true, enabled = enabled,
+                    placeholder = { Text(if (session.canReply) "回复内容，回车换行，点右侧发送" else "当前不可回复", style = MaterialTheme.typography.bodyMedium) },
+                    minLines = 1, maxLines = 4, enabled = enabled,
                     textStyle = MaterialTheme.typography.bodyMedium,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { vm.send() }),
+                    // 回车默认插入换行（多行草稿），发送统一走右侧按钮。
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                     shape = RoundedCornerShape(12.dp),
                 )
                 IconButton(
