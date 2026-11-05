@@ -76,7 +76,7 @@
 
 - 按终端列出「当前绑定的 Agent 会话」，含 provider、会话标题、模型、阶段、待决策状态；`ended` 但 PTY 未关闭时仍保留只读条目。
 - 只读镜像：新增消息按条推送到 App，以聊天气泡 + 工具折叠渲染。
-- 受限回复：Claude / Pi 的单行纯文本，注入到该终端的 PTY；Codex P0 不可回复。
+- 受限回复：Claude / Pi 的纯文本（支持回车换行的多行草稿），注入到该终端的 PTY；Codex P0 不可回复。
 - 决策联动：有待决策时禁用输入框，引导到现有决策卡片。
 - 阶段展示：`attention / running / idle / completed / failed / ended / unknown`。
 - React 网页版入口：与 App 同功能、同状态语义；两种构建（`dist` / `dist-web`）共用同一份组件代码。
@@ -126,7 +126,7 @@
    │                        ├── WS    /ws/terminal-agents/{id}
    │                        └── POST  /api/terminal-agents/{id}/reply
    │                                   │
-   └────────◀── write_to_terminal(actor) ┘ （单行 text + "\r"；REST/Web 用 Web，Tauri 用 Pc）
+   └────────◀── write_to_terminal(actor) ┘ （单行 text + "\r"；多行括号粘贴后 + "\r"；REST/Web 用 Web，Tauri 用 Pc）
 
 现有通道（不改动）：
   Hook ──▶ ClaudeHookService ──▶ /api/notifications/decisions ──▶ App 决策卡片
@@ -159,7 +159,7 @@
 | GET | `/api/terminal-agents` | JWT + `list_terminals_info_for(Web)` | 可接力的终端会话列表 |
 | GET | `/api/terminal-agents/{terminalId}/messages?afterSeq=&limit=&revision=` | JWT + `authorize(View)` | 首屏快照或限界增量；`revision` 为可选的客户端代次 |
 | WS | `/ws/terminal-agents/{terminalId}?token=` | 握手前 `authorize(View)`，之后每 5 秒复核 | 实时快照 / 增量推送 |
-| POST | `/api/terminal-agents/{terminalId}/reply` | JWT + `authorize(Input)` + 回复闸门 | 注入单行文本 |
+| POST | `/api/terminal-agents/{terminalId}/reply` | JWT + `authorize(Input)` + 回复闸门 | 注入文本（多行用括号粘贴） |
 
 全部使用现有 `ClaimsFromRequest` 与 `TerminalService`，**不新增权限动作位**。`webApiShareSessions=false` 时：列表不含 PC 终端、单终端按 `TerminalAccessError` 返回 404/403、握手前同样处理。无绑定的终端即使可见，也不存在 relay 资源：messages / subscribe 返回 404「该终端没有正在运行的 Agent」；reply 按 §4.6 返回 409。`afterSeq` 必须是 ≥ -1 的整数，`limit` 为 1–500，缺省 200，非法参数返回 400。
 
@@ -292,19 +292,19 @@
 | 2 | 该终端存在当前 agent 绑定；relay 快照身份与本次请求一致 | 409「该终端没有正在运行的 Agent」；换绑则要求刷新 |
 | 3 | 无待决策，且 `phase != "attention"`（`list_pending_decisions()` 按 terminalId 过滤） | 有卡片：409 + `decisionId`；无卡片的 Claude attention：409 +「请打开终端处理当前确认」 |
 | 4 | `requestId` 幂等（`(actor, terminalId, requestId)`，TTL 5 分钟，上限 500） | 成功重复：200 `duplicated=true`；同键不同文本：409 |
-| 5 | 文本规则：trim 后非空、≤2000 个 Unicode 字符、不以 `/` `!` `@` `#` 开头、**不含任何控制字符**（`!c.is_control()`，覆盖 `\r` `\n` `\t` `\x03` `ESC` `DEL` 及 Unicode 控制区） | 400 + 具体中文原因 |
+| 5 | 文本规则：trim 后非空、≤2000 个 Unicode 字符、不以 `/` `!` `@` `#` 开头、**除换行 `\n` 外不含任何控制字符**（`c != '\n' && c.is_control()`，覆盖 `\r` `\t` `\x03` `ESC` `DEL` 及 Unicode 控制区） | 400 + 具体中文原因 |
 | 6 | 频率：同终端 3 秒内最多 1 条 | 429 + `Retry-After`（整数秒，向上取整） |
 | 7 | 当前 `(provider, sessionId)` 的 `phase != "ended"`，且满足下表存活条件 | 409 + 明确的 `replyBlockedReason` |
 
-写入：`TerminalService::write_to_terminal(id, &format!("{text}\r"), actor)`。REST / 浏览器命令传 `Web`，原生 Tauri 传 `Pc`。
+写入：单行 `text + "\r"`；多行用括号粘贴 `ESC[200~ … ESC[201~` 包住整个文本，再补 `\r` 一次性提交，避免换行被 TUI 当成多次回车。REST / 浏览器命令传 `Web`，原生 Tauri 传 `Pc`。
 
 **原子性与幂等**：用每终端 async mutex 串行执行「重新授权 → 重新读取绑定 / 阶段 / 决策 → 检查 requestId / 文本 / 限流 → 占位 → 写 PTY」。不能先检查后占位让两个并发请求同时通过。writer 成功后记录 completed，重复请求返回 `duplicated=true`。writer 失败返回错误并标记 `write_outcome_unknown`：PTY 的 `write_all/flush` 无法报告实际已写入字节数，**不保证恰好一次**，服务端和客户端均不自动重试；客户端提示「写入结果未知，请打开终端确认；如未生效请重新发送」，由用户新建 requestId 主动重试。限流只记录成功写入，失败记录 30 秒用于诊断 / 防重复试探，过期或换绑后不再复用旧键。
 
-`requestId` 必须是 8–64 位 ASCII 字母 / 数字 / `-` / `_`；服务端不接受空串或任意长键。trim 只用于校验和判断同键文本是否一致，**实际注入保留用户原始非控制字符文本**。列表中的 canReply 是提示，不代替写入前最后一次检查。
+`requestId` 必须是 8–64 位 ASCII 字母 / 数字 / `-` / `_`；服务端不接受空串或任意长键。trim 只用于校验和判断同键文本是否一致，**实际注入保留用户原始非控制字符文本**（`\r\n` / `\r` 先统一成 `\n`）。列表中的 canReply 是提示，不代替写入前最后一次检查。
 
-**为什么不用 bracketed paste**：P0 只允许单行文本，逐字符写入 + 单个 `\r` 与真人敲键等价；bracketed paste 只在多行粘贴时才必要，而多行是明确不做的。
+**为什么多行用 bracketed paste**：直接把带 `\n` 的文本写进 PTY，TUI 会把每个换行当成一次回车，导致每一行都被独立发送。括号粘贴把整段文本作为一个整体插入输入框，最后只用一个 `\r` 提交，与真人粘贴多行再回车等价。单行仍保持 `text + "\r"`，行为不变。
 
-**为什么控制字符要整体拒绝而不止 `\r`/`\n`/ESC**：PTY 写入与真人按键等价，`\x03`（Ctrl+C）会直接中断 agent 进程、`\x04` 是 EOF、`\t` 会触发补全——都比换行更危险。用 `chars().all(|c| !c.is_control())` 一条规则全覆盖（C0/DEL/Unicode 控制区），中文与 emoji 不属于控制字符，正常放行。
+**为什么除换行外仍要拒绝其他控制字符**：PTY 写入与真人按键等价，`\x03`（Ctrl+C）会直接中断 agent 进程、`\x04` 是 EOF、`\t` 会触发补全——都比换行更危险。用 `c != '\n' && c.is_control()` 一条规则覆盖其余 C0/DEL/Unicode 控制区；`\n` 只有在括号粘贴里才允许，中文与 emoji 不属于控制字符，正常放行。
 
 **「agent 仍在」判定**（避免把文本当命令打进 shell）：
 
@@ -521,7 +521,7 @@ UI 不新增专属交互（React 面板在桌面构建里与网页版同一份�
 | 分页与截断 | 增量取最早 limit、hasMore/nextCursor 可追平；越过保留窗口或 revision 不同返回 resetRequired 完整尾页 |
 | 换绑 / 路径变化 | 新 sessionId / 路径 / 不可用恢复均提升 revision；旧任务结果不得覆盖新快照 |
 | 回复七闸门 | 逐条覆盖 §4.6，拒绝时 writer 次数为 0；无卡片 attention 与 unknown Codex 均拒绝 |
-| 控制字符 | `\x03` / `\t` / `\x7f` / 换行 / Unicode 控制区拒绝；中文与 emoji 放行 |
+| 换行与控制字符 | `\n` 允许并走括号粘贴；`\x03` / `\t` / `\x7f` / `\r` / Unicode 控制区拒绝；中文与 emoji 放行 |
 | 并发幂等 | 同 requestId 同文本并发只写一次；同键不同文本 409；写失败不自动重试、结果标未知，限流不被绕过 |
 | 阶段身份 | 旧 sessionId 延迟 SessionEnd 不影响新会话；过期回退 unknown，上限淘汰 |
 | 双身份 | 共享关闭时 Web 看不到 PC、Pc 仍可见；Pc 写 Web 终端在非共享下仍被拒绝 |
