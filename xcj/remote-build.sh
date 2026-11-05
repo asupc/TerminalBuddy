@@ -109,7 +109,9 @@ case "$TARGET" in
 esac
 
 echo "==> [2/3] 在 $REMOTE_HOST 上执行 $BUILD_SCRIPT（增量缓存位于远程命名卷）"
-ssh_remote "cd $REMOTE_DIR && bash $BUILD_SCRIPT $*"
+# DEPLOY_DIR 置空：远端构建产物必须留在远端 dist/ 供下一阶段回传，
+# 不要在构建主机上执行「移动到 /mnt/fnos/code」的归档步骤
+ssh_remote "cd $REMOTE_DIR && DEPLOY_DIR= bash $BUILD_SCRIPT $*"
 
 # ---------- [3/3] 回传产物 ----------
 

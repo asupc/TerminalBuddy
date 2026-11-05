@@ -8,8 +8,9 @@
 #   ./xcj/build-android.sh               产出 Release APK
 #   ./xcj/build-android.sh --clean-cache 清空 Gradle 项目构建缓存
 #
-# 产物：dist/TerminalBuddy_<版本>_android.apk 及同名 .sha256（仓库内
-# release.keystore 自动完成 Release 签名，并用 apksigner 校验）。
+# 产物：先落到仓库根 dist/，构建成功后自动移动到 /mnt/fnos/code/
+#       （TerminalBuddy_<版本>_android.apk 及同名 .sha256；目标目录不可用时保留在 dist/）。
+#       仓库内 release.keystore 自动完成 Release 签名，并用 apksigner 校验。
 # Windows 上带 adb 直装的版本见 scripts/build-android.bat 与 scripts/build-android.ps1。
 #
 # 每次构建自动把版本号自增一：versionName 末段 +1（如 1.0.0 → 1.0.1）、
@@ -21,6 +22,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="$REPO_ROOT/android"
 OUTPUT_DIR="$REPO_ROOT/dist"
+DEPLOY_DIR="${DEPLOY_DIR:-/mnt/fnos/code}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/.android-sdk}"
 CMDLINE_TOOLS_VERSION=13114758
 CLEAN_CACHE=0
@@ -37,6 +39,7 @@ usage() {
 
 环境变量：
   ANDROID_HOME  Android SDK 目录，默认 ~/.android-sdk
+  DEPLOY_DIR    构建产物移动目标目录，默认 /mnt/fnos/code
 EOF
 }
 
@@ -184,5 +187,23 @@ rm -f "$BAK"
 if [ -n "$PROP_BAK" ]; then
     rm -f "$PROP_BAK"
 fi
-ls -lh "$TARGET"
+
+# 构建成功后把 apk（连同 .sha256）移动到 /mnt/fnos/code；
+# 目标目录不可用时保留在 dist/，避免构建成果丢失。
+# DEPLOY_DIR 为空时跳过移动（远程构建回传场景使用）。
+if [ -z "$DEPLOY_DIR" ]; then
+    echo "==> DEPLOY_DIR 为空，跳过移动，产物保留在 $OUTPUT_DIR"
+    ls -lh "$TARGET"
+elif [ -d "$DEPLOY_DIR" ] || mkdir -p "$DEPLOY_DIR" 2>/dev/null; then
+    if mv -f "$TARGET" "$TARGET.sha256" "$DEPLOY_DIR/"; then
+        echo "==> 已移动产物到 $DEPLOY_DIR"
+        ls -lh "$DEPLOY_DIR/$(basename "$TARGET")" "$DEPLOY_DIR/$(basename "$TARGET").sha256"
+    else
+        echo "警告：移动到 $DEPLOY_DIR 失败，产物保留在 $OUTPUT_DIR" >&2
+        ls -lh "$TARGET"
+    fi
+else
+    echo "警告：目录 $DEPLOY_DIR 不存在且无法创建，产物保留在 $OUTPUT_DIR" >&2
+    ls -lh "$TARGET"
+fi
 echo "==> 构建完成，已写入版本号 versionName $NEW_VERSION / versionCode $NEW_CODE（记得随代码提交）"
