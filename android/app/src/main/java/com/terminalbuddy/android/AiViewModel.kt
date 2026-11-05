@@ -284,7 +284,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(reconnecting = true, error = null) }
         if (mutable.value.selected == null) {
             if (mutable.value.deletingAll) startHomePolling() else refresh()
-        } else if (pending == null) startRealtime(reconnecting = true)
+        } else if (pending == null) startRealtime(refreshImmediately = true)
         if (mutable.value.history.selected != null && mutable.value.history.replay == null) loadCodexReplay()
         if (mutable.value.history.expanded && !mutable.value.history.loaded) loadCodexHistory()
         reloadExpandedServerHistory()
@@ -297,6 +297,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 页面实时流只在前台维持，后台任务监听由独立前台服务负责。 */
     fun setVisible(active: Boolean) {
+        if (visible == active) return
         visible = active
         if (active && mutable.value.authenticated && !store.loggedIn) {
             resetConnection()
@@ -304,7 +305,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (active && store.loggedIn && !mutable.value.authenticating) {
             if (mutable.value.selected == null) refresh()
-            else if (pending == null) startRealtime(reconnecting = true)
+            else if (pending == null) startRealtime(refreshImmediately = true)
             val history = mutable.value.history
             if (history.selected != null && history.replay == null && history.replayError == null) loadCodexReplay()
             if (history.expanded && !history.loaded && history.error == null) loadCodexHistory()
@@ -366,7 +367,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         if (!visible || !store.loggedIn || mutable.value.authenticating) return
         if (mutable.value.selected == null) {
             if (mutable.value.homeLoaded) startHomePolling() else refresh()
-        } else if (pending == null) startRealtime(reconnecting = true)
+        } else if (pending == null) startRealtime(refreshImmediately = true)
     }
 
     /** 清空当前连接的内存状态和在途任务，各账号的磁盘数据仍按身份隔离。 */
@@ -913,6 +914,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 先显示内存 / SQLite 中的完整会话，网络请求与磁盘恢复并行，随后静默同步。 */
     fun open(id: String) {
+        if (mutable.value.selected?.id == id) {
+            if (pending == null) startRealtime(refreshImmediately = true)
+            return
+        }
         refreshJob?.cancel(); selectJob?.cancel(); cancelSend(); stopRealtime()
         pending = null
         val epoch = ++generation
@@ -938,7 +943,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         // 实时首帧、REST 补偿和磁盘恢复并行，不再等待完整 GET 才建立连接。
-        startRealtime(reconnecting = true)
+        startRealtime(refreshImmediately = true)
     }
 
     fun closeSession() {
@@ -1302,7 +1307,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         updateRecentSessions()
     }
 
-    private fun startRealtime(reconnecting: Boolean = false) {
+    /** 正常订阅和前台恢复静默补拉；重连状态仅由实际断线更新。 */
+    private fun startRealtime(refreshImmediately: Boolean = false) {
         val id = mutable.value.selected?.id ?: return
         if (!visible || !store.loggedIn || mutable.value.authenticating || streamJob?.isActive == true) return
         val epoch = generation
@@ -1317,7 +1323,6 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        if (reconnecting) mutable.update { it.copy(reconnecting = true) }
         streamJob = viewModelScope.launch {
             var retries = 0
             while (isActive && epoch == generation) {
@@ -1346,7 +1351,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 if (epoch != generation) break
                 mutable.update {
                     // REST 补偿成功后保持在线提示，避免代理拦截 WS 时每次重试都闪现。
-                    it.copy(connected = false, reconnecting = it.reconnecting || it.connected)
+                    it.copy(connected = false, reconnecting = it.reconnecting || it.connected || it.loadingSession)
                 }
                 delay(reconnectDelay(retries))
                 retries = (retries + 1).coerceAtMost(4)
@@ -1354,10 +1359,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
         // WS 被代理拦截时仍能同步：连上时 15 秒补一次，断开时 3 秒一次。
         pollingJob = viewModelScope.launch {
-            var refreshImmediately = reconnecting
+            var refreshNow = refreshImmediately
             while (isActive && epoch == generation) {
-                if (!refreshImmediately) delay(if (mutable.value.connected) 15_000 else 3_000)
-                refreshImmediately = false
+                if (!refreshNow) delay(if (mutable.value.connected) 15_000 else 3_000)
+                refreshNow = false
                 try {
                     val snapshot = repository.session(id)
                     if (epoch == generation) {

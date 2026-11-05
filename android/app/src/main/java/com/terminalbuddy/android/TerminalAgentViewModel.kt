@@ -267,6 +267,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
 
     /** 仅在 Agent 宿主 + 对话页签 + Activity START 时保持镜像 WS；其余场合立即断开。 */
     fun setVisible(value: Boolean) {
+        if (visible == value) return
         visible = value
         if (value) {
             if (socket == null && mutable.value.selected != null && !mutable.value.closed) connect()
@@ -408,7 +409,8 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         if (!visible || mutable.value.closed) return
         disconnect()
         val epoch = streamGeneration
-        mutable.update { it.copy(connected = false, reconnecting = true) }
+        // 首次进入和切回对话页签正常建立订阅；只有 connectionLost 才标记重连。
+        mutable.update { it.copy(connected = false) }
         socket = repository.connect(connection, session.terminalId, object : WebSocketListener() {
             private fun dispatch(action: () -> Unit) {
                 viewModelScope.launch {
