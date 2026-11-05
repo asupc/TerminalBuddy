@@ -54,6 +54,10 @@ const MAX_APPEND_MESSAGES: usize = 200;
 const REPLY_MAX_CHARS: usize = 2000;
 /// 同终端两次成功回复的最小间隔。
 const REPLY_COOLDOWN: Duration = Duration::from_secs(3);
+/// 文本与提交回车之间的停顿：让 TUI 结束「粘贴 / 批量输入」判定窗口。
+/// 文本与 "\r" 同一次到达时（尤其长文本），Claude Code 的输入框会把整块
+/// 当作粘贴批量插入，回车被并入粘贴内容，消息停在输入框里不提交。
+const REPLY_SUBMIT_DELAY: Duration = Duration::from_millis(150);
 /// 写入失败（结果未知）标记的保留时间，用于诊断与防重复试探。
 const REPLY_FAILURE_TTL: Duration = Duration::from_secs(30);
 /// requestId 幂等记录 TTL。
@@ -403,14 +407,19 @@ pub(crate) fn validate_reply_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 构造写往 PTY 的回复载荷：单行 text + "\r" 与真人敲键等价；
-/// 多行用括号粘贴（`ESC[200~ … ESC[201~`）作为一个整体插入输入框，再用 "\r" 提交。
-/// 直接写入换行会被 TUI 当成逐行回车，导致每一行都成为一次独立的发送。
+/// 构造写往 PTY 的文本载荷（**不含**提交回车）：
+/// - 单行直接写原文；
+/// - 多行用括号粘贴（`ESC[200~ … ESC[201~`）作为一个整体插入输入框，
+///   避免换行被 TUI 当成逐行回车。
+///
+/// 提交回车必须由调用方在 `REPLY_SUBMIT_DELAY` 停顿后**单独**写入。
+/// PTY 一次写入的长文本会被 Ink 输入框判定为粘贴批量输入，紧随其后的
+/// `"\r"` 会被并入粘贴内容，表现为「文字进了输入框但没有发送」。
 pub(crate) fn reply_payload(text: &str) -> String {
     if text.contains('\n') {
-        format!("\x1b[200~{text}\x1b[201~\r")
+        format!("\x1b[200~{text}\x1b[201~")
     } else {
-        format!("{text}\r")
+        text.to_string()
     }
 }
 
@@ -1528,6 +1537,8 @@ enum ReplyDecision {
     Accepted { duplicated: bool, phase: String },
     Failed(RelayError),
     WriteFailed,
+    /// 文本已写入 PTY，等待停顿后单独写入提交回车。
+    TextWritten,
 }
 
 /// 受限回复（§4.6）。校验链顺序固定，任何一步失败都不写 PTY；
@@ -1637,12 +1648,12 @@ pub async fn reply(
         };
         match outcome {
             GateOutcome::Write => {
-                // 写 PTY：单行等价于真人敲键；多行走括号粘贴，整段插入后回车提交。
+                // 先只写文本；回车在临界区外用 REPLY_SUBMIT_DELAY 停顿后单独提交。
                 match app
                     .state::<TerminalService>()
                     .write_to_terminal(terminal_id, &reply_payload(text), actor)
                 {
-                    Ok(()) => ReplyDecision::Accepted { duplicated: false, phase: phase.clone() },
+                    Ok(()) => ReplyDecision::TextWritten,
                     Err(_) => ReplyDecision::WriteFailed,
                 }
             }
@@ -1651,6 +1662,21 @@ pub async fn reply(
         }
     };
     let decision = decide();
+    // 文本写成功后，停顿再单独写回车：长文本与 "\r" 同一批到达会被 TUI
+    // 当作粘贴整体插入，回车被吞掉，消息停在输入框里不发送。
+    let decision = match decision {
+        ReplyDecision::TextWritten => {
+            tokio::time::sleep(REPLY_SUBMIT_DELAY).await;
+            match app
+                .state::<TerminalService>()
+                .write_to_terminal(terminal_id, "\r", actor)
+            {
+                Ok(()) => ReplyDecision::Accepted { duplicated: false, phase: phase.clone() },
+                Err(_) => ReplyDecision::WriteFailed,
+            }
+        }
+        other => other,
+    };
     match decision {
         ReplyDecision::Accepted { duplicated, phase } => {
             let mut current = lock_state();
@@ -1671,6 +1697,8 @@ pub async fn reply(
             })
         }
         ReplyDecision::Failed(error) => Err(error),
+        // 上面的提交步骤已把 TextWritten 转换为具体结果；到此说明后续改动破坏了该约定。
+        ReplyDecision::TextWritten => Err(RelayError::Internal("回复状态异常，请重试".to_string())),
     }
 }
 
@@ -2467,10 +2495,12 @@ mod tests {
     }
 
     #[test]
-    fn multiline_reply_uses_bracketed_paste_before_submit() {
-        // 单行保持原样；多行整段粘贴后再回车，避免逐行提交。
-        assert_eq!(reply_payload("正常回复"), "正常回复\r");
-        assert_eq!(reply_payload("第一行\n第二行"), "\x1b[200~第一行\n第二行\x1b[201~\r");
+    fn reply_payload_defers_submit_to_separate_write() {
+        // 文本载荷不再携带回车：提交键由调用方停顿后单独写入，
+        // 否则长文本与 "\r" 同批到达会被 TUI 当成粘贴吞掉回车。
+        assert_eq!(reply_payload("正常回复"), "正常回复");
+        assert_eq!(reply_payload("第一行\n第二行"), "\x1b[200~第一行\n第二行\x1b[201~");
+        assert!(!reply_payload("第一行\n第二行").contains('\r'));
     }
 
     // ── 阶段身份：旧 sessionId 的延迟事件不污染新会话；ended 不被审批完成覆盖 ──
