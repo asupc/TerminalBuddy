@@ -30,8 +30,11 @@ const WATCH_TICK: Duration = Duration::from_secs(1);
 const WATCHER_LINGER: Duration = Duration::from_secs(30);
 /// 完整进程扫描（/proc + 目录定位）结果的 TTL；watcher tick 与各调用方共用。
 const SCAN_CACHE_TTL: Duration = Duration::from_secs(2);
-/// 转录定位失败（找不到文件）的负缓存 TTL。
+/// 定位转录失败（找不到文件）的负缓存 TTL。
 const LOCATE_NEGATIVE_TTL: Duration = Duration::from_secs(2);
+/// hook 上报 running 之后，jsonl 尚未落盘的起始宽限期：UserPromptSubmit 先于文件写入，
+/// 宽限期内找不到转录仍按空镜像处理，避免新会话首帧闪一下「读取失败」。
+const TRANSCRIPT_START_GRACE_MS: i64 = 10_000;
 /// 镜像缓存条目无人访问后的清理时间。
 const MIRROR_IDLE_EVICT: Duration = Duration::from_secs(30 * 60);
 /// 超过该大小的转录直接判定 `transcript_too_large`，不做大字符串分配。
@@ -1031,6 +1034,11 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
             .filter(|location| location.provider == record.provider && location.session_id == record.session_id);
         let Some(location) = located else {
             mark_locate_negative(terminal_id);
+            // 新建会话在用户发出第一条消息前不会写 jsonl：找不到转录是正常状态，
+            // 按「已就绪但还没有消息」的空镜像处理，而不是报读取失败。
+            if transcript_not_started(terminal_id, &record) {
+                return commit_empty_mirror(terminal_id, &record, existing.as_ref());
+            }
             return commit_unavailable(terminal_id, &record, existing.as_ref(), "transcript_unreadable");
         };
         return match read_transcript_stable(&location.path) {
@@ -1085,6 +1093,11 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                 Some(location) => location.path,
                 None => {
                     mark_locate_negative(terminal_id);
+                    // 空镜像（会话建立后尚未写入任何消息）继续维持空态；
+                    // 一旦镜像里有过内容，文件消失就是真实故障，照常上报不可用。
+                    if entry.messages.is_empty() && transcript_not_started(terminal_id, &record) {
+                        return PollContent::None;
+                    }
                     return commit_unavailable(terminal_id, &record, Some(&entry), "transcript_unreadable");
                 }
             }
@@ -1195,6 +1208,51 @@ fn commit_entry(
     }
     current.mirrors.insert(terminal_id.to_string(), entry);
     content
+}
+
+/// 绑定已建立但会话尚未产生任何转录（例如 App 新建会话后还没发消息）。
+/// Claude 只在产生消息后才写 jsonl，此时「找不到文件」是正常状态：
+/// 以空镜像代替不可用，避免把「等待第一条消息」显示成读取失败。
+/// 一旦 hook 上报过非 idle 阶段（已提交提示词 / 正在执行 / 已结束等），
+/// 仍找不到文件就属于真实异常，继续按不可用上报；
+/// 唯一例外是 running（UserPromptSubmit 先于 jsonl 落盘）的起始宽限期。
+fn transcript_not_started(terminal_id: &str, record: &AgentSessionRecord) -> bool {
+    match lock_state()
+        .phases
+        .current(terminal_id, &record.provider, &record.session_id)
+    {
+        None => true,
+        Some((phase, _)) if phase == "idle" => true,
+        // hook 已上报「已提交提示词」，但 Claude 还没把首条消息写进 jsonl：
+        // 这是启动瞬间的正常竞态，宽限期内仍按空镜像处理，过了宽限期才算故障。
+        Some((phase, at)) if phase == "running" => now_ms().saturating_sub(at) < TRANSCRIPT_START_GRACE_MS,
+        Some(_) => false,
+    }
+}
+
+/// 提交空镜像：可用但没有任何消息。文件出现后由同身份分支按 append 或快照补齐。
+fn commit_empty_mirror(
+    terminal_id: &str,
+    record: &AgentSessionRecord,
+    existing: Option<&MirrorEntry>,
+) -> PollContent {
+    let revision = existing.map_or(1, |entry| entry.revision.wrapping_add(1));
+    let kind: &'static str = if existing.is_some() { "rotated" } else { "mirror" };
+    let entry = MirrorEntry {
+        provider: record.provider.clone(),
+        session_id: record.session_id.clone(),
+        path: None,
+        revision,
+        available: true,
+        reason: None,
+        messages: Vec::new(),
+        total: 0,
+        truncated: false,
+        file_stamp: None,
+        last_access: Instant::now(),
+    };
+    let core = TailCore::tail(&entry.baseline(), entry.revision, RETAIN_TAIL);
+    commit_entry(terminal_id, entry, PollContent::Page { kind, core }, existing.map(|old| old.identity()))
 }
 
 /// 提交不可用状态。进入不可用不提升代次（恢复时 +1）；重复的相同原因不再发帧。
@@ -2637,10 +2695,11 @@ mod tests {
     }
 
     /// hook 链路不直传 transcript 路径（record_claude_session 只设 binding），
-    /// 首次 poll 找不到文件进入 unavailable 后，transcript 在 claude_root 下出现时
-    /// 必须能靠 find_transcript 递归定位并恢复镜像（App「开始对话」后立即打开会话页的路径）。
+    /// 新建会话在发出第一条消息前没有 jsonl：首帧必须是「可用的空镜像」而不是
+    /// 不可用；transcript 在 claude_root 下出现后必须能靠 find_transcript 递归
+    /// 定位并把新消息补进同一 revision（App「开始对话」后立即打开会话页的路径）。
     #[test]
-    fn unavailable_recovers_when_transcript_appears_under_root() {
+    fn empty_mirror_waits_for_first_transcript() {
         let terminal_id = format!("relay-find-{}", uuid::Uuid::new_v4());
         let claude_line = |text: &str| {
             json!({"type":"user","message":{"content": text}}).to_string()
@@ -2658,23 +2717,67 @@ mod tests {
         // 模拟 hook 上报：只登记绑定，不传 transcript 路径。
         super::super::terminal_task_service::record_agent_session(&terminal_id, "claude", &session, None, true);
         let scan = scan_with_binding(&terminal_id, "claude", &session);
-        // transcript 尚未创建（Agent 空闲）：unavailable。
+        // transcript 尚未创建（Agent 空闲）：空镜像，不是 unavailable。
         match poll_mirror(&terminal_id, &scan) {
-            PollContent::Unavailable { reason } => assert_eq!(reason, "transcript_unreadable"),
-            other => panic!("无 transcript 应 unavailable：{other:?}"),
+            PollContent::Page { kind, core } => {
+                assert_eq!(kind, "mirror");
+                assert_eq!(core.revision, 1);
+                assert!(core.messages.is_empty(), "空镜像不得带消息");
+            }
+            other => panic!("无 transcript 应为空镜像：{other:?}"),
         }
-        // transcript 出现在 claude_root/projects/<项目目录>/ 下；等 locate 负缓存（2s TTL）过期。
+        // 空态保持：等 locate 负缓存（2s TTL）过期后再 poll，仍是空镜像且不报错。
+        std::thread::sleep(std::time::Duration::from_millis(2_100));
+        assert!(matches!(poll_mirror(&terminal_id, &scan), PollContent::None));
+        // transcript 出现在 claude_root/projects/<项目目录>/ 下：同 revision 追加消息。
         let project_dir = config_dir.join("projects").join("-tmp-demo");
         fs::create_dir_all(&project_dir).unwrap();
         let path = project_dir.join(format!("{session}.jsonl"));
-        fs::write(&path, format!("{}\n", claude_line("恢复路径的第一问"))).unwrap();
+        fs::write(&path, format!("{}\n", claude_line("第一条消息"))).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2_100));
         match poll_mirror(&terminal_id, &scan) {
-            PollContent::Page { kind, core } => {
-                assert_eq!(kind, "mirror", "transcript 出现后必须靠递归查找恢复");
-                assert_eq!(core.revision, 2, "从不可用恢复 revision+1");
+            PollContent::Append { revision, tail, .. } => {
+                assert_eq!(revision, 1, "空镜像补消息不提升代次");
+                assert_eq!(tail.len(), 1);
             }
-            other => panic!("恢复应 mirror：{other:?}"),
+            other => panic!("transcript 出现后应 append：{other:?}"),
+        }
+        lock_state().remove_terminal(&terminal_id);
+        super::super::terminal_task_service::forget_terminal(&terminal_id);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// 已提交过提示词（阶段表 running）却找不到 transcript：
+    /// 起始宽限期内按空镜像（UserPromptSubmit 先于 jsonl 落盘的竞态），过了宽限期才是真实故障。
+    #[test]
+    fn started_session_without_transcript_respects_start_grace() {
+        let terminal_id = format!("relay-started-{}", uuid::Uuid::new_v4());
+        let session = "01900000-0000-7000-8000-0000000000cd";
+        let base = std::env::temp_dir().join(format!("tb-relay-started-{}", uuid::Uuid::new_v4()));
+        let config_dir = base.join("claude");
+        fs::create_dir_all(&config_dir).unwrap();
+        super::super::terminal_task_service::prepare_launch(
+            &terminal_id, "bash", None,
+            &[("CLAUDE_CONFIG_DIR".to_string(), config_dir.to_string_lossy().into_owned())],
+            Vec::new(),
+        );
+        super::super::terminal_task_service::record_agent_session(&terminal_id, "claude", session, None, true);
+        let scan = scan_with_binding(&terminal_id, "claude", session);
+        // 刚提交提示词：jsonl 还没落盘是正常竞态，给空镜像。
+        note_phase(&terminal_id, "claude", session, "running", now_ms());
+        match poll_mirror(&terminal_id, &scan) {
+            PollContent::Page { kind, core } => {
+                assert_eq!(kind, "mirror");
+                assert!(core.messages.is_empty());
+            }
+            other => panic!("起始宽限期内应空镜像：{other:?}"),
+        }
+        // 宽限期外仍无 transcript：真实故障。
+        note_phase(&terminal_id, "claude", session, "running", now_ms() - TRANSCRIPT_START_GRACE_MS - 1);
+        lock_state().locate_negative.remove(&terminal_id);
+        match poll_mirror(&terminal_id, &scan) {
+            PollContent::Unavailable { reason } => assert_eq!(reason, "transcript_unreadable"),
+            other => panic!("宽限期外无 transcript 应 unavailable：{other:?}"),
         }
         lock_state().remove_terminal(&terminal_id);
         super::super::terminal_task_service::forget_terminal(&terminal_id);
