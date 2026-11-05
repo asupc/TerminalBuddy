@@ -1,5 +1,5 @@
 //! 终端 Agent 会话接力（relay）：把桌面/服务端终端里正在运行的 Claude / Codex
-//! 会话镜像成只读聊天气泡，并提供受限的单行回复注入。
+//! 会话镜像成只读聊天气泡，并提供受限的多行回复注入（括号粘贴，整段插入后回车提交）。
 //!
 //! 设计依据：docs/specs/2026-11-01--terminal-agent-chat-relay.md。要点：
 //! - 只读转录文件、只写 PTY 输入；不碰 SQLite、不碰 settings.json；
@@ -381,7 +381,8 @@ fn access_error(error: crate::models::TerminalAccessError) -> RelayError {
 // ───────────────────────── 纯函数：回复闸门（可单测，不依赖 PTY / AppHandle） ─────────────────────────
 
 /// 文本规则（§4.6 第 5 条）：trim 后非空、≤2000 个 Unicode 字符、不以 / ! @ # 开头、
-/// 不含任何控制字符（C0/DEL/Unicode 控制区，覆盖 \r \n \t \x03 ESC DEL）。
+/// 除换行（\n，多行草稿）外不含任何控制字符（C0/DEL/Unicode 控制区，覆盖 \r \t \x03 ESC DEL）。
+/// 换行由注入层用括号粘贴包住，避免每一行都被当成一次提交。
 /// trim 只用于校验，实际注入保留用户原始非控制字符文本。
 pub(crate) fn validate_reply_text(text: &str) -> Result<(), String> {
     let trimmed = text.trim();
@@ -396,10 +397,21 @@ pub(crate) fn validate_reply_text(text: &str) -> Result<(), String> {
             return Err("暂不支持斜杠命令与 !、@、# 开头的输入，请回到终端操作".to_string());
         }
     }
-    if let Some(control) = text.chars().find(|character| character.is_control()) {
-        return Err(format!("回复不能包含控制字符（如换行、Tab、Ctrl 组合键，检测到 U+{:04X}）", control as u32));
+    if let Some(control) = text.chars().find(|character| *character != '\n' && character.is_control()) {
+        return Err(format!("回复不能包含换行以外的控制字符（如 Tab、Ctrl 组合键，检测到 U+{:04X}）", control as u32));
     }
     Ok(())
+}
+
+/// 构造写往 PTY 的回复载荷：单行 text + "\r" 与真人敲键等价；
+/// 多行用括号粘贴（`ESC[200~ … ESC[201~`）作为一个整体插入输入框，再用 "\r" 提交。
+/// 直接写入换行会被 TUI 当成逐行回车，导致每一行都成为一次独立的发送。
+pub(crate) fn reply_payload(text: &str) -> String {
+    if text.contains('\n') {
+        format!("\x1b[200~{text}\x1b[201~\r")
+    } else {
+        format!("{text}\r")
+    }
 }
 
 /// requestId 必须是 8–64 位 ASCII 字母 / 数字 / `-` / `_`。
@@ -1533,6 +1545,9 @@ pub async fn reply(
     if !valid_request_id(request_id) {
         return Err(RelayError::BadRequest("requestId 必须是 8-64 位字母、数字、- 或 _".to_string()));
     }
+    // CRLF / CR 统一成 LF：多行草稿只允许 LF，避免 \r 被 TUI 当成回车提交。
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let text = text.as_str();
     app.state::<TerminalService>()
         .authorize(terminal_id, actor, TerminalAction::Input)
         .map_err(access_error)?;
@@ -1622,10 +1637,10 @@ pub async fn reply(
         };
         match outcome {
             GateOutcome::Write => {
-                // 写 PTY：单行 text + "\r"，与真人敲键等价。
+                // 写 PTY：单行等价于真人敲键；多行走括号粘贴，整段插入后回车提交。
                 match app
                     .state::<TerminalService>()
-                    .write_to_terminal(terminal_id, &format!("{text}\r"), actor)
+                    .write_to_terminal(terminal_id, &reply_payload(text), actor)
                 {
                     Ok(()) => ReplyDecision::Accepted { duplicated: false, phase: phase.clone() },
                     Err(_) => ReplyDecision::WriteFailed,
@@ -2436,11 +2451,12 @@ mod tests {
 
     #[test]
     fn reply_text_rules_reject_controls_and_commands_but_allow_unicode() {
-        for bad in ["\x03", "\t", "\x7f", "a\nb", "a\rb", "/斜杠", "!bang", "@提及", "#标签", "  "] {
+        for bad in ["\x03", "\t", "\x7f", "a\rb", "/斜杠", "!bang", "@提及", "#标签", "  "] {
             assert!(validate_reply_text(bad).is_err(), "应拒绝：{bad:?}");
         }
         assert!(validate_reply_text("先跳过这个测试，直接修登录超时").is_ok());
         assert!(validate_reply_text("emoji 🎉 与中文").is_ok());
+        assert!(validate_reply_text("第一行\n第二行").is_ok());
         assert!(validate_reply_text(&"长".repeat(2000)).is_ok());
         assert!(validate_reply_text(&"长".repeat(2001)).is_err());
         assert!(valid_request_id("0f1c9d2e-3b4a"));
@@ -2448,6 +2464,13 @@ mod tests {
         assert!(!valid_request_id(""));
         assert!(!valid_request_id(&"x".repeat(65)));
         assert!(!valid_request_id("带空格 的键"));
+    }
+
+    #[test]
+    fn multiline_reply_uses_bracketed_paste_before_submit() {
+        // 单行保持原样；多行整段粘贴后再回车，避免逐行提交。
+        assert_eq!(reply_payload("正常回复"), "正常回复\r");
+        assert_eq!(reply_payload("第一行\n第二行"), "\x1b[200~第一行\n第二行\x1b[201~\r");
     }
 
     // ── 阶段身份：旧 sessionId 的延迟事件不污染新会话；ended 不被审批完成覆盖 ──
