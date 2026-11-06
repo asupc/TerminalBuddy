@@ -47,12 +47,33 @@ internal fun TerminalAgentChatScreen(
     val session = ui.selected
     val entries = remember(ui.messages) { groupAgentChatEntries(ui.messages) }
     val showingMessages = session != null && !ui.closed && !ui.starting && session.mirror.available
-    val entryCount = entries.size + ui.queuedReplies.size +
+    val conversationId = "${session?.terminalId}:${session?.sessionId}:${session?.revision}"
+    val lastMessage = ui.messages.lastOrNull()
+    val assistantOutput = lastMessage?.let { it.role == "assistant" && it.text.isNotBlank() } == true
+    val waitingForDecision = session?.phase == "attention" || (session?.pendingDecisionCount ?: 0) > 0
+    val pending = ui.pendingReply
+    // 只把发送游标之后的助手正文视为本次回复，避免上一轮正文遮掉新消息的等待状态。
+    val awaitingReply = pending != null && !(assistantOutput && (lastMessage?.seq ?: -1L) > pending.sentAfterSeq)
+    // 本地发送到转录出现前也显示状态，避免原终端已收到输入而页面还没有反馈。
+    val showReplyIndicator = showingMessages && !ui.loadingMessages &&
+        (waitingForDecision || ui.sending || awaitingReply || (session?.phase == "running" && !assistantOutput))
+    val request = ui.messages.lastOrNull { it.role == "user" }
+    val requestId = when {
+        ui.sending -> "sending:${request?.seq}"
+        pending != null -> "pending:${pending.requestId}"
+        request != null -> "message:${request.seq}"
+        else -> "phase:${session?.phaseAt}"
+    }
+    val requestAt = when {
+        ui.sending -> null
+        pending != null -> pending.sentAt
+        request != null -> request.timestamp
+        else -> session?.phaseAt
+    }
+    val elapsedSeconds = rememberAiReplyElapsedSeconds(conversationId, requestId, requestAt, showReplyIndicator)
+    val entryCount = entries.size + ui.queuedReplies.size + (if (showReplyIndicator) 1 else 0) +
         (if (ui.sending) 1 else 0) + (if (ui.pendingReply != null) 1 else 0)
-    val scroll = rememberAiConversationScroll(
-        "${session?.terminalId}:${session?.sessionId}:${session?.revision}",
-        showingMessages && !ui.loadingMessages, entryCount,
-    )
+    val scroll = rememberAiConversationScroll(conversationId, showingMessages && !ui.loadingMessages, entryCount)
     // edge-to-edge 下 adjustResize 不生效：底部同时避让系统导航栏与软键盘（取两者最大值），
     // 输入框不会在键盘弹起时被遮住，键盘收起后也不会压到手势导航条。
     Column(
@@ -172,8 +193,17 @@ internal fun TerminalAgentChatScreen(
                     itemsIndexed(ui.queuedReplies, key = { index, _ -> "queued-$index" }) { index, text ->
                         AgentPendingRow(text, if (index == 0) "即将发送" else "排队中", TbColors.TextMuted, false)
                     }
+                    if (showReplyIndicator) item(key = "agent-status") {
+                        val statusLabel = if (waitingForDecision) "等待确认" else "思考中"
+                        AiReplyIndicator(
+                            session.provider,
+                            if (ui.queuedReplies.isNotEmpty()) "$statusLabel · ${ui.queuedReplies.size} 条排队中" else statusLabel,
+                            elapsedSeconds,
+                            Modifier.animateItem(fadeInSpec = tween(120), placementSpec = null, fadeOutSpec = null),
+                        )
+                    }
                     if (!ui.loadingMessages && ui.messages.isEmpty() && ui.pendingReply == null &&
-                        ui.queuedReplies.isEmpty() && !ui.sending
+                        ui.queuedReplies.isEmpty() && !ui.sending && !showReplyIndicator
                     ) {
                         item(key = "empty") {
                             Column(

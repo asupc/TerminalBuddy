@@ -590,7 +590,7 @@ private fun AiAvatar(provider: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun AiReplyIndicator(provider: String, label: String, elapsedSeconds: Long, modifier: Modifier = Modifier) {
+internal fun AiReplyIndicator(provider: String, label: String, elapsedSeconds: Long, modifier: Modifier = Modifier) {
     Row(
         modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
