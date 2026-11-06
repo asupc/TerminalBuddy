@@ -53,7 +53,7 @@ export interface ClaudeReplayTab {
 
 export { sessionReplayTabKey } from '../utils/sessionHistory';
 
-export type WorkspaceSpecialTab = "git-history" | "claude-replay" | "mobile-chat" | null;
+export type WorkspaceSpecialTab = "git-history" | "claude-replay" | null;
 
 export type TerminalRuntimeKind = "shell" | "claude";
 export type TerminalActivityPhase = "idle" | "running" | "attention" | "completed" | "failed";

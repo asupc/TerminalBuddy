@@ -667,6 +667,20 @@ pub fn expand_leading_claude_ref(command: &str, terminal_id: &str) -> Result<Str
         return Ok(command.to_string());
     };
     reject_control_chars("模型引用", &format!("{}:{}", provider_id, model_id))?;
+    if let Some(id) = provider_id.strip_prefix("native-claude-") {
+        let mut settings = super::claude_provider_service::native_session_settings(
+            id, if model_id == "default" { "" } else { &model_id },
+        )?;
+        settings["hooks"] = super::claude_hook_settings::managed_hooks_object();
+        let path = write_temp_settings(&settings)?;
+        if let Err(error) = register_temp_file(terminal_id, &path) {
+            let _ = fs::remove_file(&path);
+            return Err(error);
+        }
+        let quoted_path = quote_cmd_argument("临时模型配置", &path.to_string_lossy())?;
+        let suffix = command.trim_start()[token_end..].trim();
+        return Ok(format!("claude --settings {quoted_path} {suffix}"));
+    }
     let (provider, key) = find_provider_for_ref(&provider_id)?;
     // 只校验 providerId，不校验 modelId：供应商侧下线模型时 claude 启动后
     // 自然报错，错误信息比我们代报更准确。

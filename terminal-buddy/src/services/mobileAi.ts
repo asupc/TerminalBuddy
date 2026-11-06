@@ -25,6 +25,19 @@ export interface MobileAiSession {
   pendingInputs?: Array<{ text: string; requestId: string }>;
 }
 
+export interface MobileAiTerminalResume {
+  sessionId: string;
+  title: string;
+  projectDir: string;
+  provider: 'claude' | 'codex';
+  providerId?: string | null;
+  model?: string | null;
+}
+
+export function getMobileAiTerminalResume(id: string): Promise<MobileAiTerminalResume> {
+  return request(`/api/ai/sessions/${encodeURIComponent(id)}/terminal-resume`);
+}
+
 export type MobileAiFrame =
   | { type: 'sessions'; sessions: MobileAiSession[] }
   | { type: 'session'; session: MobileAiSession }

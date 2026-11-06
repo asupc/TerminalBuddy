@@ -1,15 +1,17 @@
 import { useState } from 'react';
-import { ChevronRight, Folder, FolderOpen, X } from 'lucide-react';
+import { ChevronRight, Folder, FolderOpen } from 'lucide-react';
 import { mobileAiIndicator, mobileAiStatus } from '../../services/mobileAi';
 import { useAppStore } from '../../stores/appStore';
-import { closeMobileAiSession, openMobileAiSession, useMobileAiStore } from '../../stores/mobileAiStore';
+import { openMobileAiSession, useMobileAiStore } from '../../stores/mobileAiStore';
 import { getIndicatorClassName, getIndicatorColor } from '../../utils/claudeIndicator';
 import { SessionTaskLabel } from '../shell/SessionTaskLabel';
 import './MobileSessions.css';
 
 export function MobileSessionList({ layout = 'list' }: { layout?: 'list' | 'tabs' }) {
   const sessions = useMobileAiStore(state => state.sessions);
-  const selectedId = useMobileAiStore(state => state.selectedId);
+  const terminalIds = useMobileAiStore(state => state.terminalIds);
+  const openingIds = useMobileAiStore(state => state.openingIds);
+  const activeSessionId = useAppStore(state => state.activeSessionId);
   const error = useMobileAiStore(state => state.error);
   const active = useAppStore(state => state.activeSpecialTab);
   const [collapsed, setCollapsed] = useState(false);
@@ -30,12 +32,13 @@ export function MobileSessionList({ layout = 'list' }: { layout?: 'list' | 'tabs
       )}
       {error && <div className="mobile-session-error" role="status">移动端会话同步：{error}</div>}
       {(tabs || !collapsed) && sessions.map(session => {
-        const selected = active === 'mobile-chat' && selectedId === session.id;
+        const selected = active === null && terminalIds[session.id] === activeSessionId;
+        const opening = openingIds.includes(session.id);
         const light = mobileAiIndicator(session.status, session.resultRevision);
         return (
-          <div key={session.id} role="button" tabIndex={0} aria-pressed={selected}
+          <div key={session.id} role="button" tabIndex={0} aria-pressed={selected} aria-busy={opening}
             className={`${tabs ? 'terminal-tab' : 'tree-item tab-nav-item tab-nav-task-item'}${selected ? ' active' : ''}`}
-            title={`${session.title}\n${session.projectPath}\n${mobileAiStatus(session.status)}`}
+            title={`${session.title}\n${session.projectPath}\n${opening ? '正在恢复到终端…' : mobileAiStatus(session.status)}`}
             onMouseDown={() => useAppStore.getState().setLastClickRegion('tab')}
             onClick={() => openMobileAiSession(session.id)}
             onKeyDown={event => {
@@ -53,8 +56,6 @@ export function MobileSessionList({ layout = 'list' }: { layout?: 'list' | 'tabs
               <SessionTaskLabel fallbackName={session.title} fallbackProvider={session.provider === 'codex' ? 'codex' : 'claude'} fallbackModel={session.model ?? undefined} />
             )}
             <span className={tabs ? 'terminal-owner-badge' : 'tab-nav-owner-badge'}>移动端</span>
-            {selected && <button type="button" className={tabs ? 'terminal-tab-close' : 'tree-item-close'}
-              onClick={event => { event.stopPropagation(); closeMobileAiSession(); }} title="关闭查看" aria-label={`关闭 ${session.title} 的查看`}><X aria-hidden="true" /></button>}
           </div>
         );
       })}

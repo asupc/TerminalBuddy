@@ -36,11 +36,9 @@ const TerminalInstance = lazy(() => import('./TerminalInstance').then(m => ({ de
 const TextEditor = lazy(() => import('../text-editor/TextEditor').then(m => ({ default: m.TextEditor })));
 const GitHistoryPage = lazy(() => import('../git/GitHistoryPage').then(m => ({ default: m.GitHistoryPage })));
 const ClaudeReplayPage = lazy(() => import('../claude-history/ReplayPage').then(m => ({ default: m.ReplayPage })));
-const MobileChatPage = lazy(() => import('../mobile-sessions/MobileChatPage').then(m => ({ default: m.MobileChatPage })));
 
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
-  const mobileSessionId = useMobileAiStore(s => s.selectedId);
   const mobileCount = useMobileAiStore(s => s.sessions.length);
   const mobileError = useMobileAiStore(s => s.error);
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
@@ -299,13 +297,6 @@ export const TerminalPanel: FC = () => {
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
         {renderTerminalContent()}
-        {mobileSessionId && activeSpecialTab === 'mobile-chat' && (
-          <div className="git-history-tab-content mobile-chat-tab-content">
-            <Suspense fallback={<div className="lazy-panel-loading">加载移动端会话…</div>}>
-              <MobileChatPage key={mobileSessionId} sessionId={mobileSessionId} />
-            </Suspense>
-          </div>
-        )}
         {gitHistoryTab && activeSpecialTab === 'git-history' && (
           <div className="git-history-tab-content">
             <Suspense fallback={<div className="lazy-panel-loading">加载 Git 历史记录…</div>}>
