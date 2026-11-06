@@ -156,6 +156,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     groupId: tab.groupId || 'default',
     groupName: tab.groupName,
     owner: clientTerminalOwner(),
+    creator: tab.creator,
     startupPath: tab.startupPath,
     extraParams: tab.profileId ? baseParams : tab.extraParams,
     extraParamMode: tab.extraParamMode,
@@ -464,6 +465,7 @@ export async function reconcileBackendSessions() {
       store.updateSession(terminal.id, {
         profileName: terminal.profileName,
         owner: terminal.owner,
+        creator: terminal.creator ?? existingSession.creator,
         groupName: existingSession.groupName || terminal.group || undefined,
         extraParams: terminal.extraStartupParams ?? existingSession.extraParams,
         extraParamMode: terminal.extraStartupMode ?? existingSession.extraParamMode,
@@ -485,7 +487,7 @@ export async function reconcileBackendSessions() {
     const theme = PRESET_THEMES.find(item => item.id === profile?.colorTheme) || PRESET_THEMES[0];
     // 无活动页签时必须把补建的页签选上，否则用户看到的还是空窗口（与 handoff
     // 事件路径 activate=true 的语义一致）；已有活动页签则不抢焦点。
-    const keepActive = store.activeSessionId !== null;
+    const keepActive = store.activeSessionId !== null || store.activeSpecialTab !== null;
     store.addSession({
       id: terminal.id,
       profileId: terminal.profileId,
@@ -496,6 +498,7 @@ export async function reconcileBackendSessions() {
       groupId: 'default',
       groupName: terminal.group || undefined,
       owner: terminal.owner,
+      creator: terminal.creator,
       extraParams: terminal.extraStartupParams,
       extraParamMode: terminal.extraStartupMode,
       extraParamTag: terminal.extraParamTag,

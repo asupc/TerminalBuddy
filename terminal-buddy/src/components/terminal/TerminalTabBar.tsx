@@ -1,4 +1,5 @@
 import { terminalTabTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
+import { MobileSessionList } from '../mobile-sessions/MobileSessionList';
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
 import { FileText, GitBranch, History, X } from 'lucide-react';
 import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
@@ -174,7 +175,7 @@ export const TerminalTabBar: FC = () => {
       if (e.key !== 'F2') return;
       const region = useAppStore.getState().lastClickRegion;
       if (region && region !== 'tab') return;
-      if (!activeSessionId) return;
+      if (!activeSessionId || useAppStore.getState().activeSpecialTab) return;
       const session = sessions.find(s => s.id === activeSessionId);
       if (session) {
         // 编辑所见即所得：输入框初始值取标签当前显示的标题（含摘要）
@@ -212,6 +213,7 @@ export const TerminalTabBar: FC = () => {
 
   return (
     <div className="terminal-tab-bar" key={settingsVersion} ref={tabBarRef}>
+      <MobileSessionList layout="tabs" />
       {visibleSessions.map((session) => (
         <div
           key={session.id}
@@ -303,7 +305,9 @@ export const TerminalTabBar: FC = () => {
               })()}
               <span className="terminal-tab-name" title={terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle)} style={session.tabColor ? { color: session.tabColor } : undefined}>{terminalTabTitle(session.profileName, taskSummaries[session.id], session.manualTitle)}</span>
               {/* Docker 端所有会话都来自网页端，Web 标签没有区分度，故隐藏 */}
-              {session.owner === 'web' && !isDockerClient() && <span className="terminal-owner-badge">Web</span>}
+              {session.creator === 'mobile' ? (
+                <span className="mobile-session-badge" title="由手机创建的会话">移动端</span>
+              ) : session.owner === 'web' && !isDockerClient() && <span className="terminal-owner-badge">Web</span>}
               {session.owner !== 'web' && terminalWebTakeovers[session.id] && (
                 <span className="terminal-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
               )}

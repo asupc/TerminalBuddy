@@ -21,6 +21,7 @@ interface SavedTab {
 	sessionType?: "terminal" | "editor";
 	isDirty?: boolean;
 	owner?: "pc" | "web";
+	creator?: "desktop" | "mobile";
 	startupPath?: string;
 	extraParams?: string;
 	extraParamMode?: "append" | "independent";
@@ -52,7 +53,7 @@ export interface ClaudeReplayTab {
 
 export { sessionReplayTabKey } from '../utils/sessionHistory';
 
-export type WorkspaceSpecialTab = "git-history" | "claude-replay" | null;
+export type WorkspaceSpecialTab = "git-history" | "claude-replay" | "mobile-chat" | null;
 
 export type TerminalRuntimeKind = "shell" | "claude";
 export type TerminalActivityPhase = "idle" | "running" | "attention" | "completed" | "failed";
@@ -97,6 +98,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 			sessionType: s.sessionType,
 			isDirty: s.sessionType === "editor" ? false : undefined,
 			owner: s.owner,
+			creator: s.creator,
 			terminalId: s.sessionType === "editor" ? undefined : s.id,
 			startupPath: s.startupPath,
 			extraParams: s.extraParams,
@@ -154,6 +156,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 		sessionType: tab.sessionType === "editor" || tab.sessionType === "terminal" ? tab.sessionType : undefined,
 		isDirty: typeof tab.isDirty === "boolean" ? tab.isDirty : undefined,
 		owner: tab.owner === "pc" || tab.owner === "web" ? tab.owner : undefined,
+		creator: tab.creator === "desktop" || tab.creator === "mobile" ? tab.creator : undefined,
 		startupPath: typeof tab.startupPath === "string" ? tab.startupPath : undefined,
 		extraParams: typeof tab.extraParams === "string" ? tab.extraParams : undefined,
 		extraParamMode: tab.extraParamMode === "independent" ? "independent" : tab.extraParamMode === "append" ? "append" : undefined,

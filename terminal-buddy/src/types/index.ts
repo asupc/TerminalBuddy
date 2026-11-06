@@ -148,6 +148,8 @@ export interface TerminalSession {
   sshRemotePath?: string;
   sshTerminalId?: string;
   owner?: 'pc' | 'web';
+  /** 创建来源只用于展示，不参与终端权限判定。 */
+  creator?: 'desktop' | 'mobile';
   // 无配置终端的启动目录快照；sessionDirectories 会随 cd 改变。
   startupPath?: string;
   extraParams?: string;
