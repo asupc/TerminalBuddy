@@ -80,6 +80,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/ai/codex-history/{id}/resume", post(handlers::ai_chat_handler::resume_codex_history))
         .route("/api/ai/sessions", get(handlers::ai_chat_handler::list).post(handlers::ai_chat_handler::create))
         .route("/api/ai/sessions/{id}", get(handlers::ai_chat_handler::get).delete(handlers::ai_chat_handler::delete))
+        .route("/api/ai/sessions/{id}/terminal-resume", get(handlers::ai_chat_handler::terminal_resume))
         .route("/api/ai/sessions/{id}/messages", post(handlers::ai_chat_handler::send))
         .route("/api/ai/sessions/{id}/flush", post(handlers::ai_chat_handler::flush))
         .route("/api/ai/sessions/{id}/pending/{request_id}", axum::routing::patch(handlers::ai_chat_handler::update_pending_input)

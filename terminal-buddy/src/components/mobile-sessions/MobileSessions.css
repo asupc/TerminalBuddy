@@ -1,0 +1,22 @@
+/* 普通手机终端的来源标记与服务端原生来源标记保持相同尺寸。 */
+.mobile-session-badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.mobile-session-error {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: normal;
+}
+
+.mobile-session-tabs { display: contents; }

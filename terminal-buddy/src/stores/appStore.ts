@@ -21,6 +21,7 @@ interface SavedTab {
 	sessionType?: "terminal" | "editor";
 	isDirty?: boolean;
 	owner?: "pc" | "web";
+	creator?: "desktop" | "mobile";
 	startupPath?: string;
 	extraParams?: string;
 	extraParamMode?: "append" | "independent";
@@ -30,6 +31,7 @@ interface SavedTab {
 	/** 后端终端 ID（editor 页签没有）。浏览器重启后用它回查持久化的 Claude 会话 ID。 */
 	terminalId?: string;
 	claudeSessionId?: string;
+	mobileAiSessionId?: string;
 	/** 统一 Agent 会话绑定；旧快照只有 claudeSessionId 时在恢复时迁移。 */
 	agentSession?: AgentSessionBinding;
 	/** 用户手动重命名过：恢复后标签固定显示手动名称，不被任务摘要覆盖。 */
@@ -97,6 +99,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 			sessionType: s.sessionType,
 			isDirty: s.sessionType === "editor" ? false : undefined,
 			owner: s.owner,
+			creator: s.creator,
 			terminalId: s.sessionType === "editor" ? undefined : s.id,
 			startupPath: s.startupPath,
 			extraParams: s.extraParams,
@@ -105,6 +108,7 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 			extraParamTagColor: s.extraParamTagColor ?? null,
 			directory: dirs[s.id],
 			claudeSessionId: claudeIds[s.id],
+			mobileAiSessionId: s.mobileAiSessionId,
 			agentSession: bindings[s.id],
 			manualTitle: s.manualTitle,
 		}));
@@ -154,6 +158,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 		sessionType: tab.sessionType === "editor" || tab.sessionType === "terminal" ? tab.sessionType : undefined,
 		isDirty: typeof tab.isDirty === "boolean" ? tab.isDirty : undefined,
 		owner: tab.owner === "pc" || tab.owner === "web" ? tab.owner : undefined,
+		creator: tab.creator === "desktop" || tab.creator === "mobile" ? tab.creator : undefined,
 		startupPath: typeof tab.startupPath === "string" ? tab.startupPath : undefined,
 		extraParams: typeof tab.extraParams === "string" ? tab.extraParams : undefined,
 		extraParamMode: tab.extraParamMode === "independent" ? "independent" : tab.extraParamMode === "append" ? "append" : undefined,
@@ -162,6 +167,7 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 		directory: typeof tab.directory === "string" ? tab.directory : undefined,
 		terminalId,
 		claudeSessionId: typeof tab.claudeSessionId === "string" ? tab.claudeSessionId : undefined,
+		mobileAiSessionId: typeof tab.mobileAiSessionId === "string" && tab.mobileAiSessionId ? tab.mobileAiSessionId : undefined,
 		agentSession: (() => {
 			const value = tab.agentSession;
 			if (typeof value !== "object" || value === null) return undefined;
