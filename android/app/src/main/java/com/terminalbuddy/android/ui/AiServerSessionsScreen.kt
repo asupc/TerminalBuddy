@@ -51,14 +51,12 @@ internal fun AiServerSessionsScreen(ui: AiUiState, vm: AiViewModel) {
             }
             return@Column
         }
+        // 不再显示「服务端历史」标题行，直接从 Claude / Codex 助手切换开始。
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 16.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            AiSectionRow("服务端历史", "展开项目，续接之前在这个项目里的对话") {
-                AiCountBadge("${projects.size} 个项目")
-            }
-            AiServerAgentTabs(agents, agent) { selectedAgent = it }        }
+            AiServerAgentTabs(agents, agent) { selectedAgent = it }
+        }
         LazyColumn(
             Modifier.fillMaxWidth().weight(1f), state = listState,
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
