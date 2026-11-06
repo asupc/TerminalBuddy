@@ -13,7 +13,7 @@
 use crate::commands::TerminalService;
 use crate::models::session_history::SessionReplayMessage;
 use crate::models::{TerminalAction, TerminalActor};
-use crate::runtime::{AppHandle, Emitter, Manager};
+use crate::runtime::{AppHandle, Manager};
 use crate::services::claude_session_registry_service::AgentSessionRecord;
 use crate::services::terminal_task_service::{self, TerminalTaskSummary};
 use serde::Serialize;
@@ -465,7 +465,6 @@ fn inferred_phase(entry: Option<&MirrorEntry>) -> (String, Option<i64>) {
     let Some(entry) = entry.filter(|entry| entry.available) else {
         return ("idle".to_string(), None);
     };
-    if let Some(at) = entry.completed_at { return ("completed".to_string(), Some(at)); }
     let last = entry.messages.last();
     let phase = if last.is_some_and(|message| message.role == "user") { "running" } else { "idle" };
     let at = last
@@ -639,8 +638,6 @@ pub(crate) struct PhaseEntry {
     pub phase: String,
     pub occurred_at: i64,
     pub last_seen: Instant,
-    /// Stop 已确认仍有真实后台工作时，不用前台回合结束记录提前结算。
-    pub background_pending: bool,
 }
 
 /// 阶段表：允许每终端多代次留存；至少保留 24 小时、上限 500 条并按最近使用淘汰。
@@ -657,7 +654,6 @@ impl PhaseTable {
                 existing.phase = phase.to_string();
                 existing.occurred_at = occurred_at;
                 existing.last_seen = Instant::now();
-                if phase != "running" { existing.background_pending = false; }
             }
             None => {
                 self.entries.insert(
@@ -666,7 +662,6 @@ impl PhaseTable {
                         phase: phase.to_string(),
                         occurred_at,
                         last_seen: Instant::now(),
-                        background_pending: false,
                     },
                 );
             }
@@ -690,18 +685,6 @@ impl PhaseTable {
                 session_id: session_id.to_string(),
             })
             .map(|entry| (entry.phase.clone(), entry.occurred_at))
-    }
-
-    /// 只纠正早于当前回合结束记录的 running；新输入、待决策、失败和结束均不覆盖。
-    fn complete_from_transcript(&mut self, key: &PhaseKey, completed_at: i64) -> bool {
-        let Some(entry) = self.entries.get_mut(key) else { return false; };
-        if entry.phase != "running" || entry.background_pending || completed_at <= entry.occurred_at {
-            return false;
-        }
-        entry.phase = "completed".to_string();
-        entry.occurred_at = completed_at;
-        entry.last_seen = Instant::now();
-        true
     }
 
     pub fn prune_expired(&mut self) {
@@ -829,8 +812,6 @@ struct MirrorEntry {
     total: i64,
     truncated: bool,
     file_stamp: Option<(SystemTime, u64)>,
-    /// 主会话最后一个已结束回合；有后续输入或模型请求时清空。
-    completed_at: Option<i64>,
     last_access: Instant,
 }
 
@@ -1006,25 +987,6 @@ fn mark_locate_negative(terminal_id: &str) {
     lock_state().locate_negative.insert(terminal_id.to_string(), Instant::now());
 }
 
-/// Claude 的 turn_duration 在本轮 Stop hooks 结束后写入；正文、工具和后续新回合不能混淆。
-fn claude_turn_completed_at(content: &str) -> Option<i64> {
-    let mut completed_at = None;
-    for line in content.lines() {
-        let Ok(row) = serde_json::from_str::<serde_json::Value>(line) else { continue; };
-        if row["isSidechain"] == true || row["is_sidechain"] == true { continue; }
-        match row["type"].as_str() {
-            Some("user" | "assistant" | "api-request") => completed_at = None,
-            Some("system") if row["subtype"] == "turn_duration" => {
-                completed_at = row["timestamp"].as_str()
-                    .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(timestamp).ok())
-                    .map(|timestamp| timestamp.timestamp_millis());
-            }
-            _ => {}
-        }
-    }
-    completed_at
-}
-
 // ───────────────────────── poll：镜像刷新（阻塞上下文，串行由调用频次与提交校验保证） ─────────────────────────
 
 #[derive(Debug)]
@@ -1094,7 +1056,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     total,
                     truncated,
                     file_stamp: Some(stamp),
-                    completed_at: if record.provider == "claude" { claude_turn_completed_at(&content) } else { None },
                     last_access: Instant::now(),
                 };
                 let kind: &'static str = if existing.is_some() { "rotated" } else { "mirror" };
@@ -1148,7 +1109,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
         TranscriptRead::Unstable => PollContent::None,
         TranscriptRead::Ok { content, stamp } => {
             let (messages, total, truncated) = parse_and_retain(&record.provider, &content);
-            let completed_at = if record.provider == "claude" { claude_turn_completed_at(&content) } else { None };
             let baseline = entry.baseline();
             // 从不可用恢复：revision + 1 全量快照。
             if !entry.available {
@@ -1157,7 +1117,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                 next.reason = None;
                 next.path = Some(path);
                 next.file_stamp = Some(stamp);
-                next.completed_at = completed_at;
                 next.messages = messages;
                 next.total = total;
                 next.truncated = truncated;
@@ -1171,7 +1130,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     // 内容未变但文件戳变了（touch/重写同内容）：只更新戳，避免每 tick 重读。
                     let mut next = entry.clone();
                     next.file_stamp = Some(stamp);
-                    next.completed_at = completed_at;
                     next.last_access = Instant::now();
                     commit_entry(terminal_id, next, PollContent::None, None)
                 }
@@ -1182,7 +1140,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     next.total = total;
                     next.truncated = truncated;
                     next.file_stamp = Some(stamp);
-                    next.completed_at = completed_at;
                     next.path = Some(path);
                     next.last_access = Instant::now();
                     if tail.len() > MAX_APPEND_MESSAGES {
@@ -1206,7 +1163,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     next.total = total;
                     next.truncated = truncated;
                     next.file_stamp = Some(stamp);
-                    next.completed_at = completed_at;
                     next.path = Some(path);
                     next.last_access = Instant::now();
                     let core = TailCore::tail(&next.baseline(), next.revision, RETAIN_TAIL);
@@ -1218,7 +1174,6 @@ fn poll_mirror(terminal_id: &str, scan: &ScanData) -> PollContent {
                     next.total = total;
                     next.truncated = truncated;
                     next.file_stamp = Some(stamp);
-                    next.completed_at = completed_at;
                     next.path = Some(path);
                     next.last_access = Instant::now();
                     next.revision = next.revision.wrapping_add(1);
@@ -1294,7 +1249,6 @@ fn commit_empty_mirror(
         total: 0,
         truncated: false,
         file_stamp: None,
-        completed_at: None,
         last_access: Instant::now(),
     };
     let core = TailCore::tail(&entry.baseline(), entry.revision, RETAIN_TAIL);
@@ -1330,7 +1284,6 @@ fn commit_unavailable(
         total: 0,
         truncated: false,
         file_stamp: None,
-        completed_at: None,
         last_access: Instant::now(),
     };
     let result = if already_unavailable { PollContent::None } else { PollContent::Unavailable { reason: reason.to_string() } };
@@ -1368,41 +1321,6 @@ fn last_activity_ms(path: Option<&std::path::Path>, phase_at: Option<i64>) -> Op
     }
 }
 
-/// 镜像补齐漏掉的完成事件，沿用同一事件通道更新电脑呼吸灯、手机状态与结果通知。
-fn reconcile_transcript_completion(
-    app: &AppHandle, info: &crate::models::web_api::TerminalInfo, record: &AgentSessionRecord,
-) {
-    if record.provider != "claude" || !pending_decision_ids(&info.id).is_empty() { return; }
-    if terminal_task_service::current_binding(&info.id) != Some((record.provider.clone(), record.session_id.clone())) {
-        return;
-    }
-    let key = PhaseKey {
-        terminal_id: info.id.clone(), provider: record.provider.clone(), session_id: record.session_id.clone(),
-    };
-    let (occurred_at, summary) = {
-        let mut current = lock_state();
-        let Some(entry) = current.mirrors.get(&info.id)
-            .filter(|entry| entry.available && entry.provider == record.provider && entry.session_id == record.session_id)
-        else { return; };
-        let Some(at) = entry.completed_at else { return; };
-        let summary = entry.messages.iter().rev()
-            .find(|message| message.role == "assistant" && !message.text.trim().is_empty())
-            .map(|message| super::codex_transcript::excerpt(&message.text, 220));
-        if !current.phases.complete_from_transcript(&key, at) { return; }
-        (at, summary)
-    };
-    let event = crate::services::ClaudeHookTerminalEvent {
-        event_id: uuid::Uuid::new_v4().to_string(), terminal_id: info.id.clone(),
-        session_id: record.session_id.clone(), event_name: "TranscriptTurnComplete".to_string(),
-        phase: "completed".to_string(), occurred_at, provider: Some(record.provider.clone()),
-        notification_type: None, title: None, message: None, task_title: None, summary,
-    };
-    eprintln!("[TerminalActivity] 从转录补齐完成事件 terminal={} session={} completed_at={}",
-        info.id, record.session_id, occurred_at);
-    let _ = app.emit("claude-hook-terminal-event", event.clone());
-    crate::services::AppNotificationService::publish_terminal_result(&event, info.profile_name.clone());
-}
-
 /// 组装某个终端的会话元数据。`info` 由调用方按可见性过滤后传入。
 /// 返回 None 表示该终端当前没有可接力的 Agent 绑定；Some 附带镜像缓存条目。
 fn build_session_meta(
@@ -1415,7 +1333,6 @@ fn build_session_meta(
     if !matches!(record.provider.as_str(), "claude" | "codex") {
         return None;
     }
-    reconcile_transcript_completion(app, info, record);
     let summary = scan.summaries.get(&info.id);
     let (entry, phase, phase_at) = {
         let current = lock_state();
@@ -1448,11 +1365,7 @@ fn build_session_meta(
         .as_ref()
         .map(|entry| MirrorStatus { available: entry.available, reason: entry.reason.clone() })
         .unwrap_or(MirrorStatus { available: true, reason: None });
-    // 尚未打开过镜像的会话也有发现链定位的转录路径，列表据此取得真实活动时间。
-    let transcript_path = entry
-        .as_ref()
-        .and_then(|entry| entry.path.clone())
-        .or_else(|| record.session_file.as_ref().map(std::path::PathBuf::from));
+    let transcript_path = entry.as_ref().and_then(|entry| entry.path.clone());
     let session = TerminalAgentSession {
         terminal_id: info.id.clone(),
         profile_name: info.profile_name.clone(),
@@ -1865,16 +1778,6 @@ pub fn note_phase(terminal_id: &str, provider: &str, session_id: &str, phase: &s
         phase,
         occurred_at,
     );
-}
-
-/// Stop 明确携带真实后台工作时，阻止前台 turn_duration 把整个任务提前结束。
-pub(crate) fn hold_for_background_work(terminal_id: &str, session_id: &str, occurred_at: i64) {
-    if terminal_task_service::current_binding(terminal_id) != Some(("claude".to_string(), session_id.to_string())) { return; }
-    let key = PhaseKey { terminal_id: terminal_id.to_string(), provider: "claude".to_string(), session_id: session_id.to_string() };
-    let mut current = lock_state();
-    if current.phases.entries.get(&key).is_some_and(|entry| entry.phase == "ended") { return; }
-    current.phases.note(key.clone(), "running", occurred_at);
-    if let Some(entry) = current.phases.entries.get_mut(&key) { entry.background_pending = true; }
 }
 
 /// 审批结束等场景：会话已 ended（或已换绑）时不把 running 写回去。
@@ -2463,48 +2366,8 @@ mod tests {
 
     // ── 回复闸门（第 2–7 条逐条覆盖；拒绝时 writer 一次都不调用） ──
 
-    #[test]
-    fn transcript_completion_requires_a_finished_main_turn() {
-        let answer = json!({"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"完成"}]}}).to_string();
-        // 最终正文和 thinking 的 end_turn 都不等同于 Stop hooks 已结束。
-        assert_eq!(claude_turn_completed_at(&answer), None);
-        let done = json!({"type":"system","subtype":"turn_duration","timestamp":"2026-11-06T07:44:36.778Z"}).to_string();
-        let completed = format!("{answer}\n{done}\n");
-        let at = chrono::DateTime::parse_from_rfc3339("2026-11-06T07:44:36.778Z").unwrap().timestamp_millis();
-        assert_eq!(claude_turn_completed_at(&completed), Some(at));
-        // 元数据与子会话的后续写入不改变主会话完成状态。
-        let sidechain = json!({"type":"user","isSidechain":true,"message":{"content":"子任务"}});
-        assert_eq!(claude_turn_completed_at(&format!("{completed}{{broken\n{sidechain}")), Some(at));
-        for row in [
-            json!({"type":"user","message":{"content":"继续"}}),
-            json!({"type":"user","message":{"content":[{"type":"tool_result","content":"结果"}]}}),
-            json!({"type":"api-request"}),
-        ] {
-            assert_eq!(claude_turn_completed_at(&format!("{completed}{row}")), None);
-        }
-    }
-
-    #[test]
-    fn transcript_completion_preserves_newer_work_and_background_tasks() {
-        let key = PhaseKey { terminal_id: "terminal".into(), provider: "claude".into(), session_id: "session".into() };
-        let mut table = PhaseTable::default();
-        table.note(key.clone(), "running", 100);
-        assert!(table.complete_from_transcript(&key, 200));
-        assert!(!table.complete_from_transcript(&key, 200), "同一回合只补发一次完成事件");
-        table.note(key.clone(), "running", 300);
-        assert!(!table.complete_from_transcript(&key, 200), "旧回合不能结束新输入");
-        table.entries.get_mut(&key).unwrap().background_pending = true;
-        assert!(!table.complete_from_transcript(&key, 400), "真实后台任务保持执行中");
-        table.note(key.clone(), "completed", 500);
-        table.note(key.clone(), "running", 600);
-        assert!(table.complete_from_transcript(&key, 700), "后续正常回合可再次完成");
-        for phase in ["attention", "failed", "ended"] {
-            table.note(key.clone(), phase, 800);
-            assert!(!table.complete_from_transcript(&key, 900));
-        }
-    }
-
-    /// 没有明确结束标记时沿用尾条推断：用户消息 → running，其余 → idle。
+    /// 阶段表无记录时的镜像推断：尾条是用户消息 → running；其余 → idle；
+    /// phaseAt 用尾条时间戳，无消息或镜像不可用 → idle + None。
     #[test]
     fn inferred_phase_follows_last_mirror_message() {
         let entry = |messages: Vec<SessionReplayMessage>| MirrorEntry {
@@ -2518,7 +2381,6 @@ mod tests {
             total: 0,
             truncated: false,
             file_stamp: None,
-            completed_at: None,
             last_access: Instant::now(),
         };
         let (phase, at) = inferred_phase(None);
@@ -2775,26 +2637,6 @@ mod tests {
             },
         );
         ScanData { summaries: HashMap::new(), bindings }
-    }
-
-    #[test]
-    fn completion_metadata_updates_even_when_replay_messages_are_unchanged() {
-        let terminal_id = format!("relay-complete-{}", uuid::Uuid::new_v4());
-        seed_tracked(&terminal_id);
-        let answer = json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"完成"}]}}).to_string();
-        let (dir, session) = temp_transcript("session", &format!("{answer}\n"));
-        let path = dir.join("session.jsonl");
-        super::super::terminal_task_service::record_agent_session(&terminal_id, "claude", &session, Some(&path.to_string_lossy()), true);
-        let scan = scan_with_binding(&terminal_id, "claude", &session);
-        let _ = poll_mirror(&terminal_id, &scan);
-        assert_eq!(lock_state().mirrors[&terminal_id].completed_at, None);
-        let done = json!({"type":"system","subtype":"turn_duration","timestamp":"2026-11-06T07:44:36.778Z"});
-        fs::write(&path, format!("{answer}\n{done}\n")).unwrap();
-        assert!(matches!(poll_mirror(&terminal_id, &scan), PollContent::None));
-        assert!(lock_state().mirrors[&terminal_id].completed_at.is_some(), "完成标记不依赖消息正文变化");
-        lock_state().remove_terminal(&terminal_id);
-        super::super::terminal_task_service::forget_terminal(&terminal_id);
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

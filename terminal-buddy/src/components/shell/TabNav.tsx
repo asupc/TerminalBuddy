@@ -1,6 +1,4 @@
 import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
-import { useMobileAiStore } from '../../stores/mobileAiStore';
-import { MobileSessionList } from '../mobile-sessions/MobileSessionList';
 import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { FileText, X } from 'lucide-react';
@@ -31,8 +29,6 @@ interface TabSidebarProps {
 
 export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
   const sessions = useAppStore(s => s.sessions);
-  const mobileCount = useMobileAiStore(s => s.sessions.length);
-  const mobileError = useMobileAiStore(s => s.error);
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const projects = useAppStore(s => s.projects);
   const tabGroups = useAppStore(s => s.groups);
@@ -88,7 +84,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
       // 'config'/'history' 等其他面板会把 region 设成自己的值，从而屏蔽此处。
       const region = useAppStore.getState().lastClickRegion;
       if (region && region !== 'tab') return;
-      if (!activeSessionId || useAppStore.getState().activeSpecialTab) return;
+      if (!activeSessionId) return;
       const session = sessions.find(s => s.id === activeSessionId);
       if (session && session.sessionType !== 'editor') {
         // 编辑所见即所得：初始值取任务行当前显示的第一行标题（含摘要）
@@ -546,7 +542,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlightedIndex]);
 
-  if (sessions.length === 0 && !mobileCount && !mobileError && !gitHistoryTab && claudeReplayTabs.length === 0) return null;
+  if (sessions.length === 0 && !gitHistoryTab && claudeReplayTabs.length === 0) return null;
 
   const handleRenameSubmit = (sessionId: string) => {
     const trimmed = renameValue.trim();
@@ -558,7 +554,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     <div className={`tab-nav${isSidebarMode ? ' sidebar-mode' : ''}`} style={{ width }} ref={containerRef}>
       <div className="panel-titlebar">
         <span className="panel-title">会话标签</span>
-        <span className="panel-title-count">{sessions.length + mobileCount}</span>
+        <span className="panel-title-count">{sessions.length}</span>
       </div>
       <div className="tab-nav-header">
         {gitHistoryTab && (
@@ -612,7 +608,6 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           setDragProfileId(null);
         }}
       >
-        <MobileSessionList />
         {claudeReplayTabs.length > 0 && (
           <div className="tab-nav-group">
             <div className="tab-nav-group-header" onClick={() => setCollapsedGroups(prev => {

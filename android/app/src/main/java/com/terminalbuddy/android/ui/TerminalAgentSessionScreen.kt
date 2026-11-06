@@ -3,17 +3,16 @@ package com.terminalbuddy.android.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -29,8 +28,8 @@ import com.terminalbuddy.android.data.ServerTerminal
 private enum class AgentSessionTab { Chat, Terminal }
 
 /**
- * 终端 Agent 会话宿主：默认打开完整版样式的聊天页，标题栏可切换原终端。
- * 对话页提供镜像与受限回复，终端页复用不含头栏的 ServerTerminalContent。
+ * 终端 Agent 会话宿主：「对话（默认）/ 终端」双页签。
+ * 对话页是只读镜像 + 受限回复；终端页复用不含头栏的 ServerTerminalContent 查看同一终端。
  * 镜像 WS 仅在对话页签且 Activity START 时保持，切页签 / 退后台立即断开。
  */
 @Composable
@@ -47,8 +46,6 @@ internal fun TerminalAgentSessionScreen(
     var activeTab by rememberSaveable(session?.terminalId.orEmpty()) {
         mutableStateOf(AgentSessionTab.Chat)
     }
-    var menu by rememberSaveable(session?.terminalId.orEmpty()) { mutableStateOf(false) }
-    var information by rememberSaveable(session?.terminalId.orEmpty()) { mutableStateOf(false) }
     val back: () -> Unit = {
         if (activeTab == AgentSessionTab.Terminal) onBackFromTerminal() else onBack()
     }
@@ -73,42 +70,30 @@ internal fun TerminalAgentSessionScreen(
     DisposableEffect(agentVm) { onDispose { agentVm.setVisible(false) } }
     BackHandler(onBack = back)
 
-    Column(
-        Modifier.fillMaxSize().background(TbColors.Surface)
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
-    ) {
-        Surface(color = TbColors.Surface) {
-            Row(
-                Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 56.dp)
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(back) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回会话列表", Modifier.size(20.dp), tint = TbColors.TextMuted)
-                }
-                Row(
-                    Modifier.weight(1f).padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        session?.displayTitle ?: "远程会话", Modifier.weight(1f, fill = false),
-                        style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                    AiReconnectingIndicator(agentUi.reconnecting)
-                }
-                IconButton({
-                    activeTab = if (activeTab == AgentSessionTab.Chat) AgentSessionTab.Terminal else AgentSessionTab.Chat
-                }) {
-                    Icon(
-                        if (activeTab == AgentSessionTab.Chat) Icons.Outlined.Terminal else Icons.Outlined.ChatBubbleOutline,
-                        if (activeTab == AgentSessionTab.Chat) "打开终端" else "返回对话",
-                        Modifier.size(20.dp), tint = TbColors.TextMuted,
-                    )
-                }
-                IconButton({ menu = true }) {
-                    Icon(Icons.Outlined.MoreHoriz, "对话操作", Modifier.size(20.dp), tint = TbColors.TextMuted)
-                }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding()
+                .padding(start = 6.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IconButton(back, enabled = true) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回终端列表", Modifier.size(22.dp))
             }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text(
+                    session?.displayTitle ?: "Agent 会话",
+                    style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                val subtitle = listOfNotNull(
+                    session?.let { terminalTypeLabel(it.terminalType) },
+                    session?.directory?.takeIf(String::isNotBlank),
+                ).joinToString(" · ")
+                if (subtitle.isNotBlank()) Text(
+                    subtitle, style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            AgentTabPills(activeTab) { activeTab = it }
         }
         AiDivider()
         when (activeTab) {
@@ -138,38 +123,29 @@ internal fun TerminalAgentSessionScreen(
             )
         }
     }
-    if (menu) {
-        AiSheet("对话操作", { menu = false }) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-                AiConversationAction(
-                    if (activeTab == AgentSessionTab.Chat) Icons.Outlined.Terminal else Icons.Outlined.ChatBubbleOutline,
-                    if (activeTab == AgentSessionTab.Chat) "打开终端" else "返回对话",
-                    {
-                        menu = false
-                        activeTab = if (activeTab == AgentSessionTab.Chat) AgentSessionTab.Terminal else AgentSessionTab.Chat
-                    },
+}
+
+/** 对话 / 终端页签切换；与底部导航和列表页的 Tab 层级区分。 */
+@Composable
+private fun AgentTabPills(active: AgentSessionTab, select: (AgentSessionTab) -> Unit) {
+    Row(
+        Modifier.background(TbColors.ButtonTrack, RoundedCornerShape(12.dp)).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        AgentSessionTab.entries.forEach { tab ->
+            val isActive = tab == active
+            Surface(
+                onClick = { select(tab) },
+                color = if (isActive) TbColors.ButtonBackground else Color.Transparent,
+                shape = RoundedCornerShape(9.dp),
+                border = if (isActive) primaryControlBorder() else null,
+            ) {
+                Text(
+                    if (tab == AgentSessionTab.Chat) "对话" else "终端",
+                    Modifier.padding(horizontal = 13.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isActive) TbColors.ButtonForeground else TbColors.TextSoft,
                 )
-                AiConversationAction(Icons.Outlined.Refresh, "刷新消息", { menu = false; agentVm.refreshSession() },
-                    enabled = session != null && !agentUi.loadingMessages && !agentUi.starting)
-                AiConversationAction(Icons.Outlined.Info, "对话信息", { menu = false; information = true })
-            }
-        }
-    }
-    if (information) {
-        AiSheet("对话信息", { information = false }) {
-            SelectionContainer(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(16.dp)) {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    AiInfoField("会话来源", "服务端终端")
-                    session?.let {
-                        AiInfoField("对话标题", it.displayTitle)
-                        AiInfoField("项目路径", it.directory?.takeIf(String::isNotBlank) ?: "未提供", monospace = true)
-                        AiInfoField("助手与模型", listOfNotNull(agentTitle(it.provider), it.model?.takeIf(String::isNotBlank)).joinToString(" · "))
-                        AiInfoField("当前状态", if (agentUi.starting) "正在启动" else it.phaseLabel)
-                        AiInfoField("终端类型", terminalTypeLabel(it.terminalType))
-                    }
-                    AiInfoField("消息数量", "${agentUi.total} 条")
-                    if (agentUi.queuedReplies.isNotEmpty()) AiInfoField("待发消息", "${agentUi.queuedReplies.size} 条")
-                }
             }
         }
     }

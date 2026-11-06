@@ -1,7 +1,7 @@
 //! 原生 AI 消息 API。复用现有 JWT 和项目范围，任务启动后立即返回。
 use axum::{extract::{Path, Query, State, ws::{Message, WebSocketUpgrade}}, response::IntoResponse, Json};
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::{collections::HashMap, time::Duration};
 use crate::{models::{ai_chat::*, session_history::{SessionHistoryItem, SessionHistoryScanResult}}, services::{ai_chat_service as service, SettingsService}, web::{auth::{ClaimsFromRequest, verify_token}, error::ApiError, server::AppState}};
@@ -82,39 +82,6 @@ pub async fn resume_codex_history(claims: ClaimsFromRequest, Path(id): Path<Stri
 pub async fn get(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiSession>, ApiError> {
     blocking(move || service::get(&id, &claims.0.sub)).await
 }
-/// 网页只取得恢复 CLI 所需的信息，正文继续由原始 PTY 终端显示。
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AiTerminalResume {
-    session_id: String,
-    title: String,
-    project_dir: String,
-    provider: String,
-    provider_id: Option<String>,
-    model: Option<String>,
-}
-
-pub async fn terminal_resume(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<AiTerminalResume>, ApiError> {
-    tokio::task::spawn_blocking(move || {
-        let session = service::get(&id, &claims.0.sub).map_err(service_error)?;
-        let project_dir = ensure_agent_project(&session.project_path, &session.provider)?;
-        let session_id = session.thread_id.filter(|id| !id.is_empty())
-            .ok_or_else(|| ApiError::Conflict("该手机会话尚未生成可恢复记录，请先在手机中开始对话".into()))?;
-        uuid::Uuid::parse_str(&session_id).map_err(|_| ApiError::BadRequest("会话恢复标识无效".into()))?;
-        // 手机供应商带来源前缀，恢复命令沿用网页已有的模型引用格式。
-        let provider_id = session.provider_id.as_deref().and_then(|id| {
-            if session.provider == "codex" { id.strip_prefix("codex:").map(str::to_owned) }
-            else if let Some(id) = id.strip_prefix("llm:") { Some(id.to_owned()) }
-            else { id.strip_prefix("claude:").map(|id| format!("native-claude-{id}")) }
-        });
-        let model = if provider_id.as_deref().is_some_and(|id| id.starts_with("native-claude-")) {
-            Some(session.model.filter(|model| !model.is_empty()).unwrap_or_else(|| "default".into()))
-        } else { session.model };
-        Ok(Json(AiTerminalResume { session_id, title: session.title, project_dir,
-            provider: session.provider, provider_id, model }))
-    }).await.map_err(|error| ApiError::Internal(error.to_string()))?
-}
-
 pub async fn send(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<SendAiMessage>) -> Result<Json<AiSession>, ApiError> {
     tokio::task::spawn_blocking(move || {
         let session = service::get(&id, &claims.0.sub).map_err(service_error)?;

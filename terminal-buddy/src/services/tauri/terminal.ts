@@ -62,7 +62,6 @@ export interface BackendTerminalInfo {
   terminalType: string;
   loadingMode: string;
   owner: 'pc' | 'web';
-  creator?: 'desktop' | 'mobile';
   extraParamTag?: string;
   extraParamTagColor?: string;
   extraStartupParams?: string;

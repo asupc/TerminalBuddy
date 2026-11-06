@@ -278,7 +278,6 @@ fun AiScreen(
                                 agentUi = agentUi, agentVm = agentVm,
                                 openAgent = { session ->
                                     selectedAgentTerminalId = session.terminalId
-                                    pendingAgentTerminalId = null
                                     agentVm.openSession(session)
                                 })
                             AiHomeTab.Profile -> AiProfileScreen(ui,

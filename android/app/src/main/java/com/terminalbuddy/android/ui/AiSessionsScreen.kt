@@ -6,7 +6,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,7 +31,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.LifecycleStartEffect
 import com.terminalbuddy.android.AiUiState
 import com.terminalbuddy.android.AiViewModel
 import com.terminalbuddy.android.ServerTerminalUiState
@@ -41,8 +39,6 @@ import com.terminalbuddy.android.TerminalAgentUiState
 import com.terminalbuddy.android.TerminalAgentViewModel
 import com.terminalbuddy.android.data.AiSession
 import com.terminalbuddy.android.data.TerminalAgentSession
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.Instant
@@ -82,27 +78,14 @@ internal fun AiSessionsScreen(
             terminalVm.bindAccount()
             agentVm.bindAccount()
             if (!terminalVm.state.value.loaded || pager.currentPage == 2) terminalVm.refresh()
-            // 最近页在可见期间持续同步，终端页沿用进入时刷新；普通终端失败不影响 Agent 列表。
-            if (pager.currentPage != 0 && (!agentVm.state.value.listLoaded || pager.currentPage == 2)) agentVm.refresh()
-        }
-        LifecycleStartEffect(ui.activeAccountId, ui.connectionRevision, pager.currentPage) {
-            // 创建终端时 Agent 可能尚未完成绑定，定期补拉以发现随后启动的会话并更新任务阶段。
-            val refreshJob = if (pager.currentPage == 0) scope.launch {
-                agentVm.bindAccount()
-                while (isActive) {
-                    agentVm.refresh()
-                    delay(5_000)
-                }
-            } else null
-            onStopOrDispose { refreshJob?.cancel() }
+            // Agent 列表：进入终端 Tab、账号切换时都会重新拉取；普通终端失败不影响这里。
+            if (!agentVm.state.value.listLoaded || pager.currentPage == 2) agentVm.refresh()
         }
         Column(Modifier.fillMaxSize()) {
             AiSessionTabs(
                 pager = pager,
                 counts = listOf(
-                    (ui.sessions.size + currentAgentUi.sessions.size).takeIf {
-                        ui.homeLoaded && (currentAgentUi.listLoaded || currentAgentUi.listError != null)
-                    },
+                    ui.sessions.size.takeIf { ui.homeLoaded },
                     ui.projects.distinctBy { it.path }.size.takeIf { ui.homeLoaded },
                     currentTerminalUi.terminals.size.takeIf { currentTerminalUi.loaded },
                 ),
@@ -116,8 +99,7 @@ internal fun AiSessionsScreen(
                 when (page) {
                     0 -> AiRecentSessions(ui, vm, start, delete, deleteAll,
                         unreadRequest = if (pager.settledPage == 0) unreadRequest else 0,
-                        unreadRequestHandled = unreadRequestHandled,
-                        agentUi = currentAgentUi, refreshAgents = agentVm::refresh, openAgent = openAgent)
+                        unreadRequestHandled = unreadRequestHandled)
                     1 -> AiServerSessionsScreen(ui, vm)
                     2 -> AiTerminalSessionsScreen(currentTerminalUi, terminalVm, currentAgentUi, agentVm, openAgent)
                 }
@@ -185,28 +167,8 @@ private fun AiSessionTabs(pager: PagerState, counts: List<Int?>, select: (Int) -
     }
 }
 
-/** 最近列表同时展示原生 AI 会话与服务端终端会话，标识分开以保持滚动和未读定位稳定。 */
-private sealed interface AiRecentEntry {
-    val key: String
-    val updatedAt: Long
-    val running: Boolean
-
-    data class Native(val session: AiSession) : AiRecentEntry {
-        override val key get() = "session-${session.id}"
-        override val updatedAt get() = session.updatedAt
-        override val running get() = session.running
-    }
-
-    data class Remote(val session: TerminalAgentSession) : AiRecentEntry {
-        override val key get() = "remote-${session.terminalId}"
-        override val updatedAt get() = session.lastActivityAt ?: session.phaseAt ?: 0L
-        override val running get() = session.pendingDecisionCount > 0 ||
-            session.phase in setOf("running", "attention", "unknown")
-    }
-}
-
 private data class AiRecentSessionGroup(
-    val key: String, val title: String, val sessions: List<AiRecentEntry>,
+    val key: String, val title: String, val sessions: List<AiSession>,
 )
 
 @Composable
@@ -214,8 +176,6 @@ private fun AiRecentSessions(
     ui: AiUiState, vm: AiViewModel, start: () -> Unit,
     delete: (AiSession) -> Unit, deleteAll: () -> Unit,
     unreadRequest: Int, unreadRequestHandled: (Int) -> Unit,
-    agentUi: TerminalAgentUiState, refreshAgents: () -> Unit,
-    openAgent: (TerminalAgentSession) -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -223,18 +183,13 @@ private fun AiRecentSessions(
     var highlightedSessionId by remember { mutableStateOf<String?>(null) }
     var highlightRequest by remember { mutableIntStateOf(0) }
     val highlightAlpha = remember { Animatable(0f) }
-    val sessions = remember(ui.sessions, agentUi.sessions) {
-        (ui.sessions.map { AiRecentEntry.Native(it) } + agentUi.sessions.map { AiRecentEntry.Remote(it) })
-            .sortedByDescending { it.updatedAt }
-    }
+    val sessions = remember(ui.sessions) { ui.sessions.sortedByDescending { it.updatedAt } }
     val today = LocalDate.now()
     val zone = ZoneId.systemDefault()
     val groups = remember(sessions, ui.unviewedIds, today, zone) {
         // 状态优先于日期：运行中置顶，其次未读；各组沿用更新时间倒序。
         val (runningSessions, idleSessions) = sessions.partition { it.running }
-        val (unreadSessions, viewedSessions) = idleSessions.partition {
-            it is AiRecentEntry.Native && it.session.id in ui.unviewedIds
-        }
+        val (unreadSessions, viewedSessions) = idleSessions.partition { it.id in ui.unviewedIds }
         buildList {
             if (runningSessions.isNotEmpty()) add(AiRecentSessionGroup("running", "运行中", runningSessions))
             if (unreadSessions.isNotEmpty()) add(AiRecentSessionGroup("unread", "未读", unreadSessions))
@@ -247,20 +202,19 @@ private fun AiRecentSessions(
     }
     LaunchedEffect(unreadRequest) {
         if (unreadRequest == 0) return@LaunchedEffect
-        val unreadSessions = groups.flatMap { it.sessions }.filterIsInstance<AiRecentEntry.Native>()
-            .filter { it.session.id in ui.unviewedIds }
+        val unreadSessions = groups.flatMap { it.sessions }.filter { it.id in ui.unviewedIds }
         if (unreadSessions.isNotEmpty()) {
-            val next = (unreadSessions.indexOfFirst { it.session.id == lastLocatedSessionId } + 1) % unreadSessions.size
+            val next = (unreadSessions.indexOfFirst { it.id == lastLocatedSessionId } + 1) % unreadSessions.size
             val target = unreadSessions[next]
             // LazyColumn 首项为汇总行，每个分组还各有一个标题，不能直接使用会话下标。
             var itemIndex = 1
             for (group in groups) {
                 itemIndex++
-                val indexInGroup = group.sessions.indexOfFirst { it.key == target.key }
+                val indexInGroup = group.sessions.indexOfFirst { it.id == target.id }
                 if (indexInGroup >= 0) {
                     listState.animateScrollToItem(itemIndex + indexInGroup)
-                    lastLocatedSessionId = target.session.id
-                    highlightedSessionId = target.session.id
+                    lastLocatedSessionId = target.id
+                    highlightedSessionId = target.id
                     highlightRequest++
                     break
                 }
@@ -284,41 +238,29 @@ private fun AiRecentSessions(
         contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 28.dp),
     ) {
         item(key = "summary") {
-            Column {
-                Row(
-                    Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        "全部会话", Modifier.weight(1f),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Box {
-                        IconButton({ menu = true }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Outlined.MoreHoriz, "更多会话操作", tint = TbColors.TextMuted)
-                        }
-                        DropdownMenu(menu, { menu = false }) {
-                            DropdownMenuItem(text = { Text(if (ui.deletingAll) "正在清理…" else "清理全部空闲会话") },
-                                leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp)) },
-                                enabled = ui.sessions.any { !it.running } && !ui.loading && !ui.working && !ui.deletingAll,
-                                onClick = { menu = false; deleteAll() })
-                        }
+            Row(
+                Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "全部会话", Modifier.weight(1f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Box {
+                    IconButton({ menu = true }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Outlined.MoreHoriz, "更多会话操作", tint = TbColors.TextMuted)
                     }
-                }
-                agentUi.listError?.let { error ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                            color = TbColors.Danger, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        TextButton(refreshAgents, enabled = !agentUi.listLoading) { Text("重新同步") }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem(text = { Text(if (ui.deletingAll) "正在清理…" else "清理全部空闲会话") },
+                            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp)) },
+                            enabled = ui.sessions.any { !it.running } && !ui.loading && !ui.working && !ui.deletingAll,
+                            onClick = { menu = false; deleteAll() })
                     }
                 }
             }
         }
-        if (sessions.isEmpty() && (ui.initialLoading || (!agentUi.listLoaded && agentUi.listError == null))) item(key = "loading") {
+        if (ui.initialLoading && sessions.isEmpty()) item(key = "loading") {
             Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text("正在同步会话…", style = MaterialTheme.typography.bodySmall, color = TbColors.TextMuted)
@@ -326,7 +268,7 @@ private fun AiRecentSessions(
         } else if (sessions.isEmpty()) item(key = "empty") {
             AiCard(shape = RoundedCornerShape(16.dp)) {
                 AiEmptyState(Icons.Outlined.ChatBubbleOutline, "还没有最近会话",
-                    "在快速开始或服务端开启助手对话后，会话会同步显示在这里。") {
+                    "在快速开始中开启对话，所有助手的会话都会汇总在这里。") {
                     TextButton(start) { Text("开启新会话") }
                 }
             }
@@ -342,16 +284,9 @@ private fun AiRecentSessions(
                     HorizontalDivider(Modifier.padding(top = 8.dp), color = TbColors.Border)
                 }
             }
-            items(group.sessions, key = { it.key }) { entry ->
-                when (entry) {
-                    is AiRecentEntry.Native -> AiRecentSessionRow(
-                        ui, entry.session, { vm.open(entry.session.id) }, { delete(entry.session) },
-                        highlightAlpha = if (highlightedSessionId == entry.session.id) highlightAlpha.value else 0f,
-                    )
-                    is AiRecentEntry.Remote -> AiRemoteSessionRow(ui, entry.session, entry.running) {
-                        openAgent(entry.session)
-                    }
-                }
+            items(group.sessions, key = { "session-${it.id}" }) { session ->
+                AiRecentSessionRow(ui, session, { vm.open(session.id) }, { delete(session) },
+                    highlightAlpha = if (highlightedSessionId == session.id) highlightAlpha.value else 0f)
             }
         }
         if (sessions.isNotEmpty()) item(key = "end") {
@@ -367,67 +302,6 @@ private fun sessionDateLabel(date: LocalDate?, today: LocalDate): String = when 
     today -> "今天"
     today.minusDays(1) -> "昨天"
     else -> date.format(DateTimeFormatter.ofPattern(if (date.year == today.year) "M月d日" else "yyyy年M月d日", Locale.CHINA))
-}
-
-/** 远程条目直接进入原终端的气泡镜像与回复通道，列表操作不会新建或恢复另一份会话。 */
-@Composable
-private fun AiRemoteSessionRow(
-    ui: AiUiState, session: TerminalAgentSession, active: Boolean, open: () -> Unit,
-) {
-    val directory = session.directory.orEmpty()
-    val project = ui.projects.find { it.path == directory }?.name
-        ?: directory.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
-    val accentColor = TbColors.Accent
-    Column(Modifier.fillMaxWidth()) {
-        Column(
-            Modifier.fillMaxWidth().clickable(onClick = open)
-                .drawBehind {
-                    if (active) drawRect(accentColor, size = Size(4.dp.toPx(), size.height))
-                }
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                AiAgentBadge(session.provider, size = 23.dp)
-                Text(
-                    session.displayTitle, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleSmall.copy(lineHeight = 17.sp),
-                )
-                Surface(color = TbColors.Accent.copy(alpha = .14f), shape = RoundedCornerShape(4.dp)) {
-                    Text(
-                        "远程", Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        color = TbColors.Accent, maxLines = 1,
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
-                    )
-                }
-                Icon(Icons.Outlined.ChevronRight, "接管远程会话", Modifier.size(15.dp), tint = TbColors.TextMuted)
-            }
-            Row(
-                Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                AgentPhaseTag(session)
-                Text(
-                    buildList {
-                        add(project.ifBlank { "未命名项目" })
-                        session.model?.takeIf(String::isNotBlank)?.let(::add)
-                    }.joinToString(" · "),
-                    Modifier.weight(1f), color = TbColors.TextMuted,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 15.sp),
-                )
-                Text(
-                    sessionTime(session.lastActivityAt ?: session.phaseAt ?: 0L), maxLines = 1,
-                    style = MaterialTheme.typography.labelSmall.copy(lineHeight = 13.sp),
-                    color = TbColors.TextMuted,
-                )
-            }
-        }
-        HorizontalDivider(color = TbColors.BorderSoft)
-    }
 }
 
 /** 参考首页最近任务的两层信息布局，使用平面列表和分隔线，不添加卡片外观。 */

@@ -100,18 +100,10 @@ internal sealed interface AiConversationEntry {
 @Composable
 internal fun rememberAiReplyElapsedSeconds(session: AiSession, active: Boolean): Long {
     val request = session.conversationMessages.lastOrNull { it.role == "user" }
-    return rememberAiReplyElapsedSeconds(session.id, request?.id, request?.createdAt, active)
-}
-
-/** 终端镜像与原生对话共用计时，消息追加与重新布局不会重置本轮耗时。 */
-@Composable
-internal fun rememberAiReplyElapsedSeconds(
-    conversationId: String, requestId: String?, requestAt: Long?, active: Boolean,
-): Long {
-    val startedAt = remember(conversationId, requestId) {
-        requestAt?.takeIf { it > 0 } ?: System.currentTimeMillis()
+    val startedAt = remember(session.id, request?.id) {
+        request?.createdAt?.takeIf { it > 0 } ?: System.currentTimeMillis()
     }
-    val elapsed by produceState(0L, conversationId, requestId, active) {
+    val elapsed by produceState(0L, session.id, request?.id, active) {
         if (!active) return@produceState
         val initialElapsed = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
         val monotonicStart = SystemClock.elapsedRealtime()

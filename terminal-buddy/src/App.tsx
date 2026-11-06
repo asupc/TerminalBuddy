@@ -1,5 +1,4 @@
 import { useTerminalTaskSummaries } from './hooks/useTerminalTaskSummaries';
-import { useMobileAiSessionsSync } from './stores/mobileAiStore';
 ﻿import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
@@ -58,7 +57,6 @@ import { PRESET_THEMES } from './types';
 
 function App() {
   useTerminalTaskSummaries();
-  useMobileAiSessionsSync();
   const setProfiles = useAppStore(s => s.setProfiles);
   const setProjects = useAppStore(s => s.setProjects);
   const addSession = useAppStore(s => s.addSession);
@@ -383,8 +381,8 @@ function App() {
 
   // Listen for terminals created/closed via Web API to sync with desktop UI
   useEffect(() => {
-    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; creator?: 'desktop' | 'mobile'; groupId?: string; groupName?: string; group?: string; extraParamTag?: string; extraParamTagColor?: string; extraStartupParams?: string; extraStartupMode?: ExtraParamMode; activate?: boolean }>('terminal-created', (event) => {
-      const { id, profileId, profileName, terminalType, owner, creator, groupId, groupName = event.payload.group, extraStartupParams, extraStartupMode, extraParamTag, extraParamTagColor, activate } = event.payload;
+    const unlistenCreated = listen<{ id: string; profileId: string; profileName: string; terminalType: string; owner: 'pc' | 'web'; groupId?: string; groupName?: string; group?: string; extraParamTag?: string; extraParamTagColor?: string; extraStartupParams?: string; extraStartupMode?: ExtraParamMode; activate?: boolean }>('terminal-created', (event) => {
+      const { id, profileId, profileName, terminalType, owner, groupId, groupName = event.payload.group, extraStartupParams, extraStartupMode, extraParamTag, extraParamTagColor, activate } = event.payload;
       const store = useAppStore.getState();
       let resolvedGroupId = groupId || 'default';
       if (groupId && groupName) {
@@ -408,7 +406,6 @@ function App() {
         store.updateSession(id, {
           profileName,
           owner,
-          creator: creator ?? existingSession.creator,
           groupId: groupId ? resolvedGroupId : existingSession.groupId,
           groupName: groupName ?? existingSession.groupName,
           extraParams: extraStartupParams ?? existingSession.extraParams,
@@ -435,7 +432,6 @@ function App() {
         groupId: resolvedGroupId,
         groupName,
         owner,
-        creator,
         extraParams: extraStartupParams,
         extraParamMode: extraStartupMode,
         extraParamTag,

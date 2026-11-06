@@ -141,7 +141,7 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
 }
 
 @Composable
-internal fun AiConversationAction(
+private fun AiConversationAction(
     icon: ImageVector, label: String, onClick: () -> Unit, enabled: Boolean = true, color: Color = TbColors.Text,
 ) {
     Row(
@@ -156,7 +156,7 @@ internal fun AiConversationAction(
 }
 
 @Composable
-internal fun AiInfoField(label: String, value: String, monospace: Boolean = false) {
+private fun AiInfoField(label: String, value: String, monospace: Boolean = false) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = TbColors.TextMuted)
         Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default)
@@ -354,28 +354,6 @@ private fun AiComposer(
     // 回复中输入了草稿就显示发送（按发送方式排队等待或原生插话）；空白才显示中断。
     val showStop = session.running && ui.draft.isBlank()
     val actionEnabled = if (showStop) !ui.working && session.status != "stopping" else session.canSend && ui.draft.isNotBlank() && !ui.sending && !ui.loadingSession
-    AiMessageComposer(
-        value = ui.draft, onValueChange = draft,
-        placeholder = "给 ${session.providerLabel} 发消息…", enabled = !ui.loadingSession,
-        actionEnabled = actionEnabled, onAction = if (showStop) stop else send,
-        actionLabel = when {
-            showStop -> "中断回复"
-            ui.sending -> "正在发送"
-            session.running && ui.sendSteer -> "原生插话"
-            session.running -> "发送排队消息"
-            else -> "发送消息"
-        },
-        showStop = showStop,
-    )
-}
-
-/** 原生对话与远程终端共用输入框外观，各自提供发送能力与状态。 */
-@Composable
-internal fun AiMessageComposer(
-    value: String, onValueChange: (String) -> Unit, placeholder: String,
-    enabled: Boolean, actionEnabled: Boolean, onAction: () -> Unit, actionLabel: String,
-    showStop: Boolean = false,
-) {
     Surface(color = TbColors.Surface) {
         Box(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
@@ -387,18 +365,18 @@ internal fun AiMessageComposer(
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                     BasicTextField(
-                        value = value, onValueChange = onValueChange,
+                        value = ui.draft, onValueChange = draft,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp)
                             .padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp)
                             .semantics { contentDescription = "消息输入框" },
-                        enabled = enabled, minLines = 1, maxLines = 4,
+                        enabled = !ui.loadingSession, minLines = 1, maxLines = 4,
                         textStyle = MaterialTheme.typography.bodyMedium.copy(color = TbColors.Text, fontSize = 14.sp, lineHeight = 20.sp),
                         cursorBrush = SolidColor(TbColors.Accent),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                         decorationBox = { innerTextField ->
                             Box(contentAlignment = Alignment.CenterStart) {
-                                if (value.isEmpty()) Text(
-                                    placeholder, color = TbColors.TextMuted,
+                                if (ui.draft.isEmpty()) Text(
+                                    "给 ${session.providerLabel} 发消息…", color = TbColors.TextMuted,
                                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 )
@@ -407,8 +385,16 @@ internal fun AiMessageComposer(
                         },
                     )
                     IconButton(
-                        onAction, enabled = actionEnabled, modifier = Modifier.size(48.dp)
-                            .semantics { contentDescription = actionLabel },
+                        if (showStop) stop else send, enabled = actionEnabled, modifier = Modifier.size(48.dp)
+                            .semantics {
+                                contentDescription = when {
+                                    showStop -> "中断回复"
+                                    ui.sending -> "正在发送"
+                                    session.running && ui.sendSteer -> "原生插话"
+                                    session.running -> "发送排队消息"
+                                    else -> "发送消息"
+                                }
+                            },
                     ) {
                         Surface(
                             Modifier.size(32.dp),
@@ -433,7 +419,7 @@ private val AiAvatarSize = 28.dp
 
 /** 用户消息为右侧小气泡，助手正文与思考状态共用左侧头像。 */
 @Composable
-internal fun AiMessageBubble(
+private fun AiMessageBubble(
     message: AiAnimatedMessage, provider: String, modifier: Modifier = Modifier, sending: Boolean = false,
 ) {
     val mine = message.role == "user"
@@ -488,7 +474,7 @@ internal fun AiMessageBubble(
 
 /** 相邻工具调用合并成一组，默认只露出最新记录，展开后按原始顺序查看历史。 */
 @Composable
-internal fun AiToolGroup(messages: List<AiAnimatedMessage>, modifier: Modifier, onInspect: () -> Unit) {
+private fun AiToolGroup(messages: List<AiAnimatedMessage>, modifier: Modifier, onInspect: () -> Unit) {
     var expanded by rememberSaveable(messages.first().id) { mutableStateOf(false) }
     val latest = messages.last()
     val hasHistory = messages.size > 1
@@ -590,7 +576,7 @@ private fun AiAvatar(provider: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-internal fun AiReplyIndicator(provider: String, label: String, elapsedSeconds: Long, modifier: Modifier = Modifier) {
+private fun AiReplyIndicator(provider: String, label: String, elapsedSeconds: Long, modifier: Modifier = Modifier) {
     Row(
         modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
