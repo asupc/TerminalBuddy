@@ -1,6 +1,5 @@
 package com.terminalbuddy.android.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -193,7 +192,7 @@ internal fun TerminalAgentChatScreen(
                     }
                     item(key = "agent-bottom") { Spacer(Modifier.height(1.dp)) }
                 }
-                AnimatedVisibility(
+                androidx.compose.animation.AnimatedVisibility(
                     visible = !scroll.following && scroll.list.canScrollForward && entryCount > 0,
                     modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
                     enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 2 },
