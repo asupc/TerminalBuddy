@@ -136,6 +136,14 @@ fn task_content(
     }
 }
 
+/// 只把仍在执行的后台工作算作忙碌；未来定时唤醒和辅助任务不会延长当前回合。
+fn has_active_background_work(tasks: &[Value]) -> bool {
+    tasks.iter().any(|task| {
+        if task["ambient"] == true || task["awaited"] == true || task["type"] == "post_turn_memory" { return false; }
+        !matches!(task["status"].as_str(), Some("completed" | "failed" | "stopped" | "cancelled" | "canceled"))
+    })
+}
+
 fn is_actionable_notification(request: &ClaudeHookRequest) -> bool {
     request.notification_type.as_deref() == Some("permission_prompt")
 }
@@ -227,7 +235,15 @@ pub(crate) async fn claude_hook(
             return StatusCode::NO_CONTENT.into_response();
         }
         "Stop" => {
-            if request.background_tasks.is_empty() && request.session_crons.is_empty() {
+            let background_pending = has_active_background_work(&request.background_tasks);
+            eprintln!("[ClaudeHook] Stop terminal={} background_tasks={} blocking={} scheduled_crons={}",
+                terminal_id, request.background_tasks.len(), background_pending, request.session_crons.len());
+            if background_pending {
+                crate::services::terminal_agent_relay::hold_for_background_work(
+                    terminal_id, &request.session_id, next_hook_timestamp(),
+                );
+            } else {
+                // session_crons 是未来唤醒计划，不代表此刻仍在执行。
                 emit_terminal_event(&app, terminal_id, &request, "completed");
             }
             return StatusCode::NO_CONTENT.into_response();
@@ -484,7 +500,7 @@ pub async fn send_claude_hook_decision_notification(
 #[cfg(test)]
 mod tests {
     use super::{
-        compact_hook_text, is_actionable_notification, next_hook_timestamp, task_content,
+        compact_hook_text, has_active_background_work, is_actionable_notification, next_hook_timestamp, task_content,
         truncate_unicode, ClaudeHookRequest,
     };
     use crate::services::ClaudeHookService;
@@ -505,6 +521,25 @@ mod tests {
         );
         assert_eq!(truncate_unicode("甲乙丙丁戊", 4), "甲乙丙…");
         assert_eq!(truncate_unicode("Claude", 6), "Claude");
+    }
+
+    #[test]
+    fn scheduled_wakeups_and_finished_background_tasks_do_not_keep_a_turn_running() {
+        let request: ClaudeHookRequest = serde_json::from_value(json!({
+            "session_id":"session", "hook_event_name":"Stop",
+            "background_tasks":[{"status":"completed"},{"status":"failed"},{"status":"stopped"}],
+            "session_crons":[{"id":"later","schedule":"*/5 * * * *"}]
+        })).unwrap();
+        assert!(!request.session_crons.is_empty());
+        assert!(!has_active_background_work(&request.background_tasks));
+        assert!(!has_active_background_work(&[
+            json!({"status":"running","ambient":true}),
+            json!({"status":"running","awaited":true}),
+            json!({"status":"running","type":"post_turn_memory"}),
+        ]));
+        assert!(has_active_background_work(&[json!({"status":"running","type":"local_bash"})]));
+        assert!(has_active_background_work(&[json!({"status":"pending","type":"local_agent"})]));
+        assert!(has_active_background_work(&[json!({"id":"unknown-status"})]), "未知状态保守保留后台执行");
     }
 
     #[test]
