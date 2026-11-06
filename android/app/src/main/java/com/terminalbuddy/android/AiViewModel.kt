@@ -45,6 +45,8 @@ data class AiUiState(
     val homeLoaded: Boolean = false,
     val unviewedIds: Set<String> = emptySet(),
     val accounts: List<AiAccount> = emptyList(), val activeAccountId: String? = null,
+    /** 当前服务端的备注名；未填写时为空，界面回退显示登录账号。 */
+    val serverName: String = "",
     val switchingAccountId: String? = null,
     val notificationLoginAccountId: String? = null,
     /** 简版首页历史 Tab 的查询范围：当前项目汇总全部已启用助手，与快速开始的助手选择无关。 */
@@ -318,10 +320,10 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun login(server: String, username: String, password: String) = authenticate {
+    fun login(server: String, username: String, password: String, name: String = "") = authenticate {
         require(username.isNotBlank()) { "请输入 AI 服务账号" }
         require(password.isNotEmpty()) { "请输入 AI 服务密码" }
-        repository.login(server, username.trim(), password)
+        repository.login(server, username.trim(), password, name.trim())
     }
 
     fun switchAccount(id: String) {
@@ -390,6 +392,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         val unviewed = if (viewed == null) emptySet() else recent.filter { session ->
             session.status !in listOf("running", "background", "stopping") && session.revision > (viewed[session.id] ?: 1L)
         }.mapTo(mutableSetOf()) { it.id }
+        val accounts = repository.accounts
         return AiUiState(
             store.server, store.username, store.loggedIn,
             loading = store.loggedIn,
@@ -400,7 +403,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             providerId = repository.selectedProvider,
             modelId = repository.selectedModel,
             homeLoaded = cached != null,
-            accounts = repository.accounts.accounts, activeAccountId = repository.accounts.activeId,
+            accounts = accounts.accounts, activeAccountId = accounts.activeId,
+            serverName = accounts.accounts.find { it.id == accounts.activeId }?.name.orEmpty(),
             connectionRevision = revision,
             sendSteer = repository.sendSteer,
         )
@@ -425,6 +429,24 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                 resetConnection()
                 mutable.value = connectionState()
             } else mutable.update { it.copy(accounts = repository.accounts.accounts, error = null) }
+        } catch (e: Throwable) {
+            mutable.update { it.copy(error = e.userMessage()) }
+        }
+    }
+
+    /** 修改已保存服务端的备注名；改的是当前账号时同步刷新当前服务名称。 */
+    fun renameAccount(id: String, name: String) {
+        if (mutable.value.authenticating) return
+        try {
+            repository.renameAccount(id, name)
+            val accounts = repository.accounts
+            mutable.update {
+                it.copy(
+                    accounts = accounts.accounts, error = null,
+                    serverName = if (it.activeAccountId == id)
+                        accounts.accounts.find { account -> account.id == id }?.name.orEmpty() else it.serverName,
+                )
+            }
         } catch (e: Throwable) {
             mutable.update { it.copy(error = e.userMessage()) }
         }

@@ -154,6 +154,10 @@ class AiRepository(context: Context) {
         edit.apply()
     }
 
+    fun renameAccount(id: String, name: String) {
+        accounts.rename(id, name)
+    }
+
     /** 登录及其他普通接口沿用连接和请求超时。 */
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
@@ -176,7 +180,7 @@ class AiRepository(context: Context) {
         .pingInterval(15, TimeUnit.SECONDS).build()
 
     /** 先认证及确认原生 AI 接口，成功后由主线程统一激活，失败保留当前账号。 */
-    internal suspend fun login(server: String, username: String, password: String): AiConnection {
+    internal suspend fun login(server: String, username: String, password: String, name: String = ""): AiConnection {
         val address = ServerAddress.normalize(server)
         val result = request(
             "POST", listOf("auth", "login"),
@@ -185,7 +189,7 @@ class AiRepository(context: Context) {
         ).asObject()
         val token = result.text("token")
         require(token.isNotBlank()) { "服务未返回登录令牌，请确认这是 TerminalBuddy 服务地址" }
-        val connection = AiConnection(address, result.text("username", fallback = username), token)
+        val connection = AiConnection(address, result.text("username", fallback = username), token, name)
         validate(connection)
         return connection
     }

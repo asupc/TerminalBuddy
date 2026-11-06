@@ -192,7 +192,8 @@ fun AiScreen(
             initialServer = account?.server ?: ui.server,
             initialUsername = account?.username ?: if (addingAccount) "" else ui.username,
             title = if (addingAccount) "添加账号" else if (account?.loggedIn == false) "重新登录" else "连接服务",
-            adding = addingAccount)
+            adding = addingAccount,
+            initialName = account?.name.orEmpty())
         return
     }
     if (page == AiPage.Accounts || !ui.authenticated) {
@@ -200,7 +201,7 @@ fun AiScreen(
             add = { openConnection(null, true, true) },
             select = { account ->
                 if (account.loggedIn) vm.switchAccount(account.id) else openConnection(account.id, false, true)
-            }, remove = vm::removeAccount, clearError = vm::clearError)
+            }, remove = vm::removeAccount, clearError = vm::clearError, rename = vm::renameAccount)
         return
     }
     if (ui.history.selected != null) {

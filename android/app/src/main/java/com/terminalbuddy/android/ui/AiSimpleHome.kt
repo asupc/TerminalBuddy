@@ -302,10 +302,13 @@ internal fun AiSimpleHome(
                                 tint = if (current) TbColors.Accent else TbColors.TextMuted,
                             )
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(account.username, style = MaterialTheme.typography.titleSmall,
+                                Text(account.label, style = MaterialTheme.typography.titleSmall,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(account.server, style = MaterialTheme.typography.bodySmall,
-                                    color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    if (account.name.isBlank()) account.server else "${account.username} · ${account.server}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TbColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
                                 Text(when {
                                     current -> "当前服务端"
                                     switching -> "正在切换…"

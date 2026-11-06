@@ -615,7 +615,7 @@ class AiTaskNotifications(private val context: Context, private val repository: 
         val notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_task_notification)
             .setContentTitle(title).setContentText(text)
-            .setSubText(listOfNotNull(account?.username, session.providerLabel).joinToString(" · "))
+            .setSubText(listOfNotNull(account?.label, session.providerLabel).joinToString(" · "))
             .setStyle(NotificationCompat.BigTextStyle().bigText("$title\n$text"))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)

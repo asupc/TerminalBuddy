@@ -31,11 +31,13 @@ import com.terminalbuddy.android.AiUiState
 /** 登录表单保持单列布局，小屏和键盘展开时均可滚动。 */
 @Composable
 internal fun AiConnection(
-    ui: AiUiState, login: (String, String, String) -> Unit, back: (() -> Unit)?,
+    ui: AiUiState, login: (String, String, String, String) -> Unit, back: (() -> Unit)?,
     initialServer: String, initialUsername: String, title: String, adding: Boolean,
+    initialName: String = "",
 ) {
     var server by rememberSaveable(initialServer, title) { mutableStateOf(initialServer) }
     var username by rememberSaveable(initialUsername, title) { mutableStateOf(initialUsername) }
+    var name by rememberSaveable(initialName, title) { mutableStateOf(initialName) }
     var password by remember { mutableStateOf("") }
     var visible by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
@@ -45,7 +47,7 @@ internal fun AiConnection(
         if (canSubmit) {
             keyboard?.hide()
             focus.clearFocus()
-            login(server.trim(), username.trim(), password)
+            login(server.trim(), username.trim(), password, name.trim())
         }
     }
     val next = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) })
@@ -85,6 +87,14 @@ internal fun AiConnection(
                         singleLine = true, enabled = !ui.authenticating, shape = RoundedCornerShape(14.dp),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
                         keyboardActions = next, textStyle = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedTextField(
+                        name, { name = it }, Modifier.fillMaxWidth(), label = { Text("名称（可选）") },
+                        placeholder = { Text("例如：客厅 NAS") },
+                        leadingIcon = { Icon(Icons.Outlined.Label, null, Modifier.size(20.dp)) },
+                        singleLine = true, enabled = !ui.authenticating, shape = RoundedCornerShape(14.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = next,
+                        textStyle = MaterialTheme.typography.bodyMedium,
                     )
                     OutlinedTextField(
                         username, { username = it }, Modifier.fillMaxWidth(), label = { Text("账号") },

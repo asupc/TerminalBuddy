@@ -391,7 +391,12 @@ internal fun AiServiceInfoScreen(ui: AiUiState, back: () -> Unit, connect: () ->
                                 Text(if (ui.reconnecting) "重连中" else "已登录", style = MaterialTheme.typography.labelMedium, color = TbColors.TextSoft)
                             }
                             SelectionContainer {
-                                Text(ui.server, style = MaterialTheme.typography.bodyLarge)
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (ui.serverName.isNotBlank()) {
+                                        Text(ui.serverName, style = MaterialTheme.typography.bodyLarge)
+                                    }
+                                    Text(ui.server, style = MaterialTheme.typography.bodyMedium, color = TbColors.TextMuted)
+                                }
                             }
                             AiDivider()
                             AiInfoRow("登录账号", ui.username)
