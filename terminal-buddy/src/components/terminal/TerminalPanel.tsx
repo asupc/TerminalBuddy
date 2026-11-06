@@ -36,10 +36,12 @@ const TerminalInstance = lazy(() => import('./TerminalInstance').then(m => ({ de
 const TextEditor = lazy(() => import('../text-editor/TextEditor').then(m => ({ default: m.TextEditor })));
 const GitHistoryPage = lazy(() => import('../git/GitHistoryPage').then(m => ({ default: m.GitHistoryPage })));
 const ClaudeReplayPage = lazy(() => import('../claude-history/ReplayPage').then(m => ({ default: m.ReplayPage })));
+const MobileSessionLiveMessages = lazy(() => import('../mobile-sessions/MobileSessionLiveMessages').then(m => ({ default: m.MobileSessionLiveMessages })));
 
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
-  const mobileCount = useMobileAiStore(s => s.sessions.length);
+  const mobileSessions = useMobileAiStore(s => s.sessions);
+  const mobileCount = mobileSessions.length;
   const mobileError = useMobileAiStore(s => s.error);
   const taskSummaries = useTaskSummaryStore(s => s.summaries);
   const activeSessionId = useAppStore(s => s.activeSessionId);
@@ -239,6 +241,16 @@ export const TerminalPanel: FC = () => {
             </Suspense>
           )}
         </div>
+        {!session.starting && session.mobileAiSessionId && mobileSessions.some(mobile => mobile.id === session.mobileAiSessionId) && (
+          <Suspense fallback={null}>
+            <MobileSessionLiveMessages
+              key={session.mobileAiSessionId}
+              sessionId={session.mobileAiSessionId}
+              colorTheme={resolvedTheme}
+              isActive={isActivePane}
+            />
+          </Suspense>
+        )}
       </div>
     );
   };

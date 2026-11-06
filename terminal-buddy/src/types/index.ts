@@ -158,6 +158,8 @@ export interface TerminalSession {
   extraParamTag?: string;
   extraParamTagColor?: string | null;
   claudeSessionId?: string;
+  /** 恢复自手机的 AI 会话；正文通过原会话消息流持续同步。 */
+  mobileAiSessionId?: string;
   createdAt?: number;   // 启动时间戳；addSession 时默认 Date.now()
   starting?: boolean;   // 后端 PTY 尚在创建；此时仅展示占位页签，不挂载 xterm
   // 用户手动重命名过：标签固定显示手动名称，不再被任务摘要覆盖

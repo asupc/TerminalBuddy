@@ -8,11 +8,10 @@ import { useAppStore } from './appStore';
 interface MobileAiState {
   sessions: MobileAiSession[];
   openingIds: string[];
-  terminalIds: Record<string, string>;
   error: string;
 }
 
-export const useMobileAiStore = create<MobileAiState>(() => ({ sessions: [], openingIds: [], terminalIds: {}, error: '' }));
+export const useMobileAiStore = create<MobileAiState>(() => ({ sessions: [], openingIds: [], error: '' }));
 
 /** 与历史列表共用 CLI 恢复流程，打开后就是网页原有的终端标签。 */
 export function openMobileAiSession(id: string): void {
@@ -24,9 +23,9 @@ export function openMobileAiSession(id: string): void {
   void (async () => {
     const { focusTerminalById, resumeClaudeSession } = await import('../components/claude-history/resumeClaudeSession');
     if (!current()) return;
-    const existingId = state.terminalIds[id];
-    if (existingId && useAppStore.getState().sessions.some(session => session.id === existingId)) {
-      focusTerminalById(existingId);
+    const existing = useAppStore.getState().sessions.find(session => session.mobileAiSessionId === id);
+    if (existing) {
+      focusTerminalById(existing.id);
       return;
     }
     const session = await getMobileAiTerminalResume(id);
@@ -37,7 +36,7 @@ export function openMobileAiSession(id: string): void {
       binding.provider === session.provider && binding.sessionId === session.sessionId
       && store.sessions.some(terminal => terminal.id === terminalId))?.[0];
     if (liveId) {
-      useMobileAiStore.setState(current => ({ terminalIds: { ...current.terminalIds, [id]: liveId } }));
+      store.updateSession(liveId, { mobileAiSessionId: id });
       focusTerminalById(liveId);
       return;
     }
@@ -54,7 +53,7 @@ export function openMobileAiSession(id: string): void {
     const terminalId = Object.entries(restored.agentSessionBindings).find(([terminalId, binding]) =>
       binding.provider === session.provider && binding.sessionId === session.sessionId
       && restored.sessions.some(terminal => terminal.id === terminalId))?.[0];
-    if (terminalId) useMobileAiStore.setState(value => ({ terminalIds: { ...value.terminalIds, [id]: terminalId } }));
+    if (terminalId) restored.updateSession(terminalId, { mobileAiSessionId: id });
   })().catch(error => {
     if (current()) useAppStore.getState().showToast(`恢复手机会话失败：${error instanceof Error ? error.message : String(error)}`, 'error');
   })
@@ -77,7 +76,7 @@ export function useMobileAiSessionsSync(): void {
     });
     return () => {
       stop();
-      useMobileAiStore.setState({ sessions: [], openingIds: [], terminalIds: {}, error: '' });
+      useMobileAiStore.setState({ sessions: [], openingIds: [], error: '' });
     };
   }, []);
 }

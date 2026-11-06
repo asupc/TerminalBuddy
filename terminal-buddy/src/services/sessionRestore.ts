@@ -163,6 +163,7 @@ async function restoreTerminalTab(tab: SavedTab): Promise<string | undefined> {
     extraParamTag: tab.extraParamTag,
     extraParamTagColor: tab.extraParamTagColor ?? null,
     manualTitle: tab.manualTitle,
+    mobileAiSessionId: tab.mobileAiSessionId,
   }, true);
   // 统一回填 Agent 会话绑定；旧 claudeSessionId 同步派生。
   if (binding) {
@@ -426,7 +427,7 @@ export async function restoreTabs() {
       if (tab.sessionType === 'editor') await restoreEditorTab(tab);
     }
     await ensureBrowserSessionsRestored();
-    await reconcileBackendSessions();
+    await reconcileBackendSessions(tabs);
     return;
   }
   await restoreSavedTabs(tabs, activeIndex);
@@ -440,7 +441,7 @@ export async function restoreTabs() {
  * 加载完成（约 rust+415ms）。事件发进还没有监听器的窗口就被丢弃，双击的 bat 于是
  * 在一间看不见的会话里跑完。启动流程末尾按后端真实存活列表补一次账。
  */
-export async function reconcileBackendSessions() {
+export async function reconcileBackendSessions(savedTabs?: readonly SavedTab[]) {
   let terminals;
   try {
     terminals = await listTerminals();
@@ -456,6 +457,15 @@ export async function reconcileBackendSessions() {
     useAppStore.getState().removeSessions(useAppStore.getState().sessions
       .filter(session => session.sessionType !== 'editor' && !session.starting && !ids.has(session.id)).map(session => session.id));
   }
+  // 普通刷新会接回存活 PTY，也要从快照接回手机正文订阅的关联。
+  const savedMobileIds = new Map<string, string>();
+  if (isBrowserClient() && (savedTabs || terminals.some(terminal =>
+    !useAppStore.getState().sessions.some(session => session.id === terminal.id)))) {
+    const tabs = savedTabs ?? (await loadSavedTabs()).tabs;
+    for (const tab of tabs) {
+      if (tab.terminalId && tab.mobileAiSessionId) savedMobileIds.set(tab.terminalId, tab.mobileAiSessionId);
+    }
+  }
   for (const terminal of terminals) {
     const store = useAppStore.getState();
     // 占位会话还没回填成真实 terminalId，此时补建会和它撞成两个页签。
@@ -466,6 +476,7 @@ export async function reconcileBackendSessions() {
         profileName: terminal.profileName,
         owner: terminal.owner,
         creator: terminal.creator ?? existingSession.creator,
+        mobileAiSessionId: existingSession.mobileAiSessionId ?? savedMobileIds.get(terminal.id),
         groupName: existingSession.groupName || terminal.group || undefined,
         extraParams: terminal.extraStartupParams ?? existingSession.extraParams,
         extraParamMode: terminal.extraStartupMode ?? existingSession.extraParamMode,
@@ -499,6 +510,7 @@ export async function reconcileBackendSessions() {
       groupName: terminal.group || undefined,
       owner: terminal.owner,
       creator: terminal.creator,
+      mobileAiSessionId: savedMobileIds.get(terminal.id),
       extraParams: terminal.extraStartupParams,
       extraParamMode: terminal.extraStartupMode,
       extraParamTag: terminal.extraParamTag,
