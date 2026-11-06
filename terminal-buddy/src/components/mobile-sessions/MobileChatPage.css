@@ -1,29 +1,27 @@
-.mobile-chat { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--text-primary); background: var(--bg-primary); }
-.mobile-chat-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-secondary); flex-shrink: 0; }
-.mobile-chat-header > svg { color: var(--accent); flex-shrink: 0; }
-.mobile-chat-title { flex: 1; min-width: 0; }
-.mobile-chat-title h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
-.mobile-chat-title p { overflow: hidden; margin: 3px 0 0; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 11px; }
-.mobile-chat-status { color: var(--text-secondary); font-size: 11px; }
-.mobile-chat-action { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--border-subtle); border-radius: 6px; color: var(--text-secondary); background: var(--bg-tertiary); cursor: pointer; flex-shrink: 0; }
-.mobile-chat-action:hover { color: var(--accent); border-color: var(--accent); }
-.mobile-chat-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px max(16px, calc((100% - 900px) / 2)); user-select: text; -webkit-user-select: text; }
-.mobile-chat-message { max-width: 100%; margin-bottom: 18px; }
-.mobile-chat-message.mine { margin-left: auto; max-width: 85%; width: fit-content; }
-.mobile-chat-message-role { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: var(--text-tertiary); margin-bottom: 5px; }
-.mobile-chat-message.mine .mobile-chat-message-role { justify-content: flex-end; }
-.mobile-chat-message-role time { font-size: 10px; }
-.mobile-chat-text { font-size: 13px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
-.mobile-chat-message.mine .mobile-chat-text { padding: 9px 12px; border-radius: 12px 12px 3px 12px; background: color-mix(in srgb, var(--accent) 13%, var(--bg-primary)); }
-.mobile-chat-tools { margin: 10px 0 18px; color: var(--text-secondary); font-size: 12px; border: 1px solid var(--border-subtle); border-radius: 7px; padding: 8px 10px; }
-.mobile-chat-tools summary { cursor: pointer; overflow-wrap: anywhere; }
-.mobile-chat-tools pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow-y: auto; font: 11px/1.6 "Cascadia Mono", Consolas, monospace; }
-.mobile-chat-thinking { display: flex; align-items: center; gap: 8px; padding: 8px 0; color: var(--text-secondary); font-size: 12px; }
-.mobile-chat-empty { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 100px; color: var(--text-tertiary); font-size: 12px; }
-.mobile-chat-error { padding: 10px 16px; color: #e35b65; font-size: 12px; white-space: pre-wrap; }
-.mobile-chat-queued { padding: 6px 0; color: var(--text-secondary); font-size: 12px; white-space: pre-wrap; }
-.mobile-chat-latest { display: flex; align-items: center; gap: 5px; position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 7px 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-secondary); color: var(--accent); cursor: pointer; box-shadow: 0 2px 8px #0002; }
-.mobile-chat-spinner { animation: mobile-chat-spin 1s linear infinite; }
-@keyframes mobile-chat-spin { to { transform: rotate(360deg); } }
-@media (max-width: 600px) { .mobile-chat-status { display: none; } .mobile-chat-header { padding: 10px; gap: 7px; } }
-@media (prefers-reduced-motion: reduce) { .mobile-chat-spinner { animation: none; } }
+.mobile-terminal-view {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mobile-terminal-view > .terminal-instance { flex: 1; height: auto; }
+.mobile-terminal-view .xterm-viewport { overflow-y: auto !important; }
+
+.mobile-terminal-status {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 7px;
+  min-height: 24px;
+  padding: 0 10px;
+  font: 11px/1.5 'Cascadia Mono', Consolas, 'Courier New', monospace;
+}
+
+.mobile-terminal-status-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .65; }
+.mobile-terminal-status button { display: inline-flex; padding: 3px; border: 0; border-radius: 3px; color: inherit; background: transparent; cursor: pointer; opacity: .65; }
+.mobile-terminal-status button:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+.mobile-terminal-latest { position: absolute; bottom: 32px; right: 20px; display: flex; align-items: center; gap: 4px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; font-size: 11px; }

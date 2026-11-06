@@ -21,6 +21,7 @@ import { installTerminalMouseGuard } from '../../utils/terminalMouse';
 import { cancelPendingClaudeNotifications, handleClaudeTerminalInputActivity } from '../../services/claudeNotification';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalInstance.css';
+import { terminalAppearance, toXtermCanvasTheme } from './terminal-appearance';
 import { PasteImageDialog } from '../claude-images/PasteImageDialog';
 import { RIGHT_CLICK_PASTE_DEDUPE_MS, RIGHT_CLICK_NATIVE_PASTE_SUPPRESS_MS, resolveSplitFontSize, adaptCodexInputBackground, recolorCodexInputBuffer } from './instance-utils';
 import {
@@ -48,16 +49,6 @@ interface TerminalInstanceProps {
   readOnly?: boolean;
   splitMode?: 'off' | '2x1' | '2x2';
 }
-
-// 半透明皮肤由 terminal-instance 外层统一绘制一次背景。xterm 画布保持透明，
-// 避免相同 rgba 在外层与画布上重复合成（例如 45% 两层叠加后视觉接近 70%）。
-const toXtermCanvasTheme = (colors: TerminalColors) => {
-  const { lightOptimized: _lightOptimized, canvasBackground, ...theme } = colors;
-  return colors.background.startsWith('rgba(')
-    ? { ...theme, background: canvasBackground ?? 'rgba(0, 0, 0, 0)' }
-    : theme;
-};
-
 
 export const TerminalInstance: FC<TerminalInstanceProps> = ({
   terminalId,
@@ -410,29 +401,12 @@ export const TerminalInstance: FC<TerminalInstanceProps> = ({
         background: '#1e1e1e',
         foreground: '#cccccc',
       };
-      const initialLightOptimized = !!initialColors.lightOptimized;
-      const initialTheme = toXtermCanvasTheme(initialColors);
       const terminal = new Terminal({
-        cursorBlink: false,
-        cursorStyle: 'block',
-        cursorInactiveStyle: 'outline',
-        cursorWidth: 1,
-        fontSize: resolveSplitFontSize(splitModeRef.current, getAppSettings()),
-        fontFamily: "'Cascadia Mono', Consolas, 'Courier New', monospace",
-        fontWeight: 'normal',
-        fontWeightBold: 'bold',
-        lineHeight: 1,
-        letterSpacing: 0,
-        scrollback: 50000,
-        theme: initialTheme,
-        allowTransparency: true,
-        // 仅跟随应用的浅色终端启用最低对比度增强；黑板/自定义终端配色保持原样
-        minimumContrastRatio: initialLightOptimized ? 4.5 : 1,
+        ...terminalAppearance(initialColors, resolveSplitFontSize(splitModeRef.current, getAppSettings())),
         allowProposedApi: true,
         disableStdin: readOnlyRef.current,
         ...(buildNumber ? { windowsPty: { backend: 'conpty' as const, buildNumber } } : {}),
         reflowCursorLine: usesVsCodeTerminal,
-        screenReaderMode: false,
       });
       void bootLog(`initTerminal[${terminalId}]: new Terminal() took ${(performance.now() - tNewTerm).toFixed(0)}ms`);
 

@@ -1,4 +1,5 @@
 import { getToken, request, socketUrl } from './browser/connection';
+import type { IndicatorLight } from '../utils/claudeIndicator';
 
 export interface MobileAiMessage {
   id: string;
@@ -18,6 +19,7 @@ export interface MobileAiSession {
   status: string;
   updatedAt: number;
   revision: number;
+  resultRevision?: number;
   messages: MobileAiMessage[];
   error?: string | null;
   pendingInputs?: Array<{ text: string; requestId: string }>;
@@ -30,6 +32,15 @@ export type MobileAiFrame =
 
 export function mobileAiRunning(status: string): boolean {
   return ['running', 'approval', 'background', 'stopping'].includes(status);
+}
+
+/** 与服务端原生会话共用状态灯的颜色和动画。 */
+export function mobileAiIndicator(status: string, resultRevision = 0): IndicatorLight {
+  if (status === 'approval') return 'attention';
+  if (status === 'error') return 'failed';
+  if (mobileAiRunning(status)) return 'running';
+  if (status === 'idle' && resultRevision > 0) return 'completed';
+  return 'presence';
 }
 
 export function mobileAiStatus(status: string): string {

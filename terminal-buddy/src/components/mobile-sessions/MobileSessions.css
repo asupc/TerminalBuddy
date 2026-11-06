@@ -1,19 +1,22 @@
-.mobile-session-list { padding: 0 6px 8px; border-bottom: 1px solid var(--border-subtle); }
-.mobile-session-heading { display: flex; align-items: center; gap: 6px; padding: 8px; color: var(--text-secondary); font-size: 12px; }
-.mobile-session-heading > span { margin-left: auto; color: var(--text-tertiary); }
-.mobile-session-row { display: flex; width: 100%; align-items: center; gap: 8px; padding: 9px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; font: inherit; }
-.mobile-session-row:hover { background: var(--list-hover-bg); }
-.mobile-session-row.active { background: var(--list-active-bg); }
-.mobile-session-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-.mobile-session-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.mobile-session-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
-.mobile-session-label > small { color: var(--text-tertiary); font-size: 10.5px; }
-.mobile-session-badge { display: inline-flex; flex-shrink: 0; padding: 1px 5px; border-radius: 4px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); font-size: 10px; line-height: 16px; white-space: nowrap; }
-.mobile-session-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--text-tertiary); }
-.mobile-session-dot.running { background: var(--accent); animation: mobile-session-pulse 1.5s ease-in-out infinite; }
-.mobile-session-dot.failed { background: #e35b65; }
-.mobile-session-error { padding: 8px; font-size: 11px; color: var(--text-secondary); white-space: normal; }
+/* 普通手机终端的来源标记与服务端原生来源标记保持相同尺寸。 */
+.mobile-session-badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.mobile-session-error {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: normal;
+}
+
 .mobile-session-tabs { display: contents; }
-.mobile-session-tabs .mobile-session-row { width: auto; min-width: 140px; max-width: 250px; flex-shrink: 0; border-radius: 0; }
-@keyframes mobile-session-pulse { 50% { opacity: .35; } }
-@media (prefers-reduced-motion: reduce) { .mobile-session-dot.running { animation: none; } }
