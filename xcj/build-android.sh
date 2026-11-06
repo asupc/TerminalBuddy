@@ -16,6 +16,9 @@
 # 每次构建自动把版本号自增一：versionName 末段 +1（如 1.0.0 → 1.0.1）、
 # versionCode 同步 +1，直接写入 android/app/build.gradle.kts（记得随
 # 代码提交）；构建失败自动回退，不消耗版本号。
+#
+# 构建结束（成功或失败）自动停止 Gradle/Kotlin 编译守护进程并清理残留
+# java 进程，保证本机构建后不留常驻 JVM。
 
 set -euo pipefail
 
@@ -71,6 +74,53 @@ if [ ! -f "$ANDROID_DIR/app/build.gradle.kts" ]; then
     echo "错误：未找到 $ANDROID_DIR/app/build.gradle.kts，请在仓库根目录运行本脚本。" >&2
     exit 1
 fi
+
+# ---------- 构建后清理 JVM ----------
+
+# 停掉 Gradle/Kotlin 守护进程，并清理仍然存活的 java 进程，保证脚本退出后
+# 本机不留常驻 JVM（守护进程合计可占数 GB 内存）。
+# 只清理属于本脚本工作范围（cwd 在本仓库 android 目录，或守护进程主类）的进程，
+# 避免误杀用户自己开着的 java 程序。
+stop_java() {
+    local dir pid cwd
+    for dir in "$ANDROID_DIR" "$REPO_ROOT"; do
+        [ -f "$dir/gradlew" ] || continue
+        # --stop 会停掉共享 GRADLE_USER_HOME 下的所有 daemon，失败不影响后续清理
+        ( cd "$dir" && ./gradlew --stop >/dev/null 2>&1 ) || true
+    done
+
+    for pid in $(pgrep -u "$(id -u)" java 2>/dev/null || true); do
+        # 进程已消失（被 --stop 正常停掉）则跳过
+        [ -d "/proc/$pid" ] || continue
+        local cmd
+        cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+        case "$cwd" in
+            "$ANDROID_DIR"|"$ANDROID_DIR"/*|"$REPO_ROOT"|"$REPO_ROOT"/*) ;;
+            *)
+                # 守护进程常把 cwd 切到 ~/.gradle/daemon 或 ~/.local/share/kotlin/daemon，
+                # 用命令行特征兜底识别，避免误杀用户自己的 java 程序
+                echo "$cmd" | grep -qE 'org\.gradle\.launcher\.daemon|org\.jetbrains\.kotlin\.daemon\.KotlinCompileDaemon|kotlin-compiler-embeddable' \
+                    || continue
+                ;;
+        esac
+        echo "==> 清理残留 java 进程 $pid（${cmd:0:80}…）"
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+
+    # 宽限 5 秒，仍存活的强制结束
+    for i in 1 2 3 4 5; do
+        sleep 1
+        [ "$(pgrep -u "$(id -u)" java 2>/dev/null | wc -l)" -gt 0 ] || break
+    done
+    for pid in $(pgrep -u "$(id -u)" java 2>/dev/null || true); do
+        [ -d "/proc/$pid" ] || continue
+        cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+        case "$cwd" in
+            "$ANDROID_DIR"|"$ANDROID_DIR"/*|"$REPO_ROOT"|"$REPO_ROOT"/*) kill -KILL "$pid" 2>/dev/null || true ;;
+        esac
+    done
+}
 
 # JDK 17+
 if command -v java >/dev/null 2>&1; then
@@ -133,6 +183,8 @@ restore_and_exit() {
             mv -f "$PROP_BAK" "$PROP_FILE"
         fi
     fi
+    # 无论成功失败都清掉 JVM，避免 Gradle/Kotlin 守护进程常驻占内存
+    stop_java
     exit "$status"
 }
 trap restore_and_exit EXIT
