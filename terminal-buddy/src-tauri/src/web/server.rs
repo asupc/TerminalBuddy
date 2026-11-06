@@ -316,8 +316,34 @@ pub fn build_router(state: AppState) -> Router {
         .merge(ai_router)
         .merge(download_router)
         .with_state(state)
+        .layer(axum::middleware::from_fn(fresh_frontend_document))
         // CORS 放最外层让 408 等错误响应也带跨域头，便于开发期排查。
         .layer(cors)
+}
+
+/// 回滚会复用旧镜像内较早的首页 mtime，不能据此返回 304 并继续使用新版首页。
+/// 首页和 SPA 路由始终返回当前入口，带内容哈希的 assets 保留原有缓存行为。
+async fn fresh_frontend_document(
+    mut request: Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path();
+    if path == "/api" || path.starts_with("/api/")
+        || path == "/ws" || path.starts_with("/ws/")
+        || path.starts_with("/assets/")
+    {
+        return next.run(request).await;
+    }
+
+    // 兼容修复前已经缓存过入口的浏览器；仅加响应头无法纠正本次错误的 304。
+    request.headers_mut().remove(axum::http::header::IF_MODIFIED_SINCE);
+    request.headers_mut().remove(axum::http::header::IF_NONE_MATCH);
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.remove(axum::http::header::LAST_MODIFIED);
+    headers.remove(axum::http::header::ETAG);
+    response
 }
 
 #[cfg(all(not(debug_assertions), feature = "desktop"))]
