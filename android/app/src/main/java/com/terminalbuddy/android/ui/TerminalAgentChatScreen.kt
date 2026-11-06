@@ -48,6 +48,9 @@ internal fun TerminalAgentChatScreen(
     val entries = remember(ui.messages) { groupAgentChatEntries(ui.messages) }
     val showingMessages = session != null && !ui.closed && !ui.starting && session.mirror.available
     val conversationId = "${session?.terminalId}:${session?.sessionId}:${session?.revision}"
+    // 滚动位置不随镜像换代（revision 变化）重置：rotated 只整体替换消息内容，
+    // 列表状态归零会把视口拽回顶部并触发跟随滚动，用户的历史浏览位置也被丢弃。
+    val scrollIdentity = "${session?.terminalId}:${session?.sessionId}"
     val lastMessage = ui.messages.lastOrNull()
     val assistantOutput = lastMessage?.let { it.role == "assistant" && it.text.isNotBlank() } == true
     val waitingForDecision = session?.phase == "attention" || (session?.pendingDecisionCount ?: 0) > 0
@@ -73,7 +76,7 @@ internal fun TerminalAgentChatScreen(
     val elapsedSeconds = rememberAiReplyElapsedSeconds(conversationId, requestId, requestAt, showReplyIndicator)
     val entryCount = entries.size + ui.queuedReplies.size + (if (showReplyIndicator) 1 else 0) +
         (if (ui.sending) 1 else 0) + (if (ui.pendingReply != null) 1 else 0)
-    val scroll = rememberAiConversationScroll(conversationId, showingMessages && !ui.loadingMessages, entryCount)
+    val scroll = rememberAiConversationScroll(scrollIdentity, showingMessages && !ui.loadingMessages, entryCount)
     // edge-to-edge 下 adjustResize 不生效：底部同时避让系统导航栏与软键盘（取两者最大值），
     // 输入框不会在键盘弹起时被遮住，键盘收起后也不会压到手势导航条。
     Column(

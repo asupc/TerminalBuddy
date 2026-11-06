@@ -23,8 +23,8 @@ android {
         applicationId = "com.terminalbuddy.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1096
-        versionName = "1.0.17"
+        versionCode = 1099
+        versionName = "1.0.20"
     }
     signingConfigs {
         if (releaseKeystoreFile.isFile) {

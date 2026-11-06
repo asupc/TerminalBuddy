@@ -190,7 +190,9 @@ internal fun rememberAiConversationScroll(sessionId: String, ready: Boolean, ent
                             val lastIndex = layout.totalItemsCount - 1
                             val bottom = layout.visibleItemsInfo.lastOrNull()?.takeIf { it.index == lastIndex }
                             if (bottom == null) {
-                                list.animateScrollToItem(lastIndex)
+                                // 底部锚点整项不可见说明视口离最新内容超过一屏（打开会话或
+                                // 内容整体替换）：直接对齐底部，不播放贯穿全部历史的长滚动动画。
+                                list.scrollToItem(lastIndex)
                             } else {
                                 val distance = (bottom.offset + bottom.size + layout.afterContentPadding - layout.viewportEndOffset).coerceAtLeast(1)
                                 list.animateScrollBy(distance.toFloat(), tween(220, easing = LinearOutSlowInEasing))
