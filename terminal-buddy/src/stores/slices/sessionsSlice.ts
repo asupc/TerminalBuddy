@@ -125,8 +125,8 @@ export const createSessionsSlice = (
 			}
 			return {
 				sessions,
-				activeSessionId: keepActive ? (state.activeSessionId ?? s.id) : s.id,
-				activeSpecialTab: keepActive ? state.activeSpecialTab : null,
+				activeSessionId: keepActive ? state.activeSessionId : s.id,
+				activeSpecialTab: null,
 			};
 		}),
 	resolveStartingSession: (startingId, terminalId) => {

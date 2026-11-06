@@ -213,9 +213,7 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
                   })()}
                 </span>
                 )}
-                {childSession?.creator === 'mobile' ? (
-                  <span className="mobile-session-badge" title="由手机创建的会话">移动端</span>
-                ) : childSession?.owner === 'web' && !isDockerClient() && <span className="tab-nav-owner-badge">Web</span>}
+                {(child.data as any)?.owner === 'web' && !isDockerClient() && <span className="tab-nav-owner-badge">Web</span>}
                 {(child.data as any)?.owner !== 'web' && terminalWebTakeovers[child.id] && (
                   <span className="tab-nav-takeover-badge" title="当前终端正在被 Web 端接管">接管中</span>
                 )}
