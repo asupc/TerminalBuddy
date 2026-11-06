@@ -1365,7 +1365,11 @@ fn build_session_meta(
         .as_ref()
         .map(|entry| MirrorStatus { available: entry.available, reason: entry.reason.clone() })
         .unwrap_or(MirrorStatus { available: true, reason: None });
-    let transcript_path = entry.as_ref().and_then(|entry| entry.path.clone());
+    // 尚未打开过镜像的会话也有发现链定位的转录路径，列表据此取得真实活动时间。
+    let transcript_path = entry
+        .as_ref()
+        .and_then(|entry| entry.path.clone())
+        .or_else(|| record.session_file.as_ref().map(std::path::PathBuf::from));
     let session = TerminalAgentSession {
         terminal_id: info.id.clone(),
         profile_name: info.profile_name.clone(),
