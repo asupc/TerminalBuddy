@@ -50,11 +50,7 @@ internal fun AiUsageCard(
 }
 
 @Composable
-internal fun AiUsageSheet(
-    session: AiSession, modelLabel: String, effortLabel: String,
-    unavailableMessage: String = "当前会话暂无用量统计。收到模型用量后会自动显示。",
-    dismiss: () -> Unit,
-) {
+internal fun AiUsageSheet(session: AiSession, modelLabel: String, effortLabel: String, dismiss: () -> Unit) {
     val usage = session.usage
     AiSheet("上下文与 Token", dismiss) {
         SelectionContainer(
@@ -70,7 +66,7 @@ internal fun AiUsageSheet(
                     )
                 }
                 if (usage == null) {
-                    Text(unavailableMessage, color = TbColors.TextMuted)
+                    Text("当前会话暂无用量统计。收到模型用量后会自动显示。", color = TbColors.TextMuted)
                 } else {
                     val context = usage.context
                     UsageSection("当前上下文") {
