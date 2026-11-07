@@ -8,8 +8,9 @@ import {
   startBlankTerminal,
   startTerminal,
   writeToTerminal,
+  aiSessionList,
 } from './tauri';
-import { loadSavedTabs, saveTabsToStorage, useAppStore } from '../stores/appStore';
+import { loadSavedTabs, saveTabsToStorage, useAppStore, type NativeAgentTab, type SavedNativeAgentTab } from '../stores/appStore';
 import { flushPendingSaveTabsIfAny } from '../stores/slices/sessionsSlice';
 import { getAppSettings, isAppSettingsInitialized } from '../utils/settings';
 import { containsClaudeRef, isClaudeCommand } from '../utils/claudeLaunch';
@@ -416,9 +417,52 @@ export function scheduleBrowserResync(options: BrowserResyncOptions = {}): void 
   });
 }
 
+/**
+ * 恢复原生会话标签：刷新页面或重启后按会话 ID 重新打开聊天页。
+ * 用服务端快照刷新标题/状态，并剔除已被删除的会话；服务端不可达时按保存值恢复。
+ */
+async function restoreNativeAgentTabs(saved: SavedNativeAgentTab[], activeKey: string | null): Promise<void> {
+  if (saved.length === 0) return;
+  // 已有运行中的聊天标签（例如 web-resync 重入）时不再覆盖。
+  if (useAppStore.getState().agentTabs.some(tab => tab.shape === 'native')) return;
+  const live = await aiSessionList().catch(() => null);
+  const restored: NativeAgentTab[] = (live
+    ? saved.filter(tab => live.some(session => session.id === tab.sessionId))
+    : saved
+  ).map(tab => {
+    const fresh = live?.find(session => session.id === tab.sessionId);
+    return {
+      ...tab,
+      shape: 'native',
+      title: fresh?.title || tab.title,
+      provider: fresh ? (fresh.provider === 'codex' ? 'codex' : 'claude') : tab.provider,
+      projectPath: fresh?.projectPath || tab.projectPath,
+      model: fresh?.model ?? tab.model,
+      status: fresh?.status,
+    };
+  });
+  if (restored.length === 0) return;
+  useAppStore.setState({
+    agentTabs: restored,
+    activeAgentTabKey: activeKey && restored.some(tab => tab.key === activeKey) ? activeKey : null,
+  });
+}
+
+/** 只恢复原生会话标签（不涉及终端 PTY），用于关闭「启动恢复页签」时仍保留聊天页签。 */
+export async function restoreAgentChatTabs(): Promise<void> {
+  const { agentTabs, activeAgentTabKey, agentChatActive } = await loadSavedTabs();
+  await restoreNativeAgentTabs(agentTabs, activeAgentTabKey);
+  if (agentChatActive && activeAgentTabKey) {
+    const store = useAppStore.getState();
+    if (store.agentTabs.some(tab => tab.key === activeAgentTabKey)) store.setActiveAgentTab(activeAgentTabKey);
+  }
+}
+
 /** 恢复上次保存的页签：活动页签优先，其余并发池恢复，完成后统一落盘。 */
 export async function restoreTabs() {
-  const { tabs, activeIndex } = await loadSavedTabs();
+  const { tabs, activeIndex, agentTabs: savedAgentTabs, activeAgentTabKey, agentChatActive } = await loadSavedTabs();
+  // 先恢复聊天标签：终端恢复流程结尾会落盘，若此时 agentTabs 还是空，会把保存的聊天标签覆盖掉。
+  await restoreNativeAgentTabs(savedAgentTabs, activeAgentTabKey);
   if (isBrowserClient()) {
     // 每次页面加载都恢复 editor 页签（幂等）；终端页签只在服务端重启后重建。
     for (const tab of tabs) {
@@ -426,9 +470,18 @@ export async function restoreTabs() {
     }
     await ensureBrowserSessionsRestored();
     await reconcileBackendSessions();
-    return;
+  } else {
+    await restoreSavedTabs(tabs, activeIndex);
   }
-  await restoreSavedTabs(tabs, activeIndex);
+  // 终端恢复会把 activeSpecialTab 归零；保存时正在看原生会话则最后切回去并落盘。
+  if (agentChatActive && activeAgentTabKey) {
+    const store = useAppStore.getState();
+    if (store.agentTabs.some(tab => tab.key === activeAgentTabKey)) {
+      store.setActiveAgentTab(activeAgentTabKey);
+      const state = useAppStore.getState();
+      void saveTabsToStorage(state.sessions, state.activeSessionId);
+    }
+  }
 }
 
 /**

@@ -3,7 +3,7 @@ import { getTaskLaunchInfo } from '../../utils/taskLaunchInfo';
 import { SessionTaskLabel } from './SessionTaskLabel';
 import { FC } from 'react';
 import { ChevronRight, Folder, FolderOpen, X } from 'lucide-react';
-import { useAppStore } from '../../stores/appStore';
+import { useAppStore, type NativeAgentTab } from '../../stores/appStore';
 import { formatDuration } from '../../utils/formatDuration';
 import { isDockerClient } from '../../services/platform';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName, type IndicatorLight } from '../../utils/claudeIndicator';
@@ -15,7 +15,7 @@ interface SessionTreeItemProps {
   depth: number;
   collapsedGroups: Set<string>;
   onToggleCollapse: (id: string) => void;
-  onCloseGroup: (groupName: string, groupSessions: TerminalSession[]) => void;
+  onCloseGroup: (groupName: string, groupSessions: TerminalSession[], groupAgentKeys: string[]) => void;
   renamingSessionId: string | null;
   renameValue: string;
   onRenameValueChange: (value: string) => void;
@@ -25,6 +25,12 @@ interface SessionTreeItemProps {
   onCloseSession: (sessionId: string) => void;
   onContextMenu: (e: React.MouseEvent, sessionId: string) => void;
 }
+
+/** 原生 AI 会话标签的叶子数据；与终端会话共用项目分组。 */
+interface AgentLeafData { kind: 'agent'; tab: NativeAgentTab }
+const agentLeafData = (data: unknown): AgentLeafData | undefined => (
+  (data as AgentLeafData | undefined)?.kind === 'agent' ? data as AgentLeafData : undefined
+);
 
 /** 会话树递归渲染：分组节点 + 终端/编辑器叶子（含重命名输入 UI 与徽章）。 */
 export const SessionTreeItem: FC<SessionTreeItemProps> = ({
@@ -49,6 +55,8 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
   const terminalActivities = useAppStore(s => s.terminalActivities);
   const terminalWebTakeovers = useAppStore(s => s.terminalWebTakeovers);
+  const agentTabs = useAppStore(s => s.agentTabs);
+  const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
 
   if (!item.isGroup && !item.children?.length) return null;
   const indent = 8 + depth * 12;
@@ -56,24 +64,25 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
 
   const renderGroupEnd = (groupItem: TreeItem) => {
     if (!groupItem.isGroup || !groupItem.children) return null;
-    // Recursively collect all session IDs from this group and its sub-groups
-    const collectSessionIds = (treeItem: TreeItem): string[] => {
+    // Recursively collect all leaf IDs from this group and its sub-groups
+    const collectLeafIds = (treeItem: TreeItem): string[] => {
       const ids: string[] = [];
       if (!treeItem.isGroup && treeItem.id) ids.push(treeItem.id);
       for (const child of (treeItem.children || [])) {
-        ids.push(...collectSessionIds(child));
+        ids.push(...collectLeafIds(child));
       }
       return ids;
     };
-    const allSessionIds = collectSessionIds(groupItem);
-    const groupSessions = sessions.filter(s => allSessionIds.includes(s.id));
+    const allLeafIds = collectLeafIds(groupItem);
+    const groupSessions = sessions.filter(s => allLeafIds.includes(s.id));
+    const groupAgentKeys = agentTabs.filter(tab => tab.shape === 'native' && allLeafIds.includes(tab.key)).map(tab => tab.key);
     return (
       <span className="tree-item-end">
-        <span className="tree-item-count">{groupSessions.length}</span>
+        <span className="tree-item-count">{groupSessions.length + groupAgentKeys.length}</span>
         <button
           className="tree-item-close"
-          onClick={(e) => { e.stopPropagation(); onCloseGroup(groupItem.id, groupSessions); }}
-          title="关闭分组内所有终端"
+          onClick={(e) => { e.stopPropagation(); onCloseGroup(groupItem.id, groupSessions, groupAgentKeys); }}
+          title="关闭分组内所有标签"
         >
           <X aria-hidden="true" />
         </button>
@@ -140,6 +149,40 @@ export const SessionTreeItem: FC<SessionTreeItemProps> = ({
               onCloseSession={onCloseSession}
               onContextMenu={onContextMenu}
             />
+          );
+        }
+        // Leaf node: 原生 AI 会话标签（与终端同组，点击打开聊天页）
+        const agentLeaf = agentLeafData(child.data);
+        if (agentLeaf) {
+          const tab = agentLeaf.tab;
+          const active = activeSpecialTab === 'agent-chat' && activeAgentTabKey === tab.key;
+          return (
+            <div
+              key={child.id}
+              className={`tree-item tab-nav-item${active ? ' active' : ''}`}
+              style={{ paddingLeft: `${indent + 12}px` }}
+              title={`${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`}
+              onMouseDown={() => { useAppStore.getState().setLastClickRegion('tab'); }}
+              onClick={() => {
+                const store = useAppStore.getState();
+                store.setLastClickRegion('tab');
+                store.setActiveAgentTab(tab.key);
+              }}
+              onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useAppStore.getState().closeAgentTab(tab.key); } }}
+            >
+              {child.icon}
+              <span className="tree-name" title={tab.title}>{tab.title}</span>
+              <span className="tab-nav-agent-chip">{tab.provider === 'codex' ? 'Codex' : 'Claude'}</span>
+              <span className="tree-item-end">
+                <button
+                  className="tree-item-close"
+                  onClick={(e) => { e.stopPropagation(); useAppStore.getState().closeAgentTab(tab.key); }}
+                  title="关闭"
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </span>
+            </div>
           );
         }
         // Leaf node: session

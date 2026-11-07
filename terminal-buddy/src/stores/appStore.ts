@@ -8,6 +8,7 @@ import { createTabsSlice } from "./slices/tabsSlice";
 import { createTransfersSlice } from "./slices/transfersSlice";
 import { createWindowSlice } from "./slices/windowSlice";
 import { createClaudeLaunchSlice } from "./slices/claudeLaunchSlice";
+import { createAgentChatSlice } from "./slices/agentChatSlice";
 import type { CodexProviderState, LlmLaunchTarget } from "../services/tauri";
 
 interface SavedTab {
@@ -50,9 +51,49 @@ export interface ClaudeReplayTab {
 	focusSeq?: number;
 }
 
+/** 会话式聊天的两种形态：原生会话（独立 CLI 进程）与终端接力（镜像终端里的 Agent）。 */
+export type AgentTabShape = 'native' | 'relay';
+
+export interface NativeAgentTab {
+	key: string;
+	shape: 'native';
+	sessionId: string;
+	title: string;
+	provider: 'claude' | 'codex';
+	projectPath: string;
+	model?: string | null;
+	status?: string;
+	openedAt: number;
+}
+
+export interface RelayAgentTab {
+	key: string;
+	shape: 'relay';
+	terminalId: string;
+	title: string;
+	provider?: 'claude' | 'codex';
+	openedAt: number;
+}
+
+export type AgentTab = NativeAgentTab | RelayAgentTab;
+
+/** 持久化的原生会话标签：只存恢复所需的最小元数据，标题/状态在恢复时用服务端快照刷新。 */
+export interface SavedNativeAgentTab {
+	key: string;
+	sessionId: string;
+	title: string;
+	provider: 'claude' | 'codex';
+	projectPath: string;
+	model?: string | null;
+	openedAt: number;
+}
+
+export const nativeAgentTabKey = (sessionId: string) => `agent:${sessionId}`;
+export const relayAgentTabKey = (terminalId: string) => `relay:${terminalId}`;
+
 export { sessionReplayTabKey } from '../utils/sessionHistory';
 
-export type WorkspaceSpecialTab = "git-history" | "claude-replay" | null;
+export type WorkspaceSpecialTab = "git-history" | "claude-replay" | "agent-chat" | null;
 
 export type TerminalRuntimeKind = "shell" | "claude";
 export type TerminalActivityPhase = "idle" | "running" | "attention" | "completed" | "failed";
@@ -110,9 +151,22 @@ export function saveTabsToStorage(sessions: TerminalSession[], activeSessionId: 
 		}));
 		const resolvedActiveIndex = activeSessionId ? persistedSessions.findIndex((s) => s.id === activeSessionId) : -1;
 		const activeIndex = resolvedActiveIndex >= 0 ? resolvedActiveIndex : 0;
+		// 原生会话标签不依赖后端 PTY，刷新页面后按会话 ID 重新打开聊天页；
+		// 终端接力标签跟着终端恢复，不单独持久化。
+		const state = useAppStore.getState();
+		const agentTabs: SavedNativeAgentTab[] = state.agentTabs
+			.filter((tab): tab is NativeAgentTab => tab.shape === "native")
+			.map(({ key, sessionId, title, provider, projectPath, model, openedAt }) => ({
+				key, sessionId, title, provider, projectPath, model, openedAt,
+			}));
+		const agentViewActive = state.activeSpecialTab === "agent-chat" && state.activeAgentTabKey != null;
+		const activeAgentTabKey = state.activeAgentTabKey && agentTabs.some(tab => tab.key === state.activeAgentTabKey)
+			? state.activeAgentTabKey : null;
 		// 保存失败必须留痕：静默吞掉会让「重启后标签丢了」无从排查。
 		// 返回 Promise 让退出流程可以 await，避免 invoke 未 settle 进程就退出。
-		return writeClientData("saved_tabs", JSON.stringify({ tabs, activeIndex })).catch((error) => {
+		return writeClientData("saved_tabs", JSON.stringify({
+			tabs, activeIndex, agentTabs, activeAgentTabKey, agentChatActive: agentViewActive,
+		})).catch((error) => {
 			console.error("Failed to save tabs:", error);
 		});
 	} catch (error) {
@@ -180,14 +234,20 @@ function normalizeSavedTab(raw: unknown): SavedTab | null {
 	};
 }
 
-export async function loadSavedTabs(): Promise<{ tabs: SavedTab[]; activeIndex: number }> {
+export async function loadSavedTabs(): Promise<{
+	tabs: SavedTab[];
+	activeIndex: number;
+	agentTabs: SavedNativeAgentTab[];
+	activeAgentTabKey: string | null;
+	agentChatActive: boolean;
+}> {
 	try {
 		const raw = await readClientData("saved_tabs");
 		if (raw) {
 			const data = JSON.parse(raw);
 			// 根值必须是对象；tabs 必须是数组；逐条校验归一化
 			if (typeof data !== "object" || data === null || !Array.isArray(data.tabs)) {
-				return { tabs: [], activeIndex: 0 };
+				return { tabs: [], activeIndex: 0, agentTabs: [], activeAgentTabKey: null, agentChatActive: false };
 			}
 			const tabs = data.tabs
 				.map(normalizeSavedTab)
@@ -198,12 +258,35 @@ export async function loadSavedTabs(): Promise<{ tabs: SavedTab[]; activeIndex: 
 				typeof rawActiveIndex === "number" && Number.isFinite(rawActiveIndex) && Number.isInteger(rawActiveIndex)
 					? Math.min(Math.max(rawActiveIndex, 0), Math.max(tabs.length - 1, 0))
 					: 0;
-			return { tabs, activeIndex };
+			const agentTabs: SavedNativeAgentTab[] = (Array.isArray(data.agentTabs) ? data.agentTabs as unknown[] : [])
+				.map(normalizeSavedAgentTab)
+				.filter((tab): tab is SavedNativeAgentTab => tab !== null);
+			const activeAgentTabKey = typeof data.activeAgentTabKey === "string"
+				&& agentTabs.some(tab => tab.key === data.activeAgentTabKey)
+				? data.activeAgentTabKey : null;
+			return { tabs, activeIndex, agentTabs, activeAgentTabKey, agentChatActive: data.agentChatActive === true && activeAgentTabKey != null };
 		}
 	} catch (error) {
 		console.error("Failed to load saved tabs:", error);
 	}
-	return { tabs: [], activeIndex: 0 };
+	return { tabs: [], activeIndex: 0, agentTabs: [], activeAgentTabKey: null, agentChatActive: false };
+}
+
+/** 原生会话标签的持久化数据校验：会话 ID 是唯一恢复锚点，其余字段给安全默认值。 */
+function normalizeSavedAgentTab(raw: unknown): SavedNativeAgentTab | null {
+	if (typeof raw !== "object" || raw === null) return null;
+	const tab = raw as Record<string, unknown>;
+	const sessionId = typeof tab.sessionId === "string" ? tab.sessionId : "";
+	if (!sessionId) return null;
+	return {
+		key: typeof tab.key === "string" && tab.key ? tab.key : nativeAgentTabKey(sessionId),
+		sessionId,
+		title: typeof tab.title === "string" && tab.title ? tab.title : "新对话",
+		provider: tab.provider === "codex" ? "codex" : "claude",
+		projectPath: typeof tab.projectPath === "string" ? tab.projectPath : "",
+		model: typeof tab.model === "string" ? tab.model : null,
+		openedAt: typeof tab.openedAt === "number" && Number.isFinite(tab.openedAt) ? tab.openedAt : Date.now(),
+	};
 }
 
 export async function initExtraParamPresets() {
@@ -290,6 +373,14 @@ export interface AppState {
 	closeClaudeReplayTab: (sessionId?: string, provider?: SessionHistoryProvider) => void;
 	activeSpecialTab: WorkspaceSpecialTab;
 	setActiveSpecialTab: (tab: WorkspaceSpecialTab) => void;
+
+	// 会话式聊天标签（原生会话 / 终端接力）
+	agentTabs: AgentTab[];
+	activeAgentTabKey: string | null;
+	openAgentTab: (tab: AgentTab) => void;
+	closeAgentTab: (key: string) => void;
+	updateAgentTab: (key: string, patch: Partial<NativeAgentTab> & Partial<RelayAgentTab>) => void;
+	setActiveAgentTab: (key: string) => void;
 
 	// File exclusion patterns
 	exclusionPatterns: string[];
@@ -456,6 +547,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 	...createTransfersSlice(set),
 	...createWindowSlice(set),
 	...createClaudeLaunchSlice(set),
+	...createAgentChatSlice(set, get),
 }) as AppState);
 
 // Listen for app-settings-changed events and increment version to trigger re-renders

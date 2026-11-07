@@ -35,6 +35,7 @@ const TerminalInstance = lazy(() => import('./TerminalInstance').then(m => ({ de
 const TextEditor = lazy(() => import('../text-editor/TextEditor').then(m => ({ default: m.TextEditor })));
 const GitHistoryPage = lazy(() => import('../git/GitHistoryPage').then(m => ({ default: m.GitHistoryPage })));
 const ClaudeReplayPage = lazy(() => import('../claude-history/ReplayPage').then(m => ({ default: m.ReplayPage })));
+const AgentChatPage = lazy(() => import('../agent-chat/AgentChatPage').then(m => ({ default: m.AgentChatPage })));
 
 export const TerminalPanel: FC = () => {
   const sessions = useAppStore(s => s.sessions);
@@ -44,6 +45,8 @@ export const TerminalPanel: FC = () => {
   const claudeReplayTab = useAppStore(s => s.claudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
+  const agentTabs = useAppStore(s => s.agentTabs);
+  const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
   const updateSession = useAppStore(s => s.updateSession);
   const profiles = useAppStore(s => s.profiles);
   const splitMode = useAppStore(s => s.splitMode);
@@ -241,7 +244,7 @@ export const TerminalPanel: FC = () => {
   };
 
   const renderTerminalContent = () => {
-    if (splitMode === 'off' && sessions.length === 0) {
+    if (splitMode === 'off' && sessions.length === 0 && !gitHistoryTab && !claudeReplayTab && agentTabs.length === 0) {
       return (
         <div className="terminal-empty">
           <SquareTerminal className="empty-icon" aria-hidden="true" />
@@ -289,7 +292,7 @@ export const TerminalPanel: FC = () => {
 
   return (
     <div className="terminal-panel">
-      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || claudeReplayTab) && (
+      {!settings.enableTabNavigation && (sessions.length > 0 || gitHistoryTab || claudeReplayTab || agentTabs.length > 0) && (
         <TerminalTabBar />
       )}
       <div className={`terminal-content${splitMode !== 'off' ? ` split-grid split-${splitMode}` : ''}`}>
@@ -315,6 +318,17 @@ export const TerminalPanel: FC = () => {
             </Suspense>
           </div>
         )}
+        {activeSpecialTab === 'agent-chat' && (() => {
+          const activeTab = agentTabs.find(tab => tab.key === activeAgentTabKey);
+          if (!activeTab) return null;
+          return (
+            <div className="git-history-tab-content agent-chat-tab-content">
+              <Suspense fallback={<div className="lazy-panel-loading">加载会话…</div>}>
+                <AgentChatPage key={activeTab.key} tab={activeTab} />
+              </Suspense>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

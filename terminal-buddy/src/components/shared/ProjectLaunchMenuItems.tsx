@@ -1,6 +1,8 @@
-import { FC, useEffect } from 'react';
+import { FC, useEffect, useState } from 'react';
 import { useAppStore } from '../../stores/appStore';
-import { openProjectAgentTerminal, openTerminalInDir } from '../../utils/openTerminalInDir';
+import { openTerminalInDir } from '../../utils/openTerminalInDir';
+import { openNewAgentSession, openExistingAgentSession } from '../../utils/openAgentChat';
+import { aiSessionList, type AiSession } from '../../services/tauri';
 import { matchingProjectPresets } from '../../utils/startupPresets';
 import { projectModelSources, type Project } from '../../types';
 import { useAgentAvailability } from '../../hooks/useAgentAvailability';
@@ -12,6 +14,15 @@ interface ProjectLaunchMenuItemsProps {
   /** 任一启动项被点击后的回调，外层负责关闭菜单。 */
   onLaunched: () => void;
 }
+
+// 项目菜单悬停会频繁挂载本组件：会话列表短时缓存，避免每次都读一遍 AiSessions。
+let recentSessionsCache: { at: number; sessions: AiSession[] } | null = null;
+const loadRecentSessions = async (): Promise<AiSession[]> => {
+  if (recentSessionsCache && Date.now() - recentSessionsCache.at < 30_000) return recentSessionsCache.sessions;
+  const sessions = await aiSessionList();
+  recentSessionsCache = { at: Date.now(), sessions };
+  return sessions;
+};
 
 /**
  * 项目右键菜单的「启动」区：命令行 / 启动参数预设 / Claude·Codex 模型。
@@ -33,6 +44,21 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
     if (!state.codexProviderState) void refreshCodexLaunchTargets();
   }, [refreshClaudeLaunchTargets, refreshCodexLaunchTargets]);
 
+  // 该项目最近的原生会话：关闭聊天标签后可从这里重新打开。
+  const [recentSessions, setRecentSessions] = useState<AiSession[]>([]);
+  useEffect(() => {
+    let disposed = false;
+    const normalize = (path: string) => path.replace(/[\\/]+$/, '').toLowerCase();
+    loadRecentSessions().then(list => {
+      if (disposed) return;
+      setRecentSessions(list
+        .filter(item => normalize(item.projectPath) === normalize(project.path))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 3));
+    }).catch(() => {});
+    return () => { disposed = true; };
+  }, [project.path]);
+
   const gotoProvidersSettings = (source: 'claude' | 'codex') => {
     useAppStore.getState().setProviderSettingsTab(source);
     useAppStore.getState().openSettingsDialog('llm-providers');
@@ -41,6 +67,14 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
 
   return (
     <>
+      {recentSessions.map(session => (
+        <div key={session.id} className="context-menu-item" onClick={() => {
+          onLaunched();
+          openExistingAgentSession(session);
+        }}>
+          AI 会话<span className="config-nav-preset-chip">{session.title}</span>
+        </div>
+      ))}
       <div className="context-menu-item" onClick={() => {
         onLaunched();
         void openTerminalInDir(project.path, { groupName: project.name }).catch(console.error);
@@ -74,7 +108,11 @@ export const ProjectLaunchMenuItems: FC<ProjectLaunchMenuItemsProps> = ({ projec
           title={source === 'claude' ? 'Claude 模型' : 'Codex 模型'}
           onPickModel={(providerId, modelId) => {
             onLaunched();
-            void openProjectAgentTerminal(project, source, providerId, modelId);
+            // 新会话形态由设置决定：原生会话（默认）直接开聊天标签，终端接力沿用终端启动。
+            // 创建失败必须提示（如供应商被删、服务端未就绪），否则点击后毫无反馈。
+            void openNewAgentSession(project, source, providerId, modelId).catch(error => {
+              useAppStore.getState().showToast(`创建 AI 会话失败：${String(error)}`, 'error');
+            });
           }}
           onGotoProviders={() => gotoProvidersSettings(source)}
         />

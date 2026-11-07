@@ -1,11 +1,11 @@
 import { terminalTabTitle, useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { FC, useState, useEffect, useCallback, useRef } from 'react';
-import { FileText, GitBranch, History, X } from 'lucide-react';
-import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
-import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation } from '../../services/tauri';
+import { FileText, GitBranch, History, SquareTerminal, X } from 'lucide-react';
+import { isTerminalWorking, useAppStore, sessionReplayTabKey, relayAgentTabKey } from '../../stores/appStore';
+import { closeTerminal as closeTerminalCmd, saveEnableTabNavigation, terminalAgentList, type TerminalAgentSession } from '../../services/tauri';
 import { getAppSettings, saveAppSettings } from '../../utils/settings';
 import { getIndicatorLight, getIndicatorColor, getIndicatorTitle, getIndicatorClassName } from '../../utils/claudeIndicator';
-import { parseClaudeRef } from '../../utils/claudeLaunch';
+import { AgentIcon } from '../agent-chat/AgentIcon';import { parseClaudeRef } from '../../utils/claudeLaunch';
 import { parseCodexRef } from '../../utils/codexLaunch';
 import { isDockerClient } from '../../services/platform';
 import { ConfirmDialog } from '../shared/Dialog';
@@ -30,7 +30,28 @@ export const TerminalTabBar: FC = () => {
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
+  const agentTabs = useAppStore(s => s.agentTabs);
+  const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
+  const closeAgentTab = useAppStore(s => s.closeAgentTab);
+  const setActiveAgentTab = useAppStore(s => s.setActiveAgentTab);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
+  // 终端里可接力的 Agent 会话（右键打开菜单时刷新）。
+  const [agentSessions, setAgentSessions] = useState<Record<string, TerminalAgentSession>>({});
+  const openAgentChat = (terminalId: string) => {
+    const info = agentSessions[terminalId];
+    if (!info) return;
+    const store = useAppStore.getState();
+    const key = relayAgentTabKey(terminalId);
+    store.openAgentTab({
+      key,
+      shape: 'relay',
+      terminalId,
+      title: info.title || info.profileName || 'Agent 会话',
+      provider: info.provider === 'codex' ? 'codex' : 'claude',
+      openedAt: Date.now(),
+    });
+    store.setActiveAgentTab(key);
+  };
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   // 打开重命名时的初始值：未改动就不落库，避免把摘要原样固化成名称
@@ -237,6 +258,9 @@ export const TerminalTabBar: FC = () => {
           onContextMenu={(e) => {
             e.preventDefault();
             setContextMenu({ x: e.clientX, y: e.clientY, sessionId: session.id });
+            void terminalAgentList()
+              .then(list => setAgentSessions(Object.fromEntries(list.map(item => [item.terminalId, item]))))
+              .catch(() => {});
           }}
         >
           {session.sessionType === 'editor' ? (
@@ -320,6 +344,33 @@ export const TerminalTabBar: FC = () => {
           ><X aria-hidden="true" /></button>
         </div>
       ))}
+      {agentTabs.map(tab => (
+        <div
+          key={tab.key}
+          className={`terminal-tab ${activeSpecialTab === 'agent-chat' && activeAgentTabKey === tab.key ? 'active' : ''}`}
+          onClick={() => setActiveAgentTab(tab.key)}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              closeAgentTab(tab.key);
+            }
+          }}
+          onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+          title={tab.shape === 'native'
+            ? `${tab.provider === 'codex' ? 'Codex' : 'Claude Code'} · ${tab.title}`
+            : `终端接力 · ${tab.title}`}
+        >
+          {tab.shape === 'native'
+            ? <AgentIcon provider={tab.provider} className="terminal-tab-history-icon" />
+            : <SquareTerminal className="terminal-tab-history-icon" aria-hidden="true" />}
+          <span className="terminal-tab-agent-badge">
+            {tab.shape === 'native' ? (tab.provider === 'codex' ? 'CODEX' : 'CLAUDE') : 'AGENT'}
+          </span>
+          <span className="terminal-tab-name">{tab.title}</span>
+          <button className="terminal-tab-close" onClick={event => { event.stopPropagation(); closeAgentTab(tab.key); }}
+            title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>
+        </div>
+      ))}
       {gitHistoryTab && (
         <div
           className={`terminal-tab ${activeSpecialTab === 'git-history' ? 'active' : ''}`}
@@ -346,7 +397,6 @@ export const TerminalTabBar: FC = () => {
           ><X aria-hidden="true" /></button>
         </div>
       )}
-      {claudeReplayTabs.length > 0 && <span className="terminal-replay-group-label">会话详情</span>}
       {claudeReplayTabs.map(tab => (
         <div key={sessionReplayTabKey(tab)} className={`terminal-tab ${activeSpecialTab === 'claude-replay' && claudeReplayTab && sessionReplayTabKey(claudeReplayTab) === sessionReplayTabKey(tab) ? 'active' : ''}`}
           onClick={() => openClaudeReplayTab(tab)}
@@ -380,6 +430,12 @@ export const TerminalTabBar: FC = () => {
               }
               setContextMenu(null);
             }}>重命名</div>
+            {agentSessions[contextMenu.sessionId] && (
+              <div className="context-menu-item" onClick={() => {
+                openAgentChat(contextMenu.sessionId);
+                setContextMenu(null);
+              }}>查看 Agent 对话</div>
+            )}
             <div
               className={`context-menu-item ${sessionIdx(contextMenu.sessionId) <= 0 ? 'disabled' : ''}`}
               onClick={() => {

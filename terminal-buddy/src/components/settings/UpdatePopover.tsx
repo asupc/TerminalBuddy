@@ -8,6 +8,8 @@ import { formatRelativeTime } from '../../utils/format';
 import './UpdatePopover.css';
 
 const md = new MarkdownIt({ html: false, linkify: true });
+// `.md` 是有效顶级域名，模糊链接会把 CHANGELOG.md 之类的文件名误识别成网址。
+md.linkify.set({ fuzzyLink: false });
 
 export type UpdateCheckStatus = 'idle' | 'checking' | 'up-to-date' | 'has-update';
 

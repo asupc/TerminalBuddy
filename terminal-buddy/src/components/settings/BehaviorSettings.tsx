@@ -1,6 +1,7 @@
 import { FC, useEffect, useState } from 'react';
 import { isBrowserClient } from '../../services/platform';
-import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, getDefaultTerminalStatus, setDefaultTerminalEnabled, type VsCodeTerminalSupport, type DefaultTerminalStatus } from '../../services/tauri';
+import { saveCloseBehavior, saveEnableTabNavigation, saveSingleInstance, saveLaunchAtLogin, saveLaunchWindowMode, saveTerminalLoadingMode, saveNativeChatSessions, getDefaultTerminalStatus, setDefaultTerminalEnabled, getWebApiStatus, type VsCodeTerminalSupport, type DefaultTerminalStatus } from '../../services/tauri';
+import { useAppStore } from '../../stores/appStore';
 import { showAlert } from '../../services/dialog';
 import { type AppSettings } from '../../utils/settings';
 
@@ -14,8 +15,11 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
   const vsCodeAvailable = vsCodeSupport?.available === true;
   // 默认终端状态自管（不进 localStorage 镜像）：注册表是唯一权威来源。
   const [defaultTerminal, setDefaultTerminal] = useState<DefaultTerminalStatus | null>(null);
+  // Web API 默认开启，但没有密码时 HTTP 服务不会启动：首次使用给出明确引导。
+  const [webApiStatus, setWebApiStatus] = useState<{ enabled: boolean; hasPassword: boolean } | null>(null);
   useEffect(() => {
     getDefaultTerminalStatus().then(setDefaultTerminal).catch(console.error);
+    getWebApiStatus().then(setWebApiStatus).catch(() => {});
   }, []);
   const toggleDefaultTerminal = async (value: boolean) => {
     try {
@@ -102,7 +106,71 @@ export const BehaviorSettings: FC<BehaviorSettingsProps> = ({ settings, updateSe
         </div>
       </div>
 
-      {/* 卡片组 2: 启动与窗口行为 */}
+      {/* 卡片组 2: 新会话形态 */}
+      <div className="settings-card-group">
+        <div className="card-group-header">
+          <span className="card-group-title">AI 会话</span>
+        </div>
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">新会话形态</div>
+            <p className="settings-row-desc">
+              只影响之后新建的会话：原生会话是独立 CLI 进程，支持斜杠命令、Skill、审批卡与排队插话；
+              终端接力在真实终端里运行 Agent，只提供只读镜像与受限回复，与手机共用同一 PTY。
+            </p>
+          </div>
+          <div className="settings-row-ctrl">
+            <div className="breathing-light-mode-options" role="radiogroup" aria-label="新会话形态">
+              <label className={`breathing-light-mode ${settings.nativeChatSessions ? 'active' : ''}`}>
+                <input
+                  type="radio"
+                  name="nativeChatSessions"
+                  checked={settings.nativeChatSessions}
+                  onChange={() => {
+                    updateSetting('nativeChatSessions', true);
+                    saveNativeChatSessions(true).catch(console.error);
+                  }}
+                />
+                <span>原生会话</span>
+              </label>
+              <label className={`breathing-light-mode ${settings.nativeChatSessions ? '' : 'active'}`}>
+                <input
+                  type="radio"
+                  name="nativeChatSessions"
+                  checked={!settings.nativeChatSessions}
+                  onChange={() => {
+                    updateSetting('nativeChatSessions', false);
+                    saveNativeChatSessions(false).catch(console.error);
+                  }}
+                />
+                <span>终端接力</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {!isBrowserClient() && (
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <div className="settings-row-title">网页与手机访问</div>
+            <p className="settings-row-desc">
+              {webApiStatus === null
+                ? '正在读取 Web API 状态…'
+                : webApiStatus.hasPassword
+                  ? '已设置登录密码，浏览器模式与手机远程访问可以正常连接。'
+                  : 'Web API 已开启但尚未设置登录密码，HTTP 服务不会启动（无对外监听）。设置密码后浏览器模式与手机才能连接。'}
+            </p>
+          </div>
+          <div className="settings-row-ctrl">
+            <button className="btn-secondary" onClick={() => useAppStore.getState().openSettingsDialog('web-auth')}>
+              {webApiStatus?.hasPassword ? '管理访问' : '设置登录密码'}
+            </button>
+          </div>
+        </div>
+        )}
+      </div>
+
+      {/* 卡片组 3: 启动与窗口行为 */}
       <div className="settings-card-group">
         <div className="card-group-header">
           <span className="card-group-title">启动与窗口行为</span>

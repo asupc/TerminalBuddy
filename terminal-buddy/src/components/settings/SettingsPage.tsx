@@ -243,6 +243,7 @@ export const SettingsPage: FC<SettingsPageProps> = ({ onClose }) => {
         terminalLoadingMode: backend.terminalLoadingMode,
         enableTabNavigation: backend.enableTabNavigation,
         singleInstance: backend.singleInstance,
+        nativeChatSessions: backend.nativeChatSessions ?? previous.nativeChatSessions,
         claudeHookConfigDir: backend.claudeHookConfigDir ?? previous.claudeHookConfigDir,
       };
       setSettings(synced);

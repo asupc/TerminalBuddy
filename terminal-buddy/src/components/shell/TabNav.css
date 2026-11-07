@@ -518,6 +518,34 @@
   background: #e8e8e8;
 }
 
+/* 原生 AI 会话标签：聊天图标 + 供应商角标，与终端指示点区分 */
+.tab-nav-agent-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.tab-nav-agent-icon svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.8;
+}
+
+.tab-nav-agent-chip {
+  flex-shrink: 0;
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-weight: 500;
+  line-height: 1;
+}
+
 /* 浅色模式：原 #e8e8e8 浅灰圆点在浅底上不可见，改用次级文字色保证可见 */
 [data-theme="light"] .tab-nav-dirty-dot {
   background: var(--text-secondary);

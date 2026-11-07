@@ -74,6 +74,9 @@ const markdown = new MarkdownIt({
   },
 }).use(addSourceMapAttributes);
 
+// `.md` 是有效顶级域名，模糊链接会把 AGENTS.md 等文件名误识别成网址；只链接显式协议地址。
+markdown.linkify.set({ fuzzyLink: false });
+
 function normalizeLocalPath(path: string, separator: '\\' | '/'): string {
   const isUnc = path.startsWith('\\\\');
   const isPosixRoot = !isUnc && path.startsWith('/');

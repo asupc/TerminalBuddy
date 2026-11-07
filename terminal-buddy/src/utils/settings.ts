@@ -74,6 +74,8 @@ export interface AppSettings {
   sshDownloadDir: string;
   serverMonitorInterval: number;
   webApiShareSessions: boolean;
+  /** 新会话形态：true = 原生会话（默认），false = 终端接力。只影响之后新建的会话。 */
+  nativeChatSessions: boolean;
   launchAtLogin: boolean;
   terminalFollowAppTheme: boolean;
   autoResumeClaudeSession: boolean;
@@ -122,6 +124,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sshDownloadDir: '',
   serverMonitorInterval: 3,
   webApiShareSessions: false,
+  nativeChatSessions: true,
   launchAtLogin: false,
   terminalFollowAppTheme: true,
   autoResumeClaudeSession: true,

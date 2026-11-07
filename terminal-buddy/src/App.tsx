@@ -28,7 +28,7 @@ import { migrateLocalStorageToBackend } from './utils/migration';
 import { TERMINAL_RESIZE_EVENT, type TerminalResizeDetail } from './utils/terminalResizeEvent';
 import { initializeClaudeNotificationActions } from './services/claudeNotification';
 import { initAppHotkeys, registerHotkeyAction } from './services/hotkeys';
-import { restoreTabs, launchTerminalSession, reconcileBackendSessions, markStartupRestoreComplete, scheduleBrowserResync } from './services/sessionRestore';
+import { restoreTabs, launchTerminalSession, reconcileBackendSessions, markStartupRestoreComplete, scheduleBrowserResync, restoreAgentChatTabs } from './services/sessionRestore';
 import { useExitConfirm } from './hooks/useExitConfirm';
 import { clientTerminalOwner, isBrowserClient } from './services/platform';
 
@@ -270,6 +270,9 @@ function App() {
       if (settings.restoreTabsOnStartup && !import.meta.env.DEV) {
         await restoreTabsOnce();
         await useAppStore.getState().restoreDraftTabs();
+      } else {
+        // 聊天标签不拉起任何进程；即使用户关闭了终端页签恢复，也保留上次打开的 AI 会话。
+        await restoreAgentChatTabs();
       }
       // 恢复完成后补一次账：启动期间（WebView 就绪前）建立的会话没有 terminal-created
       // 事件可收，默认终端 handoff 冷启动就属于这一类。

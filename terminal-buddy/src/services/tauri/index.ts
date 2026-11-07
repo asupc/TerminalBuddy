@@ -2,6 +2,8 @@
 // 消费方既有的 `import ... from '../services/tauri'` 路径全部解析到这里。
 export * from './bot';
 export * from './agentCli';
+export * from './agentRelay';
+export * from './aiChat';
 export * from './claudeAssets';
 export * from './claudeConfig';
 export * from './claudeEnhance';

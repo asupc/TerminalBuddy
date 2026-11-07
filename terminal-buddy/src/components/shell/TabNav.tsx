@@ -2,7 +2,7 @@ import { useTaskSummaryStore } from '../../stores/taskSummaryStore';
 import { defaultShellType, serverUsesWindowsPaths } from '../../services/platform';
 import { FC, useState, useEffect, useMemo, useRef } from 'react';
 import { FileText, X } from 'lucide-react';
-import { isTerminalWorking, useAppStore, sessionReplayTabKey } from '../../stores/appStore';
+import { isTerminalWorking, useAppStore, sessionReplayTabKey, type NativeAgentTab } from '../../stores/appStore';
 import { closeTerminal as closeTerminalCmd, saveConfigNavWidth, saveTabSidebarWidth, getBackendAppSettings, writeFileContent, readFileContent } from '../../services/tauri';
 import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -12,10 +12,12 @@ import { notifyTerminalPanelResize } from '../../utils/terminalResizeEvent';
 import type { TreeItem } from '../file-explorer/TreeView';
 import { ConfirmDialog, Dialog } from '../shared/Dialog';
 import { buildGroupTree, type GroupNode } from '../../utils/groupTree';
-import type { ExtraParamMode, Profile } from '../../types';
+import { projectForDirectory } from '../../utils/projectPath';
+import type { ExtraParamMode, Profile, TerminalSession } from '../../types';
 import { SessionTreeItem } from './SessionTreeItem';
 import { TabContextMenu } from './TabContextMenu';
 import { NewTerminalMenu } from './NewTerminalMenu';
+import { AgentIcon } from '../agent-chat/AgentIcon';
 import './TabNav.css';
 
 interface TabSidebarProps {
@@ -26,6 +28,14 @@ interface TabSidebarProps {
   onStartBlankTerminal: (terminalType: 'powershell' | 'pwsh' | 'cmd' | 'bash' | 'sh' | 'zsh') => void;
   onStartTextEditor: () => void;
 }
+
+/**
+ * 侧栏会话树的叶子：终端会话与原生 AI 会话标签共用同一套项目分组。
+ * 原生会话按 `projectPath` 归到已登记项目下，与项目启动的终端同组。
+ */
+type SessionLeaf =
+  | { kind: 'terminal'; session: TerminalSession }
+  | { kind: 'agent'; tab: NativeAgentTab };
 
 export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles, onStartTerminal, onStartBlankTerminal, onStartTextEditor }) => {
   const sessions = useAppStore(s => s.sessions);
@@ -41,6 +51,10 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   const openClaudeReplayTab = useAppStore(s => s.openClaudeReplayTab);
   const closeClaudeReplayTab = useAppStore(s => s.closeClaudeReplayTab);
   const activeSpecialTab = useAppStore(s => s.activeSpecialTab);
+  const agentTabs = useAppStore(s => s.agentTabs);
+  const activeAgentTabKey = useAppStore(s => s.activeAgentTabKey);
+  const setActiveAgentTab = useAppStore(s => s.setActiveAgentTab);
+  const closeAgentTab = useAppStore(s => s.closeAgentTab);
   const removeSession = useAppStore(s => s.removeSession);
   const removeSessions = useAppStore(s => s.removeSessions);
 
@@ -162,11 +176,23 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
   }, [isSidebarMode, setWidth]);
 
   // 会话显式标签分组优先；普通终端继续沿用 Profile 分组。
+  // 原生会话标签与终端一样挂到所属项目分组下（终端接力标签仍单独放「AI 会话」组，
+  // 因为它承载的终端本身已经在项目分组里，重复列出反而冗余）。
   const sessionTree = useMemo(() => {
     const editorSessions = sessions.filter(s => s.sessionType === 'editor');
     const terminalSessions = sessions.filter(s => s.sessionType !== 'editor');
+    const nativeTabs = agentTabs.filter(tab => tab.shape === 'native');
+    const leaves: SessionLeaf[] = [
+      ...terminalSessions.map(session => ({ kind: 'terminal' as const, session })),
+      ...nativeTabs.map(tab => ({ kind: 'agent' as const, tab })),
+    ];
 
-    const tree = buildGroupTree(terminalSessions, s => {
+    const tree = buildGroupTree(leaves, leaf => {
+      if (leaf.kind === 'agent') {
+        // 原生会话记录的是项目目录；与终端一致，用已登记项目名作为分组。
+        return projectForDirectory(projects, leaf.tab.projectPath)?.name || '默认';
+      }
+      const s = leaf.session;
       const explicitGroup = s.groupId && s.groupId !== 'default'
         ? tabGroups.find(group => group.id === s.groupId)
         : undefined;
@@ -176,17 +202,13 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
       return profile?.group || '默认';
     });
 
-    // Recursive helper: collect all sessions under a node (including children)
-    const collectAllSessions = (node: GroupNode<typeof terminalSessions[0]>): typeof terminalSessions => {
-      const result = [...node.items];
-      for (const child of node.children) {
-        result.push(...collectAllSessions(child));
-      }
-      return result;
-    };
+    // Recursive helper: collect all terminal sessions under a node (including children)
+    const collectAllSessions = (node: GroupNode<SessionLeaf>): typeof terminalSessions =>
+      node.items.flatMap(item => item.kind === 'terminal' ? [item.session] : [])
+        .concat(node.children.flatMap(collectAllSessions));
 
     // Convert GroupNode[] to TreeItem[] with recursive nesting
-    const toTreeItems = (nodes: GroupNode<typeof terminalSessions[0]>[]): TreeItem[] =>
+    const toTreeItems = (nodes: GroupNode<SessionLeaf>[]): TreeItem[] =>
       nodes.map(node => ({
         id: node.path,
         label: node.name,
@@ -194,7 +216,17 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
         data: { type: 'group' as const, allSessions: collectAllSessions(node) },
         children: [
           ...toTreeItems(node.children),
-          ...node.items.map(session => {
+          ...node.items.map(leaf => {
+            if (leaf.kind === 'agent') {
+              const tab = leaf.tab;
+              return {
+                id: tab.key,
+                label: tab.title,
+                icon: <AgentIcon provider={tab.provider} className="tab-nav-agent-icon" />,
+                data: { kind: 'agent' as const, tab },
+              };
+            }
+            const session = leaf.session;
             const isEditor = session.sessionType === 'editor';
             const profile = profiles.find(profile => profile.id === session.profileId);
             const hasTaskLabel = !isEditor && Boolean(taskSummaries[session.id]
@@ -268,7 +300,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     }
 
     return items;
-  }, [sessions, profiles, tabGroups, terminalActivities, settingsVersion, taskSummaries]);
+  }, [sessions, agentTabs, projects, profiles, tabGroups, terminalActivities, settingsVersion, taskSummaries]);
 
   // Mirror the project/profile grouping in the configuration navigation.
   const submenuTree = useMemo(() => {
@@ -429,17 +461,20 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     void Promise.all(terminalIds.map(id => closeTerminalCmd(id).catch(err => console.error(err))));
   };
 
-  const handleCloseGroup = async (groupName: string, groupSessions: typeof sessions) => {
+  const handleCloseGroup = async (groupName: string, groupSessions: typeof sessions, groupAgentKeys: string[] = []) => {
     const workingCount = groupSessions.filter(
       s => s.sessionType !== 'editor' && !s.starting && isTerminalWorking(terminalActivities[s.id])
     ).length;
+    const total = groupSessions.length + groupAgentKeys.length;
     setConfirmDialog({
       title: '确认关闭分组',
       message: workingCount > 0
-        ? `分组「${groupName}」中有 ${workingCount} 个终端正在执行任务，确定要关闭全部 ${groupSessions.length} 个终端吗？`
-        : `确定要关闭分组「${groupName}」中的所有 ${groupSessions.length} 个终端吗？`,
+        ? `分组「${groupName}」中有 ${workingCount} 个终端正在执行任务，确定要关闭全部 ${total} 个标签吗？`
+        : `确定要关闭分组「${groupName}」中的所有 ${total} 个标签吗？`,
       onConfirm: async () => {
         setConfirmDialog(null);
+        // 原生会话标签只是聊天页签，关闭不删除服务端会话。
+        for (const key of groupAgentKeys) closeAgentTab(key);
         await closeSessionsWithBackend(groupSessions);
       },
     });
@@ -542,7 +577,11 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlightedIndex]);
 
-  if (sessions.length === 0 && !gitHistoryTab && claudeReplayTabs.length === 0) return null;
+  if (sessions.length === 0 && !gitHistoryTab && claudeReplayTabs.length === 0 && agentTabs.length === 0) return null;
+
+  // 终端接力标签是终端的对话视图，终端本身已在项目分组里；这里只保留接力标签的独立入口。
+  const relayAgentTabs = agentTabs.filter(tab => tab.shape === 'relay');
+  const nativeAgentTabCount = agentTabs.length - relayAgentTabs.length;
 
   const handleRenameSubmit = (sessionId: string) => {
     const trimmed = renameValue.trim();
@@ -554,7 +593,7 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
     <div className={`tab-nav${isSidebarMode ? ' sidebar-mode' : ''}`} style={{ width }} ref={containerRef}>
       <div className="panel-titlebar">
         <span className="panel-title">会话标签</span>
-        <span className="panel-title-count">{sessions.length}</span>
+        <span className="panel-title-count">{sessions.length + nativeAgentTabCount}</span>
       </div>
       <div className="tab-nav-header">
         {gitHistoryTab && (
@@ -608,6 +647,35 @@ export const TabNav: FC<TabSidebarProps> = ({ isActive, isSidebarMode, profiles,
           setDragProfileId(null);
         }}
       >
+        {relayAgentTabs.length > 0 && (
+          <div className="tab-nav-group">
+            <div className="tab-nav-group-header" onClick={() => setCollapsedGroups(prev => {
+              const next = new Set(prev);
+              if (next.has("agent-group")) next.delete("agent-group"); else next.add("agent-group");
+              return next;
+            })} role="button" tabIndex={0} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.click(); } }}>
+              <span className={`tab-nav-group-arrow${collapsedGroups.has("agent-group") ? " collapsed" : ""}`}>▾</span>
+              <span className="tab-nav-group-name">AI 会话</span>
+              <span className="tab-nav-group-count">{relayAgentTabs.length}</span>
+            </div>
+            {!collapsedGroups.has("agent-group") && relayAgentTabs.map(tab => (
+              <div key={tab.key} className={`tab-nav-settings-btn tab-nav-replay-item ${activeSpecialTab === "agent-chat" && activeAgentTabKey === tab.key ? "active" : ""}`}
+                onClick={() => setActiveAgentTab(tab.key)}
+                onAuxClick={(event) => {
+                  if (event.button === 1) {
+                    event.preventDefault();
+                    closeAgentTab(tab.key);
+                  }
+                }}
+                onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
+                title={`终端接力 · ${tab.title}`}>
+                <span className="tab-nav-name">{tab.title}</span>
+                <button type="button" className="tree-item-close" onClick={event => { event.stopPropagation(); closeAgentTab(tab.key); }}
+                  title="关闭" aria-label={`关闭 ${tab.title}`}><X aria-hidden="true" /></button>
+              </div>
+            ))}
+          </div>
+        )}
         {claudeReplayTabs.length > 0 && (
           <div className="tab-nav-group">
             <div className="tab-nav-group-header" onClick={() => setCollapsedGroups(prev => {

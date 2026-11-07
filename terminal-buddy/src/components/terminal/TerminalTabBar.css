@@ -12,6 +12,18 @@
 
 .terminal-replay-group-label { align-self: center; flex-shrink: 0; padding: 0 9px; color: var(--text-tertiary); font-size: 11px; border-left: 1px solid var(--border-subtle); }
 
+/* 会话式聊天标签：供应商 / AGENT 角标，提示标签带对话视图 */
+.terminal-tab-agent-badge {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
 .terminal-tab-bar::-webkit-scrollbar {
   height: 3px;
 }
