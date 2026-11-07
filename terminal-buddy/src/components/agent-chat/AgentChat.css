@@ -665,6 +665,66 @@
   gap: 12px;
 }
 
+/* 底部平铺的用量统计：桌面端横向空间充裕，一次展示上下文 / 本轮 / 累计 */
+.agent-usage-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-usage-inline:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border-color: var(--border-subtle);
+}
+
+.agent-usage-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.agent-usage-label {
+  color: var(--text-tertiary);
+}
+
+.agent-usage-value {
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.agent-usage-sub {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  opacity: 0.85;
+}
+
+.agent-usage-sep {
+  width: 1px;
+  height: 10px;
+  flex-shrink: 0;
+  background: var(--border-subtle);
+}
+
+/* 窄屏（手机浏览器）下只保留上下文，其余收起，避免挤压发送按钮 */
+@media (max-width: 720px) {
+  .agent-usage-inline .agent-usage-sep,
+  .agent-usage-inline .agent-usage-group:not(:first-child) {
+    display: none;
+  }
+}
+
 .agent-context-usage {
   display: flex;
   align-items: center;

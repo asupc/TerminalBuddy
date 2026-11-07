@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleStop, CornerDownLeft, Send, Trash2, Zap } from 'lucide-react';
 import { AgentIcon } from './AgentIcon';
 import { ModelSwitcher } from './ModelSwitcher';
-import { UsagePanel, contextSummary } from './UsagePanel';
+import { UsagePanel, cacheHitRate, compact } from './UsagePanel';
 import {
   AI_SESSION_REMOVED_EVENT,
   AI_SESSION_UPDATE_EVENT,
@@ -52,13 +52,6 @@ function mergeSession(previous: AiSession | null, frame: AiSessionUpdateFrame): 
     return { ...frame.session, messages };
   }
   return previous;
-}
-
-function formatTokens(value: number | null | undefined): string {
-  if (value == null) return '—';
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return String(value);
 }
 
 /**
@@ -391,6 +384,8 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   }, [busy, tab.sessionId]);
   const thinkingSeconds = thinkingSince ? Math.max(0, Math.floor((clock - thinkingSince) / 1000)) : 0;
   const context = session?.usage?.context;
+  const lastTurn = session?.usage?.lastTurn;
+  const usage = session?.usage;
   const contextPercent = context?.usedTokens != null && context.windowTokens
     ? Math.min(100, Math.round((context.usedTokens / context.windowTokens) * 100))
     : null;
@@ -426,7 +421,6 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
               <span className={`agent-status-badge ${session?.status ?? 'idle'}`}>
                 {STATUS_LABEL[session?.status ?? 'idle'] ?? session?.status}
               </span>
-              <span className="agent-chat-meta">{tab.provider === 'codex' ? 'Codex' : 'Claude Code'}</span>
               {tab.provider === 'claude' ? (
                 <ModelSwitcher
                   agent="claude"
@@ -441,7 +435,6 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
                 session?.model && <span className="agent-chat-meta">{session.model}</span>
               )}
               <span className="agent-chat-meta agent-chat-path" title={tab.projectPath}>{tab.projectPath}</span>
-              <span className="agent-chat-meta agent-chat-process">独立进程</span>
             </div>
           </div>
         </div>
@@ -549,16 +542,43 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
             onCompositionEnd={() => { composing.current = false; }}
           />
           <div className="agent-input-bar">
+            {/* 桌面端底部空间宽裕：直接平铺上下文与本轮 Token 统计，明细仍可点开 */}
             <button
               type="button"
-              className="agent-context-usage"
+              className="agent-usage-inline"
               onClick={() => setUsageOpen(true)}
-              title={context?.windowTokens
-                ? `上下文 ${formatTokens(context.usedTokens)} / ${formatTokens(context.windowTokens)} · 点击查看 Token 明细`
-                : '点击查看 Token 明细'}
+              title="点击查看完整的上下文与 Token 明细"
             >
-              {contextSummary(context)}
-              {contextPercent != null && <span className="agent-context-bar"><span style={{ width: `${contextPercent}%` }} /></span>}
+              <span className="agent-usage-group">
+                <span className="agent-usage-label">上下文</span>
+                <span className="agent-usage-value">
+                  {context?.updating && context.usedTokens == null
+                    ? '待更新'
+                    : contextPercent != null
+                      ? `${contextPercent}%`
+                      : compact(context?.usedTokens)}
+                </span>
+                {contextPercent != null && (
+                  <span className="agent-context-bar"><span style={{ width: `${contextPercent}%` }} /></span>
+                )}
+                <span className="agent-usage-sub">
+                  {compact(context?.usedTokens)} / {compact(context?.windowTokens)}
+                </span>
+              </span>
+              <span className="agent-usage-sep" />
+              <span className="agent-usage-group">
+                <span className="agent-usage-label">本轮</span>
+                <span className="agent-usage-value">↑{compact(lastTurn?.inputTokens)}</span>
+                <span className="agent-usage-value">↓{compact(lastTurn?.outputTokens)}</span>
+                <span className="agent-usage-sub">缓存命中 {cacheHitRate(lastTurn)}</span>
+              </span>
+              <span className="agent-usage-sep" />
+              <span className="agent-usage-group">
+                <span className="agent-usage-label">累计</span>
+                <span className="agent-usage-value">↑{compact(usage?.sessionTotal.inputTokens)}</span>
+                <span className="agent-usage-value">↓{compact(usage?.sessionTotal.outputTokens)}</span>
+                <span className="agent-usage-sub">缓存命中 {cacheHitRate(usage?.sessionTotal)}</span>
+              </span>
             </button>
             <button className="agent-btn primary" disabled={sending || !draft.trim()} onClick={() => { void send(); }}>
               <Send aria-hidden="true" />发送

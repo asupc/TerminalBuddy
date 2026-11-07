@@ -4,12 +4,12 @@ import type { AiContextUsage, AiTokenUsage, AiUsage } from '../../services/tauri
 import './UsagePanel.css';
 
 /** 精确到个位的 token 数：用量明细需要真实数字，不做 k/M 近似。 */
-function precise(value: number | null | undefined): string {
+export function precise(value: number | null | undefined): string {
   if (value == null || value < 0) return '—';
   return value.toLocaleString('zh-CN');
 }
 
-function compact(value: number | null | undefined): string {
+export function compact(value: number | null | undefined): string {
   if (value == null || value < 0) return '—';
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
@@ -32,7 +32,7 @@ export function contextSummary(context: AiContextUsage | null | undefined): stri
 }
 
 /** 缓存命中率：命中 /（命中 + 写入 + 未命中输入）。 */
-function cacheHitRate(tokens: AiTokenUsage | null | undefined): string {
+export function cacheHitRate(tokens: AiTokenUsage | null | undefined): string {
   const read = tokens?.cacheReadInputTokens ?? null;
   const write = tokens?.cacheCreationInputTokens ?? null;
   const input = tokens?.inputTokens ?? null;
