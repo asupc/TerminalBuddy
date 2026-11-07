@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -75,5 +76,41 @@ class AiModelsTest {
         assertEquals("关闭", AiModel(id = "m", effort = "none").effortLabel)
         assertEquals("自动", AiModel(id = "m", effort = "Auto").effortLabel)
         assertEquals("跟随服务端", AiModel(id = "m", effort = "default").effortLabel)
+    }
+
+    @Test
+    fun `slash catalog decodes and terminal commands are excluded`() {
+        val session = decode<AiSession>(
+            """
+            {"id":"s1","title":"t","provider":"claude","projectPath":"p","status":"idle","messages":[],"approvals":[],
+             "error":null,"updatedAt":1,"revision":2,
+             "slashCatalog":{"skills":["code-review"],"slashCommands":["cost","code-review","doctor"],
+             "terminalSlashCommands":["doctor"]}}
+            """.trimIndent()
+        )
+        val catalog = requireNotNull(session.slashCatalog)
+        assertEquals(listOf("code-review"), catalog.skills)
+        val items = slashCompletions(catalog, "/")
+        assertEquals(listOf("cost", "code-review"), items.map { it.name })
+        assertEquals(listOf(false, true), items.map { it.isSkill })
+    }
+
+    @Test
+    fun `slash completions follow prefix and stop after a space`() {
+        val catalog = AiSlashCatalog(slashCommands = listOf("model", "cost", "compact"), skills = listOf("model"))
+        assertEquals(listOf("model"), slashCompletions(catalog, "/mo").map { it.name })
+        assertTrue(slashCompletions(catalog, "/model ").isEmpty())
+        assertTrue(slashCompletions(catalog, "model").isEmpty())
+        assertTrue(slashCompletions(null, "/").isEmpty())
+        assertEquals(2, slashCompletions(catalog, "/", limit = 2).size)
+    }
+
+    @Test
+    fun `old servers without slash catalog stay usable`() {
+        val session = decode<AiSession>(
+            """{"id":"s1","title":"t","provider":"codex","projectPath":"p","status":"idle","messages":[],"approvals":[],"error":null,"updatedAt":1,"revision":1}"""
+        )
+        assertNull(session.slashCatalog)
+        assertTrue(slashCompletions(session.slashCatalog, "/").isEmpty())
     }
 }

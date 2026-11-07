@@ -281,7 +281,7 @@ private fun AiConversation(
                     expanded = usageExpanded, onExpandedChange = { usageExpanded = it },
                     modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
             }
-            AiComposer(ui, session, { scroll.following = true; vm.send() }, vm::stop, vm::draft)
+            AiComposer(ui, session, vm, { scroll.following = true; vm.send() }, vm::stop, vm::draft)
         }
     }
 }
@@ -349,11 +349,13 @@ private fun AiQueuedMessages(
 /** 发送后仍可编辑下一条消息，发送进度随待确认的消息展示。 */
 @Composable
 private fun AiComposer(
-    ui: AiUiState, session: AiSession, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit,
+    ui: AiUiState, session: AiSession, vm: AiViewModel, send: () -> Unit, stop: () -> Unit, draft: (String) -> Unit,
 ) {
     // 回复中输入了草稿就显示发送（按发送方式排队等待或原生插话）；空白才显示中断。
     val showStop = session.running && ui.draft.isBlank()
     val actionEnabled = if (showStop) !ui.working && session.status != "stopping" else session.canSend && ui.draft.isNotBlank() && !ui.sending && !ui.loadingSession
+    // `/` 补全：候选由服务端 system/init 清单驱动，移动端不硬编码命令名。
+    val slashItems = remember(ui.draft, session.slashCatalog, session.provider) { vm.slashItems(ui.draft) }
     AiMessageComposer(
         value = ui.draft, onValueChange = draft,
         placeholder = "给 ${session.providerLabel} 发消息…", enabled = !ui.loadingSession,
@@ -366,7 +368,54 @@ private fun AiComposer(
             else -> "发送消息"
         },
         showStop = showStop,
+        slashItems = slashItems, onPickSlash = { draft("/$it ") },
     )
+}
+
+/**
+ * 斜杠命令候选条：紧贴输入框上方，点击即补全为 `/<命令> `。
+ * 横向排列是因为手机上候选较多，单行列表不会把输入区顶出屏幕。
+ */
+@Composable
+private fun AiSlashSuggestions(items: List<AiSlashItem>, onPick: (String) -> Unit) {
+    if (items.isEmpty()) return
+    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+        Surface(
+            Modifier.widthIn(max = 760.dp).fillMaxWidth(), color = TbColors.CanvasSoft,
+            border = BorderStroke(1.dp, TbColors.Border), shape = RoundedCornerShape(12.dp),
+        ) {
+            androidx.compose.foundation.lazy.LazyRow(
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.semantics { contentDescription = "斜杠命令候选" },
+            ) {
+                items(items, key = { it.name }) { item ->
+                    Surface(
+                        color = TbColors.SurfaceHover, shape = RoundedCornerShape(9.dp),
+                        modifier = Modifier
+                            .clickable(role = Role.Button) { onPick(item.name) }
+                            .heightIn(min = 36.dp),
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                if (item.isSkill) "Skill" else "命令",
+                                style = MaterialTheme.typography.labelSmall, color = TbColors.TextMuted,
+                            )
+                            Text(
+                                "/${item.name}",
+                                style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+                                color = TbColors.Accent, maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** 原生对话与远程终端共用输入框外观，各自提供发送能力与状态。 */
@@ -375,51 +424,55 @@ internal fun AiMessageComposer(
     value: String, onValueChange: (String) -> Unit, placeholder: String,
     enabled: Boolean, actionEnabled: Boolean, onAction: () -> Unit, actionLabel: String,
     showStop: Boolean = false,
+    slashItems: List<AiSlashItem> = emptyList(), onPickSlash: (String) -> Unit = {},
 ) {
     Surface(color = TbColors.Surface) {
         Box(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Surface(
-                Modifier.widthIn(max = 760.dp).fillMaxWidth(), color = TbColors.CanvasSoft,
-                border = BorderStroke(1.dp, TbColors.Border), shape = RoundedCornerShape(14.dp),
-            ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                    BasicTextField(
-                        value = value, onValueChange = onValueChange,
-                        modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-                            .padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp)
-                            .semantics { contentDescription = "消息输入框" },
-                        enabled = enabled, minLines = 1, maxLines = 4,
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = TbColors.Text, fontSize = 14.sp, lineHeight = 20.sp),
-                        cursorBrush = SolidColor(TbColors.Accent),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                        decorationBox = { innerTextField ->
-                            Box(contentAlignment = Alignment.CenterStart) {
-                                if (value.isEmpty()) Text(
-                                    placeholder, color = TbColors.TextMuted,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                )
-                                innerTextField()
-                            }
-                        },
-                    )
-                    IconButton(
-                        onAction, enabled = actionEnabled, modifier = Modifier.size(48.dp)
-                            .semantics { contentDescription = actionLabel },
-                    ) {
-                        Surface(
-                            Modifier.size(32.dp),
-                            color = TbColors.ButtonBackground.copy(alpha = if (actionEnabled) 1f else .35f),
-                            shape = RoundedCornerShape(10.dp), border = primaryControlBorder(),
+            Column(Modifier.widthIn(max = 760.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                AiSlashSuggestions(slashItems, onPickSlash)
+                Surface(
+                    Modifier.fillMaxWidth(), color = TbColors.CanvasSoft,
+                    border = BorderStroke(1.dp, TbColors.Border), shape = RoundedCornerShape(14.dp),
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                        BasicTextField(
+                            value = value, onValueChange = onValueChange,
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                                .padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp)
+                                .semantics { contentDescription = "消息输入框" },
+                            enabled = enabled, minLines = 1, maxLines = 4,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = TbColors.Text, fontSize = 14.sp, lineHeight = 20.sp),
+                            cursorBrush = SolidColor(TbColors.Accent),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                            decorationBox = { innerTextField ->
+                                Box(contentAlignment = Alignment.CenterStart) {
+                                    if (value.isEmpty()) Text(
+                                        placeholder, color = TbColors.TextMuted,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    )
+                                    innerTextField()
+                                }
+                            },
+                        )
+                        IconButton(
+                            onAction, enabled = actionEnabled, modifier = Modifier.size(48.dp)
+                                .semantics { contentDescription = actionLabel },
                         ) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Icon(
-                                    if (showStop) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null,
-                                    Modifier.size(18.dp), tint = TbColors.ButtonForeground,
-                                )
+                            Surface(
+                                Modifier.size(32.dp),
+                                color = TbColors.ButtonBackground.copy(alpha = if (actionEnabled) 1f else .35f),
+                                shape = RoundedCornerShape(10.dp), border = primaryControlBorder(),
+                            ) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        if (showStop) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, null,
+                                        Modifier.size(18.dp), tint = TbColors.ButtonForeground,
+                                    )
+                                }
                             }
                         }
                     }

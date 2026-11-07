@@ -126,6 +126,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private val drafts = mutableMapOf<String, String>()
     /** 会话 ID → 待发送文本 + requestId；结果未知时重试复用同一个 requestId。 */
     private val requests = mutableMapOf<String, Pair<String, String>>()
+    /** 斜杠命令清单的兜底缓存：会话尚未启动 CLI 时借用同一 Agent 上一次的清单。 */
+    private var slashFallback: Pair<String, AiSlashCatalog?>? = null
     private data class OutgoingMessage(
         val sessionId: String, val message: AiMessage, val draft: String, val queued: Boolean,
     ) {
@@ -1016,6 +1018,23 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(draft = text) }
     }
 
+    /**
+     * `/` 补全候选：优先使用会话自身的 `system/init` 清单；
+     * 新建会话尚未启动 CLI 时回退到同一 Agent 最近一次拿到的缓存。
+     */
+    fun slashItems(draft: String): List<AiSlashItem> {
+        val session = mutable.value.selected ?: return emptyList()
+        return slashCompletions(session.slashCatalog ?: cachedSlashCatalog(session.provider), draft)
+    }
+
+    /** 按 Agent 记住解析结果，避免每敲一个字符都重新读偏好并反序列化清单。 */
+    private fun cachedSlashCatalog(agent: String): AiSlashCatalog? {
+        slashFallback?.let { (cachedAgent, catalog) -> if (cachedAgent == agent) return catalog }
+        val catalog = repository.cachedSlashCatalog(agent)
+        slashFallback = agent to catalog
+        return catalog
+    }
+
     /** 退出或切换会话时，尚未确认的消息回到草稿，仍可复用原请求标识重试。 */
     private fun cancelSend() {
         sendJob?.cancel()
@@ -1254,6 +1273,11 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
     private fun receive(session: AiSession) {
         val selected = mutable.value.selected ?: return
         if (selected.id != session.id || session.revision < selected.revision) return
+        // `/` 清单随 CLI 启动刷新：按 Agent 缓存一份，新会话在 init 到达前也能补全。
+        session.slashCatalog?.let { catalog ->
+            repository.saveSlashCatalog(session.provider, catalog)
+            slashFallback = session.provider to catalog
+        }
         // 只缓存服务端原始快照，本地尚未确认的消息仍由 outgoing 单独管理。
         repository.sessionCache.scope()?.let { repository.sessionCache.save(it, session) }
         repository.accounts.activeId?.let { taskNotifications.observe(it, listOf(session)) }

@@ -17,6 +17,35 @@ data class AiApproval(val id: String, val method: String, val details: JsonObjec
 @Serializable
 data class AiPendingInput(val text: String = "", val requestId: String = "")
 
+/** `/` 补全清单，来自 CLI 的 `system/init`；Codex 没有该机制，字段为 null。 */
+@Serializable
+data class AiSlashCatalog(
+    val skills: List<String> = emptyList(), val slashCommands: List<String> = emptyList(),
+    val terminalSlashCommands: List<String> = emptyList(),
+)
+
+/** 一条斜杠命令候选；Skill 与内建命令分组展示。 */
+data class AiSlashItem(val name: String, val isSkill: Boolean)
+
+/**
+ * 输入框文本转候选：只认「以 / 开头且尚未写入空格」的草稿，与桌面端规则一致。
+ * 排除纯 TUI 命令（doctor / color 等对话中不可用），并按前缀过滤。
+ */
+fun slashCompletions(catalog: AiSlashCatalog?, draft: String, limit: Int = 12): List<AiSlashItem> {
+    if (catalog == null || !draft.startsWith("/")) return emptyList()
+    val query = draft.substring(1)
+    if (query.any(Char::isWhitespace)) return emptyList()
+    val terminal = catalog.terminalSlashCommands.toSet()
+    val skills = catalog.skills.toSet()
+    val normalized = query.lowercase()
+    return catalog.slashCommands.asSequence()
+        .filterNot(terminal::contains)
+        .filter { normalized.isEmpty() || it.lowercase().startsWith(normalized) }
+        .map { AiSlashItem(it, it in skills) }
+        .take(limit)
+        .toList()
+}
+
 @Serializable
 data class AiSession(
     val id: String, val title: String, val provider: String, val projectPath: String,
@@ -26,6 +55,8 @@ data class AiSession(
     val updatedAt: Long = 0, val revision: Long = 0, val resultRevision: Long = 0,
     val usage: AiUsage? = null,
     val pendingInputs: List<AiPendingInput> = emptyList(),
+    /** CLI `system/init` 下发的 `/` 命令清单；会话启动后自动刷新。 */
+    val slashCatalog: AiSlashCatalog? = null,
 ) {
     /** 服务端仍在该会话执行任务（含等待用户确认）。 */
     val running get() = status == "running" || status == "approval" || status == "background" || status == "stopping"

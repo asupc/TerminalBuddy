@@ -95,6 +95,22 @@ class AiRepository(context: Context) {
     fun selectedAgentProvider(agent: String) = preferences.getString(preferenceKey("provider:$agent"), "").orEmpty()
     fun selectedAgentModel(agent: String) = preferences.getString(preferenceKey("model:$agent"), "").orEmpty()
 
+    /**
+     * 斜杠命令清单缓存：新建的本地会话要等首次发送启动 CLI 后才有 `system/init`，
+     * 这段时间先借用同一 Agent 最近一次拿到的清单，避免输入 `/` 没有候选。
+     */
+    fun cachedSlashCatalog(agent: String): AiSlashCatalog? = runCatching {
+        preferences.getString(preferenceKey("slash_catalog:$agent"), null)
+            ?.let { ApiJson.decodeFromString<AiSlashCatalog>(it) }
+    }.getOrNull()
+
+    fun saveSlashCatalog(agent: String, catalog: AiSlashCatalog) {
+        val key = preferenceKey("slash_catalog:$agent")
+        val encoded = ApiJson.encodeToString(catalog)
+        // 快照每个回合都会重建，内容没变时不重复落盘。
+        if (preferences.getString(key, null) != encoded) preferences.edit().putString(key, encoded).apply()
+    }
+
     /** 连续发送方式是全局偏好，不随账号隔离：false 等当前回合任务完成后排队续发，true 原生插话。 */
     var sendSteer: Boolean
         get() = preferences.getBoolean("ai_send_steer", preferences.getBoolean("ai_send_immediate", false))
