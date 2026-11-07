@@ -72,7 +72,8 @@ private sealed interface RecentEntry {
 /**
  * 简版核心页：只保留快速开始。
  * 顶部品牌与「我的」入口，中间是压缩后的新会话配置，下方用 Tab 切换最近会话和历史会话。
- * 「开始对话」在服务端创建真实终端，手机打开的 Agent 与电脑终端完全同一会话；
+ * 「开始对话」按服务端「新会话形态」设置分流：原生会话直接进入与桌面端一致的聊天页；
+ * 终端接力则在服务端创建真实终端，手机打开的 Agent 与电脑终端完全同一会话。
  * 最近会话统一平铺终端 Agent 会话与存量原生会话，不再按来源分组。
  * 历史会话按当前工作项目汇总全部已启用助手，不跟随快速开始里的助手选择。
  * 支持下拉刷新：手动补齐服务端会话、终端与 Agent 列表（实时推送之外的自救入口）。
@@ -156,7 +157,12 @@ internal fun AiSimpleHome(
                     val provider = ui.launchProvider
                     val model = ui.launchModel
                     if (project != null && provider != null && model != null && ui.canCreate) {
-                        startAgent(provider.agent, provider.id, model.id, project.path, project.name)
+                        // 与桌面端共用「新会话形态」设置：原生会话走聊天页，终端接力沿用 PTY 启动。
+                        if (terminalUi.nativeChatSessions) {
+                            vm.create()
+                        } else {
+                            startAgent(provider.agent, provider.id, model.id, project.path, project.name)
+                        }
                     }
                 })
             }

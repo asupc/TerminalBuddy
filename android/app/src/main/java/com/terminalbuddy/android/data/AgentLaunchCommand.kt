@@ -92,6 +92,8 @@ internal object AgentLaunchCommand {
 internal data class AgentRuntimeInfo(
     val agentCommands: AgentCommandPair = AgentCommandPair(),
     val defaultTerminalType: String = "",
+    /** 「新会话形态」：true = 原生会话（服务端默认），false = 终端接力。旧服务端无此字段时按原生处理。 */
+    val nativeChatSessions: Boolean = true,
 )
 
 @kotlinx.serialization.Serializable
