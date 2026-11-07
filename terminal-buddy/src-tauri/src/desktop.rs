@@ -381,6 +381,8 @@ pub fn run() {
 
             // 默认终端 handoff：注册 COM 类对象（注册 ≠ 生效，是否被委派由注册表
             // 决定）。失败只记日志——未被委派时无影响，被委派则 conhost 自动回退。
+            // 原生 AI 会话的实时推送需要全局 AppHandle（桌面 webview + 浏览器事件通道）。
+            crate::services::ai_chat_service::set_app_handle(app.handle().clone());
             crate::services::handoff_server::set_app_handle(app.handle().clone());
             match crate::services::handoff_server::bootstrap_com_server() {
                 Ok(()) => boot_log("default-terminal COM server registered"),
@@ -429,6 +431,11 @@ pub fn run() {
         })
 
         .invoke_handler(tauri::generate_handler![
+            // 原生 AI 会话（桌面端，owner 固定为 web_api_username）
+            ai_session_list, ai_session_get, ai_session_create, ai_session_send,
+            ai_session_stop, ai_session_answer, ai_session_delete,
+            ai_session_pending_update, ai_session_pending_delete, ai_session_flush,
+            ai_catalog, ai_session_history, ai_session_resume_history,
             get_all_profiles, get_projects, save_projects,
             get_profile,
             get_ssh_temp_directory,
@@ -445,6 +452,9 @@ pub fn run() {
             claim_web_session_restore,
             release_web_session_restore,
             get_terminal_task_summaries,
+            // 终端 Agent 会话接力（桌面 Pc 身份；浏览器走 desktop_dispatch 的 Web 分支）
+            terminal_agent_list, terminal_agent_messages, terminal_agent_reply,
+            terminal_agent_subscribe, terminal_agent_unsubscribe, terminal_agent_heartbeat,
             save_show_task_summary,
             save_agent_commands,
             get_agent_cli_environment, get_agent_cli_status, install_agent_cli, update_agent_cli,
@@ -564,6 +574,7 @@ pub fn run() {
             fetch_ark_usage,
             save_web_api_settings,
             save_web_api_share_sessions,
+            save_native_chat_sessions,
             get_web_api_status,
             change_web_admin_password,
             save_web_page_title,

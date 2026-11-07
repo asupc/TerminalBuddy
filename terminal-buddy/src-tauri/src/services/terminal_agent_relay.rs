@@ -75,6 +75,11 @@ const PHASE_CAP: usize = 500;
 const IDLE_PHASE_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 /// 每终端出站帧队列上限（WS 慢消费者溢出即断开）。
 const OUTBOUND_QUEUE: usize = 64;
+/// 事件租约（桌面 React / 浏览器事件通道）的续租周期上限，超时未续租即释放。
+const LEASE_TTL: Duration = Duration::from_secs(30);
+
+/// 桌面 React / 浏览器事件通道的事件名（watcher 经 `crate::runtime::Emitter` 双通道推送）。
+pub const AGENT_UPDATE_EVENT: &str = "terminal-agent-update";
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -183,6 +188,10 @@ pub struct TerminalAgentFrame {
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// 事件通道（terminal-agent-update）附带：本帧发往的仍有效的租约；
+    /// WS 直发帧不填。桌面 / 浏览器按自己的 subscriptionId 过滤。
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub subscription_ids: Vec<String>,
 }
 
 impl TerminalAgentFrame {
@@ -202,6 +211,7 @@ impl TerminalAgentFrame {
             reason: None,
             code: None,
             message: None,
+            subscription_ids: Vec::new(),
         }
     }
 
@@ -223,6 +233,7 @@ impl TerminalAgentFrame {
             reason: None,
             code: None,
             message: None,
+            subscription_ids: Vec::new(),
         }
     }
 
@@ -242,6 +253,7 @@ impl TerminalAgentFrame {
             reason: None,
             code: None,
             message: None,
+            subscription_ids: Vec::new(),
         }
     }
 
@@ -262,6 +274,7 @@ impl TerminalAgentFrame {
             reason,
             code: None,
             message: None,
+            subscription_ids: Vec::new(),
         }
     }
 
@@ -281,6 +294,7 @@ impl TerminalAgentFrame {
             reason: None,
             code: Some(code.to_string()),
             message: Some(message.to_string()),
+            subscription_ids: Vec::new(),
         }
     }
 }
@@ -295,12 +309,26 @@ pub struct ReplyOutcome {
     pub at: i64,
 }
 
-/// WS 握手 `subscribe` 的返回。
+/// `terminal_agent_subscribe` / WS 握手 `subscribe` 的返回。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscribeOutcome {
     pub subscription_id: String,
     pub initial_frame: TerminalAgentFrame,
+}
+
+/// `terminal_agent_heartbeat` 的单项与返回。
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatLease {
+    pub terminal_id: String,
+    pub subscription_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatOutcome {
+    pub alive: Vec<HeartbeatLease>,
 }
 
 // ───────────────────────── 错误模型 ─────────────────────────
@@ -851,9 +879,12 @@ impl MirrorEntry {
 #[derive(Clone)]
 struct Lease {
     actor: TerminalActor,
-    /// WS 订阅（Android/浏览器直连）：连接结束由 RAII 释放，
-    /// 接收端已关闭（升级失败 / WS 任务结束）时由 watcher tick 回收。
+    /// Socket：Android / 浏览器 WS 订阅，连接结束由 RAII 释放，不按租约超时回收；
+    /// Event：桌面 React / 浏览器事件通道租约，30 秒未续租即释放。
+    kind: &'static str,
+    /// WS 订阅由连接生命周期管理（None）；事件租约到期即回收。
     sender: Option<tokio::sync::mpsc::Sender<TerminalAgentFrame>>,
+    expires: Option<Instant>,
 }
 
 struct WatcherHandle {
@@ -1576,12 +1607,15 @@ pub async fn page_for(
 
 // ───────────────────────── 用例：订阅（WS 直发租约） ─────────────────────────
 
-/// WS 握手共用：注册带身份与唯一 subscriptionId 的租约，返回接收端与首帧。
+/// `terminal_agent_subscribe` / WS 握手共用。
+/// socket=true 时返回接收端（Android / 浏览器直连 WS）；socket=false 是事件租约
+/// （桌面 React / 浏览器事件通道，帧经 `AGENT_UPDATE_EVENT` 推送）。
 pub async fn subscribe(
     app: &AppHandle,
     actor: TerminalActor,
     terminal_id: &str,
-) -> Result<(SubscribeOutcome, tokio::sync::mpsc::Receiver<TerminalAgentFrame>), RelayError> {
+    socket: bool,
+) -> Result<(SubscribeOutcome, Option<tokio::sync::mpsc::Receiver<TerminalAgentFrame>>), RelayError> {
     if !valid_terminal_id(terminal_id) {
         return Err(RelayError::BadRequest("终端标识符无效".to_string()));
     }
@@ -1607,9 +1641,12 @@ pub async fn subscribe(
             return Err(RelayError::NotFound("终端不存在或已关闭".to_string()));
         };
         let subscription_id = uuid::Uuid::new_v4().to_string();
-        let (sender, receiver) = {
+        let (sender, receiver) = if socket {
             let pair = tokio::sync::mpsc::channel(OUTBOUND_QUEUE);
-            (Some(pair.0), pair.1)
+            (Some(pair.0), Some(pair.1))
+        } else {
+            // 事件通道：帧经 Emitter 广播，不占用每租约出站队列。
+            (None, None)
         };
         // 先注册租约、再 poll：首帧从最新已提交状态构建，poll 之后提交的任何
         // 内容都会经 deliver 到达本租约，不存在「快照与注册之间」的漏帧窗口。
@@ -1628,7 +1665,9 @@ pub async fn subscribe(
                     subscription_id.clone(),
                     Lease {
                         actor,
+                        kind: if socket { "socket" } else { "event" },
                         sender,
+                        expires: if socket { None } else { Some(Instant::now() + LEASE_TTL) },
                     },
                 );
             }
@@ -1674,6 +1713,35 @@ pub fn unsubscribe(terminal_id: &str, subscription_id: &str) {
     if let Some(handle) = current.watchers.get_mut(terminal_id) {
         handle.leases.remove(subscription_id);
     }
+}
+
+/// 事件租约续租：只续本人身份的租约，返回仍然存活的子集。
+/// 心跳失败或 alive 不含当前句柄时，客户端应退订旧句柄再重新 subscribe。
+pub fn heartbeat(actor: TerminalActor, leases: &[HeartbeatLease]) -> Vec<HeartbeatLease> {
+    let now = Instant::now();
+    let mut alive = Vec::new();
+    let mut current = lock_state();
+    for lease in leases {
+        if !valid_terminal_id(&lease.terminal_id) || !valid_request_id(&lease.subscription_id) {
+            continue;
+        }
+        let renewed = current
+            .watchers
+            .get_mut(&lease.terminal_id)
+            .and_then(|handle| handle.leases.get_mut(&lease.subscription_id))
+            .filter(|entry| entry.actor == actor)
+            .map(|entry| {
+                if entry.kind == "event" {
+                    entry.expires = Some(now + LEASE_TTL);
+                }
+                true
+            })
+            .unwrap_or(false);
+        if renewed {
+            alive.push(lease.clone());
+        }
+    }
+    alive
 }
 
 // ───────────────────────── 用例：回复（七闸门 + 幂等 + 每终端串行） ─────────────────────────
@@ -1893,15 +1961,16 @@ pub fn note_phase_unless_ended(terminal_id: &str, provider: &str, session_id: &s
 
 /// 终端真正 teardown：发 terminal_closed、清理该终端全部 relay 状态。
 /// `ended` 不调用这里——PTY 仍活着，只读镜像与 watcher 都保留。
-pub fn on_terminal_closed(terminal_id: &str) {
+/// 除 WS 直发外，传入 AppHandle 时同时经事件通道广播 error 帧，让桌面 / 浏览器
+/// 事件租约立即进入只读终态而不是等下一次心跳。
+pub fn on_terminal_closed(app: Option<&AppHandle>, terminal_id: &str) {
     let senders = lock_state().remove_terminal(terminal_id);
-    if senders.is_empty() {
-        // 没有任何订阅时也无需广播：watcher 本就不存在。
-        return;
-    }
     let frame = TerminalAgentFrame::error(terminal_id, "terminal_closed", "终端已关闭");
-    for sender in senders {
+    for sender in &senders {
         let _ = sender.try_send(frame.clone());
+    }
+    if let Some(app) = app {
+        let _ = app.emit(AGENT_UPDATE_EVENT, frame);
     }
 }
 
@@ -1939,14 +2008,14 @@ async fn watcher_tick(app: &AppHandle, terminal_id: &str) -> TickAction {
     let service = app.state::<TerminalService>();
     // 终端真正关闭才终止；phase=ended 保留只读 watcher。
     if service.terminal_owner(terminal_id).is_none() {
-        on_terminal_closed(terminal_id);
+        on_terminal_closed(Some(app), terminal_id);
         return TickAction::Stop;
     }
     // 状态里已无句柄（on_terminal_closed 或回收）→ 自然退出。
     if !lock_state().watchers.contains_key(terminal_id) {
         return TickAction::Stop;
     }
-    // 幽灵租约回收（WS 升级失败/接收端已关闭）+ 失权移除。
+    // 租约到期回收 + 幽灵租约回收（WS 升级失败/接收端已关闭）+ 失权移除。
     let leases: Vec<(String, TerminalActor, Option<tokio::sync::mpsc::Sender<TerminalAgentFrame>>)> = {
         let now = Instant::now();
         let mut current = lock_state();
@@ -1957,8 +2026,10 @@ async fn watcher_tick(app: &AppHandle, terminal_id: &str) -> TickAction {
             return TickAction::Stop;
         };
         handle.leases.retain(|_, lease| {
-            // 接收端已关闭（WS 任务结束或升级从未完成）时回收。
-            lease.sender.as_ref().is_none_or(|sender| !sender.is_closed())
+            let not_expired = lease.expires.is_none_or(|expires| expires > now);
+            // socket 租约无 TTL：接收端已关闭（WS 任务结束或升级从未完成）时回收。
+            let alive = lease.sender.as_ref().is_none_or(|sender| !sender.is_closed());
+            not_expired && alive
         });
         handle
             .leases
@@ -2074,6 +2145,7 @@ fn deliver_poll_result(
             .filter(|(_, lease_actor, _)| *lease_actor == actor)
             .map(|(id, _, sender)| (id.clone(), sender.clone()))
             .collect();
+        let subscription_ids: Vec<String> = actor_leases.iter().map(|(id, _)| id.clone()).collect();
         let Some((session, _)) = build_session_meta(app, &info, &scan, actor) else {
             continue;
         };
@@ -2118,7 +2190,7 @@ fn deliver_poll_result(
                 handle.last_meta.insert(actor, session);
             }
         }
-        for frame in frames {
+        for mut frame in frames {
             for (lease_id, sender) in &actor_leases {
                 let Some(sender) = sender else { continue };
                 if sender.try_send(frame.clone()).is_err() {
@@ -2126,6 +2198,9 @@ fn deliver_poll_result(
                     slow_consumers.push(lease_id.clone());
                 }
             }
+            // 事件通道附带本帧发往的租约，桌面 / 浏览器按自己的句柄过滤。
+            frame.subscription_ids = subscription_ids.clone();
+            let _ = app.emit(AGENT_UPDATE_EVENT, frame);
         }
     }
     if !slow_consumers.is_empty() {
@@ -2973,8 +3048,11 @@ mod tests {
 
     // ── watcher / 租约状态机（不经 AppHandle，直接驱动全局状态） ──
 
-    fn seed_lease(terminal_id: &str, subscription_id: &str) -> Option<tokio::sync::mpsc::Receiver<TerminalAgentFrame>> {
-        let (sender, receiver) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE);
+    fn seed_lease(terminal_id: &str, subscription_id: &str, socket: bool) -> Option<tokio::sync::mpsc::Receiver<TerminalAgentFrame>> {
+        let (sender, receiver) = if socket {
+            let (sender, receiver) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE);
+            (Some(sender), Some(receiver))
+        } else { (None, None) };
         let mut current = lock_state();
         let handle = current.watchers.entry(terminal_id.to_string()).or_insert(WatcherHandle {
             leases: HashMap::new(),
@@ -2985,10 +3063,12 @@ mod tests {
             subscription_id.to_string(),
             Lease {
                 actor: TerminalActor::Web,
-                sender: Some(sender),
+                kind: if socket { "socket" } else { "event" },
+                sender,
+                expires: if socket { None } else { Some(Instant::now() + LEASE_TTL) },
             },
         );
-        Some(receiver)
+        receiver
     }
 
     #[test]
@@ -2996,8 +3076,8 @@ mod tests {
         let terminal_id = format!("relay-lease-{}", uuid::Uuid::new_v4());
         let first = uuid::Uuid::new_v4().to_string();
         let second = uuid::Uuid::new_v4().to_string();
-        seed_lease(&terminal_id, &first);
-        seed_lease(&terminal_id, &second);
+        seed_lease(&terminal_id, &first, false);
+        seed_lease(&terminal_id, &second, false);
         unsubscribe(&terminal_id, &first);
         unsubscribe(&terminal_id, &first); // 重复释放幂等
         let current = lock_state();
@@ -3010,12 +3090,29 @@ mod tests {
         lock_state().watchers.remove(&terminal_id);
     }
 
+    #[test]
+    fn heartbeat_renews_only_same_actor_event_leases() {
+        let terminal_id = format!("relay-heartbeat-{}", uuid::Uuid::new_v4());
+        let subscription = uuid::Uuid::new_v4().to_string();
+        seed_lease(&terminal_id, &subscription, false);
+        // Pc 续不上 Web 的租约。
+        let alive = heartbeat(TerminalActor::Pc, &[HeartbeatLease { terminal_id: terminal_id.clone(), subscription_id: subscription.clone() }]);
+        assert!(alive.is_empty());
+        // Web 本人续租成功且返回存活。
+        let alive = heartbeat(TerminalActor::Web, &[HeartbeatLease { terminal_id: terminal_id.clone(), subscription_id: subscription.clone() }]);
+        assert_eq!(alive.len(), 1);
+        // 不存在的句柄不复活。
+        let alive = heartbeat(TerminalActor::Web, &[HeartbeatLease { terminal_id: terminal_id.clone(), subscription_id: "missing-handle-000".to_string() }]);
+        assert!(alive.is_empty());
+        lock_state().watchers.remove(&terminal_id);
+    }
+
     #[tokio::test]
     async fn terminal_close_pushes_error_frame_and_clears_state() {
         let terminal_id = format!("relay-close-{}", uuid::Uuid::new_v4());
         let subscription = uuid::Uuid::new_v4().to_string();
-        let mut receiver = seed_lease(&terminal_id, &subscription).expect("WS 租约应有接收端");
-        on_terminal_closed(&terminal_id);
+        let mut receiver = seed_lease(&terminal_id, &subscription, true).expect("WS 租约应有接收端");
+        on_terminal_closed(None, &terminal_id);
         let frame = receiver.recv().await.expect("应收到 terminal_closed 错误帧");
         assert_eq!(frame.r#type, "error");
         assert_eq!(frame.code.as_deref(), Some("terminal_closed"));

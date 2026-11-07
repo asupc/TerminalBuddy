@@ -33,15 +33,27 @@ pub fn catalog() -> Result<AiCatalog> {
     Ok(AiCatalog { providers })
 }
 
+/// 在目录中按 ID 查找供应商。未带来源前缀的原始 ID（桌面端项目模型菜单传的是
+/// 终端启动用的供应商主键）依次尝试已知前缀；只有前缀确实存在时才命中，
+/// 不改变「供应商被删除」的报错语义。
+fn find_target<'a>(providers: &'a [AiProviderOption], agent: &str, id: &str) -> Option<&'a AiProviderOption> {
+    if let Some(target) = providers.iter().find(|target| target.agent == agent && target.id == id) {
+        return Some(target);
+    }
+    if id.contains(':') { return None; }
+    ["llm", "claude", "codex"].into_iter()
+        .find_map(|source| providers.iter().find(|target| target.agent == agent && target.id == format!("{source}:{id}")))
+}
+
 /// 创建时固化选择；已删除供应商或移除模型必须提示重新选择，不能回退到其他供应商。
 pub fn selection(agent: &str, id: Option<&str>, model: Option<&str>) -> Result<Option<(String, String)>> {
     let Some(id) = id else { return Ok(None); }; // 兼容旧版客户端的默认 CLI 配置。
-    let target = catalog()?.providers.into_iter().find(|target| target.agent == agent && target.id == id)
-        .ok_or("所选供应商已不存在，请刷新后重新选择")?;
+    let providers = catalog()?.providers;
+    let target = find_target(&providers, agent, id).ok_or("所选供应商已不存在，请刷新后重新选择")?;
     if !target.models.iter().any(|candidate| candidate.id == model.unwrap_or_default()) {
         return Err("所选模型已被移除或停用，请刷新后重新选择".into());
     }
-    Ok(Some((target.id, target.name)))
+    Ok(Some((target.id.clone(), target.name.clone())))
 }
 
 pub struct NativeLaunch {
@@ -106,4 +118,35 @@ pub fn prepare(agent: &str, provider_id: Option<&str>, model: Option<&str>) -> R
 fn inherited_context_window(agent: &str) -> Option<u64> {
     if agent != "claude" { return None; }
     std::env::var("CLAUDE_CODE_MAX_CONTEXT_TOKENS").ok()?.parse::<u64>().ok().filter(|n| *n > 0 && *n <= i64::MAX as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider(id: &str, agent: &str) -> AiProviderOption {
+        AiProviderOption {
+            id: id.into(), agent: agent.into(), name: format!("{id}-name"), is_default: false,
+            models: vec![AiModelOption { id: "m1".into(), label: "m1".into(), effort: String::new() }],
+        }
+    }
+
+    #[test]
+    fn raw_provider_ids_fall_back_to_prefixed_catalog_ids() {
+        let providers = vec![provider("llm:abc", "claude"), provider("claude:abc", "claude"), provider("codex:xyz", "codex")];
+        assert_eq!(find_target(&providers, "claude", "llm:abc").map(|t| t.id.as_str()), Some("llm:abc"));
+        // 桌面端项目模型菜单传的是原始主键：优先 llm 前缀，其次 claude。
+        assert_eq!(find_target(&providers, "claude", "abc").map(|t| t.id.as_str()), Some("llm:abc"));
+        assert_eq!(find_target(&providers, "codex", "xyz").map(|t| t.id.as_str()), Some("codex:xyz"));
+    }
+
+    #[test]
+    fn unknown_or_cross_agent_ids_do_not_fall_back() {
+        let providers = vec![provider("llm:abc", "claude"), provider("codex:xyz", "codex")];
+        // 供应商确实不存在时必须继续报「已不存在」，不能退化成模糊匹配。
+        assert!(find_target(&providers, "claude", "missing").is_none());
+        assert!(find_target(&providers, "claude", "xyz").is_none());
+        // 已带前缀的 ID 只做精确匹配。
+        assert!(find_target(&providers, "codex", "llm:abc").is_none());
+    }
 }

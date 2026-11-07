@@ -8,6 +8,22 @@ pub struct AiMessage {
     pub role: String,
     pub text: String,
     pub created_at: i64,
+    /// Skill 展开的消息：Skill 名称（如 "code-review"）。普通消息为 None。
+    /// 前端据此渲染为可展开的 skill:名称 条目，而非普通气泡。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_name: Option<String>,
+}
+
+/// `system/init` 提供的命令清单，随会话启动刷新。Codex 无此机制，为 None。
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SlashCatalog {
+    /// 已安装的 Skill（含插件带来的）；是 slash_commands 的子集。
+    pub skills: Vec<String>,
+    /// 内建命令 ∪ 全部 Skill。
+    pub slash_commands: Vec<String>,
+    /// 纯 TUI 命令（doctor / color / focus / reload-plugins），对话中不可用。
+    pub terminal_slash_commands: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -62,6 +78,9 @@ pub struct AiSession {
     /// 排队待发消息（非空时对客户端可见，手机端据此显示「N 条排队中」）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_inputs: Vec<PendingInput>,
+    /// `/` 补全清单，来自 `system/init`，随会话启动自动刷新。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slash_catalog: Option<SlashCatalog>,
 }
 
 impl AiSession {
@@ -74,7 +93,10 @@ impl AiSession {
             messages: Vec::new(), approvals: self.approvals.clone(), error: self.error.clone(),
             updated_at: self.updated_at, revision: self.revision, result_revision: self.result_revision,
             usage: self.usage.clone(), usage_checkpoint: None, owner: self.owner.clone(),
-            thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new(),
+            thread_id: None, request_ids: Vec::new(),
+            // 排队消息是客户端可见的元数据：实时帧需要它来刷新「N 条排队中」。
+            pending_inputs: self.pending_inputs.clone(),
+            slash_catalog: self.slash_catalog.clone(),
         }
     }
 }

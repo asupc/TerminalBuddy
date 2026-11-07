@@ -121,6 +121,10 @@ pub struct AppSettings {
     pub server_monitor_interval: u32,
     #[serde(default)]
     pub web_api_share_sessions: bool,
+    /// 新会话形态：true = 原生会话（默认），false = 终端接力。
+    /// 只影响之后新建的会话；已打开的会话保持创建时的形态。
+    #[serde(default = "default_native_chat_sessions")]
+    pub native_chat_sessions: bool,
     #[serde(default = "default_launch_at_login")]
     pub launch_at_login: bool,
     #[serde(default)]
@@ -168,7 +172,9 @@ impl Default for AppSettings {
             enable_tab_navigation: true,
             show_task_summary: false,
             single_instance: true,
-            web_api_enabled: false,
+            // 默认开启：浏览器模式需要经 /api/desktop/invoke 调用桌面命令。
+            // 未设置密码时 HTTP 服务不会启动（should_run_http_server 要求密码非空），无暴露窗口。
+            web_api_enabled: true,
             web_api_port: 9600,
             web_api_username: "admin".to_string(),
             web_api_password_hash: String::new(),
@@ -176,6 +182,7 @@ impl Default for AppSettings {
             ssh_download_dir: None,
             server_monitor_interval: 3,
             web_api_share_sessions: false,
+            native_chat_sessions: true,
             launch_at_login: false,
             claude_hook_config_dir: None,
             default_terminal_enabled: false,
@@ -187,7 +194,11 @@ impl Default for AppSettings {
 }
 
 fn default_web_api_enabled() -> bool {
-    false
+    true
+}
+
+fn default_native_chat_sessions() -> bool {
+    true
 }
 
 fn default_web_api_port() -> u16 {

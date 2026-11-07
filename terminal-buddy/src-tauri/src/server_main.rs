@@ -49,6 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let app = AppHandle::new();
+    // 原生 AI 会话的实时推送走统一事件通道（浏览器 / WS 事件订阅）。
+    terminal_buddy_lib::services::ai_chat_service::set_app_handle(app.clone());
     // 周期性登记存活终端的 Claude 会话 ID：即使用户关闭了浏览器，容器重启后
     // 也能按旧 terminal ID 找回会话并执行 claude --resume。
     {

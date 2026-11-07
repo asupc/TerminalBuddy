@@ -2,6 +2,7 @@
 //! CLI 进程在服务端执行，手机断开不会终止任务。所有文件/进程操作由 handler 的
 //! spawn_blocking 或专用工作线程承载；用户文本只进入 stdin，不拼进 shell 命令。
 use crate::models::ai_chat::*;
+use crate::runtime::Emitter;
 use super::{ai_chat_approval::{self as approval, ClaudeApproval}, ai_chat_usage as usage};
 use super::ai_chat_claude_hooks::{NativeClaudeHooks, NativeHookEvent};
 use super::{atomic_file::atomic_write_private, terminal_task_service::SessionSummaryTracker, PathService};
@@ -19,10 +20,24 @@ impl Drop for RunningTask { fn drop(&mut self) { RUNNING.fetch_sub(1, Ordering::
 
 enum Control { Stop, Retire, Message { text: String, request_id: String }, Approval(AnswerAiApproval) }
 enum WorkerExit { Completed, Retired }
+/// 桌面 webview 与浏览器事件通道共用的 AppHandle（启动时注入）。
+static APP: OnceLock<crate::runtime::AppHandle> = OnceLock::new();
+pub fn set_app_handle(app: crate::runtime::AppHandle) {
+    let _ = APP.set(app);
+}
+
+/// 已推送给客户端的内容基线：用于计算增量消息，避免每次重传整段对话。
+#[derive(Default)]
+struct Emitted {
+    revision: u64,
+    messages: HashMap<String, String>,
+}
+
 struct Cell {
     data: Mutex<AiSession>,
     control: Mutex<Option<mpsc::Sender<Control>>>,
     summary: Mutex<SessionSummaryTracker>,
+    emitted: Mutex<Emitted>,
     deleted: AtomicBool,
     path: PathBuf,
 }
@@ -38,6 +53,23 @@ fn directory() -> Result<PathBuf> {
 fn touch(data: &mut AiSession) {
     data.updated_at = chrono::Utc::now().timestamp_millis();
     data.revision = data.revision.saturating_add(1).max(data.updated_at.max(0) as u64);
+}
+/// 实时推送会话变化：载荷与 HTTP WS 的 `update` 帧同构（session 元数据 + 变化的消息），
+/// 桌面 webview 与浏览器事件通道共用同一套解析逻辑。
+fn emit_update(cell: &Cell) {
+    let Some(app) = APP.get() else { return; };
+    if cell.deleted.load(Ordering::Acquire) { return; }
+    let data = match cell.data.lock() { Ok(data) => data, Err(_) => return };
+    let mut emitted = match cell.emitted.lock() { Ok(emitted) => emitted, Err(_) => return };
+    if emitted.revision == data.revision { return; }
+    let changed: Vec<_> = data.messages.iter()
+        .filter(|message| emitted.messages.get(&message.id) != Some(&message.text)).cloned().collect();
+    emitted.messages = data.messages.iter().map(|message| (message.id.clone(), message.text.clone())).collect();
+    emitted.revision = data.revision;
+    drop(emitted);
+    let metadata = data.metadata();
+    drop(data);
+    let _ = app.emit("ai-session-update", json!({"type":"update","session":metadata,"messages":changed}));
 }
 fn persist(cell: &Cell) -> Result<()> {
     let data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
@@ -76,7 +108,7 @@ fn load(id: &str, owner: &str) -> Result<Arc<Cell>> {
             data.error = Some("服务已重启，上次执行已中断，可以继续发送消息".into()); touch(&mut data);
             data.result_revision = data.revision;
         }
-        let cell = Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: path.clone() });
+        let cell = Arc::new(Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path: path.clone() });
         // 重启中断标记与结束版本一起落盘，避免再次重启时重复生成同一结束事件。
         if interrupted || migrated { persist(&cell)?; }
         registry.insert(path.clone(), cell);
@@ -118,11 +150,12 @@ fn new_session(owner: &str, input: CreateAiSession) -> Result<AiSession> {
         project_path: input.project_path, model: input.model.filter(|m| !m.trim().is_empty()),
         status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
-        updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new() };
+        updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0, owner: owner.into(), thread_id: None, request_ids: Vec::new(), pending_inputs: Vec::new(),
+        slash_catalog: None };
     Ok(data)
 }
 fn save_new_session(data: AiSession) -> Result<AiSession> {
-    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{}.json", data.id)) });
+    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path: directory()?.join(format!("{}.json", data.id)) });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
     Ok(data)
@@ -210,8 +243,9 @@ fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> 
         status: "idle".into(), messages, approvals: Vec::new(), error: None,
         usage: Some(usage::initial()), usage_checkpoint: None,
         updated_at: chrono::Utc::now().timestamp_millis(), revision: 1, result_revision: 0,
-        owner: owner.into(), thread_id: Some(resume_id.to_string()), request_ids: Vec::new(), pending_inputs: Vec::new() };
-    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path });
+        owner: owner.into(), thread_id: Some(resume_id.to_string()), request_ids: Vec::new(), pending_inputs: Vec::new(),
+        slash_catalog: None };
+    let cell = Arc::new(Cell { data: Mutex::new(data.clone()), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path });
     persist(&cell)?;
     registry().lock().map_err(|_| "AI 会话状态不可用")?.insert(cell.path.clone(), cell);
     Ok(data)
@@ -256,7 +290,7 @@ fn prefill_history_messages(provider: &str, session_id: &str, total: usize) -> R
             if offset >= total { break; }
             offset += 1; advanced = true;
             if !matches!(item.role.as_str(), "user" | "assistant" | "tool") || item.text.trim().is_empty() { continue; }
-            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0) });
+            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0), skill_name: None });
         }
         if !advanced { break; }
     }
@@ -276,7 +310,7 @@ fn history_messages(session_id: &str, history: &crate::models::session_history::
         }
         if parts.is_empty() { return None; }
         Some(AiMessage { id: format!("history-{session_id}-{}", message.seq), role: message.role.clone(),
-            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at) })
+            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at), skill_name: None })
     }).collect()
 }
 
@@ -316,6 +350,8 @@ pub fn delete(id: &str, owner: &str) -> Result<()> {
     if let Some(tx) = control.take() { let _ = tx.send(Control::Retire); }
     drop(data);
     registry().lock().map_err(|_| "AI 会话状态不可用")?.remove(&cell.path);
+    // 跨端同步：其他客户端据此关闭已删除会话的标签。
+    if let Some(app) = APP.get() { let _ = app.emit("ai-session-removed", id.to_string()); }
     Ok(())
 }
 pub fn stop(id: &str, owner: &str) -> Result<()> {
@@ -350,6 +386,11 @@ pub fn answer(id: &str, owner: &str, input: AnswerAiApproval) -> Result<()> {
 }
 pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     let cell = load(id, owner)?;
+    let outcome = send_locked(&cell, input);
+    emit_update(&cell);
+    outcome
+}
+fn send_locked(cell: &Arc<Cell>, input: SendAiMessage) -> Result<AiSession> {
     if input.text.trim().is_empty() { return Err("消息不能为空".into()); }
     Uuid::parse_str(&input.request_id).map_err(|_| "消息请求标识无效")?;
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
@@ -379,7 +420,7 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
     let next = begin_pending_turn(&mut data).ok_or("没有排队中的消息")?;
     let snapshot = data.clone();
     if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
-    if let Err(error) = start_turn(&cell, next, &mut control) {
+    if let Err(error) = start_turn(cell, next, &mut control) {
         // 保持发送与 worker 安装串行，失败时还原本次发送。
         *data = before;
         persist_data(&cell, &data)?;
@@ -392,6 +433,11 @@ pub fn send(id: &str, owner: &str, input: SendAiMessage) -> Result<AiSession> {
 /// 不中断当前任务。worker 已退出（中断/出错后队列保留）时按选中消息启动新回合，其余随后自动续发。
 pub fn flush(id: &str, owner: &str, request_id: Option<&str>) -> Result<()> {
     let cell = load(id, owner)?;
+    let outcome = flush_locked(&cell, request_id);
+    emit_update(&cell);
+    outcome
+}
+fn flush_locked(cell: &Arc<Cell>, request_id: Option<&str>) -> Result<()> {
     let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
     if !cell.path.is_file() { return Err("AI 会话不存在".into()); }
@@ -422,7 +468,7 @@ pub fn flush(id: &str, owner: &str, request_id: Option<&str>) -> Result<()> {
     }
     let next = begin_pending_turn(&mut data).ok_or("没有排队中的消息")?;
     if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
-    if let Err(error) = start_turn(&cell, next, &mut control) {
+    if let Err(error) = start_turn(cell, next, &mut control) {
         *data = before;
         data.status = "error".into(); data.error = Some(error.clone()); touch(&mut data);
         data.result_revision = data.revision;
@@ -452,7 +498,7 @@ fn deliver_now(cell: &Cell, data: &mut AiSession, control: &mpsc::Sender<Control
 fn accept_input(data: &mut AiSession, request_id: &str, text: &str) {
     if !data.request_ids.iter().any(|id| id == request_id) { data.request_ids.push(request_id.to_string()); }
     data.messages.push(AiMessage { id: request_id.to_string(), role: "user".into(), text: text.into(),
-        created_at: chrono::Utc::now().timestamp_millis() });
+        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None });
     if data.title == "新对话" { data.title = text.trim().chars().take(36).collect(); }
     // 等待确认时保留 approval 状态，让决策卡片继续显示；其余情况视为执行中。
     if data.approvals.is_empty() { data.status = "running".into(); }
@@ -472,6 +518,11 @@ pub fn delete_pending_input(id: &str, owner: &str, request_id: &str) -> Result<A
 
 fn change_pending_input(id: &str, owner: &str, request_id: &str, text: Option<String>) -> Result<AiSession> {
     let cell = load(id, owner)?;
+    let outcome = change_pending_input_locked(&cell, request_id, text);
+    emit_update(&cell);
+    outcome
+}
+fn change_pending_input_locked(cell: &Cell, request_id: &str, text: Option<String>) -> Result<AiSession> {
     // 与发送、删除会话、回合交接串行；已被 worker 取走的消息不能再编辑或删除。
     let _control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
     let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
@@ -518,7 +569,7 @@ fn begin_pending_turn(data: &mut AiSession) -> Option<PendingInput> {
     if data.pending_inputs.is_empty() { return None; }
     let next = data.pending_inputs.remove(0);
     data.messages.push(AiMessage { id: next.request_id.clone(), role: "user".into(), text: next.text.clone(),
-        created_at: chrono::Utc::now().timestamp_millis() });
+        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None });
     if data.title == "新对话" { data.title = next.text.trim().chars().take(36).collect(); }
     usage::begin_turn(data);
     data.status = "running".into(); data.error = None; data.approvals.clear(); touch(data);
@@ -531,6 +582,8 @@ fn take_pending_if_idle(cell: &Cell) -> Result<Option<PendingInput>> {
     let before = data.clone();
     let next = begin_pending_turn(&mut data);
     if let Err(error) = persist_data(cell, &data) { *data = before; return Err(error); }
+    drop(data);
+    emit_update(cell);
     Ok(next)
 }
 fn active_request_id(data: &AiSession) -> Option<&str> {
@@ -561,12 +614,14 @@ fn save_summary_title(cell: &Cell, provider: &str, session_id: &str, title: Stri
     let previous_revision = data.revision;
     // 只更新标题与版本；正文继续变化不会导致摘要丢失，也不改变列表活动顺序。
     data.revision = data.revision.saturating_add(1);
-    if let Err(error) = persist_data(cell, &data) {
-        data.title = previous_title;
-        data.revision = previous_revision;
-        return Err(error);
-    }
-    Ok(())
+    let outcome = match persist_data(cell, &data) {
+        Ok(()) => Ok(()),
+        Err(error) => { data.title = previous_title; data.revision = previous_revision; Err(error) }
+    };
+    drop(data);
+    drop(_control);
+    emit_update(cell);
+    outcome
 }
 fn finish(cell: &Arc<Cell>, result: Result<()>) {
     let succeeded = result.is_ok();
@@ -597,12 +652,18 @@ fn finish(cell: &Arc<Cell>, result: Result<()>) {
         data.result_revision = data.revision;
         let _ = persist_data(cell, &data);
     }
+    // 回合收尾后推送最终状态：解锁后再发，避免事件回调与状态锁互等。
+    drop(data);
+    drop(control);
+    emit_update(cell);
 }
 fn update(cell: &Cell, action: impl FnOnce(&mut AiSession)) {
     if let Ok(mut data) = cell.data.lock() { action(&mut data); touch(&mut data); }
+    emit_update(cell);
 }
 fn update_usage(cell: &Cell, action: impl FnOnce(&mut AiSession) -> bool) {
     if let Ok(mut data) = cell.data.lock() { if action(&mut data) { touch(&mut data); } }
+    emit_update(cell);
 }
 fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
     if text.is_empty() { return; }
@@ -610,7 +671,21 @@ fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
         if let Some(item) = data.messages.iter_mut().find(|m| m.id == key) {
             if append { item.text.push_str(text); } else { item.text = text.into(); }
         } else {
-            data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(), created_at: chrono::Utc::now().timestamp_millis() });
+            data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(),
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None });
+        }
+    });
+}
+/// Skill 展开消息：role 仍为 user，附 `skill_name` 供前端渲染为可展开条目。
+fn message_with_skill(cell: &Cell, key: &str, name: &str, text: &str) {
+    if text.is_empty() { return; }
+    update(cell, |data| {
+        if let Some(item) = data.messages.iter_mut().find(|m| m.id == key) {
+            item.text = text.into();
+            item.skill_name = Some(name.into());
+        } else {
+            data.messages.push(AiMessage { id: key.into(), role: "user".into(), text: text.into(),
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: Some(name.into()) });
         }
     });
 }
@@ -820,6 +895,38 @@ impl ClaudeOutputState {
         }
     }
 }
+/// 消息内容里的第一段文本（`content` 可能是字符串或内容块数组）。
+fn first_text_block(content: &Value) -> Option<String> {
+    if let Some(text) = content.as_str() {
+        return (!text.trim().is_empty()).then(|| text.to_string());
+    }
+    content.as_array()?.iter()
+        .filter(|item| item["type"] == "text")
+        .find_map(|item| item["text"].as_str().filter(|text| !text.trim().is_empty()).map(str::to_string))
+}
+/// 从用户原始输入推导 Skill 名称：`/code-review src-a` → `code-review`。
+fn skill_name_from_input(input: &str) -> Option<String> {
+    let token = input.split_whitespace().next()?;
+    token.strip_prefix('/')
+        .filter(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':')))
+        .map(str::to_string)
+}
+fn string_list(value: &Value) -> Vec<String> {
+    value.as_array().map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
+}
+/// Skill 展开判定：主判据是 `parent_tool_use_id` 的 `forked-command-` 前缀；
+/// 字段缺失时用「文本显著长于本轮原始输入」兜底（短 Skill 前缀缺失时退化为普通气泡）。
+fn expanded_skill(value: &Value, original: &str) -> Option<(String, String)> {
+    let text = first_text_block(&value["message"]["content"])?;
+    if let Some(name) = value["parent_tool_use_id"].as_str().and_then(|parent| parent.strip_prefix("forked-command-")) {
+        return Some((name.to_string(), text));
+    }
+    let length = text.chars().count();
+    if length > original.chars().count().saturating_mul(3) && length > 500 {
+        return skill_name_from_input(original).map(|name| (name, text));
+    }
+    None
+}
 fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, value: &Value) -> Result<bool> {
     if let Some(uuid) = value["uuid"].as_str().filter(|id| !id.is_empty()) {
         let event_key = format!("{}:{uuid}", value["type"].as_str().unwrap_or(""));
@@ -843,6 +950,22 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
                     message(cell, &format!("{turn}-result-{}", item["tool_use_id"]), "tool", &body, false);
                 } }
             }
+            // Skill 会被 CLI 展开成完整提示词回传；记录为可展开条目而不是普通气泡。
+            let original = cell.data.lock().ok().and_then(|data| data.messages.iter()
+                .rev().find(|message| message.role == "user").map(|message| message.text.clone())).unwrap_or_default();
+            if let Some((name, text)) = expanded_skill(value, &original) {
+                message_with_skill(cell, &format!("{turn}-skill-{name}"), &name, &text);
+                return Ok(false);
+            }
+        }
+        // CLI 每次启动（含 --resume）都会发 system/init，随会话缓存命令清单。
+        "system" if value["subtype"] == "init" => {
+            let catalog = SlashCatalog {
+                skills: string_list(&value["skills"]),
+                slash_commands: string_list(&value["slash_commands"]),
+                terminal_slash_commands: string_list(&value["terminal_slash_commands"]),
+            };
+            update(cell, |data| data.slash_catalog = Some(catalog));
         }
         "result" => {
             if value["is_error"] == true { return Err(value["result"].as_str().map(str::to_string).unwrap_or_else(|| value["errors"].to_string())); }
@@ -1267,6 +1390,7 @@ fn codex_status(cell: &Cell, state: &CodexOutputState, background: &CodexBackgro
             if status == "idle" { data.result_revision = data.revision; }
         }
     }
+    emit_update(cell);
 }
 fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super::ai_permission_service::NativePermissions, stdin: &mut impl Write,
     controls: mpsc::Receiver<Control>, output: mpsc::Receiver<Result<Value>>, errors: Arc<Mutex<String>>) -> Result<WorkerExit> {
@@ -1573,7 +1697,7 @@ mod tests {
     #[test]
     fn prefill_differs_detects_append_and_rewrite() {
         let message = |id: &str, text: &str, at: i64| AiMessage {
-            id: id.into(), role: "user".into(), text: text.into(), created_at: at,
+            id: id.into(), role: "user".into(), text: text.into(), created_at: at, skill_name: None,
         };
         let old = vec![message("history-0", "第一问", 1)];
         // 条数相同、内容相同 → 不替换，避免无意义的落盘。
@@ -1590,7 +1714,7 @@ mod tests {
             "model": null, "status": "running", "messages": [], "approvals": [], "error": null,
             "updatedAt": 0, "revision": 0,
         })).unwrap();
-        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), deleted: AtomicBool::new(false), path: PathBuf::new() }
+        Cell { data: Mutex::new(data), control: Mutex::new(None), summary: Mutex::default(), emitted: Mutex::default(), deleted: AtomicBool::new(false), path: PathBuf::new() }
     }
     struct SavedCell(Cell);
     impl SavedCell {
@@ -1774,6 +1898,66 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].text, messages[1].text);
         assert_ne!(messages[0].id, messages[1].id);
+    }
+
+    fn push_user(cell: &Cell, text: &str) {
+        cell.data.lock().unwrap().messages.push(AiMessage {
+            id: "user-input".into(), role: "user".into(), text: text.into(), created_at: 0, skill_name: None,
+        });
+    }
+
+    #[test]
+    fn claude_skill_expansion_is_marked_with_skill_name() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        push_user(&cell, "/code-review src-tauri");
+        let expanded = "审查指令".repeat(1000);
+        let event = json!({"type": "user", "parent_tool_use_id": "forked-command-code-review",
+            "message": {"content": [{"type": "text", "text": expanded}]}});
+        apply_claude_event(&cell, "turn", &mut state, &event).unwrap();
+        let data = cell.data.lock().unwrap();
+        let skill = data.messages.iter().find(|message| message.skill_name.is_some()).expect("应生成 Skill 消息");
+        assert_eq!(skill.skill_name.as_deref(), Some("code-review"));
+        assert_eq!(skill.text, expanded);
+        assert_eq!(data.messages.len(), 2, "原始输入保留为独立气泡");
+    }
+
+    #[test]
+    fn claude_skill_falls_back_to_length_without_parent_field() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        push_user(&cell, "/code-review src-tauri");
+        // 字段缺失但文本显著长于原始输入：按 Skill 归类。
+        let expanded = "长内容".repeat(200);
+        apply_claude_event(&cell, "turn", &mut state, &json!({"type": "user", "message": {"content": expanded}})).unwrap();
+        let data = cell.data.lock().unwrap();
+        let skill = data.messages.iter().find(|message| message.skill_name.is_some()).expect("兜底应识别 Skill");
+        assert_eq!(skill.skill_name.as_deref(), Some("code-review"));
+    }
+
+    #[test]
+    fn claude_short_user_text_is_ignored() {
+        // 短文本不判定为 Skill，也不产生气泡（避免普通回传刷屏）。
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        push_user(&cell, "/code-review src-tauri");
+        apply_claude_event(&cell, "turn", &mut state, &json!({"type": "user", "message": {"content": "短回传"}})).unwrap();
+        assert_eq!(cell.data.lock().unwrap().messages.len(), 1);
+    }
+
+    #[test]
+    fn claude_init_event_caches_slash_catalog() {
+        let cell = cell();
+        let mut state = ClaudeOutputState::default();
+        let init = json!({"type": "system", "subtype": "init",
+            "skills": ["code-review", "simplify"],
+            "slash_commands": ["cost", "model", "code-review", "simplify"],
+            "terminal_slash_commands": ["doctor", "color"]});
+        apply_claude_event(&cell, "turn", &mut state, &init).unwrap();
+        let catalog = cell.data.lock().unwrap().slash_catalog.clone().expect("init 应写入清单");
+        assert_eq!(catalog.skills, vec!["code-review", "simplify"]);
+        assert_eq!(catalog.slash_commands, vec!["cost", "model", "code-review", "simplify"]);
+        assert_eq!(catalog.terminal_slash_commands, vec!["doctor", "color"]);
     }
 
     #[test]

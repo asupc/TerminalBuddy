@@ -105,9 +105,10 @@ pub async fn socket(
             TerminalAccessError::Denied { .. } => axum::http::StatusCode::FORBIDDEN,
         })?;
     let slot = crate::web::ws::WsConnectionSlot::acquire().ok_or(axum::http::StatusCode::CONFLICT)?;
-    let (outcome, mut receiver) = relay::subscribe(&state.app_handle, TerminalActor::Web, &terminal_id)
+    let (outcome, receiver) = relay::subscribe(&state.app_handle, TerminalActor::Web, &terminal_id, true)
         .await
         .map_err(|error| ApiError::from(error).into_response().status())?;
+    let mut receiver = receiver.expect("WS 订阅应有接收端");
     let subscription_id = outcome.subscription_id;
     let initial = outcome.initial_frame;
     let app_state = state.clone();

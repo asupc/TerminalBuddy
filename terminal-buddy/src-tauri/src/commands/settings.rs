@@ -283,6 +283,12 @@ pub fn save_web_api_share_sessions(enabled: bool) -> Result<(), String> {
     SettingsService::mutate_settings(|s| s.web_api_share_sessions = enabled)
 }
 
+/// 新会话形态：true = 原生会话，false = 终端接力。只影响之后新建的会话。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn save_native_chat_sessions(enabled: bool) -> Result<(), String> {
+    SettingsService::mutate_settings(|s| s.native_chat_sessions = enabled)
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_launch_at_login(enabled: bool) -> Result<(), String> {
     set_autostart_registry(enabled)?;

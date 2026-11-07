@@ -1,3 +1,4 @@
+pub mod ai_chat;
 pub mod ai_usage;
 pub mod agent_cli;
 pub mod bot;
@@ -29,11 +30,13 @@ pub mod session_restore;
 pub mod settings;
 pub mod templates;
 pub mod terminal;
+pub mod terminal_agent;
 pub mod update;
 pub mod web;
 #[cfg(feature = "desktop")]
 pub mod window;
 pub mod workspace;
+pub use ai_chat::*;
 pub use ai_usage::*;
 pub use agent_cli::*;
 pub use bot::*;
@@ -64,6 +67,7 @@ pub use session_restore::*;
 pub use settings::*;
 pub use templates::*;
 pub use terminal::*;
+pub use terminal_agent::*;
 pub use update::*;
 pub use web::*;
 #[cfg(feature = "desktop")]

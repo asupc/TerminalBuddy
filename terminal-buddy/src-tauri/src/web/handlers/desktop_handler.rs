@@ -23,11 +23,13 @@ pub(super) fn result<T: Serialize>(value: Result<T, String>) -> Result<Value, Ap
 
 pub async fn runtime_info() -> Json<Value> {
     // agentCommands 供 Web 前端把 Agent 基础启动命令用于模型启动与历史恢复，免拉全量设置。
-    let agent_commands = crate::services::SettingsService::get_settings().agent_commands;
+    // nativeChatSessions 供手机端「开始对话」决定开原生会话还是终端接力，与桌面端同一开关。
+    let settings = crate::services::SettingsService::get_settings();
+    let agent_commands = settings.agent_commands;
     Json(json!({"platform": std::env::consts::OS, "mode": if cfg!(feature = "desktop") { "desktop" } else { "server" },
         "defaultTerminalType": crate::commands::terminal::default_terminal_type(), "fullInterface": true,
         "windowsBuildNumber": crate::services::platform_service::windows_build_number(),
-        "isDocker": super::is_docker_runtime(),
+        "isDocker": super::is_docker_runtime(), "nativeChatSessions": settings.native_chat_sessions,
         "agentCommands": {"claude": agent_commands.claude, "codex": agent_commands.codex}}))
 }
 
@@ -65,6 +67,13 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
     if let Some(id) = args.get("terminalId").and_then(Value::as_str) {
         app.state::<TerminalService>().authorize(id, TerminalActor::Web, TerminalAction::View)
             .map_err(access_map_error)?;
+    }
+    // Agent 回复会写入 PTY：在通用 View 检查之上提级到 Input（业务层仍会重新鉴权）。
+    if command == "terminal_agent_reply" {
+        if let Some(id) = args.get("terminalId").and_then(Value::as_str) {
+            app.state::<TerminalService>().authorize(id, TerminalActor::Web, TerminalAction::Input)
+                .map_err(access_map_error)?;
+        }
     }
     // SSH 路径属于远端主机，不能拿服务器文件范围来比较。
     let path_keys: &[&str] = if command.starts_with("remote_") { &["localPath", "localDir"] } else {
@@ -122,7 +131,9 @@ pub async fn job(State(_state): State<AppState>, _claims: ClaimsFromRequest, Pat
     }))
 }
 
-pub async fn invoke(State(state): State<AppState>, _claims: ClaimsFromRequest, headers: axum::http::HeaderMap, Path(command): Path<String>, Json(args): Json<Value>) -> Result<Json<Value>, ApiError> {
+pub async fn invoke(State(state): State<AppState>, claims: ClaimsFromRequest, headers: axum::http::HeaderMap, Path(command): Path<String>, Json(args): Json<Value>) -> Result<Json<Value>, ApiError> {
+    // 浏览器端原生 AI 会话以登录账号为 owner，与手机 REST/WS 看到同一批会话。
+    let owner = claims.0.sub.clone();
     // 请求方设备类型用于创建终端时记录 creator，供来源标识与接管提示使用。
     // 完整界面（电脑浏览器）通常为 Desktop；手机直接访问 /api 时按 UA 判定。
     let client_kind = client_kind_from_headers(&headers);
@@ -144,16 +155,16 @@ pub async fn invoke(State(state): State<AppState>, _claims: ClaimsFromRequest, h
             map.insert(id.clone(), job.clone());
         }
         tokio::spawn(async move {
-            let outcome = execute(&command, args, client_kind, state.app_handle).await.map_err(|error| format!("{:?}", error));
+            let outcome = execute(&command, args, client_kind, state.app_handle, owner).await.map_err(|error| format!("{:?}", error));
             if let Some(lease) = lease { lease.finish(&outcome); }
             if let Ok(mut slot) = job.outcome.lock() { *slot = Some(outcome); }
         });
         return Ok(Json(json!({"$jobId":id})));
     }
-    Ok(Json(execute(&command, args, client_kind, state.app_handle).await?))
+    Ok(Json(execute(&command, args, client_kind, state.app_handle, owner).await?))
 }
 
-async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, app: crate::runtime::AppHandle) -> Result<Value, ApiError> {
+async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, app: crate::runtime::AppHandle, owner: String) -> Result<Value, ApiError> {
     let value = match command {
         "start_terminal" | "start_blank_terminal" => {
             let request: TerminalRequest = serde_json::from_value(args).map_err(|e| ApiError::BadRequest(e.to_string()))?;
@@ -215,7 +226,7 @@ async fn execute(command: &str, args: Value, client_kind: TerminalClientKind, ap
             Value::Null
         }
         "log_boot" => Value::Null,
-        _ => desktop_dispatch::dispatch(&command, args, app).await?,
+        _ => desktop_dispatch::dispatch(&command, args, app, &owner).await?,
     };
     Ok(value)
 }
