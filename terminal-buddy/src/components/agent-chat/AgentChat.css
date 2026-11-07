@@ -214,6 +214,8 @@
 }
 
 .agent-bubble.assistant {
+  /* AI 回复固定占会话窗口宽度的 70%，长内容更易读。 */
+  max-width: 70%;
   background: var(--bg-primary, color-mix(in srgb, var(--text-primary) 4%, transparent));
   border: 1px solid var(--border-subtle);
   white-space: normal;
