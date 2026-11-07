@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleStop, CornerDownLeft, Send, Trash2, Zap } from 'lucide-react';
 import { AgentIcon } from './AgentIcon';
+import { ModelSwitcher } from './ModelSwitcher';
+import { UsagePanel, contextSummary } from './UsagePanel';
 import {
   AI_SESSION_REMOVED_EVENT,
   AI_SESSION_UPDATE_EVENT,
@@ -12,10 +14,13 @@ import {
   aiSessionPendingDelete,
   aiSessionSend,
   aiSessionStop,
+  aiSessionSwitchModel,
+  aiCatalog,
   listenTauri,
   type AiMessage,
   type AiSession,
   type AiSessionUpdateFrame,
+  type AiModelSwitch,
   type AnswerAiApproval,
   type SlashCatalog,
 } from '../../services/tauri';
@@ -127,6 +132,30 @@ function ToolGroup({ messages }: { messages: AiMessage[] }) {
           {messages.map(message => <ToolMessage key={message.id} message={message} />)}
         </div>
       )}
+    </div>
+  );
+}
+
+function formatClock(at: number): string {
+  const date = new Date(at);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * 模型切换分隔线：明示从这一段开始会话换用了哪个供应商与模型，
+ * 之前的消息由切换前的配置产生。
+ */
+function ModelSwitchDivider({ at, info }: { at: number; info: AiModelSwitch }) {
+  const from = [info.fromModel, info.fromProvider].filter(Boolean).join(' · ') || '服务端默认';
+  const to = [info.toModel, info.toProvider].filter(Boolean).join(' · ');
+  return (
+    <div className="agent-model-divider" role="separator">
+      <span className="agent-model-divider-time">{formatClock(at)}</span>
+      <span className="agent-model-divider-rule" />
+      <span className="agent-model-divider-text" title={`${from} → ${to}`}>
+        模型切换：{from} → {to}
+      </span>
+      <span className="agent-model-divider-rule" />
     </div>
   );
 }
@@ -280,6 +309,17 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     }
   }, [tab.sessionId]);
 
+  // 空闲时切换供应商与模型：后端结束常驻进程并写入切换分段，下一条消息以新配置 --resume 续接。
+  const switchModel = useCallback(async (providerId: string, model: string) => {
+    setError(null);
+    try {
+      const snapshot = await aiSessionSwitchModel(tab.sessionId, providerId, model);
+      setSession(previous => (previous && previous.revision > snapshot.revision ? previous : snapshot));
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }, [tab.sessionId]);
+
   const removeSession = useCallback(async () => {
     try {
       await aiSessionDelete(tab.sessionId);
@@ -354,6 +394,26 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const contextPercent = context?.usedTokens != null && context.windowTokens
     ? Math.min(100, Math.round((context.usedTokens / context.windowTokens) * 100))
     : null;
+  // 上下文摘要点击后打开与手机端同源的用量明细（输入/输出/缓存/命中率）。
+  const [usageOpen, setUsageOpen] = useState(false);
+  // 思考强度：会话本身不返回 effort，按 providerId + model 到目录里匹配（与手机端同一数据源）。
+  const [effortLabel, setEffortLabel] = useState('跟随服务端');
+  useEffect(() => {
+    if (!usageOpen) return;
+    const providerId = session?.providerId;
+    const model = session?.model;
+    if (!providerId || !model) { setEffortLabel('跟随服务端'); return; }
+    let disposed = false;
+    aiCatalog()
+      .then(catalog => {
+        if (disposed) return;
+        const effort = catalog.providers.find(item => item.id === providerId)
+          ?.models.find(item => item.id === model)?.effort;
+        setEffortLabel(effort?.trim() ? effort : '跟随服务端');
+      })
+      .catch(() => { if (!disposed) setEffortLabel('跟随服务端'); });
+    return () => { disposed = true; };
+  }, [usageOpen, session?.providerId, session?.model]);
 
   return (
     <div className="agent-chat-page">
@@ -367,7 +427,19 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
                 {STATUS_LABEL[session?.status ?? 'idle'] ?? session?.status}
               </span>
               <span className="agent-chat-meta">{tab.provider === 'codex' ? 'Codex' : 'Claude Code'}</span>
-              {session?.model && <span className="agent-chat-meta">{session.model}</span>}
+              {tab.provider === 'claude' ? (
+                <ModelSwitcher
+                  agent="claude"
+                  providerId={session?.providerId}
+                  providerName={session?.providerName}
+                  model={session?.model}
+                  disabled={busy || (session?.pendingInputs?.length ?? 0) > 0 || session == null}
+                  disabledReason={busy ? '执行中无法切换模型，请等待完成或先中断' : '有排队消息，请等待发出后再切换'}
+                  onPick={(providerId, model) => { void switchModel(providerId, model); }}
+                />
+              ) : (
+                session?.model && <span className="agent-chat-meta">{session.model}</span>
+              )}
               <span className="agent-chat-meta agent-chat-path" title={tab.projectPath}>{tab.projectPath}</span>
               <span className="agent-chat-meta agent-chat-process">独立进程</span>
             </div>
@@ -400,6 +472,9 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
               : <ToolMessage key={block.messages[0].id} message={block.messages[0]} />;
           }
           const message = block.message;
+          if (message.modelSwitch) {
+            return <ModelSwitchDivider key={message.id} at={message.createdAt} info={message.modelSwitch} />;
+          }
           if (message.role === 'user') {
             if (message.skillName) {
               return <SkillEntry key={message.id} name={message.skillName} text={message.text} />;
@@ -474,16 +549,32 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
             onCompositionEnd={() => { composing.current = false; }}
           />
           <div className="agent-input-bar">
-            <span className="agent-context-usage" title={context?.windowTokens ? `上下文 ${formatTokens(context.usedTokens)} / ${formatTokens(context.windowTokens)}` : '上下文用量未知'}>
-              上下文 {formatTokens(context?.usedTokens)}
+            <button
+              type="button"
+              className="agent-context-usage"
+              onClick={() => setUsageOpen(true)}
+              title={context?.windowTokens
+                ? `上下文 ${formatTokens(context.usedTokens)} / ${formatTokens(context.windowTokens)} · 点击查看 Token 明细`
+                : '点击查看 Token 明细'}
+            >
+              {contextSummary(context)}
               {contextPercent != null && <span className="agent-context-bar"><span style={{ width: `${contextPercent}%` }} /></span>}
-            </span>
+            </button>
             <button className="agent-btn primary" disabled={sending || !draft.trim()} onClick={() => { void send(); }}>
               <Send aria-hidden="true" />发送
             </button>
           </div>
         </div>
       </footer>
+      {usageOpen && (
+        <UsagePanel
+          usage={session?.usage}
+          modelLabel={session?.model || '服务端默认模型'}
+          effortLabel={effortLabel}
+          running={running}
+          onClose={() => setUsageOpen(false)}
+        />
+      )}
     </div>
   );
 }

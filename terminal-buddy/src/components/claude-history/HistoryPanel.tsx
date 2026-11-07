@@ -23,6 +23,7 @@ import {
   getBackendAppSettings,
   saveConfigNavWidth,
   saveFileNavWidth,
+  aiSessionResumeHistory,
   type ClaudeHistoryScanResult,
   type ClaudeSessionItem,
   type ClaudeSearchHit,
@@ -45,6 +46,8 @@ import type { ExtraParamPreset, Project, SessionHistoryProvider } from '../../ty
 import { sessionHistory } from '../../services/sessionHistory';
 import { getAgentCliEnvironment } from '../../services/agentCli';
 import { resumedCodexSessionId } from '../../utils/codexLaunch';
+import { openExistingAgentSession } from '../../utils/openAgentChat';
+import { getAppSettings } from '../../utils/settings';
 import './HistoryPanel.css';
 
 interface ContextMenuState {
@@ -446,7 +449,23 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
     });
   }, [history, provider, extraParamPresets, profiles]);
 
+  // 「新会话形态」为原生会话时，历史恢复走原生聊天标签（独立 CLI 进程 + --resume/thread 续接），
+  // 与项目模型启动共用同一开关；会话仍活在某个终端里时保持终端路径（聚焦原终端）。
+  const resumeNative = useCallback(async (item: ClaudeSessionItem, vendorRef?: ClaudeVendorRef) => {
+    const session = await aiSessionResumeHistory(
+      provider,
+      item.sessionId,
+      vendorRef?.providerId || null,
+      vendorRef?.modelId || null,
+    );
+    openExistingAgentSession(session);
+  }, [provider]);
+
   const handleResume = useCallback((item: ClaudeSessionItem, preset?: ExtraParamPreset) => {
+    if (getAppSettings().nativeChatSessions && !liveTerminalBySession.has(item.sessionId)) {
+      void resumeNative(item).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
+      return;
+    }
     const launchPreset: ResumeLaunchPreset | undefined = preset && {
       name: preset.name,
       params: preset.params,
@@ -457,15 +476,19 @@ const HistoryPanelContent: FC<HistoryPanelProps & {
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
     }, launchPreset).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
-  }, [history, showToast]);
+  }, [history, liveTerminalBySession, resumeNative, showToast]);
 
   const handleResumeWithModel = useCallback((item: ClaudeSessionItem, vendorRef: ClaudeVendorRef) => {
+    if (getAppSettings().nativeChatSessions && !liveTerminalBySession.has(item.sessionId)) {
+      void resumeNative(item, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
+      return;
+    }
     void history.resume({
       sessionId: item.sessionId,
       title: item.customTitle || item.title,
       projectDir: item.projectDir,
     }, undefined, vendorRef).catch(error => showToast(`恢复会话失败: ${String(error)}`, 'error'));
-  }, [history, showToast]);
+  }, [history, liveTerminalBySession, resumeNative, showToast]);
 
   const handleReplay = useCallback((sessionId: string, title: string, projectDir: string, focusSeq?: number) => {
     openClaudeReplayTab({ sessionId, title, projectDir, focusSeq, provider });

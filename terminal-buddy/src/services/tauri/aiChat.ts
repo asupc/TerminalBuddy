@@ -8,6 +8,16 @@ export interface AiMessage {
   createdAt: number;
   /** Skill 展开的消息：Skill 名称。普通消息不携带该字段。 */
   skillName?: string;
+  /** 模型切换分段（role = system）：切换前后的供应商与模型，前端渲染为分隔线。 */
+  modelSwitch?: AiModelSwitch;
+}
+
+/** 会话中途切换模型的记录；分段位置即切换发生的时间点。 */
+export interface AiModelSwitch {
+  fromProvider?: string | null;
+  fromModel?: string | null;
+  toProvider?: string | null;
+  toModel?: string | null;
 }
 
 export interface AiApproval {
@@ -138,6 +148,9 @@ export const aiSessionGet = (id: string) => invoke<AiSession>('ai_session_get', 
 export const aiSessionCreate = (input: CreateAiSession) => invoke<AiSession>('ai_session_create', { input });
 export const aiSessionSend = (id: string, input: SendAiMessage) => invoke<AiSession>('ai_session_send', { id, input });
 export const aiSessionStop = (id: string) => invoke<void>('ai_session_stop', { id });
+/** 空闲时切换供应商与模型（仅 Claude）；下一条消息以新配置 --resume 续接。 */
+export const aiSessionSwitchModel = (id: string, providerId: string, model: string) =>
+  invoke<AiSession>('ai_session_switch_model', { id, providerId, model });
 export const aiSessionAnswer = (id: string, input: AnswerAiApproval) => invoke<void>('ai_session_answer', { id, input });
 export const aiSessionDelete = (id: string) => invoke<void>('ai_session_delete', { id });
 export const aiSessionPendingUpdate = (id: string, requestId: string, text: string) =>
