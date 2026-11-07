@@ -2,10 +2,6 @@ package com.terminalbuddy.android.ui
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,7 +16,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -61,41 +56,10 @@ fun AiConversationScreen(ui: AiUiState, vm: AiViewModel) {
     var usageInformation by rememberSaveable(session.id) { mutableStateOf(false) }
     var vivoBackgroundGuide by rememberSaveable(session.id) { mutableStateOf(false) }
     var deleting by rememberSaveable(session.id) { mutableStateOf(false) }
-    Scaffold(
-        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
-        containerColor = TbColors.Surface,
-        // 底部统一避让系统导航栏和软键盘，输入框与消息区共享同一可用高度。
-        contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom),
-        topBar = {
-            Surface(color = TbColors.Surface) {
-                Column {
-                    Row(
-                        Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 56.dp).padding(horizontal = 4.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IconButton(vm::closeSession) {
-                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回 AI 首页", Modifier.size(20.dp), tint = TbColors.TextMuted)
-                        }
-                        Row(Modifier.weight(1f).padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(session.title, Modifier.weight(1f, fill = false),
-                                style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            AiReconnectingIndicator(ui.reconnecting)
-                        }
-                        IconButton({ menu = true }) {
-                            Icon(Icons.Outlined.MoreHoriz, "对话操作", Modifier.size(20.dp), tint = TbColors.TextMuted)
-                        }
-                    }
-                    AiDivider()
-                }
-            }
-        },
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-            AiNotificationPermission()
-            ui.error?.let { AiError(it, vm::clearError) }
-            AiConversation(ui, vm, Modifier.weight(1f), ui.selectedModelLabel, ui.selectedEffortLabel) { usageInformation = true }
-        }
+    AiConversationLayout(session.title, ui.reconnecting, vm::closeSession, { menu = true }) {
+        AiNotificationPermission()
+        ui.error?.let { AiError(it, vm::clearError) }
+        AiConversation(ui, vm, Modifier.weight(1f), ui.selectedModelLabel, ui.selectedEffortLabel) { usageInformation = true }
     }
     if (menu) {
         AiSheet("对话操作", { menu = false }) {
@@ -224,35 +188,18 @@ private fun AiConversation(
                     item(key = "ai-bottom") { Spacer(Modifier.height(1.dp)) }
                 }
                 if (motion.messages.isEmpty() && (!session.running || ui.loadingSession)) {
-                    Column(
-                        Modifier.align(Alignment.Center).padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        AiAgentBadge(session.provider)
-                        Text(
-                            if (ui.loadingSession || !motion.initialized) "正在加载消息…" else "发送第一条消息，开始对话。",
-                            style = MaterialTheme.typography.bodyMedium, color = TbColors.TextMuted,
-                        )
-                    }
+                    AiConversationEmptyState(
+                        session.provider, ui.loadingSession || !motion.initialized,
+                        Modifier.align(Alignment.Center),
+                    )
                 }
                 // 展开执行记录会暂停自动跟随，仅在下方仍有内容可滚动时显示返回按钮。
-                androidx.compose.animation.AnimatedVisibility(
+                AiConversationJumpToLatest(
                     visible = activeApproval == null && !scroll.following && scroll.list.canScrollForward && motion.messages.isNotEmpty(),
+                    onClick = { scroll.following = true },
                     modifier = Modifier.align(Alignment.BottomCenter).padding(
                         start = 8.dp, end = if (usageExpanded) 8.dp else 64.dp, bottom = 8.dp),
-                    enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 2 },
-                    exit = fadeOut(tween(120)) + slideOutVertically(tween(160)) { it / 2 },
-                ) {
-                    FilledTonalButton(
-                        { scroll.following = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                        colors = primaryButtonColors(tonal = true), border = primaryControlBorder(),
-                        elevation = ButtonDefaults.filledTonalButtonElevation(defaultElevation = 2.dp),
-                    ) {
-                        Icon(Icons.Outlined.KeyboardArrowDown, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("回到最新")
-                    }
-                }
+                )
                 // 决策覆盖在消息区底部，不随消息滚动也不挤占正文布局。
                 val approvalMaxHeight = (maxHeight * .8f).coerceAtMost(400.dp)
                 Column(

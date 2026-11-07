@@ -106,6 +106,7 @@ fun AiScreen(
                 displayName = projectName.ifBlank { terminal.profileName },
                 directory = projectPath.ifBlank { terminal.directory },
                 terminalType = terminal.terminalType,
+                model = modelId.takeIf(String::isNotBlank),
             )
         }
     }

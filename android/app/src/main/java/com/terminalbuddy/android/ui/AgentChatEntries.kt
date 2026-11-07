@@ -1,6 +1,9 @@
 package com.terminalbuddy.android.ui
 
 import com.terminalbuddy.android.data.AiHistoryMessage
+import com.terminalbuddy.android.data.AiMessage
+import com.terminalbuddy.android.data.AiSession
+import com.terminalbuddy.android.data.TerminalAgentSession
 
 /**
  * 终端 Agent 镜像的展示分组：转录里每个工具回合都会写一条 assistant（通常没有正文）
@@ -82,4 +85,42 @@ internal fun processStepSummary(message: AiHistoryMessage): String {
         firstLine.isBlank() -> "$name · 执行完成"
         else -> "$name · $firstLine"
     }
+}
+
+/** 只适配展示数据，终端会话仍由接力接口读写；消息 ID 在增量更新间保持稳定。 */
+internal fun agentConversationSession(
+    session: TerminalAgentSession, messages: List<AiHistoryMessage> = emptyList(), starting: Boolean = false,
+): AiSession {
+    val id = "terminal:${session.terminalId}:${session.sessionId}:${session.revision}"
+    val transcript = groupAgentChatEntries(messages).flatMap { entry ->
+        when (entry) {
+            is AgentChatEntry.Message -> listOf(
+                AiMessage("$id-message-${entry.message.seq}", entry.message.role, entry.message.text, entry.message.timestamp ?: 0),
+            )
+            is AgentChatEntry.Process -> entry.steps.flatMap { step ->
+                if (step.role == "assistant") {
+                    step.tools.mapIndexed { index, tool ->
+                        AiMessage(
+                            "$id-tool-${step.seq}-$index", "tool",
+                            listOf(tool.name, tool.summary).filter(String::isNotBlank).joinToString(" · "),
+                            step.timestamp ?: 0,
+                        )
+                    }
+                } else {
+                    listOf(AiMessage("$id-tool-${step.seq}", "tool", processStepSummary(step) + "\n\n" + step.text, step.timestamp ?: 0))
+                }
+            }
+        }
+    }
+    return AiSession(
+        id = id, title = session.displayTitle, provider = session.provider, projectPath = session.directory.orEmpty(),
+        model = session.model, messages = transcript, revision = session.revision,
+        status = when {
+            starting -> "idle"
+            session.pendingDecisionCount > 0 || session.phase == "attention" -> "approval"
+            session.phase == "running" -> "running"
+            session.phase == "failed" -> "error"
+            else -> "idle"
+        },
+    )
 }

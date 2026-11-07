@@ -1,13 +1,11 @@
 package com.terminalbuddy.android.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,11 +23,13 @@ import com.terminalbuddy.android.ServerTerminalViewModel
 import com.terminalbuddy.android.TerminalAgentUiState
 import com.terminalbuddy.android.TerminalAgentViewModel
 import com.terminalbuddy.android.data.ServerTerminal
+import com.terminalbuddy.android.notifications.AiBackgroundCompatibility
+import com.terminalbuddy.android.notifications.AiTaskNotifications
 
 private enum class AgentSessionTab { Chat, Terminal }
 
 /**
- * 终端 Agent 会话宿主：默认打开完整版样式的聊天页，标题栏可切换原终端。
+ * 终端 Agent 会话宿主：共用完整版聊天布局，从对话菜单打开原终端。
  * 对话页提供镜像与受限回复，终端页复用不含头栏的 ServerTerminalContent。
  * 镜像 WS 仅在对话页签且 Activity START 时保持，切页签 / 退后台立即断开。
  */
@@ -49,6 +49,9 @@ internal fun TerminalAgentSessionScreen(
     }
     var menu by rememberSaveable(session?.terminalId.orEmpty()) { mutableStateOf(false) }
     var information by rememberSaveable(session?.terminalId.orEmpty()) { mutableStateOf(false) }
+    var usageInformation by rememberSaveable(session?.terminalId.orEmpty()) { mutableStateOf(false) }
+    var vivoBackgroundGuide by rememberSaveable(session?.terminalId.orEmpty()) { mutableStateOf(false) }
+    val context = LocalContext.current
     val back: () -> Unit = {
         if (activeTab == AgentSessionTab.Terminal) onBackFromTerminal() else onBack()
     }
@@ -73,44 +76,16 @@ internal fun TerminalAgentSessionScreen(
     DisposableEffect(agentVm) { onDispose { agentVm.setVisible(false) } }
     BackHandler(onBack = back)
 
-    Column(
-        Modifier.fillMaxSize().background(TbColors.Surface)
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
-    ) {
-        Surface(color = TbColors.Surface) {
-            Row(
-                Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 56.dp)
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(back) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回会话列表", Modifier.size(20.dp), tint = TbColors.TextMuted)
-                }
-                Row(
-                    Modifier.weight(1f).padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        session?.displayTitle ?: "远程会话", Modifier.weight(1f, fill = false),
-                        style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                    AiReconnectingIndicator(agentUi.reconnecting)
-                }
-                IconButton({
-                    activeTab = if (activeTab == AgentSessionTab.Chat) AgentSessionTab.Terminal else AgentSessionTab.Chat
-                }) {
-                    Icon(
-                        if (activeTab == AgentSessionTab.Chat) Icons.Outlined.Terminal else Icons.Outlined.ChatBubbleOutline,
-                        if (activeTab == AgentSessionTab.Chat) "打开终端" else "返回对话",
-                        Modifier.size(20.dp), tint = TbColors.TextMuted,
-                    )
-                }
-                IconButton({ menu = true }) {
-                    Icon(Icons.Outlined.MoreHoriz, "对话操作", Modifier.size(20.dp), tint = TbColors.TextMuted)
-                }
+    AiConversationLayout(
+        title = session?.displayTitle ?: "远程会话", reconnecting = agentUi.reconnecting,
+        onBack = back, onMenu = { menu = true },
+        actions = {
+            if (activeTab == AgentSessionTab.Terminal) IconButton({ activeTab = AgentSessionTab.Chat }) {
+                Icon(Icons.Outlined.ChatBubbleOutline, "返回对话", Modifier.size(20.dp), tint = TbColors.TextMuted)
             }
-        }
-        AiDivider()
+        },
+    ) {
+        if (activeTab == AgentSessionTab.Chat) AiNotificationPermission()
         when (activeTab) {
             AgentSessionTab.Chat -> Box(Modifier.fillMaxWidth().weight(1f)) {
                 if (session != null) {
@@ -118,6 +93,7 @@ internal fun TerminalAgentSessionScreen(
                         ui = agentUi, vm = agentVm,
                         openDecision = openDecision,
                         openTerminal = { activeTab = AgentSessionTab.Terminal },
+                        usageDetails = { usageInformation = true },
                     )
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -141,6 +117,22 @@ internal fun TerminalAgentSessionScreen(
     if (menu) {
         AiSheet("对话操作", { menu = false }) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                AiConversationAction(Icons.Outlined.NotificationsActive, "决策横幅通知", {
+                    menu = false; AiTaskNotifications.openDecisionSettings(context)
+                })
+                AiConversationAction(Icons.Outlined.NotificationsActive, "结束横幅通知", {
+                    menu = false; AiTaskNotifications.openResultSettings(context)
+                })
+                AiConversationAction(Icons.Outlined.BatteryFull, "后台运行设置", {
+                    menu = false
+                    if (AiBackgroundCompatibility.isVivoDevice()) vivoBackgroundGuide = true
+                    else AiTaskNotifications.openBackgroundSettings(context)
+                })
+                AiConversationAction(Icons.Outlined.Info, "对话信息", { menu = false; information = true })
+                AiConversationAction(Icons.Outlined.DataUsage, "上下文与 Token", {
+                    menu = false; usageInformation = true
+                }, enabled = session != null)
+                AiConversationAction(Icons.Outlined.FolderOpen, "返回首页选择模型", { menu = false; onBack() })
                 AiConversationAction(
                     if (activeTab == AgentSessionTab.Chat) Icons.Outlined.Terminal else Icons.Outlined.ChatBubbleOutline,
                     if (activeTab == AgentSessionTab.Chat) "打开终端" else "返回对话",
@@ -151,7 +143,6 @@ internal fun TerminalAgentSessionScreen(
                 )
                 AiConversationAction(Icons.Outlined.Refresh, "刷新消息", { menu = false; agentVm.refreshSession() },
                     enabled = session != null && !agentUi.loadingMessages && !agentUi.starting)
-                AiConversationAction(Icons.Outlined.Info, "对话信息", { menu = false; information = true })
             }
         }
     }
@@ -163,8 +154,9 @@ internal fun TerminalAgentSessionScreen(
                     session?.let {
                         AiInfoField("对话标题", it.displayTitle)
                         AiInfoField("项目路径", it.directory?.takeIf(String::isNotBlank) ?: "未提供", monospace = true)
-                        AiInfoField("助手与模型", listOfNotNull(agentTitle(it.provider), it.model?.takeIf(String::isNotBlank)).joinToString(" · "))
-                        AiInfoField("当前状态", if (agentUi.starting) "正在启动" else it.phaseLabel)
+                        AiInfoField("供应商与模型", listOfNotNull(agentTitle(it.provider), it.model?.takeIf(String::isNotBlank)).joinToString(" · "))
+                        AiInfoField("思考强度", "跟随服务端")
+                        AiInfoField("当前状态", "${if (agentUi.starting) "正在启动" else it.phaseLabel} · ${if (agentUi.connected) "实时连接" else "自动同步"}")
                         AiInfoField("终端类型", terminalTypeLabel(it.terminalType))
                     }
                     AiInfoField("消息数量", "${agentUi.total} 条")
@@ -172,6 +164,14 @@ internal fun TerminalAgentSessionScreen(
                 }
             }
         }
+    }
+    if (vivoBackgroundGuide) AiVivoBackgroundGuide { vivoBackgroundGuide = false }
+    if (usageInformation && session != null) {
+        val conversation = agentConversationSession(session)
+        AiUsageSheet(
+            conversation, conversation.modelLabel, "跟随服务端",
+            unavailableMessage = "当前终端会话尚未提供用量统计。",
+        ) { usageInformation = false }
     }
 }
 

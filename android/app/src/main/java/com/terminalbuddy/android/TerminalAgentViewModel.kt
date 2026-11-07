@@ -279,6 +279,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
      */
     fun openStartingSession(
         terminalId: String, provider: String, displayName: String, directory: String?, terminalType: String,
+        model: String? = null,
     ) {
         if (mutable.value.selected?.terminalId == terminalId) return
         pageJob?.cancel(); pageJob = null
@@ -297,6 +298,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
                     terminalType = terminalType,
                     directory = directory?.takeIf(String::isNotBlank),
                     provider = provider,
+                    model = model,
                 ),
                 starting = true,
             )
