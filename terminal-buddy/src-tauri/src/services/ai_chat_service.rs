@@ -784,6 +784,15 @@ fn write_json(stdin: &mut impl Write, value: Value) -> Result<()> {
     stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|e| format!("AI 输入通道已关闭：{e}"))
 }
 /// 写入一条 Claude 用户消息。进程常驻时后续回合复用同一个 stdin，因此不能关闭它或改用 --resume。
+/// CLI 以 `result` + `is_error` 返回的中断类提示：只是本段回复被打断，
+/// 不该把整个会话判为失败（用户仍可继续发送）。
+fn is_interrupt_notice(detail: &str) -> bool {
+    let text = detail.to_ascii_lowercase();
+    ["interrupt", "aborted", "cancelled", "canceled", "stopped by user"]
+        .iter().any(|needle| text.contains(needle))
+        || detail.contains("已中断") || detail.contains("被中断") || detail.contains("用户中断")
+}
+
 fn write_claude_user(stdin: &mut impl Write, session_id: &str, text: &str) -> Result<()> {
     write_json(stdin, json!({"type":"user","message":{"role":"user","content":text},
         "parent_tool_use_id":null,"session_id":session_id}))
@@ -1023,7 +1032,26 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
             update(cell, |data| data.slash_catalog = Some(catalog));
         }
         "result" => {
-            if value["is_error"] == true { return Err(value["result"].as_str().map(str::to_string).unwrap_or_else(|| value["errors"].to_string())); }
+            // `is_error` 的 result 不一定代表进程失败：用户中断、CLI 把运行中的新消息
+            // 当作重新排队的提示（"Interrupted by user" 等）都会走这里。
+            // 之前直接 return Err 会把整轮判成错误/中断，用户看到的就是「发送后会话中断」。
+            if value["is_error"] == true {
+                let detail = value["result"].as_str().map(str::to_string)
+                    .unwrap_or_else(|| value["errors"].to_string());
+                // 中断类提示只结束本段回复，保留聊天记录与进程，允许继续发送。
+                if is_interrupt_notice(&detail) {
+                    update(cell, |data| {
+                        data.status = "idle".into();
+                        data.error = None;
+                        data.result_revision = data.revision;
+                    });
+                    state.response_start = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.messages.len();
+                    state.response_number += 1;
+                    state.response_completed = true;
+                    return Ok(true);
+                }
+                return Err(detail);
+            }
             if let Some(text) = value["result"].as_str() {
                 let has_answer = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.messages.iter()
                     .skip(state.response_start).any(|m| m.id.starts_with(turn) && m.role == "assistant");
@@ -1126,7 +1154,11 @@ fn run_claude(cell: &Cell, process: &mut Process, stdin: ChildStdin, controls: m
                     });
                     let session_id = cell.data.lock().map_err(|_| "AI 会话状态不可用")?.thread_id.clone().unwrap_or_default();
                     write_claude_user(stdin, &session_id, &text)?;
-                    pending_results = pending_results.saturating_add(1);
+                    // 等待审批时注入的消息不会单独产生 result（审批恢复后并回同一回合），
+                    // 那时再加计数会让 pending_results 永远多 1，回合结束后状态卡在 running。
+                    if pending.is_empty() {
+                        pending_results = pending_results.saturating_add(1);
+                    }
                     last_event = Instant::now();
                 }
                 Control::Approval(answer) => {
@@ -2207,4 +2239,35 @@ mod tests {
         let _ = fs::remove_dir_all(&directory);
     }
 
+}
+
+#[cfg(test)]
+mod interrupt_notice_tests {
+    use super::is_interrupt_notice;
+
+    /// 中断类 result 只应结束本段回复，不能把会话判为失败。
+    #[test]
+    fn recognizes_interrupt_notices() {
+        for text in [
+            "Interrupted by user",
+            "Request was aborted",
+            "Operation cancelled",
+            "已中断",
+            "当前回合被中断",
+        ] {
+            assert!(is_interrupt_notice(text), "应识别为中断：{text}");
+        }
+    }
+
+    /// 真实错误不能被误判为中断，否则会吞掉失败原因。
+    #[test]
+    fn real_errors_are_not_treated_as_interrupts() {
+        for text in [
+            "API Error: 500 internal server error",
+            "上下文超长，请压缩后再试",
+            "rate limit exceeded",
+        ] {
+            assert!(!is_interrupt_notice(text), "不应误判为中断：{text}");
+        }
+    }
 }
