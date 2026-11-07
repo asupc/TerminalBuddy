@@ -12,6 +12,19 @@ pub struct AiMessage {
     /// 前端据此渲染为可展开的 skill:名称 条目，而非普通气泡。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_name: Option<String>,
+    /// 模型切换分段：role = "system" 时携带切换前后的配置，前端渲染为分隔线。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_switch: Option<ModelSwitch>,
+}
+
+/// 会话中途切换供应商或模型的记录：从哪一段开始由 `createdAt` 标定。
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSwitch {
+    pub from_provider: Option<String>,
+    pub from_model: Option<String>,
+    pub to_provider: Option<String>,
+    pub to_model: Option<String>,
 }
 
 /// `system/init` 提供的命令清单，随会话启动刷新。Codex 无此机制，为 None。

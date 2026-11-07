@@ -115,6 +115,18 @@ pub async fn delete_pending_input(
 pub async fn stop(claims: ClaimsFromRequest, Path(id): Path<String>) -> Result<Json<()>, ApiError> {
     blocking(move || service::stop(&id, &claims.0.sub)).await
 }
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchAiModel {
+    pub provider_id: String,
+    pub model: String,
+}
+
+/// 空闲时切换供应商与模型（仅 Claude）：常驻进程退出，下一条消息以新配置续接。
+pub async fn switch_model(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<SwitchAiModel>) -> Result<Json<AiSession>, ApiError> {
+    blocking(move || service::switch_model(&id, &claims.0.sub, &input.provider_id, &input.model)).await
+}
 pub async fn answer(claims: ClaimsFromRequest, Path(id): Path<String>, Json(input): Json<AnswerAiApproval>) -> Result<Json<()>, ApiError> {
     blocking(move || service::answer(&id, &claims.0.sub, input)).await
 }

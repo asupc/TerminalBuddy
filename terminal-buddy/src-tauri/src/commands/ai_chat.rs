@@ -41,6 +41,12 @@ pub async fn ai_session_stop(id: String) -> Result<(), String> {
     claude_task(move || service::stop(&id, &desktop_owner())).await
 }
 
+/// 空闲时切换供应商与模型（仅 Claude）；返回更新后的会话快照。
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub async fn ai_session_switch_model(id: String, provider_id: String, model: String) -> Result<AiSession, String> {
+    claude_task(move || service::switch_model(&id, &desktop_owner(), &provider_id, &model)).await
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn ai_session_answer(id: String, input: AnswerAiApproval) -> Result<(), String> {
     claude_task(move || service::answer(&id, &desktop_owner(), input)).await

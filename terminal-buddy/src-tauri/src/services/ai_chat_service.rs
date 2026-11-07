@@ -290,7 +290,7 @@ fn prefill_history_messages(provider: &str, session_id: &str, total: usize) -> R
             if offset >= total { break; }
             offset += 1; advanced = true;
             if !matches!(item.role.as_str(), "user" | "assistant" | "tool") || item.text.trim().is_empty() { continue; }
-            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0), skill_name: None });
+            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0), skill_name: None, model_switch: None });
         }
         if !advanced { break; }
     }
@@ -310,7 +310,7 @@ fn history_messages(session_id: &str, history: &crate::models::session_history::
         }
         if parts.is_empty() { return None; }
         Some(AiMessage { id: format!("history-{session_id}-{}", message.seq), role: message.role.clone(),
-            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at), skill_name: None })
+            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at), skill_name: None, model_switch: None })
     }).collect()
 }
 
@@ -361,6 +361,61 @@ pub fn stop(id: &str, owner: &str) -> Result<()> {
         update(&cell, |data| data.status = "stopping".into());
     }
     Ok(())
+}
+
+/// 会话中途切换供应商与模型（仅 Claude 原生会话）。
+///
+/// 空闲时才允许：先让常驻 CLI 进程退出，再写入新配置与切换分段。下一条消息由
+/// `run_turn` 按新配置 `prepare()` 并带 `--resume thread_id` 拉起新进程，上下文续接，对用户无感。
+pub fn switch_model(id: &str, owner: &str, provider_id: &str, model: &str) -> Result<AiSession> {
+    let cell = load(id, owner)?;
+    // 与发送、删除、回合交接共用 control 锁：不会与 start_turn 交错。
+    let mut control = cell.control.lock().map_err(|_| "AI 会话状态不可用")?;
+    let mut data = cell.data.lock().map_err(|_| "AI 会话状态不可用")?;
+    if data.provider != "claude" {
+        return Err("当前仅 Claude 会话支持切换模型，Codex 会话请新建".into());
+    }
+    // 空闲会话的 CLI 进程仍常驻（control = Some）：允许切换，先让它退出。
+    if data.status != "idle" || !data.pending_inputs.is_empty() {
+        return Err("会话正在执行或有排队消息，请等待完成（或先中断）后再切换模型".into());
+    }
+    let selection = super::ai_catalog_service::selection(&data.provider, Some(provider_id), Some(model))?;
+    let (to_provider, to_name) = selection.ok_or("所选供应商无效，请刷新后重新选择")?;
+    if data.provider_id.as_deref() == Some(to_provider.as_str()) && data.model.as_deref() == Some(model) {
+        return Ok(data.clone());
+    }
+    // 先结束常驻进程（不会写回文件），再修改配置，避免旧进程在新配置下继续接收消息。
+    if let Some(tx) = control.take() { let _ = tx.send(Control::Retire); }
+    let before = data.clone();
+    let from_label = [before.model.clone(), before.provider_name.clone()].into_iter()
+        .flatten().collect::<Vec<_>>().join(" · ");
+    let to_label = [Some(model.to_string()), Some(to_name.clone())].into_iter()
+        .flatten().collect::<Vec<_>>().join(" · ");
+    let switch_text = format!("模型切换：{} → {}", if from_label.is_empty() { "服务端默认" } else { &from_label }, to_label);
+    let switch = crate::models::ai_chat::ModelSwitch {
+        from_provider: before.provider_name.clone(),
+        from_model: before.model.clone(),
+        to_provider: Some(to_name.clone()),
+        to_model: Some(model.to_string()),
+    };
+    data.messages.push(AiMessage {
+        id: format!("switch-{}", Uuid::new_v4()),
+        role: "system".into(),
+        text: switch_text,
+        created_at: chrono::Utc::now().timestamp_millis(),
+        skill_name: None,
+        model_switch: Some(switch),
+    });
+    data.provider_id = Some(to_provider);
+    data.provider_name = Some(to_name);
+    data.model = Some(model.to_string());
+    touch(&mut data);
+    if let Err(error) = persist_data(&cell, &data) { *data = before; return Err(error); }
+    let snapshot = data.clone();
+    drop(data);
+    drop(control);
+    emit_update(&cell);
+    Ok(snapshot)
 }
 pub fn answer(id: &str, owner: &str, input: AnswerAiApproval) -> Result<()> {
     let cell = load(id, owner)?;
@@ -498,7 +553,7 @@ fn deliver_now(cell: &Cell, data: &mut AiSession, control: &mpsc::Sender<Control
 fn accept_input(data: &mut AiSession, request_id: &str, text: &str) {
     if !data.request_ids.iter().any(|id| id == request_id) { data.request_ids.push(request_id.to_string()); }
     data.messages.push(AiMessage { id: request_id.to_string(), role: "user".into(), text: text.into(),
-        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None });
+        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None });
     if data.title == "新对话" { data.title = text.trim().chars().take(36).collect(); }
     // 等待确认时保留 approval 状态，让决策卡片继续显示；其余情况视为执行中。
     if data.approvals.is_empty() { data.status = "running".into(); }
@@ -569,7 +624,7 @@ fn begin_pending_turn(data: &mut AiSession) -> Option<PendingInput> {
     if data.pending_inputs.is_empty() { return None; }
     let next = data.pending_inputs.remove(0);
     data.messages.push(AiMessage { id: next.request_id.clone(), role: "user".into(), text: next.text.clone(),
-        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None });
+        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None });
     if data.title == "新对话" { data.title = next.text.trim().chars().take(36).collect(); }
     usage::begin_turn(data);
     data.status = "running".into(); data.error = None; data.approvals.clear(); touch(data);
@@ -672,7 +727,7 @@ fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
             if append { item.text.push_str(text); } else { item.text = text.into(); }
         } else {
             data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None });
         }
     });
 }
@@ -685,7 +740,7 @@ fn message_with_skill(cell: &Cell, key: &str, name: &str, text: &str) {
             item.skill_name = Some(name.into());
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "user".into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: Some(name.into()) });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: Some(name.into()), model_switch: None });
         }
     });
 }
@@ -1697,7 +1752,7 @@ mod tests {
     #[test]
     fn prefill_differs_detects_append_and_rewrite() {
         let message = |id: &str, text: &str, at: i64| AiMessage {
-            id: id.into(), role: "user".into(), text: text.into(), created_at: at, skill_name: None,
+            id: id.into(), role: "user".into(), text: text.into(), created_at: at, skill_name: None, model_switch: None,
         };
         let old = vec![message("history-0", "第一问", 1)];
         // 条数相同、内容相同 → 不替换，避免无意义的落盘。
@@ -1902,7 +1957,7 @@ mod tests {
 
     fn push_user(cell: &Cell, text: &str) {
         cell.data.lock().unwrap().messages.push(AiMessage {
-            id: "user-input".into(), role: "user".into(), text: text.into(), created_at: 0, skill_name: None,
+            id: "user-input".into(), role: "user".into(), text: text.into(), created_at: 0, skill_name: None, model_switch: None,
         });
     }
 
@@ -2102,5 +2157,54 @@ mod tests {
         assert!(messages.is_empty());
     }
 
+    /// 原生会话切换供应商/模型：配置更新 + 写入可渲染的切换分段；执行中被拒绝。
+    #[test]
+    fn switch_model_updates_config_and_writes_divider() {
+        use crate::models::llm_provider::{LlmModelConfig, LlmProviderInput};
+        let directory = std::env::temp_dir().join(format!("ai-switch-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        crate::services::PathService::set_test_data_dir(Some(directory.clone()));
+        let verify = || {
+            let saved = crate::services::llm_provider_service::save_provider(LlmProviderInput {
+                id: String::new(), name: "切换中转".into(), base_url: "https://a.example/v1".into(),
+                auth_type: "ANTHROPIC_AUTH_TOKEN".into(), api_key: Some("secret".into()), is_default: true,
+                default_effort_level: "high".into(), models_url: String::new(),
+                enabled_models: vec![
+                    LlmModelConfig { id: "m1".into(), enabled: true, context_window: 0, effort_level: String::new(), max_output_tokens: 0 },
+                    LlmModelConfig { id: "m2".into(), enabled: true, context_window: 0, effort_level: String::new(), max_output_tokens: 0 },
+                ],
+                sort_index: 0,
+            }).unwrap();
+            let provider_id = format!("llm:{}", saved.id);
+            let data = create("switch-owner", CreateAiSession {
+                provider: "claude".into(), provider_id: Some(provider_id.clone()), project_path: "/tmp".into(),
+                model: Some("m1".into()), resume_session_id: None,
+            }).unwrap();
+
+            let switched = switch_model(&data.id, "switch-owner", &provider_id, "m2").unwrap();
+            assert_eq!(switched.model.as_deref(), Some("m2"));
+            let divider = switched.messages.iter().find(|m| m.role == "system").expect("应写入切换分段");
+            let info = divider.model_switch.as_ref().unwrap();
+            assert_eq!(info.from_model.as_deref(), Some("m1"));
+            assert_eq!(info.to_model.as_deref(), Some("m2"));
+            assert_eq!(info.to_provider.as_deref(), Some("切换中转"));
+            // 携带可读文本：旧客户端（不认识 modelSwitch）也能显示切换说明。
+            assert!(divider.text.contains("m1") && divider.text.contains("m2"));
+            // 相同配置重复切换是幂等的，不再叠加分段。
+            let again = switch_model(&data.id, "switch-owner", &provider_id, "m2").unwrap();
+            assert_eq!(again.messages.iter().filter(|m| m.role == "system").count(), 1);
+
+            // 执行中拒绝切换。
+            let cell = registry().lock().unwrap().values()
+                .find(|c| c.path.file_stem().and_then(|s| s.to_str()) == Some(data.id.as_str()))
+                .cloned().expect("会话应已注册");
+            cell.data.lock().unwrap().status = "running".into();
+            let rejected = switch_model(&data.id, "switch-owner", &provider_id, "m1");
+            assert!(rejected.is_err());
+        };
+        verify();
+        crate::services::PathService::set_test_data_dir(None);
+        let _ = fs::remove_dir_all(&directory);
+    }
 
 }

@@ -68,7 +68,11 @@ fn ensure(data: &mut AiSession) -> &mut AiUsage {
     })
 }
 pub(super) fn begin_turn(data: &mut AiSession) {
-    ensure(data).last_turn = Some(AiTurnUsage { state: "provisional".into(), ..Default::default() });
+    let usage = ensure(data);
+    usage.last_turn = Some(AiTurnUsage { state: "provisional".into(), ..Default::default() });
+    // 新一轮开始时上次的上下文数字仍然有效（只是待刷新）：不要清成 0，
+    // 否则界面会在 0 → 实际值 之间来回跳。
+    usage.context.updating = true;
 }
 pub(super) fn finish_turn(data: &mut AiSession) {
     let Some(usage) = data.usage.as_mut() else { return; };
@@ -81,14 +85,11 @@ pub(super) fn finish_turn(data: &mut AiSession) {
 }
 pub(super) fn configured_window(data: &mut AiSession, window: Option<u64>) {
     let context = &mut ensure(data).context;
-    // 显式配置即时生效；默认配置沿用最近的 CLI 报告，下一份报告到达后再校正。
-    // 会话的供应商和模型不变，因此无需在每次发送时把已知容量变回未知。
+    // 显式配置即时生效；未配置时保留最近的 CLI 报告或上一次已知容量。
+    // 会话的供应商和模型不变，把已知容量清成未知只会让界面数字闪动。
     if let Some(window) = window.filter(|n| *n > 0 && *n <= i64::MAX as u64) {
         context.window_tokens = Some(window);
         context.window_source = Some("configuration".into());
-    } else if context.window_source.as_deref() != Some("cli") {
-        context.window_tokens = None;
-        context.window_source = None;
     }
 }
 fn store_turn(data: &mut AiSession, base: &AiTokenUsage, tokens: AiTokenUsage, state: &str) {
@@ -98,8 +99,8 @@ fn store_turn(data: &mut AiSession, base: &AiTokenUsage, tokens: AiTokenUsage, s
 }
 pub(super) fn invalidate_context(data: &mut AiSession) {
     let context = &mut ensure(data).context;
-    context.used_tokens = None;
-    context.used_source = None;
+    // 压缩 / 切换后旧数字已不准确，但保留它并标记「待更新」比显示 0 更稳：
+    // 客户端据此显示「上下文待更新」，等下一份报告到达再替换。
     context.updating = true;
 }
 
@@ -322,5 +323,75 @@ impl CodexUsageTracker {
         if let Some(turn) = ensure(data).last_turn.as_mut() {
             if self.observed && !self.missing_turn_base && turn.tokens.complete() { turn.state = "final".into(); }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session() -> crate::models::ai_chat::AiSession {
+        crate::models::ai_chat::AiSession {
+            id: "usage-test".into(), title: "t".into(), provider: "claude".into(),
+            provider_id: None, provider_name: None, project_path: "/tmp".into(), model: None,
+            status: "idle".into(), messages: Vec::new(), approvals: Vec::new(), error: None,
+            updated_at: 0, revision: 1, result_revision: 0, usage: Some(initial()),
+            usage_checkpoint: None, owner: "o".into(), thread_id: None, request_ids: Vec::new(),
+            pending_inputs: Vec::new(), slash_catalog: None,
+        }
+    }
+
+    /// 回合之间不能把已知上下文清成 0，否则界面会在 0 与真实值之间跳。
+    #[test]
+    fn begin_turn_keeps_known_context_instead_of_resetting() {
+        let mut data = session();
+        {
+            let context = &mut data.usage.as_mut().unwrap().context;
+            context.used_tokens = Some(328_000);
+            context.window_tokens = Some(500_000);
+            context.window_source = Some("cli".into());
+            context.updating = false;
+        }
+        begin_turn(&mut data);
+        let context = &data.usage.as_ref().unwrap().context;
+        assert_eq!(context.used_tokens, Some(328_000), "上一轮的数字应保留");
+        assert!(context.updating, "保留数字但标记为待刷新");
+        assert_eq!(context.window_tokens, Some(500_000));
+    }
+
+    /// 压缩后旧数字不准确，但保留并标记待更新，好过闪成 0。
+    #[test]
+    fn invalidate_context_keeps_last_value_and_flags_updating() {
+        let mut data = session();
+        {
+            let context = &mut data.usage.as_mut().unwrap().context;
+            context.used_tokens = Some(120_000);
+            context.updating = false;
+        }
+        invalidate_context(&mut data);
+        let context = &data.usage.as_ref().unwrap().context;
+        assert_eq!(context.used_tokens, Some(120_000));
+        assert!(context.updating);
+    }
+
+    /// 未配置显式容量时，不要抹掉 CLI 已报告过的窗口大小。
+    #[test]
+    fn configured_window_preserves_cli_reported_window() {
+        let mut data = session();
+        {
+            let context = &mut data.usage.as_mut().unwrap().context;
+            context.window_tokens = Some(328_000);
+            context.window_source = Some("cli".into());
+        }
+        configured_window(&mut data, None);
+        let context = &data.usage.as_ref().unwrap().context;
+        assert_eq!(context.window_tokens, Some(328_000));
+        assert_eq!(context.window_source.as_deref(), Some("cli"));
+
+        // 显式配置仍然即时覆盖。
+        configured_window(&mut data, Some(500_000));
+        let context = &data.usage.as_ref().unwrap().context;
+        assert_eq!(context.window_tokens, Some(500_000));
+        assert_eq!(context.window_source.as_deref(), Some("configuration"));
     }
 }
