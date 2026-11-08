@@ -29,11 +29,16 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub(crate) const EMPTY_TREE_REVISION: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 static GIT_COMMANDS_STOPPED: AtomicBool = AtomicBool::new(false);
 
+// 调用点全部在平台 cfg 之后（runtime.rs 的 headless shutdown 与 desktop.rs 的
+// Windows 窗口过程），desktop+非 Windows 编译时呈现为 dead —— 实际已接线，
+// 按审查 L-51 补消音，不要「接线」。
+#[cfg_attr(all(feature = "desktop", not(windows)), allow(dead_code))]
 pub(crate) fn stop_git_commands() {
     GIT_COMMANDS_STOPPED.store(true, Ordering::Release);
 }
 
 #[cfg(feature = "desktop")]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn resume_git_commands() {
     GIT_COMMANDS_STOPPED.store(false, Ordering::Release);
 }
@@ -602,15 +607,50 @@ fn spawn_git_output_reader<R>(
 {
     std::thread::spawn(move || {
         let mut buffer = [0_u8; 4096];
+        // 跨块 UTF-8 累积解码（审查 M-12）：多字节字符横跨读取边界时，
+        // 两个半字符各变 U+FFFD——中文文件名/内容损坏后，后续按坏路径提交失败。
+        let mut pending: Vec<u8> = Vec::new();
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(size) => {
-                    let chunk = String::from_utf8_lossy(&buffer[..size]).replace('\r', "\n");
-                    let _ = tx.send(variant(chunk));
+                    pending.extend_from_slice(&buffer[..size]);
+                    let decoded = match std::str::from_utf8(&pending) {
+                        Ok(text) => {
+                            let text = text.to_string();
+                            pending.clear();
+                            text
+                        }
+                        Err(error) => {
+                            let valid = error.valid_up_to();
+                            let mut text = String::from_utf8_lossy(&pending[..valid]).into_owned();
+                            match error.error_len() {
+                                // 确定非法的字节序列：替换为 U+FFFD 后越过，
+                                // 否则会滞留在 pending 里永远清不掉。
+                                Some(bad) => {
+                                    text.push('\u{FFFD}');
+                                    pending.drain(..valid + bad);
+                                }
+                                // 尾部只是不完整（属于下一块的开头），保留待拼。
+                                None => {
+                                    pending.drain(..valid);
+                                }
+                            }
+                            text
+                        }
+                    };
+                    if decoded.is_empty() {
+                        continue;
+                    }
+                    let _ = tx.send(variant(decoded.replace('\r', "\n")));
                 }
                 Err(_) => break,
             }
+        }
+        // 收尾冲刷残留（流末尾的孤立字节按 lossy 呈现）。
+        if !pending.is_empty() {
+            let chunk = String::from_utf8_lossy(&pending).replace('\r', "\n");
+            let _ = tx.send(variant(chunk));
         }
     });
 }
@@ -857,10 +897,23 @@ pub(crate) fn git_checkout_branch_impl(path: String, branch: String) -> Result<S
     // 因此这里用 `--` 终止选项解析；实测 `--end-of-options` 与 switch 不兼容
     // （`fatal: only one reference expected`）。
     if is_remote {
-        let local_name = branch
-            .split_once('/')
+        // 远端名本身可能不含 '/'，但用 remote 列表做最长前缀匹配比
+        // `split_once('/')` 稳：远端名含 '/' 或分支名含多段时都不会算错。
+        let remotes = run_git(&root, &["remote"]).unwrap_or_default();
+        let local_name = remotes
+            .lines()
+            .map(str::trim)
+            .filter(|remote| !remote.is_empty())
+            .filter_map(|remote| {
+                branch
+                    .strip_prefix(remote)
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .filter(|name| !name.is_empty())
+                    .map(|name| (remote.len(), name))
+            })
+            .max_by_key(|(len, _)| *len)
             .map(|(_, name)| name)
-            .unwrap_or(branch);
+            .unwrap_or_else(|| branch.split_once('/').map(|(_, name)| name).unwrap_or(branch));
         let local_ref = local_branch_ref(local_name)?;
         if run_git(
             &root,

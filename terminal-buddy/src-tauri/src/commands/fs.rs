@@ -344,11 +344,13 @@ pub fn rename_path(path: String, new_name: String) -> Result<(), String> {
         .parent()
         .ok_or("无法定位所在目录，请确认选中的是具体文件或文件夹。")?;
     let new_path = parent.join(name);
-    // Windows 文件系统不区分大小写，仅改大小写属于合法重命名，不能被「已存在」挡下。
-    let case_only_change = source
-        .file_name()
-        .is_some_and(|current| current.eq_ignore_ascii_case(name));
-    if !case_only_change && new_path.exists() {
+    // 仅改大小写属于合法重命名，不能被「已存在」挡下；但必须确认目标与源
+    // 是同一个文件。用 canonicalize 判断可同时覆盖 Windows 的大小写不敏感
+    // 与 Linux 上「a / A 是两个文件」的差异（旧实现用 ASCII 折叠，既漏掉
+    // Unicode 大小写，又会在 Linux 上误放行覆盖）。
+    let same_file = new_path.exists()
+        && std::fs::canonicalize(source).ok() == std::fs::canonicalize(&new_path).ok();
+    if !same_file && new_path.exists() {
         return Err(format!("目标名称「{}」已存在，请换一个名称。", name));
     }
     fs::rename(source, &new_path).map_err(|e| format!("重命名失败：{}", e))?;

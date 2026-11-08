@@ -23,13 +23,13 @@ impl TemplateService {
         let _: serde_json::Value =
             serde_json::from_str(content).map_err(|e| format!("无效的JSON: {}", e))?;
         let path = Self::get_template_path();
-        fs::write(&path, content).map_err(|e| format!("写入失败: {}", e))
+        super::atomic_file::atomic_write(&path, content.as_bytes()).map_err(|e| format!("写入失败: {}", e))
     }
 
     pub fn init_templates_if_missing(default_content: &str) -> Result<bool, String> {
         let path = Self::get_template_path();
         if !path.exists() {
-            fs::write(&path, default_content).map_err(|e| format!("初始化失败: {}", e))?;
+            super::atomic_file::atomic_write(&path, default_content.as_bytes()).map_err(|e| format!("初始化失败: {}", e))?;
             return Ok(true);
         }
         Ok(false)

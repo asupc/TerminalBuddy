@@ -645,15 +645,34 @@ struct SessionFile {
     size: i64,
 }
 
-fn collect_session_files(projects_dir: &Path) -> Result<Vec<SessionFile>, String> {
+/// 一次枚举的结果：会话文件 + 本次读取失败的编码目录。
+/// 读取失败的目录可能是同步盘占位符/短暂锁定（审查 M-8）：其中的会话
+/// 只是「暂时不可见」而非真删除，prune 必须跳过这些目录。
+struct SessionFileList {
+    files: Vec<SessionFile>,
+    unreadable_dirs: std::collections::HashSet<PathBuf>,
+    /// 根目录完全不存在（全新机器，或网络盘/符号链接断开）。无法区分二者时
+    /// 一律不执行 prune：断挂载时清空索引比保留陈旧条目代价大得多。
+    root_missing: bool,
+}
+
+fn collect_session_files(projects_dir: &Path) -> Result<SessionFileList, String> {
     let mut files = Vec::new();
-    if !projects_dir.is_dir() {
-        return Ok(files);
+    let mut unreadable_dirs = std::collections::HashSet::new();
+    if !projects_dir.exists() {
+        // 全新机器还没有 ~/.claude/projects：没有会话可索引，属正常空集。
+        return Ok(SessionFileList { files, unreadable_dirs, root_missing: true });
     }
+    if !projects_dir.is_dir() {
+        return Err(format!("Claude 项目目录不可用: {}", projects_dir.display()));
+    }
+    // 根目录存在却读不动（网络盘/漫游断开）必须报错而不是返回空集：
+    // 空集会让 prune 把全部会话索引连同用户标记一起清空（审查 M-8 复核补充）。
     let project_entries = fs::read_dir(projects_dir)
         .map_err(|error| format!("读取 Claude 项目目录失败: {}", error))?;
     for project_entry in project_entries.flatten() {
         let Ok(session_entries) = fs::read_dir(project_entry.path()) else {
+            unreadable_dirs.insert(project_entry.path());
             continue;
         };
         for entry in session_entries.flatten() {
@@ -681,7 +700,7 @@ fn collect_session_files(projects_dir: &Path) -> Result<Vec<SessionFile>, String
             });
         }
     }
-    Ok(files)
+    Ok(SessionFileList { files, unreadable_dirs, root_missing: false })
 }
 
 fn is_indexed_unchanged(conn: &Connection, file: &SessionFile) -> Result<bool, String> {
@@ -744,20 +763,49 @@ fn index_files(conn: &Connection, files: &[&SessionFile]) -> Result<i64, String>
 
 /// 磁盘上已不存在的会话：清掉索引（记录本身已不存在）。seen 来自完整枚举，与本批
 /// 索引了多少文件无关，所以分批扫描中途执行也是安全的。
-fn prune_missing_sessions(conn: &Connection, seen: &HashSet<&str>) -> Result<(), String> {
+/// 只清索引行、保留 claude_session_meta（审查 M-8）：收藏/改名/归档是用户数据，
+/// 「暂时不可见」的会话恢复后标记必须还在；显式删除走 delete_index_rows 连 meta 清。
+fn prune_missing_sessions(
+    conn: &Connection,
+    seen: &HashSet<&str>,
+    unreadable_dirs: &std::collections::HashSet<PathBuf>,
+    root_missing: bool,
+) -> Result<(), String> {
+    // 根目录不存在可能是全新机器，也可能是网络盘/符号链接断开。后者若继续
+    // 清理，会把全部索引删光；宁可保留陈旧索引，等挂载恢复后由增量扫描修正。
+    if root_missing {
+        return Ok(());
+    }
+    let same_dir = |a: &Path, b: &Path| {
+        a.to_string_lossy().to_lowercase().replace('\\', "/").trim_end_matches('/')
+            == b.to_string_lossy().to_lowercase().replace('\\', "/").trim_end_matches('/')
+    };
     let stale: Vec<String> = {
         let mut statement = conn
-            .prepare("SELECT session_id FROM claude_sessions")
+            .prepare("SELECT session_id, file_path FROM claude_sessions")
             .map_err(|error| format!("查询 Claude 会话索引失败: {}", error))?;
         let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
             .map_err(|error| format!("查询 Claude 会话索引失败: {}", error))?;
         rows.filter_map(|row| row.ok())
-            .filter(|session_id| !seen.contains(session_id.as_str()))
+            .filter(|(session_id, file_path)| {
+                if seen.contains(session_id.as_str()) {
+                    return false;
+                }
+                // 会话文件所在目录本次枚举读取失败（同步盘/锁定）：
+                // 只是暂时不可见，不作为已删除清理（审查 M-8）。
+                if let Some(parent) = Path::new(file_path).parent() {
+                    if unreadable_dirs.iter().any(|dir| same_dir(dir, parent)) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map(|(session_id, _)| session_id)
             .collect()
     };
     for session_id in &stale {
-        delete_index_rows(conn, session_id)?;
+        delete_index_rows_keep_meta(conn, session_id)?;
     }
     Ok(())
 }
@@ -769,7 +817,8 @@ pub fn scan_projects_dir(
     projects_dir: &Path,
     limit: usize,
 ) -> Result<ClaudeHistoryScanResult, String> {
-    let files = collect_session_files(projects_dir)?;
+    let listing = collect_session_files(projects_dir)?;
+    let files = listing.files;
     let mut outdated: Vec<&SessionFile> = Vec::new();
     for file in &files {
         if !is_indexed_unchanged(conn, file)? {
@@ -783,7 +832,7 @@ pub fn scan_projects_dir(
         .iter()
         .map(|file| file.session_id.as_str())
         .collect();
-    prune_missing_sessions(conn, &seen)?;
+    prune_missing_sessions(conn, &seen, &listing.unreadable_dirs, listing.root_missing)?;
     let total = conn
         .query_row("SELECT COUNT(*) FROM claude_sessions", [], |row| row.get(0))
         .map_err(|error| format!("统计 Claude 会话数失败: {}", error))?;
@@ -793,6 +842,21 @@ pub fn scan_projects_dir(
         total,
         pending: (outdated.len() - batch.len()) as i64,
     })
+}
+
+/// 索引清理专用：只删索引行，保留用户标记（收藏/改名/归档，审查 M-8）。
+fn delete_index_rows_keep_meta(conn: &Connection, session_id: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM claude_messages WHERE session_id = ?1",
+        [session_id],
+    )
+    .map_err(|error| format!("清理 Claude 消息索引失败: {}", error))?;
+    conn.execute(
+        "DELETE FROM claude_sessions WHERE session_id = ?1",
+        [session_id],
+    )
+    .map_err(|error| format!("清理 Claude 会话索引失败: {}", error))?;
+    Ok(())
 }
 
 fn delete_index_rows(conn: &Connection, session_id: &str) -> Result<(), String> {
@@ -834,16 +898,27 @@ fn ensure_analyzer_version(conn: &Connection) -> Result<(), String> {
     if stored == Some(ANALYZER_VERSION) {
         return Ok(());
     }
-    conn.execute("DELETE FROM claude_messages", [])
+    // 清空与版本写入放进同一事务（审查 M-10，对齐 codex 侧）：中途失败不会留下
+    // 「已清空但版本未写」的中间态（该状态下搜索缺结果，直到下次检测再重建）。
+    let transaction = conn
+        .unchecked_transaction()
+        .map_err(|error| format!("开启 Claude 索引重建事务失败: {}", error))?;
+    transaction
+        .execute("DELETE FROM claude_messages", [])
         .map_err(|error| format!("清空 Claude 消息索引失败: {}", error))?;
-    conn.execute("DELETE FROM claude_sessions", [])
+    transaction
+        .execute("DELETE FROM claude_sessions", [])
         .map_err(|error| format!("清空 Claude 会话索引失败: {}", error))?;
-    conn.execute(
-        "INSERT INTO claude_index_state (key, value) VALUES ('analyzer_version', ?1)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![ANALYZER_VERSION],
-    )
-    .map_err(|error| format!("写入 Claude 索引版本失败: {}", error))?;
+    transaction
+        .execute(
+            "INSERT INTO claude_index_state (key, value) VALUES ('analyzer_version', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![ANALYZER_VERSION],
+        )
+        .map_err(|error| format!("写入 Claude 索引版本失败: {}", error))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("提交 Claude 索引重建事务失败: {}", error))?;
     Ok(())
 }
 
@@ -852,11 +927,24 @@ pub fn scan_and_index(app: &AppHandle) -> Result<ClaudeHistoryScanResult, String
     let conn = DatabaseService::open()?;
     ensure_analyzer_version(&conn)?;
     let projects_dir = projects_root()?;
-    let result = scan_projects_dir(&conn, &projects_dir, INDEX_BATCH_FILES)?;
+    let result = {
+        let _guard = index_lock()?;
+        scan_projects_dir(&conn, &projects_dir, INDEX_BATCH_FILES)?
+    };
     if result.pending > 0 {
         spawn_backfill(app.clone(), conn, projects_dir);
     }
     Ok(result)
+}
+
+/// 索引互斥锁（审查 M-11，对齐 codex 侧 INDEX_LOCK）：删除会话（文件移入回收 +
+/// 事务清行）与索引扫描/后台补齐互斥，避免已删会话被在飞扫描重新插回索引。
+static INDEX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn index_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    INDEX_LOCK
+        .lock()
+        .map_err(|_| "Claude 会话索引锁不可用".to_string())
 }
 
 /// 后台分批补齐剩余会话，每批一个事务、一次广播，界面全程可用。
@@ -878,7 +966,10 @@ fn spawn_backfill(app: AppHandle, conn: Connection, projects_dir: PathBuf) {
         let _guard = Guard;
         let mut last_pending = i64::MAX;
         loop {
-            let result = match scan_projects_dir(&conn, &projects_dir, INDEX_BATCH_FILES) {
+            let result = match (|| {
+                let _guard = index_lock()?;
+                scan_projects_dir(&conn, &projects_dir, INDEX_BATCH_FILES)
+            })() {
                 Ok(result) => result,
                 Err(error) => {
                     crate::commands::terminal::log_debug(&format!("[claude-history] 补齐失败: {}", error));
@@ -1055,15 +1146,21 @@ fn search_in(
     Ok(hits)
 }
 
-/// LIKE 兜底的命中片段：取关键词首次出现位置前后各一段
+/// LIKE 兜底的命中片段：取关键词首次出现位置前后各一段。
+/// 位置一律按字符计算（审查 M-7）：`str::find` 返回 UTF-8 字节偏移，
+/// 中文密集内容直接当字符数用会错位；命中靠后时 `end - start` 还会
+/// usize 下溢（debug 直接 panic、release 切出全错片段）。
 fn snippet_around(content: &str, keyword: &str) -> String {
     let lower = content.to_lowercase();
     let needle = keyword.to_lowercase();
     match lower.find(&needle) {
-        Some(index) => {
-            let start = index.saturating_sub(20);
-            let end = (index + needle.chars().count() + 40).min(content.chars().count());
-            let slice: String = content.chars().skip(start).take(end - start).collect();
+        Some(byte_index) => {
+            // 字节偏移 → 字符位置
+            let position = lower[..byte_index].chars().count();
+            let total = content.chars().count();
+            let start = position.saturating_sub(20);
+            let take = needle.chars().count() + 40;
+            let slice: String = content.chars().skip(start).take(take.min(total.saturating_sub(start))).collect();
             format!("…{}…", slice.trim())
         }
         None => truncate_unicode(content.trim(), 80),
@@ -1261,6 +1358,7 @@ pub(super) fn with_file_restore_error(error: String, moved_files: &[(PathBuf, Pa
 
 /// 批量删除会话记录：所有索引表在一个 SQLite 事务内提交，JSONL 文件移入回收目录。
 pub fn delete_sessions(session_ids: &[String]) -> Result<(), String> {
+    let _guard = index_lock()?;
     let mut unique_session_ids = Vec::new();
     let mut seen_session_ids = HashSet::new();
     for session_id in session_ids {

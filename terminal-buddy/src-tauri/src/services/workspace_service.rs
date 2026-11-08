@@ -67,7 +67,7 @@ impl WorkspaceService {
         }
         let content = serde_json::to_string_pretty(&workspace)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))?;
+        super::atomic_file::atomic_write(&path, content.as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
 
         Ok(workspace)
     }
@@ -85,7 +85,7 @@ impl WorkspaceService {
             Self::get_workspaces_dir().join(format!("{}.json", sanitize_filename(&workspace.name)));
         let content = serde_json::to_string_pretty(workspace)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))
+        super::atomic_file::atomic_write(&path, content.as_bytes()).map_err(|e| format!("Failed to write file: {}", e))
     }
 
     pub fn delete_workspace(id: &str) -> Result<(), String> {

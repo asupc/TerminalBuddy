@@ -392,11 +392,6 @@ pub(crate) fn executable_command(path: &Path, args: &[&str]) -> Command {
     }
 }
 
-/// 定位工具入口（不执行版本检测），供模型列表等只读命令复用。
-pub(crate) fn resolve_binary(tool: CliTool) -> Option<PathBuf> {
-    candidate_paths(tool).into_iter().find(|path| path.is_file())
-}
-
 fn detect_cli(tool: CliTool) -> Option<String> {
     detect_candidates(tool, candidate_paths(tool))
 }

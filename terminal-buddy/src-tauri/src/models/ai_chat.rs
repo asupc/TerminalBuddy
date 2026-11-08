@@ -16,6 +16,11 @@ pub struct AiMessage {
     /// 主线程消息为 None；前端据此把连续的同名子代理消息合并为一个可折叠条目。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<String>,
+    /// 子代理分组键（turn + parent_tool_use_id 派生）：同一子代理的全部消息
+    /// 共享同一键，前端据此精确分组——同名代理不误并组、同一代理被主线程
+    /// 消息隔开也不拆组（审查 V-5；名称仅作显示）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_key: Option<String>,
     /// 模型切换分段：role = "system" 时携带切换前后的配置，前端渲染为分隔线。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_switch: Option<ModelSwitch>,

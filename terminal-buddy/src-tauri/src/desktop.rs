@@ -236,6 +236,9 @@ pub(crate) fn tray_available() -> bool {
 /// 为直接退出，避免应用隐藏到无法恢复。
 fn bootstrap_tray(app: &tauri::App) -> bool {
     use std::sync::atomic::Ordering;
+    // 图标缺失时不能把「跳过托盘」当成构建成功，否则 closeBehavior=tray 会把窗口
+    // 隐藏到并不存在的托盘里。用 built 标记区分成功与提前返回。
+    let mut built = false;
     let result = (|| -> tauri::Result<()> {
         let show_item = MenuItemBuilder::with_id("show", "打开窗口").build(app)?;
         let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
@@ -249,7 +252,6 @@ fn bootstrap_tray(app: &tauri::App) -> bool {
             boot_log("tray skipped: default window icon unavailable");
             return Ok(());
         };
-
         let _tray = TrayIconBuilder::new()
             .icon(icon)
             .menu(&menu)
@@ -268,15 +270,17 @@ fn bootstrap_tray(app: &tauri::App) -> bool {
                 }
             })
             .build(app)?;
+        built = true;
         Ok(())
     })();
 
     match result {
-        Ok(()) => {
+        Ok(()) if built => {
             TRAY_AVAILABLE.store(true, Ordering::Relaxed);
             boot_log("tray built");
             true
         }
+        Ok(()) => false,
         Err(error) => {
             boot_log(format!("tray build failed, continuing without tray: {error}"));
             false
@@ -393,7 +397,11 @@ pub fn run() {
             let _ = commands::sync_launch_at_login();
             boot_log("after sync_launch_at_login");
 
-            bootstrap_http_server(app.handle())?;
+            // Web 服务启动失败（jwt.key 损坏 / 数据盘不可用）不应让整个桌面应用
+            // 无法启动：降级为「Web 不可用」，本地终端照常使用。
+            if let Err(error) = bootstrap_http_server(app.handle()) {
+                boot_log(format!("HTTP server bootstrap failed, continuing without Web API: {error}"));
+            }
             bootstrap_bot_connections(app.handle())?;
             bootstrap_claude_hook(app.handle());
             // 模型终端残留的临时 --settings 文件：上次异常退出可能没清掉，

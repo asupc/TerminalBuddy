@@ -599,13 +599,19 @@ fn write_temp_map(map: &BTreeMap<String, TempMapEntry>) -> Result<(), String> {
 
 fn register_temp_file(terminal_id: &str, path: &PathBuf) -> Result<(), String> {
     let mut map = read_temp_map()?;
-    map.insert(
+    // 同一终端第二条 __TB_CLAUDE_REF__ 启动命令会覆盖映射；旧临时 settings
+    // 含明文 key，必须同时删除，否则它会成为孤儿文件永久留在磁盘上。
+    if let Some(previous) = map.insert(
         terminal_id.to_string(),
         TempMapEntry {
             path: path.to_string_lossy().to_string(),
             created_at: Utc::now().to_rfc3339(),
         },
-    );
+    ) {
+        if previous.path != path.to_string_lossy() {
+            remove_temp_settings_file(&previous.path);
+        }
+    }
     write_temp_map(&map)?;
     // 落盘成功后才登记内存映射，失败时调用方负责删除临时文件。
     if let Ok(mut registry) = temp_file_registry().lock() {

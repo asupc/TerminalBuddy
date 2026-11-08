@@ -30,7 +30,9 @@ pub fn set_app_handle(app: crate::runtime::AppHandle) {
 #[derive(Default)]
 struct Emitted {
     revision: u64,
-    messages: HashMap<String, String>,
+    /// id → (text, subagent, subagentKey)：除正文外，子代理字段变化（流式早期的
+    /// 兜底名修正、分组键补写）也必须触发推送，否则前端停留在旧值（审查 V-4）。
+    messages: HashMap<String, (String, Option<String>, Option<String>)>,
 }
 
 struct Cell {
@@ -66,8 +68,14 @@ fn emit_update(cell: &Cell) {
     // 旧实现每帧全量重建 id→text 表，长会话流式期间每秒克隆整段对话文本数十次。
     let mut changed: Vec<AiMessage> = Vec::new();
     for message in &data.messages {
-        if emitted.messages.get(&message.id) == Some(&message.text) { continue; }
-        emitted.messages.insert(message.id.clone(), message.text.clone());
+        match emitted.messages.get(&message.id) {
+            Some((text, subagent, subagent_key)) if *text == message.text
+                && *subagent == message.subagent
+                && *subagent_key == message.subagent_key => continue,
+            _ => {}
+        }
+        emitted.messages.insert(message.id.clone(),
+            (message.text.clone(), message.subagent.clone(), message.subagent_key.clone()));
         changed.push(message.clone());
     }
     if emitted.messages.len() != data.messages.len() {
@@ -204,6 +212,10 @@ pub fn replay_page(agent: &str, session_id: &str, offset: usize, limit: usize) -
 /// 从 CLI 历史会话恢复为原生 AI 会话：绑定历史线程并预填最近消息，之后的发送
 /// 走各 Agent 已有的续接通道（Claude `--resume`、Codex `thread/resume`）。
 fn resume_from_history(owner: &str, input: CreateAiSession, resume_id: &str) -> Result<AiSession> {
+    // 恢复全程持锁（审查 M-16，对齐 codex 侧 RESUME_LOCK）：find_by_thread 与落盘
+    // 注册之间存在窗口，重复点击/双端同时恢复会各自新建一个绑定同一线程的会话。
+    static RESUME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = RESUME_LOCK.lock().map_err(|_| "历史会话恢复锁不可用")?;
     let provider = input.provider.as_str();
     // 第一页只取元数据：标题、项目目录与消息总数均来自历史索引。
     let first = replay_page(provider, resume_id, 0, 1)?;
@@ -300,7 +312,7 @@ fn prefill_history_messages(provider: &str, session_id: &str, total: usize) -> R
             if offset >= total { break; }
             offset += 1; advanced = true;
             if !matches!(item.role.as_str(), "user" | "assistant" | "tool") || item.text.trim().is_empty() { continue; }
-            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0), skill_name: None, model_switch: None, subagent: None });
+            messages.push(AiMessage { id: format!("history-{}", item.seq), role: item.role, text: item.text, created_at: item.timestamp.unwrap_or(0), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
         }
         if !advanced { break; }
     }
@@ -320,7 +332,7 @@ fn history_messages(session_id: &str, history: &crate::models::session_history::
         }
         if parts.is_empty() { return None; }
         Some(AiMessage { id: format!("history-{session_id}-{}", message.seq), role: message.role.clone(),
-            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at), skill_name: None, model_switch: None, subagent: None })
+            text: parts.join("\n\n"), created_at: message.timestamp.unwrap_or(history.updated_at), skill_name: None, model_switch: None, subagent_key: None, subagent: None })
     }).collect()
 }
 
@@ -415,6 +427,7 @@ pub fn switch_model(id: &str, owner: &str, provider_id: &str, model: &str) -> Re
         created_at: chrono::Utc::now().timestamp_millis(),
         skill_name: None,
         subagent: None,
+        subagent_key: None,
         model_switch: Some(switch),
     });
     data.provider_id = Some(to_provider);
@@ -564,7 +577,7 @@ fn deliver_now(cell: &Cell, data: &mut AiSession, control: &mpsc::Sender<Control
 fn accept_input(data: &mut AiSession, request_id: &str, text: &str) {
     if !data.request_ids.iter().any(|id| id == request_id) { data.request_ids.push(request_id.to_string()); }
     data.messages.push(AiMessage { id: request_id.to_string(), role: "user".into(), text: text.into(),
-        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent: None });
+        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
     if data.title == "新对话" { data.title = text.trim().chars().take(36).collect(); }
     // 等待确认时保留 approval 状态，让决策卡片继续显示；其余情况视为执行中。
     if data.approvals.is_empty() { data.status = "running".into(); }
@@ -635,7 +648,7 @@ fn begin_pending_turn(data: &mut AiSession) -> Option<PendingInput> {
     if data.pending_inputs.is_empty() { return None; }
     let next = data.pending_inputs.remove(0);
     data.messages.push(AiMessage { id: next.request_id.clone(), role: "user".into(), text: next.text.clone(),
-        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent: None });
+        created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
     if data.title == "新对话" { data.title = next.text.trim().chars().take(36).collect(); }
     usage::begin_turn(data);
     data.status = "running".into(); data.error = None; data.approvals.clear(); touch(data);
@@ -739,7 +752,7 @@ fn message(cell: &Cell, key: &str, role: &str, text: &str, append: bool) {
             if append { item.text.push_str(text); } else { item.text = text.into(); }
         } else {
             data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent: None });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
         }
     });
 }
@@ -752,7 +765,7 @@ fn message_with_skill(cell: &Cell, key: &str, name: &str, text: &str) {
             item.skill_name = Some(name.into());
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "user".into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: Some(name.into()), model_switch: None, subagent: None });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: Some(name.into()), model_switch: None, subagent_key: None, subagent: None });
         }
     });
 }
@@ -766,7 +779,7 @@ fn message_append_quiet(cell: &Cell, key: &str, text: &str) {
             item.text.push_str(text);
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "assistant".into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent: None });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent_key: None, subagent: None });
         }
         touch(&mut data);
     }
@@ -774,27 +787,32 @@ fn message_append_quiet(cell: &Cell, key: &str, text: &str) {
 /// 子代理（Task 工具启动）消息：携带 subagent 标记，前端合并为可折叠的「子代理」条目。
 /// 已存在的消息总是覆盖名字：流式早期可能先以兜底名 "subagent" 建立条目，
 /// Task 登记的准确名称随完整消息到达。
-fn message_with_subagent(cell: &Cell, key: &str, role: &str, text: &str, agent: &str) {
+fn message_with_subagent(cell: &Cell, key: &str, group: &str, role: &str, text: &str, agent: &str) {
     if text.is_empty() { return; }
     update(cell, |data| {
         if let Some(item) = data.messages.iter_mut().rev().find(|m| m.id == key) {
             item.text = text.into();
             item.subagent = Some(agent.into());
+            item.subagent_key = Some(group.into());
         } else {
             data.messages.push(AiMessage { id: key.into(), role: role.into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent: Some(agent.into()) });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None,
+                subagent: Some(agent.into()), subagent_key: Some(group.into()) });
         }
     });
 }
 /// 子代理消息的流式增量：静默写入，批末统一推送（同 message_append_quiet）。
-fn message_sub_quiet(cell: &Cell, key: &str, text: &str, agent: &str) {
+/// group 为分组键（turn + parent_tool_use_id），同一子代理共享（审查 V-5）。
+fn message_sub_quiet(cell: &Cell, key: &str, group: &str, text: &str, agent: &str) {
     if text.is_empty() { return; }
     if let Ok(mut data) = cell.data.lock() {
         if let Some(item) = data.messages.iter_mut().rev().find(|m| m.id == key) {
             item.text.push_str(text);
+            if item.subagent_key.is_none() { item.subagent_key = Some(group.into()); }
         } else {
             data.messages.push(AiMessage { id: key.into(), role: "assistant".into(), text: text.into(),
-                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None, subagent: Some(agent.into()) });
+                created_at: chrono::Utc::now().timestamp_millis(), skill_name: None, model_switch: None,
+                subagent: Some(agent.into()), subagent_key: Some(group.into()) });
         }
         touch(&mut data);
     }
@@ -900,7 +918,17 @@ fn run_turn(cell: &Cell, prompt: &str, controls: mpsc::Receiver<Control>) -> Res
     thread::spawn(move || {
         let mut reader = BufReader::new(stderr); let mut buffer = [0; 2048];
         while let Ok(size) = reader.read(&mut buffer) { if size == 0 { break; }
-            if let Ok(mut text) = error_buffer.lock() { text.push_str(&String::from_utf8_lossy(&buffer[..size])); }
+            if let Ok(mut text) = error_buffer.lock() {
+                text.push_str(&String::from_utf8_lossy(&buffer[..size]));
+                // stderr 只用于错误提示，长期运行的 CLI 可能持续输出；按字节上限
+                // 保留尾部，避免缓冲无界增长。
+                const STDERR_CAP: usize = 16 * 1024;
+                if text.len() > STDERR_CAP {
+                    let mut cut = text.len() - STDERR_CAP;
+                    while cut < text.len() && !text.is_char_boundary(cut) { cut += 1; }
+                    text.drain(..cut);
+                }
+            }
         }
     });
     let (tx, output) = mpsc::sync_channel(64);
@@ -997,15 +1025,16 @@ impl ClaudeOutputState {
             }
             "content_block_start" | "content_block_delta" => {
                 let Some(index) = event["index"].as_u64() else { return; };
-                let (tracking, key, agent) = match parent {
+                let (tracking, key, agent, group) = match parent {
                     Some(parent) => {
                         // content_block 事件没有 message id：取 message_start 记下的当前子代理消息。
                         let id = self.current_sub_messages.get(parent).cloned()
                             .unwrap_or_else(|| self.current_message.clone());
                         let name = self.subagent_name(parent, value);
-                        (format!("sub:{parent}:{id}"), format!("{turn}-sub-text-{parent}-{id}-{index}"), Some(name))
+                        let group = format!("{turn}:{parent}");
+                        (format!("sub:{parent}:{id}"), format!("{turn}-sub-text-{parent}-{id}-{index}"), Some(name), group)
                     }
-                    None => (self.current_message.clone(), format!("{turn}-text-{}-{index}", self.current_message), None),
+                    None => (self.current_message.clone(), format!("{turn}-text-{}-{index}", self.current_message), None, String::new()),
                 };
                 let blocks = self.messages.entry(tracking).or_default();
                 blocks.next_index = blocks.next_index.max(index.saturating_add(1));
@@ -1017,14 +1046,14 @@ impl ClaudeOutputState {
                     block.kind = event["content_block"]["type"].as_str().unwrap_or("").into();
                     if block.kind == "text" {
                         match &agent {
-                            Some(name) => message_sub_quiet(cell, &key, event["content_block"]["text"].as_str().unwrap_or(""), name),
+                            Some(name) => message_sub_quiet(cell, &key, &group, event["content_block"]["text"].as_str().unwrap_or(""), name),
                             None => message_append_quiet(cell, &key, event["content_block"]["text"].as_str().unwrap_or("")),
                         }
                     }
                 } else if event["delta"]["type"] == "text_delta" {
                     block.kind = "text".into();
                     match &agent {
-                        Some(name) => message_sub_quiet(cell, &key, event["delta"]["text"].as_str().unwrap_or(""), name),
+                        Some(name) => message_sub_quiet(cell, &key, &group, event["delta"]["text"].as_str().unwrap_or(""), name),
                         None => message_append_quiet(cell, &key, event["delta"]["text"].as_str().unwrap_or("")),
                     }
                 }
@@ -1058,7 +1087,7 @@ impl ClaudeOutputState {
                 let text = item["text"].as_str().unwrap_or("");
                 match &subagent {
                     // subagent 为 Some 时 parent 必为 Some，unwrap_or("") 仅满足类型。
-                    Some(name) => message_with_subagent(cell, &format!("{turn}-sub-text-{}-{id}-{index}", parent.unwrap_or("")), "assistant", text, name),
+                    Some(name) => message_with_subagent(cell, &format!("{turn}-sub-text-{}-{id}-{index}", parent.unwrap_or("")), &format!("{turn}:{}", parent.unwrap_or("")), "assistant", text, name),
                     None => message(cell, &format!("{turn}-text-{id}-{index}"), "assistant", text, false),
                 }
             }
@@ -1076,7 +1105,7 @@ impl ClaudeOutputState {
                 let body = format!("{}\n{}", item["name"].as_str().unwrap_or("工具调用"), item["input"]);
                 let tool_id = item["id"].as_str().unwrap_or_default();
                 match &subagent {
-                    Some(name) => message_with_subagent(cell, &format!("{turn}-sub-tool-{}-{tool_id}", parent.unwrap_or("")), "tool", &body, name),
+                    Some(name) => message_with_subagent(cell, &format!("{turn}-sub-tool-{}-{tool_id}", parent.unwrap_or("")), &format!("{turn}:{}", parent.unwrap_or("")), "tool", &body, name),
                     None => message(cell, &format!("{turn}-tool-{tool_id}"), "tool", &body, false),
                 }
             }
@@ -1141,7 +1170,7 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
                     let body = item["content"].as_str().map(str::to_string).unwrap_or_else(|| item["content"].to_string());
                     let tool_id = item["tool_use_id"].as_str().unwrap_or_default();
                     match &subagent {
-                        Some(name) => message_with_subagent(cell, &format!("{turn}-sub-result-{}-{tool_id}", subagent_parent(value).unwrap_or("")), "tool", &body, name),
+                        Some(name) => message_with_subagent(cell, &format!("{turn}-sub-result-{}-{tool_id}", subagent_parent(value).unwrap_or("")), &format!("{turn}:{}", subagent_parent(value).unwrap_or("")), "tool", &body, name),
                         None => message(cell, &format!("{turn}-result-{tool_id}"), "tool", &body, false),
                     }
                 } }
@@ -1169,7 +1198,7 @@ fn apply_claude_event(cell: &Cell, turn: &str, state: &mut ClaudeOutputState, va
             if let Some(parent) = subagent_parent(value) {
                 if let Some(text) = value["result"].as_str().filter(|text| !text.trim().is_empty()) {
                     let name = state.subagent_name(parent, value);
-                    message_with_subagent(cell, &format!("{turn}-sub-final-{parent}"), "assistant", text, &name);
+                    message_with_subagent(cell, &format!("{turn}-sub-final-{parent}"), &format!("{turn}:{parent}"), "assistant", text, &name);
                 }
                 return Ok(false);
             }
@@ -1661,7 +1690,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
     let mut settle_at: Option<Instant> = None;
     // 最近一次活动（app-server 输出或用户操作）时间，用于识别模型接口挂起导致的回合停滞。
     let mut last_event = Instant::now();
-    if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
+    if let Ok(mut data) = cell.data.lock() { usage::begin_turn(&mut data); state.usage.start(&mut data); }
     loop {
         while let Ok(control) = controls.try_recv() {
             match control {
@@ -1677,7 +1706,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
                         turn_request = Some(codex_request(stdin, &mut next_id, "turn/start", params)?);
                     } else {
                         state.usage = usage::CodexUsageTracker::default();
-                        if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
+                        if let Ok(mut data) = cell.data.lock() { usage::begin_turn(&mut data); state.usage.start(&mut data); }
                         let permissions = super::ai_permission_service::for_agent("codex")?;
                         let mut params = json!({"threadId":id,"cwd":session.project_path,"developerInstructions":decision_instructions});
                         permissions.apply_thread(&mut params);
@@ -1710,7 +1739,7 @@ fn run_codex(cell: &Cell, session: &AiSession, prompt: &str, permissions: &super
                 let Some(id) = state.thread_id.clone() else { continue };
                 request_id = Some(next.request_id);
                 state.usage = usage::CodexUsageTracker::default();
-                if let Ok(mut data) = cell.data.lock() { state.usage.start(&mut data); }
+                if let Ok(mut data) = cell.data.lock() { usage::begin_turn(&mut data); state.usage.start(&mut data); }
                 let permissions = super::ai_permission_service::for_agent("codex")?;
                 let mut params = json!({"threadId":id,"cwd":session.project_path,"developerInstructions":decision_instructions});
                 permissions.apply_thread(&mut params);
@@ -1947,7 +1976,7 @@ mod tests {
     #[test]
     fn prefill_differs_detects_append_and_rewrite() {
         let message = |id: &str, text: &str, at: i64| AiMessage {
-            id: id.into(), role: "user".into(), text: text.into(), created_at: at, skill_name: None, model_switch: None, subagent: None,
+            id: id.into(), role: "user".into(), text: text.into(), created_at: at, skill_name: None, model_switch: None, subagent: None, subagent_key: None,
         };
         let old = vec![message("history-0", "第一问", 1)];
         // 条数相同、内容相同 → 不替换，避免无意义的落盘。
@@ -2152,7 +2181,7 @@ mod tests {
 
     fn push_user(cell: &Cell, text: &str) {
         cell.data.lock().unwrap().messages.push(AiMessage {
-            id: "user-input".into(), role: "user".into(), text: text.into(), created_at: 0, skill_name: None, model_switch: None, subagent: None,
+            id: "user-input".into(), role: "user".into(), text: text.into(), created_at: 0, skill_name: None, model_switch: None, subagent: None, subagent_key: None,
         });
     }
 

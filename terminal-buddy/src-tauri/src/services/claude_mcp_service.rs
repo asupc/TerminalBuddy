@@ -274,39 +274,51 @@ pub fn probe(timeout_secs: u64) -> Result<Vec<McpProbeStatus>, String> {
         .spawn()
         .map_err(|error| format!("启动 claude CLI 失败（需在 PATH 中）: {}", error))?;
 
+    // 必须在等待子进程期间并发抽干两条管道：`claude mcp list` 输出超过
+    // 管道缓冲（约 64KB）时会阻塞在写端，若只 try_wait 不读，只能等超时。
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(mut pipe) = stdout_pipe {
+            let _ = pipe.read_to_string(&mut text);
+        }
+        text
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(mut pipe) = stderr_pipe {
+            let _ = pipe.read_to_string(&mut text);
+        }
+        text
+    });
+
     let started = Instant::now();
-    let (stdout_text, stderr_text) = loop {
+    let status = loop {
         match child
             .try_wait()
             .map_err(|error| format!("检测 claude mcp list 状态失败: {}", error))?
         {
-            Some(status) => {
-                let mut stdout_text = String::new();
-                if let Some(mut stdout) = child.stdout.take() {
-                    let _ = stdout.read_to_string(&mut stdout_text);
-                }
-                let mut stderr_text = String::new();
-                if let Some(mut stderr) = child.stderr.take() {
-                    let _ = stderr.read_to_string(&mut stderr_text);
-                }
-                if !status.success() && stdout_text.trim().is_empty() {
-                    return Err(format!(
-                        "claude mcp list 失败（退出码 {:?}）：{}",
-                        status.code(),
-                        stderr_text.trim().chars().take(300).collect::<String>()
-                    ));
-                }
-                break (stdout_text, stderr_text);
-            }
+            Some(status) => break status,
             None => {
                 if started.elapsed() > Duration::from_secs(timeout_secs) {
                     let _ = child.kill();
+                    let _ = child.wait();
                     return Err(format!("检测超时（claude mcp list 未在 {}s 内返回）", timeout_secs));
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
         }
     };
+    let stdout_text = stdout_reader.join().unwrap_or_default();
+    let stderr_text = stderr_reader.join().unwrap_or_default();
+    if !status.success() && stdout_text.trim().is_empty() {
+        return Err(format!(
+            "claude mcp list 失败（退出码 {:?}）：{}",
+            status.code(),
+            stderr_text.trim().chars().take(300).collect::<String>()
+        ));
+    }
 
     let mut statuses = parse_mcp_list_output(&stdout_text);
     // 有的版本把结果打到 stderr：stdout 解析不出再试 stderr

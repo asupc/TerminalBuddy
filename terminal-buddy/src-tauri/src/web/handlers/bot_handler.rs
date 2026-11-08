@@ -13,8 +13,19 @@ use crate::services::bot_channel::send_feishu_reply;
 use crate::services::BotSettingsService;
 use crate::web::server::AppState;
 
-fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
-    (
+/// 令牌比较使用常数时间算法，避免 `==` 的短路比较泄漏前缀匹配长度。
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in left.iter().zip(right.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
+fn json_error(status: StatusCode, message: impl Into<String>) -> Response {    (
         status,
         Json(json!({ "success": false, "error": message.into() })),
     )
@@ -53,7 +64,7 @@ pub async fn bridge_inbound(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     let expected = format!("Bearer {}", channel.callback_token);
-    if channel.callback_token.is_empty() || authorization != expected {
+    if channel.callback_token.is_empty() || !constant_time_eq(authorization.as_bytes(), expected.as_bytes()) {
         return json_error(StatusCode::UNAUTHORIZED, "机器人回调认证失败");
     }
     let terminal_service = state.app_handle.state::<TerminalService>();
@@ -79,7 +90,7 @@ pub async fn feishu_events(State(state): State<AppState>, Json(payload): Json<Va
             channel.enabled
                 && channel.platform == "feishu"
                 && !channel.callback_token.is_empty()
-                && channel.callback_token == token
+                && constant_time_eq(channel.callback_token.as_bytes(), token.as_bytes())
         });
         if valid {
             return Json(json!({ "challenge": challenge })).into_response();
@@ -129,7 +140,7 @@ pub async fn feishu_events(State(state): State<AppState>, Json(payload): Json<Va
             channel.enabled
                 && channel.platform == "feishu"
                 && !channel.callback_token.is_empty()
-                && channel.callback_token == token
+                && constant_time_eq(channel.callback_token.as_bytes(), token.as_bytes())
                 && (channel.receive_id_type != "chat_id" || channel.target_id == conversation_id)
         }) else {
             return feishu_card_result(false, "卡片不属于已配置通道");
@@ -226,7 +237,7 @@ pub async fn feishu_events(State(state): State<AppState>, Json(payload): Json<Va
         channel.enabled
             && channel.platform == "feishu"
             && !channel.callback_token.is_empty()
-            && channel.callback_token == token
+            && constant_time_eq(channel.callback_token.as_bytes(), token.as_bytes())
             && (channel.receive_id_type != "chat_id" || channel.target_id == conversation_id)
     }) else {
         return json_error(StatusCode::UNAUTHORIZED, "飞书消息不属于已配置通道");
@@ -288,5 +299,18 @@ pub async fn feishu_events(State(state): State<AppState>, Json(payload): Json<Va
             }
             Json(json!({ "code": 0 })).into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::constant_time_eq;
+
+    #[test]
+    fn token_comparison_is_length_aware_and_exact() {
+        assert!(constant_time_eq(b"secret-token", b"secret-token"));
+        assert!(!constant_time_eq(b"secret-token", b"secret-toke"));
+        assert!(!constant_time_eq(b"secret-token", b"secret-tokeX"));
+        assert!(!constant_time_eq(b"", b"x"));
     }
 }

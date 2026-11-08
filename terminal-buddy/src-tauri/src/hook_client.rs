@@ -51,7 +51,9 @@ pub fn run_claude_hook_client() {
     let response_body = runtime.block_on(async move {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(2))
-            .timeout(Duration::from_secs(90_000))
+            // 与 Claude Hook 服务端的挂起上限对齐：此前误写成 90_000 秒（约 25 小时），
+            // 服务端异常时 hook 客户端会长期挂住。
+            .timeout(crate::services::claude_hook_service::HTTP_WAIT_CAP)
             .build()
             .ok()?;
         let response = client

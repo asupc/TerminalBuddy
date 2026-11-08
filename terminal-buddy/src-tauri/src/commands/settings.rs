@@ -145,9 +145,7 @@ pub fn save_close_behavior(behavior: String) -> Result<(), String> {
         "tray" => CloseBehavior::Tray,
         _ => return Err(format!("无效的关闭行为: {}", behavior)),
     };
-    let mut settings = SettingsService::get_settings();
-    settings.close_behavior = behavior;
-    SettingsService::save_settings(&settings)
+    SettingsService::mutate_settings(|settings| settings.close_behavior = behavior)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
@@ -203,29 +201,83 @@ pub fn get_data_path_status() -> serde_json::Value {
     }
 }
 
+/// 两条路径是否指向同一目录：先 canonicalize，再按 Unix 的 dev+inode 判等，
+/// 以覆盖符号链接、相对路径与 bind mount。
+fn same_directory(left: &std::path::Path, right: &std::path::Path) -> bool {
+    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        if a == b {
+            return true;
+        }
+    }
+    same_file_identity(left, right)
+}
+
+fn same_file_identity(left: &std::path::Path, right: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a), Ok(b)) = (std::fs::metadata(left), std::fs::metadata(right)) {
+            return a.dev() == b.dev() && a.ino() == b.ino();
+        }
+        false
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (left, right);
+        false
+    }
+}
+
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn set_data_path(new_path: String) -> Result<(), String> {
     let validated = PathService::validate_data_path(&new_path)?;
-    let old_dir = PathService::get_data_dir();
+    // require（审查 L-11）：旧的自定义目录不可用时 get_data_dir 会静默回退
+    // 默认目录，迁移就从错误的来源复制出一套半吊子数据；此处显式报错。
+    let old_dir = PathService::require_data_dir()?;
     let new_dir = validated;
 
-    if old_dir == new_dir {
+    if old_dir == new_dir || same_directory(&old_dir, &new_dir) {
         return Ok(());
     }
 
-    // 目标在源内部、目录链接环路都由 copy_dir_recursive 拒绝；任一子目录
-    // 复制失败立即中止，不写 settings.json，当前数据目录保持原样。
-    for subdir in &["Profiles", "Workspaces", "ClientData", "Bots"] {
-        let src = old_dir.join(subdir);
-        let dst = new_dir.join(subdir);
-        if src.exists() {
-            copy_dir_recursive(&src, &dst)?;
+    // 迁移前尽量把 WAL 合并回主库，减少「复制 db 与 wal 不是同一快照」的窗口。
+    // 失败不阻断迁移（可能数据库尚未创建）。
+    let _ = crate::services::DatabaseService::checkpoint();
+
+    // 迁移整个数据目录根（审查 H-5）：此前只复制 4 个硬编码子目录，
+    // terminal_buddy.db（历史索引+命令历史）、AiSessions/、projects.json、
+    // command_templates.json、providers*.json、jwt.key、server.key、ClaudeAssets/
+    // 等十余项全部留在旧目录，迁移后表现为「数据丢失」。
+    // 任一条目复制失败立即中止，不写 settings.json，当前数据目录保持原样。
+    {
+        let entries = fs::read_dir(&old_dir)
+            .map_err(|e| format!("读取旧数据目录失败: {}", e))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("读取目录条目失败: {}", e))?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            // 调试日志按需重新生成，不随迁移携带。
+            if name == "debug.log" {
+                continue;
+            }
+            let src = entry.path();
+            let dst = new_dir.join(&name);
+            // 新旧目录可能是同一目录的另一种写法（符号链接 / bind mount）：
+            // 此时 fs::copy 会先截断目标再读源，源文件被清空。目录与文件都先按
+            // 真实身份（Unix dev+inode）判等，相同则跳过。
+            if same_file_identity(&src, &dst) {
+                continue;
+            }
+            if src.is_dir() {
+                copy_dir_recursive(&src, &dst)?;
+            } else {
+                fs::copy(&src, &dst)
+                    .map_err(|e| format!("复制文件 {} 失败: {}", name, e))?;
+            }
         }
     }
 
-    let mut settings = SettingsService::get_settings();
-    settings.data_path = Some(new_dir.to_string_lossy().to_string());
-    SettingsService::save_settings(&settings)?;
+    let data_path = Some(new_dir.to_string_lossy().to_string());
+    SettingsService::mutate_settings(move |settings| settings.data_path = data_path)?;
 
     Ok(())
 }
@@ -237,23 +289,17 @@ pub fn save_enable_tab_navigation(enabled: bool) -> Result<(), String> {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_tab_sidebar_width(width: u32) -> Result<(), String> {
-    let mut settings = SettingsService::get_settings();
-    settings.tab_sidebar_width = width.clamp(150, 400);
-    SettingsService::save_settings(&settings)
+    SettingsService::mutate_settings(|settings| settings.tab_sidebar_width = width.clamp(150, 400))
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_config_nav_width(width: u32) -> Result<(), String> {
-    let mut settings = SettingsService::get_settings();
-    settings.config_nav_width = width.clamp(150, 400);
-    SettingsService::save_settings(&settings)
+    SettingsService::mutate_settings(|settings| settings.config_nav_width = width.clamp(150, 400))
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_file_nav_width(width: u32) -> Result<(), String> {
-    let mut settings = SettingsService::get_settings();
-    settings.file_nav_width = width.clamp(150, 500);
-    SettingsService::save_settings(&settings)
+    SettingsService::mutate_settings(|settings| settings.file_nav_width = width.clamp(150, 500))
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
@@ -298,11 +344,7 @@ pub fn save_launch_at_login(enabled: bool) -> Result<(), String> {
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn sync_launch_at_login() -> bool {
     let registry_enabled = read_autostart_registry();
-    let mut settings = SettingsService::get_settings();
-    if settings.launch_at_login != registry_enabled {
-        settings.launch_at_login = registry_enabled;
-        let _ = SettingsService::save_settings(&settings);
-    }
+    let _ = SettingsService::mutate_settings(|settings| settings.launch_at_login = registry_enabled);
     registry_enabled
 }
 
@@ -337,7 +379,9 @@ fn read_json_file(path: &PathBuf) -> Result<Option<Value>, String> {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn export_all_data(file_path: String) -> Result<(), String> {
-    let data_dir = PathService::get_data_dir();
+    // 导出的数据源必须与写入一致；get_data_dir 在自定义目录不可用时会静默回退
+    // 默认目录，导出「成功」却缺数据（复核 #11）。
+    let data_dir = PathService::require_data_dir()?;
 
     let mut export = json!({
         "version": "1.0",
@@ -358,11 +402,7 @@ pub fn export_all_data(file_path: String) -> Result<(), String> {
     }
 
     // Collect single-file data
-    for filename in &[
-        "command_history.json",
-        "command_templates.json",
-        "settings.json",
-    ] {
+    for filename in &["command_templates.json"] {
         let path = data_dir.join(filename);
         let stem = filename.trim_end_matches(".json");
         match read_json_file(&path) {
@@ -374,9 +414,34 @@ pub fn export_all_data(file_path: String) -> Result<(), String> {
         }
     }
 
+    // 命令历史的权威存储已迁 SQLite（app_documents 表，legacy-command-history-v1
+    // 迁移是一次性的）：从这里导出，否则读旧 data 目录里多半已不存在的
+    // command_history.json，导出恒为空（审查 H-6）。
+    match crate::services::DatabaseService::read_command_history() {
+        Ok(Some(content)) => {
+            let value = serde_json::from_str::<Value>(&content)
+                .map_err(|e| format!("命令历史数据损坏，无法导出：{}", e))?;
+            export["command_history"] = value;
+        }
+        Ok(None) => {}
+        // 数据库读取失败不能生成一份「缺命令历史但显示成功」的备份。
+        Err(error) => return Err(format!("读取命令历史失败：{}", error)),
+    }
+
+    // 真实设置位置是 get_settings_path()（不跟随自定义 dataPath）：从 data 目录
+    // 读要么导不出 settings、要么把历史遗留副本当真实设置导出（审查 N-4）。
+    match read_json_file(&SettingsService::get_settings_path()) {
+        Ok(Some(value)) => {
+            export["settings"] = value;
+        }
+        Ok(None) => {}
+        Err(e) => return Err(e),
+    }
+
     let json_str =
         serde_json::to_string_pretty(&export).map_err(|e| format!("序列化JSON失败: {}", e))?;
-    fs::write(&file_path, json_str).map_err(|e| format!("写入文件失败: {}", e))?;
+    crate::services::atomic_file::atomic_write(std::path::Path::new(&file_path), json_str.as_bytes())
+        .map_err(|e| format!("写入文件失败: {}", e))?;
 
     Ok(())
 }
@@ -387,7 +452,8 @@ fn write_json_files(dir: &PathBuf, map: &HashMap<String, Value>) -> Result<(), S
         let path = dir.join(format!("{}.json", name));
         let content =
             serde_json::to_string_pretty(value).map_err(|e| format!("序列化JSON失败: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))?;
+        crate::services::atomic_file::atomic_write(&path, content.as_bytes())
+            .map_err(|e| format!("写入文件失败: {}", e))?;
     }
     Ok(())
 }
@@ -425,7 +491,22 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
         }
     }
 
-    let data_dir = PathService::get_data_dir();
+    // settings 最先校验：备份里的 settings 损坏时，必须在覆盖任何数据之前失败，
+    // 否则用户看到「导入失败」但 Profiles/命令历史已被部分替换（审查 H-4）。
+    let imported_settings = data
+        .get("settings")
+        .map(|value| serde_json::from_value::<crate::models::AppSettings>(value.clone()))
+        .transpose()
+        .map_err(|e| format!("备份中的 settings 结构无效：{}", e))?;
+
+    // 目标数据目录必须与导入后真正生效的目录一致：导入会剥离 dataPath，
+    // 因此带 settings 的备份一律恢复到默认数据目录；没有 settings 时保持当前目录。
+    // 旧实现写当前自定义目录却剥离 dataPath，导入后应用改读默认目录，数据「消失」（复核 #3）。
+    let data_dir = if imported_settings.is_some() {
+        PathService::get_default_base_dir()
+    } else {
+        PathService::require_data_dir()?
+    };
     fs::create_dir_all(&data_dir).map_err(|e| format!("创建数据目录失败: {}", e))?;
 
     // 这条路径直接把 JSON 原样写进 Profiles/，不经过 ProfileService，所以必须在这里
@@ -453,14 +534,36 @@ pub fn import_all_data(file_path: String) -> Result<(), String> {
     }
 
     // Restore single-file data
-    for filename in &["command_history", "command_templates", "settings"] {
+    for filename in &["command_templates"] {
         if let Some(value) = data.get(filename) {
             let path = data_dir.join(format!("{}.json", filename));
             let content = serde_json::to_string_pretty(value)
                 .map_err(|e| format!("序列化JSON失败: {}", e))?;
-            fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))?;
+            crate::services::atomic_file::atomic_write(&path, content.as_bytes())
+                .map_err(|e| format!("写入文件失败: {}", e))?;
         }
     }
+
+    // 命令历史写回 SQLite（app_documents 表）：写 json 文件不会生效，
+    // legacy 迁移是一次性的（审查 H-6）。
+    if let Some(value) = data.get("command_history") {
+        let content = serde_json::to_string(value)
+            .map_err(|e| format!("序列化JSON失败: {}", e))?;
+        crate::services::DatabaseService::save_command_history_at(&data_dir, &content)?;
+    }
+
+    // settings：剥离导出机携带的 dataPath（跨机/跨目录恢复才不会因严格模式拒绝），
+    // 并走 SettingsService::save_settings 以持有全局写锁——导入耗时期间其他客户端
+    // 保存设置不会用旧缓存把导入结果覆盖掉（复核 #9）。
+    if let Some(mut settings) = imported_settings {
+        settings.data_path = None;
+        SettingsService::save_settings(&settings)?;
+    }
+
+    // 导入直写磁盘绕过了服务层，必须失效内存缓存：否则之后的任意 save_*
+    // 会用旧缓存全量覆盖，导入内容静默回滚（审查 H-4）。
+    SettingsService::invalidate_cache();
+    crate::services::ProfileService::invalidate_cache();
 
     Ok(())
 }
@@ -473,16 +576,22 @@ pub fn save_web_api_settings(
     password: String,
     share_sessions: bool,
 ) -> Result<(), String> {
-    let mut settings = SettingsService::get_settings();
-    settings.web_api_enabled = enabled;
-    settings.web_api_port = port;
-    settings.web_api_username = username;
-    if !password.is_empty() {
-        settings.web_api_password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
-            .map_err(|e| format!("密码加密失败: {}", e))?;
-    }
-    settings.web_api_share_sessions = share_sessions;
-    SettingsService::save_settings(&settings)
+    // 密码哈希在锁外计算（bcrypt 较慢），随后把整组字段在一次原子读改写中落盘，
+    // 避免与「修改密码」等其它设置写入互相覆盖。
+    let password_hash = if password.is_empty() {
+        None
+    } else {
+        Some(bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|e| format!("密码加密失败: {}", e))?)
+    };
+    SettingsService::mutate_settings(move |settings| {
+        settings.web_api_enabled = enabled;
+        settings.web_api_port = port;
+        settings.web_api_username = username;
+        if let Some(hash) = password_hash {
+            settings.web_api_password_hash = hash;
+        }
+        settings.web_api_share_sessions = share_sessions;
+    })
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]

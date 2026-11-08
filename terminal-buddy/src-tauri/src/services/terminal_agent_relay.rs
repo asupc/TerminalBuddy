@@ -918,6 +918,7 @@ impl RelayState {
         self.ledger.remove_terminal(terminal_id);
         self.rate.remove(terminal_id);
         self.reply_locks.remove(terminal_id);
+        self.poll_locks.remove(terminal_id);
         self.locate_negative.remove(terminal_id);
         self.watchers
             .remove(terminal_id)
@@ -1811,7 +1812,7 @@ pub async fn reply(
     })
     .await
     .map_err(|error| RelayError::Internal(error.to_string()))?;
-    let (binding, pending, phase, phase_at) = context;
+    let (binding, _prefetched_pending, phase, _prefetched_phase_at) = context;
     // 每终端串行临界区：重新授权 → 重读绑定/阶段/决策 → 幂等/文本/限流 → 写 PTY。
     let lock = {
         let mut current = lock_state();
@@ -1834,6 +1835,25 @@ pub async fn reply(
             return ReplyDecision::Failed(access_error(error));
         }
         // 第 2–7 条为纯函数判定（可单测）：幂等表与限流快照在锁内读取。
+        // 待决策与阶段同样在锁内重读（审查 M-17）：预取发生在拿锁之前，
+        // attention/待决策窗口期内状态可能已被其他事件改变；绑定来自文件
+        // 扫描，按 §4.9 不在临界区重跑，维持预取值。
+        let (pending, phase, phase_at) = {
+            let current = lock_state();
+            let pending = pending_decision_ids(terminal_id);
+            let (phase, phase_at) = binding
+                .as_ref()
+                .and_then(|(provider, session_id)| current.phases.current(terminal_id, provider, session_id))
+                .map(|(phase, at)| (phase, Some(at)))
+                .unwrap_or_else(|| {
+                    let entry = current
+                        .mirrors
+                        .get(terminal_id)
+                        .filter(|entry| binding.as_ref().is_some_and(|identity| &entry.identity() == identity));
+                    inferred_phase(entry)
+                });
+            (pending, phase, phase_at)
+        };
         let (mirror_identity, last_success) = {
             let current = lock_state();
             (
@@ -2638,7 +2658,7 @@ mod tests {
     fn reply_gates_reject_each_failure_without_writing() {
         let binding = ("claude".to_string(), "3f2c".to_string());
         let no_pending: Vec<String> = Vec::new();
-        let mut ledger = ReplyLedger::default();
+        let ledger = ReplyLedger::default();
 
         // 第 2 条：无绑定。
         let outcome = evaluate_reply_gates(gate_context(None, &no_pending, "running", "正常回复"), &ledger, None);

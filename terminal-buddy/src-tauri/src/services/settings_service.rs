@@ -1,9 +1,12 @@
 use crate::models::AppSettings;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
 static CACHED_SETTINGS: RwLock<Option<AppSettings>> = RwLock::new(None);
+/// 串行化所有设置写入：`mutate_settings` 的「读缓存 → 修改 → 写回」必须整体
+/// 原子，否则并发保存（如改 Web 密码与保存界面设置）会互相覆盖丢更新。
+static SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 pub struct SettingsService;
 
@@ -59,6 +62,10 @@ impl SettingsService {
     /// Modify a single field in settings, saving immediately.
     /// Avoids the clone-on-read of `get_settings()` for write-heavy callers.
     pub fn mutate_settings(f: impl FnOnce(&mut AppSettings)) -> Result<(), String> {
+        // 读改写全程持锁；内部调用 `write_settings_unlocked` 避免重入死锁。
+        let _guard = SETTINGS_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut settings = {
             if let Ok(cache) = CACHED_SETTINGS.read() {
                 if let Some(ref s) = *cache {
@@ -71,10 +78,17 @@ impl SettingsService {
             }
         };
         f(&mut settings);
-        Self::save_settings(&settings)
+        Self::write_settings_unlocked(&settings)
     }
 
     pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
+        let _guard = SETTINGS_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        Self::write_settings_unlocked(settings)
+    }
+
+    fn write_settings_unlocked(settings: &AppSettings) -> Result<(), String> {
         let path = Self::get_settings_path();
         let content =
             serde_json::to_string_pretty(settings).map_err(|e| format!("序列化设置失败: {}", e))?;

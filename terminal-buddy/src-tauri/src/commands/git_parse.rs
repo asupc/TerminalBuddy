@@ -638,6 +638,16 @@ fn lookup_history_numstat(
     path: &str,
     old_path: Option<&str>,
 ) -> (u32, u32, bool) {
+    // 先精确匹配：两个文件路径互为后缀时（如 a/foo 与 foo），宽松启发式可能
+    // 把前一个文件的统计记到后一个上。
+    if let Some(stat) = stats.iter().find(|stat| stat.path == path) {
+        return (stat.additions, stat.deletions, stat.binary);
+    }
+    if let Some(old_path) = old_path {
+        if let Some(stat) = stats.iter().find(|stat| stat.path == old_path) {
+            return (stat.additions, stat.deletions, stat.binary);
+        }
+    }
     stats
         .iter()
         .find(|stat| history_numstat_matches(&stat.path, path, old_path))

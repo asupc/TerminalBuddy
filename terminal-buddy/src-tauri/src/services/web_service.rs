@@ -1,9 +1,15 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use crate::models::TerminalViewport;
 
 pub type OutputData = Arc<str>;
+
+/// 订阅条目：(订阅 id, 事件发送端, 是否因慢客户端溢出被断开)。
+/// 溢出标记让 WS handler 能区分「PTY 退出」与「队列满被限流」，前者发 Exited
+/// 让客户端永久关闭页签，后者应发可重连的错误帧（复核 #4）。
+type Subscriber = (String, mpsc::Sender<WebTerminalEvent>, Arc<AtomicBool>);
 
 #[derive(Clone)]
 pub enum WebTerminalEvent {
@@ -22,9 +28,14 @@ pub enum UnsubscribeOutcome {
     NotFound,
 }
 
+/// 单个订阅者的输出事件队列上限。慢客户端（TCP 背压导致 send_task 停止消费）
+/// 积压超限即被断开，防止无界增长拖垮进程（审查 M-3）。
+/// 正常客户端的消费速度下该队列毫秒级清空，256 足以缓冲偶发的瞬时卡顿。
+const MAX_SUBSCRIBER_QUEUE: usize = 256;
+
 pub struct WebServiceState {
     pub output_subscribers:
-        Arc<Mutex<HashMap<String, Vec<(String, mpsc::UnboundedSender<WebTerminalEvent>)>>>>,
+        Arc<Mutex<HashMap<String, Vec<Subscriber>>>>,
     next_subscriber_id: Arc<Mutex<u64>>,
 }
 
@@ -38,7 +49,7 @@ impl WebServiceState {
 
     fn lock_subscribers(
         &self,
-    ) -> std::sync::MutexGuard<'_, HashMap<String, Vec<(String, mpsc::UnboundedSender<WebTerminalEvent>)>>>
+    ) -> std::sync::MutexGuard<'_, HashMap<String, Vec<Subscriber>>>
     {
         self.output_subscribers
             .lock()
@@ -61,9 +72,11 @@ impl WebServiceState {
         &self,
         terminal_id: &str,
         max_per_terminal: usize,
-    ) -> Option<(String, mpsc::UnboundedReceiver<WebTerminalEvent>)> {
+    ) -> Option<(String, mpsc::Receiver<WebTerminalEvent>, Arc<AtomicBool>)> {
         let sub_id = self.next_id();
-        let (tx, rx) = mpsc::unbounded_channel();
+        // 有界通道：慢客户端积压超限时由 broadcast_event 断开（审查 M-3）。
+        let (tx, rx) = mpsc::channel(MAX_SUBSCRIBER_QUEUE);
+        let overflowed = Arc::new(AtomicBool::new(false));
         let mut subs = self.lock_subscribers();
         let senders = subs.entry(terminal_id.to_string()).or_default();
         if senders.len() >= max_per_terminal {
@@ -73,8 +86,8 @@ impl WebServiceState {
             }
             return None;
         }
-        senders.push((sub_id.clone(), tx));
-        Some((sub_id, rx))
+        senders.push((sub_id.clone(), tx, overflowed.clone()));
+        Some((sub_id, rx, overflowed))
     }
 
     pub fn get_subscriber_count(&self, terminal_id: &str) -> usize {
@@ -91,7 +104,7 @@ impl WebServiceState {
             return UnsubscribeOutcome::NotFound;
         };
         let before = senders.len();
-        senders.retain(|(id, _)| id != sub_id);
+        senders.retain(|(id, _, _)| id != sub_id);
         if senders.len() == before {
             // 本订阅已不在表中（例如被 broadcast 的死链清理顺带移除）。
             if senders.is_empty() {
@@ -127,14 +140,24 @@ impl WebServiceState {
             return;
         };
         let mut dead = false;
-        for (_, tx) in senders.iter() {
-            // Arc clone is cheap — no string copy per subscriber
-            if tx.send(event.clone()).is_err() {
+        for (_, tx, overflowed) in senders.iter() {
+            // Arc clone is cheap — no string copy per subscriber。
+            // try_send：队列满（慢客户端积压超限）或接收端已关都断开该订阅者。
+            if tx.try_send(event.clone()).is_err() {
+                // 接收端仍打开却发不进去 = 只可能是队列满：标记为「限流断开」，
+                // 让 WS handler 发可重连的错误帧而不是永久的 Exited。
+                if !tx.is_closed() {
+                    overflowed.store(true, Ordering::Release);
+                }
                 dead = true;
             }
         }
         if dead {
-            senders.retain(|(_, tx)| !tx.is_closed());
+            // 只移除已关闭或已标记溢出的订阅者；容量恰好为 0 但本次发送成功的
+            // 客户端并未溢出，不能连带误删（复核 #4）。
+            senders.retain(|(_, tx, overflowed)| {
+                !tx.is_closed() && !overflowed.load(Ordering::Acquire)
+            });
             if senders.is_empty() {
                 subs.remove(terminal_id);
             }
@@ -170,8 +193,8 @@ mod tests {
     #[test]
     fn unsubscribe_reports_last_only_once() {
         let state = WebServiceState::new();
-        let (a, _ra) = state.subscribe_within_limit("t1", 5).unwrap();
-        let (b, _rb) = state.subscribe_within_limit("t1", 5).unwrap();
+        let (a, _ra, _oa) = state.subscribe_within_limit("t1", 5).unwrap();
+        let (b, _rb, _ob) = state.subscribe_within_limit("t1", 5).unwrap();
         assert_eq!(
             state.unsubscribe("t1", &a),
             UnsubscribeOutcome::RemovedNotLast
@@ -184,8 +207,8 @@ mod tests {
     #[test]
     fn close_all_makes_every_later_unsubscribe_not_found() {
         let state = WebServiceState::new();
-        let (a, _ra) = state.subscribe_within_limit("t1", 5).unwrap();
-        let (b, _rb) = state.subscribe_within_limit("t1", 5).unwrap();
+        let (a, _ra, _oa) = state.subscribe_within_limit("t1", 5).unwrap();
+        let (b, _rb, _ob) = state.subscribe_within_limit("t1", 5).unwrap();
         state.close_all("t1");
         assert_eq!(state.unsubscribe("t1", &a), UnsubscribeOutcome::NotFound);
         assert_eq!(state.unsubscribe("t1", &b), UnsubscribeOutcome::NotFound);
@@ -194,7 +217,7 @@ mod tests {
     #[test]
     fn broadcast_drops_closed_subscribers() {
         let state = WebServiceState::new();
-        let (_a, ra) = state.subscribe_within_limit("t1", 5).unwrap();
+        let (_a, ra, _oa) = state.subscribe_within_limit("t1", 5).unwrap();
         drop(ra);
         state.broadcast("t1", &Arc::from("hello"));
         assert_eq!(state.get_subscriber_count("t1"), 0);

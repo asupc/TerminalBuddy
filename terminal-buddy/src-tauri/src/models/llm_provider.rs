@@ -277,7 +277,9 @@ impl LlmProviderInput {
 impl LlmProvider {
     /// 脱敏视图：只给 `keySet` + 末 4 位。
     pub fn to_view(&self, decrypted_key: &str) -> LlmProviderView {
-        let key_tail = if decrypted_key.is_empty() {
+        // 短密钥（≤4 字符）若仍回显末 4 位，等于把完整密钥返回给前端；
+        // 与 codex 侧一致：过短时只保留 key_set 标志，不回显任何字符。
+        let key_tail = if decrypted_key.chars().count() <= 4 {
             String::new()
         } else {
             decrypted_key
@@ -436,5 +438,14 @@ mod tests {
         assert!(!json.contains("sk-test-key-1234"));
         // camelCase 序列化
         assert!(json.contains("keySet") && json.contains("defaultEffortLevel"));
+    }
+
+    #[test]
+    fn view_hides_short_keys_entirely() {
+        let (provider, key) = valid_input().validate(None).unwrap();
+        let view = provider.to_view("abc");
+        assert!(view.key_set);
+        assert_eq!(view.key_tail, "");
+        assert!(key.len() > 4);
     }
 }

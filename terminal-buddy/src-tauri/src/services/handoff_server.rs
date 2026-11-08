@@ -669,7 +669,9 @@ unsafe fn do_establish_pty_handoff(
 /// handoff 会话的后端状态与生命周期。无自有 spawn 的 child：`client` 是客户端
 /// 进程句柄（只观测 + 关闭会话时终止，对应 Default 的 `child.kill()`）。
 pub struct HandoffPty {
-    writer: Option<File>,
+    /// 共享写通道（独立锁）：输入写可能无限阻塞，必须能移出 instances
+    /// 全局锁执行（审查 H-2）。None 表示已停用。
+    writer: Option<std::sync::Arc<crate::commands::terminal::SharedPtyWriter>>,
     signal: Option<File>,
     reference: Option<OwnedHandle>,
     server: Option<OwnedHandle>,
@@ -687,7 +689,9 @@ impl HandoffPty {
         client_pid: u32,
     ) -> Self {
         Self {
-            writer: Some(writer),
+            writer: Some(std::sync::Arc::new(std::sync::Mutex::new(Some(
+                Box::new(writer),
+            )))),
             signal: Some(signal),
             reference: Some(reference),
             server: Some(server),
@@ -699,12 +703,24 @@ impl HandoffPty {
     pub fn write_input(&mut self, data: &[u8]) -> Result<(), String> {
         let writer = self
             .writer
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| "Terminal writer not available".to_string())?;
+        let mut guard = writer.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(writer) = guard.as_mut() else {
+            return Err("Terminal writer not available".to_string());
+        };
         writer
             .write_all(data)
             .and_then(|_| writer.flush())
             .map_err(|error| format!("Write failed: {}", error))
+    }
+
+    /// 克隆共享 writer 写通道：供 instances 全局锁外执行输入写（审查 H-2）。
+    /// writer 已关闭时返回 None。
+    pub(crate) fn writer_shared(
+        &self,
+    ) -> Option<std::sync::Arc<crate::commands::terminal::SharedPtyWriter>> {
+        self.writer.clone()
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
@@ -721,10 +737,20 @@ impl HandoffPty {
         Ok(())
     }
 
+    /// 停输入写通道：写者可能正阻塞在 write_all 持锁，不能等锁——
+    /// 先尝试置空，拿不到锁就直接交由调用方终止进程，管道断裂后写者自行解除阻塞。
+    fn drop_writer(&mut self) {
+        if let Some(writer) = self.writer.take() {
+            if let Ok(mut guard) = writer.try_lock() {
+                *guard = None;
+            }
+        }
+    }
+
     /// 关闭后端并返回观测到的退出码：先停输入/信号，终止仍在运行的客户端
     /// （对齐 Default 的 kill 语义，关 tab 即拆会话），再释放保活引用句柄。
     pub fn close(&mut self) -> Option<u32> {
-        self.writer = None;
+        self.drop_writer();
         self.signal = None;
         let exit_code = self.client.take().map(|client| {
             let raw = client.as_raw_handle() as RawHandle;
@@ -749,7 +775,7 @@ impl HandoffPty {
 
     /// 只发终止、不 wait。供应用退出等不能被阻塞的路径使用。
     pub fn kill_without_wait(&mut self) {
-        self.writer = None;
+        self.drop_writer();
         self.signal = None;
         if let Some(client) = self.client.take() {
             unsafe {

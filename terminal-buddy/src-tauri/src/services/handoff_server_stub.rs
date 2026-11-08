@@ -25,6 +25,13 @@ impl HandoffPty {
 
     pub fn kill_without_wait(&mut self) {}
 
+    /// stub 平台不产生 handoff 会话，永远没有可用的共享写通道。
+    pub(crate) fn writer_shared(
+        &self,
+    ) -> Option<std::sync::Arc<crate::commands::terminal::SharedPtyWriter>> {
+        None
+    }
+
     pub fn process_id(&self) -> Option<u32> {
         None
     }

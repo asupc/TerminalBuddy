@@ -243,7 +243,7 @@ enum TerminalBackend {
     Default {
         child: Box<dyn Child + Send + Sync>,
         master: Box<dyn MasterPty + Send>,
-        writer: Option<Box<dyn Write + Send>>,
+        writer: Arc<SharedPtyWriter>,
     },
     #[cfg(feature = "desktop")]
     VsCode(VsCodeTerminalProcess),
@@ -252,22 +252,77 @@ enum TerminalBackend {
     Handoff(HandoffPty),
 }
 
-impl TerminalBackend {
-    fn write_input(&mut self, data: &[u8]) -> Result<(), String> {
+/// 与实例其他字段分离加锁的共享 PTY 写句柄。
+/// 前台进程不读 stdin 时 `write_all` 会无限期阻塞，绝不能在 instances
+/// 全局锁临界区内执行该写——否则单个堵塞终端会冻结全部终端的
+/// authorize/resize/列举/关闭（审查 H-2）。
+pub type SharedPtyWriter = Mutex<Option<Box<dyn Write + Send>>>;
+
+/// 可克隆的输入写通道：instances 全局锁内只 clone，阻塞写在锁外执行。
+#[derive(Clone)]
+pub(crate) enum TerminalInputHandle {
+    /// 本地 ConPTY/PTY（Default 后端）与 handoff 终端的 writer 管道。
+    Writer(Arc<SharedPtyWriter>),
+    /// VS Code 终端插件：向插件进程 stdin 写帧（INPUT 帧）。
+    #[cfg(feature = "desktop")]
+    VsCode(Arc<Mutex<std::process::ChildStdin>>),
+}
+
+impl TerminalInputHandle {
+    /// 可能阻塞（锁外调用）。锁被其他写者长期持有时同样会等待，
+    /// 但等待只发生在该终端自己的写通道上，不影响其他终端。
+    fn write_input(&self, data: &[u8]) -> Result<(), String> {
         match self {
-            Self::Default { writer, .. } => {
-                let writer = writer
-                    .as_mut()
-                    .ok_or_else(|| "Terminal writer not available".to_string())?;
+            Self::Writer(writer) => {
+                let mut guard = writer.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(writer) = guard.as_mut() else {
+                    return Err("Terminal writer not available".to_string());
+                };
                 writer
                     .write_all(data)
                     .and_then(|_| writer.flush())
                     .map_err(|error| format!("Write failed: {}", error))
             }
             #[cfg(feature = "desktop")]
-            Self::VsCode(process) => process.write_input(data),
+            Self::VsCode(stdin) => {
+                let mut stdin = stdin.lock().unwrap_or_else(|e| e.into_inner());
+                crate::services::vscode_terminal_service::write_vscode_frame(
+                    &mut stdin,
+                    crate::services::vscode_terminal_service::FRAME_INPUT,
+                    data,
+                )
+            }
+        }
+    }
+
+    /// 渲染流控回执。Default 后端无流控（Ok(())）。
+    fn acknowledge_output(&self, char_count: u32) -> Result<(), String> {
+        match self {
+            Self::Writer(_) => Ok(()),
             #[cfg(feature = "desktop")]
-            Self::Handoff(process) => process.write_input(data),
+            Self::VsCode(stdin) => {
+                let mut stdin = stdin.lock().unwrap_or_else(|e| e.into_inner());
+                crate::services::vscode_terminal_service::write_vscode_frame(
+                    &mut stdin,
+                    crate::services::vscode_terminal_service::FRAME_ACK,
+                    &char_count.to_le_bytes(),
+                )
+            }
+        }
+    }
+}
+
+impl TerminalBackend {
+    /// 克隆共享输入写句柄：供调用方在 instances 全局锁外执行可能阻塞的写。
+    fn input_handle(&self) -> Option<TerminalInputHandle> {
+        match self {
+            Self::Default { writer, .. } => Some(TerminalInputHandle::Writer(writer.clone())),
+            #[cfg(feature = "desktop")]
+            Self::VsCode(process) => Some(TerminalInputHandle::VsCode(process.stdin_shared())),
+            #[cfg(feature = "desktop")]
+            Self::Handoff(process) => process
+                .writer_shared()
+                .map(TerminalInputHandle::Writer),
         }
     }
 
@@ -294,7 +349,11 @@ impl TerminalBackend {
     fn close(&mut self) -> Option<u32> {
         match self {
             Self::Default { child, writer, .. } => {
-                *writer = None;
+                // try_lock：写者可能正阻塞在 write_all 持有 writer 锁，
+                // 此时不能等锁——直接 kill child，管道断裂后写者自行解除阻塞。
+                if let Ok(mut guard) = writer.try_lock() {
+                    *guard = None;
+                }
                 if let Ok(Some(status)) = child.try_wait() {
                     return Some(status.exit_code());
                 }
@@ -312,7 +371,9 @@ impl TerminalBackend {
     fn kill_without_wait(&mut self) {
         match self {
             Self::Default { child, writer, .. } => {
-                *writer = None;
+                if let Ok(mut guard) = writer.try_lock() {
+                    *guard = None;
+                }
                 child.kill().ok();
             }
             #[cfg(feature = "desktop")]
@@ -331,16 +392,6 @@ impl TerminalBackend {
             Self::VsCode(process) => process.process_id(),
             #[cfg(feature = "desktop")]
             Self::Handoff(process) => process.process_id(),
-        }
-    }
-
-    fn acknowledge_output(&mut self, _char_count: u32) -> Result<(), String> {
-        match self {
-            Self::Default { .. } => Ok(()),
-            #[cfg(feature = "desktop")]
-            Self::VsCode(process) => process.acknowledge_output(_char_count),
-            #[cfg(feature = "desktop")]
-            Self::Handoff(process) => process.acknowledge_output(),
         }
     }
 
@@ -465,7 +516,7 @@ fn spawn_terminal_backend(
         TerminalBackend::Default {
             child,
             master: pty_pair.master,
-            writer: Some(writer),
+            writer: Arc::new(Mutex::new(Some(writer))),
         },
         reader,
         TerminalOutputBufferMode::Default,
@@ -670,6 +721,10 @@ pub fn teardown_terminal(app: &AppHandle, terminal_id: &str, reason: TerminalClo
         reason.as_str()
     ));
     release_terminal_resources(app, terminal_id, Some(instance.backend), reason);
+    // 采样缓存按 terminal_id 持有上一帧计数，关闭时一并清理，防止长期运行累积。
+    if let Some(cache) = app.try_state::<crate::commands::MonitorCache>() {
+        cache.remove_terminal(terminal_id);
+    }
     // 桌面端 removeSession 幂等，但这里也只会收到一次。
     let _ = app.emit("terminal-closed", terminal_id);
     service.notify_sessions_changed();
@@ -772,8 +827,10 @@ impl Drop for TerminalCreation {
 
 /// 终端尺寸默认值：0/空值回退 24x80。
 fn resolve_terminal_size(rows: u16, cols: u16) -> (u16, u16) {
-    let rows = if rows > 0 { rows } else { 24 };
-    let cols = if cols > 0 { cols } else { 80 };
+    // 与 resize 链路保持一致：0 用默认值，异常大值钳到 500，避免一次性
+    // 申请超大 ConPTY 缓冲（rows=65535 会放大底层内存占用）。
+    let rows = if rows == 0 { 24 } else { rows.clamp(1, 500) };
+    let cols = if cols == 0 { 80 } else { cols.clamp(1, 500) };
     (rows, cols)
 }
 
@@ -876,11 +933,14 @@ fn schedule_delayed_input(
             terminal_id
         ));
 
-        let mut instances = lock_instances_map(&instances);
-        if let Some(instance) = instances.get_mut(&terminal_id) {
+        // 锁内只取共享写句柄，阻塞写在锁外执行（与 write_to_terminal 一致，审查 H-2）。
+        let handle = lock_instances_map(&instances)
+            .get(&terminal_id)
+            .and_then(|instance| instance.backend.input_handle());
+        if let Some(handle) = handle {
             for command in &commands {
                 let command = format!("{}\r", command);
-                if let Err(error) = instance.backend.write_input(command.as_bytes()) {
+                if let Err(error) = handle.write_input(command.as_bytes()) {
                     log_debug(&format!("[{}] failed: {}", log_prefix, error));
                     break;
                 }
@@ -1497,14 +1557,18 @@ impl TerminalService {
     ) -> Result<(), String> {
         self.authorize(id, actor, TerminalAction::Input)
             .map_err(|error| error.to_string())?;
-        let mut instances = self.lock_instances();
-        instances
-            .get_mut(id)
-            .ok_or_else(|| TerminalAccessError::NotFound.to_string())?
-            .backend
-            .write_input(data.as_bytes())?;
-        drop(instances);
-        Ok(())
+        // 全局锁内只取共享写句柄；可能无限阻塞的 write_all 必须在锁外执行，
+        // 否则单终端输入管道堵塞会冻结全部终端（审查 H-2）。
+        let handle = {
+            let instances = self.lock_instances();
+            instances
+                .get(id)
+                .ok_or_else(|| TerminalAccessError::NotFound.to_string())?
+                .backend
+                .input_handle()
+                .ok_or_else(|| "Terminal writer not available".to_string())?
+        };
+        handle.write_input(data.as_bytes())
     }
 
     pub fn update_terminal_display_name(
@@ -1614,12 +1678,17 @@ impl TerminalService {
     ) -> Result<(), String> {
         self.authorize(id, actor, TerminalAction::View)
             .map_err(|error| error.to_string())?;
-        let mut instances = self.lock_instances();
-        instances
-            .get_mut(id)
-            .ok_or_else(|| TerminalAccessError::NotFound.to_string())?
-            .backend
-            .acknowledge_output(char_count)
+        // 回执对 VsCode 后端要写插件 stdin（可能阻塞），同样移出全局锁（审查 H-2）。
+        let handle = {
+            let instances = self.lock_instances();
+            instances
+                .get(id)
+                .ok_or_else(|| TerminalAccessError::NotFound.to_string())?
+                .backend
+                .input_handle()
+                .ok_or_else(|| "Terminal writer not available".to_string())?
+        };
+        handle.acknowledge_output(char_count)
     }
 
     pub fn terminal_loading_mode(
@@ -1656,13 +1725,13 @@ impl TerminalService {
 
     pub fn subscribe_web_output(
         &self, id: &str, web: &WebServiceState, limit: usize,
-    ) -> Result<Option<(String, tokio::sync::mpsc::UnboundedReceiver<crate::services::web_service::WebTerminalEvent>, Vec<TerminalReplayFrame>, crate::models::TerminalViewport)>, TerminalAccessError> {
+    ) -> Result<Option<(String, tokio::sync::mpsc::Receiver<crate::services::web_service::WebTerminalEvent>, Vec<TerminalReplayFrame>, crate::models::TerminalViewport, std::sync::Arc<std::sync::atomic::AtomicBool>)>, TerminalAccessError> {
         self.authorize(id, TerminalActor::Web, TerminalAction::View)?;
         let instances = self.lock_instances();
         let instance = instances.get(id).ok_or(TerminalAccessError::NotFound)?;
         let buffer = instance.output_buffer.lock().unwrap_or_else(|e| e.into_inner());
         let viewport = instance.takeover.viewport(crate::models::TerminalSize::new(instance.current_rows, instance.current_cols));
-        Ok(web.subscribe_within_limit(id, limit).map(|(subscription, receiver)| (subscription, receiver, buffer.replay_frames(), viewport)))
+        Ok(web.subscribe_within_limit(id, limit).map(|(subscription, receiver, overflowed)| (subscription, receiver, buffer.replay_frames(), viewport, overflowed)))
     }
 
     /// 关闭终端的唯一入口（含授权）。成功后由 `teardown_terminal` 释放资源，
@@ -2126,5 +2195,17 @@ mod replay_tests {
         assert_eq!((frames[0].rows, frames[0].cols), (35, 45));
         assert_eq!(frames[0].data.len(), TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS);
         assert_eq!(buffer.bytes, TERMINAL_OUTPUT_BUFFER_MAX_CHUNKS);
+    }
+}
+
+#[cfg(test)]
+mod size_clamp_tests {
+    use super::resolve_terminal_size;
+
+    #[test]
+    fn zero_uses_defaults_and_large_values_are_clamped() {
+        assert_eq!(resolve_terminal_size(0, 0), (24, 80));
+        assert_eq!(resolve_terminal_size(65535, 65535), (500, 500));
+        assert_eq!(resolve_terminal_size(30, 100), (30, 100));
     }
 }

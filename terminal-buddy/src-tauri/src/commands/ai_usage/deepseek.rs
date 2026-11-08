@@ -225,7 +225,8 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
     };
 
     // Parallel: summary + daily amount + daily cost
-    let now = chrono::Local::now();
+    // 与 today_str/week_start 使用同一固定时区，避免 UTC 容器里月份/年份错位。
+    let now = super::china_now();
     let month = now.month() as u32;
     let year = now.year();
 
@@ -243,6 +244,10 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
         .send(),
     );
 
+    // 网络失败不能静默当成「无用量」（审查 M-15）：三路请求各自记录失败原因，
+    // 全部数据源都拿不到时返回 success:false，让前端显示查询失败而不是空数据。
+    let mut failures: Vec<String> = Vec::new();
+
     // Parse summary
     let summary_body: Option<serde_json::Value> = match summary_resp {
         Ok(resp) if resp.status().is_success() => resp.json().await.ok(),
@@ -258,7 +263,8 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
                 error: Some("API Key 无效".into()),
             }
         }
-        _ => None,
+        Ok(resp) => { failures.push(format!("usage 接口返回 {}", resp.status().as_u16())); None }
+        Err(error) => { failures.push(format!("usage 请求失败: {}", error)); None }
     };
 
     let summary_data = summary_body
@@ -271,7 +277,8 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
     // Parse amount data
     let amount_data: Option<serde_json::Value> = match amount_resp {
         Ok(resp) if resp.status().is_success() => resp.json().await.ok(),
-        _ => None,
+        Ok(resp) => { failures.push(format!("amount 接口返回 {}", resp.status().as_u16())); None }
+        Err(error) => { failures.push(format!("amount 请求失败: {}", error)); None }
     };
 
     let amount_days = amount_data
@@ -290,7 +297,8 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
     // Parse cost data
     let cost_data: Option<serde_json::Value> = match cost_resp {
         Ok(resp) if resp.status().is_success() => resp.json().await.ok(),
-        _ => None,
+        Ok(resp) => { failures.push(format!("cost 接口返回 {}", resp.status().as_u16())); None }
+        Err(error) => { failures.push(format!("cost 请求失败: {}", error)); None }
     };
 
     let cost_days = cost_data
@@ -306,7 +314,7 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
     let today_s = today_str();
     let yesterday_s = yesterday_str();
     let week_start_s = {
-        let n = chrono::Local::now();
+        let n = super::china_now();
         let weekday = n.weekday().num_days_from_monday() as i64;
         let monday = n - chrono::Duration::days(weekday);
         let mut ws = format!("{}", monday.format("%Y-%m-%d"));
@@ -325,6 +333,19 @@ pub async fn fetch_deepseek_usage(api_key: String) -> DeepseekUsageResult {
 
     // Weekly
     let week_usage = compute_week(amount_days, cost_days, &week_start_s, &today_s);
+
+    if summary_data.is_none() && amount_data.is_none() && cost_data.is_none() {
+        return DeepseekUsageResult {
+            success: false,
+            normal_wallets: vec![],
+            bonus_wallets: vec![],
+            today: None,
+            yesterday: None,
+            week: None,
+            month: None,
+            error: Some(if failures.is_empty() { "用量数据为空".into() } else { failures.join("; ") }),
+        };
+    }
 
     DeepseekUsageResult {
         success: true,

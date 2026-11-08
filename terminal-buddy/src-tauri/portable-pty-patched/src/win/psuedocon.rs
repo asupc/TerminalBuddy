@@ -88,6 +88,11 @@ impl PsuedoCon {
     fn report_mode(line: &str) {
         use std::io::Write;
         let path = std::env::temp_dir().join("terminal-buddy-conpty-mode.log");
+        // 每次创建终端都会追加一行；长期使用会无限增长。超过 256KB 时整体重写。
+        const MAX_LOG_BYTES: u64 = 256 * 1024;
+        if std::fs::metadata(&path).map(|meta| meta.len() > MAX_LOG_BYTES).unwrap_or(false) {
+            let _ = std::fs::remove_file(&path);
+        }
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

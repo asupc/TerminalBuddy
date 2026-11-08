@@ -8,11 +8,24 @@ use std::time::Duration;
 pub struct DatabaseService;
 
 impl DatabaseService {
+    /// 把 WAL 合并回主库（迁移数据目录前调用），减少 db 与 -wal 非同一快照的窗口。
+    pub(crate) fn checkpoint() -> Result<(), String> {
+        let connection = Self::open()?;
+        connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(|error| format!("SQLite checkpoint 失败: {}", error))
+    }
+
     pub(crate) fn open() -> Result<Connection, String> {
         // 数据库是持久写入方，必须走 require：自定义目录不可用时显式失败，
         // 绝不能在默认目录另开一个数据库。
         let data_dir = PathService::require_data_dir()?;
-        fs::create_dir_all(&data_dir).map_err(|error| format!("创建数据库目录失败: {}", error))?;
+        Self::open_at(&data_dir)
+    }
+
+    /// 在指定数据目录打开数据库（导入到默认目录时不能沿用当前自定义目录）。
+    pub(crate) fn open_at(data_dir: &std::path::Path) -> Result<Connection, String> {
+        fs::create_dir_all(data_dir).map_err(|error| format!("创建数据库目录失败: {}", error))?;
         let mut connection = Connection::open(data_dir.join("terminal_buddy.db"))
             .map_err(|error| format!("打开 SQLite 数据库失败: {}", error))?;
         connection
@@ -224,6 +237,19 @@ impl DatabaseService {
 
     pub fn save_command_history(content: &str) -> Result<(), String> {
         Self::save_document("command_history", content)
+    }
+
+    /// 把命令历史写入指定数据目录（导入备份时目标目录可能与当前目录不同）。
+    pub(crate) fn save_command_history_at(data_dir: &std::path::Path, content: &str) -> Result<(), String> {
+        let connection = Self::open_at(data_dir)?;
+        connection
+            .execute(
+                "INSERT INTO app_documents (key, content, updated_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",
+                params!["command_history", content, chrono::Utc::now().timestamp_millis()],
+            )
+            .map_err(|error| format!("保存命令历史失败: {}", error))?;
+        Ok(())
     }
 
     fn read_document(key: &str) -> Result<Option<String>, String> {

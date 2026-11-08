@@ -43,6 +43,45 @@ fn scoped_file(path: &str) -> Result<(), ApiError> {
     super::ensure_project_scope(path).map(|_| ())
 }
 
+/// Web 端不允许新登记的「过宽」项目目录：文件系统根 / 盘根、系统目录、
+/// 用户家目录。注册这类目录会让 `ensure_project_scope` 的白名单整体失效
+/// （审查 M-2 / N-3：`/`、`C:\` 会被尾斜杠折叠，`/home`、`C:\Users` 等
+/// 才是真实入口，因此按规范化路径判定而非封禁字面量）。
+fn is_overbroad_project_path(raw: &str) -> bool {
+    let normalized = raw.replace('\\', "/").to_lowercase();
+    let trimmed = normalized.trim().trim_end_matches('/');
+    let parts: Vec<&str> = trimmed.split('/').filter(|part| !part.is_empty()).collect();
+    // 文件系统根 / Windows 盘根（"c:"）与 UNC 根（"//server"）
+    if parts.is_empty() {
+        return true;
+    }
+    if parts[0].len() == 2 && parts[0].ends_with(':') && parts[0].as_bytes()[0].is_ascii_alphabetic() && parts.len() == 1 {
+        return true;
+    }
+    if parts[0].len() == 2 && parts[0].ends_with(':') && parts[0].as_bytes()[0].is_ascii_alphabetic()
+        && parts.len() >= 2 && matches!(parts[1], "users" | "windows" | "program files" | "programdata") {
+        return true; // c:/users、c:/windows、c:/program files 等系统前缀根
+    }
+    if parts.len() == 1 && matches!(parts[0], "etc" | "usr" | "var" | "bin" | "sbin" | "lib" | "lib64"
+        | "boot" | "dev" | "proc" | "sys" | "tmp" | "root" | "home" | "users" | "mnt" | "media"
+        | "srv" | "opt" | "run" | "windows" | "programdata") {
+        return true;
+    }
+    // 类 Unix 用户家目录：/home/<user>、/Users/<user>
+    if parts.len() == 2 && (parts[0] == "home" || parts[0] == "users") {
+        return true;
+    }
+    // 本进程的 HOME（Linux 服务器模式）
+    if let Ok(home) = std::env::var("HOME") {
+        let home_norm = home.replace('\\', "/").to_lowercase();
+        let home_norm = home_norm.trim().trim_end_matches('/');
+        if !home_norm.is_empty() && trimmed == home_norm {
+            return true;
+        }
+    }
+    false
+}
+
 /// 终端访问失败按变体映射：不存在 404、无权限 403（§4.8）。
 /// 之前一律 403，客户端无法用 404 修剪已关闭终端。
 fn access_map_error(error: crate::models::TerminalAccessError) -> ApiError {
@@ -77,12 +116,72 @@ fn check_arguments(command: &str, args: &Value, app: &crate::runtime::AppHandle)
     }
     // SSH 路径属于远端主机，不能拿服务器文件范围来比较。
     let path_keys: &[&str] = if command.starts_with("remote_") { &["localPath", "localDir"] } else {
-        &["path", "startupPath", "projectDir", "filePath", "newPath"]
+        // destPath：claude/codex_history_export 直接落盘写文件，必须与 path 一样受
+        // scope 约束，否则持 JWT 可向任意路径写文件（审查 M-1）。
+        // selectedDir：uninstall_claude_hooks 会在该目录写 settings.json（M-1 同类）。
+        &["path", "startupPath", "projectDir", "filePath", "newPath", "destPath", "selectedDir"]
     };
     for key in path_keys {
         if let Some(path) = args.get(*key).and_then(Value::as_str).filter(|p| !p.trim().is_empty()) { scoped_file(path)?; }
     }
     if let Some(path) = args.get("options").and_then(|v| v.get("path")).and_then(Value::as_str) { scoped_file(path)?; }
+    // Git 命令以「向上回溯 .git」得到的仓库根为操作根：登记目录可能只是外层仓库的
+    // 子目录（monorepo 场景），须对回溯根二次校验，防止对外层整仓提交/推送越过
+    // 登记边界（审查 H-3）。require_repo_root 会跑一次 git rev-parse（几十毫秒），
+    // Git 操作低频，可接受。
+    if command == "get_git_repository_status" || command.starts_with("git_") {
+        for path in args.get("path").and_then(Value::as_str).into_iter()
+            .chain(args.get("options").and_then(|v| v.get("path")).and_then(Value::as_str)) {
+            if path.trim().is_empty() { continue; }
+            if let Ok(root) = crate::commands::git::require_repo_root(path) {
+                scoped_file(&root.to_string_lossy())?;
+            }
+        }
+    }
+    // save_projects 全量覆盖项目白名单——白名单本身是 Web 端文件访问的边界，
+    // 不能允许 Web 端登记盘根/系统目录/用户家目录这类过宽目录使边界失效
+    // （审查 M-2；注册 `/home`、`C:\` 后 write_file_content/delete_path/git
+    // 即全盘放行）。仅约束新增路径：桌面端历史上已注册的条目原样保留。
+    if command == "save_projects" {
+        let incoming: Vec<String> = args.get("projects")
+            .and_then(Value::as_array)
+            .map(|items| items.iter()
+                .filter_map(|item| item.get("path").and_then(Value::as_str).map(str::to_string))
+                .collect())
+            .unwrap_or_default();
+        let existing: Vec<String> = crate::commands::profile::get_projects()
+            .map_err(ApiError::Internal)?
+            .into_iter().map(|project| project.path).collect();
+        for path in incoming {
+            if path.trim().is_empty() { continue; }
+            let already = existing.iter().any(|old| old.trim_end_matches(['/', '\\'])
+                .eq_ignore_ascii_case(path.trim_end_matches(['/', '\\'])));
+            if already { continue; }
+            // 纯字符串分段判断可被 `..`、符号链接和「把文件当项目」绕过：
+            // 注册 /etc/../etc 或 /etc/shadow 时原串不过宽，访问时
+            // ensure_project_scope 却会 canonicalize 成 /etc 或该文件本身。
+            // 因此先拒绝 `..`，再 canonicalize 后按真实路径判定，且必须是目录。
+            if path.split(['/', '\\']).any(|part| part == "..") {
+                return Err(ApiError::Forbidden(format!(
+                    "项目路径不能包含上级目录引用（..）：{}",
+                    path
+                )));
+            }
+            let canonical = std::fs::canonicalize(path.trim()).map_err(|_| {
+                ApiError::Forbidden(format!("项目目录不存在或不可访问：{}", path))
+            })?;
+            if !canonical.is_dir() {
+                return Err(ApiError::Forbidden(format!("项目路径不是目录：{}", path)));
+            }
+            let canonical = canonical.to_string_lossy();
+            if is_overbroad_project_path(&canonical) {
+                return Err(ApiError::Forbidden(format!(
+                    "Web 端不能登记系统级或用户根目录（{}），请改用更具体的项目目录",
+                    path
+                )));
+            }
+        }
+    }
     if matches!(command, "get_claude_sessions_for_terminals" | "get_agent_sessions_for_terminals" | "get_terminal_task_summaries") {
         let ids: Vec<String> = argument(args, "terminalIds")?;
         let service = app.state::<TerminalService>();

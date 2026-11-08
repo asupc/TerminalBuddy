@@ -29,6 +29,16 @@ impl MonitorCache {
             cpu: Mutex::new(HashMap::new()),
         }
     }
+
+    /// 终端关闭时清理采样条目，避免按 terminal_id 永久累积。
+    pub fn remove_terminal(&self, terminal_id: &str) {
+        if let Ok(mut net) = self.net.lock() {
+            net.remove(terminal_id);
+        }
+        if let Ok(mut cpu) = self.cpu.lock() {
+            cpu.remove(terminal_id);
+        }
+    }
 }
 
 const MONITOR_CMD: &str = "\
@@ -55,8 +65,23 @@ fn parse_uptime(output: &str) -> String {
     // Extract the "up ..." portion from plain uptime
     if let Some(pos) = line.find(" up ") {
         let rest = &line[pos + 4..];
-        if let Some(end) = rest.find(",  ") {
-            return format!("up {}", &rest[..end]);
+        // 老系统输出形如 "up 3 days, 2:01, 1 user, load average: ..."：
+        // 截到 " user" 之前，并去掉末尾的 ", 1" 计数。旧实现只找双空格，永远截不到。
+        let cut = rest
+            .find(" user")
+            .or_else(|| rest.find(", load average"))
+            .unwrap_or(rest.len());
+        // 只剥掉 " user" 前面的用户计数（形如 ", 1"），不能按数字全局裁剪，
+        // 否则 "2:01" 的分钟数会被吃掉。
+        let mut segment = rest[..cut].trim_end();
+        if let Some(comma) = segment.rfind(',') {
+            let tail = segment[comma + 1..].trim();
+            if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
+                segment = segment[..comma].trim_end();
+            }
+        }
+        if !segment.is_empty() {
+            return format!("up {}", segment);
         }
         return format!("up {}", rest.trim_end());
     }
@@ -298,4 +323,26 @@ pub fn get_server_stats(
         timestamp: now,
     };
     Ok(result)
+}
+
+#[cfg(test)]
+mod uptime_tests {
+    use super::parse_uptime;
+
+    #[test]
+    fn plain_uptime_stops_before_user_count() {
+        assert_eq!(
+            parse_uptime(" 10:30:00 up 3 days, 2:01, 1 user, load average: 0.10, 0.20, 0.30"),
+            "up 3 days, 2:01"
+        );
+        assert_eq!(
+            parse_uptime(" 10:30:00 up 5 min, 2 users, load average: 0.00, 0.01, 0.05"),
+            "up 5 min"
+        );
+    }
+
+    #[test]
+    fn uptime_p_output_is_kept_as_is() {
+        assert_eq!(parse_uptime("up 3 days, 2 hours, 1 minute"), "up 3 days, 2 hours, 1 minute");
+    }
 }

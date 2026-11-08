@@ -107,7 +107,7 @@ fn set_status(status: DataDirStatus) {
 }
 
 impl PathService {
-    fn get_default_base_dir() -> PathBuf {
+    pub fn get_default_base_dir() -> PathBuf {
         if let Some(directory) = std::env::var_os("TERMINAL_BUDDY_DATA_DIR") {
             return PathBuf::from(directory);
         }

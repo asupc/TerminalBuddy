@@ -80,6 +80,7 @@ impl Drop for DesktopGitLease {
     }
 }
 pub(crate) fn reserve_desktop_operation(path: &str, action: &str) -> Result<DesktopGitLease, ApiError> {
+    ensure_repo_root_within_scope(path)?;
     let repo = ensure_project_scope(path)?;
     let mut map = operations().lock().map_err(|_| ApiError::Internal("Git 操作锁不可用".to_string()))?;
     if map.get(&repo).is_some_and(|operation| operation.status == "running") {
@@ -89,6 +90,18 @@ pub(crate) fn reserve_desktop_operation(path: &str, action: &str) -> Result<Desk
     Ok(DesktopGitLease { repo })
 }
 
+/// 对「向上回溯 `.git` 得到的仓库根」做二次 scope 校验。
+/// 已登记目录可能只是外层仓库的子目录（monorepo 场景），各 `*_impl` 内部
+/// 会以回溯出的祖先仓库根为操作根，只校验传入路径会让 `git add -A` 等
+/// 操作越过登记边界提交登记目录之外的变更（审查 H-3），越界返回 403。
+/// 非 Git 仓库不在此报错，交给各 impl 层返回自然错误。
+fn ensure_repo_root_within_scope(repo: &str) -> Result<(), ApiError> {
+    if let Ok(root) = crate::commands::git::require_repo_root(repo) {
+        ensure_project_scope(&root.to_string_lossy())?;
+    }
+    Ok(())
+}
+
 /// 启动后台 Git 操作：同仓库忙碌返回 409，任务结束后把输出写回轮询记录。
 /// 接收 String（而非 &str）：闭包要 move 同一份数据进后台任务，避免借用冲突。
 fn start_operation(
@@ -96,6 +109,8 @@ fn start_operation(
     action: &'static str,
     task: impl FnOnce() -> Result<String, String> + Send + 'static,
 ) -> Result<(), ApiError> {
+    // 会跑一次 git rev-parse（几十毫秒），Git 变更类操作低频，可接受。
+    ensure_repo_root_within_scope(&repo)?;
     let key = ensure_project_scope(&repo)?;
     {
         let mut ops = operations().lock().unwrap_or_else(|e| e.into_inner());
@@ -120,6 +135,9 @@ fn start_operation(
         );
     }
     tokio::task::spawn_blocking(move || {
+        // panic 守卫：任务中途崩溃时 Drop 将记录标记为 failed，否则轮询会
+        // 永远看到 running，该仓库此后一直被 409 拒绝。
+        let mut guard = GitOperationGuard { key: key.clone(), armed: true };
         let result = task();
         let mut ops = operations().lock().unwrap_or_else(|e| e.into_inner());
         if let Some(record) = ops.get_mut(&key) {
@@ -135,8 +153,30 @@ fn start_operation(
             }
             record.finished_at = Some(now_millis());
         }
+        guard.armed = false;
     });
     Ok(())
+}
+
+struct GitOperationGuard {
+    key: String,
+    armed: bool,
+}
+
+impl Drop for GitOperationGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut ops = operations().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(record) = ops.get_mut(&self.key) {
+            if record.status == "running" {
+                record.status = "failed".into();
+                record.output = "Git 操作异常中断，请重试".into();
+                record.finished_at = Some(now_millis());
+            }
+        }
+    }
 }
 
 /// 仓库状态摘要（当前分支 / 上下游 / 变更计数）；非 Git 目录返回 null。
@@ -147,10 +187,14 @@ pub async fn status(
 ) -> Result<Json<Option<GitRepositoryStatus>>, ApiError> {
     ensure_project_scope(&q.repo)?;
     let path = q.repo;
-    let status = tokio::task::spawn_blocking(move || get_git_repository_status_impl(path))
-        .await
-        .map_err(|error| ApiError::Internal(format!("状态查询任务执行失败: {}", error)))?
-        .map_err(ApiError::Internal)?;
+    // require_repo_root 会同步跑 git rev-parse；Git 页面会轮询此接口，必须放进
+    // spawn_blocking，否则卡住的网络盘仓库能占满 tokio worker（复核 #7）。
+    let status = tokio::task::spawn_blocking(move || {
+        ensure_repo_root_within_scope(&path)?;
+        get_git_repository_status_impl(path).map_err(ApiError::Internal)
+    })
+    .await
+    .map_err(|error| ApiError::Internal(format!("状态查询任务执行失败: {}", error)))??;
     Ok(Json(status))
 }
 
@@ -162,10 +206,13 @@ pub async fn branches(
 ) -> Result<Json<Vec<GitBranch>>, ApiError> {
     ensure_project_scope(&q.repo)?;
     let path = q.repo;
-    let list = tokio::task::spawn_blocking(move || git_list_branches_impl(path))
-        .await
-        .map_err(|error| ApiError::Internal(format!("分支查询任务执行失败: {}", error)))?
-        .map_err(ApiError::Internal)?;
+    // 同 status：把可能阻塞的 git rev-parse 移出 async worker。
+    let list = tokio::task::spawn_blocking(move || {
+        ensure_repo_root_within_scope(&path)?;
+        git_list_branches_impl(path).map_err(ApiError::Internal)
+    })
+    .await
+    .map_err(|error| ApiError::Internal(format!("分支查询任务执行失败: {}", error)))??;
     Ok(Json(list))
 }
 

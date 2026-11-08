@@ -24,7 +24,8 @@ impl ProfileService {
         PathService::get_profiles_dir()
     }
 
-    fn invalidate_cache() {
+    /// 供 import_all_data 等直写磁盘的路径使用：写盘后失效内存缓存。
+    pub fn invalidate_cache() {
         if let Ok(mut cache) = CACHED_PROFILES.write() {
             *cache = None;
         }
@@ -154,7 +155,7 @@ impl ProfileService {
         let path = Self::get_profiles_dir()?.join(format!("{}.json", profile.id));
         let content = serde_json::to_string_pretty(&profile)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))?;
+        super::atomic_file::atomic_write(&path, content.as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
         Self::invalidate_cache();
         Ok(profile)
     }
@@ -198,7 +199,7 @@ impl ProfileService {
         let path = Self::get_profiles_dir()?.join(format!("{}.json", to_save.id));
         let content = serde_json::to_string_pretty(&to_save)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))?;
+        super::atomic_file::atomic_write(&path, content.as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
         Self::invalidate_cache();
         Ok(())
     }
@@ -225,7 +226,7 @@ impl ProfileService {
         let profiles = Self::get_all_profiles()?;
         let content = serde_json::to_string_pretty(&profiles)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        fs::write(path, content).map_err(|e| format!("Failed to write file: {}", e))
+        super::atomic_file::atomic_write(std::path::Path::new(path), content.as_bytes()).map_err(|e| format!("Failed to write file: {}", e))
     }
 
     pub fn import_profiles(path: &str) -> Result<Vec<Profile>, String> {
@@ -248,7 +249,7 @@ impl ProfileService {
             let save_path = Self::get_profiles_dir()?.join(format!("{}.json", profile.id));
             let json = serde_json::to_string_pretty(&profile)
                 .map_err(|e| format!("Failed to serialize: {}", e))?;
-            fs::write(&save_path, json).map_err(|e| format!("Failed to write file: {}", e))?;
+            super::atomic_file::atomic_write(&save_path, json.as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
             // Decrypt for return value (frontend needs plaintext)
             profile.decrypt_sensitive_fields();
             imported.push(profile);

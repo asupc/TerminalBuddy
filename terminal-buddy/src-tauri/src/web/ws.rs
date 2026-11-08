@@ -15,7 +15,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use crate::runtime::Manager;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{self, Instant, MissedTickBehavior};
 
 static WS_CONNECTION_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -50,9 +49,13 @@ impl Drop for WsConnectionSlot {
 }
 
 /// 把失败原因回传给手机端；通道已关闭时静默丢弃。
-fn send_ws_error(error_tx: &UnboundedSender<String>, message: String) {
+fn send_ws_error(error_tx: &tokio::sync::mpsc::Sender<String>, message: String) {
     if let Ok(msg) = serde_json::to_string(&WsServerMessage::Error { message }) {
-        let _ = error_tx.send(msg);
+        // try_send（N-2）：send_task 卡死期间 recv_task 可能持续产生错误
+        // （如向堵死终端发输入），错误提示不属于关键数据，满则丢弃。
+        if error_tx.try_send(msg).is_err() {
+            eprintln!("[WS] error channel full, dropping error message");
+        }
     }
 }
 
@@ -68,8 +71,7 @@ pub async fn terminal_ws_handler(
     let token = params
         .get("token")
         .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
-    let _claims = verify_token(token, &state.jwt_secret)?;
-
+    let claims = verify_token(token, &state.jwt_secret)?;
     // 授权必须发生在 upgrade / subscribe / peek history 之前：非共享模式下即使
     // 手机端已经知道 terminal id，也读不到 PC 终端的任何输出。
     let owner = {
@@ -92,14 +94,24 @@ pub async fn terminal_ws_handler(
     let viewport_aware = params.get("viewport").is_some_and(|value| value == "1");
 
     Ok(ws.on_upgrade(move |socket| {
-        handle_terminal_socket(socket, terminal_id, state, is_pc_takeover, replay_history, mobile_takeover, viewport_aware)
+        handle_terminal_socket(socket, terminal_id, state, claims.exp, is_pc_takeover, replay_history, mobile_takeover, viewport_aware)
     }))
+}
+
+/// 长连接跨越 JWT 过期时刻后必须主动断开，否则 30 天 token 在首次握手后可无限续命。
+fn token_expiry_deadline(exp: usize) -> tokio::time::Instant {
+    let expires_at = std::time::UNIX_EPOCH + Duration::from_secs(exp as u64);
+    let remaining = expires_at
+        .duration_since(std::time::SystemTime::now())
+        .unwrap_or_default();
+    tokio::time::Instant::now() + remaining
 }
 
 async fn handle_terminal_socket(
     socket: WebSocket,
     terminal_id: String,
     state: AppState,
+    token_exp: usize,
     is_pc_takeover: bool,
     replay_history: bool,
     mobile_takeover: bool,
@@ -121,7 +133,7 @@ async fn handle_terminal_socket(
     let subscription = state.app_handle.state::<TerminalService>().subscribe_web_output(
         &terminal_id, &web_state, MAX_PER_TERMINAL_WS_CONNECTIONS,
     ).ok().flatten();
-    let Some((sub_id, mut output_rx, mut history, viewport)) = subscription
+    let Some((sub_id, mut output_rx, mut history, viewport, output_overflowed)) = subscription
     else {
         eprintln!(
             "[WS] Per-terminal connection limit reached for {}",
@@ -133,14 +145,16 @@ async fn handle_terminal_socket(
     // 等首个 resize 后再发送历史；支持回放的客户端先恢复每段历史原来的网格，
     // 然后适配手机尺寸，避免把电脑的光标定位序列直接放进窄屏解析。
 
-    // recv_task → send_task: error messages channel.
-    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // recv_task → send_task: error messages channel（有界，见 send_ws_error）。
+    let (error_tx, mut error_rx) = tokio::sync::mpsc::channel::<String>(64);
     // recv_task → send_task: frontend sent its first resize, safe to replay history.
     let (ready_tx, mut ready_rx) = tokio::sync::oneshot::channel::<()>();
     let mut ready_tx = Some(ready_tx);
-    // Browsers automatically answer protocol-level Ping frames with Pong. This lets
-    // the server release a takeover even when a dead client never sends Close.
-    let (activity_tx, mut activity_rx) = tokio::sync::watch::channel(Instant::now());
+    // send_task → 主循环: 最近一次 WS 发送成功的时刻。心跳超时以它驱动
+    // （审查 M-3）：只看收帧时,恶意客户端周期发送任意小帧即可在「不读 TCP」
+    // 的情况下保活,配合无界队列可耗尽内存;改为「发送成功」驱动后,不读 TCP
+    // 的连接必然因写缓冲堆积而无法完成发送,最终按超时回收。
+    let (send_ok_tx, mut send_ok_rx) = tokio::sync::watch::channel(Instant::now());
     let heartbeat_terminal_id = terminal_id.clone();
 
     // Forward PTY output → WebSocket
@@ -152,6 +166,8 @@ async fn handle_terminal_socket(
             WS_HEARTBEAT_INTERVAL,
         );
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        // 每次成功发送都推进心跳基线（审查 M-3）。
+        let mark_sent = || send_ok_tx.send_replace(Instant::now());
         loop {
             tokio::select! {
                 biased;
@@ -163,6 +179,7 @@ async fn handle_terminal_socket(
                             };
                             if let Ok(msg) = serde_json::to_string(&message) {
                                 if ws_sender.send(Message::Text(msg.into())).await.is_err() { break; }
+                                mark_sent();
                             }
                         }
                         let frames = std::mem::take(&mut history);
@@ -178,6 +195,7 @@ async fn handle_terminal_socket(
                             if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                                 break;
                             }
+                            mark_sent();
                         }
                     }
                     history_sent = true;
@@ -186,6 +204,7 @@ async fn handle_terminal_socket(
                     if ws_sender.send(Message::Ping(Vec::new().into())).await.is_err() {
                         break;
                     }
+                    mark_sent();
                 }
                 data = output_rx.recv(), if history_sent => {
                     match data {
@@ -195,6 +214,7 @@ async fn handle_terminal_socket(
                             if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                                 break;
                             }
+                            mark_sent();
                         }
                         Some(WebTerminalEvent::Viewport(viewport)) => {
                             if viewport_aware {
@@ -203,13 +223,23 @@ async fn handle_terminal_socket(
                                 };
                                 if let Ok(msg) = serde_json::to_string(&message) {
                                     if ws_sender.send(Message::Text(msg.into())).await.is_err() { break; }
+                                    mark_sent();
                                 }
                             }
                         }
                         None => {
-                            // 订阅通道关闭 = PTY 已退出（见 spawn_output_forwarder 的 close_all）。
-                            let exited = serde_json::to_string(&WsServerMessage::Exited { code: 0 }).unwrap_or_default();
-                            let _ = ws_sender.send(Message::Text(exited.into())).await;
+                            // 订阅通道关闭有两种原因：PTY 退出（close_all）或该客户端
+                            // 积压超限被 broadcast_event 移除。后者必须发可重连的错误帧，
+                            // 否则前端会永久把终端标记为已关闭（复核 #4）。
+                            if output_overflowed.load(std::sync::atomic::Ordering::Acquire) {
+                                let msg = serde_json::to_string(&WsServerMessage::Error {
+                                    message: "终端输出过快，连接已断开，正在重新连接…".to_string(),
+                                }).unwrap_or_default();
+                                let _ = ws_sender.send(Message::Text(msg.into())).await;
+                            } else {
+                                let exited = serde_json::to_string(&WsServerMessage::Exited { code: 0 }).unwrap_or_default();
+                                let _ = ws_sender.send(Message::Text(exited.into())).await;
+                            }
                             break;
                         }
                     }
@@ -220,6 +250,7 @@ async fn handle_terminal_socket(
                             if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                                 break;
                             }
+                            mark_sent();
                         }
                         None => error_channel_open = false,
                     }
@@ -242,7 +273,6 @@ async fn handle_terminal_socket(
                 Ok(msg) => msg,
                 Err(_) => break,
             };
-            activity_tx.send_replace(Instant::now());
             match msg {
                 Message::Text(text) => {
                     if text.len() > MAX_WS_MESSAGE_SIZE {
@@ -266,10 +296,19 @@ async fn handle_terminal_socket(
                             WsClientMessage::Input { data } => {
                                 // 逐消息复核：write_to_terminal 内部按当前共享设置授权，
                                 // 因此连接存续期间关闭共享后，输入会立刻被拒绝。
-                                let ts = app.state::<TerminalService>();
-                                if let Err(error) =
-                                    ts.write_to_terminal(&tid, &data, TerminalActor::Web)
-                                {
+                                // 写入可能因前台进程不读 stdin 而无限阻塞（即使已在
+                                // instances 全局锁外），放阻塞线程池执行，不占 async worker。
+                                let app = app.clone();
+                                let tid = tid.clone();
+                                let result = tokio::task::spawn_blocking(move || {
+                                    app.state::<TerminalService>()
+                                        .write_to_terminal(&tid, &data, TerminalActor::Web)
+                                })
+                                .await
+                                .unwrap_or_else(|join_error| {
+                                    Err(format!("输入任务执行失败: {}", join_error))
+                                });
+                                if let Err(error) = result {
                                     send_ws_error(&error_tx, error);
                                 }
                             }
@@ -318,11 +357,14 @@ async fn handle_terminal_socket(
         WS_AUTH_RECHECK_INTERVAL,
     );
     auth_recheck.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    // 与权限复核并行：token 到期时刻一到就断开，不依赖客户端重新登录。
+    let mut token_expiry = Box::pin(time::sleep_until(token_expiry_deadline(token_exp)));
     let exit_reason = loop {
         tokio::select! {
             _ = &mut send_task => break SocketExit::Send,
             _ = &mut recv_task => break SocketExit::Receive,
             _ = &mut heartbeat_deadline => break SocketExit::HeartbeatTimeout,
+            _ = &mut token_expiry => break SocketExit::Unauthorized("登录已过期，请重新登录".into()),
             _ = auth_recheck.tick(), if is_pc_takeover => {
                 let ts = state.app_handle.state::<TerminalService>();
                 // 只有明确的「无权限」才主动断开；NotFound 交给输出通道关闭路径，
@@ -333,12 +375,13 @@ async fn handle_terminal_socket(
                     break SocketExit::Unauthorized(error.to_string());
                 }
             }
-            activity = activity_rx.changed() => {
-                if activity.is_err() {
-                    break SocketExit::Receive;
+            changed = send_ok_rx.changed() => {
+                if changed.is_err() {
+                    // send_task 已结束（drop 了 sender），由其分支收尾。
+                    continue;
                 }
-                let last_activity = *activity_rx.borrow_and_update();
-                heartbeat_deadline.as_mut().reset(last_activity + WS_HEARTBEAT_TIMEOUT);
+                let last_sent_ok = *send_ok_rx.borrow_and_update();
+                heartbeat_deadline.as_mut().reset(last_sent_ok + WS_HEARTBEAT_TIMEOUT);
             }
         }
     };
@@ -392,15 +435,16 @@ pub async fn meta_ws_handler(
     let token = params
         .get("token")
         .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
-    let _claims = verify_token(token, &state.jwt_secret)?;
+    let claims = verify_token(token, &state.jwt_secret)?;
 
-    Ok(ws.on_upgrade(move |socket| handle_meta_socket(socket, state)))
+    Ok(ws.on_upgrade(move |socket| handle_meta_socket(socket, state, claims.exp)))
 }
 
-async fn handle_meta_socket(socket: WebSocket, state: AppState) {
+async fn handle_meta_socket(socket: WebSocket, state: AppState, token_exp: usize) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let ts = state.app_handle.state::<TerminalService>();
     let mut change_rx = ts.session_change_tx.subscribe();
+    let mut token_expiry = Box::pin(time::sleep_until(token_expiry_deadline(token_exp)));
 
     // 连上立即推一次当前会话列表：非共享模式下只有 Web 自己创建的终端，
     // 共享模式下才包含可接管的 PC 终端。过滤逻辑集中在 list_terminals_info_for。
@@ -440,6 +484,7 @@ async fn handle_meta_socket(socket: WebSocket, state: AppState) {
                     _ => {}
                 }
             }
+            _ = &mut token_expiry => break,
         }
     }
     let _ = ws_sender.close().await;

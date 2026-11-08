@@ -6,6 +6,10 @@ use serde_json::json;
 use std::{collections::HashMap, time::Duration};
 use crate::{models::{ai_chat::*, session_history::{SessionHistoryItem, SessionHistoryScanResult}}, services::{ai_chat_service as service, SettingsService}, web::{auth::{ClaimsFromRequest, verify_token}, error::ApiError, server::AppState}};
 
+/// AI 会话 WS 单帧上限：用户消息与审批回包都远小于此值。此前的
+/// `usize::MAX` 等于取消防护，恶意客户端可用超长帧耗尽内存。
+const AI_WS_MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
+
 fn service_error(error: String) -> ApiError {
     if error.contains("不存在") { ApiError::NotFound(error) }
     else if error.contains("正在") { ApiError::Conflict(error) }
@@ -138,7 +142,7 @@ pub async fn socket(ws: WebSocketUpgrade, State(state): State<AppState>, Path(id
     let claims = verify_token(&token, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期，请重新登录".into()))?;
     let owner = claims.sub;
     let initial = { let id = id.clone(); let owner = owner.clone(); blocking(move || service::get(&id, &owner)).await?.0 };
-    Ok(ws.max_message_size(usize::MAX).max_frame_size(usize::MAX).on_upgrade(move |socket| async move {
+    Ok(ws.max_message_size(AI_WS_MAX_MESSAGE_SIZE).max_frame_size(AI_WS_MAX_MESSAGE_SIZE).on_upgrade(move |socket| async move {
         let (mut sender, mut receiver) = socket.split();
         let send_updates = async {
             let mut revision = initial.revision;
@@ -207,7 +211,7 @@ pub async fn notifications_socket(ws: WebSocketUpgrade, State(state): State<AppS
     let claims = verify_token(&token, &state.jwt_secret).map_err(|_| ApiError::Unauthorized("登录已过期，请重新登录".into()))?;
     let owner = claims.sub;
     let initial = { let owner = owner.clone(); blocking(move || service::list(&owner)).await?.0 };
-    Ok(ws.max_message_size(usize::MAX).max_frame_size(usize::MAX).on_upgrade(move |socket| async move {
+    Ok(ws.max_message_size(AI_WS_MAX_MESSAGE_SIZE).max_frame_size(AI_WS_MAX_MESSAGE_SIZE).on_upgrade(move |socket| async move {
         let (mut sender, mut receiver) = socket.split();
         let send_updates = async {
             let mut previous: Vec<_> = initial.iter().map(|s| (s.id.clone(), s.revision)).collect();

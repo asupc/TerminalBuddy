@@ -444,7 +444,8 @@ pub fn create_asset(kind: AssetKind, name: &str, description: &str) -> Result<St
             }
         }
     };
-    fs::write(main_file_of(&path, kind), content).map_err(|error| format!("创建资产失败: {}", error))?;
+    crate::services::atomic_file::atomic_write(&main_file_of(&path, kind), content.as_bytes())
+        .map_err(|error| format!("创建资产失败: {}", error))?;
     Ok(name)
 }
 
@@ -455,7 +456,8 @@ pub fn read_asset(kind: AssetKind, name: &str) -> Result<String, String> {
 
 pub fn write_asset(kind: AssetKind, name: &str, content: &str) -> Result<(), String> {
     let (_, lib_path) = resolve_library_path(kind, name)?;
-    fs::write(main_file_of(&lib_path, kind), content).map_err(|error| format!("写入资产失败: {}", error))
+    crate::services::atomic_file::atomic_write(&main_file_of(&lib_path, kind), content.as_bytes())
+        .map_err(|error| format!("写入资产失败: {}", error))
 }
 
 // ---------------------------------------------------------------------------

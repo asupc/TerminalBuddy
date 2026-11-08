@@ -12,16 +12,17 @@ use std::thread;
 use std::time::Duration;
 use crate::runtime::AppHandle;
 
-const FRAME_INPUT: u8 = 1;
+pub(crate) const FRAME_INPUT: u8 = 1;
 const FRAME_RESIZE: u8 = 2;
 const FRAME_KILL: u8 = 3;
-const FRAME_ACK: u8 = 4;
+pub(crate) const FRAME_ACK: u8 = 4;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 static EMBEDDED_VSCODE_TERMINAL: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/resources/vscode-terminal");
 static EXTRACTED_VSCODE_TERMINAL: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 static COMPATIBLE_NODE: OnceLock<Mutex<Option<Result<(PathBuf, NodeProbeResult), String>>>> = OnceLock::new();
+#[cfg_attr(not(windows), allow(dead_code))]
 static HOST_EXE_COPY_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Serialize)]
@@ -36,7 +37,9 @@ struct LaunchConfig<'a> {
 
 pub struct VsCodeTerminalProcess {
     child: Child,
-    stdin: ChildStdin,
+    /// stdin 独立加锁并共享：终端输入写可能因插件进程不读 stdin 而无限阻塞，
+    /// 必须能在 instances 全局锁外（经克隆的 Arc）执行（审查 H-2）。
+    stdin: std::sync::Arc<Mutex<ChildStdin>>,
     shell_pid: u32,
 }
 
@@ -150,7 +153,7 @@ impl VsCodeTerminalProcess {
         Ok((
             Self {
                 child,
-                stdin,
+                stdin: std::sync::Arc::new(Mutex::new(stdin)),
                 shell_pid,
             },
             Box::new(stdout),
@@ -196,11 +199,15 @@ impl VsCodeTerminalProcess {
         let mut payload = [0u8; 4];
         payload[..2].copy_from_slice(&cols.to_le_bytes());
         payload[2..].copy_from_slice(&rows.to_le_bytes());
-        self.write_frame(FRAME_RESIZE, &payload)
+        // resize 在 instances 全局锁内执行（terminal.rs），绝不能阻塞在 stdin 锁上：
+        // 插件卡住时一次在途输入写会让所有终端的列表/关闭/鉴权一起冻结。
+        // 拿不到锁就跳过本次 resize，下一帧布局变化会再试。
+        let _ = self.try_write_frame(FRAME_RESIZE, &payload);
+        Ok(())
     }
 
     pub fn kill(&mut self) -> Result<(), String> {
-        if self.write_frame(FRAME_KILL, &[]).is_err() {
+        if self.try_write_frame(FRAME_KILL, &[]).is_err() {
             self.child
                 .kill()
                 .map_err(|error| format!("关闭 VS Code 终端插件失败: {}", error))?;
@@ -209,7 +216,8 @@ impl VsCodeTerminalProcess {
     }
 
     pub fn acknowledge_output(&mut self, char_count: u32) -> Result<(), String> {
-        self.write_frame(FRAME_ACK, &char_count.to_le_bytes())
+        let _ = self.try_write_frame(FRAME_ACK, &char_count.to_le_bytes());
+        Ok(())
     }
 
     pub fn wait(&mut self) -> Result<(), String> {
@@ -219,12 +227,16 @@ impl VsCodeTerminalProcess {
             .map_err(|error| format!("等待 VS Code 终端插件退出失败: {}", error))
     }
 
-    /// 关闭并返回观测到的退出码：已退出直接取自然退出码，仍在运行先发 KILL 再等待。
+    /// 关闭并返回观测到的退出码：已退出直接取自然退出码，仍在运行先尝试通知再强制结束。
+    /// 与 Default/Handoff 一致，不得无超时等待 stdin 锁——插件卡住时阻塞写会永久
+    /// 持有锁，close 若等锁就永远杀不掉子进程（复核 #5）。
     pub fn close(&mut self) -> Option<u32> {
         if let Ok(Some(status)) = self.child.try_wait() {
             return status.code().map(|code| code as u32);
         }
-        let _ = self.kill();
+        // 发 KILL 帧只是礼貌通知；拿不到 stdin 锁就直接杀进程。
+        let _ = self.try_write_frame(FRAME_KILL, &[]);
+        let _ = self.child.kill();
         self.child
             .wait()
             .ok()
@@ -240,14 +252,40 @@ impl VsCodeTerminalProcess {
     }
 
     fn write_frame(&mut self, frame_type: u8, payload: &[u8]) -> Result<(), String> {
-        let length = u32::try_from(payload.len()).map_err(|_| "终端输入过大".to_string())?;
-        self.stdin
-            .write_all(&[frame_type])
-            .and_then(|_| self.stdin.write_all(&length.to_le_bytes()))
-            .and_then(|_| self.stdin.write_all(payload))
-            .and_then(|_| self.stdin.flush())
-            .map_err(|error| format!("写入 VS Code 终端插件失败: {}", error))
+        let mut stdin = self.stdin.lock().unwrap_or_else(|e| e.into_inner());
+        write_vscode_frame(&mut stdin, frame_type, payload)
     }
+
+    /// 非阻塞写：仅用于在全局 instances 锁内或收尾路径调用，避免卡住的插件
+    /// 间接冻结其他终端（复核 #5）。
+    fn try_write_frame(&mut self, frame_type: u8, payload: &[u8]) -> Result<(), String> {
+        let mut stdin = self
+            .stdin
+            .try_lock()
+            .map_err(|_| "VS Code 终端写入繁忙".to_string())?;
+        write_vscode_frame(&mut stdin, frame_type, payload)
+    }
+
+    /// 克隆共享 stdin 写通道：供 instances 全局锁外执行输入写（审查 H-2）。
+    pub(crate) fn stdin_shared(&self) -> std::sync::Arc<Mutex<ChildStdin>> {
+        self.stdin.clone()
+    }
+}
+
+/// 向插件进程 stdin 写一帧（帧类型 + 4 字节小端长度 + 载荷）。
+/// 独立于 `&mut self`，供共享锁路径（`TerminalInputHandle`）复用。
+pub(crate) fn write_vscode_frame(
+    stdin: &mut ChildStdin,
+    frame_type: u8,
+    payload: &[u8],
+) -> Result<(), String> {
+    let length = u32::try_from(payload.len()).map_err(|_| "终端输入过大".to_string())?;
+    stdin
+        .write_all(&[frame_type])
+        .and_then(|_| stdin.write_all(&length.to_le_bytes()))
+        .and_then(|_| stdin.write_all(payload))
+        .and_then(|_| stdin.flush())
+        .map_err(|error| format!("写入 VS Code 终端插件失败: {}", error))
 }
 
 fn terminate_and_collect_plugin_error(child: &mut Child, stderr: Option<ChildStderr>) -> String {
@@ -410,6 +448,8 @@ fn dedicated_host_exe(node_path: &Path) -> PathBuf {
 
 /// 确保目标位置存在与源一致的 node 副本；源 size/mtime 变化（node 升级/切换）时重新复制。
 /// 先写临时文件再原子替换；sidecar `.meta` 记录复制时的源指纹，避免同大小不同内容的漏刷新。
+/// 调用点在 dedicated_host_exe 的 windows cfg 分支内（审查 L-51 伪 dead），已接线。
+#[cfg_attr(not(windows), allow(dead_code))]
 fn ensure_host_exe_copy(source: &Path, target: &Path) -> std::io::Result<()> {
     let _guard = HOST_EXE_COPY_GUARD
         .get_or_init(|| Mutex::new(()))

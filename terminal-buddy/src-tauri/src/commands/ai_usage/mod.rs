@@ -16,7 +16,14 @@ use std::sync::OnceLock;
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 pub(crate) fn get_http_client() -> &'static reqwest::Client {
-    HTTP_CLIENT.get_or_init(reqwest::Client::new)
+    // 用量查询必须带超时（审查 M-14）：无超时的共享客户端在厂商接口网络
+    // stall 时会让四家用量查询无限期挂起（对照 llm_provider_service 的 15s）。
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
 }
 
 /// 各厂商共用的套餐档位结构（qianfan/ark/minimax 字段完全相同）。
@@ -100,8 +107,14 @@ pub(crate) fn extract_day_data(
     None
 }
 
+/// 用量接口按固定东八区（Asia/Shanghai）切分自然日；服务器本地时区不可用
+/// （UTC 容器里中国用户早晨的「今天」会错位一天）。所有用量日期边界统一走这里。
+pub(crate) fn china_now() -> chrono::DateTime<chrono::Utc> {
+    chrono::Utc::now() + chrono::Duration::hours(8)
+}
+
 fn date_str(days_ago: i64) -> String {
-    let now = chrono::Local::now() - chrono::Duration::days(days_ago);
+    let now = china_now() - chrono::Duration::days(days_ago);
     format!("{}", now.format("%Y-%m-%d"))
 }
 

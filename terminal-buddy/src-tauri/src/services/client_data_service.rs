@@ -37,7 +37,8 @@ impl ClientDataService {
             return DatabaseService::save_command_history(&pretty);
         }
         let path = Self::get_client_data_dir().join(format!("{}.json", key));
-        fs::write(&path, pretty).map_err(|e| format!("写入文件失败: {}", e))?;
+        super::atomic_file::atomic_write(&path, pretty.as_bytes())
+            .map_err(|e| format!("写入文件失败: {}", e))?;
         Ok(())
     }
 

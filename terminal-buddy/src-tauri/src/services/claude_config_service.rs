@@ -165,9 +165,10 @@ fn memory_dir_of(conn: &rusqlite::Connection, project_dir: &str) -> Option<PathB
         .optional()
         .ok()
         .flatten()?;
-    // <projects>/<enc>/<id>.jsonl → <projects>/<enc> → memory
+    // <projects>/<enc>/<id>.jsonl → <projects>/<enc> → <projects>/<enc>/memory
+    // 只取一层 parent：memory 与会话文件同在编码目录下。
     let session_file = PathBuf::from(file_path);
-    let encoded_dir = session_file.parent().and_then(Path::parent)?.to_path_buf();
+    let encoded_dir = session_file.parent()?.to_path_buf();
     let memory = encoded_dir.join("memory");
     memory.is_dir().then_some(memory)
 }
@@ -251,6 +252,18 @@ pub fn list_projects() -> Vec<ClaudeProjectInfo> {
 // ---------------------------------------------------------------------------
 
 fn resolve_memory_dir(project_dir: &str) -> Result<PathBuf, String> {
+    // 兜底仅用于「路径本身就是 Claude 编码目录」的形态（list_projects 会这样透出）。
+    // 普通项目仓库也常有 memory/ 子目录，若无条件优先返回它，浏览/编辑/删除会误操作
+    // 项目文件，而不是 ~/.claude/projects/<enc>/memory。
+    let direct_path = PathBuf::from(project_dir);
+    if let Ok(projects_root) = claude_projects_root() {
+        if direct_path.parent() == Some(projects_root.as_path()) {
+            let direct = direct_path.join("memory");
+            if direct.is_dir() {
+                return Ok(direct);
+            }
+        }
+    }
     let conn = DatabaseService::open()?;
     memory_dir_of(&conn, project_dir)
         .ok_or_else(|| "该项目没有 memory 目录（先在 Claude Code 里产生记忆，或等待会话历史索引）".to_string())
@@ -299,7 +312,8 @@ pub fn write_memory_file(project_dir: &str, name: &str, content: &str) -> Result
         return Err("非法文件名".to_string());
     }
     let path = resolve_memory_dir(project_dir)?.join(name);
-    fs::write(&path, content).map_err(|error| format!("写入记忆文件失败: {}", error))
+    crate::services::atomic_file::atomic_write(&path, content.as_bytes())
+        .map_err(|error| format!("写入记忆文件失败: {}", error))
 }
 
 /// 新建记忆条目：按项目记忆格式模板带 frontmatter
@@ -321,7 +335,8 @@ pub fn create_memory_file(
     let content = format!(
         "---\nname: {stem}\ndescription: {description}\nmetadata:\n  type: {memory_type}\n---\n\n（在这里写下这条记忆的内容）\n"
     );
-    fs::write(&path, content).map_err(|error| format!("创建记忆文件失败: {}", error))?;
+    crate::services::atomic_file::atomic_write(&path, content.as_bytes())
+        .map_err(|error| format!("创建记忆文件失败: {}", error))?;
     Ok(file_name)
 }
 
@@ -346,8 +361,10 @@ fn claude_md_path(kind: &str, project_dir: &str) -> Result<PathBuf, String> {
             .map(|home| home.join(".claude").join("CLAUDE.md"))
             .ok_or_else(|| "无法获取用户主目录".to_string()),
         "project" => {
-            if !is_safe_name(project_dir) && !PathBuf::from(project_dir).is_absolute() {
-                return Err("非法项目路径".to_string());
+            // 项目目录必须是绝对路径（审查 M-9）：旧条件 `!is_safe_name(..) && !is_absolute()`
+            // 会被 `is_safe_name("foo") == true` 短路，相对路径按进程 CWD 建目录写文件。
+            if !PathBuf::from(project_dir).is_absolute() {
+                return Err("项目路径必须是绝对路径".to_string());
             }
             Ok(PathBuf::from(project_dir).join("CLAUDE.md"))
         }
@@ -380,6 +397,7 @@ pub fn write_claude_md(kind: &str, project_dir: &str, content: &str) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
 
     #[test]
     fn frontmatter_parses_type_and_description() {
@@ -408,5 +426,37 @@ mod tests {
         assert!(!is_safe_name("a/b.md"));
         assert!(!is_safe_name(""));
         assert!(!is_safe_name(".hidden"));
+    }
+
+    /// 锁定 memory 目录布局：<projects>/<enc>/<id>.jsonl 对应
+    /// <projects>/<enc>/memory（曾因多取一层 parent 整体失效，见审查 H-1）。
+    #[test]
+    fn memory_dir_sits_beside_session_file() {
+        use crate::services::claude_history_service::init_claude_schema;
+
+        let conn = Connection::open_in_memory().expect("打开内存库");
+        init_claude_schema(&conn).expect("建表");
+
+        let root =
+            std::env::temp_dir().join(format!("tb-claude-memory-{}", uuid::Uuid::new_v4()));
+        let encoded_dir = root.join("D--gitee-TerminalBuddy");
+        fs::create_dir_all(encoded_dir.join("memory")).expect("创建 memory 目录");
+        let session_file = encoded_dir.join("s1.jsonl");
+        fs::write(&session_file, "{}\n").expect("写入会话文件");
+
+        conn.execute(
+            "INSERT INTO claude_sessions (session_id, project_dir, file_path, file_mtime, file_size, updated_at, indexed_at)
+             VALUES ('s1', 'D:\\gitee\\TerminalBuddy', ?1, 0, 0, 0, 0)",
+            [session_file.to_string_lossy().as_ref()],
+        )
+        .expect("插入索引记录");
+
+        let resolved = memory_dir_of(&conn, r"D:\gitee\TerminalBuddy")
+            .expect("应解析出 memory 目录");
+        assert_eq!(resolved, encoded_dir.join("memory"));
+        // 真实 memory 在编码目录下，绝不能解析到 <projects>/memory
+        assert_ne!(resolved, root.join("memory"));
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
