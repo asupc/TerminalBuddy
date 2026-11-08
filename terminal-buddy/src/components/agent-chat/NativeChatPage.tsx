@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleStop, CornerDownLeft, Send, Trash2, Zap } from 'lucide-react';
+import { CircleStop, ListTree, Send, Trash2, Zap } from 'lucide-react';
 import { AgentIcon } from './AgentIcon';
 import { ModelSwitcher } from './ModelSwitcher';
 import { UsagePanel, cacheHitRate, compact } from './UsagePanel';
@@ -17,17 +17,13 @@ import {
   aiSessionSwitchModel,
   aiCatalog,
   listenTauri,
-  type AiMessage,
   type AiSession,
   type AiSessionUpdateFrame,
-  type AiModelSwitch,
   type AnswerAiApproval,
   type SlashCatalog,
 } from '../../services/tauri';
 import { useAppStore, type NativeAgentTab } from '../../stores/appStore';
-import { ChatMarkdown } from './ChatMarkdown';
-import { SkillEntry } from './SkillEntry';
-import { ApprovalCard } from './ApprovalCard';
+import { AgentMessageList, formatClock, type AgentMessageListHandle, type ChatBlock } from './AgentMessageList';
 import { filterSlashCommands, SlashCompletions } from './SlashCompletions';
 import './AgentChat.css';
 
@@ -41,13 +37,17 @@ const STATUS_LABEL: Record<string, string> = {
   error: '出错',
 };
 
+/** 增量帧合并：用索引 Map 定位待更新消息，流式期间每帧都是 O(n) 而非 O(n·m)。 */
 function mergeSession(previous: AiSession | null, frame: AiSessionUpdateFrame): AiSession {
   if (!previous || frame.session.revision >= previous.revision) {
-    const messages = previous ? [...previous.messages] : [];
+    if (!previous) return { ...frame.session, messages: [...frame.messages] };
+    const index = new Map<string, number>();
+    previous.messages.forEach((message, position) => index.set(message.id, position));
+    const messages = previous.messages.slice();
     for (const message of frame.messages) {
-      const index = messages.findIndex(item => item.id === message.id);
-      if (index >= 0) messages[index] = message;
-      else messages.push(message);
+      const at = index.get(message.id);
+      if (at != null) messages[at] = message;
+      else { index.set(message.id, messages.length); messages.push(message); }
     }
     return { ...frame.session, messages };
   }
@@ -59,6 +59,8 @@ function mergeSession(previous: AiSession | null, frame: AiSessionUpdateFrame): 
  * 这段时间先借用同一客户端最近一次拿到的清单，避免输入 / 没有补全。
  */
 const SLASH_CATALOG_CACHE_KEY = 'agent-slash-catalog';
+/** 右侧输入节点导航的展开状态持久化键。 */
+const OUTLINE_VISIBLE_KEY = 'agent-outline-visible';
 
 function readCachedCatalog(provider: string): SlashCatalog | null {
   try {
@@ -82,75 +84,17 @@ function writeCachedCatalog(provider: string, catalog: SlashCatalog): void {
   }
 }
 
-function toolTitle(message: AiMessage): string {
-  const newline = message.text.indexOf('\n');
-  return (newline >= 0 ? message.text.slice(0, newline) : message.text).trim();
+/** 导航条目摘要：取首个非空行的开头，过长截断。 */
+function outlineLabel(text: string): string {
+  const firstLine = text.split('\n').find(line => line.trim()) ?? '';
+  return firstLine.trim().slice(0, 48);
 }
 
-function ToolMessage({ message }: { message: AiMessage }) {
-  const [open, setOpen] = useState(false);
-  const newline = message.text.indexOf('\n');
-  const title = message.text.slice(0, newline >= 0 ? newline : undefined);
-  const body = newline >= 0 ? message.text.slice(newline + 1) : '';
-  return (
-    <div className={`agent-tool-entry${open ? ' open' : ''}`}>
-      <button className="agent-tool-header" onClick={() => setOpen(value => !value)} aria-expanded={open}>
-        <CornerDownLeft aria-hidden="true" />
-        <span className="agent-tool-title">{title || '工具调用'}</span>
-      </button>
-      {open && body && <pre className="agent-tool-body">{body}</pre>}
-    </div>
-  );
-}
-
-/**
- * 连续的工具调用合并成一个可展开条目：多轮命令不再把对话刷成一长串工具名。
- * 单项工具仍直接展示命令，方便快速确认执行内容。
- */
-function ToolGroup({ messages }: { messages: AiMessage[] }) {
-  const [open, setOpen] = useState(false);
-  const names = Array.from(new Set(messages.map(toolTitle).filter(Boolean)));
-  const summary = names.slice(0, 3).join('、');
-  return (
-    <div className={`agent-tool-entry agent-tool-group${open ? ' open' : ''}`}>
-      <button className="agent-tool-header" onClick={() => setOpen(value => !value)} aria-expanded={open}>
-        <CornerDownLeft aria-hidden="true" />
-        <span className="agent-tool-title">
-          {messages.length} 个工具调用
-          {summary && <span className="agent-tool-summary"> · {summary}{names.length > 3 ? ' 等' : ''}</span>}
-        </span>
-      </button>
-      {open && (
-        <div className="agent-tool-group-body">
-          {messages.map(message => <ToolMessage key={message.id} message={message} />)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function formatClock(at: number): string {
-  const date = new Date(at);
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
-/**
- * 模型切换分隔线：明示从这一段开始会话换用了哪个供应商与模型，
- * 之前的消息由切换前的配置产生。
- */
-function ModelSwitchDivider({ at, info }: { at: number; info: AiModelSwitch }) {
-  const from = [info.fromModel, info.fromProvider].filter(Boolean).join(' · ') || '服务端默认';
-  const to = [info.toModel, info.toProvider].filter(Boolean).join(' · ');
-  return (
-    <div className="agent-model-divider" role="separator">
-      <span className="agent-model-divider-time">{formatClock(at)}</span>
-      <span className="agent-model-divider-rule" />
-      <span className="agent-model-divider-text" title={`${from} → ${to}`}>
-        模型切换：{from} → {to}
-      </span>
-      <span className="agent-model-divider-rule" />
-    </div>
-  );
+interface OutlineNode {
+  id: string;
+  label: string;
+  skillName?: string;
+  at: number;
 }
 
 export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
@@ -162,10 +106,19 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   const [sending, setSending] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const composing = useRef(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const previousStatus = useRef<string | null>(null);
+  const listRef = useRef<AgentMessageListHandle>(null);
+  // 右侧输入节点导航：默认展开，状态跨会话记住。
+  const [outlineOpen, setOutlineOpen] = useState(() => localStorage.getItem(OUTLINE_VISIBLE_KEY) !== '0');
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+
+  const toggleOutline = useCallback(() => {
+    setOutlineOpen(open => {
+      localStorage.setItem(OUTLINE_VISIBLE_KEY, open ? '0' : '1');
+      return !open;
+    });
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -240,12 +193,16 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
   }, [session?.slashCatalog, tab.provider, fallbackCatalog]);
   const slashCatalog = session?.slashCatalog ?? fallbackCatalog;
 
-  // 连续工具调用合并为一个块；用户/助手消息保持原顺序。
-  const blocks = useMemo(() => {
-    const result: Array<
-      { kind: 'message'; message: AiMessage } | { kind: 'tools'; messages: AiMessage[] }
-    > = [];
+  // 连续工具调用合并为一个块；连续同名子代理消息合并为子代理组；用户/助手消息保持原顺序。
+  const blocks = useMemo<ChatBlock[]>(() => {
+    const result: ChatBlock[] = [];
     for (const message of messages) {
+      if (message.subagent) {
+        const last = result[result.length - 1];
+        if (last?.kind === 'subagent' && last.name === message.subagent) last.messages.push(message);
+        else result.push({ kind: 'subagent', name: message.subagent, messages: [message] });
+        continue;
+      }
       if (message.role !== 'tool') {
         result.push({ kind: 'message', message });
         continue;
@@ -257,10 +214,22 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     return result;
   }, [messages]);
 
-  useEffect(() => {
-    if (stickToBottom.current) bottomRef.current?.scrollIntoView({ block: 'end' });
-    // 思考指示条出现/消失也会改变底部位置，需要一并跟随。
-  }, [messages.length, messages[messages.length - 1]?.text, blocks.length, sending, session?.status]);
+  // 右侧输入节点导航：列出全部用户输入（含 Skill 展开），点击即可定位。
+  const outlineNodes = useMemo<OutlineNode[]>(() => {
+    const nodes: OutlineNode[] = [];
+    for (const block of blocks) {
+      if (block.kind !== 'message') continue;
+      const message = block.message;
+      if (message.role !== 'user') continue;
+      nodes.push({
+        id: message.id,
+        label: outlineLabel(message.text) || (message.skillName ? `skill:${message.skillName}` : '（空消息）'),
+        skillName: message.skillName,
+        at: message.createdAt,
+      });
+    }
+    return nodes;
+  }, [blocks]);
 
   const slashItems = useMemo(() => {
     if (!draft.startsWith('/') || /\s/.test(draft)) return [];
@@ -322,11 +291,9 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     }
   }, [closeAgentTab, tab.key, tab.sessionId]);
 
-  const onScroll = useCallback(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-  }, []);
+  const stop = useCallback(() => {
+    aiSessionStop(tab.sessionId).catch(reason => setError(String(reason)));
+  }, [tab.sessionId]);
 
   const onKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (composing.current || event.nativeEvent.isComposing) return;
@@ -383,6 +350,10 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
     return () => window.clearInterval(timer);
   }, [busy, tab.sessionId]);
   const thinkingSeconds = thinkingSince ? Math.max(0, Math.floor((clock - thinkingSince) / 1000)) : 0;
+  const elapsedText = thinkingSeconds >= 8 ? `已等待 ${thinkingSeconds} 秒` : null;
+  const busyText = session?.status === 'stopping'
+    ? '正在中断'
+    : session?.status === 'background' ? '后台任务执行中' : 'AI 正在思考中';
   const context = session?.usage?.context;
   const lastTurn = session?.usage?.lastTurn;
   const usage = session?.usage;
@@ -439,73 +410,61 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
           </div>
         </div>
         <div className="agent-chat-header-actions">
-          {running && (
-            <button className="agent-btn" onClick={() => { void aiSessionStop(tab.sessionId).catch(reason => setError(String(reason))); }}>
-              <CircleStop aria-hidden="true" />中断
-            </button>
-          )}
+          <button
+            className={`agent-btn${outlineOpen ? ' active' : ''}`}
+            title={outlineOpen ? '收起输入节点导航' : '展开输入节点导航'}
+            onClick={toggleOutline}
+          >
+            <ListTree aria-hidden="true" />节点
+          </button>
           <button className="agent-btn danger" onClick={() => { void removeSession(); }}>
             <Trash2 aria-hidden="true" />删除会话
           </button>
         </div>
       </header>
 
-      <div className="agent-chat-messages" ref={scrollRef} onScroll={onScroll}>
-        {messages.length === 0 && !error && (
-          <div className="agent-chat-empty">
-            <AgentIcon provider={tab.provider} className="agent-chat-empty-logo" />
-            <div>在下方输入消息开始对话。</div>
-            <div className="agent-chat-empty-hint">输入 / 可查看命令与 Skill 补全。</div>
-          </div>
-        )}
-        {blocks.map(block => {
-          if (block.kind === 'tools') {
-            return block.messages.length > 1
-              ? <ToolGroup key={`tools-${block.messages[0].id}`} messages={block.messages} />
-              : <ToolMessage key={block.messages[0].id} message={block.messages[0]} />;
-          }
-          const message = block.message;
-          if (message.modelSwitch) {
-            return <ModelSwitchDivider key={message.id} at={message.createdAt} info={message.modelSwitch} />;
-          }
-          if (message.role === 'user') {
-            if (message.skillName) {
-              return <SkillEntry key={message.id} name={message.skillName} text={message.text} />;
-            }
-            return (
-              <div key={message.id} className="agent-bubble-row user">
-                <div className="agent-bubble user">{message.text}</div>
-              </div>
-            );
-          }
-          if (message.role === 'assistant') {
-            return (
-              <div key={message.id} className="agent-bubble-row assistant">
-                <div className="agent-bubble assistant"><ChatMarkdown text={message.text} /></div>
-              </div>
-            );
-          }
-          return <ToolMessage key={message.id} message={message} />;
-        })}
-        {session?.approvals.map(approval => (
-          <ApprovalCard key={approval.id} approval={approval} onAnswer={answer} />
-        ))}
-        {busy && (
-          <div className="agent-bubble-row assistant agent-thinking-row" role="status" aria-live="polite">
-            <div className="agent-bubble assistant agent-thinking-bubble">
-              <span className="agent-thinking-dots" aria-hidden="true"><span /><span /><span /></span>
-              <span>
-                {session?.status === 'stopping'
-                  ? '正在中断'
-                  : session?.status === 'background' ? '后台任务执行中' : 'AI 正在思考中'}…
-                {thinkingSeconds >= 8 && <span className="agent-thinking-elapsed"> 已等待 {thinkingSeconds} 秒</span>}
-              </span>
+      <div className="agent-chat-body">
+        <AgentMessageList
+          ref={listRef}
+          provider={tab.provider}
+          blocks={blocks}
+          approvals={session?.approvals ?? []}
+          sessionError={session?.error ?? null}
+          localError={error}
+          busy={busy}
+          busyText={busyText}
+          elapsedText={elapsedText}
+          stickRef={stickToBottom}
+          onAnswer={answer}
+          onActiveUserChange={setActiveNodeId}
+        />
+        {outlineOpen && (
+          <aside className="agent-chat-outline">
+            <div className="agent-outline-head">
+              <span>输入节点 · {outlineNodes.length}</span>
             </div>
-          </div>
+            <div className="agent-outline-list">
+              {outlineNodes.length === 0 && (
+                <div className="agent-outline-empty">发送消息后，这里会列出全部输入，点击可快速定位。</div>
+              )}
+              {outlineNodes.map((node, index) => (
+                <button
+                  key={node.id}
+                  className={`agent-outline-item${activeNodeId === node.id ? ' active' : ''}`}
+                  title={node.label}
+                  onClick={() => listRef.current?.jumpTo(node.id)}
+                >
+                  <span className="agent-outline-index">{index + 1}</span>
+                  <span className="agent-outline-text">
+                    {node.skillName && <span className="agent-skill-badge">SKILL</span>}
+                    {node.label}
+                  </span>
+                  <span className="agent-outline-time">{formatClock(node.at)}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
         )}
-        {session?.error && <div className="agent-chat-error">{session.error}</div>}
-        {error && <div className="agent-chat-error">{error}</div>}
-        <div ref={bottomRef} />
       </div>
 
       <footer className="agent-chat-composer">
@@ -580,9 +539,17 @@ export function NativeChatPage({ tab }: { tab: NativeAgentTab }) {
                 <span className="agent-usage-sub">缓存命中 {cacheHitRate(usage?.sessionTotal)}</span>
               </span>
             </button>
-            <button className="agent-btn primary" disabled={sending || !draft.trim()} onClick={() => { void send(); }}>
-              <Send aria-hidden="true" />发送
-            </button>
+            <div className="agent-input-actions">
+              <button className="agent-btn primary" disabled={sending || !draft.trim()} onClick={() => { void send(); }}>
+                <Send aria-hidden="true" />发送
+              </button>
+              {/* 运行中的停止按钮紧跟发送按钮，不用再去顶部找中断入口。 */}
+              {running && (
+                <button className="agent-btn danger agent-stop-btn" title="中断当前任务" onClick={stop}>
+                  <CircleStop aria-hidden="true" />停止
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </footer>

@@ -8,6 +8,8 @@ export interface AiMessage {
   createdAt: number;
   /** Skill 展开的消息：Skill 名称。普通消息不携带该字段。 */
   skillName?: string;
+  /** 子代理（Task 工具）产生的消息：subagent 类型名（如 "Explore"）。主线程消息不携带。 */
+  subagent?: string;
   /** 模型切换分段（role = system）：切换前后的供应商与模型，前端渲染为分隔线。 */
   modelSwitch?: AiModelSwitch;
 }
