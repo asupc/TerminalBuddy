@@ -12,6 +12,10 @@ pub struct AiMessage {
     /// 前端据此渲染为可展开的 skill:名称 条目，而非普通气泡。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_name: Option<String>,
+    /// 子代理（Task 工具启动）产生的消息：subagent 类型名（如 "Explore"）。
+    /// 主线程消息为 None；前端据此把连续的同名子代理消息合并为一个可折叠条目。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
     /// 模型切换分段：role = "system" 时携带切换前后的配置，前端渲染为分隔线。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_switch: Option<ModelSwitch>,
