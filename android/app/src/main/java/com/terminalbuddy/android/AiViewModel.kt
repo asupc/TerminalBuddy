@@ -1087,6 +1087,9 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
         }
         val notificationAccountId = repository.accounts.activeId
         notificationAccountId?.let { taskNotifications.expectTask(it, session) }
+        // 首发送可能先以 local-* 临时 ID 登记通知基线，创建成功后再替换为真实 ID；
+        // 失败路径必须清理对应条目，否则「运行中」通知会滞留到 2 分钟兜底。
+        var notificationSessionId = session.id
         val epoch = generation
         sendJob = viewModelScope.launch {
             try {
@@ -1097,6 +1100,7 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
                     if (epoch == generation && mutable.value.selected?.id == session.id) {
                         if (visible) markViewed(created.id, created.revision)
                         notificationAccountId?.let { taskNotifications.replaceExpectedTask(it, session.id, created) }
+                        notificationSessionId = created.id
                         outgoing = outgoing?.copy(sessionId = created.id)
                         mutable.update { current -> current.copy(selected = current.selected?.copy(id = created.id)) }
                         drafts[created.id] = drafts.remove(session.id).orEmpty()
@@ -1120,6 +1124,8 @@ class AiViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Throwable) {
                 if (epoch == generation) {
                     clearOutgoing(restoreDraft = true)
+                    // 发送失败时撤掉刚登记的「运行中」通知基线。
+                    notificationAccountId?.let { taskNotifications.forgetSession(it, notificationSessionId) }
                     failure(e)
                 }
             } finally {

@@ -109,6 +109,8 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     private var attempts = 0
     /** 离开会话页时尚未发出的启动期输入（terminalId → 队列），重新进入时恢复。 */
     private val savedQueues = HashMap<String, List<String>>()
+    /** 在途 REST 发送的（终端 id, 文本）；取消协程前暂存，避免回复被静默丢弃。 */
+    private var inflightReply: Pair<String, String>? = null
     fun isCurrentAccount(): Boolean = store.loggedIn && mutable.value.connection ==
         AiConnection(store.server, store.username, store.token)
 
@@ -145,6 +147,13 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
                 if (!isActive || epoch != generation) break
                 // 正常关闭（cancel / 账号切换）不重连；异常才退避重试。
                 if (observed.isFailure) {
+                    // 旧服务端不提供 /ws/notifications（404）：静默降级并长退避
+                    // （M-29），否则每 ≤8s 一次注定失败的握手毫无意义。
+                    if (observed.exceptionOrNull() is com.terminalbuddy.android.data.ApiException &&
+                        (observed.exceptionOrNull() as com.terminalbuddy.android.data.ApiException).code == 404) {
+                        delay(600_000L)
+                        continue
+                    }
                     delay(1_000L shl retries.coerceAtMost(3))
                     retries = (retries + 1).coerceAtMost(3)
                 }
@@ -234,6 +243,14 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
     private fun Throwable.isRetryableListFailure(): Boolean = isConnectionFailure() ||
         this is TerminalAgentException && (code == 408 || code == 429 || code in 500..599)
 
+    /** 取消 replyJob 前调用：在途文本放回该终端的暂存队列，重新进入会话时恢复。 */
+    private fun captureInflightReply() {
+        if (replyJob?.isActive != true) return
+        val (terminalId, text) = inflightReply ?: return
+        savedQueues[terminalId] = listOf(text) + savedQueues[terminalId].orEmpty()
+        inflightReply = null
+    }
+
     fun openSession(session: TerminalAgentSession) {
         val current = mutable.value
         // 启动态下绑定出现：就地接管，保留队列/草稿，不重建页面。
@@ -251,6 +268,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         }
         if (current.selected?.terminalId == session.terminalId) return
         pageJob?.cancel(); pageJob = null
+        captureInflightReply()
         replyJob?.cancel(); replyJob = null
         confirmJob?.cancel(); confirmJob = null
         disconnect()
@@ -336,8 +354,11 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         val anchorRevision = state.revision
         val anchorSeq = state.cursor
         replyJob = viewModelScope.launch {
+            inflightReply = session.terminalId to text
             try {
                 repository.reply(connection, session.terminalId, text, requestId)
+                // 请求已成功返回：此后取消协程不应再把这条文本当成「在途未发」重放。
+                inflightReply = null
                 if (epoch != generation || mutable.value.selected?.terminalId != session.terminalId) return@launch
                 mutable.update {
                     it.copy(
@@ -372,6 +393,8 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
                         }
                     }
                 }
+            } finally {
+                if (inflightReply?.second == text) inflightReply = null
             }
         }
     }
@@ -380,6 +403,7 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
      *  启动态还有没发出去的输入时按终端暂存，重新进入同一会话时恢复，避免无声丢弃。 */
     fun leaveSession() {
         pageJob?.cancel(); pageJob = null
+        captureInflightReply()
         replyJob?.cancel(); replyJob = null
         confirmJob?.cancel(); confirmJob = null
         disconnect()
@@ -464,8 +488,11 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
         val anchorSeq = state.cursor
         mutable.update { it.copy(draft = "", sending = true, sendError = null) }
         replyJob = viewModelScope.launch {
+            inflightReply = session.terminalId to text
             try {
                 repository.reply(connection, session.terminalId, text, requestId)
+                // 请求已成功返回：此后取消协程不应再把这条文本当成「在途未发」重放。
+                inflightReply = null
                 if (epoch != generation || mutable.value.selected?.terminalId != session.terminalId) return@launch
                 mutable.update {
                     it.copy(
@@ -488,6 +515,8 @@ internal class TerminalAgentViewModel(application: Application) : AndroidViewMod
                 if (epoch == generation && mutable.value.selected?.terminalId == session.terminalId) {
                     mutable.update { it.copy(sending = false, draft = text, sendError = replyErrorText(e)) }
                 }
+            } finally {
+                if (inflightReply?.second == text) inflightReply = null
             }
         }
     }
